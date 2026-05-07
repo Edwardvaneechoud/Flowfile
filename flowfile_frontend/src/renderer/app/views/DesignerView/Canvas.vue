@@ -62,7 +62,6 @@ import ContextMenu from "./ContextMenu.vue";
 import AiAssistant from "../../features/ai/AiAssistant.vue";
 import AiCommandPalette from "../../features/ai/AiCommandPalette.vue";
 import AiGhostNode from "../../features/ai/AiGhostNode.vue";
-import { useAiCommandPaletteStore } from "../../stores/ai-command-palette-store";
 import { useGhostNodeSuggestions } from "../../features/ai/useGhostNodeSuggestions";
 import {
   NodeCopyInput,
@@ -94,7 +93,6 @@ const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const flowStore = useFlowStore();
 const aiStore = useAiStore();
-const commandPalette = useAiCommandPaletteStore();
 const rawCustomNode = markRaw(CustomNode);
 const rawDeletableEdge = markRaw(DeletableEdge);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes, onPaneReady } =
@@ -963,12 +961,15 @@ const handleKeyDown = (event: KeyboardEvent) => {
     event.preventDefault();
     emit("open");
   } else if (eventKeyClicked && key === "k" && !isInputElement && !isInCodeMirror) {
-    // W33 — Cmd+K / Ctrl+K opens the AI command palette. Skipped when
-    // typing in any input or CodeMirror so the user can still cut/copy
-    // text inside those surfaces unmodified.
+    // W33 — Cmd+K / Ctrl+K toggles the AI assistant drawer. Originally
+    // wired to the AI command palette; rewired per polish.md 2026-05-06
+    // to the drawer because the palette UX confused users. Palette
+    // component, store, and route are kept intact — reversible by
+    // restoring `commandPalette.toggle()` here. Skipped when typing in
+    // any input or CodeMirror so plain k presses pass through.
     if (flowStore.flowId && flowStore.flowId > 0) {
       event.preventDefault();
-      commandPalette.toggle();
+      editorStore.toggleAiDrawer();
     }
   }
 };
@@ -1089,6 +1090,21 @@ onMounted(async () => {
     () => editorStore.showEdgeLabels,
     () => {
       refreshAllEdgeLabels();
+    },
+  );
+
+  // Bring the AI assistant DraggableItem to the front when the drawer
+  // opens. Replaces the previous `#aiAssistant.overlay { z-index: 245
+  // !important }` CSS hack — that rule clobbered stateStore's
+  // bring-to-front semantics for every other panel. nextTick gives
+  // DraggableItem.onMounted time to register itself with itemStore
+  // before we ask it to bump its zIndex.
+  watch(
+    () => editorStore.isAiOpen,
+    (open) => {
+      if (open) {
+        nextTick().then(() => itemStore.bringToFront("aiAssistant"));
+      }
     },
   );
 

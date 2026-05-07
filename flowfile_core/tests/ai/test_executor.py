@@ -448,6 +448,39 @@ def test_connect_missing_required_field_is_refused(call_kwargs: dict[str, Any]) 
     assert "from_node_id" in result.refusal_detail
 
 
+def test_connect_string_node_ids_get_example_nudge(call_kwargs: dict[str, Any]) -> None:
+    """2026-05-07 — when ``from_node_id`` / ``to_node_id`` come in as
+    non-coercible strings (live dogfood: LLM sent ``"node_3"`` /
+    ``"<placeholder>"`` shapes), the connect refusal appends a concrete
+    example payload so the LLM corrects on retry. Mirrors W67's enrichment
+    for ``add_*`` settings refusals.
+    """
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={
+            "flow_id": flow.flow_id,
+            # Non-numeric strings — Pydantic's lax-mode coercion fails on these
+            # (unlike "1" / "2" which it would silently parse).
+            "from_node_id": "node_one",
+            "to_node_id": "node_two",
+        },
+        insertion_context=InsertionContext(),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    detail = result.refusal_detail or ""
+    # Pydantic's original error survives, mapped to flat field names.
+    assert "from_node_id" in detail
+    assert "to_node_id" in detail
+    # And the new W67-style example is appended.
+    assert "Example payload" in detail
+    assert '"from_node_id": 3' in detail
+    assert '"to_node_id": 5' in detail
+
+
 def test_delete_connection_accepts_flat_shape(call_kwargs: dict[str, Any]) -> None:
     """The flat-shape contract applies to ``flowfile.graph.delete_connection``
     too — the executor copy-pastes the same construction path."""
@@ -1037,3 +1070,418 @@ def test_w67_settings_validation_refusal_includes_concrete_example(call_kwargs: 
     assert isinstance(parsed, dict)
     assert "columns" in parsed, parsed
     assert "data" in parsed, parsed
+
+
+# --------------------------------------------------------------------------- #
+# W47 — update_node_settings                                                   #
+# --------------------------------------------------------------------------- #
+
+
+def _flow_with_orders_and_filter() -> FlowGraph:
+    """``orders`` (id=1) → ``filter EU`` (id=2). Mirrors the production add
+    pattern (``_apply_add_node``) by following ``add_filter`` with an
+    explicit ``add_connection`` so the filter's ``node_inputs.main_inputs``
+    is populated — without it the live ``get_predicted_schema`` call has
+    no upstream data to feed into ``_func``.
+    """
+    flow = _flow_with_orders()
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                filter_type="advanced", advanced_filter="[region]=='EU'"
+            ),
+        )
+    )
+    add_connection(
+        flow,
+        input_schema.NodeConnection.create_from_simple_input(
+            from_id=1, to_id=2, input_type="input-0", output_handle="output-0"
+        ),
+    )
+    flow.get_node(2).get_predicted_schema()
+    return flow
+
+
+def _update_settings_args(
+    *,
+    node_id: int,
+    settings: dict[str, Any],
+    flow_id: int = 1,
+) -> dict[str, Any]:
+    return {"flow_id": flow_id, "node_id": node_id, "settings": settings}
+
+
+def test_update_node_settings_stage_returns_modification_payload(call_kwargs: dict[str, Any]) -> None:
+    """W47 — ``mode="stage"`` returns ``staged_node_payload`` with
+    ``kind="modification"`` and old + new settings populated; the live
+    node is not mutated.
+    """
+    flow = _flow_with_orders_and_filter()
+    pre_filter = flow.get_node(2).setting_input.model_dump(mode="json")
+    new_settings = _filter_args(node_id=2, depending_on_id=1, expr="[amount] > 50")
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.update_node_settings",
+        tool_args=_update_settings_args(node_id=2, settings=new_settings),
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+
+    assert result.status == "staged", result.refusal_detail
+    payload = result.staged_node_payload
+    assert isinstance(payload, dict)
+    assert payload["kind"] == "modification"
+    assert payload["node_id"] == 2
+    assert payload["node_type"] == "filter"
+    # Old settings reflect the pre-change state captured at stage time.
+    assert payload["old_settings"]["filter_input"]["advanced_filter"] == "[region]=='EU'"
+    assert payload["new_settings"]["filter_input"]["advanced_filter"] == "[amount] > 50"
+    assert payload["predicted_output_schema"] is not None
+    # Live graph unchanged.
+    assert (
+        flow.get_node(2).setting_input.model_dump(mode="json")["filter_input"]["advanced_filter"]
+        == pre_filter["filter_input"]["advanced_filter"]
+    )
+
+
+def test_update_node_settings_apply_mutates_live_node(call_kwargs: dict[str, Any]) -> None:
+    """W47 — ``mode="apply"`` re-fires ``add_<node_type>`` with the new
+    settings; the existing node's ``setting_input`` reflects the change
+    on the next read.
+    """
+    flow = _flow_with_orders_and_filter()
+    new_settings = _filter_args(node_id=2, depending_on_id=1, expr="[amount] > 50")
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.update_node_settings",
+        tool_args=_update_settings_args(node_id=2, settings=new_settings),
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="apply",
+        **call_kwargs,
+    )
+
+    assert result.status in ("applied", "warned"), result.refusal_detail
+    assert result.node_id == 2
+    post = flow.get_node(2).setting_input
+    assert post.filter_input.advanced_filter == "[amount] > 50"
+    # The wiring is preserved — main upstream is still node 1.
+    assert flow.get_node(2).node_inputs.main_inputs[0].node_id == 1
+
+
+def test_update_node_settings_pydantic_refusal(call_kwargs: dict[str, Any]) -> None:
+    """W47 refusal stage 1 — bad Pydantic shape surfaces as
+    ``settings_validation``. The W67 enriched-detail message routes
+    through the same path as ``add_*``.
+    """
+    flow = _flow_with_orders_and_filter()
+    bogus_settings = {"flow_id": 1, "node_id": 2, "filter_input": "not-an-object"}
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.update_node_settings",
+        tool_args=_update_settings_args(node_id=2, settings=bogus_settings),
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+
+    assert result.status == "rejected"
+    assert result.refusal_reason == "settings_validation"
+    assert "filter_input" in (result.refusal_detail or "")
+
+
+def test_update_node_settings_network_egress_refusal(
+    call_kwargs: dict[str, Any], stub_kernel: list[dict[str, Any]]
+) -> None:
+    """W47 refusal stage 2 — network-egress check fires on code-bearing
+    nodes via the same ``_extract_code`` path used by ``add_*``.
+    """
+    flow = _flow_with_orders()
+    flow.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=1,
+            node_id=20,
+            depending_on_ids=[1],
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="main"),
+        )
+    )
+    bad_code = "import requests\nresult = requests.post('http://example.com', json={})\nmain"
+    new_settings = input_schema.NodePolarsCode(
+        flow_id=1,
+        node_id=20,
+        depending_on_ids=[1],
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code=bad_code),
+    ).model_dump(mode="json")
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.update_node_settings",
+        tool_args=_update_settings_args(node_id=20, settings=new_settings),
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "network_egress"
+    assert len(stub_kernel) == 0, "egress-flagged code must not reach the kernel"
+
+
+def test_update_node_settings_unknown_columns_refusal(call_kwargs: dict[str, Any]) -> None:
+    """W47 refusal stage 3 — column refs validated against live upstream
+    schemas. Mirrors the ``add_*`` path; the upstream resolution comes
+    from the live node's existing wiring rather than insertion_context.
+    """
+    flow = _flow_with_orders_and_filter()
+    bogus_settings = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            filter_type="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="not_a_real_column",
+                operator="equals",
+                value="x",
+            ),
+        ),
+    ).model_dump(mode="json")
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.update_node_settings",
+        tool_args=_update_settings_args(node_id=2, settings=bogus_settings),
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "unknown_columns"
+    assert "not_a_real_column" in (result.refusal_detail or "")
+
+
+def test_update_node_settings_unknown_node_id(call_kwargs: dict[str, Any]) -> None:
+    """W47 — modification target must exist on the live graph. Bare
+    integer with no live node yields a generic refusal.
+    """
+    flow = _flow_with_orders()
+    new_settings = _filter_args(node_id=999, depending_on_id=1, expr="[amount] > 50")
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.update_node_settings",
+        tool_args=_update_settings_args(node_id=999, settings=new_settings),
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert "999" in (result.refusal_detail or "")
+
+
+def test_update_node_settings_missing_node_id_arg(call_kwargs: dict[str, Any]) -> None:
+    """W47 — defensive: missing top-level ``node_id`` rejects with a
+    deterministic detail before touching the live graph.
+    """
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.update_node_settings",
+        tool_args={"flow_id": 1, "settings": {}},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert "node_id" in (result.refusal_detail or "")
+
+
+# --------------------------------------------------------------------------- #
+# 2026-05-07 — sink-as-upstream refusal                                         #
+# --------------------------------------------------------------------------- #
+
+
+def _flow_with_orders_and_explore_data() -> FlowGraph:
+    """Builds a minimal ``manual_input → explore_data`` flow. The
+    ``explore_data`` node template has ``output == 0`` — i.e. it's a sink
+    that consumes data and has no output port. Used to verify the executor
+    refuses to wire downstream nodes to it.
+    """
+    flow = _flow_with_orders()
+    flow.add_explore_data(
+        input_schema.NodeExploreData(
+            flow_id=1,
+            node_id=99,  # node 99: explore_data sink
+        )
+    )
+    return flow
+
+
+def test_add_node_refuses_when_upstream_is_sink(call_kwargs: dict[str, Any]) -> None:
+    """An ``add_<type>`` call whose ``upstream_node_ids`` names a sink
+    (``NodeTemplate.output == 0``) is refused with ``upstream_is_sink``
+    before any wiring happens. Mirrors the customer_deduplication dogfood
+    failure (2026-05-07): LLM picked node 4 (``explore_data``) as the
+    upstream for an ``add_group_by``.
+    """
+    flow = _flow_with_orders_and_explore_data()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_filter",
+        tool_args=_filter_args(node_id=2, depending_on_id=99),
+        insertion_context=InsertionContext(upstream_node_ids=[99]),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "upstream_is_sink"
+    detail = result.refusal_detail or ""
+    assert "99" in detail
+    assert "explore_data" in detail
+    # Refusal includes non-sink candidates so the LLM can retry intelligently.
+    assert "[1]" in detail
+
+
+def test_connect_refuses_when_upstream_is_sink(call_kwargs: dict[str, Any]) -> None:
+    """An explicit ``flowfile.graph.connect`` call whose ``from`` (upstream)
+    side is a sink is refused. Catches the case where the LLM's wiring
+    intent bypasses the ``add_*`` auto-wiring path entirely.
+    """
+    flow = _flow_with_orders_and_explore_data()
+    # Add a downstream candidate to connect TO so the connection has a
+    # plausible shape (otherwise the validation might short-circuit
+    # elsewhere).
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                filter_type="advanced", advanced_filter="[region]=='EU'"
+            ),
+        )
+    )
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={
+            "flow_id": 1,
+            "from_node_id": 99,  # explore_data sink — illegal as upstream
+            "to_node_id": 2,
+            "input_type": "main",
+        },
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "upstream_is_sink"
+    detail = result.refusal_detail or ""
+    assert "99" in detail and "explore_data" in detail
+
+
+def test_add_node_passes_when_upstream_is_non_sink(call_kwargs: dict[str, Any]) -> None:
+    """Regression guard: the sink check must not regress the happy path.
+    A normal ``add_filter`` on top of a manual_input source (output > 0)
+    still applies cleanly."""
+    flow = _flow_with_orders_and_explore_data()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_filter",
+        tool_args=_filter_args(node_id=2, depending_on_id=1),
+        insertion_context=InsertionContext(upstream_node_ids=[1]),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "staged", result.refusal_detail
+    assert result.refusal_reason is None
+
+
+# --------------------------------------------------------------------------- #
+# 2026-05-07 — node_id coercion in non-Pydantic handlers                        #
+# --------------------------------------------------------------------------- #
+
+
+def test_delete_node_coerces_string_node_id(call_kwargs: dict[str, Any]) -> None:
+    """The LLM ships ``"node_id": "1"`` (string) on tools whose handlers
+    don't go through Pydantic. The executor coerces simple numeric strings
+    to int — same lenience the ``add_*`` / ``connect`` paths get from
+    Pydantic's lax mode — so the cross-tool experience is consistent.
+    """
+    flow = _flow_with_orders()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.delete_node",
+        tool_args={"flow_id": 1, "node_id": "1"},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    # Coercion succeeded → handler ran → staging path applied.
+    assert result.status == "staged", result.refusal_detail
+
+
+def test_delete_node_refuses_non_coercible_node_id(call_kwargs: dict[str, Any]) -> None:
+    """Truly non-numeric strings still refuse with the W67-style example."""
+    flow = _flow_with_orders()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.delete_node",
+        tool_args={"flow_id": 1, "node_id": "node_one"},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    detail = result.refusal_detail or ""
+    assert "delete_node" in detail
+    assert "Example payload" in detail
+
+
+def test_read_node_schema_coerces_string_node_id(call_kwargs: dict[str, Any]) -> None:
+    """Same coercion applies to read-only introspection tools."""
+    flow = _flow_with_orders()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.schema.read_node_schema",
+        tool_args={"flow_id": 1, "node_id": "1"},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="apply",
+        **call_kwargs,
+    )
+    assert result.status == "applied", result.refusal_detail
+
+
+def test_delete_node_refuses_bool_node_id(call_kwargs: dict[str, Any]) -> None:
+    """``True`` / ``False`` are technically ``int`` subclasses in Python —
+    the coercion helper rejects them explicitly so a hallucinated boolean
+    doesn't sneak through as ``1`` / ``0``."""
+    flow = _flow_with_orders()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.delete_node",
+        tool_args={"flow_id": 1, "node_id": True},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert "bool" in (result.refusal_detail or "")

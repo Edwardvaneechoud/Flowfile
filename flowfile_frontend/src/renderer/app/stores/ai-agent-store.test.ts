@@ -914,3 +914,76 @@ describe("useAiAgentStore - W49 followup re-entry", () => {
     expect(store.status).toBe("failed");
   });
 });
+
+// --------------------------------------------------------------------------- #
+// clearLastResultDiffPayload — called by the diff store on a successful        #
+// accept/reject (and on a 404 from accept/reject) so the persisted             #
+// ``lastResult.diff_payload`` doesn't survive past its useful lifetime and     #
+// re-hydrate a dead diff on the next page refresh.                             #
+// --------------------------------------------------------------------------- #
+
+describe("useAiAgentStore - clearLastResultDiffPayload", () => {
+  it("is a no-op when lastResult is null", () => {
+    const store = useAiAgentStore();
+    expect(store.lastResult).toBeNull();
+
+    store.clearLastResultDiffPayload();
+
+    expect(store.lastResult).toBeNull();
+  });
+
+  it("is a no-op when lastResult.diff_payload is already null", () => {
+    mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
+      events: [],
+      currentSessionId: "sess-x",
+      status: "completed",
+      driftDetail: null,
+      lastResult: {
+        session_id: "sess-x",
+        diff_id: null,
+        op_count: 0,
+        rationale: "no-op result",
+        diff_payload: null,
+      },
+      error: null,
+    });
+    const store = useAiAgentStore();
+    const before = store.lastResult;
+
+    store.clearLastResultDiffPayload();
+
+    // Identity check — the helper should leave the same object reference in
+    // place when there's nothing to clear, so the deep watcher doesn't fire
+    // a redundant persist.
+    expect(store.lastResult).toBe(before);
+  });
+
+  it("nulls diff_payload while preserving the other AgentCompleteResult fields", () => {
+    const persistedDiff = { diff_id: "d-keep", flow_id: 1, additions: [] };
+    mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
+      events: [],
+      currentSessionId: "sess-y",
+      status: "completed",
+      driftDetail: null,
+      lastResult: {
+        session_id: "sess-y",
+        diff_id: "d-keep",
+        op_count: 3,
+        rationale: "rationale stays",
+        diff_payload: persistedDiff,
+      },
+      error: null,
+    });
+    const store = useAiAgentStore();
+    expect(store.lastResult!.diff_payload).toEqual(persistedDiff);
+
+    store.clearLastResultDiffPayload();
+
+    expect(store.lastResult).not.toBeNull();
+    expect(store.lastResult!.diff_payload).toBeNull();
+    expect(store.lastResult!.session_id).toBe("sess-y");
+    expect(store.lastResult!.diff_id).toBe("d-keep");
+    expect(store.lastResult!.op_count).toBe(3);
+    expect(store.lastResult!.rationale).toBe("rationale stays");
+  });
+});

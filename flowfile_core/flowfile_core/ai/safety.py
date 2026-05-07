@@ -428,6 +428,7 @@ RefusalReason = Literal[
     "missing_diff",
     "self_loop_prevented",
     "settings_validation",
+    "upstream_is_sink",
 ]
 
 

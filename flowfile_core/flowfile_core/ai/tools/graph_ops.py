@@ -34,39 +34,18 @@ def _schema(properties: dict, required: list[str]) -> dict:
 
 
 GRAPH_OPS_TOOLS: Final[list[ToolSpec]] = [
-    ToolSpec(
-        name="flowfile.graph.add_node",
-        description=(
-            "Add a new, unconfigured node ('promise') to the flow graph. "
-            "Use this when you need a node to exist before attaching settings — "
-            "the per-type tools (e.g. flowfile.graph.add_filter) bundle creation "
-            "with settings and are usually preferred."
-        ),
-        long_description=(
-            "Almost never the right tool. The typed per-node-type tools "
-            "('flowfile.graph.add_filter', 'add_join', etc.) create the node *and* "
-            "attach validated settings in a single step; that's what you want in "
-            "almost every case. Use 'add_node' only when you genuinely need a "
-            "placeholder ('promise') without settings — e.g. to reserve an id "
-            "before a downstream connect step that will be retroactively wired. "
-            "Don't use to start a flow — use a typed source node like add_read or "
-            "add_manual_input instead. If you find yourself reaching for add_node, "
-            "stop and check whether a typed alternative already covers the case."
-        ),
-        parameters=_schema(
-            properties={
-                "flow_id": {"type": "integer", "description": "Target flow id."},
-                "node_id": {"type": "integer", "description": "Client-generated id for the new node."},
-                "node_type": {
-                    "type": "string",
-                    "description": "Node type from NODE_TYPE_TO_SETTINGS_CLASS (e.g. 'filter', 'join').",
-                },
-                "pos_x": {"type": "number", "default": 0},
-                "pos_y": {"type": "number", "default": 0},
-            },
-            required=["flow_id", "node_id", "node_type"],
-        ),
-    ),
+    # 2026-05-07 — ``flowfile.graph.add_node`` removed. The tool advertised
+    # itself as "Almost never the right tool" yet still appeared in the
+    # catalog, which made it a hallucination magnet: live dogfood showed the
+    # LLM emitting ``add_node`` with ``node_type="node"``, which the executor
+    # can only refuse with ``unknown node type: 'node'`` because the dispatcher
+    # has no separate promise-handler — every ``add_*`` call routes through
+    # ``_handle_add_node`` and demands a real node type. The typed per-type
+    # tools (``add_filter`` / ``add_join`` / ``add_group_by`` / etc., all
+    # auto-generated in ``registry.py``) cover the legitimate use cases
+    # without the placeholder confusion. ``_apply_add_node`` and
+    # ``_handle_add_node`` are kept (internal Python plumbing); only the
+    # agent-facing ``ToolSpec`` is gone.
     ToolSpec(
         name="flowfile.graph.connect",
         description=(
@@ -106,10 +85,46 @@ GRAPH_OPS_TOOLS: Final[list[ToolSpec]] = [
             required=["flow_id", "from_node_id", "to_node_id"],
         ),
     ),
-    # ``flowfile.graph.update_node_settings`` removed from the catalog in W46
-    # (2026-05-05). The executor (W31) refused it with "not implemented", so
-    # the LLM kept burning retries on a stub. Implementing it properly needs
-    # ``GraphDiff.modifications`` (deferred from W41) — tracked under W47.
+    ToolSpec(
+        name="flowfile.graph.update_node_settings",
+        description=(
+            "Patch an existing node's settings. Pass the full settings object — "
+            "the executor validates against the matching Pydantic class for the "
+            "node's type and rejects unknown columns against the live upstream "
+            "schema. The node's type and existing wiring are preserved; use "
+            "connect / delete_connection to rewire."
+        ),
+        long_description=(
+            "Modify the configuration of a node that already exists in the flow. "
+            "Use when the user asks to change a setting on a specific node — "
+            "*'show only top 5 rows in node 9'*, *'change the join key to "
+            "customer_id'*, *'switch the filter to keep amount > 100'*. The "
+            "executor validates the new settings against the node's Pydantic "
+            "settings class, runs the same network-egress check as add_* for "
+            "code-bearing nodes, validates column references against the live "
+            "upstream schema, and predicts the new output schema. Wiring "
+            "(upstream / right-input connections) is preserved verbatim — this "
+            "tool does NOT rewire the topology. To change which upstream a "
+            "node consumes, use 'flowfile.graph.delete_connection' followed by "
+            "'flowfile.graph.connect'. Don't reach for this tool to add a new "
+            "node ('flowfile.graph.add_<type>' is the right choice) or to "
+            "delete one ('flowfile.graph.delete_node'). Pass the FULL settings "
+            "dict for the node's type — partial patches are not supported; the "
+            "settings object replaces the existing one wholesale."
+        ),
+        parameters=_schema(
+            properties={
+                "flow_id": {"type": "integer"},
+                "node_id": {"type": "integer"},
+                "settings": {
+                    "type": "object",
+                    "description": "Full settings dict matching the node-type's Pydantic class.",
+                    "additionalProperties": True,
+                },
+            },
+            required=["flow_id", "node_id", "settings"],
+        ),
+    ),
     ToolSpec(
         name="flowfile.graph.delete_node",
         description="Remove a node from the flow graph. Mirrors POST /editor/delete_node/.",

@@ -18,6 +18,7 @@ import { useFlowStore } from "../../stores/flow-store";
 import type {
   DiffStoreError,
   GraphDiffPayload,
+  ModificationItem,
   StagedAddition,
   StagedConnection,
   StagedSchemaColumn,
@@ -65,11 +66,30 @@ const toggleSettings = (index: number): void => {
   expandedSettings.value = new Set(expandedSettings.value);
 };
 
+// W47 — modifications carry old + new settings; collapse them by default
+// because settings dicts can be large. Track expansion separately from
+// addition-settings so the two visual hierarchies don't share state.
+const expandedModifications = ref<Set<number>>(new Set());
+
+const toggleModification = (index: number): void => {
+  if (expandedModifications.value.has(index)) {
+    expandedModifications.value.delete(index);
+  } else {
+    expandedModifications.value.add(index);
+  }
+  expandedModifications.value = new Set(expandedModifications.value);
+};
+
 const summaryLine = computed(() => {
   const parts: string[] = [];
   if (props.diff.additions.length > 0) {
     parts.push(
       `${props.diff.additions.length} addition${props.diff.additions.length === 1 ? "" : "s"}`,
+    );
+  }
+  if (props.diff.modifications.length > 0) {
+    parts.push(
+      `${props.diff.modifications.length} modification${props.diff.modifications.length === 1 ? "" : "s"}`,
     );
   }
   if (props.diff.connections_added.length > 0) {
@@ -118,6 +138,15 @@ const nodeTypeById = computed<Map<number, string>>(() => {
     for (const upId of add.insertion_context.upstream_node_ids) seedExisting(upId);
     seedExisting(add.insertion_context.right_input_node_id);
   }
+  // W47 — modifications carry their own node_type on the wire (since they
+  // target an existing node whose type is preserved); seed the map so the
+  // section header can render `<node_type> #<id>` even if the live store
+  // hasn't loaded yet.
+  for (const mod of props.diff.modifications) {
+    if (!map.has(mod.node_id)) {
+      map.set(mod.node_id, mod.node_type);
+    }
+  }
   return map;
 });
 
@@ -143,6 +172,26 @@ const formatSettings = (settings: Record<string, unknown>): string => {
   } catch {
     return String(settings);
   }
+};
+
+// W47 — collect the keys whose values differ between old and new settings.
+// Used to surface a quick "what changed" line in the modification card
+// header before the user expands the full JSON-diff. Only top-level keys
+// are walked — nested deltas show up in the expanded JSON view.
+const changedSettingsKeys = (mod: ModificationItem): string[] => {
+  const oldKeys = Object.keys(mod.old_settings ?? {});
+  const newKeys = Object.keys(mod.new_settings ?? {});
+  const allKeys = new Set([...oldKeys, ...newKeys]);
+  // Skip identity / wiring fields the user doesn't think of as "settings".
+  const noise = new Set(["flow_id", "node_id", "depending_on_id", "pos_x", "pos_y"]);
+  const changed: string[] = [];
+  for (const key of allKeys) {
+    if (noise.has(key)) continue;
+    const before = JSON.stringify(mod.old_settings?.[key]);
+    const after = JSON.stringify(mod.new_settings?.[key]);
+    if (before !== after) changed.push(key);
+  }
+  return changed;
 };
 
 const renderedRationale = computed(() => renderSafeMarkdown(props.diff.rationale ?? ""));
@@ -193,6 +242,19 @@ const handleReject = (): void => {
           #{{ id }}
         </code>
       </p>
+      <p
+        v-else-if="error.kind === 'inconsistent' && error.missingEndpoints.length > 0"
+        class="ai-diff-preview__error-hint"
+      >
+        Missing endpoint id(s):
+        <code
+          v-for="ep in error.missingEndpoints"
+          :key="`${ep.nodeId}-${ep.role}`"
+          class="ai-diff-preview__node-id"
+        >
+          #{{ ep.nodeId }} ({{ ep.role }})
+        </code>
+      </p>
     </div>
 
     <section v-if="diff.additions.length > 0" class="ai-diff-preview__section">
@@ -228,6 +290,63 @@ const handleReject = (): void => {
         <pre v-if="expandedSettings.has(idx)" class="ai-diff-preview__settings">{{
           formatSettings(add.settings)
         }}</pre>
+      </article>
+    </section>
+
+    <section v-if="diff.modifications.length > 0" class="ai-diff-preview__section">
+      <h4 class="ai-diff-preview__section-title">Modifications</h4>
+      <article
+        v-for="(mod, idx) in diff.modifications"
+        :key="`mod-${idx}`"
+        class="ai-diff-preview__card ai-diff-preview__card--modify"
+      >
+        <header class="ai-diff-preview__card-header">
+          <span class="ai-diff-preview__chip">{{ mod.node_type }}</span>
+          <span class="ai-diff-preview__upstream">node #{{ mod.node_id }}</span>
+          <span v-if="changedSettingsKeys(mod).length > 0" class="ai-diff-preview__changed-keys">
+            changed:
+            <code
+              v-for="key in changedSettingsKeys(mod)"
+              :key="key"
+              class="ai-diff-preview__changed-key"
+              >{{ key }}</code
+            >
+          </span>
+        </header>
+        <p
+          v-if="mod.predicted_output_schema && mod.predicted_output_schema.length > 0"
+          class="ai-diff-preview__schema"
+        >
+          <span class="ai-diff-preview__schema-label">Predicted output:</span>
+          <span
+            v-for="col in mod.predicted_output_schema"
+            :key="col.name"
+            class="ai-diff-preview__schema-col"
+          >
+            {{ formatSchemaColumn(col) }}
+          </span>
+        </p>
+        <button
+          type="button"
+          class="ai-diff-preview__settings-toggle"
+          @click="toggleModification(idx)"
+        >
+          {{ expandedModifications.has(idx) ? "Hide diff" : "Show diff" }}
+        </button>
+        <div v-if="expandedModifications.has(idx)" class="ai-diff-preview__mod-diff">
+          <div class="ai-diff-preview__mod-side">
+            <span class="ai-diff-preview__mod-label">Before</span>
+            <pre class="ai-diff-preview__settings ai-diff-preview__settings--old">{{
+              formatSettings(mod.old_settings)
+            }}</pre>
+          </div>
+          <div class="ai-diff-preview__mod-side">
+            <span class="ai-diff-preview__mod-label">After</span>
+            <pre class="ai-diff-preview__settings ai-diff-preview__settings--new">{{
+              formatSettings(mod.new_settings)
+            }}</pre>
+          </div>
+        </div>
       </article>
     </section>
 
@@ -408,6 +527,15 @@ const handleReject = (): void => {
   border: 1px solid var(--color-warning, #b07b00);
 }
 
+/* W70 — inconsistency is the agent's own diff being broken (not a user
+   canvas drift), so it gets the danger palette to mirror the severity
+   distinction; the drift case stays amber/warning. */
+.ai-diff-preview__error--inconsistent {
+  background-color: var(--color-danger-light, #ffe5e5);
+  color: var(--color-danger, #c53030);
+  border: 1px solid var(--color-danger, #c53030);
+}
+
 .ai-diff-preview__error--http {
   background-color: var(--color-danger-light, #ffe5e5);
   color: var(--color-danger, #c53030);
@@ -466,6 +594,59 @@ const handleReject = (): void => {
 
 .ai-diff-preview__card--connection {
   border-left-color: var(--color-info, #0366d6);
+}
+
+/* W47 — modification cards use a warning-amber accent so they're
+   visually distinct from green additions and red deletions. */
+.ai-diff-preview__card--modify {
+  border-left-color: var(--color-warning, #b07b00);
+}
+
+.ai-diff-preview__changed-keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--color-text-muted, #6a737d);
+}
+
+.ai-diff-preview__changed-key {
+  background-color: var(--color-background-secondary, #f6f8fa);
+  font-family: var(--font-family-mono, monospace);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--color-text-primary, #24292e);
+}
+
+.ai-diff-preview__mod-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.ai-diff-preview__mod-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ai-diff-preview__mod-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-muted, #6a737d);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ai-diff-preview__settings--old {
+  border-left: 3px solid var(--color-danger, #c53030);
+}
+
+.ai-diff-preview__settings--new {
+  border-left: 3px solid var(--color-success, #28a745);
 }
 
 .ai-diff-preview__card--delete {

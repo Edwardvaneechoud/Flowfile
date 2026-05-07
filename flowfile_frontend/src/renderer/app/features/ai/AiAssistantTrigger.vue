@@ -2,9 +2,9 @@
 // "Ask AI" header pill — toggles the AI assistant sidebar.
 //
 // Click toggles the AI sidebar (editorStore.isAiOpen). The kbd hint
-// advertises the Cmd+K command palette, which is bound directly in
-// Canvas.vue and is the only path to the palette now that the dropdown
-// caret has been removed.
+// advertises Cmd+K, which is bound to the same toggle in Canvas.vue
+// (rewired from the AI command palette per polish.md 2026-05-06 —
+// palette is dormant but reversible).
 
 import { computed } from "vue";
 import { useEditorStore } from "../../stores/editor-store";
@@ -78,19 +78,28 @@ const handleClick = (event: MouseEvent): void => {
   box-shadow: none;
 }
 
-.action-btn.active {
-  background: linear-gradient(
-    135deg,
-    var(--color-accent-purple) 0%,
-    var(--color-accent-purple-hover) 100%
-  );
-  border-color: var(--color-accent-purple-hover);
+/* Higher specificity than RightActionCluster's `.action-btn.active` (teal,
+   used for the Code toggle). Without this, the Ask AI pill — which also
+   matches `.action-btn.active` because the button is the AiAssistantTrigger
+   root and inherits the parent component's scope attribute — would render
+   with the Code-button teal palette instead of indigo. */
+.action-btn.ai-trigger__pill.active,
+.action-btn.ai-trigger__pill.active:focus,
+.action-btn.ai-trigger__pill.active:focus-visible {
+  background: var(--color-accent-purple);
+  border-color: var(--color-accent-purple);
   color: #ffffff;
+  outline: none;
 }
 
-.action-btn.active:hover {
+.action-btn.ai-trigger__pill.active:hover {
   background: var(--color-accent-purple-hover);
   border-color: var(--color-accent-purple-hover);
+}
+
+.action-btn.ai-trigger__pill.active .btn-text,
+.action-btn.ai-trigger__pill.active .btn-icon {
+  color: #ffffff;
 }
 
 .btn-icon {

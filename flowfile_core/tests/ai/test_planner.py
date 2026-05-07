@@ -41,8 +41,10 @@ from flowfile_core.ai.agents.planner import (
     _capture_rationale,
     _classify_op_kind,
     _resolve_insertion_context,
+    _summarise_result_for_llm,
     run_planner_session,
 )
+from flowfile_core.ai.tools.executor import ToolExecutionResult
 from flowfile_core.ai.context.builder import SURFACE_TO_LEVEL
 from flowfile_core.ai.providers.base import ChatResponse, Message, ToolCall, Usage
 from flowfile_core.ai.scheduler import RateLimitScheduler
@@ -373,23 +375,21 @@ def test_insertion_uses_selection_when_no_llm_override() -> None:
     assert ambiguous is None
 
 
-def test_insertion_refuses_when_ambiguous_and_no_selection() -> None:
+def test_insertion_falls_back_to_last_live_node_when_multiple_present() -> None:
     """Tier 6 — multiple live nodes, no selection, no pin, no LLM override,
-    no settings-field hint → ambiguous_detail is set; ctx.upstream_node_ids
-    is empty so the planner refuses with ambiguous_insertion_context."""
+    no settings-field hint → fall back to ``live_nodes[-1]``. (Was a
+    refusal-on-ambiguity in W57; reverted 2026-05-07 because the refusal
+    blocked the agent on simple prompts in multi-node flows.)"""
     flow = _make_flow()
     _add_orders(flow, node_id=2)
     _add_orders(flow, node_id=3)
     sess = _make_session(flow)
-    tc = ToolCall(id="amb", name="flowfile.graph.add_filter", arguments={})
+    tc = ToolCall(id="fallback", name="flowfile.graph.add_filter", arguments={})
     ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
-    assert ctx.upstream_node_ids == []
-    assert ambiguous is not None
-    # The detail must list the live candidates so the LLM can retry with
-    # an explicit upstream.
-    assert "1" in ambiguous
-    assert "2" in ambiguous
-    assert "3" in ambiguous
+    # Falls back to the most-recently-added live node (node 3).
+    assert ctx.upstream_node_ids == [3]
+    # ``ambiguous_detail`` is always None post-revert; tuple shape preserved.
+    assert ambiguous is None
 
 
 def test_insertion_falls_back_to_last_node_when_single_live_node() -> None:
@@ -400,6 +400,34 @@ def test_insertion_falls_back_to_last_node_when_single_live_node() -> None:
     tc = ToolCall(id="single", name="flowfile.graph.add_filter", arguments={})
     ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
     assert ctx.upstream_node_ids == [1]
+    assert ambiguous is None
+
+
+def test_insertion_fallback_skips_terminal_explore_data_node() -> None:
+    """Tier 6 walks live_nodes in reverse and skips sinks (template.output==0).
+
+    Reproduces the customer_deduplication dogfood failure (2026-05-07
+    afternoon): the template ends in an ``explore_data`` node, the LLM
+    omitted ``upstream_node_ids``, and the resolver's ``flow.nodes[-1]``
+    blind fallback attached the staged group_by downstream of the sink.
+    The fix walks in reverse and picks the most-recent non-sink — node 3
+    (the second manual_input) here, just like a real flow ending in a
+    select before explore_data.
+    """
+    flow = _make_flow()  # node 1: manual_input (output > 0)
+    _add_orders(flow, node_id=2)  # node 2: manual_input
+    _add_orders(flow, node_id=3)  # node 3: manual_input
+    flow.add_explore_data(
+        input_schema.NodeExploreData(
+            flow_id=flow.flow_id,
+            node_id=4,  # node 4: explore_data (template.output == 0)
+        )
+    )
+    sess = _make_session(flow)
+    tc = ToolCall(id="skip-sink", name="flowfile.graph.add_filter", arguments={})
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
+    # Skips node 4 (sink), falls back to node 3 (last non-sink).
+    assert ctx.upstream_node_ids == [3]
     assert ambiguous is None
 
 
@@ -839,10 +867,12 @@ async def test_external_drift_still_detected_after_one_stage() -> None:
                 # User adds an external node mid-LLM-thinking. The agent's
                 # next drift check (start of iteration 2) should see it.
                 _add_orders(flow, node_id=99)
-                # W57 — explicit ``upstream_node_ids`` so the planner doesn't
-                # refuse with ambiguous_insertion_context once node 99 lands
-                # in the live graph (now 2 live nodes; the resolver would
-                # otherwise refuse without a signal).
+                # Explicit ``upstream_node_ids`` so the test doesn't depend on
+                # the resolver's live-graph fallback (which would attach to
+                # node 99 — the externally-added one — and confuse the test
+                # intent). The W57 ambiguity-refusal that this comment used to
+                # work around was reverted 2026-05-07; the explicit override
+                # stays for test stability.
                 args = _filter_args()
                 args["upstream_node_ids"] = [1]
                 return ChatResponse(
@@ -1555,6 +1585,35 @@ def test_w56_planner_system_prompt_includes_node_catalog() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# W70 — planner prompt warns against the redundant-connect pattern             #
+# --------------------------------------------------------------------------- #
+
+
+def test_w70_planner_prompt_warns_against_redundant_connect() -> None:
+    """W70 — the planner system prompt for the agent surface includes
+    the connection-discipline section that tells the model not to emit
+    a follow-up ``connect`` call after ``add_*`` (the executor already
+    auto-wires) and never to invent a ``to_node_id`` integer.
+
+    Substring assertions only — this doesn't test the LLM's behaviour,
+    just that the new paragraph is wired through the layered prompt
+    assembly so the model actually sees it.
+    """
+    from flowfile_core.ai.context.builder import assemble_system_prompt
+
+    prompt = assemble_system_prompt("agent")
+    assert "## Connection discipline (W70)" in prompt, "W70 connection-discipline header missing"
+    assert "Do NOT emit a follow-up" in prompt, "W70 redundant-connect refusal phrase missing"
+    assert "never invent a fresh integer" in prompt, "W70 invent-id refusal phrase missing"
+
+    # The agent_complex surface uses the same planner suffix; verify the
+    # paragraph is present there too (regression guard against a future
+    # surface-specific override that would silently strip W70's section).
+    prompt_complex = assemble_system_prompt("agent_complex")
+    assert "## Connection discipline (W70)" in prompt_complex
+
+
+# --------------------------------------------------------------------------- #
 # W49 — Post-completion followup re-entry                                      #
 # --------------------------------------------------------------------------- #
 
@@ -1850,3 +1909,280 @@ async def test_w49_followup_synthetic_rejection_appears_in_conversation() -> Non
     rejection_msgs = [m for m in sent_messages if m.role == "user" and "rejected" in (m.content or "").lower()]
     assert rejection_msgs, "synthetic rejection user message missing from conversation"
     assert "please use the read node directly" in rejection_msgs[-1].content
+
+
+# --------------------------------------------------------------------------- #
+# W47 — modification dispatch                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def _make_flow_with_filter(flow_id: int = 1) -> FlowGraph:
+    """Mirrors ``_make_flow`` but adds a filter at id=2 with explicit
+    upstream wiring so ``update_node_settings`` has a live target.
+    """
+    from flowfile_core.flowfile.flow_graph import add_connection
+    from flowfile_core.schemas import transform_schema
+
+    flow = _make_flow(flow_id=flow_id)
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                filter_type="advanced", advanced_filter="[region]=='EU'"
+            ),
+        )
+    )
+    add_connection(
+        flow,
+        input_schema.NodeConnection.create_from_simple_input(
+            from_id=1, to_id=2, input_type="input-0", output_handle="output-0"
+        ),
+    )
+    flow.get_node(2).get_predicted_schema()
+    return flow
+
+
+@pytest.mark.asyncio
+async def test_planner_stages_modification_with_existing_node_target() -> None:
+    """W47 — planner dispatches a single ``update_node_settings`` call,
+    stages the modification, and the bundled diff has 1 modification, 0
+    additions. ``staged_node_ids`` is unchanged because modifications
+    target *existing* node ids (W45 drift-detection invariant).
+    """
+    from flowfile_core.schemas import transform_schema
+
+    flow = _make_flow_with_filter()
+    sess = _make_session(flow, surface="agent_complex")
+
+    new_settings = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            filter_type="advanced", advanced_filter="[amount] > 50"
+        ),
+    ).model_dump(mode="json")
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t1",
+                        name="flowfile.graph.update_node_settings",
+                        arguments={"flow_id": 1, "node_id": 2, "settings": new_settings},
+                    )
+                ],
+                content="tightening the filter",
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], content="done.", finish_reason="stop"),
+        ]
+    )
+
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+
+    staged = [e for e in events if e.event == "tool_call_staged"]
+    assert len(staged) == 1
+    assert staged[0].payload["name"] == "flowfile.graph.update_node_settings"
+    assert staged[0].payload["node_id"] == 2
+
+    # W45 drift-detection invariant — modifications target existing ids,
+    # so the planner must NOT append to staged_node_ids.
+    assert sess.staged_node_ids == []
+
+    # The bundled diff has the modification + zero additions.
+    diff = diff_module.get_diff(sess.diff_id)
+    assert diff is not None
+    assert len(diff.modifications) == 1
+    assert len(diff.additions) == 0
+    mod = diff.modifications[0]
+    assert mod.node_id == 2
+    assert mod.node_type == "filter"
+    assert mod.new_settings["filter_input"]["advanced_filter"] == "[amount] > 50"
+    # Old settings reflect the pre-change state.
+    assert mod.old_settings["filter_input"]["advanced_filter"] == "[region]=='EU'"
+
+    # Live graph wasn't mutated — staging only.
+    assert flow.get_node(2).setting_input.filter_input.advanced_filter == "[region]=='EU'"
+
+
+@pytest.mark.asyncio
+async def test_planner_modification_does_not_pollute_staged_node_ids_when_chained() -> None:
+    """W47 — back-to-back modifications on the same flow keep
+    ``staged_node_ids`` empty. Defends the W45 drift invariant against
+    accidental drift from modification-heavy sessions.
+    """
+    from flowfile_core.schemas import transform_schema
+    from flowfile_core.flowfile.flow_graph import add_connection
+
+    flow = _make_flow_with_filter()
+    # Add a second filter at id=3 so we have two modification targets.
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=1,
+            node_id=3,
+            depending_on_id=2,
+            filter_input=transform_schema.FilterInput(
+                filter_type="advanced", advanced_filter="[order_id] > 0"
+            ),
+        )
+    )
+    add_connection(
+        flow,
+        input_schema.NodeConnection.create_from_simple_input(
+            from_id=2, to_id=3, input_type="input-0", output_handle="output-0"
+        ),
+    )
+    sess = _make_session(flow, surface="agent_complex")
+
+    def _new_filter_dump(node_id: int, dep_id: int, expr: str) -> dict[str, Any]:
+        return input_schema.NodeFilter(
+            flow_id=1,
+            node_id=node_id,
+            depending_on_id=dep_id,
+            filter_input=transform_schema.FilterInput(filter_type="advanced", advanced_filter=expr),
+        ).model_dump(mode="json")
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="m1",
+                        name="flowfile.graph.update_node_settings",
+                        arguments={
+                            "flow_id": 1,
+                            "node_id": 2,
+                            "settings": _new_filter_dump(2, 1, "[amount] > 50"),
+                        },
+                    )
+                ],
+                content="filter on amount",
+                finish_reason="tool_calls",
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="m2",
+                        name="flowfile.graph.update_node_settings",
+                        arguments={
+                            "flow_id": 1,
+                            "node_id": 3,
+                            "settings": _new_filter_dump(3, 2, "[amount] > 100"),
+                        },
+                    )
+                ],
+                content="and the downstream one too",
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], content="done.", finish_reason="stop"),
+        ]
+    )
+
+    await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    assert sess.staged_node_ids == []
+    diff = diff_module.get_diff(sess.diff_id)
+    assert diff is not None
+    assert len(diff.modifications) == 2
+    assert {m.node_id for m in diff.modifications} == {2, 3}
+
+
+# --------------------------------------------------------------------------- #
+# 2026-05-07 — staged settings echo in tool reply                               #
+# --------------------------------------------------------------------------- #
+
+
+def test_summarise_echoes_staged_settings_for_add() -> None:
+    """The LLM tool reply for ``add_*`` includes the staged settings JSON
+    so a follow-up ``update_node_settings`` call can copy current values
+    rather than hallucinate them. Without this, the LLM had only
+    ``predicted columns: ...`` to work from and invented fields like
+    ``pos_x`` / ``user_id`` / ``depending_on_id`` (live trace 13:56).
+    """
+    result = ToolExecutionResult(
+        status="staged",
+        tool_name="flowfile.graph.add_group_by",
+        predicted_output_schema=[{"name": "city"}, {"name": "customer_count"}],
+        staged_node_payload={
+            "node_type": "group_by",
+            "settings": {
+                "node_id": 5,
+                "flow_id": 2,
+                "groupby_input": {"agg_cols": [{"old_name": "city", "agg": "groupby"}]},
+            },
+            "predicted_output_schema": [{"name": "city"}, {"name": "customer_count"}],
+        },
+    )
+    summary = _summarise_result_for_llm(result)
+    assert "predicted columns: city, customer_count" in summary
+    assert "settings: " in summary
+    assert '"node_id":5' in summary
+    assert '"groupby_input"' in summary
+
+
+def test_summarise_echoes_settings_for_update_node_settings() -> None:
+    """The same echo applies to W47 modification payloads (settings under
+    ``new_settings`` rather than ``settings``)."""
+    result = ToolExecutionResult(
+        status="staged",
+        tool_name="flowfile.graph.update_node_settings",
+        staged_node_payload={
+            "kind": "modification",
+            "node_id": 5,
+            "node_type": "group_by",
+            "old_settings": {"node_id": 5, "groupby_input": {"agg_cols": []}},
+            "new_settings": {"node_id": 5, "groupby_input": {"agg_cols": [{"old_name": "city", "agg": "groupby"}]}},
+        },
+    )
+    summary = _summarise_result_for_llm(result)
+    assert "settings: " in summary
+    assert '"groupby_input"' in summary
+    # Old settings are NOT echoed — only the new state is what subsequent
+    # tool calls should anchor on.
+    assert summary.count("settings: ") == 1
+
+
+def test_summarise_omits_settings_for_connect_payload() -> None:
+    """Connect payloads have no settings dict — the echo must not fire."""
+    result = ToolExecutionResult(
+        status="staged",
+        tool_name="flowfile.graph.connect",
+        staged_node_payload={"connection": {"input_connection": {}, "output_connection": {}}},
+    )
+    summary = _summarise_result_for_llm(result)
+    assert "settings: " not in summary
+
+
+def test_summarise_omits_settings_on_rejected_status() -> None:
+    """Rejection paths shouldn't echo phantom settings (the staged_node_payload
+    on a rejection — if any — represents an unstaged attempt)."""
+    result = ToolExecutionResult(
+        status="rejected",
+        tool_name="flowfile.graph.add_filter",
+        refusal_reason="settings_validation",
+        refusal_detail="bad shape",
+        staged_node_payload={"settings": {"node_id": 99}},
+    )
+    summary = _summarise_result_for_llm(result)
+    assert "settings: " not in summary
+
+
+def test_summarise_truncates_oversized_settings() -> None:
+    """Pathologically large settings get truncated so a single staging
+    can't blow the context budget."""
+    huge_settings = {"node_id": 5, "blob": "x" * 5000}
+    result = ToolExecutionResult(
+        status="staged",
+        tool_name="flowfile.graph.add_polars_code",
+        staged_node_payload={"settings": huge_settings},
+    )
+    summary = _summarise_result_for_llm(result)
+    assert "settings: " in summary
+    assert "[truncated]" in summary

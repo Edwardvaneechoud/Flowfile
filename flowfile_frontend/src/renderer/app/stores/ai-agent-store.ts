@@ -632,6 +632,22 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     clearPersistedAgentState();
   };
 
+  // Drop only the persisted ``diff_payload`` from the last completed run,
+  // leaving the rest of ``lastResult`` (session_id, diff_id, op_count,
+  // rationale) intact so any "session complete" surfaces still render.
+  // Called by the diff store on (a) successful accept / reject, and (b) a
+  // 404 from the apply route — in both cases the diff is no longer live,
+  // and without this clear ``ai-agent-store.ts:140-149`` would re-push the
+  // stale payload into the diff store on the next refresh.
+  const clearLastResultDiffPayload = (): void => {
+    const current = lastResult.value;
+    if (current === null) return;
+    if (current.diff_payload === null || current.diff_payload === undefined) return;
+    // Spread so the deep watcher fires and the persistence layer sees the
+    // updated value — mutating the existing object in place is not enough.
+    lastResult.value = { ...current, diff_payload: null };
+  };
+
   return {
     // state
     currentSessionId,
@@ -651,5 +667,6 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     refreshState,
     reattach,
     clear,
+    clearLastResultDiffPayload,
   };
 });

@@ -44,6 +44,7 @@ from flowfile_core.ai.diff import (
     StagedConnection,
     StagedDeletion,
     StagedInsertionContext,
+    StagedSettingsUpdate,
     register_diff,
 )
 from flowfile_core.ai.metrics import record_autocomplete_call
@@ -334,6 +335,7 @@ _ADD_PREFIX: Final[str] = "flowfile.graph.add_"
 _CONNECT_NAME: Final[str] = "flowfile.graph.connect"
 _DELETE_NODE_NAME: Final[str] = "flowfile.graph.delete_node"
 _DELETE_CONNECTION_NAME: Final[str] = "flowfile.graph.delete_connection"
+_UPDATE_SETTINGS_NAME: Final[str] = "flowfile.graph.update_node_settings"
 
 
 def _is_graph_mutation(tool_name: str) -> bool:
@@ -342,14 +344,18 @@ def _is_graph_mutation(tool_name: str) -> bool:
     Read-only tools in the surface (e.g. ``flowfile.schema.read_node_schema``)
     are silently dropped — schemas are already in the W22 user message,
     so the LLM rarely needs the call, and the executor's read path doesn't
-    feed a diff. ``update_node_settings`` was dropped from the catalog in
-    W46 — when W47 lands its proper implementation, this filter needs to
-    accept it (mode="modification" instead of pure stage). ``run_node`` /
-    ``propose_subgraph`` were dropped permanently and won't return.
+    feed a diff. W47 re-admits ``update_node_settings`` (modifications
+    bucket on :class:`GraphDiff`); ``run_node`` / ``propose_subgraph``
+    were dropped permanently in W46 and won't return.
     """
     if tool_name.startswith(_ADD_PREFIX):
         return True
-    return tool_name in {_CONNECT_NAME, _DELETE_NODE_NAME, _DELETE_CONNECTION_NAME}
+    return tool_name in {
+        _CONNECT_NAME,
+        _DELETE_NODE_NAME,
+        _DELETE_CONNECTION_NAME,
+        _UPDATE_SETTINGS_NAME,
+    }
 
 
 def _next_free_node_id(graph: FlowGraph) -> int:
@@ -404,6 +410,7 @@ def _bin_tool_results_to_diff(
     diff_routes module (which is route-layer code).
     """
     additions: list[StagedAddition] = []
+    modifications: list[StagedSettingsUpdate] = []
     connections_added: list[StagedConnection] = []
     deletions: list[StagedDeletion] = []
     connections_removed: list[StagedConnection] = []
@@ -425,6 +432,20 @@ def _bin_tool_results_to_diff(
                     audit_id=result.audit_id,
                 )
             )
+        elif tool_name == _UPDATE_SETTINGS_NAME:
+            mod_node_id = payload.get("node_id")
+            mod_node_type = payload.get("node_type")
+            if isinstance(mod_node_id, int) and isinstance(mod_node_type, str):
+                modifications.append(
+                    StagedSettingsUpdate(
+                        node_id=mod_node_id,
+                        node_type=mod_node_type,
+                        old_settings=payload.get("old_settings") or {},
+                        new_settings=payload.get("new_settings") or {},
+                        predicted_output_schema=payload.get("predicted_output_schema"),
+                        audit_id=result.audit_id,
+                    )
+                )
         elif tool_name == _CONNECT_NAME:
             connections_added.append(
                 StagedConnection(
@@ -454,6 +475,7 @@ def _bin_tool_results_to_diff(
         flow_id=flow_id,
         rationale=rationale,
         additions=additions,
+        modifications=modifications,
         connections_added=connections_added,
         deletions=deletions,
         connections_removed=connections_removed,

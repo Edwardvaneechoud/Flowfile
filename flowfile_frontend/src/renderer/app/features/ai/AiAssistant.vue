@@ -169,6 +169,17 @@ const handleSend = async (): Promise<void> => {
       return;
     }
 
+    // 2026-05-07 — fold prior chat history into the agent prompt the same
+    // way W58 auto-promotion does. Live trace 14:34: user toggled the
+    // manual Agent checkbox after a chat assistant had laid out a plan,
+    // typed *"Implement the plan"*, and the agent replied *"I'm not sure
+    // which specific plan you'd like me to implement"* — the bare ``text``
+    // we used to forward carried no transcript, so the agent saw a
+    // context-less message. ``buildAgentPromptWithHistory`` returns
+    // ``text`` verbatim when no prior chat exists (no harm on the
+    // first-message-of-session case).
+    const promptWithHistory = aiStore.buildAgentPromptWithHistory(text);
+
     // Forward the model the user picked verbatim. If the W29 picker has a
     // value, that's the user's choice and the backend honours it. If it's
     // null (no picker rendered, no manual selection), the backend's
@@ -176,7 +187,7 @@ const handleSend = async (): Promise<void> => {
     // ``Provider.surface_models[surface]``.
     await agentStore.start({
       flow_id: flowStore.flowId,
-      prompt: text,
+      prompt: promptWithHistory,
       // ``agent`` is the planner default — two-stage with ``pick_category``,
       // routes to a sonnet-class model. ``agent_complex`` exposes the full
       // catalog and routes to opus-class; opt in via a future toggle if

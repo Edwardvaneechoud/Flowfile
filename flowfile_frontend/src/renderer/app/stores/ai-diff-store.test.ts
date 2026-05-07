@@ -55,6 +55,7 @@ vi.mock("./flow-store", () => ({
 // followup hand-off without spinning up a real Pinia agent store.
 const mockAgent = vi.hoisted(() => ({
   resumeAfterReject: vi.fn(),
+  clearLastResultDiffPayload: vi.fn(),
   state: {
     currentSessionId: null as string | null,
     status: "idle" as
@@ -77,7 +78,18 @@ vi.mock("./ai-agent-store", () => ({
       return mockAgent.state.status;
     },
     resumeAfterReject: mockAgent.resumeAfterReject,
+    clearLastResultDiffPayload: mockAgent.clearLastResultDiffPayload,
   }),
+}));
+
+// 2026-05-07 — diff-store.accept() / reject() now push synthetic decision
+// messages into ``ai-store.messages`` so the chat trail records what the
+// user clicked plus any rejection note. Mock the store's messages array so
+// tests can assert push-shape without dragging the real ai-store import
+// chain (which transitively reaches ``auth.service`` and touches ``window``).
+const mockAiStoreMessages = vi.hoisted(() => ({ messages: [] as Array<Record<string, unknown>> }));
+vi.mock("./ai-store", () => ({
+  useAiStore: () => ({ messages: mockAiStoreMessages.messages }),
 }));
 
 import { useAiDiffStore } from "./ai-diff-store";
@@ -168,8 +180,10 @@ beforeEach(() => {
   mockReject.mockReset();
   mockRequestReload.mockReset();
   mockAgent.resumeAfterReject.mockReset();
+  mockAgent.clearLastResultDiffPayload.mockReset();
   mockAgent.state.currentSessionId = null;
   mockAgent.state.status = "idle";
+  mockAiStoreMessages.messages.length = 0;
 });
 
 afterEach(() => {
@@ -328,20 +342,96 @@ describe("ai-diff-store — reject", () => {
 
   it("preserves currentDiff on http error so the user can retry", async () => {
     mockStage.mockResolvedValue(stageOk("diff-1"));
-    mockReject.mockRejectedValue(new AiDiffHttpError(404, "not found"));
+    // 422 (not 404) — 404 is now the "diff is gone" signal handled by
+    // the dedicated stale-diff path, see the "stale diff" describe block.
+    mockReject.mockRejectedValue(new AiDiffHttpError(422, "transient backend error"));
 
     const store = useAiDiffStore();
     await store.stage(sampleStageRequest());
     await store.reject();
 
     expect(store.currentDiff).not.toBeNull();
-    expect(store.error).toEqual({ kind: "http", status: 404, message: "not found" });
+    expect(store.error).toEqual({
+      kind: "http",
+      status: 422,
+      message: "transient backend error",
+    });
   });
 
   it("is a no-op when there is no staged diff", async () => {
     const store = useAiDiffStore();
     await store.reject();
     expect(mockReject).not.toHaveBeenCalled();
+  });
+});
+
+describe("ai-diff-store — chat-trail decision messages (2026-05-07)", () => {
+  it("pushes an [Accepted] message with apply counts on accept-success", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-acc"));
+    mockAccept.mockResolvedValue(acceptOk("diff-acc"));
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(mockAiStoreMessages.messages).toHaveLength(1);
+    const msg = mockAiStoreMessages.messages[0];
+    expect(msg.role).toBe("user");
+    expect(msg.content).toBe("[Accepted] applied 1 node(s), 1 connection(s).");
+  });
+
+  it("does NOT push an [Accepted] message when accept fails", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-fail"));
+    mockAccept.mockRejectedValue(new AiDiffHttpError(409, "drift"));
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(mockAiStoreMessages.messages).toHaveLength(0);
+  });
+
+  it("pushes a bare [Rejected] message when reject is called without a note", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-rej"));
+    mockReject.mockResolvedValue(rejectOk("diff-rej"));
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject();
+
+    expect(mockAiStoreMessages.messages).toHaveLength(1);
+    expect(mockAiStoreMessages.messages[0].content).toBe("[Rejected]");
+  });
+
+  it("pushes a [Rejected] message with the user-supplied note when provided", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-rej-note"));
+    mockReject.mockResolvedValue(rejectOk("diff-rej-note"));
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject("use the read node directly, not after the filter");
+
+    expect(mockAiStoreMessages.messages).toHaveLength(1);
+    expect(mockAiStoreMessages.messages[0].content).toBe(
+      "[Rejected] use the read node directly, not after the filter",
+    );
+  });
+
+  it("trims whitespace-only notes to the bare [Rejected] form", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-rej-blank"));
+    mockReject.mockResolvedValue(rejectOk("diff-rej-blank"));
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject("   \n   ");
+
+    expect(mockAiStoreMessages.messages).toHaveLength(1);
+    expect(mockAiStoreMessages.messages[0].content).toBe("[Rejected]");
+  });
+
+  it("does NOT push a [Rejected] message when reject fails", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-rej-fail"));
+    mockReject.mockRejectedValue(new AiDiffHttpError(422, "transient"));
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject("doesn't matter");
+
+    expect(mockAiStoreMessages.messages).toHaveLength(0);
   });
 });
 
@@ -448,6 +538,7 @@ describe("ai-diff-store — clear / setCurrentDiff", () => {
       flow_id: 1,
       rationale: null,
       additions: [],
+      modifications: [],
       connections_added: [],
       deletions: [],
       connections_removed: [],
@@ -484,6 +575,143 @@ describe("ai-diff-store — drift detail parsing", () => {
     await store.accept();
 
     expect(store.error!.kind).toBe("http");
+  });
+});
+
+// W70 — diff inconsistency: the agent's own staged diff is broken (e.g. a
+// `connect` op references a `to_node_id` that's neither live nor in the
+// diff's additions). Mirrors the 409-drift code path: same posture
+// (currentDiff stays staged so the user can Reject and retry), same
+// fall-back to http error when the wire shape doesn't match the typed
+// payload. The 422-`diff_inconsistent` shape is distinct from the
+// existing 422-string path (cross-flow mismatch / generic mid-batch
+// raise); the new parser must not capture those.
+describe("ai-diff-store — inconsistency detail parsing (W70)", () => {
+  it("keeps currentDiff staged when the backend reports a 422 diff_inconsistent", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-1"));
+    mockAccept.mockRejectedValue(
+      new AiDiffHttpError(422, {
+        error: "diff_inconsistent",
+        missing_endpoints: [[77, "to"]],
+        diff_id: "diff-1",
+      }),
+    );
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(store.currentDiff).not.toBeNull();
+    expect(store.currentDiff!.diff_id).toBe("diff-1");
+    expect(store.error).not.toBeNull();
+    expect(store.error!.kind).toBe("inconsistent");
+    if (store.error!.kind === "inconsistent") {
+      expect(store.error!.status).toBe(422);
+      expect(store.error!.missingEndpoints).toEqual([{ nodeId: 77, role: "to" }]);
+    }
+  });
+
+  it("does NOT call requestReload() on accept-422 inconsistent (canvas is unchanged)", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-1"));
+    mockAccept.mockRejectedValue(
+      new AiDiffHttpError(422, {
+        error: "diff_inconsistent",
+        missing_endpoints: [[77, "to"]],
+        diff_id: "diff-1",
+      }),
+    );
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(mockRequestReload).not.toHaveBeenCalled();
+  });
+
+  it("captures multiple missing endpoints with mixed from/to roles", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-1"));
+    mockAccept.mockRejectedValue(
+      new AiDiffHttpError(422, {
+        error: "diff_inconsistent",
+        missing_endpoints: [
+          [77, "to"],
+          [99, "from"],
+        ],
+        diff_id: "diff-1",
+      }),
+    );
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(store.error!.kind).toBe("inconsistent");
+    if (store.error!.kind === "inconsistent") {
+      expect(store.error!.missingEndpoints).toEqual([
+        { nodeId: 77, role: "to" },
+        { nodeId: 99, role: "from" },
+      ]);
+    }
+  });
+
+  it("falls back to a generic http error if 422 detail is a string (legacy mid-batch raise)", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-1"));
+    mockAccept.mockRejectedValue(new AiDiffHttpError(422, "apply_diff failed: ..."));
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(store.error).not.toBeNull();
+    expect(store.error!.kind).toBe("http");
+    expect(store.error!.status).toBe(422);
+    if (store.error!.kind === "http") {
+      expect(store.error!.message).toBe("apply_diff failed: ...");
+    }
+  });
+
+  it("falls back to a generic http error if 422 detail is missing_endpoints-broken", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-1"));
+    mockAccept.mockRejectedValue(
+      new AiDiffHttpError(422, {
+        error: "diff_inconsistent",
+        missing_endpoints: "broken",
+      }),
+    );
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(store.error!.kind).toBe("http");
+  });
+
+  it("filters out malformed endpoint entries and keeps the well-formed ones", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-1"));
+    mockAccept.mockRejectedValue(
+      new AiDiffHttpError(422, {
+        error: "diff_inconsistent",
+        missing_endpoints: [
+          [77, "to"],
+          [88, "sideways"], // bad role — dropped
+          ["nope", "from"], // non-numeric id — dropped
+          [99, "from"],
+        ],
+        diff_id: "diff-1",
+      }),
+    );
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(store.error!.kind).toBe("inconsistent");
+    if (store.error!.kind === "inconsistent") {
+      expect(store.error!.missingEndpoints).toEqual([
+        { nodeId: 77, role: "to" },
+        { nodeId: 99, role: "from" },
+      ]);
+    }
   });
 });
 
@@ -709,6 +937,7 @@ describe("aiDiffTypes — buildAdditionNodeTypes (W68)", () => {
           audit_id: null,
         },
       ],
+      modifications: [],
       connections_added: [],
       deletions: [],
       connections_removed: [],
@@ -751,10 +980,288 @@ describe("aiDiffTypes — buildAdditionNodeTypes (W68)", () => {
           audit_id: null,
         },
       ],
+      modifications: [],
       connections_added: [],
       deletions: [],
       connections_removed: [],
     });
     expect(map.size).toBe(0);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// W47 — modifications round-trip                                               #
+// --------------------------------------------------------------------------- #
+
+const sampleModificationStageRequest = (): StageDiffRequestShape => ({
+  session_id: "sess-mod",
+  flow_id: 42,
+  rationale: "Tighten the EU filter to amount > 100",
+  staged_results: [
+    {
+      tool_name: "flowfile.graph.update_node_settings",
+      audit_id: 201,
+      staged_node_payload: {
+        kind: "modification",
+        node_id: 9,
+        node_type: "filter",
+        old_settings: {
+          flow_id: 1,
+          node_id: 9,
+          depending_on_id: 1,
+          filter_input: { filter_type: "advanced", advanced_filter: "[region]=='EU'" },
+        },
+        new_settings: {
+          flow_id: 1,
+          node_id: 9,
+          depending_on_id: 1,
+          filter_input: { filter_type: "advanced", advanced_filter: "[amount] > 100" },
+        },
+        predicted_output_schema: [{ name: "amount", data_type: "Float64", nullable: true }],
+      },
+    },
+  ],
+});
+
+describe("ai-diff-store — modifications (W47)", () => {
+  it("synthesises the modifications bucket from an update_node_settings staged result", async () => {
+    mockStage.mockResolvedValue({ diff_id: "diff-mod-1", op_count: 1 });
+    const store = useAiDiffStore();
+
+    await store.stage(sampleModificationStageRequest());
+
+    expect(store.currentDiff).not.toBeNull();
+    expect(store.currentDiff!.modifications).toHaveLength(1);
+    expect(store.currentDiff!.additions).toEqual([]);
+    expect(store.currentDiff!.connections_added).toEqual([]);
+    expect(store.currentDiff!.deletions).toEqual([]);
+
+    const mod = store.currentDiff!.modifications[0];
+    expect(mod.node_id).toBe(9);
+    expect(mod.node_type).toBe("filter");
+    expect(mod.audit_id).toBe(201);
+    expect(mod.predicted_output_schema).toHaveLength(1);
+    // Old + new are preserved verbatim from the wire so the diff preview
+    // can render an old-vs-new view without re-fetching.
+    expect((mod.old_settings.filter_input as Record<string, unknown>).advanced_filter).toBe(
+      "[region]=='EU'",
+    );
+    expect((mod.new_settings.filter_input as Record<string, unknown>).advanced_filter).toBe(
+      "[amount] > 100",
+    );
+    expect(store.error).toBeNull();
+  });
+
+  it("accept clears currentDiff and signals canvas reload after a modification-only diff", async () => {
+    mockStage.mockResolvedValue({ diff_id: "diff-mod-1", op_count: 1 });
+    mockAccept.mockResolvedValue({
+      status: "accepted" as const,
+      diff_id: "diff-mod-1",
+      applied_node_ids: [],
+      modified_node_ids: [9],
+      applied_connection_count: 0,
+      removed_node_ids: [],
+      removed_connection_count: 0,
+      audit_ids_updated: [201],
+      history_action: "batch",
+    });
+
+    const store = useAiDiffStore();
+    await store.stage(sampleModificationStageRequest());
+    await store.accept();
+
+    expect(store.currentDiff).toBeNull();
+    expect(store.lastApplyResult).not.toBeNull();
+    expect(store.lastApplyResult!.modified_node_ids).toEqual([9]);
+    expect(mockRequestReload).toHaveBeenCalledTimes(1);
+  });
+
+  it("setCurrentDiff accepts a payload with only modifications", () => {
+    const store = useAiDiffStore();
+    store.setCurrentDiff({
+      diff_id: "diff-mod-direct",
+      session_id: "sess",
+      flow_id: 1,
+      rationale: null,
+      additions: [],
+      modifications: [
+        {
+          node_id: 5,
+          node_type: "select",
+          old_settings: { keep_missing: false },
+          new_settings: { keep_missing: true },
+          predicted_output_schema: null,
+          audit_id: null,
+        },
+      ],
+      connections_added: [],
+      deletions: [],
+      connections_removed: [],
+    });
+    expect(store.currentDiff?.modifications).toHaveLength(1);
+    expect(store.currentDiff?.modifications[0].node_id).toBe(5);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// Stale diff (404) — accept/reject after the backend has lost the diff,        #
+// typically because ``flowfile_core`` was restarted between staging and the    #
+// user clicking Accept/Reject. The store clears the staged diff, surfaces a    #
+// transient toast via ``staleNotice``, and drops the agent store's persisted   #
+// ``lastResult.diff_payload`` so a refresh doesn't re-hydrate the dead diff.   #
+// --------------------------------------------------------------------------- #
+
+describe("ai-diff-store — stale diff (404 from accept)", () => {
+  it("clears currentDiff and surfaces a toast when accept 404s", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-stale"));
+    mockAccept.mockRejectedValue(new AiDiffHttpError(404, "Unknown diff_id 'diff-stale'"));
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(store.currentDiff).toBeNull();
+    expect(store.error).toBeNull();
+    expect(store.staleNotice).toMatch(/no longer available/);
+  });
+
+  it("drops the agent store's lastResult.diff_payload when accept 404s", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-stale"));
+    mockAccept.mockRejectedValue(new AiDiffHttpError(404, "Unknown diff_id 'diff-stale'"));
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(mockAgent.clearLastResultDiffPayload).toHaveBeenCalled();
+  });
+
+  it("does NOT call requestReload() when accept 404s (canvas is unchanged)", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-stale"));
+    mockAccept.mockRejectedValue(new AiDiffHttpError(404, "Unknown diff_id 'diff-stale'"));
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(mockRequestReload).not.toHaveBeenCalled();
+  });
+});
+
+describe("ai-diff-store — stale diff (404 from reject)", () => {
+  it("clears currentDiff and surfaces a toast when reject 404s", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-stale"));
+    mockReject.mockRejectedValue(new AiDiffHttpError(404, "Unknown diff_id 'diff-stale'"));
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject();
+
+    expect(store.currentDiff).toBeNull();
+    expect(store.error).toBeNull();
+    expect(store.staleNotice).toMatch(/no longer available/);
+  });
+
+  it("drops the agent store's lastResult.diff_payload when reject 404s", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-stale"));
+    mockReject.mockRejectedValue(new AiDiffHttpError(404, "Unknown diff_id 'diff-stale'"));
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject();
+
+    expect(mockAgent.clearLastResultDiffPayload).toHaveBeenCalled();
+  });
+
+  it("does NOT call resumeAfterReject when reject 404s (rejection didn't happen)", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-stale"));
+    mockReject.mockRejectedValue(new AiDiffHttpError(404, "Unknown diff_id 'diff-stale'"));
+    mockAgent.state.currentSessionId = "sess-99";
+    mockAgent.state.status = "completed";
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject("with a note");
+
+    expect(mockAgent.resumeAfterReject).not.toHaveBeenCalled();
+  });
+});
+
+describe("ai-diff-store — staleNotice timer", () => {
+  it("auto-dismisses the staleNotice after the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      mockStage.mockResolvedValue(stageOk("diff-stale"));
+      mockAccept.mockRejectedValue(new AiDiffHttpError(404, "Unknown diff_id 'diff-stale'"));
+
+      const store = useAiDiffStore();
+      await store.stage(sampleStageRequest());
+      await store.accept();
+
+      expect(store.staleNotice).not.toBeNull();
+      vi.advanceTimersByTime(6000);
+      expect(store.staleNotice).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("dismissStaleNotice clears immediately and cancels the timer", async () => {
+    vi.useFakeTimers();
+    try {
+      mockStage.mockResolvedValue(stageOk("diff-stale"));
+      mockAccept.mockRejectedValue(new AiDiffHttpError(404, "Unknown diff_id 'diff-stale'"));
+
+      const store = useAiDiffStore();
+      await store.stage(sampleStageRequest());
+      await store.accept();
+
+      expect(store.staleNotice).not.toBeNull();
+      store.dismissStaleNotice();
+      expect(store.staleNotice).toBeNull();
+      // Advancing past the timeout shouldn't re-introduce or change the
+      // state — ``dismissStaleNotice`` cancelled the underlying setTimeout.
+      vi.advanceTimersByTime(10000);
+      expect(store.staleNotice).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clear() also wipes the staleNotice", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-stale"));
+    mockAccept.mockRejectedValue(new AiDiffHttpError(404, "Unknown diff_id 'diff-stale'"));
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(store.staleNotice).not.toBeNull();
+    store.clear();
+    expect(store.staleNotice).toBeNull();
+  });
+});
+
+describe("ai-diff-store — success-path diff_payload cleanup", () => {
+  it("calls clearLastResultDiffPayload after a successful accept", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-1"));
+    mockAccept.mockResolvedValue(acceptOk("diff-1"));
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(mockAgent.clearLastResultDiffPayload).toHaveBeenCalled();
+  });
+
+  it("calls clearLastResultDiffPayload after a successful reject", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-1"));
+    mockReject.mockResolvedValue(rejectOk("diff-1"));
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject();
+
+    expect(mockAgent.clearLastResultDiffPayload).toHaveBeenCalled();
   });
 });

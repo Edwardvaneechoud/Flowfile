@@ -5,10 +5,12 @@
 // participate in `hideAllPanels()` without coupling to this module. The
 // chat payload + streaming state live here.
 //
-// Future workstreams will extend this:
-//   - W22: pin-context (selected node, schemas) into the request body.
-//   - W42/W43: persist messages + sessions per flow.
-//   - W31+: handle `tool_call` events and wire diff acceptance.
+// Persistence is per-flow + browser-local (W27 → W43). Each flow's chat
+// trail lives under `flowfile.ai.chat.v1.{flow_id}` in `localStorage` so
+// switching flows shows the right conversation, and chat survives
+// Electron app restart. The `flowStore.flowId` watcher below performs an
+// atomic save-then-load swap on flow switch so round-tripping A → B → A
+// preserves A's history.
 
 import { defineStore } from "pinia";
 import { computed, ref, watch } from "vue";
@@ -61,15 +63,25 @@ const nextMessageId = (): number => {
   return _messageCounter;
 };
 
-// W27 — interim browser-side persistence. Throttled writes coalesce streaming
-// chunk deltas into ~4 saves/sec instead of one per token. Server-side
-// per-flow persistence (W42 / W43, sidecar at `{user_dir}/ai_sessions/{flow_id}/`
-// per D007) will obsolete this; keep the persistence path thin so it's easy
-// to delete or migrate when that lands.
+// W27 → W43 — browser-side persistence. Throttled writes coalesce streaming
+// chunk deltas into ~4 saves/sec instead of one per token. W43 made
+// persistence per-flow (`localStorage` keyed by flow_id) so switching flows
+// shows the right conversation and chat survives Electron restart.
 const PERSIST_THROTTLE_MS = 250;
+
+// `flowStore.flowId` is initialised to `-1` for "no flow loaded" (see
+// `flow-store.ts:28`). Translate the sentinel to `null` so the persistence
+// helpers route through the `unscoped` bucket cleanly.
+const _scopedFlowId = (id: number): number | null => (id === -1 ? null : id);
 
 export const useAiStore = defineStore("ai", () => {
   const editorStore = useEditorStore();
+  // The chat store coordinates with the flow store both at hydration time
+  // (load the right per-flow bucket) and on every flow switch (save
+  // outgoing → load incoming). Resolve the store reference once at setup
+  // so the watcher / queuePersist closures don't pay the lookup cost on
+  // every tick.
+  const flowStore = useFlowStore();
 
   // ----- providers (from W12 / W16) -----
   const providers = ref<AiProvider[]>([]);
@@ -104,10 +116,16 @@ export const useAiStore = defineStore("ai", () => {
   const agentModeAccepted = ref<boolean>(false);
   const promotionBanner = ref<{ reason: string; message: string } | null>(null);
 
-  // ----- W27 hydrate from sessionStorage -----
+  // ----- W27 + W43 hydrate from localStorage under the active flow's key -----
   // Order matters: hydrate refs BEFORE wiring the watch so the initial
   // assignment doesn't trigger a redundant write of what we just read.
-  const _hydrated = loadPersistedAiState();
+  // Flow id is read from the flow store at hydration time so the right
+  // per-flow bucket loads — this is the W43 update to the W27 path. When
+  // no flow is loaded yet (flow store sentinel `-1`) we fall through to
+  // the `unscoped` bucket which round-trips correctly once the user later
+  // opens a flow (the watcher saves the unscoped state under that key
+  // before swapping to the new flow's state).
+  const _hydrated = loadPersistedAiState(undefined, _scopedFlowId(flowStore.flowId));
   if (_hydrated.messages.length > 0) {
     messages.value = _hydrated.messages;
     // Bump the module-scoped counter past any persisted ids so the next
@@ -130,11 +148,15 @@ export const useAiStore = defineStore("ai", () => {
     agentModeAccepted.value = _hydrated.agentModeAccepted;
   }
 
-  // Throttled save. SessionStorage writes are sync + main-thread; coalescing
+  // Throttled save. localStorage writes are sync + main-thread; coalescing
   // streaming chunk deltas into ~4 writes/sec keeps the cost negligible
   // during a long response. User-driven changes (Send, Clear, provider pick)
   // get a 0 ms delay so the next tick captures them — durable for any
-  // refresh past one event-loop turn (~milliseconds).
+  // refresh past one event-loop turn (~milliseconds). The flow_id is
+  // resolved at write time (not at schedule time) so a swap that lands
+  // between the schedule and the timer still writes under the right key —
+  // and the swap watcher itself does its own atomic save so this path
+  // doesn't need to coordinate with it.
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   const queuePersist = (): void => {
     const isStreaming = streamingState.value === "streaming";
@@ -149,13 +171,17 @@ export const useAiStore = defineStore("ai", () => {
     saveTimer = setTimeout(
       () => {
         saveTimer = null;
-        persistAiState({
-          messages: messages.value,
-          selectedProvider: selectedProvider.value,
-          selectedModel: selectedModel.value,
-          autoPromote: autoPromote.value,
-          agentModeAccepted: agentModeAccepted.value,
-        });
+        persistAiState(
+          {
+            messages: messages.value,
+            selectedProvider: selectedProvider.value,
+            selectedModel: selectedModel.value,
+            autoPromote: autoPromote.value,
+            agentModeAccepted: agentModeAccepted.value,
+          },
+          undefined,
+          _scopedFlowId(flowStore.flowId),
+        );
       },
       isStreaming ? PERSIST_THROTTLE_MS : 0,
     );
@@ -173,6 +199,75 @@ export const useAiStore = defineStore("ai", () => {
   watch(streamingState, queuePersist, { flush: "sync" });
   watch(autoPromote, queuePersist, { flush: "sync" });
   watch(agentModeAccepted, queuePersist, { flush: "sync" });
+
+  // W43 — flow switch handler. Persist the *outgoing* flow's chat under its
+  // own key BEFORE clearing `messages.value`, then load the *incoming*
+  // flow's persisted state (or fresh defaults if none). `flush: "sync"`
+  // mirrors the queuePersist watchers so the save lands before any
+  // reactive consumer sees the swapped message array — round-tripping
+  // A → B → A preserves A's history.
+  //
+  // Streaming consideration: an in-flight stream's `reactivePlaceholder`
+  // is captured from the *outgoing* `messages.value` array. Reassigning
+  // `messages.value` would orphan that proxy, and `streamingState` would
+  // later flip to "idle" globally — clobbering any stream the user kicks
+  // off on the incoming flow. `abortStream()` cuts the stream cleanly
+  // before the swap so the outgoing snapshot includes the partial
+  // assistant response (frozen at swap time, no spinner on rehydrate
+  // because `sanitizeMessage` strips `pending`).
+  watch(
+    () => flowStore.flowId,
+    (newId, oldId) => {
+      const outgoing = _scopedFlowId(oldId);
+      const incoming = _scopedFlowId(newId);
+      if (outgoing === incoming) return;
+
+      abortStream();
+
+      persistAiState(
+        {
+          messages: messages.value,
+          selectedProvider: selectedProvider.value,
+          selectedModel: selectedModel.value,
+          autoPromote: autoPromote.value,
+          agentModeAccepted: agentModeAccepted.value,
+        },
+        undefined,
+        outgoing,
+      );
+
+      const loaded = loadPersistedAiState(undefined, incoming);
+      messages.value = loaded.messages;
+      // Loaded provider/model take precedence ONLY when present; absent
+      // values keep the user's current pick so a fresh-flow switch
+      // doesn't reset the picker mid-session.
+      if (loaded.selectedProvider !== null) {
+        selectedProvider.value = loaded.selectedProvider;
+      }
+      if (loaded.selectedModel !== null) {
+        selectedModel.value = loaded.selectedModel;
+      }
+      // autoPromote / agentModeAccepted DO reset to defaults on a fresh
+      // flow — these are session preferences for the conversation, not
+      // for the user's account. A flow with no prior chat shouldn't
+      // inherit the previous flow's "continue as agent" lock.
+      autoPromote.value = loaded.autoPromote ?? true;
+      agentModeAccepted.value = loaded.agentModeAccepted ?? false;
+      promotionBanner.value = null;
+      streamError.value = null;
+
+      // Bump the module-scoped counter past any persisted ids on the
+      // incoming flow's bucket so the next `nextMessageId()` call doesn't
+      // collide with a hydrated message. Counter is monotonic across the
+      // whole session — never reset — so messages from the outgoing flow
+      // and the incoming flow can't share an id even briefly.
+      const persistedMax = highestPersistedMessageId(loaded.messages);
+      if (persistedMax > _messageCounter) {
+        _messageCounter = persistedMax;
+      }
+    },
+    { flush: "sync" },
+  );
 
   // ----- derived -----
   const isAiOpen = computed<boolean>({
@@ -1023,6 +1118,15 @@ export const useAiStore = defineStore("ai", () => {
     dismissPromotionBanner,
     undoPromotion,
     acceptPromotion,
+    // 2026-05-07 — public re-export of ``_buildPromotedAgentPrompt`` so
+    // ``AiAssistant.vue``'s manual-Agent-toggle path can fold in chat
+    // history the same way auto-promotion does. Without this, flipping
+    // the explicit Agent toggle and typing *"Implement the plan"* sent
+    // a context-less prompt to the planner, which then asked *"I'm not
+    // sure which specific plan you'd like me to implement?"* — the
+    // prior chat assistant had laid out the plan but the agent never
+    // saw it.
+    buildAgentPromptWithHistory: _buildPromotedAgentPrompt,
   };
 });
 

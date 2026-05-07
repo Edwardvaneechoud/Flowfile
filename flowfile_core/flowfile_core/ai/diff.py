@@ -40,7 +40,11 @@ from flowfile_core.ai.diff_store import (
     DiskDiffRepository,
     InMemoryDiffRepository,
 )
-from flowfile_core.ai.tools.executor import InsertionContext, _apply_add_node
+from flowfile_core.ai.tools.executor import (
+    InsertionContext,
+    _apply_add_node,
+    _apply_update_node_settings,
+)
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import HistoryActionType
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
@@ -101,6 +105,26 @@ class StagedDeletion(BaseModel):
     audit_id: int | None = None
 
 
+class StagedSettingsUpdate(BaseModel):
+    """A ``flowfile.graph.update_node_settings`` op pending in a :class:`GraphDiff`.
+
+    Modifications target an *existing* node — distinct from
+    :class:`StagedAddition` (which creates a new one) and :class:`StagedDeletion`
+    (which removes one). Old settings are captured at stage time so the
+    diff-preview UI can render a reliable old-vs-new view, and so a mid-batch
+    rollback in :func:`apply_diff` can restore the prior value without
+    re-deriving from disk (W41's BATCH-snapshot rollback covers the live
+    graph; this field exists for the *diff-preview* truth).
+    """
+
+    node_id: int
+    node_type: str
+    old_settings: dict[str, Any] = Field(default_factory=dict)
+    new_settings: dict[str, Any] = Field(default_factory=dict)
+    predicted_output_schema: list[StagedSchemaColumn] | None = None
+    audit_id: int | None = None
+
+
 # --------------------------------------------------------------------------- #
 # GraphDiff bundle                                                             #
 # --------------------------------------------------------------------------- #
@@ -110,16 +134,26 @@ class GraphDiff(BaseModel):
     """A bundle of staged graph mutations awaiting user accept / reject.
 
     Op order is preserved within and across buckets. :func:`apply_diff`
-    walks ``additions`` → ``connections_added`` → ``deletions`` →
-    ``connections_removed`` so connections to a freshly-added node land
-    after the node itself, and deletions land after any new wiring that
-    referenced the about-to-be-removed node.
+    walks ``additions`` → ``modifications`` → ``connections_added`` →
+    ``deletions`` → ``connections_removed`` so:
+
+    * connections to a freshly-added node land after the node itself,
+    * settings updates for a freshly-added node land after the addition
+      and before any wiring referencing the modified node,
+    * deletions land after any new wiring that referenced the
+      about-to-be-removed node.
+
+    Modifications target an *existing* node id (or an in-batch addition);
+    they do not create new node ids. W45 drift detection is NOT influenced
+    by modifications — the planner does NOT append to ``staged_node_ids``
+    when a modification is staged.
     """
 
     diff_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     session_id: str
     flow_id: int
     additions: list[StagedAddition] = Field(default_factory=list)
+    modifications: list[StagedSettingsUpdate] = Field(default_factory=list)
     connections_added: list[StagedConnection] = Field(default_factory=list)
     deletions: list[StagedDeletion] = Field(default_factory=list)
     connections_removed: list[StagedConnection] = Field(default_factory=list)
@@ -132,6 +166,7 @@ class ApplyResult(BaseModel):
 
     diff_id: str
     applied_node_ids: list[int]
+    modified_node_ids: list[int] = Field(default_factory=list)
     applied_connection_count: int
     removed_node_ids: list[int]
     removed_connection_count: int
@@ -156,6 +191,26 @@ class DiffDriftError(Exception):
     def __init__(self, missing_node_ids: list[int]) -> None:
         self.missing_node_ids: list[int] = list(missing_node_ids)
         super().__init__(f"diff references missing node ids: {self.missing_node_ids}")
+
+
+class DiffInconsistentError(Exception):
+    """Raised when a staged diff is internally inconsistent (W70).
+
+    Distinct from :class:`DiffDriftError` — drift is the canvas mutating
+    during the agent's work (D006); inconsistency is the agent's *own*
+    diff being broken (e.g. a staged ``connect`` whose ``to_node_id``
+    isn't in the live graph nor in this diff's additions). The route
+    layer maps this to ``422 Unprocessable Entity`` and leaves the diff
+    in the store so the user can Reject and ask the agent to retry.
+
+    ``missing_endpoints`` carries ``(node_id, role)`` tuples where role
+    is ``"from"`` (output side) or ``"to"`` (input side) — the offending
+    end of the staged connection.
+    """
+
+    def __init__(self, missing_endpoints: list[tuple[int, str]]) -> None:
+        self.missing_endpoints: list[tuple[int, str]] = list(missing_endpoints)
+        super().__init__(f"diff has inconsistent connection endpoints: {self.missing_endpoints}")
 
 
 # --------------------------------------------------------------------------- #
@@ -231,6 +286,7 @@ _ADD_PREFIX = "flowfile.graph.add_"
 _CONNECT_NAME = "flowfile.graph.connect"
 _DELETE_NODE_NAME = "flowfile.graph.delete_node"
 _DELETE_CONNECTION_NAME = "flowfile.graph.delete_connection"
+_UPDATE_SETTINGS_NAME = "flowfile.graph.update_node_settings"
 
 
 class StagedToolEntry(BaseModel):
@@ -263,6 +319,7 @@ def bundle_staged_results(staged: list[StagedToolEntry]) -> GraphDiff:
     metadata leaking through the dispatch).
     """
     additions: list[StagedAddition] = []
+    modifications: list[StagedSettingsUpdate] = []
     connections_added: list[StagedConnection] = []
     deletions: list[StagedDeletion] = []
     connections_removed: list[StagedConnection] = []
@@ -285,6 +342,31 @@ def bundle_staged_results(staged: list[StagedToolEntry]) -> GraphDiff:
                 )
             except Exception as exc:
                 raise ValueError(f"invalid add payload for {tool_name!r}: {exc}") from exc
+        elif tool_name == _UPDATE_SETTINGS_NAME:
+            kind = payload.get("kind")
+            if kind != "modification":
+                raise ValueError(
+                    f"update_node_settings payload missing kind='modification': {payload!r}",
+                )
+            node_id = payload.get("node_id")
+            node_type = payload.get("node_type")
+            if not isinstance(node_id, int) or not isinstance(node_type, str):
+                raise ValueError(
+                    f"update_node_settings payload missing integer node_id / string node_type: {payload!r}",
+                )
+            try:
+                modifications.append(
+                    StagedSettingsUpdate(
+                        node_id=node_id,
+                        node_type=node_type,
+                        old_settings=payload.get("old_settings") or {},
+                        new_settings=payload.get("new_settings") or {},
+                        predicted_output_schema=payload.get("predicted_output_schema"),
+                        audit_id=entry.audit_id,
+                    )
+                )
+            except Exception as exc:
+                raise ValueError(f"invalid modification payload for {tool_name!r}: {exc}") from exc
         elif tool_name == _CONNECT_NAME:
             connections_added.append(
                 StagedConnection(
@@ -316,27 +398,68 @@ def bundle_staged_results(staged: list[StagedToolEntry]) -> GraphDiff:
         else:
             raise ValueError(f"diff staging only accepts flowfile.graph.* tools; got {tool_name!r}")
 
+    # 2026-05-07 — dedupe modifications and additions by node_id (latest wins).
+    # Live trace 14:21 showed the LLM emitting 4 identical
+    # ``update_node_settings`` calls on the same node within one agent run;
+    # without dedupe the diff preview surfaced *"4 modifications"* with
+    # four identical cards stacked. The W47 contract is full-replace, so
+    # the latest staged call already reflects the cumulative intent — older
+    # calls for the same node are noise that confuse the review surface.
+    # Same logic applies to additions: if the LLM emits multiple ``add_*``
+    # for the same allocated id (rare but observed), keep the last.
+    modifications = _dedupe_by_node_id_keep_last(modifications, lambda m: m.node_id)
+    additions = _dedupe_by_node_id_keep_last(
+        additions,
+        lambda a: a.settings.get("node_id") if isinstance(a.settings, dict) else None,
+    )
+
     return GraphDiff(
         session_id="",
         flow_id=0,
         additions=additions,
+        modifications=modifications,
         connections_added=connections_added,
         deletions=deletions,
         connections_removed=connections_removed,
     )
 
 
+def _dedupe_by_node_id_keep_last(items: list, key: Any) -> list:
+    """Keep the LAST occurrence per node-id key, preserving original order minus dupes.
+
+    ``key`` is a callable that returns the node-id (or ``None`` for entries
+    that should never dedupe — those pass through unchanged). Walks ``items``
+    in reverse, records ``node_id``s as it sees them, drops any subsequent
+    (= earlier in original order) item with a node-id we've already seen.
+    Reverses again to restore op-order.
+    """
+    seen: set[int] = set()
+    deduped: list = []
+    for item in reversed(items):
+        node_id = key(item)
+        if isinstance(node_id, int):
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+        deduped.append(item)
+    deduped.reverse()
+    return deduped
+
+
 def collect_audit_ids(diff: GraphDiff) -> list[int]:
     """Walk every op in op-order, returning the ``audit_id`` for those that have one.
 
-    Order matches :func:`apply_diff` traversal: additions, connections_added,
-    deletions, connections_removed. ``None`` values are skipped — the audit
-    table only flips rows that actually exist.
+    Order matches :func:`apply_diff` traversal: additions, modifications,
+    connections_added, deletions, connections_removed. ``None`` values are
+    skipped — the audit table only flips rows that actually exist.
     """
     out: list[int] = []
     for add in diff.additions:
         if add.audit_id is not None:
             out.append(add.audit_id)
+    for m in diff.modifications:
+        if m.audit_id is not None:
+            out.append(m.audit_id)
     for c in diff.connections_added:
         if c.audit_id is not None:
             out.append(c.audit_id)
@@ -355,21 +478,33 @@ def collect_audit_ids(diff: GraphDiff) -> list[int]:
 
 
 def validate_diff_against_flow(flow, diff: GraphDiff) -> None:
-    """Raise :class:`DiffDriftError` if any referenced node id is missing.
+    """Raise :class:`DiffDriftError` or :class:`DiffInconsistentError` on bad refs.
 
-    Checks:
+    Two parallel checks fire here:
 
-    * Each addition's ``insertion_context.upstream_node_ids`` and optional
-      ``right_input_node_id``.
-    * Each deletion's ``delete_node_id``.
+    * **Drift (D006):** addition upstreams + deletion targets must resolve
+      on the live graph *now* OR appear earlier in this diff's
+      ``additions`` bucket. If not, raise :class:`DiffDriftError` —
+      mapped to ``409 Conflict`` by the route layer; the user mutated
+      the canvas between staging and accept.
+    * **Inconsistency (W70):** every staged ``connections_added`` entry's
+      ``from`` and ``to`` endpoint ids must resolve on the live graph
+      *now* OR appear in this diff's ``additions`` bucket. If not, raise
+      :class:`DiffInconsistentError` — mapped to ``422 Unprocessable
+      Entity`` by the route layer; the agent's own diff is broken
+      (e.g. an LLM-hallucinated ``to_node_id``).
 
-    A node id counts as available if it either resolves on the live graph
-    *now* OR appears earlier in this diff's ``additions`` bucket — chained
-    additions (filter then second filter on top of the first) are a normal
-    pattern and don't constitute drift. Connections (added or removed) are
-    NOT pre-checked — ``add_connection`` enforces its own cycle / unknown-
-    id guards inside :func:`apply_diff`, and any raise rolls back the
-    BATCH snapshot. Pre-checking would duplicate that logic.
+    A node id counts as available if it either resolves on the live
+    graph *now* OR appears earlier in this diff's ``additions`` bucket —
+    chained additions (filter then second filter on top of the first)
+    are a normal pattern and don't constitute drift. Chained connections
+    referencing an id added in the same diff (e.g. wiring a freshly
+    staged left input to a freshly staged join) are likewise legal.
+
+    Drift is checked first; if both fire the drift raise wins because it
+    is the deeper precondition (a missing upstream means the addition
+    itself can't be reconstructed; a missing connection endpoint means
+    only the wiring is broken).
     """
     missing: set[int] = set()
     pending_additions: set[int] = set()
@@ -392,11 +527,36 @@ def validate_diff_against_flow(flow, diff: GraphDiff) -> None:
             new_id = None
         if new_id is not None:
             pending_additions.add(new_id)
+    for mod in diff.modifications:
+        # Modifications target an existing node id OR an in-batch addition
+        # (the same chaining tolerance that drives addition upstream resolution).
+        if not _is_available(mod.node_id):
+            missing.add(mod.node_id)
     for d in diff.deletions:
         if not _is_available(d.delete_node_id):
             missing.add(d.delete_node_id)
     if missing:
         raise DiffDriftError(sorted(missing))
+
+    # W70 — inconsistency check. Walks ``connections_added`` only;
+    # ``connections_removed`` references are tolerated by ``delete_connection``'s
+    # own no-op-on-missing semantics, and pre-checking them would conflate
+    # legitimate "user accepted the staged removal of a connection that's
+    # already gone" with the agent emitting a phantom id.
+    inconsistent: list[tuple[int, str]] = []
+    for c in diff.connections_added:
+        connection = c.connection if isinstance(c.connection, dict) else {}
+        for role, side_key in (("from", "output_connection"), ("to", "input_connection")):
+            side = connection.get(side_key)
+            if not isinstance(side, dict):
+                continue
+            raw = side.get("node_id")
+            if not isinstance(raw, int):
+                continue
+            if not _is_available(raw):
+                inconsistent.append((raw, role))
+    if inconsistent:
+        raise DiffInconsistentError(inconsistent)
 
 
 # --------------------------------------------------------------------------- #
@@ -418,7 +578,13 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
     """
     validate_diff_against_flow(flow, diff)
 
-    op_count = len(diff.additions) + len(diff.connections_added) + len(diff.deletions) + len(diff.connections_removed)
+    op_count = (
+        len(diff.additions)
+        + len(diff.modifications)
+        + len(diff.connections_added)
+        + len(diff.deletions)
+        + len(diff.connections_removed)
+    )
     description = f"AI diff: {diff.rationale}" if diff.rationale else f"AI diff ({op_count} ops)"
     flow.capture_history_snapshot(HistoryActionType.BATCH, description)
 
@@ -426,6 +592,7 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
     flow.flow_settings.track_history = False
 
     applied_node_ids: list[int] = []
+    modified_node_ids: list[int] = []
     applied_connection_count = 0
     removed_node_ids: list[int] = []
     removed_connection_count = 0
@@ -445,6 +612,14 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
             settings = settings_cls.model_validate(add.settings)
             _apply_add_node(flow, add.node_type, settings, ctx)
             applied_node_ids.append(int(settings.node_id))
+
+        for mod in diff.modifications:
+            settings_cls = get_settings_class_for_node_type(mod.node_type)
+            if settings_cls is None:
+                raise ValueError(f"unknown node type: {mod.node_type!r}")
+            settings = settings_cls.model_validate(mod.new_settings)
+            _apply_update_node_settings(flow, mod.node_type, settings)
+            modified_node_ids.append(int(mod.node_id))
 
         for c in diff.connections_added:
             connection = input_schema.NodeConnection.model_validate(c.connection)
@@ -471,6 +646,7 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
     return ApplyResult(
         diff_id=diff.diff_id,
         applied_node_ids=applied_node_ids,
+        modified_node_ids=modified_node_ids,
         applied_connection_count=applied_connection_count,
         removed_node_ids=removed_node_ids,
         removed_connection_count=removed_connection_count,
@@ -481,12 +657,14 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
 __all__ = [
     "ApplyResult",
     "DiffDriftError",
+    "DiffInconsistentError",
     "GraphDiff",
     "StagedAddition",
     "StagedConnection",
     "StagedDeletion",
     "StagedInsertionContext",
     "StagedSchemaColumn",
+    "StagedSettingsUpdate",
     "StagedToolEntry",
     "apply_diff",
     "bundle_staged_results",

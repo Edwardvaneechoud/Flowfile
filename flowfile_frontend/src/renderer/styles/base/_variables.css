@@ -94,10 +94,10 @@
   --color-button-secondary-hover: #2980b9;
   --color-button-secondary-light: #93c5fd;
 
-  /* Deep-purple accents — Run + AI surfaces. Pulled to match the
-     existing AI primary-button gradient endpoints (#6f42c1 → #5933a8). */
-  --color-accent-purple: #6f42c1;
-  --color-accent-purple-hover: #5933a8;
+  /* Indigo accents — Run + AI surfaces. Matches the gradient-start
+     token used by AI primary buttons (#667eea, rgb(102,126,234)). */
+  --color-accent-purple: #667eea;
+  --color-accent-purple-hover: #4f5fcc;
 
   /* Code editor colors */
   --color-code-bg: #282c34;

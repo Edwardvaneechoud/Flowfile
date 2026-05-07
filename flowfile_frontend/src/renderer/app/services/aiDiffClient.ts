@@ -38,6 +38,7 @@ export interface AcceptDiffResponse {
   status: "accepted";
   diff_id: string;
   applied_node_ids: number[];
+  modified_node_ids?: number[];
   applied_connection_count: number;
   removed_node_ids: number[];
   removed_connection_count: number;

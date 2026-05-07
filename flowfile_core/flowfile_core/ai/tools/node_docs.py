@@ -188,9 +188,13 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "is one row per unique combination of group keys, with the chosen "
         "aggregation columns. Don't use 'formula' for this — formulas are row-wise "
         "and cannot collapse rows. Don't use 'pivot' unless the user explicitly "
-        "wants a long-to-wide reshape on top. Example: "
-        '{"groupby_input": {"agg_cols": [{"new_name": "total", "agg": "sum", '
-        '"old_name": "amount"}], "group_by_cols": [{"name": "region"}]}}. '
+        "wants a long-to-wide reshape on top. Group keys and aggregations share "
+        "a single `agg_cols` list — group keys are entries with `agg=\"groupby\"`. "
+        "Example: "
+        '{"groupby_input": {"agg_cols": ['
+        '{"old_name": "region", "agg": "groupby"}, '
+        '{"old_name": "amount", "agg": "sum", "new_name": "total"}'
+        "]}}. "
         "Often paired downstream of 'filter' (then aggregate) and upstream of "
         "'sort' (rank by aggregate)."
     ),
@@ -406,11 +410,11 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
     ),
     "promise": (
         "An empty placeholder node — a node id that exists but has no settings "
-        "yet. Used internally by the agent flow when 'flowfile.graph.add_node' "
-        "stages a node without typed settings. The agent should rarely create "
-        "promise nodes directly — prefer 'flowfile.graph.add_<type>' tools that "
-        "bundle creation with settings. Don't use for production flows; remove "
-        "or replace with a typed node before saving."
+        "yet. Created internally by editor flows that reserve an id before "
+        "attaching settings. The agent has no tool to create one (the generic "
+        "'flowfile.graph.add_node' was removed 2026-05-07 because it confused "
+        "the model into emitting `node_type=\"node\"`); use the typed "
+        "'flowfile.graph.add_<type>' tools instead."
     ),
     "user_defined": (
         "A user-defined node (UDF) — runs custom code registered in the flow's "

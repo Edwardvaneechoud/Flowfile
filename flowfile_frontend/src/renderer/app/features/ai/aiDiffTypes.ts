@@ -65,7 +65,23 @@ export interface StagedDeletion {
 }
 
 /**
- * The renderer's view of a staged `GraphDiff`. Matches the four W41
+ * W47 — TS mirror of the Pydantic `StagedSettingsUpdate`. Modifications
+ * target an *existing* node id (or an in-batch addition); they do not
+ * create new ids. Old + new settings are captured at stage time so the
+ * diff-preview UI can render an old-vs-new view, and so a Reject reverts
+ * to the value the user was looking at when reviewing.
+ */
+export interface ModificationItem {
+  node_id: number;
+  node_type: string;
+  old_settings: Record<string, unknown>;
+  new_settings: Record<string, unknown>;
+  predicted_output_schema: StagedSchemaColumn[] | null;
+  audit_id: number | null;
+}
+
+/**
+ * The renderer's view of a staged `GraphDiff`. Matches the W41/W47
  * buckets in their apply order. Synthesised client-side from the
  * `StageDiffRequest` body the user just posted, since the backend
  * exposes no `GET /ai/diff/{id}` endpoint.
@@ -76,6 +92,7 @@ export interface GraphDiffPayload {
   flow_id: number;
   rationale: string | null;
   additions: StagedAddition[];
+  modifications: ModificationItem[];
   connections_added: StagedConnection[];
   deletions: StagedDeletion[];
   connections_removed: StagedConnection[];
@@ -88,13 +105,45 @@ export interface DriftDetail {
   missingNodeIds: number[];
 }
 
+/**
+ * W70 — staged diff is internally inconsistent (e.g. a `connect` op
+ * references a `to_node_id` that's neither live nor in this diff's
+ * additions). Backend wire shape is `{error: "diff_inconsistent",
+ * missing_endpoints: [[id, "from"|"to"], ...], diff_id}` returned with
+ * status 422. Distinct from drift: drift = the canvas mutated while
+ * the agent was staging (D006); inconsistency = the agent's own diff
+ * is broken. Same posture as drift on the store side: `currentDiff`
+ * stays set so the user can Reject and ask the agent to retry.
+ */
+export interface InconsistentDetail {
+  kind: "inconsistent";
+  status: 422;
+  message: string;
+  missingEndpoints: Array<{ nodeId: number; role: "from" | "to" }>;
+}
+
 export interface HttpErrorDetail {
   kind: "http";
   status: number;
   message: string;
 }
 
-export type DiffStoreError = DriftDetail | HttpErrorDetail;
+/**
+ * Backend returned 404 on accept/reject — the staged diff is no longer in
+ * the disk repo (e.g. ``flowfile_core`` was restarted in a setup where the
+ * diff sidecar didn't survive). The store treats this as "diff is gone":
+ * ``currentDiff`` is cleared and a transient toast is surfaced via
+ * ``staleNotice``. Distinct from ``http`` so consumers can branch on the
+ * "definitely lost" case without pattern-matching on detail strings.
+ */
+export interface NotFoundDetail {
+  kind: "not_found";
+  status: 404;
+  message: string;
+  diffId: string;
+}
+
+export type DiffStoreError = DriftDetail | InconsistentDetail | NotFoundDetail | HttpErrorDetail;
 
 /**
  * Build a renderer-shaped diff from the inputs that produced a
@@ -108,6 +157,7 @@ export const synthesiseDiffFromStageRequest = (
   diffId: string,
 ): GraphDiffPayload => {
   const additions: StagedAddition[] = [];
+  const modifications: ModificationItem[] = [];
   const connectionsAdded: StagedConnection[] = [];
   const deletions: StagedDeletion[] = [];
   const connectionsRemoved: StagedConnection[] = [];
@@ -132,6 +182,20 @@ export const synthesiseDiffFromStageRequest = (
           (payload.predicted_output_schema as StagedSchemaColumn[] | null | undefined) ?? null,
         audit_id: entry.audit_id ?? null,
       });
+    } else if (tool === "flowfile.graph.update_node_settings") {
+      const nodeId = payload.node_id;
+      const nodeType = payload.node_type;
+      if (typeof nodeId === "number" && typeof nodeType === "string") {
+        modifications.push({
+          node_id: nodeId,
+          node_type: nodeType,
+          old_settings: (payload.old_settings as Record<string, unknown> | undefined) ?? {},
+          new_settings: (payload.new_settings as Record<string, unknown> | undefined) ?? {},
+          predicted_output_schema:
+            (payload.predicted_output_schema as StagedSchemaColumn[] | null | undefined) ?? null,
+          audit_id: entry.audit_id ?? null,
+        });
+      }
     } else if (tool === "flowfile.graph.connect") {
       connectionsAdded.push({
         connection: (payload.connection as StagedConnectionShape | undefined) ?? {},
@@ -159,6 +223,7 @@ export const synthesiseDiffFromStageRequest = (
     flow_id: request.flow_id,
     rationale: request.rationale ?? null,
     additions,
+    modifications,
     connections_added: connectionsAdded,
     deletions,
     connections_removed: connectionsRemoved,
@@ -167,6 +232,7 @@ export const synthesiseDiffFromStageRequest = (
 
 export const opCount = (diff: GraphDiffPayload): number =>
   diff.additions.length +
+  diff.modifications.length +
   diff.connections_added.length +
   diff.deletions.length +
   diff.connections_removed.length;

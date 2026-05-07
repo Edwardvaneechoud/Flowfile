@@ -34,3 +34,14 @@ When the upstream schema is unknown (the node has not been run and no
 prediction is available), say so explicitly and ask the user to run the
 upstream node first, or accept a degraded response that may need
 revision.
+
+# Where to attach new nodes
+
+When suggesting (or staging) a new node, the new node always attaches
+*downstream of* an existing one. Pick a **transformation** node — one
+that produces data — as the upstream. Never pick a **sink**: node types
+``explore_data`` / ``output`` / ``database_writer`` /
+``cloud_storage_writer`` / ``catalog_writer`` consume data and have no
+output port, so nothing can attach downstream of them. If the user's
+flow ends in a sink, recommend inserting *before* the sink (between the
+last transformation and the sink), not after.

@@ -384,13 +384,24 @@ def _handle_graph(
         return _handle_delete_node(tool_name, tool_args, redacted_args, flow, session_id, user_id, mode)
     if op == "delete_connection":
         return _handle_delete_connection(tool_name, tool_args, redacted_args, flow, session_id, user_id, mode)
+    if op == "update_node_settings":
+        return _handle_update_node_settings(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            redacted_args=redacted_args,
+            flow=flow,
+            session_id=session_id,
+            user_id=user_id,
+            mode=mode,
+            dry_run_cache=dry_run_cache,
+        )
 
-    # ``update_node_settings`` / ``run_node`` / ``propose_subgraph`` were
-    # removed from the catalog in W46 (graph_ops.py 2026-05-05) so the LLM
-    # never sees them. This rejection branch stays as defence-in-depth in
-    # case a future workstream re-adds them to the catalog before wiring an
-    # implementation. ``update_node_settings`` is tracked for proper
-    # implementation under W47 (depends on ``GraphDiff.modifications``).
+    # ``run_node`` / ``propose_subgraph`` were removed from the catalog in
+    # W46 (graph_ops.py 2026-05-05) and stay out — autonomous run-node is
+    # unsafe (worker collects, user code, external systems); propose_subgraph
+    # is redundant with W40's per-step staging. This rejection branch stays
+    # as defence-in-depth in case a future workstream re-adds either before
+    # wiring an implementation.
     return _reject_and_audit(
         tool_name=tool_name,
         tool_args=redacted_args,
@@ -561,6 +572,85 @@ def _example_from_payload(node_type: str, loc_parts: list[str]) -> Any:
     return node
 
 
+def _coerce_to_int_or_none(value: Any) -> int | None:
+    """Best-effort coercion of a ``node_id``-shaped value to ``int``.
+
+    The Pydantic validator at the ``add_*`` and ``connect`` paths runs in
+    lax mode and silently coerces ``"5"`` → ``5``; the manually-validated
+    paths (``delete_node`` / ``update_node_settings`` / ``read_node_*``)
+    historically refused outright on any non-``int`` shape, which made the
+    cross-tool experience inconsistent — the LLM would correct on one
+    tool and immediately repeat the same mistake on another. This helper
+    closes that gap: numeric-looking strings get coerced; truly bogus
+    inputs (``"node_5"``, ``None``, lists) return ``None`` so the caller
+    can refuse with a structured detail. ``bool`` is rejected explicitly
+    because Python treats it as ``int`` subclass and ``True`` / ``False``
+    would otherwise sneak through as ``1`` / ``0``.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _detect_sink_upstreams(flow, upstream_ids: list[int]) -> list[tuple[int, str]]:
+    """Return ``(node_id, node_type)`` for any upstream id that resolves to a
+    sink in ``flow.nodes`` (i.e. ``NodeTemplate.output == 0``).
+
+    Sinks (``explore_data`` / ``output`` / ``database_writer`` /
+    ``cloud_storage_writer`` / ``catalog_writer``) consume data and have no
+    output port, so wiring a downstream node to one is a static error. The
+    LLM occasionally proposes this when chat history doesn't disambiguate
+    and the resolver Tier-6 fallback (post-2026-05-07 fix) skips sinks —
+    this guard catches the explicit-Tier-1 case where the LLM names a sink
+    in ``upstream_node_ids`` directly.
+
+    Ids absent from ``flow.nodes`` (i.e. staged-this-session or invalid)
+    are silently skipped here; the missing-id case is handled by downstream
+    refusal stages, not this guard.
+    """
+    sinks: list[tuple[int, str]] = []
+    for uid in upstream_ids:
+        upstream_node = flow.get_node(uid)
+        if upstream_node is None:
+            continue
+        template = getattr(upstream_node, "node_template", None)
+        if template is not None and getattr(template, "output", 1) == 0:
+            sinks.append((uid, upstream_node.node_type))
+    return sinks
+
+
+def _format_sink_upstream_refusal(flow, sink_upstreams: list[tuple[int, str]]) -> str:
+    """Build the refusal detail string for a sink-upstream rejection.
+
+    Lists each offending id + its node type and proposes the live non-sink
+    candidates so the LLM can retry with a corrected ``upstream_node_ids``
+    on the next turn (planner re-feeds refusal_detail back as a tool message).
+    """
+    sink_str = ", ".join(f"{nid} ({nt})" for nid, nt in sink_upstreams)
+    non_sinks: list[int] = []
+    for live in flow.nodes:
+        live_template = getattr(live, "node_template", None)
+        if live_template is not None and getattr(live_template, "output", 1) > 0:
+            try:
+                non_sinks.append(int(live.node_id))
+            except (TypeError, ValueError, AttributeError):
+                continue
+    candidates = sorted(set(non_sinks))
+    return (
+        f"upstream node(s) {sink_str} are sinks (no output port) and cannot "
+        f"have downstream nodes — sink types consume data, they don't produce "
+        f"it. Non-sink candidates available: {candidates}. Pick a "
+        f"transformation node and retry."
+    )
+
+
 def _format_settings_validation_refusal(
     *,
     exc: ValidationError,
@@ -716,6 +806,26 @@ def _handle_add_node(
             flow_id=flow.flow_id,
             refusal_reason="settings_validation",
             refusal_detail=_format_settings_validation_refusal(exc=exc, settings_cls=settings_cls, node_type=node_type),
+        )
+
+    # --- Refusal stage 1.5: upstream sink validation (2026-05-07) ---
+    # The Tier-6 resolver fallback already filters sinks (see planner.py).
+    # This guard catches the explicit case where the LLM named a sink in
+    # ``upstream_node_ids`` directly (Tier 1) — the resolver respects
+    # explicit intent, so the only place to refuse is here.
+    upstream_check_ids = [uid for uid in (insertion_context.upstream_node_ids or []) if isinstance(uid, int)]
+    if isinstance(insertion_context.right_input_node_id, int):
+        upstream_check_ids.append(insertion_context.right_input_node_id)
+    sink_upstreams = _detect_sink_upstreams(flow, upstream_check_ids)
+    if sink_upstreams:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason="upstream_is_sink",
+            refusal_detail=_format_sink_upstream_refusal(flow, sink_upstreams),
         )
 
     # W62 — stamp the resolved layout coordinates onto the settings object.
@@ -951,16 +1061,36 @@ def _format_connection_validation_error(exc: ValidationError) -> str:
     """Translate Pydantic field paths from internal ``NodeConnection`` field names
     back to the flat tool-spec field names (``input_class``, ``output_class``,
     ``from_node_id``, ``to_node_id``). Otherwise the W53 retry loop hands the LLM
-    error messages referring to fields it never sees in the tool schema."""
+    error messages referring to fields it never sees in the tool schema.
+
+    2026-05-07 — appends a concrete example payload when any error names an
+    integer field (mirrors W67's ``_format_settings_validation_refusal``: when
+    the LLM JSON-string-encodes ids, raw Pydantic prose isn't enough — the
+    example shape teaches the corrected call in one retry instead of the
+    cascading-retry exhaustion the dogfood trace showed).
+    """
     parts = []
+    int_field_error = False
     for err in exc.errors():
         loc = ".".join(str(p) for p in err["loc"])
         for internal, external in _CONNECTION_FIELD_REWRITES:
             if loc == internal or loc.startswith(internal + "."):
                 loc = loc.replace(internal, external, 1)
                 break
+        # Any int-typed field at the flat-tool surface triggers the example
+        # nudge — covers both ``unable to parse string as integer`` and
+        # ``Input should be a valid integer``.
+        if loc in {"from_node_id", "to_node_id", "flow_id"}:
+            int_field_error = True
         parts.append(f"{loc}: {err['msg']}")
-    return "; ".join(parts)
+    detail = "; ".join(parts)
+    if int_field_error:
+        detail += (
+            ". Example payload: "
+            '{"flow_id": 1, "from_node_id": 3, "to_node_id": 5}. '
+            "Pass node ids as integers, not JSON-encoded strings."
+        )
+    return detail
 
 
 def _handle_connect(
@@ -994,6 +1124,22 @@ def _handle_connect(
             flow_id=flow.flow_id,
             refusal_reason=None,
             refusal_detail=f"connection validation failed: {exc}",
+        )
+
+    # 2026-05-07 — refuse explicit ``connect`` calls whose upstream side is a
+    # sink. ``output_connection.node_id`` is the FROM (upstream) side; if it
+    # has no output port, the connection is a static error.
+    upstream_id = connection.output_connection.node_id
+    sink_upstreams = _detect_sink_upstreams(flow, [upstream_id])
+    if sink_upstreams:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason="upstream_is_sink",
+            refusal_detail=_format_sink_upstream_refusal(flow, sink_upstreams),
         )
 
     if mode == "stage":
@@ -1053,8 +1199,10 @@ def _handle_delete_node(
     user_id: int,
     mode: ExecutionMode,
 ) -> ToolExecutionResult:
-    node_id = tool_args.get("node_id")
-    if not isinstance(node_id, int):
+    node_id_raw = tool_args.get("node_id")
+    node_id = _coerce_to_int_or_none(node_id_raw)
+    if node_id is None:
+        got_type = type(node_id_raw).__name__
         return _reject_and_audit(
             tool_name=tool_name,
             tool_args=redacted_args,
@@ -1062,7 +1210,11 @@ def _handle_delete_node(
             user_id=user_id,
             flow_id=flow.flow_id,
             refusal_reason=None,
-            refusal_detail="delete_node requires an integer node_id",
+            refusal_detail=(
+                f"delete_node requires an integer node_id (got {got_type}). "
+                'Example payload: {"flow_id": 1, "node_id": 5}. '
+                "Pass node ids as integers, not JSON-encoded strings."
+            ),
         )
 
     if mode == "stage":
@@ -1192,6 +1344,300 @@ def _handle_delete_connection(
     )
 
 
+def _handle_update_node_settings(
+    *,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    redacted_args: dict[str, Any],
+    flow,
+    session_id: str,
+    user_id: int,
+    mode: ExecutionMode,
+    dry_run_cache: DryRunCache,
+) -> ToolExecutionResult:
+    """W47 — modify an existing node's settings.
+
+    Mirrors :func:`_handle_add_node`'s shape: validates new settings via the
+    Pydantic class for the live node's type, runs the network-egress check
+    for code-bearing settings, resolves upstream schemas via the D011 tier
+    handler from the existing wiring, validates column references, predicts
+    the new output schema (mirror for static, kernel dry-run for dynamic),
+    then either stages the modification for a :class:`GraphDiff` or
+    re-fires the production ``add_<node_type>`` path so the live node
+    inherits the new settings.
+
+    The stage payload carries ``kind="modification"`` plus old and new
+    settings dicts so the diff preview can render an old-vs-new view; the
+    old-settings capture happens at stage time (not apply time) so a
+    rejected diff reverts to what the user was looking at when reviewing.
+    """
+    node_id_raw = tool_args.get("node_id")
+    node_id = _coerce_to_int_or_none(node_id_raw)
+    if node_id is None:
+        got_type = type(node_id_raw).__name__
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason=None,
+            refusal_detail=(
+                f"update_node_settings requires an integer node_id (got {got_type}). "
+                'Example payload: {"flow_id": 1, "node_id": 5, "settings": {...}}. '
+                "Pass node ids as integers, not JSON-encoded strings."
+            ),
+        )
+
+    settings_payload = tool_args.get("settings")
+    if not isinstance(settings_payload, dict):
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason=None,
+            refusal_detail="update_node_settings requires a settings object",
+        )
+
+    target_node = flow.get_node(node_id)
+    if target_node is None:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason=None,
+            refusal_detail=f"node {node_id} not found in flow {flow.flow_id}",
+        )
+
+    node_type = getattr(target_node, "node_type", None)
+    if not isinstance(node_type, str) or not node_type:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason=None,
+            refusal_detail=f"node {node_id} has no resolvable node_type",
+        )
+
+    settings_cls = get_settings_class_for_node_type(node_type)
+    if settings_cls is None:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason=None,
+            refusal_detail=f"unknown node type: {node_type!r}",
+        )
+
+    # Capture the live (pre-change) settings BEFORE validation. This is the
+    # truth the diff-preview UI renders against and the value Reject would
+    # restore — we want it stable even if the new settings later fail.
+    old_settings_dict: dict[str, Any] = {}
+    current_settings = getattr(target_node, "setting_input", None)
+    if isinstance(current_settings, BaseModel):
+        try:
+            old_settings_dict = current_settings.model_dump(mode="json")
+        except Exception:  # noqa: BLE001 — defensive serialisation
+            logger.warning("could not serialise existing settings for node %s", node_id)
+
+    # --- Refusal stage 1: Pydantic shape ---
+    try:
+        new_settings = settings_cls.model_validate(settings_payload)
+    except ValidationError as exc:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason="settings_validation",
+            refusal_detail=_format_settings_validation_refusal(exc=exc, settings_cls=settings_cls, node_type=node_type),
+        )
+
+    # --- Refusal stage 2: network egress (code-bearing nodes only) ---
+    code = _extract_code(node_type, new_settings)
+    if code is not None:
+        egress_labels = safety.detect_network_egress(code)
+        if egress_labels:
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow.flow_id,
+                refusal_reason="network_egress",
+                refusal_detail=f"blocked: {', '.join(egress_labels)}",
+            )
+
+    # --- Resolve upstream schemas from the live node's existing wiring ---
+    # Modifications never rewire the topology — the LLM must use connect /
+    # delete_connection for that — so we read upstream ids off the live
+    # node rather than from the new settings (which might carry a stale
+    # ``depending_on_id`` we don't want to honour for schema resolution).
+    main_input_ids: list[int] = []
+    main_inputs = getattr(target_node.node_inputs, "main_inputs", None) or []
+    for upstream in main_inputs:
+        try:
+            main_input_ids.append(int(upstream.node_id))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    right_input_obj = getattr(target_node.node_inputs, "right_input", None)
+    right_input_id: int | None = None
+    if right_input_obj is not None:
+        try:
+            right_input_id = int(right_input_obj.node_id)
+        except (TypeError, ValueError, AttributeError):
+            right_input_id = None
+
+    upstream_ids = list(main_input_ids)
+    if right_input_id is not None and right_input_id not in upstream_ids:
+        upstream_ids.append(right_input_id)
+    upstream_schemas, warnings = _resolve_upstream_schemas(flow, upstream_ids)
+
+    # --- Refusal stage 3: column refs ---
+    refs = collect_column_refs(node_type, new_settings)
+    if refs and upstream_schemas:
+        available: list[str] = []
+        seen: set[str] = set()
+        for cols in upstream_schemas.values():
+            for col in cols:
+                if col.column_name not in seen:
+                    seen.add(col.column_name)
+                    available.append(col.column_name)
+        missing = safety.validate_column_references(refs, available)
+        if missing:
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow.flow_id,
+                refusal_reason="unknown_columns",
+                refusal_detail=f"missing columns: {', '.join(missing)}",
+                extra={"missing_columns": missing, "available_columns": available},
+            )
+
+    # --- Predict output schema ---
+    node_class = classify_node_type(node_type)
+    predicted: list[Any] | None = None
+    if node_class == "dynamic":
+        if code is None:
+            warnings.append(f"dynamic node {node_type} has no code-bearing field; output schema cannot be predicted")
+        elif not upstream_schemas and main_input_ids:
+            warnings.append("upstream schema unresolved — kernel dry-run skipped; output schema deferred until run")
+        elif not main_input_ids:
+            warnings.append(f"dynamic node {node_type} has no upstream; output schema cannot be predicted")
+        else:
+            try:
+                predicted = dry_run_code(
+                    flow=flow,
+                    node_id=node_id,
+                    upstream_node_ids=main_input_ids,
+                    code=code,
+                    output_names=_resolve_output_names(node_type, new_settings),
+                    cache=dry_run_cache,
+                    upstream_schemas=upstream_schemas,
+                )
+            except Exception as exc:
+                logger.warning("dry-run failed for %s/%s on update: %s", node_type, node_id, exc)
+                warnings.append(f"kernel dry-run failed: {exc}; output schema deferred")
+    else:
+        predicted = predict_schema_via_mirror(
+            node_type,
+            new_settings,
+            upstream_schemas,
+            right_input_node_id=right_input_id,
+        )
+
+    # --- Apply or stage ---
+    if mode == "stage":
+        payload = {
+            "kind": "modification",
+            "node_id": node_id,
+            "node_type": node_type,
+            "old_settings": old_settings_dict,
+            "new_settings": new_settings.model_dump(mode="json"),
+            "predicted_output_schema": schema_to_dict_list(predicted),
+        }
+        audit_row = _record_event(
+            session_id=session_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            flow_id=flow.flow_id,
+            tool_args=redacted_args,
+            result_status="success",
+        )
+        return ToolExecutionResult(
+            status="staged",
+            tool_name=tool_name,
+            node_id=node_id,
+            predicted_output_schema=schema_to_dict_list(predicted),
+            warnings=warnings,
+            audit_id=audit_row.id if audit_row is not None else None,
+            executed_args=redacted_args,
+            staged_node_payload=payload,
+        )
+
+    # mode == "apply"
+    try:
+        _apply_update_node_settings(flow, node_type, new_settings)
+    except Exception as exc:
+        logger.warning("apply failed for update_node_settings %s/%s: %s", node_type, node_id, exc)
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason=None,
+            refusal_detail=f"apply failed: {exc}",
+        )
+
+    audit_row = _record_event(
+        session_id=session_id,
+        user_id=user_id,
+        tool_name=tool_name,
+        flow_id=flow.flow_id,
+        tool_args=redacted_args,
+        result_status="success",
+    )
+    status: ResultStatus = "warned" if warnings else "applied"
+    return ToolExecutionResult(
+        status=status,
+        tool_name=tool_name,
+        node_id=node_id,
+        predicted_output_schema=schema_to_dict_list(predicted),
+        warnings=warnings,
+        audit_id=audit_row.id if audit_row is not None else None,
+        executed_args=redacted_args,
+    )
+
+
+def _apply_update_node_settings(flow, node_type: str, settings: BaseModel) -> None:
+    """Real-graph mutation: re-fire ``add_<node_type>`` so the existing node
+    inherits the new settings.
+
+    The same path the production UI takes from
+    ``POST /editor/update_settings/`` (``routes.py:887``) — ``add_node_step``
+    detects the existing node id and routes through ``existing_node.update_node``
+    rather than constructing a fresh :class:`FlowNode`. Wiring is preserved
+    (``existing_node.all_inputs`` is kept verbatim — the modification never
+    rewires upstream / right-input).
+    """
+    add_method = getattr(flow, f"add_{node_type}", None)
+    if add_method is None:
+        raise ValueError(f"flow has no add_{node_type} method")
+    add_method(settings)
+
+
 def _handle_schema(
     *,
     op: str,
@@ -1203,8 +1649,10 @@ def _handle_schema(
     user_id: int,
 ) -> ToolExecutionResult:
     """Read-only introspection ops — never mutate the graph."""
-    node_id = tool_args.get("node_id")
-    if not isinstance(node_id, int):
+    node_id_raw = tool_args.get("node_id")
+    node_id = _coerce_to_int_or_none(node_id_raw)
+    if node_id is None:
+        got_type = type(node_id_raw).__name__
         return _reject_and_audit(
             tool_name=tool_name,
             tool_args=redacted_args,
@@ -1212,7 +1660,11 @@ def _handle_schema(
             user_id=user_id,
             flow_id=flow.flow_id,
             refusal_reason=None,
-            refusal_detail=f"{op} requires an integer node_id",
+            refusal_detail=(
+                f"{op} requires an integer node_id (got {got_type}). "
+                'Example payload: {"flow_id": 1, "node_id": 5}. '
+                "Pass node ids as integers, not JSON-encoded strings."
+            ),
         )
 
     node = flow.get_node(node_id)

@@ -1,20 +1,35 @@
-// Browser-side session persistence for the AI chat drawer (W27).
+// Browser-side chat persistence for the AI drawer (W27 → W43).
 //
-// Pure helpers — no Vue/Pinia deps — so they're easy to unit-test and trivial
-// for W42/W43 to delete or migrate when server-side per-flow chat history
-// (D007 sidecar) lands. Per-tab semantics via `sessionStorage` (not
-// `localStorage`) match the "ephemeral while iterating" framing and avoid
-// cross-tab bleed. Capped at MAX_PERSISTED_MESSAGES so an unbounded
-// conversation can't blow past sessionStorage's ~5 MB ceiling.
+// Pure helpers — no Vue/Pinia deps — so they're easy to unit-test without
+// jsdom. W43 changes the surface in two ways relative to W27's original cut:
 //
-// Storage key is versioned (`flowfile.ai.chat.v1`) so a future schema bump
-// — or W42/W43's invalidation pass — can ignore stale shapes by writing a
-// new key and leaving the old one orphaned for the user to drop.
+//   1. Storage default flips from `sessionStorage` to `localStorage` so chat
+//      survives Electron app restart / browser close. Quota is still ~5 MB,
+//      plenty for chat history bounded by `MAX_PERSISTED_MESSAGES`.
+//   2. Persistence keys are flow-scoped: `flowfile.ai.chat.v1.{flow_id}`
+//      for a real flow id, `flowfile.ai.chat.v1.unscoped` for entry paths
+//      that open the chat without a flow context. The store's flow_id
+//      watcher uses these helpers to swap the persisted bucket when the
+//      user switches flows so the trail stays bound to the conversation
+//      it belongs to. Bare `PERSISTENCE_KEY` is still exported as the
+//      versioned prefix so a future schema bump can orphan a whole
+//      generation of entries by writing under a new prefix.
+//
+// Storage-injection seam (`StorageLike`) preserved verbatim from W27 so the
+// vitest suite stays node-only and the same call sites can target an
+// in-memory mock for per-test isolation.
 
 import type { ChatMessage } from "./ai-store";
 
 export const PERSISTENCE_KEY = "flowfile.ai.chat.v1";
 export const MAX_PERSISTED_MESSAGES = 200;
+
+/** Flow-scoped storage key. `null` flow_id (no flow open) maps to the
+ * `unscoped` bucket so chat opened from entry paths without a flow
+ * context still has somewhere to land — and round-trips correctly when
+ * the user later opens a flow and then comes back. */
+export const chatPersistenceKey = (flowId: number | null): string =>
+  `${PERSISTENCE_KEY}.${flowId === null ? "unscoped" : flowId}`;
 
 export interface PersistedAiState {
   messages: ChatMessage[];
@@ -52,7 +67,7 @@ const resolveStorage = (storage?: StorageLike | null): StorageLike | null => {
   if (storage) return storage;
   if (typeof window === "undefined") return null;
   try {
-    return window.sessionStorage;
+    return window.localStorage;
   } catch {
     return null;
   }
@@ -68,7 +83,7 @@ const sanitizeMessage = (raw: unknown): ChatMessage | null => {
   if (!isChatRole(obj.role)) return null;
   if (typeof obj.content !== "string") return null;
   // ``createdAt`` was added after the persistence format shipped — older
-  // entries in sessionStorage may not have it. Fall back to ``id`` (small
+  // entries in storage may not have it. Fall back to ``id`` (small
   // counter, but at least monotonic) so the timeline still has *some*
   // ordering signal. New messages always carry ``createdAt`` (Date.now).
   const createdAt = typeof obj.createdAt === "number" ? obj.createdAt : obj.id;
@@ -85,13 +100,17 @@ const sanitizeMessage = (raw: unknown): ChatMessage | null => {
   };
 };
 
-export const loadPersistedAiState = (storage?: StorageLike | null): PersistedAiState => {
+export const loadPersistedAiState = (
+  storage?: StorageLike | null,
+  flowId: number | null = null,
+): PersistedAiState => {
   const store = resolveStorage(storage);
   if (!store) return { ...EMPTY_STATE, messages: [] };
 
+  const key = chatPersistenceKey(flowId);
   let raw: string | null;
   try {
-    raw = store.getItem(PERSISTENCE_KEY);
+    raw = store.getItem(key);
   } catch {
     return { ...EMPTY_STATE, messages: [] };
   }
@@ -101,12 +120,13 @@ export const loadPersistedAiState = (storage?: StorageLike | null): PersistedAiS
   try {
     parsed = JSON.parse(raw);
   } catch {
-    // Corrupt JSON — drop it so the user starts fresh next time and we don't
-    // crash on every drawer open.
+    // Corrupt JSON — drop just *this* flow's entry so the user starts fresh
+    // next time without crashing. Other flows' keys are untouched (the
+    // removal is scoped to the per-flow key, never the v1 prefix).
     try {
-      store.removeItem(PERSISTENCE_KEY);
+      store.removeItem(key);
     } catch {
-      // sessionStorage rejected the removal (private mode quirks) — best
+      // Storage rejected the removal (private mode quirks) — best
       // effort, swallow.
     }
     return { ...EMPTY_STATE, messages: [] };
@@ -131,7 +151,11 @@ export const loadPersistedAiState = (storage?: StorageLike | null): PersistedAiS
   };
 };
 
-export const persistAiState = (state: PersistedAiState, storage?: StorageLike | null): void => {
+export const persistAiState = (
+  state: PersistedAiState,
+  storage?: StorageLike | null,
+  flowId: number | null = null,
+): void => {
   const store = resolveStorage(storage);
   if (!store) return;
 
@@ -153,18 +177,21 @@ export const persistAiState = (state: PersistedAiState, storage?: StorageLike | 
   }
 
   try {
-    store.setItem(PERSISTENCE_KEY, payload);
+    store.setItem(chatPersistenceKey(flowId), payload);
   } catch {
     // QuotaExceededError or storage disabled — fail silent. The chat
     // continues to work in-memory; the user just loses refresh-survival.
   }
 };
 
-export const clearPersistedAiState = (storage?: StorageLike | null): void => {
+export const clearPersistedAiState = (
+  storage?: StorageLike | null,
+  flowId: number | null = null,
+): void => {
   const store = resolveStorage(storage);
   if (!store) return;
   try {
-    store.removeItem(PERSISTENCE_KEY);
+    store.removeItem(chatPersistenceKey(flowId));
   } catch {
     // ignore
   }

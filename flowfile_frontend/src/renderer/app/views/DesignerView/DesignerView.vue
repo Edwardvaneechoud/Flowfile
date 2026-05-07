@@ -20,7 +20,7 @@
             @close-tab="handleCloseFlow"
           />
         </div>
-        <div class="right-section">
+        <div v-if="hasOpenFlow" class="right-section">
           <right-action-cluster ref="rightCluster" @open-settings="headerButtons?.openSettings()" />
         </div>
       </div>

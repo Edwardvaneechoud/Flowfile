@@ -46,6 +46,7 @@ which lazy-loads litellm in its own subclass.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Literal
@@ -404,6 +405,12 @@ def _arg_summary(tool_name: str, tool_args: dict[str, Any]) -> str | None:
             return f"Removing node {nid}"
         return "Removing a node"
 
+    if tool_name == "flowfile.graph.update_node_settings":
+        nid = tool_args.get("node_id")
+        if isinstance(nid, int):
+            return f"Updating settings on node {nid}"
+        return "Updating node settings"
+
     if tool_name == "flowfile.graph.delete_connection":
         upstream = tool_args.get("upstream_node_id")
         downstream = tool_args.get("downstream_node_id")
@@ -512,13 +519,12 @@ def _resolve_insertion_context(
 ) -> tuple[InsertionContext, str | None]:
     """Build an :class:`InsertionContext` for a tool call.
 
-    Returns ``(insertion_context, ambiguous_detail_or_none)``. When the second
-    element is non-``None``, the planner converts it into a
-    ``tool_call_rejected`` event with ``refusal_reason="ambiguous_insertion_context"``
-    for ``add_*`` calls. Non-``add_*`` calls ignore the flag (they don't
-    consume ``upstream_node_ids``).
+    Returns ``(insertion_context, ambiguous_detail_or_none)``. The second
+    element is always ``None`` post-2026-05-07 — the W57 ambiguity-refusal
+    tier was reverted after live UX showed it too aggressive. Tuple shape
+    preserved so existing destructuring at call sites keeps working.
 
-    Tier order (W57; was 4 tiers, now 8):
+    Tier order (W57 + 2026-05-07 revert; 7 tiers):
 
     1. LLM-provided ``args["upstream_node_ids"]`` (explicit override always
        wins).
@@ -533,14 +539,17 @@ def _resolve_insertion_context(
        start time.
     5. ``session.pinned_node_ids`` (W57) — ``@``-mention targets at start
        time.
-    6. **Ambiguity refusal** — ``len(live_nodes) > 1`` and nothing else
-       hit. Returns an empty ctx + a refusal_detail string. The planner
-       emits ``tool_call_rejected`` with the candidate list so the model
-       retries with explicit ``upstream_node_ids``.
-    7. ``flow.nodes[-1]`` ONLY if exactly one live node (unambiguous
-       cold-flow first step).
-    8. Empty (truly cold flow — no nodes). The executor handles this
-       (sources don't need an upstream; most node types refuse).
+    6. Most-recently-added live node whose ``NodeTemplate.output > 0``
+       — i.e. skip terminal / sink types (``explore_data``, ``output``,
+       ``database_writer``, ``cloud_storage_writer``, ``catalog_writer``)
+       in reverse order. (Was ``flow.nodes[-1]`` blindly until 2026-05-07
+       afternoon; the original W57 revert flagged this as the residual
+       risk and dogfood on the customer_deduplication template hit it
+       immediately — the template ends in ``explore_data`` and the
+       fallback was attaching the new node downstream of a sink.)
+    7. Empty (truly cold flow — no nodes, OR all live nodes are terminals).
+       The executor handles this (sources don't need an upstream;
+       most node types refuse).
     """
     args: dict[str, Any] = tc.arguments or {}
 
@@ -580,21 +589,32 @@ def _resolve_insertion_context(
     if not upstream_ids and session.pinned_node_ids:
         upstream_ids = [uid for uid in session.pinned_node_ids if isinstance(uid, int)]
 
-    # Tiers 6-8 — live-graph fallbacks. Tier 6 refuses on ambiguity; tier 7
-    # is the unambiguous cold-flow case; tier 8 is the truly-empty case.
+    # Tiers 6-7 — live-graph fallback. Tier 6 walks live nodes in reverse
+    # and falls back to the most-recently-added node whose template advertises
+    # an output port (``NodeTemplate.output > 0``). Sink types (``output=0``
+    # — explore_data, output, database_writer, cloud_storage_writer,
+    # catalog_writer) are skipped: attaching a downstream node to a sink is
+    # always wrong (the sink consumes data, doesn't produce it). Tier 7
+    # is the truly-empty case (cold flow OR all live nodes are sinks).
+    # Selection / pin tiers above still take precedence when set; LLM override
+    # + settings-field hint always win.
     if not upstream_ids:
         live_nodes = flow.nodes
-        if len(live_nodes) > 1:
-            # Tier 6 — ambiguous: the planner will turn this into a
-            # tool_call_rejected event for add_* calls.
-            ambiguous_detail = _format_ambiguous_insertion_detail(flow)
-        elif len(live_nodes) == 1:
-            # Tier 7 — exactly one live node; safe to chain.
-            try:
-                upstream_ids = [int(live_nodes[0].node_id)]
-            except (TypeError, ValueError, AttributeError):
-                upstream_ids = []
-        # else: Tier 8 — truly cold flow, leave upstream_ids empty.
+        if live_nodes:
+            for candidate in reversed(live_nodes):
+                template = getattr(candidate, "node_template", None)
+                # ``NodeTemplate.output`` is an int port count. Default to 1
+                # when the template is missing or the attribute isn't set —
+                # treating an unknown node type as non-terminal preserves the
+                # pre-fix behaviour for any node missing a registered template.
+                if template is not None and getattr(template, "output", 1) == 0:
+                    continue
+                try:
+                    upstream_ids = [int(candidate.node_id)]
+                    break
+                except (TypeError, ValueError, AttributeError):
+                    continue
+        # else / no non-sink found: Tier 7 — leave upstream_ids empty.
 
     raw_right = args.get("right_input_node_id")
     right_input_node_id = raw_right if isinstance(raw_right, int) else None
@@ -678,13 +698,60 @@ def _collect_staged_upstream_positions(
     return out
 
 
+_SETTINGS_REPLY_MAX_CHARS = 2000
+"""Cap on the JSON-serialised settings echo in the LLM tool reply.
+
+Empirically, simple node settings (filter, group_by, select) serialise to
+200-500 chars; complex ones (multi-column joins, formulas with long
+expressions) can exceed 1500. The cap keeps the tool reply bounded so a
+pathological staging doesn't blow the context budget. When clipped, we
+append ``... [truncated]`` so the LLM knows the echo is partial and can
+``read_node_schema`` if needed.
+"""
+
+
+def _extract_staged_settings_for_reply(result: ToolExecutionResult) -> str | None:
+    """Return a compact JSON of the just-staged settings, for the LLM tool reply.
+
+    2026-05-07 — without this, the only post-staging signal the LLM gets back
+    is ``status: staged | predicted columns: ...``. When the user later asks
+    to modify the same node, the LLM has to invent the full settings dict
+    (W47 contract: pass the *full* settings) — including fields it can't
+    know like ``pos_x`` / ``pos_y`` / ``user_id`` / ``depending_on_id``,
+    which it then hallucinates with random-looking values that overwrite
+    the real ones. Echoing the staged settings closes that loop.
+
+    Handles both ``add_*`` payloads (settings under ``"settings"``) and
+    W47 modification payloads (settings under ``"new_settings"``). Returns
+    ``None`` for op shapes without a settings dict (connect / delete_node
+    / delete_connection).
+    """
+    payload = result.staged_node_payload
+    if not isinstance(payload, dict):
+        return None
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        settings = payload.get("new_settings")
+    if not isinstance(settings, dict):
+        return None
+    try:
+        rendered = json.dumps(settings, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return None
+    if len(rendered) > _SETTINGS_REPLY_MAX_CHARS:
+        rendered = rendered[:_SETTINGS_REPLY_MAX_CHARS] + "... [truncated]"
+    return rendered
+
+
 def _summarise_result_for_llm(result: ToolExecutionResult) -> str:
     """Compact summary of a :class:`ToolExecutionResult` for the LLM tool message.
 
     The LLM sees this as the ``role="tool"`` reply that closes the loop on
     its prior tool call. Keep it terse but include enough signal for the
     LLM to correct on retry: refusal reason / detail, predicted columns,
-    warnings.
+    warnings, and (2026-05-07) the just-staged settings dict so subsequent
+    ``update_node_settings`` calls can copy current values rather than
+    hallucinate them.
     """
     parts: list[str] = [f"status: {result.status}"]
     if result.status == "rejected":
@@ -702,14 +769,34 @@ def _summarise_result_for_llm(result: ToolExecutionResult) -> str:
         )
         if cols:
             parts.append(f"predicted columns: {cols}")
+    if result.status in {"staged", "applied", "warned"}:
+        settings_json = _extract_staged_settings_for_reply(result)
+        if settings_json is not None:
+            parts.append(f"settings: {settings_json}")
     if result.extra:
         parts.append(f"extra: {result.extra}")
     return " | ".join(parts)
 
 
 def _payload_node_id(payload: dict[str, Any] | None) -> int | None:
+    """Extract the node id a staged tool call targets.
+
+    For ``add_*`` payloads the id lives on the validated settings dict
+    (``payload["settings"]["node_id"]``); the planner emits this for
+    ``staged_node_ids`` tracking and for the ``tool_call_staged`` event.
+    For W47 ``update_node_settings`` modification payloads, the id is
+    a top-level field — modifications target an existing node, so the
+    inner ``new_settings.node_id`` is not authoritative (and might be
+    omitted by the LLM). We return the top-level ``node_id`` in that
+    case for the event payload, but the planner does NOT add modification
+    targets to ``staged_node_ids`` (that list is for net-new nodes; the
+    W45 drift detector treats modification targets as unchanged).
+    """
     if not isinstance(payload, dict):
         return None
+    if payload.get("kind") == "modification":
+        nid = payload.get("node_id")
+        return nid if isinstance(nid, int) else None
     settings = payload.get("settings")
     if not isinstance(settings, dict):
         return None
@@ -1221,54 +1308,11 @@ async def _run_planner_loop(
                     "staged_node_ids_at_stage": list(session.staged_node_ids),
                 }
 
-            # W57 — ambiguity refusal. The resolver returned an empty upstream
-            # because there are multiple live nodes and no signal for which to
-            # use. Refuse rather than guess; the LLM retries with explicit
-            # ``upstream_node_ids``. Only applies to add_* calls (other ops
-            # don't consume upstream_node_ids).
-            if tc.name.startswith(_ADD_PREFIX) and ambiguous_detail is not None:
-                audit_id_for_event: int | None = None
-                try:
-                    audit_row = audit_module.record_event(
-                        audit_module.AuditEvent(
-                            session_id=session.session_id,
-                            user_id=session.user_id,
-                            tool_name=tc.name,
-                            flow_id=session.flow_id,
-                            result_status="rejected",
-                            error=ambiguous_detail,
-                            tool_args={
-                                **(safety.redact_secrets(tool_args) if tool_args else {}),
-                                "__planner_meta__": audit_meta,
-                            },
-                        )
-                    )
-                    audit_id_for_event = audit_row.id if audit_row is not None else None
-                except Exception:  # noqa: BLE001 — audit must not crash the loop
-                    logger.warning("audit.record_event failed for ambiguous_insertion_context", exc_info=False)
-
-                session.messages.append(
-                    Message(
-                        role="tool",
-                        tool_call_id=tc.id,
-                        name=tc.name,
-                        content=f"status: rejected | refusal: ambiguous_insertion_context | detail: {ambiguous_detail}",
-                    )
-                )
-                yield PlannerEvent(
-                    event="tool_call_rejected",
-                    payload={
-                        "id": tc.id,
-                        "name": tc.name,
-                        "reason": "ambiguous_insertion_context",
-                        "detail": ambiguous_detail,
-                        "op_kind": op_kind,
-                        "rationale": rationale,
-                        "arg_summary": arg_summary,
-                        "audit_id": audit_id_for_event,
-                    },
-                )
-                continue
+            # W57 ambiguity-refusal block removed 2026-05-07 — the resolver
+            # now falls back to ``live_nodes[-1]`` for the multi-live-node
+            # case rather than refusing. ``ambiguous_detail`` is always
+            # ``None`` post-revert; preserved in the tuple shape for call-
+            # site destructuring stability.
 
             # W54 — universal self-loop invariant guard. Catches all three
             # plausible upstream causes (LLM-provided collision, stale

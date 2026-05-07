@@ -48,10 +48,17 @@ const handleCancelReject = (): void => {
 const handleDismissToast = (): void => {
   aiDiffStore.lastApplyResult = null;
 };
+
+const handleDismissStaleNotice = (): void => {
+  aiDiffStore.dismissStaleNotice();
+};
 </script>
 
 <template>
-  <div v-if="aiDiffStore.currentDiff || aiDiffStore.lastApplyResult" class="ai-diff-panel">
+  <div
+    v-if="aiDiffStore.currentDiff || aiDiffStore.lastApplyResult || aiDiffStore.staleNotice"
+    class="ai-diff-panel"
+  >
     <AiDiffPreview
       v-if="aiDiffStore.currentDiff"
       :diff="aiDiffStore.currentDiff"
@@ -102,6 +109,27 @@ const handleDismissToast = (): void => {
         ×
       </button>
     </div>
+
+    <!-- Surfaced when the backend 404s on accept/reject (e.g. flowfile_core
+         was restarted and the on-disk diff sidecar didn't survive). The
+         store auto-dismisses the notice after ~6s; this button lets the
+         user clear it sooner. -->
+    <div
+      v-if="aiDiffStore.staleNotice"
+      class="ai-diff-panel__toast ai-diff-panel__toast--stale"
+      role="status"
+    >
+      <span class="ai-diff-panel__toast-icon">⚠</span>
+      <span class="ai-diff-panel__toast-text">{{ aiDiffStore.staleNotice }}</span>
+      <button
+        type="button"
+        class="ai-diff-panel__toast-dismiss ai-diff-panel__toast-dismiss--stale"
+        aria-label="Dismiss"
+        @click="handleDismissStaleNotice"
+      >
+        ×
+      </button>
+    </div>
   </div>
 </template>
 
@@ -138,6 +166,19 @@ const handleDismissToast = (): void => {
   line-height: 1;
   color: var(--color-success, #28a745);
   padding: 0 4px;
+}
+
+/* Stale-diff notice — amber palette mirrors the drift error block in
+   AiDiffPreview.vue, signalling "warning, action needed" rather than
+   the success-green of the apply toast. */
+.ai-diff-panel__toast--stale {
+  background-color: var(--color-warning-light, #fff8e1);
+  border-color: var(--color-warning, #b07b00);
+  color: var(--color-warning, #b07b00);
+}
+
+.ai-diff-panel__toast-dismiss--stale {
+  color: var(--color-warning, #b07b00);
 }
 
 .ai-diff-panel__rejection {

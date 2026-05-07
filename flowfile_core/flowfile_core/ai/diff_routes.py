@@ -22,8 +22,10 @@ Error mapping mirrors W12 / W20 / W23 / W34:
 
 * ``404`` — unknown ``diff_id``; flow not found.
 * ``409`` — drift detected before mutation (D006 — diff stays in store).
-* ``422`` — Pydantic validation; cross-flow id mismatch; mid-batch raise
-  (graph is rolled back; diff stays in store so user can fix-and-retry).
+* ``422`` — Pydantic validation; cross-flow id mismatch; W70 inconsistency
+  (staged connection references a node id that's neither live nor in
+  the diff's additions; diff stays in store); mid-batch raise (graph is
+  rolled back; diff stays in store so user can fix-and-retry).
 * ``503`` — ``FEATURE_FLAG_AI`` off (inherited router-level).
 """
 
@@ -235,8 +237,11 @@ async def accept_diff(
       Diff stays in the store so the user can fix the underlying graph and
       retry.
     * ``422`` — body ``flow_id`` doesn't match the stored diff's
-      ``flow_id``; or mid-batch raise during apply (graph is rolled back;
-      diff stays in store).
+      ``flow_id``; W70 inconsistency (a staged connection references a
+      node id that's neither live nor in this diff's additions; diff
+      stays in store so the user can Reject and ask the agent to retry);
+      or mid-batch raise during apply (graph is rolled back; diff stays
+      in store).
     * ``503`` — ``FEATURE_FLAG_AI`` off.
     """
     graph_diff = diff.get_diff(diff_id)
@@ -258,6 +263,15 @@ async def accept_diff(
             detail={
                 "error": "diff_drift",
                 "missing_node_ids": exc.missing_node_ids,
+                "diff_id": diff_id,
+            },
+        ) from exc
+    except diff.DiffInconsistentError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "diff_inconsistent",
+                "missing_endpoints": [[eid, role] for eid, role in exc.missing_endpoints],
                 "diff_id": diff_id,
             },
         ) from exc

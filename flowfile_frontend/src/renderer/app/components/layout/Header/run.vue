@@ -95,21 +95,16 @@ defineExpose({
   flex-shrink: 0;
 }
 
-/* Run button - normal state — matches the AI primary-button gradient
-   used by Send / Accept Diff so the run + AI surfaces share visual language. */
+/* Run button - normal state */
 .button-group .el-button:first-child:not([disabled]) {
-  background: linear-gradient(
-    135deg,
-    var(--color-accent-purple) 0%,
-    var(--color-accent-purple-hover) 100%
-  ) !important;
-  border: 1px solid var(--color-accent-purple-hover) !important;
+  background-color: var(--color-accent-purple) !important;
+  border: 1px solid var(--color-accent-purple) !important;
   color: #ffffff !important;
 }
 
 /* Run button - hover state */
 .button-group .el-button:first-child:not([disabled]):hover {
-  background: var(--color-accent-purple-hover) !important;
+  background-color: var(--color-accent-purple-hover) !important;
   border-color: var(--color-accent-purple-hover) !important;
 }
 

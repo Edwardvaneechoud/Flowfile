@@ -102,36 +102,46 @@ def test_full_catalog_returns_tool_specs() -> None:
     assert all(isinstance(tool, ToolSpec) for tool in catalog)
 
 
-def test_w46_unimplemented_stubs_absent_from_catalog() -> None:
-    """W46 — the three W31 stub tools must not be in the catalog.
+def test_w47_update_node_settings_present_in_catalog() -> None:
+    """W47 — ``flowfile.graph.update_node_settings`` is back in the catalog
+    with a real implementation. Inverts the W46 absence assertion: W46
+    pulled the tool because the executor refused it; W47 lifts the refusal
+    and ships ``_handle_update_node_settings`` plus the modifications
+    bucket on :class:`GraphDiff`.
 
-    ``update_node_settings`` / ``run_node`` / ``propose_subgraph`` were
-    advertised in the catalog but the executor refused them. The LLM kept
-    burning retries on stubs. W46 dropped the entries; the executor's
-    rejection branch stays as defence-in-depth.
+    ``run_node`` / ``propose_subgraph`` stay out — W46 dropped them
+    permanently (autonomous run-node is unsafe; propose_subgraph is
+    redundant with the planner's per-step staging).
     """
     catalog = build_tool_catalog()
     names = {tool.name for tool in catalog}
-    assert "flowfile.graph.update_node_settings" not in names
+    assert "flowfile.graph.update_node_settings" in names
     assert "flowfile.graph.run_node" not in names
     assert "flowfile.graph.propose_subgraph" not in names
 
-    # And not in any preset / category lookup either (defence vs
-    # `_UNIVERSAL_OP_NAMES` derivation drift).
+    # The universal-ops derivation auto-includes ``update_node_settings``
+    # in every surface / category preset alongside add_node / connect /
+    # delete_node / delete_connection.
     from flowfile_core.ai.tools.registry import (
         CATEGORY_PRESETS,
         SURFACE_PRESETS,
+        _UNIVERSAL_OP_NAMES,
     )
 
-    forbidden = {
-        "flowfile.graph.update_node_settings",
+    assert "flowfile.graph.update_node_settings" in _UNIVERSAL_OP_NAMES
+
+    permanently_dropped = {
         "flowfile.graph.run_node",
         "flowfile.graph.propose_subgraph",
     }
     for surface, preset in SURFACE_PRESETS.items():
-        assert not (forbidden & preset), f"surface {surface!r} contains a removed stub: {forbidden & preset}"
+        assert not (permanently_dropped & preset), (
+            f"surface {surface!r} contains a removed stub: {permanently_dropped & preset}"
+        )
     for category, preset in CATEGORY_PRESETS.items():
-        assert not (forbidden & preset), f"category {category!r} contains a removed stub: {forbidden & preset}"
+        assert not (permanently_dropped & preset), (
+            f"category {category!r} contains a removed stub: {permanently_dropped & preset}"
+        )
 
 
 # ---------------------------------------------------------------------------

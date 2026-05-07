@@ -330,6 +330,138 @@ def test_apply_diff_drift_detected() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 5b. W70 — diff inconsistency detection                                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_validate_diff_rejects_phantom_connection_endpoint() -> None:
+    """W70 — staged connection references a node id that's neither live
+    nor in this diff's additions. Replicates the live audit trail: agent
+    staged ``add_group_by(node_id=10, upstream_node_ids=[2])`` plus a
+    redundant ``connect(from=2, to=77)`` where 77 was hallucinated.
+    """
+    flow = _flow_with_orders()
+    # One legitimate addition (id=2) plus one connection to a phantom id 77.
+    graph_diff = diff.GraphDiff(
+        session_id="s",
+        flow_id=1,
+        additions=[
+            diff.StagedAddition(
+                node_type="filter",
+                settings=_filter_args(node_id=2, depending_on_id=1),
+                insertion_context=diff.StagedInsertionContext(upstream_node_ids=[1]),
+            )
+        ],
+        connections_added=[
+            diff.StagedConnection(
+                connection=input_schema.NodeConnection.create_from_simple_input(
+                    from_id=1, to_id=77, input_type="input-0", output_handle="output-0"
+                ).model_dump(),
+            )
+        ],
+    )
+
+    with pytest.raises(diff.DiffInconsistentError) as exc_info:
+        diff.validate_diff_against_flow(flow, graph_diff)
+
+    assert exc_info.value.missing_endpoints == [(77, "to")]
+
+
+def test_validate_diff_accepts_in_batch_added_endpoint() -> None:
+    """W70 — chained additions where the connection references an id
+    being added in the same diff. Legal: in-batch references resolve.
+    """
+    flow = _flow_with_orders()
+    second_filter = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=11,
+        depending_on_id=10,
+        filter_input=transform_schema.FilterInput(filter_type="advanced", advanced_filter="[amount] > 50"),
+    ).model_dump(mode="json")
+    graph_diff = diff.GraphDiff(
+        session_id="s",
+        flow_id=1,
+        additions=[
+            diff.StagedAddition(
+                node_type="filter",
+                settings=_filter_args(node_id=10, depending_on_id=1),
+                insertion_context=diff.StagedInsertionContext(upstream_node_ids=[1]),
+            ),
+            diff.StagedAddition(
+                node_type="filter",
+                settings=second_filter,
+                insertion_context=diff.StagedInsertionContext(upstream_node_ids=[10]),
+            ),
+        ],
+        connections_added=[
+            diff.StagedConnection(
+                connection=input_schema.NodeConnection.create_from_simple_input(
+                    from_id=10, to_id=11, input_type="input-0", output_handle="output-0"
+                ).model_dump(),
+            )
+        ],
+    )
+
+    # Should not raise — id 11 is in this diff's additions; id 10 too.
+    diff.validate_diff_against_flow(flow, graph_diff)
+
+
+def test_apply_diff_does_not_reach_apply_path_on_inconsistent_diff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W70 — ``apply_diff`` short-circuits via validation before the
+    per-op apply loop. Spies on ``_apply_add_node`` and ``add_connection``
+    to assert zero invocations when the diff is inconsistent.
+    """
+    flow = _flow_with_orders()
+    graph_diff = diff.GraphDiff(
+        session_id="s",
+        flow_id=1,
+        additions=[
+            diff.StagedAddition(
+                node_type="filter",
+                settings=_filter_args(node_id=2, depending_on_id=1),
+                insertion_context=diff.StagedInsertionContext(upstream_node_ids=[1]),
+            )
+        ],
+        connections_added=[
+            diff.StagedConnection(
+                connection=input_schema.NodeConnection.create_from_simple_input(
+                    from_id=1, to_id=77, input_type="input-0", output_handle="output-0"
+                ).model_dump(),
+            )
+        ],
+    )
+
+    apply_calls: list[tuple] = []
+    connect_calls: list[tuple] = []
+
+    def _spy_apply_add(*args, **kwargs):  # type: ignore[no-untyped-def]
+        apply_calls.append((args, kwargs))
+
+    def _spy_add_connection(*args, **kwargs):  # type: ignore[no-untyped-def]
+        connect_calls.append((args, kwargs))
+
+    # Both seams live in ``flowfile_core.ai.diff`` import scope: ``_apply_add_node``
+    # is imported at module top; ``add_connection`` is imported lazily inside
+    # ``apply_diff``. Patch both at their import sources to catch any sneak path.
+    monkeypatch.setattr("flowfile_core.ai.diff._apply_add_node", _spy_apply_add)
+    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.add_connection", _spy_add_connection)
+
+    pre_undo = flow.get_history_state().undo_count
+    pre_node_count = len(flow.nodes)
+
+    with pytest.raises(diff.DiffInconsistentError):
+        diff.apply_diff(flow, graph_diff)
+
+    assert apply_calls == [], "validation must reject before _apply_add_node fires"
+    assert connect_calls == [], "validation must reject before add_connection fires"
+    # No snapshot was taken (validation is checked first).
+    assert flow.get_history_state().undo_count == pre_undo
+    assert len(flow.nodes) == pre_node_count
+
+
+# --------------------------------------------------------------------------- #
 # 6. Accept route flips audit actions                                          #
 # --------------------------------------------------------------------------- #
 
@@ -481,6 +613,58 @@ def test_route_409_drift(authed_client: TestClient, registered_flow: FlowGraph) 
 
 
 # --------------------------------------------------------------------------- #
+# 9b. W70 — 422 diff_inconsistent via the route                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_route_422_diff_inconsistent(authed_client: TestClient, registered_flow: FlowGraph) -> None:
+    """W70 — Accept route returns 422 with a typed `diff_inconsistent`
+    detail when the staged diff carries a phantom connection endpoint,
+    and the diff stays in the store so the user can Reject and ask the
+    agent to retry.
+    """
+    staged_filter = _stage_filter(registered_flow, node_id=2, upstream=1)
+    phantom_connection = input_schema.NodeConnection.create_from_simple_input(
+        from_id=1, to_id=77, input_type="input-0", output_handle="output-0"
+    ).model_dump()
+
+    stage_response = authed_client.post(
+        "/ai/diff/stage",
+        json={
+            "session_id": "s",
+            "flow_id": registered_flow.flow_id,
+            "staged_results": [
+                {
+                    "tool_name": staged_filter.tool_name,
+                    "audit_id": staged_filter.audit_id,
+                    "staged_node_payload": staged_filter.staged_node_payload,
+                },
+                {
+                    "tool_name": "flowfile.graph.connect",
+                    "audit_id": None,
+                    "staged_node_payload": {"connection": phantom_connection},
+                },
+            ],
+        },
+    )
+    assert stage_response.status_code == 200, stage_response.text
+    diff_id = stage_response.json()["diff_id"]
+
+    accept = authed_client.post(
+        f"/ai/diff/{diff_id}/accept",
+        json={"flow_id": registered_flow.flow_id},
+    )
+    assert accept.status_code == 422, accept.text
+    detail = accept.json()["detail"]
+    assert detail["error"] == "diff_inconsistent"
+    assert detail["missing_endpoints"] == [[77, "to"]]
+    assert detail["diff_id"] == diff_id
+
+    # Diff stays in the store so the user can Reject and ask the agent to retry.
+    assert diff.get_diff(diff_id) is not None
+
+
+# --------------------------------------------------------------------------- #
 # 10. 422 cross-flow mismatch                                                  #
 # --------------------------------------------------------------------------- #
 
@@ -622,3 +806,364 @@ def test_end_to_end_stage_then_accept(authed_client: TestClient, registered_flow
     assert diff.get_diff(diff_id) is None
 
     _ = connection_payload  # Keep the helper exercised for the future W40 path.
+
+
+# --------------------------------------------------------------------------- #
+# W47 — modifications bucket                                                   #
+# --------------------------------------------------------------------------- #
+
+
+def _flow_with_orders_and_filter(flow_id: int = 1) -> FlowGraph:
+    """``orders`` (id=1) → ``filter EU`` (id=2). Used by W47 tests to have an
+    existing filter node available for `update_node_settings` to mutate.
+
+    Mirrors the production ``_apply_add_node`` pattern (``add_filter`` then
+    ``add_connection``) so the filter's ``node_inputs.main_inputs`` is
+    populated — without the explicit connection, ``get_predicted_schema``
+    has no upstream data to feed into ``_func``.
+    """
+    from flowfile_core.flowfile.flow_graph import add_connection as _add_connection
+
+    flow = _flow_with_orders(flow_id=flow_id)
+    filter_settings = input_schema.NodeFilter(
+        flow_id=flow_id,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(filter_type="advanced", advanced_filter="[region]=='EU'"),
+    )
+    flow.add_filter(filter_settings)
+    _add_connection(
+        flow,
+        input_schema.NodeConnection.create_from_simple_input(
+            from_id=1, to_id=2, input_type="input-0", output_handle="output-0"
+        ),
+    )
+    flow.get_node(2).get_predicted_schema()
+    return flow
+
+
+def _filter_settings_dump(node_id: int, depending_on_id: int, expr: str) -> dict[str, Any]:
+    return input_schema.NodeFilter(
+        flow_id=1,
+        node_id=node_id,
+        depending_on_id=depending_on_id,
+        filter_input=transform_schema.FilterInput(filter_type="advanced", advanced_filter=expr),
+    ).model_dump(mode="json")
+
+
+def test_staged_settings_update_roundtrip() -> None:
+    """W47 — :class:`StagedSettingsUpdate` round-trips with all required fields.
+
+    Smoke test that the new bucket type is constructible and ``GraphDiff``
+    accepts a populated ``modifications`` list.
+    """
+    mod = diff.StagedSettingsUpdate(
+        node_id=9,
+        node_type="filter",
+        old_settings={"foo": 1},
+        new_settings={"foo": 2},
+        predicted_output_schema=[diff.StagedSchemaColumn(name="region", data_type="String")],
+        audit_id=42,
+    )
+    graph_diff = diff.GraphDiff(session_id="s", flow_id=1, modifications=[mod])
+    assert graph_diff.modifications[0].node_id == 9
+    assert graph_diff.modifications[0].old_settings == {"foo": 1}
+    assert graph_diff.modifications[0].new_settings == {"foo": 2}
+    assert diff.collect_audit_ids(graph_diff) == [42]
+
+
+def test_bundle_staged_results_bins_modification() -> None:
+    """W47 — bundler routes ``flowfile.graph.update_node_settings`` payloads
+    into the modifications bucket; mixed batch with an addition stays clean.
+    """
+    entries = [
+        diff.StagedToolEntry(
+            tool_name="flowfile.graph.add_filter",
+            audit_id=1,
+            staged_node_payload={
+                "node_type": "filter",
+                "settings": _filter_settings_dump(node_id=2, depending_on_id=1, expr="[region]=='EU'"),
+                "insertion_context": {"upstream_node_ids": [1]},
+                "predicted_output_schema": [],
+            },
+        ),
+        diff.StagedToolEntry(
+            tool_name="flowfile.graph.update_node_settings",
+            audit_id=2,
+            staged_node_payload={
+                "kind": "modification",
+                "node_id": 2,
+                "node_type": "filter",
+                "old_settings": _filter_settings_dump(node_id=2, depending_on_id=1, expr="[region]=='EU'"),
+                "new_settings": _filter_settings_dump(node_id=2, depending_on_id=1, expr="[amount] > 50"),
+                "predicted_output_schema": [],
+            },
+        ),
+    ]
+    bundled = diff.bundle_staged_results(entries)
+    assert len(bundled.additions) == 1
+    assert len(bundled.modifications) == 1
+    mod = bundled.modifications[0]
+    assert mod.node_id == 2
+    assert mod.node_type == "filter"
+    assert mod.audit_id == 2
+    # collect_audit_ids walks additions, then modifications, then connections, ...
+    diff_with_meta = diff.GraphDiff(
+        session_id="s",
+        flow_id=1,
+        additions=bundled.additions,
+        modifications=bundled.modifications,
+    )
+    assert diff.collect_audit_ids(diff_with_meta) == [1, 2]
+
+
+def test_bundle_staged_results_dedupes_modifications_by_node_id() -> None:
+    """2026-05-07 — multiple ``update_node_settings`` calls on the same
+    node within an agent run collapse to the latest one. Live trace
+    14:21 showed the LLM emitting 4 identical ``update_node_settings``
+    calls; without dedupe the diff preview surfaced *"4 modifications"*
+    with four identical cards stacked. The W47 contract is full-replace,
+    so the latest call already reflects the cumulative intent.
+    """
+    initial_settings = _filter_settings_dump(node_id=2, depending_on_id=1, expr="[region]=='EU'")
+    new_v1 = _filter_settings_dump(node_id=2, depending_on_id=1, expr="[amount] > 50")
+    new_v2 = _filter_settings_dump(node_id=2, depending_on_id=1, expr="[amount] > 100")
+    new_v3 = _filter_settings_dump(node_id=2, depending_on_id=1, expr="[amount] > 200")
+    entries = [
+        diff.StagedToolEntry(
+            tool_name="flowfile.graph.update_node_settings",
+            audit_id=10,
+            staged_node_payload={
+                "kind": "modification", "node_id": 2, "node_type": "filter",
+                "old_settings": initial_settings, "new_settings": new_v1,
+            },
+        ),
+        diff.StagedToolEntry(
+            tool_name="flowfile.graph.update_node_settings",
+            audit_id=11,
+            staged_node_payload={
+                "kind": "modification", "node_id": 2, "node_type": "filter",
+                "old_settings": new_v1, "new_settings": new_v2,
+            },
+        ),
+        diff.StagedToolEntry(
+            tool_name="flowfile.graph.update_node_settings",
+            audit_id=12,
+            staged_node_payload={
+                "kind": "modification", "node_id": 2, "node_type": "filter",
+                "old_settings": new_v2, "new_settings": new_v3,
+            },
+        ),
+    ]
+    bundled = diff.bundle_staged_results(entries)
+    # Three calls on node 2 collapse to one entry: the latest.
+    assert len(bundled.modifications) == 1
+    mod = bundled.modifications[0]
+    assert mod.audit_id == 12
+    # The "After" payload reflects the last LLM call's intent.
+    assert mod.new_settings.get("filter_input", {}).get("advanced_filter") == "[amount] > 200"
+
+
+def test_bundle_staged_results_dedupes_modifications_per_node() -> None:
+    """Modifications targeting *different* nodes do NOT dedupe — each gets
+    its own entry. Only same-node duplicates collapse."""
+    settings_a = _filter_settings_dump(node_id=2, depending_on_id=1, expr="[region]=='EU'")
+    settings_b = _filter_settings_dump(node_id=3, depending_on_id=1, expr="[region]=='US'")
+    entries = [
+        diff.StagedToolEntry(
+            tool_name="flowfile.graph.update_node_settings",
+            audit_id=20,
+            staged_node_payload={
+                "kind": "modification", "node_id": 2, "node_type": "filter",
+                "old_settings": settings_a, "new_settings": settings_a,
+            },
+        ),
+        diff.StagedToolEntry(
+            tool_name="flowfile.graph.update_node_settings",
+            audit_id=21,
+            staged_node_payload={
+                "kind": "modification", "node_id": 3, "node_type": "filter",
+                "old_settings": settings_b, "new_settings": settings_b,
+            },
+        ),
+    ]
+    bundled = diff.bundle_staged_results(entries)
+    assert len(bundled.modifications) == 2
+    assert {m.node_id for m in bundled.modifications} == {2, 3}
+
+
+def test_bundle_staged_results_rejects_modification_without_kind() -> None:
+    """W47 — defensive: missing ``kind="modification"`` in the payload is
+    a programming error from upstream; raise so it surfaces as 422.
+    """
+    entries = [
+        diff.StagedToolEntry(
+            tool_name="flowfile.graph.update_node_settings",
+            audit_id=1,
+            staged_node_payload={"node_id": 2, "node_type": "filter"},  # no kind
+        ),
+    ]
+    with pytest.raises(ValueError, match="kind='modification'"):
+        diff.bundle_staged_results(entries)
+
+
+def test_validate_diff_against_flow_drift_on_missing_modification_target() -> None:
+    """W47 — a modification targeting a node that's neither live nor in
+    the diff's additions raises :class:`DiffDriftError` with the missing
+    id surfaced. Mirrors how addition-upstream drift is reported.
+    """
+    flow = _flow_with_orders()
+    graph_diff = diff.GraphDiff(
+        session_id="s",
+        flow_id=1,
+        modifications=[
+            diff.StagedSettingsUpdate(
+                node_id=99,
+                node_type="filter",
+                old_settings={},
+                new_settings=_filter_settings_dump(node_id=99, depending_on_id=1, expr="[amount] > 50"),
+            ),
+        ],
+    )
+    with pytest.raises(diff.DiffDriftError) as exc_info:
+        diff.validate_diff_against_flow(flow, graph_diff)
+    assert exc_info.value.missing_node_ids == [99]
+
+
+def test_validate_diff_against_flow_tolerates_modification_on_in_batch_addition() -> None:
+    """W47 — a modification targeting an in-batch addition is legal
+    (parallel to addition-chaining via upstream ids). Apply order is
+    additions → modifications, so the addition exists when the
+    modification fires.
+    """
+    flow = _flow_with_orders()
+    graph_diff = diff.GraphDiff(
+        session_id="s",
+        flow_id=1,
+        additions=[
+            diff.StagedAddition(
+                node_type="filter",
+                settings=_filter_settings_dump(node_id=10, depending_on_id=1, expr="[region]=='EU'"),
+                insertion_context=diff.StagedInsertionContext(upstream_node_ids=[1]),
+            ),
+        ],
+        modifications=[
+            diff.StagedSettingsUpdate(
+                node_id=10,
+                node_type="filter",
+                old_settings={},
+                new_settings=_filter_settings_dump(node_id=10, depending_on_id=1, expr="[amount] > 50"),
+            ),
+        ],
+    )
+    # Should not raise — id 10 is in the additions bucket.
+    diff.validate_diff_against_flow(flow, graph_diff)
+
+
+def test_apply_diff_modification_mutates_settings_and_single_undo_point() -> None:
+    """W47 — applying a single modification mutates the live node's
+    ``setting_input`` to the new value and registers exactly one BATCH
+    snapshot on the undo stack.
+    """
+    flow = _flow_with_orders_and_filter()
+    pre_undo = flow.get_history_state().undo_count
+    pre_filter = flow.get_node(2).setting_input
+    assert pre_filter.filter_input.advanced_filter == "[region]=='EU'"
+
+    graph_diff = diff.GraphDiff(
+        session_id="s",
+        flow_id=1,
+        modifications=[
+            diff.StagedSettingsUpdate(
+                node_id=2,
+                node_type="filter",
+                old_settings=pre_filter.model_dump(mode="json"),
+                new_settings=_filter_settings_dump(node_id=2, depending_on_id=1, expr="[amount] > 50"),
+            ),
+        ],
+        rationale="show only large amounts",
+    )
+    result = diff.apply_diff(flow, graph_diff)
+
+    assert result.modified_node_ids == [2]
+    post_filter = flow.get_node(2).setting_input
+    assert post_filter.filter_input.advanced_filter == "[amount] > 50"
+    assert flow.get_history_state().undo_count - pre_undo == 1
+
+
+def test_apply_diff_modification_rolls_back_on_midbatch_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """W47 — when a downstream op raises after a modification has already
+    fired, ``flow.undo()`` rolls the BATCH snapshot back and the live
+    node's settings revert to the pre-apply value. The diff stays in the
+    store so the user can fix-and-retry.
+    """
+    flow = _flow_with_orders_and_filter()
+    pre_filter_dump = flow.get_node(2).setting_input.model_dump(mode="json")
+    pre_undo = flow.get_history_state().undo_count
+
+    graph_diff = diff.GraphDiff(
+        session_id="s",
+        flow_id=1,
+        modifications=[
+            diff.StagedSettingsUpdate(
+                node_id=2,
+                node_type="filter",
+                old_settings=pre_filter_dump,
+                new_settings=_filter_settings_dump(node_id=2, depending_on_id=1, expr="[amount] > 50"),
+                audit_id=42,
+            ),
+        ],
+        deletions=[diff.StagedDeletion(delete_node_id=1, audit_id=43)],
+    )
+    diff.register_diff(graph_diff)
+
+    # Detonate the deletion bucket so the modification has already been applied
+    # by the time the raise fires — exercises the rollback path.
+    def _boom(self: FlowGraph, node_id):  # type: ignore[no-untyped-def]
+        raise RuntimeError("simulated post-modification failure")
+
+    monkeypatch.setattr(FlowGraph, "delete_node", _boom)
+    with pytest.raises(RuntimeError, match="simulated post-modification failure"):
+        diff.apply_diff(flow, graph_diff)
+
+    # Live node's settings rolled back to pre-apply state.
+    post_filter = flow.get_node(2).setting_input
+    assert post_filter.filter_input.advanced_filter == "[region]=='EU'"
+    # Diff stays in the store.
+    assert diff.get_diff(graph_diff.diff_id) is graph_diff
+    # BATCH snapshot taken then undone — net delta 0.
+    assert flow.get_history_state().undo_count == pre_undo
+
+
+def test_apply_diff_modification_chained_after_addition() -> None:
+    """W47 — addition + modification of the freshly-added node in the
+    same diff. The bundler bins them; ``apply_diff`` walks additions
+    first so the modification fires against a real node.
+    """
+    flow = _flow_with_orders()
+    pre_filter_count = sum(1 for n in flow.nodes if n.node_type == "filter")
+    graph_diff = diff.GraphDiff(
+        session_id="s",
+        flow_id=1,
+        additions=[
+            diff.StagedAddition(
+                node_type="filter",
+                settings=_filter_settings_dump(node_id=10, depending_on_id=1, expr="[region]=='EU'"),
+                insertion_context=diff.StagedInsertionContext(upstream_node_ids=[1]),
+            ),
+        ],
+        modifications=[
+            diff.StagedSettingsUpdate(
+                node_id=10,
+                node_type="filter",
+                old_settings={},
+                new_settings=_filter_settings_dump(node_id=10, depending_on_id=1, expr="[amount] > 100"),
+            ),
+        ],
+    )
+    result = diff.apply_diff(flow, graph_diff)
+    assert result.applied_node_ids == [10]
+    assert result.modified_node_ids == [10]
+    post_filter = flow.get_node(10).setting_input
+    assert post_filter.filter_input.advanced_filter == "[amount] > 100"
+    assert sum(1 for n in flow.nodes if n.node_type == "filter") == pre_filter_count + 1
