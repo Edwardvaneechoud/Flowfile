@@ -221,9 +221,16 @@ export const summarizeToolArgs = (
  * W38 — predicate for the chat-trail filter: true when an event should be
  * suppressed from the user-visible timeline.
  *
- * - ``op_kind === "meta"`` events are D002 internal routing
- *   (``flowfile.meta.pick_category`` and the "category narrowed" info note)
- *   and never appear in the user's chat.
+ * - ``op_kind === "meta"`` SUCCESSFUL events are D002 internal routing
+ *   (``flowfile.meta.pick_category`` ✓, ``classify_intent`` ✓,
+ *   ``pick_node_type`` ✓, ``pick_upstream`` ✓) and never appear in the
+ *   user's chat — the host renders the resulting state via
+ *   ``stage_advanced`` events (W71) or by narrowing the catalog.
+ * - ``op_kind === "meta"`` REJECTED events (W71 v1.3) are the user's only
+ *   debugging signal when the LLM mis-fills a meta tool — e.g. llama-70b
+ *   emitting ``upstream_node_ids`` as a string. We MUST show them so the
+ *   refusal_detail surfaces in the chat trail; otherwise the user sees
+ *   only "Retrying step (attempt 1 of 3)" with no clue why.
  * - ``info`` events without a message are server housekeeping
  *   (e.g. resume re-snapshots) — UI doesn't need to surface them either.
  */
@@ -232,7 +239,7 @@ export const isAgentEventHidden = (
   payload: Record<string, unknown> | null | undefined,
 ): boolean => {
   const opKind = payload && typeof payload.op_kind === "string" ? payload.op_kind : "";
-  if (opKind === "meta") return true;
+  if (opKind === "meta" && kind !== "tool_call_rejected") return true;
   if (kind === "info") {
     const message = payload && typeof payload.message === "string" ? payload.message : "";
     if (!message) return true;

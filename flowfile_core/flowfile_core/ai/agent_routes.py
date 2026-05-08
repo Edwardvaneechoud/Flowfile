@@ -79,7 +79,13 @@ class AgentStartRequest(BaseModel):
 
     flow_id: int = Field(ge=0)
     prompt: str = Field(min_length=1, max_length=5_000)
-    surface: Literal["agent", "agent_complex"] = "agent"
+    surface: Literal["agent", "agent_complex", "agent_staged"] = "agent_staged"
+    """W71 — defaults to ``agent_staged`` (multi-stage state machine).
+    Existing clients can still opt into the legacy two-stage ``agent``
+    surface or the single-shot ``agent_complex`` surface by passing the
+    value explicitly. The frontend reads back the chosen surface via
+    :class:`AgentStateResponse.surface` so the UI knows which agent is
+    in use."""
     samples_mode: Literal["off", "regex"] = "off"
     provider: str = Field(default="anthropic", min_length=1)
     model: str | None = None
@@ -158,6 +164,19 @@ class AgentStateResponse(BaseModel):
     rationale: str | None
     pause_reason: str | None
     drift_detail: sessions.DriftDetail | None
+    stage: sessions.PlannerStage
+    """W71 — current state-machine stage for ``agent_staged`` sessions.
+    Stays at ``"classify"`` for legacy ``agent`` / ``agent_complex``
+    surfaces (those don't drive transitions). The frontend reads this
+    to render *"Step 1/4: classifying intent"* etc. on the agent panel."""
+    picked_op_kind: sessions.PlannerOpKind | None
+    """W71 — op kind chosen by the stage-0 ``classify_intent`` call,
+    surfaced so the UI can show the in-flight intent (*"Adding a node…"*
+    vs *"Modifying node 3…"*). ``None`` until classify resolves."""
+    picked_node_type: str | None
+    """W71 — node type chosen by stage 1's ``pick_node_type`` call.
+    Surfaced so the UI can show the in-flight node type. ``None`` until
+    pick_type resolves; reset to ``None`` after each successful add."""
     created_at: str
     updated_at: str
 
@@ -196,6 +215,9 @@ def _to_state_response(session: sessions.AgentSession) -> AgentStateResponse:
         rationale=session.rationale,
         pause_reason=session.pause_reason,
         drift_detail=session.drift_detail,
+        stage=session.stage,
+        picked_op_kind=session.picked_op_kind,
+        picked_node_type=session.picked_node_type,
         created_at=session.created_at.isoformat(),
         updated_at=session.updated_at.isoformat(),
     )
@@ -315,6 +337,37 @@ async def agent_start(
         session_kwargs["session_id"] = body.session_id
     session = sessions.AgentSession(**session_kwargs)
     sessions.register_session(session)
+
+    # W71 v1.1 — one structured INFO line per session start. Pairs with the
+    # ``planner.staged session=…`` lines emitted on each stage transition,
+    # so a single ``grep agent\\.`` against the core's stderr/log file
+    # reconstructs every session's surface + provider + model + the full
+    # state-machine trajectory without parsing the JSONL prompt log.
+    logger.info(
+        "agent.start session=%s flow=%s surface=%s provider=%s model=%s",
+        session.session_id[:8],
+        body.flow_id,
+        body.surface,
+        body.provider,
+        resolved_model,
+    )
+    # W71 v1.1 — soft warning when a small open-weights model is paired
+    # with the legacy two-stage surface. The combination is a known
+    # function-calling-API compliance failure mode (llama-3.3-70b on
+    # ``surface=agent`` emits text-JSON-in-content rather than tool_calls);
+    # ``agent_staged`` was built specifically to fix it. Emit at WARNING so
+    # the operator notices in the standard log without failing the call —
+    # users can still opt into legacy explicitly when they have a reason.
+    if body.surface == "agent" and body.provider in ("openrouter", "groq"):
+        model_str = (resolved_model or "").lower()
+        if "llama" in model_str:
+            logger.warning(
+                "agent.start: legacy surface=agent on a small model "
+                "(provider=%s model=%s) is a known function-calling failure "
+                "mode — consider surface=agent_staged for reliable tool use",
+                body.provider,
+                resolved_model,
+            )
 
     events = run_planner_session(
         session=session,

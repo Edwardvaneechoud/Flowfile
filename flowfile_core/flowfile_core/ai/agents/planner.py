@@ -65,7 +65,17 @@ from flowfile_core.ai.tools.executor import (
     ToolExecutionResult,
     execute_tool_call,
 )
-from flowfile_core.ai.tools.registry import build_tool_catalog
+from flowfile_core.ai.tools.meta_ops import (
+    CLASSIFY_INTENT_TOOL_NAME,
+    PICK_NODE_TYPE_TOOL_NAME,
+    PICK_UPSTREAM_TOOL_NAME,
+    build_pick_upstream_spec,
+)
+from flowfile_core.ai.tools.registry import (
+    build_staged_fill_tool_spec,
+    build_tool_catalog,
+    get_staged_fill_inner_field_name,
+)
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -73,7 +83,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_MAX_STEPS: int = 12
+DEFAULT_MAX_STEPS: int = 32
+"""Per-session planner-loop budget. Bumped from 12 for W71 because the
+``agent_staged`` surface fans each node-add into 4 LLM rounds (classify
+→ pick_type → pick_upstream → fill_settings); a 3-node user turn now
+needs at least 12 rounds. Legacy ``agent`` / ``agent_complex`` surfaces
+rarely hit even half of this — wasted budget is free, missed budget
+truncates the user's plan."""
 DEFAULT_MAX_RETRIES_PER_STEP: int = 3
 DEFAULT_MAX_TOKENS: int = 2_048
 RATIONALE_MAX_LEN: int = 500
@@ -91,6 +107,7 @@ PlannerEventName = Literal[
     "abort",
     "complete",
     "awaiting_user_input",
+    "stage_advanced",
     "error",
     "info",
 ]
@@ -124,6 +141,25 @@ class PlannerEvent(BaseModel):
 
 _ADD_PREFIX = "flowfile.graph.add_"
 _PICK_CATEGORY_NAME = "flowfile.meta.pick_category"
+
+# W71 — staged-flow tool name lookups. Mirrored from ``meta_ops`` so the
+# planner can branch on tool name without re-importing the constants in
+# the loop hot path.
+_CLASSIFY_INTENT_NAME = CLASSIFY_INTENT_TOOL_NAME
+_PICK_NODE_TYPE_NAME = PICK_NODE_TYPE_TOOL_NAME
+_PICK_UPSTREAM_NAME = PICK_UPSTREAM_TOOL_NAME
+
+# W71 — non-add ops that the staged surface dispatches via ``single_stage_op``.
+# The planner uses this set to decide when to call ``reset_stage_state`` after
+# a successful single-stage op so the next round restarts at ``classify``.
+_STAGED_SINGLE_OP_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "flowfile.graph.update_node_settings",
+        "flowfile.graph.delete_node",
+        "flowfile.graph.connect",
+        "flowfile.graph.delete_connection",
+    }
+)
 
 # W57 — settings-field names that express primary upstream dependency for
 # single-input nodes. The catalog generator (``tools/registry.py``) auto-derives
@@ -556,12 +592,22 @@ def _resolve_insertion_context(
     upstream_ids: list[int] = []
     ambiguous_detail: str | None = None
 
+    # Tier 0 (W71) — agent_staged stage 3: session state is canonical.
+    # The LLM at ``fill_settings`` doesn't see the upstream fields in its
+    # tool schema (they're stripped by ``build_staged_fill_tool_spec``);
+    # the upstream picker at stage 2 already resolved the choice and
+    # stored it on the session. Skip every other tier — these picks
+    # cannot be overridden by an LLM that didn't see the schema.
+    if session.surface == "agent_staged" and session.stage == "fill_settings":
+        upstream_ids = [uid for uid in (session.picked_upstream_ids or []) if isinstance(uid, int)]
+
     # Tier 1 — explicit planner param.
-    raw_upstream = args.get("upstream_node_ids")
-    if isinstance(raw_upstream, list):
-        for uid in raw_upstream:
-            if isinstance(uid, int):
-                upstream_ids.append(uid)
+    if not upstream_ids:
+        raw_upstream = args.get("upstream_node_ids")
+        if isinstance(raw_upstream, list):
+            for uid in raw_upstream:
+                if isinstance(uid, int):
+                    upstream_ids.append(uid)
 
     # Tier 2 — settings-field dependency hint.
     if not upstream_ids:
@@ -616,8 +662,12 @@ def _resolve_insertion_context(
                     continue
         # else / no non-sink found: Tier 7 — leave upstream_ids empty.
 
-    raw_right = args.get("right_input_node_id")
-    right_input_node_id = raw_right if isinstance(raw_right, int) else None
+    # W71 — at fill_settings, right input is also session-canonical.
+    if session.surface == "agent_staged" and session.stage == "fill_settings":
+        right_input_node_id = session.picked_right_input_id
+    else:
+        raw_right = args.get("right_input_node_id")
+        right_input_node_id = raw_right if isinstance(raw_right, int) else None
 
     pos_x = args.get("pos_x")
     pos_y = args.get("pos_y")
@@ -850,16 +900,59 @@ def _op_count(graph_diff: diff_module.GraphDiff) -> int:
     )
 
 
-def _resolve_current_surface(session: sessions.AgentSession, narrowed_category: str | None) -> str:
-    """Map the session's surface + the heuristic ``pick_category`` outcome to a tool surface.
+_AGENT_STAGED_OP_TO_SURFACE: dict[str, str] = {
+    "modify": "staged_modify",
+    "delete": "staged_delete",
+    "connect": "staged_connect",
+    "disconnect": "staged_disconnect",
+}
 
-    ``surface="agent"`` starts with just ``flowfile.meta.pick_category``;
-    once the LLM picks a category we narrow to ``CATEGORY_PRESETS[chosen]``
-    for the rest of the loop. ``surface="agent_complex"`` is one-shot full
-    catalog and never narrows.
+
+def _resolve_current_surface(session: sessions.AgentSession, narrowed_category: str | None) -> str:
+    """Map the session's surface + state to a tool-catalog surface key.
+
+    Legacy ``agent`` two-stage flow:
+
+    * ``surface="agent"`` starts with just ``flowfile.meta.pick_category``;
+      once the LLM picks a category we narrow to ``CATEGORY_PRESETS[chosen]``
+      for the rest of the loop.
+    * ``surface="agent_complex"`` is one-shot full catalog and never narrows.
+
+    W71 ``agent_staged`` multi-stage flow — branches on ``session.stage``:
+
+    * ``classify`` → ``"staged_classify"`` (one tool: ``classify_intent``).
+    * ``pick_type`` → ``"staged_pick_type"`` (one tool: ``pick_node_type``).
+    * ``pick_upstream`` → ``"staged_pick_upstream"`` (the planner builds a
+      per-turn dynamic spec via ``build_pick_upstream_spec`` so the upstream
+      enum is fresh; this surface key is a placeholder used by callers that
+      don't get the dynamic override).
+    * ``fill_settings`` → ``"staged_pick_upstream"`` here is overridden in
+      the loop with ``build_staged_fill_tool_spec(picked_node_type)``;
+      this function still returns a stable key for telemetry.
+    * ``single_stage_op`` → one of ``"staged_modify"`` / ``"staged_delete"``
+      / ``"staged_connect"`` / ``"staged_disconnect"`` per ``picked_op_kind``.
     """
     if session.surface == "agent_complex":
         return "agent_complex"
+    if session.surface == "agent_staged":
+        if session.stage == "single_stage_op" and session.picked_op_kind is not None:
+            mapped = _AGENT_STAGED_OP_TO_SURFACE.get(session.picked_op_kind)
+            if mapped is not None:
+                return mapped
+            # Defensive — picked_op_kind in {add, other} never reaches this
+            # branch (add advances through pick_type stages; other terminates
+            # the loop). Fall through to classify so the loop self-heals.
+            return "staged_classify"
+        if session.stage == "pick_type":
+            return "staged_pick_type"
+        if session.stage == "pick_upstream":
+            return "staged_pick_upstream"
+        if session.stage == "fill_settings":
+            # Telemetry-only: the planner overrides the catalog with a
+            # per-turn ``build_staged_fill_tool_spec`` call before
+            # dispatch.
+            return "staged_pick_upstream"
+        return "staged_classify"
     if narrowed_category is None:
         return "agent"
     return narrowed_category
@@ -887,12 +980,125 @@ def _build_initial_messages(flow: FlowGraph, session: sessions.AgentSession) -> 
         surface=session.surface,
         samples_mode=session.samples_mode,
         mentions="@flow",
+        stage=session.stage if session.surface == "agent_staged" else None,
+        picked_node_type=session.picked_node_type if session.surface == "agent_staged" else None,
     )
     user_text = f"{ctx.user}\n\n## Goal\n\n{session.user_prompt}".strip()
     return [
         Message(role="system", content=ctx.system),
         Message(role="user", content=user_text),
     ]
+
+
+def _log_stage_transition(
+    session: sessions.AgentSession,
+    *,
+    from_stage: str,
+    to_stage: str,
+    tool_name: str,
+    op_kind: str | None = None,
+    node_type: str | None = None,
+    upstream_node_ids: list[int] | None = None,
+    completed_op: str | None = None,
+) -> None:
+    """W71 — emit a structured INFO line per stage transition.
+
+    Pairs with the prompt log (``FLOWFILE_AI_LOG_PROMPTS=true``) to give
+    a complete debugging picture without enabling DEBUG: the prompt log
+    captures the raw LLM input/output per stage; this line captures the
+    state-machine transition itself, with the session id so multiple
+    concurrent sessions stay disambiguated.
+
+    Format: ``planner.staged session=<sid> from=<from> to=<to>
+    tool=<name> op_kind=<ok> node_type=<nt> upstream=<ids>
+    completed_op=<co>``. Tail with::
+
+        tail -F ~/.flowfile/logs/flowfile_core.log | grep planner.staged
+    """
+    parts: list[str] = [
+        f"session={session.session_id[:8]}",
+        f"from={from_stage}",
+        f"to={to_stage}",
+        f"tool={tool_name}",
+    ]
+    if op_kind:
+        parts.append(f"op_kind={op_kind}")
+    if node_type:
+        parts.append(f"node_type={node_type}")
+    if upstream_node_ids is not None:
+        parts.append(f"upstream={upstream_node_ids}")
+    if completed_op:
+        parts.append(f"completed_op={completed_op}")
+    logger.info("planner.staged %s", " ".join(parts))
+
+
+def _refresh_system_prompt_for_stage(session: sessions.AgentSession) -> None:
+    """W71 — replace ``session.messages[0]`` with a freshly-rendered system
+    prompt for the current stage.
+
+    No-op when the surface is not ``agent_staged`` or when the session
+    doesn't have a system message yet (the initial system prompt is built
+    by :func:`_build_initial_messages` on first entry to the loop).
+
+    Stages have different suffix files and different catalog scopes, so
+    the system prompt must be re-assembled when the stage changes.
+    Updating ``messages[0]`` in place keeps the rest of the conversation
+    history intact (assistant turns, tool replies). The prompt cache is
+    invalidated by the change but per-stage prompts are smaller, so the
+    re-keyed cache is cheap to fill.
+    """
+    if session.surface != "agent_staged":
+        return
+    if not session.messages or session.messages[0].role != "system":
+        return
+    from flowfile_core.ai.context.builder import assemble_system_prompt
+
+    new_system = assemble_system_prompt(
+        session.surface,
+        stage=session.stage,
+        picked_node_type=session.picked_node_type,
+    )
+    session.messages[0] = Message(role="system", content=new_system)
+
+
+def _build_staged_tool_catalog(
+    session: sessions.AgentSession,
+    flow: FlowGraph,
+) -> tuple[list, str | None]:
+    """W71 — build the per-turn tool catalog for ``agent_staged``.
+
+    Returns ``(tools, error_detail)``. Most stages dispatch through the
+    static ``SURFACE_PRESETS`` lookup; two stages need per-turn dynamic
+    specs because their schemas depend on session state:
+
+    * ``pick_upstream`` — the upstream-id enum is the union of currently-
+      live node ids and ids the agent has staged this session. Building
+      per-turn means a multi-node turn (filter → sort) sees the prior
+      add's id in the picker enum without history pruning.
+    * ``fill_settings`` — the single tool exposed is the
+      ``flowfile.graph.add_<picked_type>`` Pydantic schema with planner-
+      injected fields stripped. ``picked_node_type`` is set by the prior
+      stage; defensive ``None`` fallback returns an error string instead
+      of an empty catalog so the loop refuses cleanly.
+    """
+    if session.stage == "fill_settings":
+        if not session.picked_node_type:
+            return [], "agent_staged: stage=fill_settings without picked_node_type"
+        spec = build_staged_fill_tool_spec(session.picked_node_type)
+        if spec is None:
+            return [], (
+                f"agent_staged: picked_node_type {session.picked_node_type!r} "
+                "has no registered settings class"
+            )
+        return [spec], None
+
+    if session.stage == "pick_upstream":
+        live_ids = _collect_live_node_ids(flow)
+        spec = build_pick_upstream_spec(live_ids, list(session.staged_node_ids))
+        return [spec], None
+
+    # All other stages map to a static surface preset via _resolve_current_surface.
+    return [], None
 
 
 # --------------------------------------------------------------------------- #
@@ -1192,8 +1398,24 @@ async def _run_planner_loop(
             return
 
         current_surface = _resolve_current_surface(session, narrowed_category)
+
+        # W71 — refresh the system prompt for the current stage. The first
+        # iteration's system prompt was set in ``_build_initial_messages``;
+        # subsequent stage advances need a re-render so the LLM sees the
+        # right per-stage suffix and (at fill_settings) the picked type's
+        # single-node block.
+        _refresh_system_prompt_for_stage(session)
+
         try:
-            tool_catalog = build_tool_catalog(surface=current_surface)
+            if session.surface == "agent_staged" and session.stage in ("pick_upstream", "fill_settings"):
+                tool_catalog, dyn_err = _build_staged_tool_catalog(session, flow)
+                if dyn_err is not None:
+                    session.status = "failed"
+                    session.touch()
+                    yield PlannerEvent(event="error", payload={"message": dyn_err})
+                    return
+            else:
+                tool_catalog = build_tool_catalog(surface=current_surface)
         except KeyError as exc:
             session.status = "failed"
             session.touch()
@@ -1201,12 +1423,19 @@ async def _run_planner_loop(
             return
 
         # --- Provider call ---
+        # W71 — pass surface/session_id/user_id through so the prompt log
+        # (FLOWFILE_AI_LOG_PROMPTS=true) tags each entry with the stage
+        # the call came from. Without this, every planner entry lands as
+        # ``surface=null`` and you can't grep by stage post-hoc.
         try:
             async with sched.acquire(provider.name, surface=current_surface):
                 response = await provider.chat(
                     messages=session.messages,
                     tools=tool_catalog,
                     max_tokens=max_tokens,
+                    surface=current_surface,
+                    session_id=session.session_id,
+                    user_id=session.user_id,
                 )
         except Exception as exc:  # noqa: BLE001 — collapse to a stable reason
             logger.warning("planner provider call failed: %s", exc)
@@ -1274,6 +1503,39 @@ async def _run_planner_loop(
 
             # Inject planner-managed args for add_* dispatches
             tool_args: dict[str, Any] = dict(tc.arguments) if tc.arguments else {}
+            # W71 v1.2 — at fill_settings on agent_staged, the LLM-facing
+            # tool spec exposes only the inner-input shape (e.g.
+            # ``GroupByInput``: top-level ``agg_cols``) for single-input
+            # node types. The executor's settings validation expects the
+            # full Pydantic envelope (``NodeGroupBy.groupby_input.agg_cols``),
+            # so wrap the LLM's args under the resolved field name before
+            # the existing flow_id / node_id injection runs. Multi-field
+            # types fall back to the flat-stripped spec (no wrap needed).
+            if (
+                session.surface == "agent_staged"
+                and session.stage == "fill_settings"
+                and tc.name.startswith(_ADD_PREFIX)
+            ):
+                picked_type = tc.name.removeprefix(_ADD_PREFIX)
+                inner_field = get_staged_fill_inner_field_name(picked_type)
+                if inner_field is not None and inner_field not in tool_args:
+                    # Wrap every key in tool_args under inner_field, except
+                    # planner-injected fields (flow_id / node_id) which
+                    # belong at the envelope level. The LLM never sees
+                    # those at fill_settings, so in practice tool_args
+                    # contains only inner-shape keys at this point — but
+                    # the conditional defends against future schema drift.
+                    inner_args = {
+                        k: v
+                        for k, v in tool_args.items()
+                        if k not in {"flow_id", "node_id", "upstream_node_ids", "right_input_node_id"}
+                    }
+                    tool_args = {
+                        k: v
+                        for k, v in tool_args.items()
+                        if k in {"flow_id", "node_id", "upstream_node_ids", "right_input_node_id"}
+                    }
+                    tool_args[inner_field] = inner_args
             # W54 — capture provenance: did the LLM emit ``node_id`` itself,
             # or did the planner allocate? Both values flow into audit_meta
             # so the audit row alone shows whether a self-loop traced back
@@ -1473,6 +1735,125 @@ async def _run_planner_loop(
                 any_succeeded_this_round = True
                 continue
 
+            # W71 — agent_staged stage transitions on meta tool success.
+            # Each meta tool sets a piece of session state and advances the
+            # stage; the next loop iteration re-renders the system prompt
+            # and exposes the next stage's tool. ``stage_advanced`` is
+            # surfaced to the frontend so the agent panel can render the
+            # current step ("Step 2/4: picking upstream").
+            if (
+                session.surface == "agent_staged"
+                and tc.name == _CLASSIFY_INTENT_NAME
+                and isinstance(result.extra, dict)
+            ):
+                op_kind = result.extra.get("op_kind")
+                rationale = str(result.extra.get("rationale") or "")
+                prev_stage = session.stage
+                if isinstance(op_kind, str):
+                    session.picked_op_kind = op_kind  # type: ignore[assignment]
+                    if op_kind == "add":
+                        session.stage = "pick_type"
+                    elif op_kind in ("modify", "delete", "connect", "disconnect"):
+                        session.stage = "single_stage_op"
+                    # ``other`` leaves stage at ``classify`` — the loop will
+                    # call the LLM again, which sees the rationale already
+                    # in history and will most likely emit no tool call,
+                    # ending the loop with the rationale as the final
+                    # assistant message (W49 question detection still
+                    # routes to ``awaiting_user_input`` if it ends in a
+                    # question).
+                _log_stage_transition(
+                    session,
+                    from_stage=prev_stage,
+                    to_stage=session.stage,
+                    tool_name=tc.name,
+                    op_kind=op_kind if isinstance(op_kind, str) else None,
+                )
+                yield PlannerEvent(
+                    event="stage_advanced",
+                    payload={
+                        "from": prev_stage,
+                        "to": session.stage,
+                        "op_kind": op_kind,
+                        "rationale": rationale,
+                        "session_id": session.session_id,
+                        "op_kind_meta": "meta",
+                    },
+                )
+                any_succeeded_this_round = True
+                continue
+
+            if (
+                session.surface == "agent_staged"
+                and tc.name == _PICK_NODE_TYPE_NAME
+                and isinstance(result.extra, dict)
+            ):
+                node_type = result.extra.get("node_type")
+                rationale = str(result.extra.get("rationale") or "")
+                prev_stage = session.stage
+                if isinstance(node_type, str):
+                    session.picked_node_type = node_type
+                    session.stage = "pick_upstream"
+                _log_stage_transition(
+                    session,
+                    from_stage=prev_stage,
+                    to_stage=session.stage,
+                    tool_name=tc.name,
+                    node_type=node_type if isinstance(node_type, str) else None,
+                )
+                yield PlannerEvent(
+                    event="stage_advanced",
+                    payload={
+                        "from": prev_stage,
+                        "to": session.stage,
+                        "picked_node_type": node_type,
+                        "rationale": rationale,
+                        "session_id": session.session_id,
+                        "op_kind_meta": "meta",
+                    },
+                )
+                any_succeeded_this_round = True
+                continue
+
+            if (
+                session.surface == "agent_staged"
+                and tc.name == _PICK_UPSTREAM_NAME
+                and isinstance(result.extra, dict)
+            ):
+                upstream_ids_raw = result.extra.get("upstream_node_ids")
+                right_input_raw = result.extra.get("right_input_node_id")
+                rationale = str(result.extra.get("rationale") or "")
+                prev_stage = session.stage
+                if isinstance(upstream_ids_raw, list):
+                    session.picked_upstream_ids = [
+                        u for u in upstream_ids_raw if isinstance(u, int)
+                    ]
+                    session.picked_right_input_id = (
+                        right_input_raw if isinstance(right_input_raw, int) else None
+                    )
+                    session.stage = "fill_settings"
+                _log_stage_transition(
+                    session,
+                    from_stage=prev_stage,
+                    to_stage=session.stage,
+                    tool_name=tc.name,
+                    upstream_node_ids=list(session.picked_upstream_ids),
+                )
+                yield PlannerEvent(
+                    event="stage_advanced",
+                    payload={
+                        "from": prev_stage,
+                        "to": session.stage,
+                        "picked_upstream_ids": session.picked_upstream_ids,
+                        "right_input_node_id": session.picked_right_input_id,
+                        "rationale": rationale,
+                        "session_id": session.session_id,
+                        "op_kind_meta": "meta",
+                    },
+                )
+                any_succeeded_this_round = True
+                continue
+
             # Real staging path
             if result.status in ("staged", "warned", "applied"):
                 if result.staged_node_payload is not None:
@@ -1517,6 +1898,34 @@ async def _run_planner_loop(
                         "arg_summary": arg_summary,
                     },
                 )
+                # W71 — on agent_staged, reset the state machine after each
+                # successful add_* (stage 3) or single-stage non-add op so
+                # the next round starts a fresh classify→pick→fill cycle.
+                # Multi-node turns serialize naturally as N×4 rounds without
+                # any history pruning.
+                if session.surface == "agent_staged" and (
+                    tc.name.startswith(_ADD_PREFIX)
+                    or tc.name in _STAGED_SINGLE_OP_TOOL_NAMES
+                ):
+                    prev_stage = session.stage
+                    sessions.reset_stage_state(session)
+                    _log_stage_transition(
+                        session,
+                        from_stage=prev_stage,
+                        to_stage=session.stage,
+                        tool_name=tc.name,
+                        completed_op=tc.name,
+                    )
+                    yield PlannerEvent(
+                        event="stage_advanced",
+                        payload={
+                            "from": prev_stage,
+                            "to": session.stage,
+                            "session_id": session.session_id,
+                            "completed_op": tc.name,
+                            "op_kind_meta": "meta",
+                        },
+                    )
                 any_succeeded_this_round = True
 
         # End of per-tool-call loop.

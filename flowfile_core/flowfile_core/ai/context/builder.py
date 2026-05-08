@@ -63,6 +63,7 @@ SurfaceLiteral = Literal[
     "explain",
     "agent",
     "agent_complex",
+    "agent_staged",
     "docgen",
     "settings_autocomplete",
     "lineage",
@@ -79,6 +80,11 @@ SURFACE_TO_LEVEL: dict[str, PromptLevel] = {
     "explain": "assist",
     "agent": "planner",
     "agent_complex": "planner",
+    # W71 — ``agent_staged`` falls back to ``planner`` only when no stage
+    # is supplied (defensive). When a stage IS supplied,
+    # :func:`assemble_system_prompt` routes to a stage-specific suffix
+    # via :data:`_STAGE_TO_PROMPT` instead of using this level mapping.
+    "agent_staged": "planner",
     "docgen": "assist",
     # Settings autocomplete (W34) maps to copilot — short-context suggestion-shaped
     # output. The strict-JSON-only instruction is added inline by the autocomplete
@@ -96,6 +102,23 @@ SURFACE_TO_LEVEL: dict[str, PromptLevel] = {
     # is never called for this surface.
     "intent_classifier": "copilot",
 }
+
+
+_STAGE_TO_PROMPT: dict[str, str] = {
+    "classify": "stage_classify",
+    "pick_type": "stage_pick_type",
+    "pick_upstream": "stage_pick_upstream",
+    "fill_settings": "stage_fill_settings",
+    "single_stage_op": "planner",
+}
+"""W71 — per-stage suffix file map for the ``agent_staged`` surface.
+
+Each stage gets its own short suffix prompt so the LLM only sees the
+guidance relevant to the choice it's about to make. ``single_stage_op``
+re-uses the legacy ``planner.md`` because the modify/delete/connect/
+disconnect ops follow the same staging discipline as the legacy agent
+surfaces (they emit one ``flowfile.graph.<op>`` call directly, no
+multi-stage cycle)."""
 
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -180,6 +203,8 @@ def render_prompt_context(
     max_columns_per_node: int | None = None,
     depth: int | None = None,
     resolve_schemas: bool = True,
+    stage: str | None = None,
+    picked_node_type: str | None = None,
 ) -> PromptContext:
     """Build a budget-bounded :class:`PromptContext` for ``surface``.
 
@@ -224,7 +249,7 @@ def render_prompt_context(
     rendered_user = render_user_message(snapshot, user_text=raw_text)
     report.estimated_input_tokens = estimate_tokens(rendered_user)
 
-    system = assemble_system_prompt(surface)
+    system = assemble_system_prompt(surface, stage=stage, picked_node_type=picked_node_type)
     messages = [
         Message(role="system", content=system),
         Message(role="user", content=rendered_user),
@@ -350,7 +375,12 @@ def snapshot_node(
     )
 
 
-def assemble_system_prompt(surface: SurfaceLiteral) -> str:
+def assemble_system_prompt(
+    surface: SurfaceLiteral,
+    *,
+    stage: str | None = None,
+    picked_node_type: str | None = None,
+) -> str:
     """Compose the layered system prompt for ``surface`` per **D008**.
 
     Reads ``prompts/base.md`` plus ``prompts/{level}.md`` (where
@@ -369,6 +399,12 @@ def assemble_system_prompt(surface: SurfaceLiteral) -> str:
     of inventing names like "transform node". ``settings_autocomplete``
     is a constrained-JSON surface and skips both blocks.
 
+    W71 — for ``surface="agent_staged"`` the suffix is selected from
+    :data:`_STAGE_TO_PROMPT` per the supplied ``stage``. The catalog
+    block also varies by stage: the full catalog at ``"pick_type"``,
+    a single-node block at ``"fill_settings"`` (using
+    ``picked_node_type``), and an empty catalog at the other stages.
+
     Raises ``ValueError`` for unknown surfaces.
     """
 
@@ -376,8 +412,12 @@ def assemble_system_prompt(surface: SurfaceLiteral) -> str:
         raise ValueError(f"Unknown surface {surface!r}. Expected one of {sorted(get_args(SurfaceLiteral))}.")
 
     base = _load_prompt("base")
-    suffix = _load_prompt(SURFACE_TO_LEVEL[surface])
-    catalog = _build_catalog_block(surface)
+    if surface == "agent_staged" and stage:
+        suffix_name = _STAGE_TO_PROMPT.get(stage, SURFACE_TO_LEVEL[surface])
+    else:
+        suffix_name = SURFACE_TO_LEVEL[surface]
+    suffix = _load_prompt(suffix_name)
+    catalog = _build_catalog_block(surface, stage=stage, picked_node_type=picked_node_type)
     blocks = [block for block in (base, suffix, catalog) if block]
     return "\n\n".join(blocks)
 
@@ -406,7 +446,12 @@ _ASSIST_CATALOG_SURFACES: frozenset[str] = frozenset({"explain", "lineage", "doc
 _NODE_TYPE_TOOL_PREFIX = "flowfile.graph.add_"
 
 
-def _build_catalog_block(surface: str) -> str:
+def _build_catalog_block(
+    surface: str,
+    *,
+    stage: str | None = None,
+    picked_node_type: str | None = None,
+) -> str:
     """Build the W56 narrative block for ``surface``.
 
     One function, two render paths via a slice-selector per surface group
@@ -427,6 +472,15 @@ def _build_catalog_block(surface: str) -> str:
     * ``settings_autocomplete`` — returns ``""`` (constrained-JSON
       output, no narrative grounding needed).
 
+    W71 — ``agent_staged`` is per-stage:
+
+    * ``stage="pick_type"`` — full ``## Tool catalog`` with every node
+      type's narrative grounding so the LLM picks the right one.
+    * ``stage="fill_settings"`` — a single-node block scoped to
+      ``picked_node_type`` (description + payload example). Other stages
+      get ``""`` — they don't need catalog content because their decision
+      space is already constrained by the function-calling enum.
+
     Lazy-imports ``tools.registry`` so the prompts package stays
     independently importable in tests that mock the catalog.
     """
@@ -434,6 +488,14 @@ def _build_catalog_block(surface: str) -> str:
     from flowfile_core.ai.tools.registry import build_tool_catalog
 
     full_catalog = build_tool_catalog()
+
+    if surface == "agent_staged":
+        if stage == "pick_type":
+            tools = build_tool_catalog(surface="agent_complex")
+            return _render_tool_catalog(tools)
+        if stage == "fill_settings" and picked_node_type:
+            return _build_single_node_block(picked_node_type, full_catalog)
+        return ""
 
     if surface in _FULL_CATALOG_SURFACES:
         tools = build_tool_catalog(surface="agent_complex")
@@ -445,6 +507,81 @@ def _build_catalog_block(surface: str) -> str:
         node_tools = [tool for tool in full_catalog if tool.name.startswith(_NODE_TYPE_TOOL_PREFIX)]
         return _render_node_reference(node_tools)
     return ""
+
+
+def _build_single_node_block(node_type: str, full_catalog: list[Any]) -> str:
+    """W71 — render one node's narrative + payload example for stage 3.
+
+    Used by ``agent_staged`` at stage ``fill_settings``: the LLM has
+    already picked the node type at stage 1, so the system prompt only
+    needs that one type's settings reference (not the full 40-type
+    catalog). Mirrors :func:`_render_tool_catalog` for the single-tool
+    case, including the fenced ``Example payload`` block when one
+    exists in ``NODE_AGENT_PAYLOAD_EXAMPLES``.
+
+    v1.2 — when the stage-3 tool exposes the inner-input shape (e.g.
+    ``GroupByInput`` for ``group_by``), the rendered example is trimmed
+    to the inner shape too. Without this trim the LLM would see the
+    full envelope (``{"flow_id": 1, "node_id": 99, "groupby_input":
+    {"agg_cols": [...]}}``) but a tool spec that expects only
+    ``{"agg_cols": [...]}`` — confusing for any model and especially
+    for smaller ones.
+
+    Returns ``""`` when no matching tool is found in the catalog
+    (defensive: stage 1 enforces a registered node type via the
+    ``pick_node_type`` enum).
+    """
+    add_name = f"{_NODE_TYPE_TOOL_PREFIX}{node_type}"
+    tool = next((t for t in full_catalog if t.name == add_name), None)
+    if tool is None:
+        return ""
+
+    from flowfile_core.ai.tools.registry import get_staged_fill_inner_field_name
+
+    inner_field = get_staged_fill_inner_field_name(node_type)
+    example = tool.agent_payload_example.strip() if tool.agent_payload_example else ""
+    if example and inner_field is not None:
+        example = _trim_example_to_inner_shape(example, inner_field)
+
+    lines: list[str] = ["## Node settings reference", ""]
+    description = (tool.long_description or tool.description or "").strip()
+    if description:
+        lines.append(description)
+        lines.append("")
+    if example:
+        lines.append("Example payload (use this exact shape):")
+        lines.append("```json")
+        lines.append(example)
+        lines.append("```")
+    return "\n".join(lines).rstrip()
+
+
+def _trim_example_to_inner_shape(example_json: str, inner_field: str) -> str:
+    """W71 v1.2 — strip the wrapper envelope from a payload example.
+
+    ``NODE_AGENT_PAYLOAD_EXAMPLES`` carries the full validated payload
+    (``{"flow_id": 1, "node_id": 99, "<inner_field>": {...}}``). The
+    inner-input stage-3 tool spec only accepts ``{...}`` (the inner
+    object directly), so the example must be trimmed to match. Returns
+    the original ``example_json`` unchanged when parsing fails or the
+    inner field is missing — defensive: a stale example surface still
+    renders, and the LLM has the JSON-schema spec to fall back on.
+    """
+    import json as _json
+
+    try:
+        data = _json.loads(example_json)
+    except (TypeError, ValueError):
+        return example_json
+    if not isinstance(data, dict):
+        return example_json
+    inner_value = data.get(inner_field)
+    if inner_value is None:
+        return example_json
+    try:
+        return _json.dumps(inner_value, indent=2)
+    except (TypeError, ValueError):
+        return example_json
 
 
 def _render_tool_catalog(tools: list[Any]) -> str:

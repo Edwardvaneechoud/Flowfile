@@ -460,6 +460,23 @@ export interface AgentDriftDetail {
   nodeTypes: Record<number, string>;
 }
 
+export type AgentSurface = "agent" | "agent_complex" | "agent_staged";
+
+export type AgentStage =
+  | "classify"
+  | "pick_type"
+  | "pick_upstream"
+  | "fill_settings"
+  | "single_stage_op";
+
+export type AgentOpKind =
+  | "add"
+  | "modify"
+  | "delete"
+  | "connect"
+  | "disconnect"
+  | "other";
+
 export interface AgentSessionState {
   sessionId: string;
   flowId: number;
@@ -468,10 +485,11 @@ export interface AgentSessionState {
     | "paused_drift"
     | "paused_user_action"
     | "awaiting_user"
+    | "awaiting_user_input"
     | "completed"
     | "aborted"
     | "failed";
-  surface: "agent" | "agent_complex";
+  surface: AgentSurface;
   samplesMode: "off" | "regex";
   stepCount: number;
   maxSteps: number;
@@ -480,6 +498,12 @@ export interface AgentSessionState {
   rationale: string | null;
   pauseReason: string | null;
   driftDetail: AgentDriftDetail | null;
+  // W71 — agent_staged state-machine fields. Always present on the wire
+  // (Pydantic defaults stage="classify"); legacy surfaces stay at
+  // "classify" + null and the UI hides the stage badge.
+  stage: AgentStage;
+  pickedOpKind: AgentOpKind | null;
+  pickedNodeType: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -515,6 +539,9 @@ interface PyAgentSessionState {
   rationale: string | null;
   pause_reason: string | null;
   drift_detail: PyAgentDriftDetail | null;
+  stage: AgentStage;
+  picked_op_kind: AgentOpKind | null;
+  picked_node_type: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -559,6 +586,9 @@ export const getAgentSession = async (
       rationale: data.rationale,
       pauseReason: data.pause_reason,
       driftDetail: data.drift_detail ? fromPyDriftDetail(data.drift_detail) : null,
+      stage: data.stage,
+      pickedOpKind: data.picked_op_kind,
+      pickedNodeType: data.picked_node_type,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };

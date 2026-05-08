@@ -26,6 +26,15 @@ class AnthropicProvider(LiteLLMProvider):
         "explain": "claude-sonnet-4-6",
         "agent": "claude-sonnet-4-6",
         "agent_complex": "claude-opus-4-7",
+        # W71 — agent_staged exposes one tool per stage so each round is
+        # a tightly-scoped decision. Haiku is plenty for stages 0/1/2
+        # (enum picks); stage 3 (settings JSON) is the only stage where
+        # Sonnet would help and Haiku 4.5 still gets the JSON shape
+        # right when the per-type ``Example payload`` is in the prompt.
+        # Cost dominates for the 4×-per-node-add fan-out — defaulting to
+        # Haiku saves ~5× over Sonnet. Users who explicitly want Sonnet
+        # can override via the model picker (``model=`` on the request).
+        "agent_staged": "claude-haiku-4-5",
         "docgen": "claude-sonnet-4-6",
         "settings_autocomplete": "claude-haiku-4-5",
         "lineage": "claude-sonnet-4-6",

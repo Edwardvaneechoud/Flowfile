@@ -492,7 +492,15 @@ export const useAiStore = defineStore("ai", () => {
     await agentStore.start({
       flow_id: flowId,
       prompt: enrichedPrompt,
-      surface: "agent",
+      // W71 v1.1 — auto-promote-from-chat (W58) routes to the same default
+      // surface as the direct agent-mode toggle in AiAssistant.vue. Was
+      // ``"agent"`` (legacy two-stage with ``pick_category``); flipped to
+      // ``"agent_staged"`` so smaller models (llama-3.3-70b on
+      // OpenRouter / Groq) stay on the function-calling path that actually
+      // works for them. Dogfood 2026-05-07: legacy surface produced
+      // repeated *"groupby_input got str"* refusals on llama-70b before
+      // the fix.
+      surface: "agent_staged",
       provider: selectedProvider.value ?? "anthropic",
       model: selectedModel.value ?? null,
     });

@@ -95,10 +95,30 @@ export interface AgentEvent {
     | "abort"
     | "complete"
     | "awaiting_user_input"
+    | "stage_advanced"
     | "info";
   payload: Record<string, unknown>;
   at: number;
 }
+
+/** W71 — stage in the ``agent_staged`` state machine. Mirrors the
+ * server's ``PlannerStage`` literal in ``flowfile_core.ai.sessions``. */
+export type AgentStage =
+  | "classify"
+  | "pick_type"
+  | "pick_upstream"
+  | "fill_settings"
+  | "single_stage_op";
+
+/** W71 — op kind chosen by stage 0 (``classify_intent``). Mirrors
+ * ``PlannerOpKind`` server-side. */
+export type AgentOpKind =
+  | "add"
+  | "modify"
+  | "delete"
+  | "connect"
+  | "disconnect"
+  | "other";
 
 const isAbortError = (err: unknown): boolean => {
   if (err instanceof DOMException && err.name === "AbortError") return true;
@@ -114,6 +134,17 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
   const driftDetail = ref<AgentDriftDetail | null>(null);
   const lastResult = ref<AgentCompleteResult | null>(null);
   const aiDisabled = ref(false);
+
+  // W71 — agent_staged state-machine fields. Updated by the
+  // ``stage_advanced`` SSE handler so the agent panel can render a
+  // per-stage badge ("Step 1/4: classifying intent" etc.). Stays at
+  // ``"classify"`` / null for legacy ``agent`` / ``agent_complex``
+  // surfaces that don't drive transitions; the UI conditional checks
+  // ``currentSurface === "agent_staged"`` before showing the badge.
+  const stage = ref<AgentStage>("classify");
+  const pickedOpKind = ref<AgentOpKind | null>(null);
+  const pickedNodeType = ref<string | null>(null);
+  const currentSurface = ref<"agent" | "agent_complex" | "agent_staged" | null>(null);
 
   let activeAbort: AbortController | null = null;
 
@@ -304,6 +335,46 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
           }
         }
       },
+      onStageAdvanced: (payload) => {
+        // W71 — agent_staged state-machine transition. Update the local
+        // refs so the agent panel can render the current stage; record
+        // the event so the chat trail keeps a debug record.
+        if (payload.session_id) currentSessionId.value = payload.session_id;
+        if (
+          payload.to === "classify" ||
+          payload.to === "pick_type" ||
+          payload.to === "pick_upstream" ||
+          payload.to === "fill_settings" ||
+          payload.to === "single_stage_op"
+        ) {
+          stage.value = payload.to;
+        }
+        if (payload.op_kind) {
+          const ok = payload.op_kind;
+          if (
+            ok === "add" ||
+            ok === "modify" ||
+            ok === "delete" ||
+            ok === "connect" ||
+            ok === "disconnect" ||
+            ok === "other"
+          ) {
+            pickedOpKind.value = ok;
+          }
+        }
+        if (payload.picked_node_type !== undefined) {
+          pickedNodeType.value = payload.picked_node_type ?? null;
+        }
+        // After a successful add or single-stage non-add op, the planner
+        // resets the state machine (transitions ``to=classify``). Clear
+        // the picked refs so the badge reflects the next round's clean
+        // start.
+        if (payload.completed_op || payload.to === "classify") {
+          pickedOpKind.value = null;
+          pickedNodeType.value = null;
+        }
+        _appendEvent("stage_advanced", payload as unknown as Record<string, unknown>);
+      },
       onInfo: (payload) => _appendEvent("info", payload),
       onError: (message) => {
         error.value = message;
@@ -345,6 +416,17 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     driftDetail.value = null;
     lastResult.value = null;
     aiDisabled.value = false;
+    // W71 — fresh run, fresh state machine. The first stage_advanced
+    // event from the server will overwrite these as the agent classifies
+    // intent / picks node type / etc.
+    stage.value = "classify";
+    pickedOpKind.value = null;
+    pickedNodeType.value = null;
+    // Capture the surface the run was started on so the badge UI can
+    // gate on agent_staged-only without a separate prop. ``surface``
+    // is required on AgentStartRequest; defensive ``?? null`` keeps
+    // TypeScript happy.
+    currentSurface.value = (resolvedBody.surface as typeof currentSurface.value) ?? null;
 
     const handlers = _buildHandlers();
     try {
@@ -626,6 +708,12 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     error.value = null;
     driftDetail.value = null;
     lastResult.value = null;
+    // W71 — reset the staged state machine on clear so the next run
+    // starts at stage 0 even if the previous run was on agent_staged.
+    stage.value = "classify";
+    pickedOpKind.value = null;
+    pickedNodeType.value = null;
+    currentSurface.value = null;
     aiDisabled.value = false;
     // Also wipe the persisted copy so a fresh refresh doesn't resurrect
     // the cleared state from sessionStorage.
@@ -657,6 +745,11 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     driftDetail,
     lastResult,
     aiDisabled,
+    // W71 — staged state-machine refs
+    stage,
+    pickedOpKind,
+    pickedNodeType,
+    currentSurface,
     // actions
     start,
     resumeContinue,

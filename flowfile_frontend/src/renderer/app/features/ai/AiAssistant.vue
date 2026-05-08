@@ -83,6 +83,43 @@ const isAgentRunning = computed(
   () => agentStore.status === "running" || agentStore.status === "paused_drift",
 );
 
+// W71 — agent_staged stage badge labels. The state machine has 4 stages
+// for an "add" intent (classify → pick_type → pick_upstream →
+// fill_settings) and 2 stages for a non-add intent (classify →
+// single_stage_op). The numerator counts up through stages so the user
+// sees concrete progress; the denominator reflects the path:
+// 4 if op_kind is "add" (or unknown), 2 otherwise.
+const STAGE_ORDER_ADD: Record<string, number> = {
+  classify: 1,
+  pick_type: 2,
+  pick_upstream: 3,
+  fill_settings: 4,
+};
+const STAGE_ORDER_OTHER: Record<string, number> = {
+  classify: 1,
+  single_stage_op: 2,
+};
+
+const STAGE_HUMAN_LABELS: Record<string, string> = {
+  classify: "classifying intent",
+  pick_type: "picking node type",
+  pick_upstream: "picking upstream",
+  fill_settings: "filling settings",
+  single_stage_op: "applying operation",
+};
+
+const stageStepLabel = computed<string>(() => {
+  const isAdd = agentStore.pickedOpKind === "add" || agentStore.pickedOpKind === null;
+  const total = isAdd ? 4 : 2;
+  const order = isAdd ? STAGE_ORDER_ADD : STAGE_ORDER_OTHER;
+  const idx = order[agentStore.stage] ?? 1;
+  return `Step ${idx}/${total}`;
+});
+
+const stageReadableLabel = computed<string>(
+  () => STAGE_HUMAN_LABELS[agentStore.stage] ?? agentStore.stage,
+);
+
 const canSend = computed(
   () =>
     !aiStore.isStreaming &&
@@ -188,11 +225,15 @@ const handleSend = async (): Promise<void> => {
     await agentStore.start({
       flow_id: flowStore.flowId,
       prompt: promptWithHistory,
-      // ``agent`` is the planner default — two-stage with ``pick_category``,
-      // routes to a sonnet-class model. ``agent_complex`` exposes the full
-      // catalog and routes to opus-class; opt in via a future toggle if
-      // dogfood shows the two-stage flow under-performs.
-      surface: "agent",
+      // W71 — ``agent_staged`` is the new default: a four-stage state machine
+      // (classify → pick_type → pick_upstream → fill_settings) that exposes
+      // exactly one tool to the function-calling API per round. This makes
+      // smaller models (llama-3.3-70b on Groq / OpenRouter) viable on the
+      // agent surface — the legacy ``agent`` / ``agent_complex`` surfaces
+      // failed function-calling-API compliance on those models.
+      // ``agent`` (legacy two-stage) and ``agent_complex`` (full catalog)
+      // remain available as opt-ins for users who explicitly prefer them.
+      surface: "agent_staged",
       provider: aiStore.selectedProvider ?? "anthropic",
       model: aiStore.selectedModel ?? null,
     });
@@ -449,10 +490,17 @@ const timelineItems = computed<TimelineItem[]>(() => {
 
     <div v-else class="ai-assistant__chat">
       <AiDiffPanel />
-      <div v-if="aiStore.promotionBanner !== null" class="ai-assistant__promo-banner">
+      <!-- W71 v1.2 — W58 promotion banner intentionally hidden. The
+           auto-promote-from-chat dispatch (ai-store.ts
+           ``_dispatchPromotedAgent``) and the underlying
+           ``promotionBanner`` / ``acceptPromotion`` /
+           ``undoPromotion`` store plumbing are kept intact so the
+           banner can be restored cheaply when the UX is wanted again.
+           For now the chat → agent_staged hand-off is silent. -->
+      <div v-if="false && aiStore.promotionBanner !== null" class="ai-assistant__promo-banner">
         <p class="ai-assistant__promo-text">
           <span class="ai-assistant__promo-icon">✨</span>
-          <span> Switched to Agent mode — {{ aiStore.promotionBanner.reason }}. </span>
+          <span> Switched to Agent mode — {{ aiStore.promotionBanner?.reason }}. </span>
         </p>
         <div class="ai-assistant__promo-actions">
           <button
@@ -476,6 +524,56 @@ const timelineItems = computed<TimelineItem[]>(() => {
         <span class="ai-assistant__awaiting-icon">💬</span>
         <span class="ai-assistant__awaiting-text">
           Agent is waiting for your reply — type below and Send to continue the same session.
+        </span>
+      </div>
+      <!-- W71 v1.1 — always-on surface chip. Renders for every active
+           agent run regardless of surface so the operator can verify at
+           a glance which agent (legacy two-stage / agent_complex /
+           agent_staged) is actually executing. The dogfood incident on
+           2026-05-07 was hidden because the auto-promote-from-chat path
+           was silently routing to legacy ``agent`` while everything
+           else looked normal. -->
+      <div
+        v-if="agentStore.status === 'running' && agentStore.currentSurface"
+        class="ai-assistant__surface-chip"
+        :class="{
+          'ai-assistant__surface-chip--legacy':
+            agentStore.currentSurface === 'agent' ||
+            agentStore.currentSurface === 'agent_complex',
+        }"
+        role="status"
+        aria-label="Active agent surface"
+      >
+        <span class="ai-assistant__surface-chip-label">surface</span>
+        <span class="ai-assistant__surface-chip-name">
+          {{ agentStore.currentSurface }}
+        </span>
+      </div>
+      <!-- W71 — agent_staged stage badge. Only renders for the staged
+           surface; legacy ``agent`` / ``agent_complex`` surfaces show
+           nothing (the badge has no meaning there). -->
+      <div
+        v-if="
+          agentStore.status === 'running' &&
+          agentStore.currentSurface === 'agent_staged'
+        "
+        class="ai-assistant__stage-badge"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="ai-assistant__stage-step">{{ stageStepLabel }}</span>
+        <span class="ai-assistant__stage-name">{{ stageReadableLabel }}</span>
+        <span
+          v-if="agentStore.pickedNodeType"
+          class="ai-assistant__stage-detail"
+        >
+          ({{ agentStore.pickedNodeType }})
+        </span>
+        <span
+          v-else-if="agentStore.pickedOpKind && agentStore.pickedOpKind !== 'add'"
+          class="ai-assistant__stage-detail"
+        >
+          ({{ agentStore.pickedOpKind }})
         </span>
       </div>
       <div
@@ -829,6 +927,83 @@ const timelineItems = computed<TimelineItem[]>(() => {
 
 .ai-assistant__awaiting-text {
   flex: 1;
+}
+
+/* W71 v1.1 — surface chip. Always renders during an active agent run
+   so operators can verify which agent variant is in use. Default
+   accent posture matches the stage badge; legacy surfaces get a muted
+   warning tint so a stray ``surface=agent`` or ``surface=agent_complex``
+   stands out visually (the dogfood failure mode was the auto-promote
+   path silently using legacy on llama-70b). */
+.ai-assistant__surface-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  margin: 0 0 4px 0;
+  align-self: flex-start;
+  background-color: var(--color-accent-soft, rgba(111, 66, 193, 0.06));
+  border: 1px solid var(--color-accent, #6f42c1);
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-accent, #6f42c1);
+  width: fit-content;
+}
+
+.ai-assistant__surface-chip--legacy {
+  background-color: var(--color-warning-soft, rgba(204, 119, 0, 0.08));
+  border-color: var(--color-warning, #cc7700);
+  color: var(--color-warning, #cc7700);
+}
+
+.ai-assistant__surface-chip-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  opacity: 0.75;
+}
+
+.ai-assistant__surface-chip-name {
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-weight: 600;
+}
+
+/* W71 — staged-agent stage badge. Compact pill that lives between the
+   awaiting banner and the drift banner; only renders when the active
+   run is on the agent_staged surface. Visual posture matches the rest
+   of the agent surface (accent border, soft secondary background). */
+.ai-assistant__stage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  margin: 0 0 8px 0;
+  align-self: flex-start;
+  background-color: var(--color-accent-soft, rgba(111, 66, 193, 0.08));
+  border: 1px solid var(--color-accent, #6f42c1);
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-accent, #6f42c1);
+  width: fit-content;
+}
+
+.ai-assistant__stage-step {
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.ai-assistant__stage-name {
+  font-style: italic;
+}
+
+.ai-assistant__stage-detail {
+  color: var(--color-text-secondary, #57606a);
+  font-size: 10px;
 }
 
 .ai-assistant__drift-banner {

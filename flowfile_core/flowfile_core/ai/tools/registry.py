@@ -31,10 +31,18 @@ import copy
 import re
 from typing import Any, Final, Literal, get_args
 
+from pydantic import BaseModel
+
 from flowfile_core.ai.providers.base import ToolSpec
 from flowfile_core.ai.tools.codegen_ops import CODEGEN_OPS_TOOLS
 from flowfile_core.ai.tools.graph_ops import GRAPH_OPS_TOOLS
-from flowfile_core.ai.tools.meta_ops import CATEGORY_NAMES, META_OPS_TOOLS
+from flowfile_core.ai.tools.meta_ops import (
+    CATEGORY_NAMES,
+    CLASSIFY_INTENT_TOOL_NAME,
+    META_OPS_TOOLS,
+    PICK_NODE_TYPE_TOOL_NAME,
+    PICK_UPSTREAM_TOOL_NAME,
+)
 from flowfile_core.ai.tools.node_docs import (
     NODE_AGENT_PAYLOAD_EXAMPLES,
     NODE_LONG_DESCRIPTIONS,
@@ -68,6 +76,14 @@ SurfaceLiteral = Literal[
     "explain",
     "agent",
     "agent_complex",
+    "agent_staged",
+    "staged_classify",
+    "staged_pick_type",
+    "staged_pick_upstream",
+    "staged_modify",
+    "staged_delete",
+    "staged_connect",
+    "staged_disconnect",
     "docgen",
     "settings_autocomplete",
     "lineage",
@@ -171,6 +187,213 @@ def _node_settings_to_tool_spec(node_type: str, settings_cls: type) -> ToolSpec:
         agent_payload_example=NODE_AGENT_PAYLOAD_EXAMPLES.get(node_type, ""),
         parameters=schema,
     )
+
+
+# W71 — fields the planner injects into ``add_<node_type>`` tool args from
+# session state, before Pydantic validation runs. The stripped tool spec
+# used at the ``fill_settings`` stage of ``agent_staged`` removes these from
+# the LLM-facing JSON Schema so the LLM only sees the actual settings shape
+# (``groupby_input``, ``filter_input``, etc.). The executor's existing
+# ``_handle_add_node`` path is unchanged — it still validates the same way
+# once the planner has populated the missing fields.
+#
+# v1.2 expanded set: the original (flow_id/node_id/depending_on_id/
+# depending_on_ids) plus all the rest of NodeBase's metadata. The dogfood
+# 2026-05-08 surfaced llama-3.3-70b filling ``output_field_config`` /
+# ``description`` / etc. with garbage strings; stripping these means the
+# LLM never sees the noise. Pydantic uses the defaults for these fields
+# at validation time.
+#
+# * ``flow_id`` / ``node_id`` — required on ``NodeBase``; planner sets via
+#   ``planner._allocate_node_id`` and ``session.flow_id``.
+# * ``depending_on_id`` / ``depending_on_ids`` — legacy single-/multi-input
+#   dependency fields on ``NodeSingleInput`` / ``NodeMultiInput``; resolver
+#   canonicalises against ``InsertionContext.upstream_node_ids`` so the LLM
+#   does not need to fill them.
+# * ``cache_results`` / ``pos_x`` / ``pos_y`` / ``is_setup`` / ``description``
+#   / ``node_reference`` / ``user_id`` / ``is_flow_output`` /
+#   ``is_user_defined`` / ``output_field_config`` — NodeBase metadata not
+#   needed for stage-3 settings authoring. All have safe defaults; positions
+#   and ``user_id`` are filled by other planner machinery.
+_PLANNER_INJECTED_SETTINGS_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "flow_id",
+        "node_id",
+        "depending_on_id",
+        "depending_on_ids",
+        "cache_results",
+        "pos_x",
+        "pos_y",
+        "is_setup",
+        "description",
+        "node_reference",
+        "user_id",
+        "is_flow_output",
+        "is_user_defined",
+        "output_field_config",
+    }
+)
+
+
+def _unwrap_optional_annotation(annotation: Any) -> Any:
+    """Strip ``Optional[X]`` / ``Union[X, None]`` / ``X | None`` to ``X``.
+
+    Pydantic v2 field annotations frequently appear as ``X | None = None``
+    (e.g. ``groupby_input: GroupByInput = None`` is annotated as
+    ``Optional[GroupByInput]``). Inner-input detection needs the underlying
+    type to inspect whether it's a ``BaseModel`` subclass.
+    """
+    import types as _types
+    import typing as _typing
+
+    origin = _typing.get_origin(annotation)
+    if origin is _typing.Union or origin is _types.UnionType:
+        args = [a for a in _typing.get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+    return annotation
+
+
+def _resolve_inner_input_field(settings_cls: type) -> tuple[str, type] | None:
+    """W71 v1.2 — return ``(field_name, inner_class)`` for single-input
+    settings types, else ``None`` for multi-field / empty types.
+
+    Auto-detect: filter out :data:`_PLANNER_INJECTED_SETTINGS_FIELDS` from
+    the model's fields. If exactly one type-specific field remains AND its
+    annotation is a ``BaseModel`` subclass, it's a single-input type and
+    we can expose just the inner schema.
+
+    Examples (single-input → returns inner):
+
+    * ``NodeGroupBy`` → ``("groupby_input", GroupByInput)``
+    * ``NodeSort`` → ``("sort_input", SortInput)``
+    * ``NodeManualInput`` → ``("raw_data_format", RawData)``
+
+    Multi-field types (``NodeFilter`` has ``filter_input + split_mode``,
+    ``NodeJoin`` has ``join_input + auto_keep_*`` etc.), empty types
+    (``NodeRecordCount``, ``NodeWaitFor``), and types whose only
+    type-specific field is a primitive (``NodeSample.sample_size: int``)
+    return ``None`` so the caller falls back to the flat-stripped variant.
+    """
+    type_specific: dict[str, Any] = {
+        name: info.annotation
+        for name, info in settings_cls.model_fields.items()
+        if name not in _PLANNER_INJECTED_SETTINGS_FIELDS
+    }
+    if len(type_specific) != 1:
+        return None
+    field_name, annotation = next(iter(type_specific.items()))
+    inner = _unwrap_optional_annotation(annotation)
+    if isinstance(inner, type) and issubclass(inner, BaseModel):
+        return field_name, inner
+    return None
+
+
+def _node_settings_to_tool_spec_stripped(node_type: str, settings_cls: type) -> ToolSpec:
+    """Stage-3 variant of :func:`_node_settings_to_tool_spec` (W71).
+
+    Identical to the standard projection except that planner-injected
+    fields are removed from both ``properties`` and ``required`` (see
+    :data:`_PLANNER_INJECTED_SETTINGS_FIELDS`). The LLM at ``fill_settings``
+    only sees the type-specific settings shape; the planner threads the
+    stripped fields in from the session's ``picked_*`` state before
+    validation.
+
+    Re-uses the standard projection (descriptions, long_description, the
+    payload example) so the fill-settings prompt sees the same per-type
+    grounding the legacy surfaces show.
+
+    Used as the **fallback** when a node type has multiple type-specific
+    fields and ``_resolve_inner_input_field`` declined to return an inner
+    class. For single-input types,
+    :func:`_node_settings_to_inner_tool_spec` is preferred instead — it
+    drops the envelope entirely.
+    """
+    base = _node_settings_to_tool_spec(node_type, settings_cls)
+    schema = copy.deepcopy(base.parameters)
+
+    props = schema.get("properties")
+    if isinstance(props, dict):
+        for field_name in _PLANNER_INJECTED_SETTINGS_FIELDS:
+            props.pop(field_name, None)
+
+    required = schema.get("required")
+    if isinstance(required, list):
+        schema["required"] = [r for r in required if r not in _PLANNER_INJECTED_SETTINGS_FIELDS]
+
+    return base.model_copy(update={"parameters": schema})
+
+
+def _node_settings_to_inner_tool_spec(
+    node_type: str, settings_cls: type, inner_field_name: str, inner_cls: type
+) -> ToolSpec:
+    """W71 v1.2 — stage-3 inner-shape variant.
+
+    Returns a tool spec whose parameters schema is the *inner* class
+    (e.g. ``GroupByInput``) rather than the wrapper (``NodeGroupBy``).
+    The LLM never sees the envelope — it just fills ``agg_cols`` (or
+    whatever the inner shape is). The planner re-wraps before validation
+    via :func:`get_staged_fill_inner_field_name`.
+
+    Reuses the per-type ``long_description`` and ``user_instructions``
+    from the wrapper class so the prompt grounding remains identical.
+    The tool name (``flowfile.graph.add_<type>``) also stays the same so
+    the executor's dispatch table still routes correctly.
+    """
+    schema = _inline_ref_schema(dict(inner_cls.model_json_schema()))
+    schema.setdefault("$schema", JSON_SCHEMA_DIALECT)
+    description = (settings_cls.__doc__ or f"Create a {node_type} node.").strip()
+    description = description.split("\n\n", 1)[0].strip()
+    return ToolSpec(
+        name=mcp_tool_name("graph", f"add_{node_type}"),
+        description=description,
+        long_description=NODE_LONG_DESCRIPTIONS.get(node_type, ""),
+        user_instructions=_compose_user_instructions(node_type),
+        agent_payload_example=NODE_AGENT_PAYLOAD_EXAMPLES.get(node_type, ""),
+        parameters=schema,
+    )
+
+
+def get_staged_fill_inner_field_name(node_type: str) -> str | None:
+    """W71 v1.2 — return the wrapper field name when stage 3 uses the inner-input
+    tool spec, else ``None``.
+
+    The planner consults this at fill-settings dispatch: when non-``None``,
+    it wraps the LLM-emitted ``tc.arguments`` as
+    ``{<field_name>: tc.arguments, flow_id, node_id, ...}`` so the
+    executor's settings validation receives the full Pydantic shape.
+    Returns ``None`` for multi-field / empty types — the planner passes
+    ``tc.arguments`` through unchanged in that case.
+    """
+    settings_cls = get_settings_class_for_node_type(node_type)
+    if settings_cls is None:
+        return None
+    inner = _resolve_inner_input_field(settings_cls)
+    return inner[0] if inner is not None else None
+
+
+def build_staged_fill_tool_spec(node_type: str) -> ToolSpec | None:
+    """W71 — return the single stage-3 tool spec for the picked node type.
+
+    Looked up per-turn by the planner (``agent_staged`` surface, stage
+    ``fill_settings``) using ``session.picked_node_type``. Returns ``None``
+    when the node type is unknown so the planner can refuse cleanly rather
+    than dispatching against a missing settings class.
+
+    v1.2: prefers the inner-shape variant when the settings class has a
+    single type-specific field whose type is a ``BaseModel`` subclass —
+    e.g. ``group_by`` exposes ``GroupByInput`` directly so the LLM sees
+    ``agg_cols`` at the top level instead of the ``NodeGroupBy`` envelope.
+    Multi-field types fall back to the flat-stripped variant.
+    """
+    settings_cls = get_settings_class_for_node_type(node_type)
+    if settings_cls is None:
+        return None
+    inner = _resolve_inner_input_field(settings_cls)
+    if inner is not None:
+        field_name, inner_cls = inner
+        return _node_settings_to_inner_tool_spec(node_type, settings_cls, field_name, inner_cls)
+    return _node_settings_to_tool_spec_stripped(node_type, settings_cls)
 
 
 def _compose_user_instructions(node_type: str) -> str:
@@ -286,6 +509,23 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
     # context budgets and provider quality both allow it (e.g. Opus 4.7 on a
     # paid tier). The executor decides which surface to pick at runtime.
     "agent_complex": frozenset(),  # populated below after _build_node_type_tools
+    # W71 — ``agent_staged`` is the wrapper surface that ``AgentSession.surface``
+    # carries. The planner never queries this preset directly: it dispatches
+    # on ``session.stage`` to one of the per-stage entries below. The empty
+    # frozenset is a placeholder that satisfies ``_check_preset_coverage``.
+    "agent_staged": frozenset(),
+    "staged_classify": frozenset({CLASSIFY_INTENT_TOOL_NAME}),
+    "staged_pick_type": frozenset({PICK_NODE_TYPE_TOOL_NAME}),
+    # ``staged_pick_upstream`` is a placeholder — at runtime the planner
+    # builds a per-turn spec via ``meta_ops.build_pick_upstream_spec`` so the
+    # upstream-id enum is fresh. The preset is here only so callers that
+    # round-trip through ``build_tool_catalog`` get a correct (if static)
+    # tool list and ``_check_preset_coverage`` passes.
+    "staged_pick_upstream": frozenset({PICK_UPSTREAM_TOOL_NAME}),
+    "staged_modify": frozenset({"flowfile.graph.update_node_settings"}),
+    "staged_delete": frozenset({"flowfile.graph.delete_node"}),
+    "staged_connect": frozenset({"flowfile.graph.connect"}),
+    "staged_disconnect": frozenset({"flowfile.graph.delete_connection"}),
     "docgen": frozenset(
         {
             "flowfile.schema.read_node_schema",

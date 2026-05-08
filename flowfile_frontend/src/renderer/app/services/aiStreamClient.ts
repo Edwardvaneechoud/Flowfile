@@ -405,6 +405,27 @@ export interface AgentCompleteResult {
   diff_payload: Record<string, unknown> | null;
 }
 
+/** W71 — `stage_advanced` event payload. Emitted by the agent_staged
+ * planner each time the state machine transitions: classify → pick_type
+ * → pick_upstream → fill_settings, and back to classify after a node
+ * is staged. The frontend uses this to render a per-stage badge.
+ *
+ * `from` and `to` carry the stage names; `op_kind`, `picked_node_type`,
+ * `picked_upstream_ids` are present on the relevant transitions only.
+ * `completed_op` is the tool name when the transition fires after a
+ * successful add or single-stage non-add op. */
+export interface AgentStageAdvanced {
+  from: string;
+  to: string;
+  op_kind?: string | null;
+  picked_node_type?: string | null;
+  picked_upstream_ids?: number[];
+  right_input_node_id?: number | null;
+  completed_op?: string;
+  rationale?: string;
+  session_id?: string;
+}
+
 export interface AgentSessionHandlers {
   onThinking?: (text: string) => void;
   onToolCallProposed?: (tc: AgentToolCallProposed) => void;
@@ -420,6 +441,8 @@ export interface AgentSessionHandlers {
    * clarifying question. The store flips to ``awaiting_user_input`` and
    * the frontend routes the next user message through ``streamAgentFollowup``. */
   onAwaitingUserInput?: (result: AgentAwaitingUserInputResult) => void;
+  /** W71 — emitted by the agent_staged surface on each stage transition. */
+  onStageAdvanced?: (payload: AgentStageAdvanced) => void;
   onInfo?: (payload: Record<string, unknown>) => void;
   onError?: (message: string) => void;
 }
@@ -481,6 +504,9 @@ const dispatchPlannerEvent = (parsed: ParsedEvent, handlers: AgentSessionHandler
       break;
     case "awaiting_user_input":
       handlers.onAwaitingUserInput?.(payload as unknown as AgentAwaitingUserInputResult);
+      break;
+    case "stage_advanced":
+      handlers.onStageAdvanced?.(payload as unknown as AgentStageAdvanced);
       break;
     case "error": {
       const msg = typeof payload.message === "string" ? payload.message : "AI agent error";

@@ -158,7 +158,10 @@ describe("useAiStore - sendMessage with autoPromote", () => {
       expect.objectContaining({
         flow_id: 1,
         prompt: "add a group_by node grouping by status",
-        surface: "agent",
+        // W71 v1.1 — auto-promote-from-chat now defaults to agent_staged
+        // (the multi-stage state machine) so smaller models stay on the
+        // function-calling path. Was "agent" before the dogfood fix.
+        surface: "agent_staged",
         provider: "anthropic",
       }),
     );
@@ -498,7 +501,8 @@ describe("useAiStore - acceptPromotion (round 7)", () => {
     expect(mockSymbols.streamChat).not.toHaveBeenCalled();
     const agentArgs = mockSymbols.agentStoreStart.mock.calls[0][0];
     expect(agentArgs.flow_id).toBe(1);
-    expect(agentArgs.surface).toBe("agent");
+    // W71 v1.1 — auto-promote default flipped to agent_staged.
+    expect(agentArgs.surface).toBe("agent_staged");
     // The user message lands in the chat trail exactly once (round 6
     // optimistic-push contract preserved).
     expect(store.messages.filter((m) => m.role === "user")).toHaveLength(1);

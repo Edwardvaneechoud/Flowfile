@@ -36,10 +36,18 @@ const _num = (payload: Record<string, unknown>, key: string): number | null => {
   return typeof v === "number" ? v : null;
 };
 
-// Strip the ``flowfile.graph.add_`` prefix so summaries read "filter" not
-// "flowfile.graph.add_filter". Other dotted names render whole.
-const _shortToolName = (name: string): string =>
-  name.startsWith("flowfile.graph.add_") ? name.slice("flowfile.graph.add_".length) : name;
+// Strip the dotted MCP prefix so summaries read "filter" not
+// "flowfile.graph.add_filter", and "pick_upstream" not
+// "flowfile.meta.pick_upstream" (W71 v1.3 — meta-op rejections are now
+// surfaced in the chat trail).
+const _shortToolName = (name: string): string => {
+  if (name.startsWith("flowfile.graph.add_")) return name.slice("flowfile.graph.add_".length);
+  if (name.startsWith("flowfile.meta.")) return name.slice("flowfile.meta.".length);
+  if (name.startsWith("flowfile.graph.")) return name.slice("flowfile.graph.".length);
+  if (name.startsWith("flowfile.schema.")) return name.slice("flowfile.schema.".length);
+  if (name.startsWith("flowfile.codegen.")) return name.slice("flowfile.codegen.".length);
+  return name;
+};
 
 // W38 — payload-level accessors for the rationale-primary rendering.
 const rationale = computed<string>(() => _str(props.event.payload ?? {}, "rationale"));
@@ -144,8 +152,49 @@ const showRejectionDetail = computed(() => toolStepRejectionDetail.value.length 
 // the same component instance.
 const detailsOpen = ref(false);
 
+// W71 v1.2 — humanised stage-transition labels. The planner's
+// agent_staged surface emits one ``stage_advanced`` event per state-
+// machine transition (see ``planner._log_stage_transition``); without
+// rendering them the chat trail goes silent between rounds. We pick the
+// most-informative payload field per transition and fall back to a
+// generic "stage: X → Y" label for transitions we don't enumerate.
+const _renderStageAdvanced = (p: Record<string, unknown>): string => {
+  const to = _str(p, "to");
+  const from = _str(p, "from");
+  const opKind = _str(p, "op_kind");
+  const pickedNodeType = _str(p, "picked_node_type");
+  const completedOp = _str(p, "completed_op");
+  const upstreamRaw = (p as { picked_upstream_ids?: unknown }).picked_upstream_ids;
+  const upstream = Array.isArray(upstreamRaw)
+    ? upstreamRaw.filter((v): v is number => typeof v === "number")
+    : [];
+
+  // Reset transitions (after a successful add or single-stage op):
+  // ``to=classify`` with completed_op populated.
+  if (to === "classify" && completedOp) {
+    const shortName = completedOp.startsWith("flowfile.graph.add_")
+      ? completedOp.slice("flowfile.graph.add_".length)
+      : completedOp.replace(/^flowfile\.graph\./, "");
+    return `Staged ${shortName} — ready for the next step.`;
+  }
+
+  // Forward transitions:
+  if (to === "pick_type" && opKind) return `Classified as ${opKind}.`;
+  if (to === "pick_upstream" && pickedNodeType) return `Picked node type: ${pickedNodeType}.`;
+  if (to === "fill_settings") {
+    if (upstream.length === 1) return `Attaching to node ${upstream[0]}.`;
+    if (upstream.length > 1) return `Attaching to nodes ${upstream.join(", ")}.`;
+    return "Filling settings…";
+  }
+  if (to === "single_stage_op" && opKind) return `Routing to ${opKind} operation.`;
+
+  // Fallback — muted "stage: X → Y" for any transition we didn't enumerate.
+  if (from && to) return `Stage: ${from} → ${to}.`;
+  return "";
+};
+
 // One-line summary used for non-tool-step kinds (thinking / drift / paused
-// / retry / abort / complete / info). Unchanged from the W40 layout.
+// / retry / abort / complete / info / stage_advanced).
 const summary = computed<string>(() => {
   const p = props.event.payload ?? {};
   switch (props.event.kind) {
@@ -172,6 +221,8 @@ const summary = computed<string>(() => {
       const msg = _str(p, "message");
       return msg || "";
     }
+    case "stage_advanced":
+      return _renderStageAdvanced(p);
     default:
       return "";
   }
@@ -267,6 +318,19 @@ const thinkingHtml = computed<string>(() => {
 .ai-agent-event--complete {
   color: var(--color-success, #1a7f37);
   border-left-color: var(--color-success, #1a7f37);
+}
+
+/* W71 v1.2 — stage_advanced events render as faint trail markers between
+   the more salient tool_call_* events. Smaller font, lighter color, no
+   secondary background so they read as "the agent is moving through its
+   pipeline" without competing with the staged-node summaries. */
+.ai-agent-event--stage_advanced {
+  font-size: 11px;
+  color: var(--color-text-muted, #6a737d);
+  background-color: transparent;
+  border-left-color: var(--color-border-primary, #d0d7de);
+  padding: 2px 12px;
+  font-style: italic;
 }
 
 .ai-agent-event--tool_call_rejected {

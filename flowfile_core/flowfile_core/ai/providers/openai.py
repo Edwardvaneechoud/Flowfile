@@ -22,6 +22,10 @@ class OpenAIProvider(LiteLLMProvider):
         "explain": "gpt-4.1",
         "agent": "gpt-4.1",
         "agent_complex": "gpt-4.1",
+        # W71 — agent_staged stays on the mini tier: each LLM round sees
+        # one tool with a tight enum, so the cheap model is sufficient
+        # and the four-round cycle stays well within rate limits.
+        "agent_staged": "gpt-4.1-mini",
         "docgen": "gpt-4.1",
         "settings_autocomplete": "gpt-4.1-mini",
         "lineage": "gpt-4.1",

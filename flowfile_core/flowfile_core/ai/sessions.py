@@ -77,8 +77,54 @@ instead of the misleading *"finished — nothing to stage"*. Both
 ``awaiting_user_input`` and ``completed`` are followup-resumable via
 ``POST /ai/agent/{session_id}/followup`` — see W49 for the wire shape."""
 
-PlannerSurface = Literal["agent", "agent_complex"]
+PlannerSurface = Literal["agent", "agent_complex", "agent_staged"]
 SamplesMode = Literal["off", "regex"]
+
+
+PlannerStage = Literal[
+    "classify",
+    "pick_type",
+    "pick_upstream",
+    "fill_settings",
+    "single_stage_op",
+]
+"""W71 — current state in the ``agent_staged`` multi-stage state machine.
+
+Each stage exposes exactly one tool to the function-calling API so smaller
+models comply with the API rather than emitting text-JSON. The legacy
+``agent`` and ``agent_complex`` surfaces ignore this field — only the
+``agent_staged`` surface drives transitions through it.
+
+* ``classify`` — exposes ``flowfile.meta.classify_intent``; the LLM picks
+  an :data:`PlannerOpKind` value. Default at session start.
+* ``pick_type`` — add path only. Exposes ``flowfile.meta.pick_node_type``.
+* ``pick_upstream`` — add path only. Exposes
+  ``flowfile.meta.pick_upstream`` with the upstream id enum populated
+  per-turn from ``live_ids ∪ session.staged_node_ids``.
+* ``fill_settings`` — add path only. Exposes the picked node type's
+  ``flowfile.graph.add_<type>`` tool with planner-injected fields stripped
+  from its parameter schema.
+* ``single_stage_op`` — non-add path. Exposes the one matching ops tool
+  (``update_node_settings`` / ``delete_node`` / ``connect`` /
+  ``delete_connection``) per :attr:`AgentSession.picked_op_kind`.
+"""
+
+PlannerOpKind = Literal[
+    "add",
+    "modify",
+    "delete",
+    "connect",
+    "disconnect",
+    "other",
+]
+"""W71 — the user-intent kind chosen by ``classify_intent`` at stage 0.
+
+``add`` advances through stages ``pick_type → pick_upstream → fill_settings``.
+``modify`` / ``delete`` / ``connect`` / ``disconnect`` advance to
+``single_stage_op`` exposing exactly one ops tool. ``other`` terminates
+the loop — the LLM's accompanying assistant content becomes the final
+response (used for clarifying questions, "what does this flow do?", etc.).
+"""
 
 
 class GraphSnapshot(BaseModel):
@@ -182,12 +228,53 @@ class AgentSession(BaseModel):
     selection. Currently always empty — no v0 wire path populates it; the
     field is structurally present so a future workstream can extract
     ``@``-mentions from the user prompt without an additional schema bump."""
+    stage: PlannerStage = "classify"
+    """W71 — current stage in the ``agent_staged`` state machine. Ignored
+    by legacy ``agent`` / ``agent_complex`` surfaces. Reset to
+    ``"classify"`` after each successful ``add_*`` or single-stage non-add
+    op via :func:`reset_stage_state` so multi-node turns serialize cleanly."""
+    picked_op_kind: PlannerOpKind | None = None
+    """W71 — the op_kind chosen by ``classify_intent`` at stage 0. Drives
+    ``single_stage_op`` surface selection for non-add intents. Cleared by
+    :func:`reset_stage_state`."""
+    picked_node_type: str | None = None
+    """W71 — the node type chosen by ``pick_node_type`` at stage 1.
+    Used by the planner to build a per-turn one-tool catalog for stage 3
+    (``fill_settings``). Cleared by :func:`reset_stage_state`."""
+    picked_upstream_ids: list[int] = Field(default_factory=list)
+    """W71 — primary-input upstream node ids chosen by ``pick_upstream``
+    at stage 2. Injected into the ``add_<type>`` call's
+    ``InsertionContext`` at stage 3. Cleared by :func:`reset_stage_state`."""
+    picked_right_input_id: int | None = None
+    """W71 — optional right-input node id chosen by ``pick_upstream`` at
+    stage 2 (join-shaped node types only). Injected into the
+    ``InsertionContext.right_input_node_id`` at stage 3. Cleared by
+    :func:`reset_stage_state`."""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def touch(self) -> None:
         """Bump ``updated_at`` to the current UTC instant."""
         self.updated_at = datetime.now(timezone.utc)
+
+
+def reset_stage_state(session: AgentSession) -> None:
+    """W71 — reset the ``agent_staged`` state machine back to stage 0.
+
+    Called by the planner after each successful ``add_*`` (at stage
+    ``fill_settings``) or successful single-stage non-add op (at stage
+    ``single_stage_op``). The next loop iteration starts a fresh
+    classify→pick→fill cycle so multi-node turns work without history
+    pruning.
+
+    No-op for legacy ``agent`` / ``agent_complex`` surfaces — they don't
+    drive transitions through these fields.
+    """
+    session.stage = "classify"
+    session.picked_op_kind = None
+    session.picked_node_type = None
+    session.picked_upstream_ids = []
+    session.picked_right_input_id = None
 
 
 # --------------------------------------------------------------------------- #
@@ -494,6 +581,8 @@ __all__ = [
     "AgentSession",
     "DriftDetail",
     "GraphSnapshot",
+    "PlannerOpKind",
+    "PlannerStage",
     "PlannerSurface",
     "SamplesMode",
     "SessionStatus",
@@ -506,6 +595,7 @@ __all__ = [
     "list_sessions_for_user",
     "pop_session",
     "register_session",
+    "reset_stage_state",
     "revalidate_staged_results_against_live",
     "set_session_repo",
 ]

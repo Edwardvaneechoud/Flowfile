@@ -180,6 +180,10 @@ class _ScriptedProvider:
         tools: list[Any] | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        *,
+        surface: str | None = None,
+        session_id: str | None = None,
+        user_id: int | None = None,
     ) -> ChatResponse:
         if not self._steps:
             raise AssertionError("scripted provider exhausted")

@@ -45,10 +45,11 @@ from flowfile_core.ai.tools.predictor import (
     predict_schema_via_mirror,
     schema_to_dict_list,
 )
+from flowfile_core.ai.tools.meta_ops import OP_KIND_NAMES
 from flowfile_core.ai.tools.registry import _inline_ref_schema
 from flowfile_core.ai.tools.registry import pick_category as _pick_category_heuristic
 from flowfile_core.schemas import input_schema
-from flowfile_core.schemas.schemas import get_settings_class_for_node_type
+from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS, get_settings_class_for_node_type
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +241,20 @@ def execute_tool_call(
     in-batch staged-but-unapplied upstreams (which by definition aren't in
     ``flow.nodes`` yet).
     """
+    # W71 v1.4 — universal lenient JSON-string unwrap. Smaller open-weights
+    # models (llama-3.3-70b, in particular) routinely pass structured
+    # tool args as JSON-encoded strings rather than native objects /
+    # arrays / ints. ``upstream_node_ids: "[3]"``, ``groupby_input:
+    # "{\"agg_cols\": ...}"``, ``node_id: "5"`` — Pydantic strict mode
+    # rejects each of these and burns retry budget on a recoverable
+    # type-wrap mistake. Apply the unwrap pass at the top of dispatch so
+    # every handler (add_*, update_node_settings, the meta ops, schema
+    # ops) gets the same forgiveness uniformly. See
+    # :func:`_unwrap_json_string_values` for the heuristic + safety
+    # guards (free-form code bodies / Polars expressions are never
+    # mangled because they don't start with ``[`` / ``{`` / a digit).
+    if tool_args:
+        tool_args = _unwrap_json_string_values(tool_args)
     redacted_args = safety.redact_secrets(tool_args) if tool_args else {}
 
     match = _TOOL_NAME_RE.match(tool_name)
@@ -1771,6 +1786,145 @@ def _handle_codegen(
     )
 
 
+def _unwrap_json_string_values(value: Any) -> Any:
+    """W71 v1.4 — recursively unwrap JSON-encoded string values in tool
+    args.
+
+    Smaller open-weights models routinely emit structured tool args as
+    JSON-encoded strings rather than native objects / arrays / ints.
+    Three failure modes seen in dogfood:
+
+    * ``upstream_node_ids: "[3, 4]"`` (the field is array<int>; model
+      emits a string).
+    * ``groupby_input: "{\\"agg_cols\\": [...]}"`` (an object field
+      delivered as a JSON-string).
+    * ``node_id: "5"`` (an int field delivered as a digit-string).
+
+    Pydantic strict mode rejects each of these and the planner spends
+    its retry budget re-asking the model to fix shape, which it usually
+    does only after several attempts (or never). Pre-unwrapping at the
+    executor seam means the rest of the pipeline (Pydantic validation,
+    custom handlers) sees the native types it expects.
+
+    The heuristic is conservative: only attempt to JSON-parse strings
+    that **start with ``{``, ``[``, a digit, or ``-``**. This protects
+    free-form code bodies (``polars_code``, ``python_script``,
+    ``sql_query``), Polars expressions ("``pl.col('x') > 5``"), and
+    SQL queries ("``SELECT …``") from being parsed accidentally —
+    none of those start with a JSON-shape character.
+
+    A parsed value replaces the original string ONLY when it parses to
+    a ``dict``, ``list``, or ``int``. Floats / bools / null parse-results
+    leave the original string in place so Pydantic can decide; this
+    avoids rewriting a literal ``"true"`` (where the model truly meant
+    the string) into ``True``.
+
+    Walks dicts and lists recursively so partially-encoded payloads
+    (e.g. ``{"join_input": {"join_mapping": "[{...}]"}}``) get fully
+    unwrapped in one pass.
+    """
+    if isinstance(value, dict):
+        return {k: _unwrap_json_string_values(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_unwrap_json_string_values(item) for item in value]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return value
+        first = stripped[0]
+        # Free-form strings (code, SQL, prose, identifiers) never start
+        # with a JSON-shape character, so this guard makes the unwrap
+        # pass safe to apply universally without a per-tool allowlist.
+        if first not in "{[" and not first.isdigit() and first != "-":
+            return value
+        try:
+            parsed = json.loads(stripped)
+        except (TypeError, ValueError):
+            return value
+        # Recurse so nested JSON-strings inside the parsed value also
+        # get unwrapped. Booleans are passed through; floats/null land
+        # back at the original string.
+        if isinstance(parsed, dict):
+            return _unwrap_json_string_values(parsed)
+        if isinstance(parsed, list):
+            return _unwrap_json_string_values(parsed)
+        if isinstance(parsed, bool):
+            return value
+        if isinstance(parsed, int):
+            return parsed
+        return value
+    return value
+
+
+def _coerce_to_int_or_self(value: Any) -> Any:
+    """W71 v1.3 — small helper for lenient ``int | null`` parsing.
+
+    Returns the parsed int when ``value`` is a stringified int (``"4"``)
+    or None when it's an empty string. Otherwise returns the original
+    ``value`` unchanged so the caller's type check fires on the
+    structurally-wrong shape rather than on a recoverable string. Booleans
+    are passed through (caller rejects them — Python's ``isinstance(True, int)``
+    is True so we explicitly avoid swallowing booleans here).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or stripped.lower() in ("null", "none"):
+            return None
+        try:
+            return int(stripped)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def _coerce_to_int_list_or_self(value: Any) -> Any:
+    """W71 v1.3 — coerce common llama-70b mis-shapes back to ``list[int]``.
+
+    Accepts:
+
+    * Native ``list`` of ints — returned unchanged (each element passes
+      through ``_coerce_to_int_or_self`` so stringified ints inside the
+      list are also recovered).
+    * Single ``int`` — wrapped as ``[int]`` (the model emitted a scalar
+      where the schema expected an array).
+    * ``str`` parseable as JSON to a list or int — parsed and wrapped.
+    * ``str`` of comma-separated ints (``"4, 5"``) — parsed.
+    * Anything else — returned unchanged so the caller's type check
+      surfaces the actual shape problem in the refusal_detail.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return [value]
+    if isinstance(value, list):
+        return [_coerce_to_int_or_self(item) for item in value]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        # Try JSON first — covers '[4]', '[4, 5]', '4', and '"4"'.
+        try:
+            parsed = json.loads(stripped)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, list):
+            return [_coerce_to_int_or_self(item) for item in parsed]
+        if isinstance(parsed, int) and not isinstance(parsed, bool):
+            return [parsed]
+        # Fallback: comma-separated integers.
+        try:
+            return [int(part.strip()) for part in stripped.split(",") if part.strip()]
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
 def _handle_meta(
     *,
     op: str,
@@ -1781,32 +1935,198 @@ def _handle_meta(
     user_id: int,
     flow_id: int,
 ) -> ToolExecutionResult:
-    if op != "pick_category":
-        return _reject_and_audit(
-            tool_name=tool_name,
-            tool_args=redacted_args,
+    """Dispatch the four meta ops (W31 / W71).
+
+    * ``pick_category`` — legacy two-stage agent's heuristic categoriser.
+    * ``classify_intent`` — W71 stage 0: returns ``extra["op_kind"]``.
+    * ``pick_node_type`` — W71 stage 1: returns ``extra["node_type"]``.
+    * ``pick_upstream`` — W71 stage 2: returns ``extra["upstream_node_ids"]``
+      and ``extra["right_input_node_id"]``.
+
+    All four follow the same shape: validate the LLM-provided value
+    against the schema (enum / type), emit one ``AuditEvent``, return
+    ``status="applied"`` with the chosen value(s) on ``extra`` so the
+    planner can mutate session state.
+    """
+    if op == "pick_category":
+        intent = tool_args.get("intent", "")
+        category = _pick_category_heuristic(str(intent))
+        audit_row = _record_event(
             session_id=session_id,
             user_id=user_id,
+            tool_name=tool_name,
             flow_id=flow_id,
-            refusal_reason=None,
-            refusal_detail=f"unknown meta op: {op!r}",
+            tool_args=redacted_args,
+            result_status="success",
         )
-    intent = tool_args.get("intent", "")
-    category = _pick_category_heuristic(str(intent))
-    audit_row = _record_event(
+        return ToolExecutionResult(
+            status="applied",
+            tool_name=tool_name,
+            audit_id=audit_row.id if audit_row is not None else None,
+            executed_args=redacted_args,
+            extra={"category": category, "rationale": "heuristic keyword match (W31)"},
+        )
+
+    if op == "classify_intent":
+        op_kind = tool_args.get("op_kind")
+        rationale = tool_args.get("rationale", "")
+        if not isinstance(op_kind, str) or op_kind not in OP_KIND_NAMES:
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow_id,
+                refusal_reason=None,
+                refusal_detail=(
+                    f"classify_intent: op_kind {op_kind!r} not one of "
+                    f"{list(OP_KIND_NAMES)}"
+                ),
+            )
+        audit_row = _record_event(
+            session_id=session_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            flow_id=flow_id,
+            tool_args=redacted_args,
+            result_status="success",
+        )
+        return ToolExecutionResult(
+            status="applied",
+            tool_name=tool_name,
+            audit_id=audit_row.id if audit_row is not None else None,
+            executed_args=redacted_args,
+            extra={"op_kind": op_kind, "rationale": str(rationale or "")},
+        )
+
+    if op == "pick_node_type":
+        node_type = tool_args.get("node_type")
+        rationale = tool_args.get("rationale", "")
+        if not isinstance(node_type, str) or get_settings_class_for_node_type(node_type) is None:
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow_id,
+                refusal_reason=None,
+                refusal_detail=(
+                    f"pick_node_type: node_type {node_type!r} is not a registered "
+                    f"Flowfile node type. Known: {sorted(NODE_TYPE_TO_SETTINGS_CLASS.keys())}"
+                ),
+            )
+        audit_row = _record_event(
+            session_id=session_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            flow_id=flow_id,
+            tool_args=redacted_args,
+            result_status="success",
+        )
+        return ToolExecutionResult(
+            status="applied",
+            tool_name=tool_name,
+            audit_id=audit_row.id if audit_row is not None else None,
+            executed_args=redacted_args,
+            extra={"node_type": node_type, "rationale": str(rationale or "")},
+        )
+
+    if op == "pick_upstream":
+        raw_upstream = tool_args.get("upstream_node_ids")
+        raw_right = tool_args.get("right_input_node_id")
+        rationale = tool_args.get("rationale", "")
+
+        # W71 v1.3 — coerce common llama-70b mis-shapes back to the
+        # expected list[int]. Without this, every dogfood run on
+        # llama-3.3-70b spends its retry budget on the same predictable
+        # type errors. Three mistakes seen in practice:
+        #   1. ``upstream_node_ids: 4`` (single int, not wrapped in a list)
+        #   2. ``upstream_node_ids: "4"`` (JSON-encoded as string)
+        #   3. ``upstream_node_ids: "[4]"`` or ``"4,5"`` (CSV string)
+        # Each gets coerced to ``[4]`` / ``[4, 5]`` rather than rejected.
+        # We only coerce — if the result still doesn't match list[int]
+        # the original rejection still fires below.
+        raw_upstream = _coerce_to_int_list_or_self(raw_upstream)
+        raw_right = _coerce_to_int_or_self(raw_right)
+
+        if not isinstance(raw_upstream, list):
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow_id,
+                refusal_reason=None,
+                refusal_detail=(
+                    "pick_upstream: upstream_node_ids must be a list of integers, "
+                    f"got {type(raw_upstream).__name__}. Pass a list like [3] "
+                    "or [3, 4]; not a string, not a single integer."
+                ),
+            )
+        upstream_ids: list[int] = []
+        for uid in raw_upstream:
+            if isinstance(uid, int) and not isinstance(uid, bool):
+                upstream_ids.append(uid)
+            else:
+                return _reject_and_audit(
+                    tool_name=tool_name,
+                    tool_args=redacted_args,
+                    session_id=session_id,
+                    user_id=user_id,
+                    flow_id=flow_id,
+                    refusal_reason=None,
+                    refusal_detail=(
+                        f"pick_upstream: upstream_node_ids contains non-integer {uid!r}. "
+                        "Each entry must be one of the live node ids in the enum."
+                    ),
+                )
+
+        right_input_id: int | None = None
+        if raw_right is not None:
+            if isinstance(raw_right, int) and not isinstance(raw_right, bool):
+                right_input_id = raw_right
+            else:
+                return _reject_and_audit(
+                    tool_name=tool_name,
+                    tool_args=redacted_args,
+                    session_id=session_id,
+                    user_id=user_id,
+                    flow_id=flow_id,
+                    refusal_reason=None,
+                    refusal_detail=(
+                        "pick_upstream: right_input_node_id must be an integer or null, "
+                        f"got {type(raw_right).__name__}"
+                    ),
+                )
+
+        audit_row = _record_event(
+            session_id=session_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            flow_id=flow_id,
+            tool_args=redacted_args,
+            result_status="success",
+        )
+        return ToolExecutionResult(
+            status="applied",
+            tool_name=tool_name,
+            audit_id=audit_row.id if audit_row is not None else None,
+            executed_args=redacted_args,
+            extra={
+                "upstream_node_ids": upstream_ids,
+                "right_input_node_id": right_input_id,
+                "rationale": str(rationale or ""),
+            },
+        )
+
+    return _reject_and_audit(
+        tool_name=tool_name,
+        tool_args=redacted_args,
         session_id=session_id,
         user_id=user_id,
-        tool_name=tool_name,
         flow_id=flow_id,
-        tool_args=redacted_args,
-        result_status="success",
-    )
-    return ToolExecutionResult(
-        status="applied",
-        tool_name=tool_name,
-        audit_id=audit_row.id if audit_row is not None else None,
-        executed_args=redacted_args,
-        extra={"category": category, "rationale": "heuristic keyword match (W31)"},
+        refusal_reason=None,
+        refusal_detail=f"unknown meta op: {op!r}",
     )
 
 

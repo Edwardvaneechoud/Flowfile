@@ -979,14 +979,25 @@ def test_executor_module_exposes_seam() -> None:
 
 
 def _add_manual_input_args_with_string_raw_data() -> dict[str, Any]:
-    """Replicate the live-transcript shape: LLM JSON-string-encodes
-    ``raw_data_format``. Pydantic refuses with ``type=model_type``."""
+    """W67 — replicate a settings-validation refusal that the W71 v1.4
+    universal JSON-string unwrap can't recover.
+
+    Originally this fixture passed ``raw_data_format`` as a JSON-encoded
+    string (``'{"columns": [], "data": []}'``) — exactly the live-
+    transcript shape llama-70b emits. v1.4 unwraps that automatically at
+    the executor seam, so the refusal path is no longer reached for
+    JSON-parseable strings. To keep the W67 refusal-enrichment tests
+    meaningful, the fixture now sends a string that isn't JSON-shaped
+    (doesn't start with ``{`` / ``[`` / a digit) — the unwrap declines
+    to attempt a parse and Pydantic still rejects with the original
+    ``type=model_type`` error.
+    """
     return {
         "flow_id": 1,
         "node_id": 5,
         "pos_x": 0.0,
         "pos_y": 0.0,
-        "raw_data_format": '{"columns": [], "data": []}',
+        "raw_data_format": "not a JSON-shaped string",
     }
 
 
