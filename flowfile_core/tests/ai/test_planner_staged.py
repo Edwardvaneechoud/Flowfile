@@ -646,6 +646,195 @@ def test_text_json_tool_call_recovery_at_fill_settings() -> None:
     assert sort_input[0].get("how") == "desc"
 
 
+def test_text_json_recovery_handles_json_object_shape_at_classify() -> None:
+    """W71 v1.8 — llama-3.3-8b emits the function call as a JSON object
+    in its content (the OpenAI envelope: ``{"name": ..., "parameters":
+    ...}``) even at the simplest classify stage. Recovery now applies
+    at all agent_staged stages and parses the JSON-object shape so the
+    8b run advances instead of terminating immediately."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "classify"
+
+    text_content = (
+        '{"name": "flowfile.meta.classify_intent", "parameters": '
+        '{"op_kind": "add", "rationale": "Implement the suggested nodes."}}'
+    )
+    provider = _ScriptedProvider(
+        [
+            _Step(content=text_content, finish_reason="stop"),
+            # After classify advances, exit cleanly at pick_type.
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    # classify_intent dispatched and advanced the stage to pick_type.
+    assert sess.picked_op_kind == "add"
+    assert sess.stage == "pick_type"
+
+
+def test_text_json_recovery_handles_arguments_alias() -> None:
+    """W71 v1.8 — some models prefer ``"arguments"`` (OpenAI's older key
+    name) over ``"parameters"``. Recovery accepts both."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "classify"
+
+    text_content = (
+        '{"name": "flowfile.meta.classify_intent", "arguments": '
+        '{"op_kind": "add", "rationale": "Yes, please add it."}}'
+    )
+    provider = _ScriptedProvider(
+        [
+            _Step(content=text_content, finish_reason="stop"),
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+    assert sess.picked_op_kind == "add"
+
+
+def test_text_json_recovery_declines_when_name_not_in_expected_set() -> None:
+    """W71 v1.8 — the name must be in the expected catalog. If a model
+    emits ``add_group_by`` while the catalog only exposes
+    ``classify_intent`` (i.e. wrong stage), recovery declines rather
+    than misfiring."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "classify"
+
+    # The catalog at classify exposes ONLY classify_intent. A
+    # JSON-object call for add_group_by should not be recovered here.
+    text_content = (
+        '{"name": "flowfile.graph.add_group_by", "parameters": '
+        '{"agg_cols": [{"old_name": "city", "agg": "groupby"}]}}'
+    )
+    provider = _ScriptedProvider(
+        [
+            _Step(content=text_content, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    # Nothing got staged — recovery correctly declined.
+    assert sess.staged_results == []
+    # Stage is unchanged (LLM didn't classify; loop terminated).
+    assert sess.picked_op_kind is None
+
+
+def test_silent_termination_routes_to_retry_at_fill_settings() -> None:
+    """W71 v1.7 — at fill_settings the LLM emits prose with no
+    tool_call AND no parseable text-JSON shape (the llama-70b
+    'altimoreFiltering...' token-corruption case). Instead of the
+    legacy 'Agent finished — nothing to stage' termination, the loop
+    appends a synthetic 'you must call the tool' reminder and routes
+    through the retry budget."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "fill_settings"
+    sess.picked_op_kind = "add"
+    sess.picked_node_type = "filter"
+    sess.picked_upstream_ids = [1]
+
+    provider = _ScriptedProvider(
+        [
+            # Round 1: garbled prose, no tool_call.
+            _Step(content="altimoreFiltering to rows from EU only", finish_reason="stop"),
+            # Round 2 (after retry reminder): emit a real call.
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-fill-retry",
+                        name="flowfile.graph.add_filter",
+                        arguments={
+                            "filter_input": {
+                                "filter_type": "advanced",
+                                "advanced_filter": "[region]=='EU'",
+                            }
+                        },
+                    )
+                ]
+            ),
+            # Round 3: classify after reset; nothing more.
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+
+    # The retry path fired between round 1 and round 2.
+    retry_events = [e for e in events if e.event == "retry"]
+    assert len(retry_events) >= 1, "expected a retry event after silent stage-3 termination"
+
+    # Round 2's real tool call staged the filter.
+    assert len(sess.staged_results) == 1
+    assert sess.staged_results[0].tool_name == "flowfile.graph.add_filter"
+
+
+def test_silent_termination_max_retries_exhausted_fails() -> None:
+    """W71 v1.7 — three consecutive empty-tool-call rounds at stage 3
+    exhaust the retry budget and fail the run with a clear error."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "fill_settings"
+    sess.picked_op_kind = "add"
+    sess.picked_node_type = "filter"
+    sess.picked_upstream_ids = [1]
+
+    provider = _ScriptedProvider(
+        [
+            _Step(content="garbage 1", finish_reason="stop"),
+            _Step(content="garbage 2", finish_reason="stop"),
+            _Step(content="garbage 3", finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(
+        _drain(
+            run_planner_session(
+                session=sess,
+                flow=flow,
+                provider=provider,
+                scheduler=_no_wait_scheduler(),
+                max_retries_per_step=3,
+            )
+        )
+    )
+
+    error_events = [e for e in events if e.event == "error"]
+    assert error_events, "expected an error event after retries exhausted"
+    assert sess.status == "failed"
+    assert sess.staged_results == []
+
+
+def test_classify_silent_termination_still_terminates() -> None:
+    """W71 v1.7 — preserve the existing termination semantics at the
+    classify stage. The LLM emitting prose-only at classify is a
+    valid 'I'm done responding' signal (e.g. op_kind='other' was
+    intended). It must NOT loop into retry hell."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "classify"
+
+    provider = _ScriptedProvider(
+        [
+            _Step(content="Here is my answer about the flow.", finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    # Loop terminated cleanly; no retry, no failure, no staged ops.
+    assert sess.staged_results == []
+    assert sess.status in ("completed", "awaiting_user_input")
+
+
 def test_text_json_tool_call_recovery_skipped_at_classify() -> None:
     """W71 v1.6 — recovery does NOT fire at the classify stage. After a
     successful add, the LLM is reset to classify and sometimes emits a

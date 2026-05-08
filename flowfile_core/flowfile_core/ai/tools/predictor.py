@@ -197,6 +197,8 @@ predict_schema_static = predict_schema_via_mirror
 def _resolve_upstream_schemas(
     flow,
     upstream_node_ids: list[int],
+    *,
+    staged_schemas: dict[int, list[FlowfileColumn]] | None = None,
 ) -> tuple[dict[int, list[FlowfileColumn]], list[str]]:
     """Apply D011's tiered handling for upstream nodes whose schema may be ``None``.
 
@@ -212,6 +214,15 @@ def _resolve_upstream_schemas(
 
     Tiers (in order):
 
+    * **Tier 0a** (W71 v1.11) — uid is in ``staged_schemas`` (a session's
+      already-staged-but-not-yet-applied add_* node). Use the predicted
+      output schema captured when that node was staged. This is the
+      load-bearing path for chained add_* calls in a single agent turn:
+      without it, ``predictor`` warned *"upstream node N not found in
+      flow"* for each chain step, the LLM read the warning as a failure
+      signal, and tried to "fix" it by re-staging with new ids — a
+      14-node runaway loop on Qwen 32B / agent_complex (2026-05-08
+      dogfood).
     * **Tier 0** — ``node.predicted_schema`` already populated. Use it.
     * **Tier 1** — node has a ``schema_callback`` and forcing returns a
       non-empty schema. Covers both static upstreams (filter/select/join/...)
@@ -223,14 +234,22 @@ def _resolve_upstream_schemas(
       and return ``status="warned"``.
 
     Returns ``(resolved_schemas, warnings)`` where ``resolved_schemas`` only
-    contains entries that successfully resolved (tiers 0–1). Tier 2 entries are
-    surfaced solely as warnings — callers can choose to refuse the tool call or
-    proceed with deferred validation.
+    contains entries that successfully resolved (tiers 0a–1). Tier 2 entries
+    are surfaced solely as warnings — callers can choose to refuse the tool
+    call or proceed with deferred validation.
     """
     resolved: dict[int, list[FlowfileColumn]] = {}
     warnings: list[str] = []
 
     for uid in upstream_node_ids:
+        # Tier 0a (W71 v1.11): staged-but-not-yet-applied upstream from
+        # the current session. Use the cached predicted output schema
+        # the planner threaded in via ``staged_schemas``. Skip the
+        # live-graph lookup AND the warning entirely.
+        if staged_schemas is not None and uid in staged_schemas:
+            resolved[uid] = list(staged_schemas[uid])
+            continue
+
         node = flow.get_node(uid)
         if node is None:
             warnings.append(f"upstream node {uid} not found in flow {flow.flow_id}")

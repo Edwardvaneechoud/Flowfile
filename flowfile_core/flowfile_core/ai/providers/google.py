@@ -20,7 +20,6 @@ class GoogleProvider(LiteLLMProvider):
         "cmd_k": "gemini-2.5-flash",
         "ghost_node": "gemini-2.5-flash",
         "explain": "gemini-2.5-flash",
-        "agent": "gemini-2.5-pro",
         "agent_complex": "gemini-2.5-pro",
         "docgen": "gemini-2.5-flash",
         "settings_autocomplete": "gemini-2.5-flash",

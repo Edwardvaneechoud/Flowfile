@@ -77,7 +77,14 @@ instead of the misleading *"finished — nothing to stage"*. Both
 ``awaiting_user_input`` and ``completed`` are followup-resumable via
 ``POST /ai/agent/{session_id}/followup`` — see W49 for the wire shape."""
 
-PlannerSurface = Literal["agent", "agent_complex", "agent_staged"]
+PlannerSurface = Literal["agent_complex", "agent_staged"]
+"""W71 v1.10 — legacy ``"agent"`` surface (two-stage with
+``flowfile.meta.pick_category``) was removed: it was the failure mode
+that triggered W71 (small open-weights models silently fall back to
+text-JSON-in-content instead of using the function-calling API).
+``agent_staged`` covers the small-model case via a one-tool-per-round
+state machine; ``agent_complex`` covers single-shot full-catalog use
+on big-model providers."""
 SamplesMode = Literal["off", "regex"]
 
 
@@ -191,7 +198,7 @@ class AgentSession(BaseModel):
     flow_id: int
     user_id: int
     user_prompt: str
-    surface: PlannerSurface = "agent"
+    surface: PlannerSurface = "agent_staged"
     samples_mode: SamplesMode = "off"
     provider_name: str
     """Name of the BYOK provider — used by the resume route to re-resolve

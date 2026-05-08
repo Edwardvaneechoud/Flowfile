@@ -24,24 +24,20 @@ from flowfile_core.ai.tools.executor import (
     execute_tool_call,
 )
 from flowfile_core.ai.tools.graph_ops import GRAPH_OPS_TOOLS
-from flowfile_core.ai.tools.meta_ops import CATEGORY_NAMES, META_OPS_TOOLS
+from flowfile_core.ai.tools.meta_ops import META_OPS_TOOLS
 from flowfile_core.ai.tools.registry import (
-    CATEGORY_PRESETS,
     JSON_SCHEMA_DIALECT,
     MCP_TOOL_NAMESPACE,
     SURFACE_PRESETS,
     SurfaceLiteral,
-    ToolCategory,
     build_tool_catalog,
     mcp_tool_name,
-    pick_category,
 )
 from flowfile_core.ai.tools.schema_ops import SCHEMA_OPS_TOOLS
 
 __all__ = [
     # main entry points
     "build_tool_catalog",
-    "pick_category",
     "execute_tool_call",
     # executor types (W31)
     "ToolExecutionResult",
@@ -60,12 +56,9 @@ __all__ = [
     "META_OPS_TOOLS",
     # presets + naming
     "SURFACE_PRESETS",
-    "CATEGORY_PRESETS",
-    "CATEGORY_NAMES",
     "MCP_TOOL_NAMESPACE",
     "JSON_SCHEMA_DIALECT",
     "mcp_tool_name",
     # type literals
-    "ToolCategory",
     "SurfaceLiteral",
 ]

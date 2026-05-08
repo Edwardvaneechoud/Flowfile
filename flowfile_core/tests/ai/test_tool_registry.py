@@ -54,8 +54,6 @@ from jsonschema import Draft202012Validator
 
 from flowfile_core.ai.providers.base import ToolSpec
 from flowfile_core.ai.tools import (
-    CATEGORY_NAMES,
-    CATEGORY_PRESETS,
     CODEGEN_OPS_TOOLS,
     GRAPH_OPS_TOOLS,
     JSON_SCHEMA_DIALECT,
@@ -63,10 +61,8 @@ from flowfile_core.ai.tools import (
     SCHEMA_OPS_TOOLS,
     SURFACE_PRESETS,
     SurfaceLiteral,
-    ToolCategory,
     build_tool_catalog,
     mcp_tool_name,
-    pick_category,
 )
 from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
 
@@ -120,10 +116,10 @@ def test_w47_update_node_settings_present_in_catalog() -> None:
     assert "flowfile.graph.propose_subgraph" not in names
 
     # The universal-ops derivation auto-includes ``update_node_settings``
-    # in every surface / category preset alongside add_node / connect /
-    # delete_node / delete_connection.
+    # in every surface preset alongside add_node / connect / delete_node /
+    # delete_connection. (W71 v1.10 — CATEGORY_PRESETS removed alongside
+    # the legacy two-stage agent surface; only SURFACE_PRESETS remains.)
     from flowfile_core.ai.tools.registry import (
-        CATEGORY_PRESETS,
         SURFACE_PRESETS,
         _UNIVERSAL_OP_NAMES,
     )
@@ -137,10 +133,6 @@ def test_w47_update_node_settings_present_in_catalog() -> None:
     for surface, preset in SURFACE_PRESETS.items():
         assert not (permanently_dropped & preset), (
             f"surface {surface!r} contains a removed stub: {permanently_dropped & preset}"
-        )
-    for category, preset in CATEGORY_PRESETS.items():
-        assert not (permanently_dropped & preset), (
-            f"category {category!r} contains a removed stub: {permanently_dropped & preset}"
         )
 
 
@@ -169,7 +161,7 @@ def test_mcp_tool_name_helper() -> None:
     assert mcp_tool_name("graph", "add_filter") == "flowfile.graph.add_filter"
     assert mcp_tool_name("schema", "read_node_schema") == "flowfile.schema.read_node_schema"
     assert mcp_tool_name("codegen", "generate_polars_code") == "flowfile.codegen.generate_polars_code"
-    assert mcp_tool_name("meta", "pick_category") == "flowfile.meta.pick_category"
+    assert mcp_tool_name("meta", "classify_intent") == "flowfile.meta.classify_intent"
 
     with pytest.raises(ValueError, match="MCP naming convention"):
         mcp_tool_name("frontend", "click_button")  # bad domain
@@ -225,28 +217,18 @@ def test_surface_preset_keys_match_literal() -> None:
     assert set(SURFACE_PRESETS) == surface_keys
 
 
-def test_category_preset_keys_match_literal() -> None:
-    category_keys = set(get_args(ToolCategory))
-    assert set(CATEGORY_PRESETS) == category_keys
-    assert set(CATEGORY_PRESETS) == set(CATEGORY_NAMES)
-
-
 def test_surface_presets_resolve_to_known_tools() -> None:
     catalog_names = {tool.name for tool in build_tool_catalog()}
     for surface, names in SURFACE_PRESETS.items():
-        if surface == "agent_complex":
-            # agent_complex is documented as full-catalog; preset entry is
-            # intentionally empty so build_tool_catalog short-circuits.
+        if surface in ("agent_complex", "agent_staged"):
+            # ``agent_complex`` is full-catalog (preset is intentionally
+            # empty so ``build_tool_catalog`` short-circuits to the full
+            # list). ``agent_staged`` is the wrapper key for the W71
+            # state machine; the actual tool catalogs live under the
+            # per-stage ``staged_*`` keys.
             continue
         for name in names:
             assert name in catalog_names, f"surface {surface!r} references unknown tool {name!r}"
-
-
-def test_category_presets_resolve_to_known_tools() -> None:
-    catalog_names = {tool.name for tool in build_tool_catalog()}
-    for category, names in CATEGORY_PRESETS.items():
-        for name in names:
-            assert name in catalog_names, f"category {category!r} references unknown tool {name!r}"
 
 
 def test_cmd_k_surface_is_narrow() -> None:
@@ -262,96 +244,17 @@ def test_explain_surface_is_read_only() -> None:
         assert tool.name.startswith("flowfile.schema."), tool.name
 
 
-def test_agent_surface_first_stage_is_meta_only() -> None:
-    """The first stage of D002's two-stage flow exposes only pick_category."""
-    tools = build_tool_catalog(surface="agent")
-    assert [tool.name for tool in tools] == ["flowfile.meta.pick_category"]
-
-
 def test_agent_complex_surface_is_full() -> None:
     full = build_tool_catalog()
     agent_complex = build_tool_catalog(surface="agent_complex")
     assert {tool.name for tool in full} == {tool.name for tool in agent_complex}
 
 
-def test_transformations_category_includes_universal_ops() -> None:
-    """Every category surface is augmented with graph + schema ops at lookup."""
-    tools = build_tool_catalog(surface="transformations")
-    names = {tool.name for tool in tools}
-    # At least one transformation node tool
-    assert "flowfile.graph.add_filter" in names
-    # Universal graph op is always present
-    assert "flowfile.graph.connect" in names
-    # Universal schema op is always present
-    assert "flowfile.schema.read_node_schema" in names
-    # ML-only category tool is *not* present
-    assert "flowfile.graph.add_train_model" not in names
-
-
-def test_io_category_includes_io_node_tools() -> None:
-    tools = build_tool_catalog(surface="io")
-    names = {tool.name for tool in tools}
-    assert "flowfile.graph.add_read" in names
-    assert "flowfile.graph.add_database_reader" in names
-    assert "flowfile.graph.add_cloud_storage_reader" in names
-    # Transformation tools are *not* in the io category
-    assert "flowfile.graph.add_filter" not in names
-
-
-def test_code_category_includes_codegen_ops() -> None:
-    tools = build_tool_catalog(surface="code")
-    names = {tool.name for tool in tools}
-    assert "flowfile.codegen.generate_polars_code" in names
-    assert "flowfile.codegen.generate_python_script" in names
-    assert "flowfile.codegen.generate_sql_query" in names
-    # The corresponding node-type tools are also present so the executor
-    # can stage the generated body via add_polars_code etc.
-    assert "flowfile.graph.add_polars_code" in names
-
-
 def test_unknown_surface_raises() -> None:
-    with pytest.raises(KeyError, match="Unknown surface or category"):
+    """W71 v1.10 — error message simplified after CATEGORY_PRESETS
+    removal; the matcher just checks the surface-unknown phrase."""
+    with pytest.raises(KeyError, match="Unknown surface"):
         build_tool_catalog(surface="nonsense")
-
-
-# ---------------------------------------------------------------------------
-# pick_category (heuristic)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "intent,expected",
-    [
-        ("filter rows where region == 'EU'", "transformations"),
-        ("rename column foo to bar", "transformations"),
-        ("sort by revenue desc", "transformations"),
-        ("join customers and orders", "joins"),
-        ("merge on customer_id", "joins"),
-        ("group by region and average revenue", "aggregations"),
-        ("pivot the table on quarter", "aggregations"),
-        ("read parquet from s3", "io"),
-        ("write csv to disk", "io"),
-        ("run polars code to compute lag", "code"),
-        ("python script to call api", "code"),
-        ("train model on this dataset", "ml"),
-        ("predict scores", "ml"),
-        ("delete node 17", "graph"),
-        ("connect node 12 to node 18", "graph"),
-    ],
-)
-def test_pick_category_heuristic(intent: str, expected: str) -> None:
-    assert pick_category(intent) == expected
-
-
-def test_pick_category_falls_back_on_empty_intent() -> None:
-    assert pick_category("") == "transformations"
-    assert pick_category("   ") == "transformations"
-    # Pure noise that hits no keyword falls back to default.
-    assert pick_category("xyzzy plugh") == "transformations"
-
-
-def test_pick_category_respects_default_argument() -> None:
-    assert pick_category("xyzzy plugh", default="meta") == "meta"
 
 
 # ---------------------------------------------------------------------------
@@ -687,16 +590,18 @@ def test_w56v2_agent_payload_examples_only_for_divergent_nodes() -> None:
 
 
 def test_w56v2_agent_payload_examples_surface_on_agent_only() -> None:
-    """W56 v2 — examples appear ONLY on agent / agent_complex catalog.
+    """W56 v2 — examples appear ONLY on agent_complex catalog.
 
     Read-only / advisory surfaces (explain / lineage / docgen) get
     user_instructions, not agent payloads. cmd_k / ghost_node get the
     agent-shaped catalog but their preset filters out group_by / pivot /
     fuzzy_match / etc. (they only carry a narrow set of common transforms).
+    (W71 v1.10 — legacy ``"agent"`` surface removed; ``agent_complex``
+    is the only full-catalog surface left.)
     """
     from flowfile_core.ai.context.builder import assemble_system_prompt
 
-    agent_prompt = assemble_system_prompt("agent")
+    agent_prompt = assemble_system_prompt("agent_complex")
     explain_prompt = assemble_system_prompt("explain")
 
     # The example payload's distinctive marker — the customer-count line

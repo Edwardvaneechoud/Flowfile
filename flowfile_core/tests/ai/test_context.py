@@ -610,7 +610,7 @@ def test_render_prompt_context_with_string_mentions(linear_flow: FlowGraph) -> N
     ctx = render_prompt_context(
         linear_flow,
         pinned_node_ids=[],
-        surface="agent",
+        surface="agent_complex",
         mentions="please describe @flow",
     )
     assert isinstance(ctx, PromptContext)
@@ -846,11 +846,13 @@ _W56_REPRESENTATIVE_NODE_TOOLS = (
 )
 
 
-@pytest.mark.parametrize("surface", ["agent", "agent_complex"])
+@pytest.mark.parametrize("surface", ["agent_complex"])
 def test_w56_agent_surfaces_include_catalog_block(surface: SurfaceLiteral) -> None:
-    """W56 AC2 — agent / agent_complex prompts include the catalog header
-    plus several representative node-type sections so the model sees
-    narrative grounding for each tool."""
+    """W56 AC2 — agent_complex prompt includes the catalog header plus
+    several representative node-type sections so the model sees
+    narrative grounding for each tool. (W71 v1.10 — legacy ``"agent"``
+    surface removed; ``agent_staged`` only renders the catalog at the
+    ``pick_type`` stage, which is exercised by ``test_planner_staged.py``.)"""
     text = assemble_system_prompt(surface)
     assert _W56_CATALOG_HEADER in text, f"catalog header missing for {surface}"
     for heading in _W56_REPRESENTATIVE_NODE_TOOLS:
@@ -1021,19 +1023,22 @@ def test_w56_explain_surface_token_budget_reasonable() -> None:
 
 
 def test_w56_agent_surface_token_budget_under_70_pct_of_agent_budget() -> None:
-    """W56 AC6 — agent surface system prompt fits inside 70% of D010 agent budget.
+    """W56 AC6 — full-catalog agent prompt fits inside the per-call budget.
 
-    Per D010 the agent budget is 32K tokens; 70% is 22.4K. The prompt is
-    static — it has to carry the catalog plus the layered base + planner
-    suffix and still leave room for the per-call user message and the
-    model's reply on the wire.
+    W71 v1.10 — legacy ``"agent"`` surface removed; the equivalent
+    full-catalog prompt now lives on ``agent_complex`` (96K budget).
+    The static prompt has to carry the catalog plus the layered base +
+    planner suffix and still leave room for the per-call user message
+    and the model's reply on the wire — assert it's under 70% of the
+    96K complex budget.
     """
-    text = assemble_system_prompt("agent")
+    text = assemble_system_prompt("agent_complex")
     # Same chars/4 estimator the budget module uses (no tiktoken pull).
     estimated_tokens = len(text) // 4
-    cap = int(32_000 * 0.7)
+    cap = int(96_000 * 0.7)
     assert estimated_tokens <= cap, (
-        f"agent surface system prompt is {estimated_tokens} tokens (chars/4); " f"AC6 caps it at {cap} (70% of 32K)"
+        f"agent_complex system prompt is {estimated_tokens} tokens (chars/4); "
+        f"AC6 caps it at {cap} (70% of 96K)"
     )
 
 

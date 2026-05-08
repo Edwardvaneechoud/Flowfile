@@ -140,7 +140,6 @@ class PlannerEvent(BaseModel):
 
 
 _ADD_PREFIX = "flowfile.graph.add_"
-_PICK_CATEGORY_NAME = "flowfile.meta.pick_category"
 
 # W71 — staged-flow tool name lookups. Mirrored from ``meta_ops`` so the
 # planner can branch on tool name without re-importing the constants in
@@ -148,13 +147,18 @@ _PICK_CATEGORY_NAME = "flowfile.meta.pick_category"
 _CLASSIFY_INTENT_NAME = CLASSIFY_INTENT_TOOL_NAME
 _PICK_NODE_TYPE_NAME = PICK_NODE_TYPE_TOOL_NAME
 
-# W71 v1.6 — stages where text-JSON tool-call recovery is safe to apply.
-# At ``classify`` the LLM sometimes emits a "summary" of past calls in
-# its content after a successful add (it's reset back to classify and
-# has nothing useful to do); recovering those would re-execute the
-# already-staged ops. Restrict recovery to the stages where the LLM is
-# expected to emit exactly one tool call to a known tool.
-_TEXT_JSON_RECOVERY_STAGES: frozenset[str] = frozenset({"fill_settings", "single_stage_op"})
+# W71 v1.6 / v1.8 — recovery is now applied at all agent_staged stages
+# (the "exactly one match" + "name must be in expected_tool_names"
+# rules in ``_recover_textual_tool_call`` defend against the after-add
+# summary pattern). This frozenset stays in place to identify the
+# **mandatory-tool-call** stages where an empty ``tool_calls`` —
+# even after recovery — should route through the retry path rather
+# than terminating the loop (W71 v1.7). At ``classify`` an empty
+# ``tool_calls`` is still a valid termination signal: the LLM
+# decided op_kind="other" (silently) or the user got their answer.
+_MANDATORY_TOOL_CALL_STAGES: frozenset[str] = frozenset(
+    {"pick_type", "pick_upstream", "fill_settings", "single_stage_op"}
+)
 _PICK_UPSTREAM_NAME = PICK_UPSTREAM_TOOL_NAME
 
 # W71 — non-add ops that the staged surface dispatches via ``single_stage_op``.
@@ -756,6 +760,90 @@ def _collect_staged_upstream_positions(
     return out
 
 
+def _staged_dict_to_flowfile_column(col: dict[str, Any]) -> Any:
+    """W71 v1.11 — reconstruct a ``FlowfileColumn``-shaped object from a
+    serialized predicted_output_schema dict.
+
+    ``predictor.schema_to_dict_list`` projects a ``FlowfileColumn`` to
+    ``{"name": ..., "data_type": ..., "nullable": True}`` for the wire
+    payload (and disk persistence). To feed that back into the
+    predictor's mirror-graph as an upstream ``predicted_schema``, we
+    need objects that quack like ``FlowfileColumn`` — at minimum
+    ``column_name`` and ``data_type`` attributes. The mirror's
+    schema_callback closures only read those two; the rest of the
+    dataclass fields are populated with safe defaults so reflection /
+    repr / private attributes don't trip.
+
+    Uses ``__new__`` to bypass ``FlowfileColumn.__init__`` (which
+    requires a heavy ``PlType`` argument we don't have on the staging
+    path).
+    """
+    from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+
+    obj = FlowfileColumn.__new__(FlowfileColumn)
+    obj.column_name = str(col.get("name") or "")
+    obj.data_type = str(col.get("data_type") or "Unknown")
+    obj.size = 0
+    obj.max_value = ""
+    obj.min_value = ""
+    obj.col_index = 0
+    obj.number_of_empty_values = 0
+    obj.number_of_unique_values = 0
+    obj.example_values = ""
+    obj.average_value = None
+    # Name-mangled private dataclass fields. Setting them to ``None``
+    # matches what the regular ``__init__`` does so any access path
+    # (e.g. ``__str__``) doesn't AttributeError.
+    obj._FlowfileColumn__has_values = None
+    obj._FlowfileColumn__nullable = None
+    obj._FlowfileColumn__is_unique = None
+    obj._FlowfileColumn__sql_type = None
+    obj._FlowfileColumn__perc_unique = None
+    try:
+        obj.data_type_group = obj.get_readable_datatype_group()
+    except Exception:
+        obj.data_type_group = None
+    return obj
+
+
+def _collect_staged_upstream_schemas(
+    session: sessions.AgentSession,
+) -> dict[int, list[Any]]:
+    """W71 v1.11 — build ``{node_id: list[FlowfileColumn-like]}`` for every
+    prior in-batch staged ``add_*`` whose predicted output schema is
+    known.
+
+    Mirrors :func:`_collect_staged_upstream_positions`'s shape (same
+    walk over ``session.staged_results``) so the executor receives a
+    parallel ``extra_upstream_schemas`` lookup. The predictor consults
+    this BEFORE the live-graph ``flow.get_node(uid)`` lookup at Tier
+    0a (see ``predictor._resolve_upstream_schemas``). Without it,
+    chained add_* calls in a single agent turn produce *"upstream node
+    N not found in flow"* warnings on every step — which the LLM
+    reads as a failure signal and tries to "fix" by re-staging with
+    new ids, leading to a 14-node runaway loop on smaller models
+    (Qwen 32B / agent_complex, 2026-05-08 dogfood).
+    """
+    out: dict[int, list[Any]] = {}
+    for entry in session.staged_results:
+        if not entry.tool_name.startswith(_ADD_PREFIX):
+            continue
+        payload = entry.staged_node_payload if isinstance(entry.staged_node_payload, dict) else None
+        if payload is None:
+            continue
+        settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+        nid = settings.get("node_id") if isinstance(settings, dict) else None
+        if not isinstance(nid, int):
+            continue
+        preds = payload.get("predicted_output_schema")
+        if not isinstance(preds, list):
+            continue
+        cols = [_staged_dict_to_flowfile_column(c) for c in preds if isinstance(c, dict)]
+        if cols:
+            out[int(nid)] = cols
+    return out
+
+
 _SETTINGS_REPLY_MAX_CHARS = 2000
 """Cap on the JSON-serialised settings echo in the LLM tool reply.
 
@@ -916,54 +1004,49 @@ _AGENT_STAGED_OP_TO_SURFACE: dict[str, str] = {
 }
 
 
-def _resolve_current_surface(session: sessions.AgentSession, narrowed_category: str | None) -> str:
+def _resolve_current_surface(session: sessions.AgentSession) -> str:
     """Map the session's surface + state to a tool-catalog surface key.
 
-    Legacy ``agent`` two-stage flow:
+    * ``surface="agent_complex"`` — one-shot full catalog (single round
+      with every tool exposed). Big-model power-user path.
+    * ``surface="agent_staged"`` — W71 multi-stage state machine. The
+      tool catalog is per-stage:
+      - ``classify`` → ``"staged_classify"``.
+      - ``pick_type`` → ``"staged_pick_type"``.
+      - ``pick_upstream`` → ``"staged_pick_upstream"`` (planner overrides
+        with a per-turn dynamic spec via
+        ``build_pick_upstream_spec``).
+      - ``fill_settings`` → telemetry-only key (planner overrides with
+        ``build_staged_fill_tool_spec(picked_node_type)``).
+      - ``single_stage_op`` → ``"staged_modify"`` / ``"staged_delete"``
+        / ``"staged_connect"`` / ``"staged_disconnect"`` per
+        ``picked_op_kind``.
 
-    * ``surface="agent"`` starts with just ``flowfile.meta.pick_category``;
-      once the LLM picks a category we narrow to ``CATEGORY_PRESETS[chosen]``
-      for the rest of the loop.
-    * ``surface="agent_complex"`` is one-shot full catalog and never narrows.
-
-    W71 ``agent_staged`` multi-stage flow — branches on ``session.stage``:
-
-    * ``classify`` → ``"staged_classify"`` (one tool: ``classify_intent``).
-    * ``pick_type`` → ``"staged_pick_type"`` (one tool: ``pick_node_type``).
-    * ``pick_upstream`` → ``"staged_pick_upstream"`` (the planner builds a
-      per-turn dynamic spec via ``build_pick_upstream_spec`` so the upstream
-      enum is fresh; this surface key is a placeholder used by callers that
-      don't get the dynamic override).
-    * ``fill_settings`` → ``"staged_pick_upstream"`` here is overridden in
-      the loop with ``build_staged_fill_tool_spec(picked_node_type)``;
-      this function still returns a stable key for telemetry.
-    * ``single_stage_op`` → one of ``"staged_modify"`` / ``"staged_delete"``
-      / ``"staged_connect"`` / ``"staged_disconnect"`` per ``picked_op_kind``.
+    W71 v1.10 — legacy ``surface="agent"`` (two-stage ``pick_category``)
+    was removed; the literal type rejects it at request validation, so
+    it can't reach this function.
     """
     if session.surface == "agent_complex":
         return "agent_complex"
-    if session.surface == "agent_staged":
-        if session.stage == "single_stage_op" and session.picked_op_kind is not None:
-            mapped = _AGENT_STAGED_OP_TO_SURFACE.get(session.picked_op_kind)
-            if mapped is not None:
-                return mapped
-            # Defensive — picked_op_kind in {add, other} never reaches this
-            # branch (add advances through pick_type stages; other terminates
-            # the loop). Fall through to classify so the loop self-heals.
-            return "staged_classify"
-        if session.stage == "pick_type":
-            return "staged_pick_type"
-        if session.stage == "pick_upstream":
-            return "staged_pick_upstream"
-        if session.stage == "fill_settings":
-            # Telemetry-only: the planner overrides the catalog with a
-            # per-turn ``build_staged_fill_tool_spec`` call before
-            # dispatch.
-            return "staged_pick_upstream"
+    # session.surface == "agent_staged" — only remaining alternative.
+    if session.stage == "single_stage_op" and session.picked_op_kind is not None:
+        mapped = _AGENT_STAGED_OP_TO_SURFACE.get(session.picked_op_kind)
+        if mapped is not None:
+            return mapped
+        # Defensive — picked_op_kind in {add, other} never reaches this
+        # branch (add advances through pick_type stages; other terminates
+        # the loop). Fall through to classify so the loop self-heals.
         return "staged_classify"
-    if narrowed_category is None:
-        return "agent"
-    return narrowed_category
+    if session.stage == "pick_type":
+        return "staged_pick_type"
+    if session.stage == "pick_upstream":
+        return "staged_pick_upstream"
+    if session.stage == "fill_settings":
+        # Telemetry-only: the planner overrides the catalog with a
+        # per-turn ``build_staged_fill_tool_spec`` call before
+        # dispatch.
+        return "staged_pick_upstream"
+    return "staged_classify"
 
 
 def _build_initial_messages(flow: FlowGraph, session: sessions.AgentSession) -> list[Message]:
@@ -1040,53 +1123,59 @@ def _log_stage_transition(
     logger.info("planner.staged %s", " ".join(parts))
 
 
-def _recover_textual_tool_call(
-    content: str,
-    expected_tool_names: set[str],
-) -> ToolCall | None:
-    """W71 v1.6 — last-resort parse for LLMs that emit a function-call
-    invocation as **text content** rather than via the function-calling
-    API.
+def _walk_balanced_braces(content: str, start_idx: int) -> int:
+    """Return the index just after the closing ``}`` that pairs with
+    the ``{`` at ``start_idx``, or ``-1`` if no balanced pair exists.
 
-    Llama-3.3-70b on OpenRouter / Groq occasionally produces this
-    pattern even when the tools array has exactly one entry::
-
-        Sorting by the number of customers per city
-        flowfile.graph.add_sort({"sort_input": [{"column": "...", "how": "desc"}]})
-
-    The planner's ``response.tool_calls`` is empty in that case and
-    the loop terminates with no diff staged — exactly the symptom the
-    2026-05-08 PM dogfood reproduced. This helper finds the call
-    pattern in ``content``, parses the JSON args, and returns a
-    synthetic :class:`ToolCall` so the dispatch can proceed.
-
-    Robustness rules:
-
-    * Only matches against ``expected_tool_names`` (the catalog the
-      current stage exposed). Defends against the model emitting an
-      unrelated tool name in its prose.
-    * Returns ``None`` when **multiple** distinct expected names match
-      — that's almost always a "summary of past calls" style message
-      after a successful add (the LLM walked through what it just did
-      and re-emitted the JSON envelope of each call). Re-firing those
-      would double-stage. The loop's normal "no tool calls →
-      terminate" path handles the summary case correctly.
-    * The ``stage`` gate (see ``_TEXT_JSON_RECOVERY_STAGES``) provides
-      an additional defence: classify-stage summaries are excluded
-      entirely.
+    String-context-aware: open/close braces inside JSON strings are
+    ignored so the depth counter doesn't get fooled by a value like
+    ``"text {with} braces"``. Used by the JSON-object-shape recovery
+    path to find a candidate object's bounds before passing the
+    substring to ``json.loads``.
     """
-    if not content or not expected_tool_names:
-        return None
+    if start_idx >= len(content) or content[start_idx] != "{":
+        return -1
+    depth = 1
+    in_str = False
+    esc = False
+    for i in range(start_idx + 1, len(content)):
+        c = content[i]
+        if esc:
+            esc = False
+            continue
+        if in_str and c == "\\":
+            esc = True
+            continue
+        if c == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
 
+
+def _try_parse_function_call_shape(
+    content: str, expected_tool_names: set[str]
+) -> list[tuple[str, dict[str, Any]]]:
+    """W71 v1.6 shape — find ``<tool_name>(<json>)`` invocations.
+
+    Walks balanced parens (string-aware) for each expected tool name.
+    Returns a list of ``(name, args)`` matches. The caller decides
+    whether to dispatch (single match) or decline (multiple distinct
+    names → summary).
+    """
     found: list[tuple[str, dict[str, Any]]] = []
     for tool_name in expected_tool_names:
         marker = f"{tool_name}("
         idx = content.find(marker)
         if idx < 0:
             continue
-        # Walk balanced parens to find the JSON args. Track string
-        # context so an open-paren or close-paren character inside a
-        # JSON string doesn't throw the depth count off.
         start = idx + len(marker)
         depth = 1
         end = -1
@@ -1120,10 +1209,95 @@ def _recover_textual_tool_call(
             continue
         if isinstance(args, dict):
             found.append((tool_name, args))
+    return found
 
-    if len(found) != 1:
+
+def _try_parse_json_object_shape(
+    content: str, expected_tool_names: set[str]
+) -> list[tuple[str, dict[str, Any]]]:
+    """W71 v1.8 shape — find ``{"name": "...", "parameters": {...}}``
+    or the ``"arguments"`` alias.
+
+    Llama-3.3-8b (and other small open-weights models) often emit the
+    OpenAI-style function-call envelope as text content rather than via
+    the function-calling API. This helper walks the content for
+    balanced ``{...}`` blocks, attempts ``json.loads`` on each, and
+    accepts when the parsed object has ``name``/``tool`` plus
+    ``parameters``/``arguments`` AND the name is in
+    ``expected_tool_names``.
+    """
+    found: list[tuple[str, dict[str, Any]]] = []
+    i = 0
+    while i < len(content):
+        if content[i] != "{":
+            i += 1
+            continue
+        end = _walk_balanced_braces(content, i)
+        if end < 0:
+            break
+        candidate = content[i:end]
+        try:
+            obj = json.loads(candidate)
+        except (TypeError, ValueError):
+            obj = None
+        i = end
+        if not isinstance(obj, dict):
+            continue
+        name = obj.get("name") or obj.get("tool")
+        args = obj.get("parameters")
+        if args is None:
+            args = obj.get("arguments")
+        if not isinstance(name, str) or name not in expected_tool_names or not isinstance(args, dict):
+            continue
+        found.append((name, args))
+    return found
+
+
+def _recover_textual_tool_call(
+    content: str,
+    expected_tool_names: set[str],
+) -> ToolCall | None:
+    """W71 v1.6 + v1.8 — last-resort parse for LLMs that emit a
+    function-call invocation as **text content** rather than via the
+    function-calling API.
+
+    Two LLM-emitted shapes are recognised:
+
+    * **v1.6 shape** — ``flowfile.graph.add_sort({"sort_input": ...})``.
+      Llama-3.3-70b's typical fallback when it almost-but-not-quite
+      uses the function-calling API.
+    * **v1.8 shape** — ``{"name": "flowfile.meta.classify_intent",
+      "parameters": {"op_kind": "add", ...}}`` (OpenAI-envelope form).
+      Llama-3.3-8b's typical fallback even at the simplest stage 0.
+      The ``"arguments"`` alias is also accepted because some models
+      use that key name instead of ``"parameters"``.
+
+    Robustness rules:
+
+    * Only matches against ``expected_tool_names`` (the catalog the
+      current stage exposed). Defends against the model emitting an
+      unrelated tool name in its prose.
+    * Returns ``None`` when **multiple distinct** expected names
+      match across both shapes — that's almost always a "summary of
+      past calls" style message after a successful add. Re-firing
+      those would double-stage. The loop's normal "no tool calls →
+      terminate" path handles the summary case correctly.
+    """
+    if not content or not expected_tool_names:
         return None
-    tool_name, args = found[0]
+
+    found = _try_parse_function_call_shape(content, expected_tool_names)
+    found.extend(_try_parse_json_object_shape(content, expected_tool_names))
+
+    # Dedupe by tool name — a single call can match both shapes if
+    # the model emits both forms; that's still one logical call.
+    distinct_names = {name for name, _ in found}
+    if len(distinct_names) != 1 or not found:
+        return None
+    tool_name = next(iter(distinct_names))
+    # Pick the args from the first match for that name.
+    args = next(args for name, args in found if name == tool_name)
+
     # Synthetic id for the tool message correlation. Stable hash of the
     # call string keeps it deterministic for tests; the planner's
     # ``role="tool"`` reply uses this id so the LLM can correlate on
@@ -1567,7 +1741,6 @@ async def _run_planner_loop(
 
     sched = scheduler or default_scheduler()
     dry_run_cache = DryRunCache()
-    narrowed_category: str | None = None
     retries_for_step = 0
 
     if not session.messages:
@@ -1613,7 +1786,7 @@ async def _run_planner_loop(
             )
             return
 
-        current_surface = _resolve_current_surface(session, narrowed_category)
+        current_surface = _resolve_current_surface(session)
 
         # W71 — refresh the system prompt for the current stage. The first
         # iteration's system prompt was set in ``_build_initial_messages``;
@@ -1675,17 +1848,19 @@ async def _run_planner_loop(
 
         tool_calls = list(response.tool_calls or [])
 
-        # W71 v1.6 — last-resort text-JSON recovery for small models
-        # that emit the function call as content prose instead of via
-        # the function-calling API. Gated to fill_settings /
-        # single_stage_op so the recovery never re-fires the
-        # "summary of past calls" pattern that classify-stage emits
-        # after a successful add. See ``_recover_textual_tool_call``.
+        # W71 v1.6 + v1.8 — last-resort text-JSON recovery for small
+        # models that emit the function call as content prose instead
+        # of via the function-calling API. Applied at ALL agent_staged
+        # stages now (v1.8): llama-3.3-8b fails this way at stage 0
+        # too, not just stage 3. The "exactly one match" + "name must
+        # be in expected_tool_names" rules in
+        # ``_recover_textual_tool_call`` are sufficient to defend
+        # against the after-add summary pattern (multiple distinct
+        # tool names → declines).
         if (
             not tool_calls
             and assistant_text
             and session.surface == "agent_staged"
-            and session.stage in _TEXT_JSON_RECOVERY_STAGES
         ):
             expected_names = {t.name for t in tool_catalog}
             recovered = _recover_textual_tool_call(assistant_text, expected_names)
@@ -1718,7 +1893,66 @@ async def _run_planner_loop(
             yield PlannerEvent(event="thinking", payload={"text": assistant_text})
 
         if not tool_calls:
-            # LLM has nothing more to do.
+            # W71 v1.7 — at mandatory-tool-call stages, an empty
+            # ``tool_calls`` (even after v1.6/v1.8 text-JSON recovery
+            # tried) means the LLM emitted unparseable prose — e.g.
+            # llama-70b's token-corruption case
+            # ("altimoreFiltering to rows ..."). Treat it as a
+            # no-progress retry instead of a terminal "nothing to
+            # stage": append a synthetic reminder so the next round
+            # explicitly tells the LLM what's expected, and route
+            # through the existing ``max_retries_per_step`` budget.
+            # Classify stage stays on the legacy break path —
+            # there an empty ``tool_calls`` is a valid termination
+            # signal (op_kind="other" handled, or LLM has nothing
+            # more to add).
+            if (
+                session.surface == "agent_staged"
+                and session.stage in _MANDATORY_TOOL_CALL_STAGES
+            ):
+                retries_for_step += 1
+                if retries_for_step >= max_retries_per_step:
+                    session.status = "failed"
+                    session.touch()
+                    yield PlannerEvent(
+                        event="error",
+                        payload={
+                            "message": (
+                                f"agent_staged stage={session.stage}: LLM emitted "
+                                f"prose with no tool_call across "
+                                f"{max_retries_per_step} consecutive rounds; check "
+                                "the prompt log for the model's response shape"
+                            ),
+                        },
+                    )
+                    return
+                expected_tool = next(
+                    iter(t.name for t in tool_catalog), "the available tool"
+                )
+                session.messages.append(
+                    Message(
+                        role="user",
+                        content=(
+                            f"Your previous response was prose only — no function "
+                            f"call. You MUST call ``{expected_tool}`` via the "
+                            f"function-calling API to advance. Do not write the "
+                            f"call as text in your response; emit a real tool "
+                            f"call with the correct arguments."
+                        ),
+                    )
+                )
+                yield PlannerEvent(
+                    event="retry",
+                    payload={
+                        "attempt": retries_for_step,
+                        "max": max_retries_per_step,
+                    },
+                )
+                continue
+            # All other stages / surfaces — preserve the existing
+            # termination path so legacy ``agent`` / ``agent_complex``
+            # and the ``classify`` stage of ``agent_staged`` keep
+            # their current "LLM is done" semantics.
             break
 
         any_succeeded_this_round = False
@@ -1902,6 +2136,14 @@ async def _run_planner_loop(
             else:
                 staged_offset_index = 0
                 extra_upstream_positions = None
+            # W71 v1.11 — staged-but-not-yet-applied upstream schemas.
+            # Threaded through every dispatch (add_* AND
+            # update_node_settings) so the predictor's Tier 0a sees them
+            # and stops emitting *"upstream not found"* warnings for
+            # nodes the agent staged earlier in the same session.
+            extra_upstream_schemas: dict[int, Any] | None = (
+                _collect_staged_upstream_schemas(session) or None
+            )
 
             # Dispatch — execute_tool_call is meant to never raise (returns rejected
             # result instead) but we wrap defensively.
@@ -1920,6 +2162,7 @@ async def _run_planner_loop(
                     audit_meta=audit_meta,
                     staged_offset_index=staged_offset_index,
                     extra_upstream_positions=extra_upstream_positions,
+                    extra_upstream_schemas=extra_upstream_schemas,
                 )
             except Exception as exc:  # noqa: BLE001 — defence in depth
                 logger.exception("tool dispatch raised; treating as rejected")
@@ -1966,26 +2209,6 @@ async def _run_planner_loop(
                         "arg_summary": arg_summary,
                     },
                 )
-                continue
-
-            # pick_category is meta — surface narrows for the remaining loop
-            if tc.name == _PICK_CATEGORY_NAME:
-                chosen = result.extra.get("category") if isinstance(result.extra, dict) else None
-                if isinstance(chosen, str) and chosen:
-                    narrowed_category = chosen
-                    # ``op_kind: "meta"`` lets the frontend suppress this from the
-                    # user-visible chat trail (D002 internal routing — not a step
-                    # the user needs to see). The audit log still captures the
-                    # underlying tool call via execute_tool_call().
-                    yield PlannerEvent(
-                        event="info",
-                        payload={
-                            "message": "category narrowed",
-                            "category": chosen,
-                            "op_kind": "meta",
-                        },
-                    )
-                any_succeeded_this_round = True
                 continue
 
             # W71 — agent_staged stage transitions on meta tool success.

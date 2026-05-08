@@ -158,6 +158,16 @@ onMounted(async () => {
   }
 });
 
+const handleAgentSurfaceChange = (event: Event): void => {
+  const target = event.target as HTMLSelectElement;
+  const value = target.value;
+  // W71 v1.10 — legacy "agent" surface removed; only agent_staged
+  // (default) and agent_complex (single-shot full catalog) remain.
+  if (value === "agent_complex" || value === "agent_staged") {
+    aiStore.setSelectedAgentSurface(value);
+  }
+};
+
 const handleProviderChange = (event: Event): void => {
   const target = event.target as HTMLSelectElement;
   aiStore.setSelectedProvider(target.value);
@@ -225,15 +235,13 @@ const handleSend = async (): Promise<void> => {
     await agentStore.start({
       flow_id: flowStore.flowId,
       prompt: promptWithHistory,
-      // W71 — ``agent_staged`` is the new default: a four-stage state machine
-      // (classify → pick_type → pick_upstream → fill_settings) that exposes
-      // exactly one tool to the function-calling API per round. This makes
-      // smaller models (llama-3.3-70b on Groq / OpenRouter) viable on the
-      // agent surface — the legacy ``agent`` / ``agent_complex`` surfaces
-      // failed function-calling-API compliance on those models.
-      // ``agent`` (legacy two-stage) and ``agent_complex`` (full catalog)
-      // remain available as opt-ins for users who explicitly prefer them.
-      surface: "agent_staged",
+      // W71 v1.9 — surface is now user-selectable via the header
+      // dropdown. Default is ``agent_staged`` (the multi-stage state
+      // machine that's reliable on small open-weights models).
+      // Legacy ``agent`` (two-stage) and ``agent_complex`` (single-shot
+      // full catalog) remain available as opt-ins for users who
+      // explicitly want them.
+      surface: aiStore.selectedAgentSurface,
       provider: aiStore.selectedProvider ?? "anthropic",
       model: aiStore.selectedModel ?? null,
     });
@@ -435,6 +443,24 @@ const timelineItems = computed<TimelineItem[]>(() => {
         <option v-for="model in availableModels" :key="model" :value="model">
           {{ model }}
         </option>
+      </select>
+      <!-- W71 v1.10 — agent surface picker. Two options now that the
+           legacy ``agent`` (two-stage ``pick_category``) is removed —
+           it was the failure mode that triggered W71 and stopped
+           working on small open-weights models. ``agent_staged`` is
+           the multi-stage state machine (default; reliable on llama
+           etc.); ``agent_complex`` is the single-shot full catalog
+           for big-model power users. -->
+      <select
+        v-if="!isDisabledByFlag"
+        class="ai-assistant__select ai-assistant__select--surface"
+        :value="aiStore.selectedAgentSurface"
+        :disabled="aiStore.isStreaming || isAgentRunning"
+        title="Choose which agent variant runs when you trigger an agent task."
+        @change="handleAgentSurfaceChange"
+      >
+        <option value="agent_staged">staged (default)</option>
+        <option value="agent_complex">single-shot full</option>
       </select>
       <label
         v-if="!isDisabledByFlag"

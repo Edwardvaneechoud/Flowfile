@@ -24,7 +24,6 @@ class AnthropicProvider(LiteLLMProvider):
         "cmd_k": "claude-haiku-4-5",
         "ghost_node": "claude-haiku-4-5",
         "explain": "claude-sonnet-4-6",
-        "agent": "claude-sonnet-4-6",
         "agent_complex": "claude-opus-4-7",
         # W71 — agent_staged exposes one tool per stage so each round is
         # a tightly-scoped decision. Haiku is plenty for stages 0/1/2

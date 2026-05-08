@@ -31,6 +31,8 @@ export const MAX_PERSISTED_MESSAGES = 200;
 export const chatPersistenceKey = (flowId: number | null): string =>
   `${PERSISTENCE_KEY}.${flowId === null ? "unscoped" : flowId}`;
 
+export type PersistedAgentSurface = "agent_complex" | "agent_staged";
+
 export interface PersistedAiState {
   messages: ChatMessage[];
   selectedProvider: string | null;
@@ -47,6 +49,10 @@ export interface PersistedAiState {
    * Optional / nullable for the same backward-compat reason as
    * ``autoPromote`` — pre-W58-round-7 entries don't carry the field. */
   agentModeAccepted?: boolean | null;
+  /** W71 v1.9 — user-selected agent surface ("agent" / "agent_complex" /
+   * "agent_staged"). Optional / nullable so pre-v1.9 entries fall
+   * through to the store's default (``"agent_staged"``). */
+  selectedAgentSurface?: PersistedAgentSurface | null;
 }
 
 const EMPTY_STATE: PersistedAiState = {
@@ -55,7 +61,17 @@ const EMPTY_STATE: PersistedAiState = {
   selectedModel: null,
   autoPromote: null,
   agentModeAccepted: null,
+  selectedAgentSurface: null,
 };
+
+const _AGENT_SURFACE_VALUES: ReadonlyArray<PersistedAgentSurface> = [
+  "agent_complex",
+  "agent_staged",
+];
+
+const isAgentSurface = (value: unknown): value is PersistedAgentSurface =>
+  typeof value === "string" &&
+  (_AGENT_SURFACE_VALUES as ReadonlyArray<string>).includes(value);
 
 interface StorageLike {
   getItem(key: string): string | null;
@@ -148,6 +164,9 @@ export const loadPersistedAiState = (
     autoPromote: typeof payload.autoPromote === "boolean" ? payload.autoPromote : null,
     agentModeAccepted:
       typeof payload.agentModeAccepted === "boolean" ? payload.agentModeAccepted : null,
+    selectedAgentSurface: isAgentSurface(payload.selectedAgentSurface)
+      ? payload.selectedAgentSurface
+      : null,
   };
 };
 
@@ -167,6 +186,7 @@ export const persistAiState = (
     selectedModel: state.selectedModel,
     autoPromote: state.autoPromote ?? null,
     agentModeAccepted: state.agentModeAccepted ?? null,
+    selectedAgentSurface: state.selectedAgentSurface ?? null,
   };
 
   let payload: string;

@@ -19,7 +19,6 @@ class GroqProvider(LiteLLMProvider):
         "cmd_k": "llama-3.3-70b-versatile",
         "ghost_node": "llama-3.3-70b-versatile",
         "explain": "llama-3.3-70b-versatile",
-        "agent": "llama-3.3-70b-versatile",
         "agent_complex": "llama-3.3-70b-versatile",
         # W71 — Groq's llama-3.3-70b is the canonical small-model target
         # for agent_staged. The function-calling failures we saw on

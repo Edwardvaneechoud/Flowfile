@@ -20,7 +20,6 @@ class OpenAIProvider(LiteLLMProvider):
         "cmd_k": "gpt-4.1-mini",
         "ghost_node": "gpt-4.1-mini",
         "explain": "gpt-4.1",
-        "agent": "gpt-4.1",
         "agent_complex": "gpt-4.1",
         # W71 — agent_staged stays on the mini tier: each LLM round sees
         # one tool with a tight enum, so the cheap model is sufficient

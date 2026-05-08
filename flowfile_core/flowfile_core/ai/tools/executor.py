@@ -47,7 +47,6 @@ from flowfile_core.ai.tools.predictor import (
 )
 from flowfile_core.ai.tools.meta_ops import OP_KIND_NAMES
 from flowfile_core.ai.tools.registry import _inline_ref_schema
-from flowfile_core.ai.tools.registry import pick_category as _pick_category_heuristic
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS, get_settings_class_for_node_type
 
@@ -210,6 +209,7 @@ def execute_tool_call(
     audit_meta: dict[str, Any] | None = None,
     staged_offset_index: int = 0,
     extra_upstream_positions: dict[int, tuple[float, float]] | None = None,
+    extra_upstream_schemas: dict[int, Any] | None = None,
 ) -> ToolExecutionResult:
     """Validate, predict, and dispatch a single LLM tool call.
 
@@ -303,6 +303,7 @@ def execute_tool_call(
             audit_meta=audit_meta,
             staged_offset_index=staged_offset_index,
             extra_upstream_positions=extra_upstream_positions,
+            extra_upstream_schemas=extra_upstream_schemas,
         )
 
     if domain == "schema":
@@ -373,6 +374,7 @@ def _handle_graph(
     audit_meta: dict[str, Any] | None = None,
     staged_offset_index: int = 0,
     extra_upstream_positions: dict[int, tuple[float, float]] | None = None,
+    extra_upstream_schemas: dict[int, Any] | None = None,
 ) -> ToolExecutionResult:
     if op.startswith("add_"):
         node_type = op[len("add_") :]
@@ -391,6 +393,7 @@ def _handle_graph(
             audit_meta=audit_meta,
             staged_offset_index=staged_offset_index,
             extra_upstream_positions=extra_upstream_positions,
+            extra_upstream_schemas=extra_upstream_schemas,
         )
 
     if op == "connect":
@@ -409,6 +412,7 @@ def _handle_graph(
             user_id=user_id,
             mode=mode,
             dry_run_cache=dry_run_cache,
+            extra_upstream_schemas=extra_upstream_schemas,
         )
 
     # ``run_node`` / ``propose_subgraph`` were removed from the catalog in
@@ -734,6 +738,7 @@ def _handle_add_node(
     audit_meta: dict[str, Any] | None = None,
     staged_offset_index: int = 0,
     extra_upstream_positions: dict[int, tuple[float, float]] | None = None,
+    extra_upstream_schemas: dict[int, Any] | None = None,
 ) -> ToolExecutionResult:
     # W54 — every audit row this function emits piggybacks on tool_args
     # under the namespaced ``__planner_meta__`` key. Rebind ``redacted_args``
@@ -891,7 +896,9 @@ def _handle_add_node(
     upstream_ids = list(insertion_context.upstream_node_ids)
     if insertion_context.right_input_node_id is not None and insertion_context.right_input_node_id not in upstream_ids:
         upstream_ids.append(insertion_context.right_input_node_id)
-    upstream_schemas, warnings = _resolve_upstream_schemas(flow, upstream_ids)
+    upstream_schemas, warnings = _resolve_upstream_schemas(
+        flow, upstream_ids, staged_schemas=extra_upstream_schemas
+    )
 
     # --- Refusal stage 3: column refs ---
     refs = collect_column_refs(node_type, settings)
@@ -1369,6 +1376,7 @@ def _handle_update_node_settings(
     user_id: int,
     mode: ExecutionMode,
     dry_run_cache: DryRunCache,
+    extra_upstream_schemas: dict[int, Any] | None = None,
 ) -> ToolExecutionResult:
     """W47 — modify an existing node's settings.
 
@@ -1515,7 +1523,9 @@ def _handle_update_node_settings(
     upstream_ids = list(main_input_ids)
     if right_input_id is not None and right_input_id not in upstream_ids:
         upstream_ids.append(right_input_id)
-    upstream_schemas, warnings = _resolve_upstream_schemas(flow, upstream_ids)
+    upstream_schemas, warnings = _resolve_upstream_schemas(
+        flow, upstream_ids, staged_schemas=extra_upstream_schemas
+    )
 
     # --- Refusal stage 3: column refs ---
     refs = collect_column_refs(node_type, new_settings)
@@ -1935,38 +1945,20 @@ def _handle_meta(
     user_id: int,
     flow_id: int,
 ) -> ToolExecutionResult:
-    """Dispatch the four meta ops (W31 / W71).
+    """Dispatch the W71 staged meta ops.
 
-    * ``pick_category`` — legacy two-stage agent's heuristic categoriser.
-    * ``classify_intent`` — W71 stage 0: returns ``extra["op_kind"]``.
-    * ``pick_node_type`` — W71 stage 1: returns ``extra["node_type"]``.
-    * ``pick_upstream`` — W71 stage 2: returns ``extra["upstream_node_ids"]``
-      and ``extra["right_input_node_id"]``.
+    * ``classify_intent`` — stage 0: returns ``extra["op_kind"]``.
+    * ``pick_node_type`` — stage 1: returns ``extra["node_type"]``.
+    * ``pick_upstream`` — stage 2: returns
+      ``extra["upstream_node_ids"]`` and ``extra["right_input_node_id"]``.
 
-    All four follow the same shape: validate the LLM-provided value
+    All three follow the same shape: validate the LLM-provided value
     against the schema (enum / type), emit one ``AuditEvent``, return
     ``status="applied"`` with the chosen value(s) on ``extra`` so the
     planner can mutate session state.
-    """
-    if op == "pick_category":
-        intent = tool_args.get("intent", "")
-        category = _pick_category_heuristic(str(intent))
-        audit_row = _record_event(
-            session_id=session_id,
-            user_id=user_id,
-            tool_name=tool_name,
-            flow_id=flow_id,
-            tool_args=redacted_args,
-            result_status="success",
-        )
-        return ToolExecutionResult(
-            status="applied",
-            tool_name=tool_name,
-            audit_id=audit_row.id if audit_row is not None else None,
-            executed_args=redacted_args,
-            extra={"category": category, "rationale": "heuristic keyword match (W31)"},
-        )
 
+    W71 v1.10 — ``pick_category`` (legacy two-stage agent) was removed.
+    """
     if op == "classify_intent":
         op_kind = tool_args.get("op_kind")
         rationale = tool_args.get("rationale", "")

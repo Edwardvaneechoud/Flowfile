@@ -2,7 +2,9 @@
 Level 3 — Planner surface suffix (D008).
 
 Owner: W40 (multi-step planner agent). Surfaces using this suffix:
-agent, agent_complex.
+``agent_complex`` (full single-shot catalog) and the
+``single_stage_op`` stage of ``agent_staged``. (W71 v1.10 — legacy
+``surface=agent`` two-stage flow was removed.)
 -->
 
 # Planner mode
@@ -107,17 +109,11 @@ User goal: *"Filter to last 30 days, then sort by region descending."*
 
 Your turn 1 message:
 
-> I'll narrow the catalog to the transformations I need.
-
-(call: ``flowfile.meta.pick_category(category="transformations")`` — no rationale needed)
-
-Your turn 2 message:
-
 > Filtering to rows from the last 30 days so downstream steps only see recent activity.
 
 (call: ``flowfile.graph.add_filter(...)``)
 
-Your turn 3 message:
+Your turn 2 message:
 
 > Sorting the filtered rows by region descending so the largest region appears first.
 

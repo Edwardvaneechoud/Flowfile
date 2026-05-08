@@ -11,18 +11,22 @@ Surfacing strategy (D002):
 * **Per-surface presets** for narrow surfaces (``cmd_k``, ``ghost_node``,
   ``explain``, ``docgen``) — hand-picked subsets that keep token cost low
   and meet the sub-1s TTFB target on Cmd+K.
-* **Two-stage pick_category** for the full Level 3 agent — first call
-  surfaces only ``flowfile.meta.pick_category``; second call surfaces the
-  chosen category's tools (``CATEGORY_PRESETS``).
+* **Multi-stage agent (W71)** — ``agent_staged`` exposes one tool per
+  round via the ``staged_*`` presets; ``agent_complex`` exposes the full
+  catalog in a single call.
 
 User-defined nodes registered via the ``CUSTOM_NODE_STORE`` are picked up
 by ``_iter_node_types()`` and surfaced under their own ``flowfile.graph.add_<type>``
 name automatically.
 
 W30 generates the catalog. W31's executor consumes ``ToolSpec.name`` →
-node-type / op resolution and dispatches accordingly. W40's planner runs
-the LLM-driven first stage; this module's ``pick_category`` heuristic is
-the fallback.
+node-type / op resolution and dispatches accordingly.
+
+W71 v1.10 — the legacy two-stage ``surface=agent`` flow (``pick_category``
++ ``CATEGORY_PRESETS``) was removed because small open-weights models
+silently fall back to text-JSON-in-content on it; ``agent_staged``
+replaces it with a one-tool-per-round state machine that those models
+actually comply with.
 """
 
 from __future__ import annotations
@@ -37,7 +41,6 @@ from flowfile_core.ai.providers.base import ToolSpec
 from flowfile_core.ai.tools.codegen_ops import CODEGEN_OPS_TOOLS
 from flowfile_core.ai.tools.graph_ops import GRAPH_OPS_TOOLS
 from flowfile_core.ai.tools.meta_ops import (
-    CATEGORY_NAMES,
     CLASSIFY_INTENT_TOOL_NAME,
     META_OPS_TOOLS,
     PICK_NODE_TYPE_TOOL_NAME,
@@ -59,22 +62,10 @@ from flowfile_core.schemas.schemas import (
 MCP_TOOL_NAMESPACE: Final[str] = "flowfile"
 JSON_SCHEMA_DIALECT: Final[str] = "https://json-schema.org/draft/2020-12/schema"
 
-ToolCategory = Literal[
-    "transformations",
-    "joins",
-    "aggregations",
-    "io",
-    "code",
-    "ml",
-    "meta",
-    "graph",
-]
-
 SurfaceLiteral = Literal[
     "cmd_k",
     "ghost_node",
     "explain",
-    "agent",
     "agent_complex",
     "agent_staged",
     "staged_classify",
@@ -504,10 +495,10 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
             "flowfile.schema.read_node_preview",
         }
     ),
-    "agent": frozenset({"flowfile.meta.pick_category"}),
-    # ``agent_complex`` exposes the full catalog in a single call — used when
-    # context budgets and provider quality both allow it (e.g. Opus 4.7 on a
-    # paid tier). The executor decides which surface to pick at runtime.
+    # W71 v1.10 — legacy ``"agent"`` preset removed. ``agent_complex``
+    # exposes the full catalog in a single call — used when context
+    # budgets and provider quality both allow it (e.g. Opus on a paid
+    # tier). The executor decides which surface to pick at runtime.
     "agent_complex": frozenset(),  # populated below after _build_node_type_tools
     # W71 — ``agent_staged`` is the wrapper surface that ``AgentSession.surface``
     # carries. The planner never queries this preset directly: it dispatches
@@ -548,213 +539,6 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
 }
 
 
-# Two-stage agent: each ``pick_category`` outcome → the tool surface for the
-# next call. Always augmented with ``_UNIVERSAL_OP_NAMES`` at lookup so the
-# executor doesn't have to remember to merge.
-_NODE_CATEGORY_MEMBERS: Final[dict[str, tuple[str, ...]]] = {
-    "transformations": (
-        "filter",
-        "select",
-        "sort",
-        "formula",
-        "unique",
-        "record_id",
-        "sample",
-        "random_split",
-        "text_to_rows",
-        "graph_solver",
-    ),
-    "joins": (
-        "join",
-        "cross_join",
-        "fuzzy_match",
-        "union",
-    ),
-    "aggregations": (
-        "group_by",
-        "pivot",
-        "unpivot",
-        "record_count",
-    ),
-    "io": (
-        "read",
-        "output",
-        "manual_input",
-        "database_reader",
-        "database_writer",
-        "cloud_storage_reader",
-        "cloud_storage_writer",
-        "catalog_reader",
-        "catalog_writer",
-        "kafka_source",
-        "google_analytics_reader",
-        "external_source",
-    ),
-    "code": (
-        "polars_code",
-        "python_script",
-        "sql_query",
-    ),
-    "ml": (
-        "train_model",
-        "apply_model",
-        "evaluate_model",
-    ),
-    "meta": (
-        "explore_data",
-        "wait_for",
-    ),
-    "graph": (),  # graph category exposes only the universal graph-ops surface
-}
-
-
-def _category_to_tool_names(category: str) -> frozenset[str]:
-    members = _NODE_CATEGORY_MEMBERS.get(category, ())
-    names = {_node_tool_name(nt) for nt in members}
-    if category == "code":
-        names |= {tool.name for tool in CODEGEN_OPS_TOOLS}
-    if category == "meta":
-        names |= {tool.name for tool in META_OPS_TOOLS}
-    # Universal graph + schema ops are always available.
-    names |= _UNIVERSAL_OP_NAMES
-    return frozenset(names)
-
-
-CATEGORY_PRESETS: Final[dict[str, frozenset[str]]] = {name: _category_to_tool_names(name) for name in CATEGORY_NAMES}
-
-
-# Heuristic keyword → category map for ``pick_category``. The values are the
-# substrings we look for in a (lowercased) intent string. First match wins
-# in declaration order, so put the most specific matches first.
-_CATEGORY_KEYWORDS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
-    (
-        "joins",
-        ("join", "merge", "lookup", "fuzzy match", "cross join", "union"),
-    ),
-    (
-        "aggregations",
-        (
-            "group by",
-            "groupby",
-            "aggregate",
-            "aggregation",
-            "summarise",
-            "summarize",
-            "pivot",
-            "unpivot",
-            "count by",
-            "average",
-            "mean",
-            "sum",
-        ),
-    ),
-    (
-        "io",
-        (
-            "read csv",
-            "read parquet",
-            "read file",
-            "load from",
-            "open file",
-            "write to",
-            "write csv",
-            "write parquet",
-            "save to",
-            "from database",
-            "to database",
-            "from s3",
-            "from gcs",
-            "from kafka",
-            "from google analytics",
-            "import data",
-            "export data",
-        ),
-    ),
-    (
-        "code",
-        (
-            "polars code",
-            "python script",
-            "python code",
-            "sql query",
-            "run sql",
-            "custom code",
-        ),
-    ),
-    (
-        "ml",
-        (
-            "train model",
-            "predict",
-            "apply model",
-            "evaluate model",
-            "score data",
-        ),
-    ),
-    (
-        "graph",
-        (
-            "delete node",
-            "remove node",
-            "connect node",
-            "wire up",
-            "rerun",
-            "run flow",
-            "stage diff",
-            "propose subgraph",
-        ),
-    ),
-    (
-        "transformations",
-        (
-            "filter",
-            "where ",
-            "rename",
-            "select",
-            "drop column",
-            "sort",
-            "order by",
-            "unique",
-            "deduplicate",
-            "sample",
-            "random split",
-            "split rows",
-            "record id",
-            "row number",
-            "formula",
-            "expression",
-            "compute column",
-            "derive column",
-            "text to rows",
-            "split text",
-        ),
-    ),
-)
-
-
-def pick_category(intent: str, *, default: ToolCategory = "transformations") -> ToolCategory:
-    """Heuristic first-stage categoriser used as the fallback for the two-stage flow.
-
-    The production planner (W40) replaces this with an LLM call against
-    ``flowfile.meta.pick_category``; this implementation lets W31's executor
-    exercise the two-stage path in tests and degrade gracefully when no
-    provider is configured.
-
-    Returns the matched ``ToolCategory`` or ``default`` (``"transformations"``)
-    when no keyword matches.
-    """
-    if not intent or not intent.strip():
-        return default
-    needle = intent.lower()
-    for category, keywords in _CATEGORY_KEYWORDS:
-        for kw in keywords:
-            if kw in needle:
-                # Cast is safe — every category in the heuristic is a member
-                # of ``CATEGORY_NAMES``.
-                return category  # type: ignore[return-value]
-    return default
-
-
 def _full_catalog() -> list[ToolSpec]:
     """Internal: the complete deduplicated tool list."""
     tools = list(_build_node_type_tools())
@@ -767,13 +551,12 @@ def _full_catalog() -> list[ToolSpec]:
 
 
 def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
-    """Return the tool catalog, optionally filtered by surface or category.
+    """Return the tool catalog, optionally filtered by surface.
 
     With ``surface=None`` returns the full deduplicated catalog (every
-    node-type tool + every ops-surface tool). Otherwise filters by the
-    union of ``SURFACE_PRESETS`` and ``CATEGORY_PRESETS`` lookup —
-    ``"agent"`` is the first-stage surface (just ``pick_category``) and
-    ``"transformations"`` (etc.) is a second-stage category.
+    node-type tool + every ops-surface tool). Otherwise filters by
+    :data:`SURFACE_PRESETS` lookup. ``"agent_complex"`` is the
+    single-shot full-catalog convenience alias.
 
     Raises ``KeyError`` for unknown surface names so callers get a hard
     failure rather than a silently empty catalog.
@@ -788,12 +571,10 @@ def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
         return catalog
     if surface in SURFACE_PRESETS:
         names = SURFACE_PRESETS[surface]
-    elif surface in CATEGORY_PRESETS:
-        names = CATEGORY_PRESETS[surface]
     else:
-        valid = sorted(set(SURFACE_PRESETS) | set(CATEGORY_PRESETS) | {"agent_complex"})
+        valid = sorted(set(SURFACE_PRESETS) | {"agent_complex"})
         raise KeyError(
-            f"Unknown surface or category {surface!r}. Valid: {valid}. "
+            f"Unknown surface {surface!r}. Valid: {valid}. "
             "(Use surface=None to return the full catalog.)"
         )
     return [tool for tool in catalog if tool.name in names]
@@ -804,16 +585,11 @@ def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
 # but forgot the preset entry" class of bug at module load.
 def _check_preset_coverage() -> None:
     surface_keys = set(get_args(SurfaceLiteral))
-    category_keys = set(get_args(ToolCategory))
     preset_keys = set(SURFACE_PRESETS) | {"agent_complex"}
     if surface_keys != preset_keys:
         missing = surface_keys - preset_keys
         extra = preset_keys - surface_keys
         raise RuntimeError(f"SurfaceLiteral / SURFACE_PRESETS coverage mismatch: missing={missing}, extra={extra}")
-    if category_keys != set(CATEGORY_PRESETS):
-        missing = category_keys - set(CATEGORY_PRESETS)
-        extra = set(CATEGORY_PRESETS) - category_keys
-        raise RuntimeError(f"ToolCategory / CATEGORY_PRESETS coverage mismatch: missing={missing}, extra={extra}")
 
 
 _check_preset_coverage()
@@ -822,11 +598,8 @@ _check_preset_coverage()
 __all__ = [
     "MCP_TOOL_NAMESPACE",
     "JSON_SCHEMA_DIALECT",
-    "ToolCategory",
     "SurfaceLiteral",
     "SURFACE_PRESETS",
-    "CATEGORY_PRESETS",
     "build_tool_catalog",
     "mcp_tool_name",
-    "pick_category",
 ]

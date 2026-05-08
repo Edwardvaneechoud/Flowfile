@@ -248,9 +248,11 @@ def test_lazy_litellm_contract() -> None:
 
 
 def test_surface_lockstep() -> None:
-    assert {"agent", "agent_complex"} <= SURFACE_PRESETS.keys()
-    assert SURFACE_TO_LEVEL["agent"] == "planner"
+    """W71 v1.10 — legacy ``"agent"`` removed; ``agent_complex`` and
+    ``agent_staged`` are the planner surfaces."""
+    assert {"agent_complex", "agent_staged"} <= SURFACE_PRESETS.keys()
     assert SURFACE_TO_LEVEL["agent_complex"] == "planner"
+    assert SURFACE_TO_LEVEL["agent_staged"] == "planner"
 
 
 # --------------------------------------------------------------------------- #
@@ -596,45 +598,11 @@ async def test_w62_chained_agent_stages_have_non_overlapping_coords() -> None:
 
 
 @pytest.mark.asyncio
-async def test_surface_agent_two_stage_routes_through_pick_category() -> None:
-    flow = _make_flow()
-    sess = _make_session(flow, surface="agent")
-
-    provider = _ScriptedProvider(
-        [
-            _Step(
-                tool_calls=[
-                    ToolCall(
-                        id="t1",
-                        name="flowfile.meta.pick_category",
-                        arguments={"intent": "filter to EU"},
-                    )
-                ],
-                finish_reason="tool_calls",
-            ),
-            _Step(
-                tool_calls=[ToolCall(id="t2", name="flowfile.graph.add_filter", arguments=_filter_args())],
-                finish_reason="tool_calls",
-            ),
-            _Step(tool_calls=[], finish_reason="stop"),
-        ]
-    )
-
-    await _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
-
-    assert len(provider.calls) == 3
-    # First call's tools should be exactly the agent surface (just pick_category).
-    first_tools = {tool.name for tool in provider.calls[0]["tools"]}
-    assert "flowfile.meta.pick_category" in first_tools
-    assert "flowfile.graph.add_filter" not in first_tools
-
-    # Second call (after pick_category narrowed to "transformations") should include add_filter.
-    second_tools = {tool.name for tool in provider.calls[1]["tools"]}
-    assert "flowfile.graph.add_filter" in second_tools
-
-
-@pytest.mark.asyncio
 async def test_surface_agent_complex_uses_full_catalog_from_step_one() -> None:
+    """W71 v1.10 — legacy two-stage ``surface="agent"`` was removed
+    (the failure mode that motivated W71). ``agent_complex`` keeps its
+    single-shot full-catalog behavior for big-model power users; this
+    test pins the catalog shape."""
     flow = _make_flow()
     sess = _make_session(flow, surface="agent_complex")
 
@@ -647,14 +615,14 @@ async def test_surface_agent_complex_uses_full_catalog_from_step_one() -> None:
     await _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
 
     first_tools = {tool.name for tool in provider.calls[0]["tools"]}
-    # Full catalog: every add_* node-type tool plus universal ops + pick_category.
+    # Full catalog: every add_* node-type tool plus universal ops.
     assert "flowfile.graph.add_filter" in first_tools
     assert "flowfile.graph.add_select" in first_tools
     assert "flowfile.graph.add_join" in first_tools
     assert "flowfile.schema.read_node_schema" in first_tools
-    # agent_complex == full catalog, so pick_category is also present (just not the
-    # only thing surfaced like in surface="agent" stage 1).
-    assert "flowfile.meta.pick_category" in first_tools
+    # The legacy ``flowfile.meta.pick_category`` was removed alongside
+    # the ``surface="agent"`` flow; assert it's no longer in the catalog.
+    assert "flowfile.meta.pick_category" not in first_tools
 
 
 # --------------------------------------------------------------------------- #
@@ -1068,7 +1036,7 @@ async def test_resume_from_paused_drift_resnapshots() -> None:
 
 
 def test_w38_classify_op_kind_meta() -> None:
-    assert _classify_op_kind("flowfile.meta.pick_category") == "meta"
+    assert _classify_op_kind("flowfile.meta.classify_intent") == "meta"
 
 
 def test_w38_classify_op_kind_graph() -> None:
@@ -1134,7 +1102,7 @@ def test_w38_arg_summary_join_renders_keys_and_how() -> None:
 
 
 def test_w38_arg_summary_meta_returns_none() -> None:
-    assert _arg_summary("flowfile.meta.pick_category", {"intent": "filter"}) is None
+    assert _arg_summary("flowfile.meta.classify_intent", {"op_kind": "add"}) is None
 
 
 def test_w38_arg_summary_connect() -> None:
@@ -1226,47 +1194,12 @@ async def test_w38_rationale_falls_back_to_none_when_no_preamble() -> None:
     assert "[region]=='EU'" in payload["arg_summary"]
 
 
-@pytest.mark.asyncio
-async def test_w38_meta_pick_category_carries_op_kind_meta_no_rationale() -> None:
-    """Even if the model writes a preamble before pick_category, op_kind=='meta'
-    suppresses rationale on the proposed/info events so the frontend hides the
-    whole D002 routing dance from the user-visible chat trail."""
-    flow = _make_flow()
-    sess = _make_session(flow, surface="agent")
-    provider = _ScriptedProvider(
-        [
-            _Step(
-                tool_calls=[
-                    ToolCall(id="t1", name="flowfile.meta.pick_category", arguments={"intent": "filter to EU"})
-                ],
-                content="Picking the right tool category for this goal.",  # would-be rationale
-                finish_reason="tool_calls",
-            ),
-            _Step(
-                tool_calls=[ToolCall(id="t2", name="flowfile.graph.add_filter", arguments=_filter_args())],
-                content="Filtering to EU rows.",
-                finish_reason="tool_calls",
-            ),
-            _Step(tool_calls=[], finish_reason="stop"),
-        ]
-    )
-    events = await _drain(
-        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
-    )
-    # First proposed event — the meta call — must be op_kind="meta", rationale=None
-    proposed = [e for e in events if e.event == "tool_call_proposed"]
-    assert proposed[0].payload["name"] == "flowfile.meta.pick_category"
-    assert proposed[0].payload["op_kind"] == "meta"
-    assert proposed[0].payload["rationale"] is None
-    # Second proposed — the graph op — must carry op_kind="graph" with rationale.
-    assert proposed[1].payload["name"] == "flowfile.graph.add_filter"
-    assert proposed[1].payload["op_kind"] == "graph"
-    assert proposed[1].payload["rationale"] == "Filtering to EU rows."
-    # The "category narrowed" info event also tagged op_kind="meta" so the UI
-    # can suppress it as part of the meta-routing dance.
-    info = [e for e in events if e.event == "info" and e.payload.get("category")]
-    assert info, "expected a category-narrowed info event"
-    assert info[0].payload["op_kind"] == "meta"
+# W71 v1.10 — ``test_w38_meta_pick_category_carries_op_kind_meta_no_rationale``
+# was deleted. It tested the legacy two-stage ``flowfile.meta.pick_category``
+# meta-routing dance, which is gone. The op_kind="meta" rationale-suppression
+# contract still applies and is now exercised by ``test_planner_staged.py``
+# against the W71 staged meta tools (classify_intent / pick_node_type /
+# pick_upstream).
 
 
 @pytest.mark.asyncio
@@ -1567,7 +1500,10 @@ def test_w56_planner_system_prompt_includes_node_catalog() -> None:
     """
     from flowfile_core.ai.context.builder import assemble_system_prompt
 
-    prompt = assemble_system_prompt("agent")
+    # W71 v1.10 — legacy ``"agent"`` surface removed; assert the catalog
+    # is wired into ``agent_complex`` (the only full-catalog planner
+    # surface left).
+    prompt = assemble_system_prompt("agent_complex")
     assert "## Tool catalog" in prompt, "catalog header missing from planner prompt"
 
     # At least three representative tools across categories must surface so
@@ -1605,16 +1541,19 @@ def test_w70_planner_prompt_warns_against_redundant_connect() -> None:
     """
     from flowfile_core.ai.context.builder import assemble_system_prompt
 
-    prompt = assemble_system_prompt("agent")
+    # W71 v1.10 — legacy ``"agent"`` surface removed; the W70 paragraph
+    # ships with the ``agent_complex`` surface and the
+    # ``single_stage_op`` stage of ``agent_staged`` (both surfaces use
+    # the legacy ``planner.md`` suffix).
+    prompt = assemble_system_prompt("agent_complex")
     assert "## Connection discipline (W70)" in prompt, "W70 connection-discipline header missing"
     assert "Do NOT emit a follow-up" in prompt, "W70 redundant-connect refusal phrase missing"
     assert "never invent a fresh integer" in prompt, "W70 invent-id refusal phrase missing"
 
-    # The agent_complex surface uses the same planner suffix; verify the
-    # paragraph is present there too (regression guard against a future
-    # surface-specific override that would silently strip W70's section).
-    prompt_complex = assemble_system_prompt("agent_complex")
-    assert "## Connection discipline (W70)" in prompt_complex
+    prompt_staged_single_op = assemble_system_prompt(
+        "agent_staged", stage="single_stage_op"
+    )
+    assert "## Connection discipline (W70)" in prompt_staged_single_op
 
 
 # --------------------------------------------------------------------------- #

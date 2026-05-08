@@ -52,7 +52,12 @@ _SURFACE_BUDGETS: dict[str, SurfaceBudget] = {
     "cmd_k": (4_000, 1_500),
     "ghost_node": (4_000, 1_500),
     "explain": (16_000, 4_000),
-    "agent": (32_000, 4_000),
+    # W71 v1.10 — legacy ``"agent"`` surface removed. ``agent_staged``
+    # uses the same per-call budget shape as legacy agent at most
+    # stages; pick_type round can need more headroom for the catalog
+    # block (~33 KB chars / ~8 K tokens), still well under the
+    # ``agent_complex`` ceiling.
+    "agent_staged": (48_000, 4_000),
     "agent_complex": (96_000, 4_000),
     "docgen": (32_000, 8_000),
     # W34 settings autocomplete: tiny prompt (schema column list + partial text)
@@ -109,12 +114,13 @@ def estimate_tokens(text: str) -> int:
 def surface_budget(surface: str) -> SurfaceBudget:
     """Return ``(prompt_budget, response_budget)`` for ``surface``.
 
-    Falls back to the ``agent`` budget for unknown surfaces — the broad
-    default lets callers keep working when adding a new surface without
-    immediately editing this table.
+    Falls back to the ``agent_staged`` budget for unknown surfaces —
+    the broad default lets callers keep working when adding a new
+    surface without immediately editing this table. (W71 v1.10 — was
+    ``"agent"`` before the legacy two-stage surface was removed.)
     """
 
-    return _SURFACE_BUDGETS.get(surface, _SURFACE_BUDGETS["agent"])
+    return _SURFACE_BUDGETS.get(surface, _SURFACE_BUDGETS["agent_staged"])
 
 
 def apply_budget(

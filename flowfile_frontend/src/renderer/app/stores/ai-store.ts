@@ -91,6 +91,16 @@ export const useAiStore = defineStore("ai", () => {
   const selectedProvider = ref<string | null>(null);
   const selectedModel = ref<string | null>(null);
 
+  // W71 v1.9 — user-selectable agent surface. Defaults to ``agent_staged``
+  // (v1's locked decision) but exposed in the UI as a third picker
+  // alongside provider / model so users can opt into the legacy
+  // two-stage ``agent`` or single-shot ``agent_complex`` surfaces
+  // without editing code. The store-side getter / setter mirrors the
+  // model picker pattern; the UI control lives in
+  // ``AiAssistant.vue:header``. Persisted alongside the other AI
+  // selections via ``ai-store-persistence``.
+  const selectedAgentSurface = ref<"agent_complex" | "agent_staged">("agent_staged");
+
   // ----- messages -----
   const messages = ref<ChatMessage[]>([]);
 
@@ -147,6 +157,12 @@ export const useAiStore = defineStore("ai", () => {
   if (_hydrated.agentModeAccepted !== null && _hydrated.agentModeAccepted !== undefined) {
     agentModeAccepted.value = _hydrated.agentModeAccepted;
   }
+  if (
+    _hydrated.selectedAgentSurface !== null &&
+    _hydrated.selectedAgentSurface !== undefined
+  ) {
+    selectedAgentSurface.value = _hydrated.selectedAgentSurface;
+  }
 
   // Throttled save. localStorage writes are sync + main-thread; coalescing
   // streaming chunk deltas into ~4 writes/sec keeps the cost negligible
@@ -178,6 +194,7 @@ export const useAiStore = defineStore("ai", () => {
             selectedModel: selectedModel.value,
             autoPromote: autoPromote.value,
             agentModeAccepted: agentModeAccepted.value,
+            selectedAgentSurface: selectedAgentSurface.value,
           },
           undefined,
           _scopedFlowId(flowStore.flowId),
@@ -196,6 +213,7 @@ export const useAiStore = defineStore("ai", () => {
   watch(messages, queuePersist, { deep: true, flush: "sync" });
   watch(selectedProvider, queuePersist, { flush: "sync" });
   watch(selectedModel, queuePersist, { flush: "sync" });
+  watch(selectedAgentSurface, queuePersist, { flush: "sync" });
   watch(streamingState, queuePersist, { flush: "sync" });
   watch(autoPromote, queuePersist, { flush: "sync" });
   watch(agentModeAccepted, queuePersist, { flush: "sync" });
@@ -231,6 +249,7 @@ export const useAiStore = defineStore("ai", () => {
           selectedModel: selectedModel.value,
           autoPromote: autoPromote.value,
           agentModeAccepted: agentModeAccepted.value,
+          selectedAgentSurface: selectedAgentSurface.value,
         },
         undefined,
         outgoing,
@@ -253,6 +272,10 @@ export const useAiStore = defineStore("ai", () => {
       // inherit the previous flow's "continue as agent" lock.
       autoPromote.value = loaded.autoPromote ?? true;
       agentModeAccepted.value = loaded.agentModeAccepted ?? false;
+      // W71 v1.9 — selectedAgentSurface is a per-flow session
+      // preference (matches autoPromote semantics). Fall back to the
+      // store's default when the flow has no persisted value.
+      selectedAgentSurface.value = loaded.selectedAgentSurface ?? "agent_staged";
       promotionBanner.value = null;
       streamError.value = null;
 
@@ -339,6 +362,10 @@ export const useAiStore = defineStore("ai", () => {
 
   const setSelectedModel = (model: string | null): void => {
     selectedModel.value = model;
+  };
+
+  const setSelectedAgentSurface = (surface: "agent_complex" | "agent_staged"): void => {
+    selectedAgentSurface.value = surface;
   };
 
   const abortStream = (): void => {
@@ -492,15 +519,11 @@ export const useAiStore = defineStore("ai", () => {
     await agentStore.start({
       flow_id: flowId,
       prompt: enrichedPrompt,
-      // W71 v1.1 — auto-promote-from-chat (W58) routes to the same default
-      // surface as the direct agent-mode toggle in AiAssistant.vue. Was
-      // ``"agent"`` (legacy two-stage with ``pick_category``); flipped to
-      // ``"agent_staged"`` so smaller models (llama-3.3-70b on
-      // OpenRouter / Groq) stay on the function-calling path that actually
-      // works for them. Dogfood 2026-05-07: legacy surface produced
-      // repeated *"groupby_input got str"* refusals on llama-70b before
-      // the fix.
-      surface: "agent_staged",
+      // W71 v1.9 — auto-promote-from-chat (W58) honors the user's
+      // selected agent surface (defaults to ``agent_staged``). The
+      // direct agent-mode toggle in ``AiAssistant.vue`` reads the same
+      // ref so both dispatch paths stay consistent.
+      surface: selectedAgentSurface.value,
       provider: selectedProvider.value ?? "anthropic",
       model: selectedModel.value ?? null,
     });
@@ -1116,6 +1139,8 @@ export const useAiStore = defineStore("ai", () => {
     loadProviders,
     setSelectedProvider,
     setSelectedModel,
+    selectedAgentSurface,
+    setSelectedAgentSurface,
     abortStream,
     sendMessage,
     explainRunFailure,

@@ -61,7 +61,6 @@ SurfaceLiteral = Literal[
     "cmd_k",
     "ghost_node",
     "explain",
-    "agent",
     "agent_complex",
     "agent_staged",
     "docgen",
@@ -78,7 +77,6 @@ SURFACE_TO_LEVEL: dict[str, PromptLevel] = {
     "cmd_k": "copilot",
     "ghost_node": "copilot",
     "explain": "assist",
-    "agent": "planner",
     "agent_complex": "planner",
     # W71 — ``agent_staged`` falls back to ``planner`` only when no stage
     # is supplied (defensive). When a stage IS supplied,
@@ -425,11 +423,12 @@ def assemble_system_prompt(
 _CATALOG_HEADER = "## Tool catalog"
 _NODE_REFERENCE_HEADER = "## Flowfile node reference"
 
-# Surfaces that get the full catalog block — both stages of the agent see
-# every node's narrative grounding so the first-stage pick_category call
-# can pick the right category and the second-stage tool call can pick the
-# right tool inside it. ``agent_complex`` is the one-shot full surface.
-_FULL_CATALOG_SURFACES: frozenset[str] = frozenset({"agent", "agent_complex"})
+# Surface that gets the full catalog block. ``agent_complex`` is the
+# one-shot full-catalog surface; ``agent_staged`` renders the catalog
+# only at the ``pick_type`` stage via the per-stage branch in
+# :func:`_build_catalog_block`. (Legacy ``agent`` surface was removed in
+# W71 v1.10.)
+_FULL_CATALOG_SURFACES: frozenset[str] = frozenset({"agent_complex"})
 
 # Surfaces that get a narrowed catalog filtered to their D002 preset.
 _PRESET_CATALOG_SURFACES: frozenset[str] = frozenset({"cmd_k", "ghost_node"})

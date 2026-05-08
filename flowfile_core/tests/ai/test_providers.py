@@ -146,12 +146,15 @@ def test_list_supported_providers() -> None:
     ("name", "surface", "model_substr"),
     [
         ("anthropic", "cmd_k", "haiku"),
-        ("anthropic", "agent", "sonnet"),
+        # W71 v1.10 — legacy ``"agent"`` surface removed; the staged
+        # surface routes to haiku for anthropic, agent_complex stays on
+        # opus.
+        ("anthropic", "agent_staged", "haiku"),
         ("anthropic", "agent_complex", "opus"),
         ("google", "cmd_k", "flash"),
         ("google", "agent_complex", "pro"),
         ("groq", "cmd_k", "llama"),
-        ("ollama", "agent", "70b"),
+        ("ollama", "agent_complex", "70b"),
         ("openrouter", "cmd_k", "haiku"),
     ],
 )
@@ -622,7 +625,7 @@ async def test_chat_writes_prompt_log_when_enabled(
                 )
             ],
             max_tokens=200,
-            surface="agent",
+            surface="agent_complex",
             session_id="sess-1",
         )
 
@@ -632,7 +635,7 @@ async def test_chat_writes_prompt_log_when_enabled(
     assert len(lines) == 1
     payload = json.loads(lines[0])
     assert payload["provider"] == "anthropic"
-    assert payload["surface"] == "agent"
+    assert payload["surface"] == "agent_complex"
     assert payload["session_id"] == "sess-1"
     assert payload["max_tokens"] == 200
     assert payload["response"] == "hello world"
@@ -650,7 +653,7 @@ async def test_chat_no_log_when_disabled(
     p = provider_factory("anthropic")
     fake_response = _make_chat_response(content="hi")
     with patch("litellm.acompletion", new=AsyncMock(return_value=fake_response)):
-        await p.chat([Message(role="user", content="hi")], surface="agent")
+        await p.chat([Message(role="user", content="hi")], surface="agent_complex")
 
     assert not _isolated_log_dir.exists() or not list(_isolated_log_dir.iterdir())
 
@@ -721,7 +724,7 @@ async def test_chat_log_records_error(
         new=AsyncMock(side_effect=RuntimeError("boom")),
     ):
         with pytest.raises(RuntimeError, match="boom"):
-            await p.chat([Message(role="user", content="hi")], surface="agent")
+            await p.chat([Message(role="user", content="hi")], surface="agent_complex")
 
     files = list(_isolated_log_dir.iterdir())
     assert len(files) == 1
@@ -759,10 +762,10 @@ async def test_provider_counter_increments_on_error(
         new=AsyncMock(side_effect=RuntimeError("boom")),
     ):
         with pytest.raises(RuntimeError):
-            await p.chat([Message(role="user", content="hi")], surface="agent")
+            await p.chat([Message(role="user", content="hi")], surface="agent_complex")
 
     counts = get_provider_call_counts()
-    assert counts.get(("anthropic", "agent", p.model, "error")) == 1
+    assert counts.get(("anthropic", "agent_complex", p.model, "error")) == 1
 
 
 @pytest.mark.asyncio

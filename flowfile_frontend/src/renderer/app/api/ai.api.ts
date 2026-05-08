@@ -460,7 +460,7 @@ export interface AgentDriftDetail {
   nodeTypes: Record<number, string>;
 }
 
-export type AgentSurface = "agent" | "agent_complex" | "agent_staged";
+export type AgentSurface = "agent_complex" | "agent_staged";
 
 export type AgentStage =
   | "classify"

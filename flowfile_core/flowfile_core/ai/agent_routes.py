@@ -79,13 +79,12 @@ class AgentStartRequest(BaseModel):
 
     flow_id: int = Field(ge=0)
     prompt: str = Field(min_length=1, max_length=5_000)
-    surface: Literal["agent", "agent_complex", "agent_staged"] = "agent_staged"
-    """W71 — defaults to ``agent_staged`` (multi-stage state machine).
-    Existing clients can still opt into the legacy two-stage ``agent``
-    surface or the single-shot ``agent_complex`` surface by passing the
-    value explicitly. The frontend reads back the chosen surface via
-    :class:`AgentStateResponse.surface` so the UI knows which agent is
-    in use."""
+    surface: Literal["agent_complex", "agent_staged"] = "agent_staged"
+    """W71 v1.10 — defaults to ``agent_staged`` (multi-stage state
+    machine). Big-model power users can opt into ``agent_complex``
+    (single-shot full catalog) by passing it explicitly. The legacy
+    two-stage ``agent`` surface was removed in v1.10 — it was the
+    failure mode that motivated W71 in the first place."""
     samples_mode: Literal["off", "regex"] = "off"
     provider: str = Field(default="anthropic", min_length=1)
     model: str | None = None
@@ -351,23 +350,10 @@ async def agent_start(
         body.provider,
         resolved_model,
     )
-    # W71 v1.1 — soft warning when a small open-weights model is paired
-    # with the legacy two-stage surface. The combination is a known
-    # function-calling-API compliance failure mode (llama-3.3-70b on
-    # ``surface=agent`` emits text-JSON-in-content rather than tool_calls);
-    # ``agent_staged`` was built specifically to fix it. Emit at WARNING so
-    # the operator notices in the standard log without failing the call —
-    # users can still opt into legacy explicitly when they have a reason.
-    if body.surface == "agent" and body.provider in ("openrouter", "groq"):
-        model_str = (resolved_model or "").lower()
-        if "llama" in model_str:
-            logger.warning(
-                "agent.start: legacy surface=agent on a small model "
-                "(provider=%s model=%s) is a known function-calling failure "
-                "mode — consider surface=agent_staged for reliable tool use",
-                body.provider,
-                resolved_model,
-            )
+    # W71 v1.10 — the legacy ``surface=agent`` warning is gone because
+    # the surface itself was removed: the literal type rejects "agent"
+    # at request validation. The remaining surfaces (agent_staged,
+    # agent_complex) are both viable on their respective model tiers.
 
     events = run_planner_session(
         session=session,

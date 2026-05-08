@@ -798,24 +798,16 @@ def test_w62_staged_offset_index_stacks_fan_out(call_kwargs: dict[str, Any]) -> 
 
 
 # --------------------------------------------------------------------------- #
-# 11. Meta pick_category                                                       #
+# 11. Meta classify_intent (W71)                                               #
 # --------------------------------------------------------------------------- #
-
-
-def test_meta_pick_category(call_kwargs: dict[str, Any]) -> None:
-    flow = _flow_with_orders()
-    result = execute_tool_call(
-        flow_id=flow.flow_id,
-        tool_name="flowfile.meta.pick_category",
-        tool_args={"intent": "filter rows where amount is over 100"},
-        insertion_context=InsertionContext(),
-        flow=flow,
-        **call_kwargs,
-    )
-    assert result.status == "applied"
-    assert "category" in result.extra
-    # Heuristic should pick "transformations" for a filter-shaped intent.
-    assert isinstance(result.extra["category"], str)
+#
+# W71 v1.10 — ``test_meta_pick_category`` was deleted. The legacy
+# ``flowfile.meta.pick_category`` tool was removed alongside the
+# ``surface=agent`` two-stage flow it powered. The W71 staged meta
+# tools (``classify_intent`` / ``pick_node_type`` / ``pick_upstream``)
+# are exercised end-to-end by ``test_planner_staged.py``; the
+# executor-side ``_handle_meta`` dispatch they go through is the same
+# code path.
 
 
 # --------------------------------------------------------------------------- #
