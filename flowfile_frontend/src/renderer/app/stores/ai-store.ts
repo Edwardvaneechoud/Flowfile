@@ -99,7 +99,7 @@ export const useAiStore = defineStore("ai", () => {
   // model picker pattern; the UI control lives in
   // ``AiAssistant.vue:header``. Persisted alongside the other AI
   // selections via ``ai-store-persistence``.
-  const selectedAgentSurface = ref<"agent_complex" | "agent_staged">("agent_staged");
+  const selectedAgentSurface = ref<"agent_complex" | "agent_staged" | "agent_live">("agent_staged");
 
   // ----- messages -----
   const messages = ref<ChatMessage[]>([]);
@@ -364,7 +364,7 @@ export const useAiStore = defineStore("ai", () => {
     selectedModel.value = model;
   };
 
-  const setSelectedAgentSurface = (surface: "agent_complex" | "agent_staged"): void => {
+  const setSelectedAgentSurface = (surface: "agent_complex" | "agent_staged" | "agent_live"): void => {
     selectedAgentSurface.value = surface;
   };
 

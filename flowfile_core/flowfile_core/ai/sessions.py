@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from flowfile_core.ai.diff import StagedToolEntry
+from flowfile_core.ai.diff import AppliedNodeRecord, StagedToolEntry
 from flowfile_core.ai.providers.base import Message
 from flowfile_core.ai.session_store import (
     DiskSessionRepository,
@@ -77,14 +77,23 @@ instead of the misleading *"finished — nothing to stage"*. Both
 ``awaiting_user_input`` and ``completed`` are followup-resumable via
 ``POST /ai/agent/{session_id}/followup`` — see W49 for the wire shape."""
 
-PlannerSurface = Literal["agent_complex", "agent_staged"]
+PlannerSurface = Literal["agent_complex", "agent_staged", "agent_live"]
 """W71 v1.10 — legacy ``"agent"`` surface (two-stage with
 ``flowfile.meta.pick_category``) was removed: it was the failure mode
 that triggered W71 (small open-weights models silently fall back to
 text-JSON-in-content instead of using the function-calling API).
 ``agent_staged`` covers the small-model case via a one-tool-per-round
-state machine; ``agent_complex`` covers single-shot full-catalog use
-on big-model providers."""
+state machine; ``agent_complex`` covers single-shot full-catalog use;
+W71 v2.0 — ``agent_live`` is a third opt-in surface that mirrors
+``agent_staged``'s state machine through fill_settings but applies
+each step LIVE to the canvas (mode="apply" not "stage"), runs the
+affected subgraph (Performance) or evaluates a sample (Development),
+and feeds the runtime observation back to the LLM as the next
+tool reply. On runtime failure the just-added node is auto-deleted
+and the LLM retries up to ``max_retries_per_step``; the canvas is
+always at the last-successful state. No staged_results bundle —
+every action is live; the chat trail's ``applied_results`` list is
+the equivalent record-of-truth for that surface."""
 SamplesMode = Literal["off", "regex"]
 
 
@@ -208,6 +217,13 @@ class AgentSession(BaseModel):
     snapshot: GraphSnapshot
     messages: list[Message] = Field(default_factory=list)
     staged_results: list[StagedToolEntry] = Field(default_factory=list)
+    applied_results: list[AppliedNodeRecord] = Field(default_factory=list)
+    """W71 v2.0 — per-step applied-live record for ``surface=agent_live``.
+    Mirrors ``staged_results`` for the chat-trail rendering and the
+    audit / undo paths, but the records describe nodes ALREADY in
+    ``flow.nodes`` (not staged proposals). Empty for the other
+    surfaces; populated one entry per successful apply round on
+    ``agent_live``."""
     status: SessionStatus = "running"
     pause_reason: str | None = None
     drift_detail: DriftDetail | None = None

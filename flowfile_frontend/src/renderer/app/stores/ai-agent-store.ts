@@ -35,6 +35,7 @@ import {
   type AgentFollowupRequest,
   type AgentSessionHandlers,
   type AgentStartRequest,
+  type AgentToolCallApplied,
   type AgentToolCallProposed,
   type AgentToolCallRejected,
   type AgentToolCallStaged,
@@ -89,6 +90,7 @@ export interface AgentEvent {
     | "tool_call_staged"
     | "tool_call_warned"
     | "tool_call_rejected"
+    | "tool_call_applied"
     | "drift_detected"
     | "paused"
     | "retry"
@@ -144,7 +146,7 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
   const stage = ref<AgentStage>("classify");
   const pickedOpKind = ref<AgentOpKind | null>(null);
   const pickedNodeType = ref<string | null>(null);
-  const currentSurface = ref<"agent" | "agent_complex" | "agent_staged" | null>(null);
+  const currentSurface = ref<"agent" | "agent_complex" | "agent_staged" | "agent_live" | null>(null);
 
   let activeAbort: AbortController | null = null;
 
@@ -251,6 +253,17 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
         _appendEvent("tool_call_warned", entry as unknown as Record<string, unknown>),
       onToolCallRejected: (refusal: AgentToolCallRejected) =>
         _appendEvent("tool_call_rejected", refusal as unknown as Record<string, unknown>),
+      onToolCallApplied: (entry: AgentToolCallApplied) => {
+        // W71 v2.0 — agent_live committed a node to the live graph.
+        // Record the event for the chat trail AND ask the canvas
+        // store to re-fetch the flow so the new node materialises
+        // on the user's canvas. ``flow-store.requestReload()`` bumps
+        // a counter that ``Canvas.vue``'s watcher debounces into a
+        // single re-render even if multiple ``tool_call_applied``
+        // events fire rapidly during a multi-step agent_live run.
+        _appendEvent("tool_call_applied", entry as unknown as Record<string, unknown>);
+        useFlowStore().requestReload();
+      },
       onDriftDetected: (drift, sessionId) => {
         // Populate currentSessionId from the wire — start() can't because
         // the server allocates the id and streams it back with each event.

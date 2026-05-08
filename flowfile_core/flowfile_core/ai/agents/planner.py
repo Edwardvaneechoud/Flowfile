@@ -101,6 +101,7 @@ PlannerEventName = Literal[
     "tool_call_staged",
     "tool_call_warned",
     "tool_call_rejected",
+    "tool_call_applied",
     "drift_detected",
     "paused",
     "retry",
@@ -140,6 +141,125 @@ class PlannerEvent(BaseModel):
 
 
 _ADD_PREFIX = "flowfile.graph.add_"
+
+# W71 v2.0 — surfaces that share the agent_staged state machine
+# (classify→pick_type→pick_upstream→fill_settings).
+# ``agent_live`` differs only in the post-apply behaviour (lives
+# in flow.nodes immediately + observation), so every place the
+# state-machine logic gates on ``agent_staged`` must also include
+# ``agent_live``.
+_STAGED_STATE_MACHINE_SURFACES: frozenset[str] = frozenset({"agent_staged", "agent_live"})
+
+
+def _coerce_formula_bare_string_args(
+    tool_args: dict[str, Any],
+    *,
+    user_prompt: str,
+) -> dict[str, Any]:
+    """W71 v1.13B — auto-coerce the LLM's *bare-expression-string* shape
+    for ``add_formula`` at agent_staged ``fill_settings``.
+
+    Smaller models routinely confuse the FunctionInput envelope's
+    inner ``function`` field (a string expression) with the OUTER
+    ``function`` parameter (a FunctionInput object). They emit
+    ``{"function": "[first] + ' ' + [last]"}`` — only the expression
+    string keyed under the wrapper-field name, no ``field``
+    descriptor. The downstream Pydantic validation then refuses with
+    *"function expects FunctionInput, got str"*; v1.13B's refusal
+    rewrite (executor.py) makes the message readable, but the
+    cleanest UX is to recognise the intent and fill in the missing
+    ``field`` rather than refuse.
+
+    Coercion rule (narrow):
+
+    * ``tool_args`` is a single-key dict ``{"function": <str>}`` AND
+      the value is a non-empty string (the formula text).
+    * Synthesize ``{"field": {"name": <derived>, "data_type":
+      "String"}, "function": <the string>}``.
+    * ``field.name`` is derived from the user prompt (best-effort
+      extraction of *"as <name>"* / *"a <name> column"*); falls
+      back to ``"derived"`` so the user can rename in the diff
+      review.
+    * The caller still wraps the result under the inner-input
+      ``function`` field name; this helper only fixes the SHAPE
+      under the wrapper.
+
+    Returns ``tool_args`` unchanged when the coercion doesn't apply.
+    Defensive: a future LLM that does emit the right shape sails
+    through unchanged.
+    """
+    if not isinstance(tool_args, dict):
+        return tool_args
+    candidate = tool_args.get("function")
+    if not isinstance(candidate, str) or not candidate.strip():
+        return tool_args
+    # Only fire when the bare-string shape is the *complete* inner
+    # payload — i.e. the LLM didn't already supply ``field``. If
+    # ``field`` is present we leave it for normal validation to
+    # surface the more specific error.
+    if "field" in tool_args:
+        return tool_args
+
+    derived_name = _derive_formula_output_column_name(user_prompt)
+    return {
+        "field": {"name": derived_name, "data_type": "String"},
+        "function": candidate,
+    }
+
+
+def _looks_like_outer_envelope_value(value: Any) -> bool:
+    """W71 v1.13B — does ``value`` look like an outer-envelope's
+    inner-class value (a dict, possibly JSON-encoded)?
+
+    Returns True for ``{...}`` and for ``"{\\"...\\": ...}"`` (JSON
+    string that parses to a dict). The v1.4 universal unwrap will
+    convert the JSON-string variant to a dict at the executor seam,
+    so both cases mean *"the LLM provided the outer envelope"* — no
+    planner-side wrap needed. Returns False for scalars (bare
+    expression strings, ints, lists), which are inner-schema
+    collision noise that DOES need the wrap.
+    """
+    if isinstance(value, dict):
+        return True
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or stripped[0] != "{":
+            return False
+        try:
+            parsed = json.loads(stripped)
+        except (TypeError, ValueError):
+            return False
+        return isinstance(parsed, dict)
+    return False
+
+
+_FORMULA_NAME_PATTERNS: tuple[tuple[str, int], ...] = (
+    # Phrase forms the user typically uses to name a derived column.
+    # Each pattern is (regex, group index) — group 1 captures the name.
+    (r"\bas\s+([A-Za-z_][A-Za-z0-9_]*)\b", 1),
+    (r"\ba\s+([A-Za-z_][A-Za-z0-9_]*)\s+column\b", 1),
+    (r"\bcolumn\s+(?:called|named)\s+([A-Za-z_][A-Za-z0-9_]*)\b", 1),
+    (r"\bnew\s+column\s+([A-Za-z_][A-Za-z0-9_]*)\b", 1),
+)
+
+
+def _derive_formula_output_column_name(user_prompt: str) -> str:
+    """Best-effort extraction of the user's intended output-column name
+    for ``v1.13B``'s formula bare-string coercion. Falls back to
+    ``"derived"`` when no recognizable pattern fires.
+    """
+    import re
+
+    text = (user_prompt or "").strip()
+    if not text:
+        return "derived"
+    for pattern, group in _FORMULA_NAME_PATTERNS:
+        m = re.search(pattern, text, flags=re.IGNORECASE)
+        if m is not None:
+            candidate = m.group(group)
+            if candidate and not candidate.lower() in {"new", "column", "data"}:
+                return candidate
+    return "derived"
 
 # W71 — staged-flow tool name lookups. Mirrored from ``meta_ops`` so the
 # planner can branch on tool name without re-importing the constants in
@@ -610,7 +730,7 @@ def _resolve_insertion_context(
     # the upstream picker at stage 2 already resolved the choice and
     # stored it on the session. Skip every other tier — these picks
     # cannot be overridden by an LLM that didn't see the schema.
-    if session.surface == "agent_staged" and session.stage == "fill_settings":
+    if session.surface in _STAGED_STATE_MACHINE_SURFACES and session.stage == "fill_settings":
         upstream_ids = [uid for uid in (session.picked_upstream_ids or []) if isinstance(uid, int)]
 
     # Tier 1 — explicit planner param.
@@ -675,7 +795,7 @@ def _resolve_insertion_context(
         # else / no non-sink found: Tier 7 — leave upstream_ids empty.
 
     # W71 — at fill_settings, right input is also session-canonical.
-    if session.surface == "agent_staged" and session.stage == "fill_settings":
+    if session.surface in _STAGED_STATE_MACHINE_SURFACES and session.stage == "fill_settings":
         right_input_node_id = session.picked_right_input_id
     else:
         raw_right = args.get("right_input_node_id")
@@ -1028,7 +1148,7 @@ def _resolve_current_surface(session: sessions.AgentSession) -> str:
     """
     if session.surface == "agent_complex":
         return "agent_complex"
-    # session.surface == "agent_staged" — only remaining alternative.
+    # session.surface in _STAGED_STATE_MACHINE_SURFACES — only remaining alternative.
     if session.stage == "single_stage_op" and session.picked_op_kind is not None:
         mapped = _AGENT_STAGED_OP_TO_SURFACE.get(session.picked_op_kind)
         if mapped is not None:
@@ -1071,8 +1191,8 @@ def _build_initial_messages(flow: FlowGraph, session: sessions.AgentSession) -> 
         surface=session.surface,
         samples_mode=session.samples_mode,
         mentions="@flow",
-        stage=session.stage if session.surface == "agent_staged" else None,
-        picked_node_type=session.picked_node_type if session.surface == "agent_staged" else None,
+        stage=session.stage if session.surface in _STAGED_STATE_MACHINE_SURFACES else None,
+        picked_node_type=session.picked_node_type if session.surface in _STAGED_STATE_MACHINE_SURFACES else None,
     )
     user_text = f"{ctx.user}\n\n## Goal\n\n{session.user_prompt}".strip()
     return [
@@ -1402,6 +1522,59 @@ def _build_fill_settings_user_message(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _build_pick_upstream_staged_addendum(
+    session: sessions.AgentSession,
+) -> str | None:
+    """W71 v1.12A — render a *"## Staged this session"* block listing
+    each prior in-batch staged ``add_*`` with its node id, type, and
+    predicted output schema.
+
+    The pick_upstream user message at session start carries the live
+    subgraph but says NOTHING about nodes the agent has staged earlier
+    in the same session. Per v1.11 those staged ids ARE in the
+    ``pick_upstream_node_ids`` enum (``meta_ops.build_pick_upstream_spec``
+    walks ``session.staged_node_ids``), so the LLM can pick them — but
+    blind, without column context. On long chains that hurts accuracy.
+
+    Returns ``None`` when there are no staged-this-session add_* entries
+    so the caller can leave ``messages[1]`` untouched.
+    """
+    blocks: list[str] = []
+    for entry in session.staged_results:
+        if not entry.tool_name.startswith(_ADD_PREFIX):
+            continue
+        node_type = entry.tool_name.removeprefix(_ADD_PREFIX)
+        payload = entry.staged_node_payload if isinstance(entry.staged_node_payload, dict) else None
+        if payload is None:
+            continue
+        settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+        nid = settings.get("node_id") if isinstance(settings, dict) else None
+        if not isinstance(nid, int):
+            continue
+        preds = payload.get("predicted_output_schema")
+        cols_text: list[str] = []
+        if isinstance(preds, list):
+            for col in preds:
+                if isinstance(col, dict):
+                    cols_text.append(
+                        f"  - {col.get('name', '?')}: {col.get('data_type', 'Unknown')}"
+                    )
+        header = f"- node {nid} ({node_type})"
+        if cols_text:
+            blocks.append(header + "\n" + "\n".join(cols_text))
+        else:
+            blocks.append(header + "\n  - schema: unknown")
+
+    # Cap to the 10 most-recent staged entries to bound the prompt on
+    # very long sessions. Oldest entries fall out — by then they're
+    # already accepted or rejected and downstream context is what
+    # matters for the next pick.
+    if not blocks:
+        return None
+    blocks = blocks[-10:]
+    return "## Staged this session\n\n" + "\n".join(blocks) + "\n"
+
+
 def _refresh_system_prompt_for_stage(
     session: sessions.AgentSession, flow: FlowGraph | None = None
 ) -> None:
@@ -1427,7 +1600,7 @@ def _refresh_system_prompt_for_stage(
     upstream is locked in; keeping it bloats the prompt and confuses
     smaller models like llama-3.3-70b.
     """
-    if session.surface != "agent_staged":
+    if session.surface not in _STAGED_STATE_MACHINE_SURFACES:
         return
     if not session.messages or session.messages[0].role != "system":
         return
@@ -1449,6 +1622,33 @@ def _refresh_system_prompt_for_stage(
         slim_user = _build_fill_settings_user_message(session, flow)
         if slim_user is not None:
             session.messages[1] = Message(role="user", content=slim_user)
+        return
+
+    # W71 v1.12A — at the pick_upstream stage, append a
+    # *"## Staged this session"* block to the user message so the LLM
+    # can see the predicted columns of nodes it staged earlier in the
+    # same session (those ids appear in the upstream-id enum but
+    # otherwise have no schema context). Rebuild from the original
+    # subgraph + goal each time so re-entries to pick_upstream within
+    # one session don't accumulate stale staged blocks.
+    if (
+        session.stage == "pick_upstream"
+        and flow is not None
+        and len(session.messages) >= 2
+        and session.messages[1].role == "user"
+    ):
+        addendum = _build_pick_upstream_staged_addendum(session)
+        if addendum is None:
+            return
+        # Re-render the original user message (live subgraph + goal)
+        # to drop any stale addendum from a prior pick_upstream
+        # iteration in the same session.
+        rebuilt = _build_initial_messages(flow, session)
+        base_user = rebuilt[1].content if len(rebuilt) >= 2 else session.messages[1].content
+        session.messages[1] = Message(
+            role="user",
+            content=base_user.rstrip() + "\n\n" + addendum,
+        )
 
 
 def _build_staged_tool_catalog(
@@ -1484,7 +1684,16 @@ def _build_staged_tool_catalog(
 
     if session.stage == "pick_upstream":
         live_ids = _collect_live_node_ids(flow)
-        spec = build_pick_upstream_spec(live_ids, list(session.staged_node_ids))
+        # W71 v1.14B — pass session.picked_node_type so the spec
+        # makes ``right_input_node_id`` REQUIRED for join-shaped
+        # node types (join / cross_join / fuzzy_match). Without
+        # this, cross_join staged with only one upstream wire and
+        # the second input dangled (2026-05-08 dogfood).
+        spec = build_pick_upstream_spec(
+            live_ids,
+            list(session.staged_node_ids),
+            picked_node_type=session.picked_node_type,
+        )
         return [spec], None
 
     # All other stages map to a static surface preset via _resolve_current_surface.
@@ -1799,7 +2008,7 @@ async def _run_planner_loop(
         _refresh_system_prompt_for_stage(session, flow)
 
         try:
-            if session.surface == "agent_staged" and session.stage in ("pick_upstream", "fill_settings"):
+            if session.surface in _STAGED_STATE_MACHINE_SURFACES and session.stage in ("pick_upstream", "fill_settings"):
                 tool_catalog, dyn_err = _build_staged_tool_catalog(session, flow)
                 if dyn_err is not None:
                     session.status = "failed"
@@ -1860,7 +2069,7 @@ async def _run_planner_loop(
         if (
             not tool_calls
             and assistant_text
-            and session.surface == "agent_staged"
+            and session.surface in _STAGED_STATE_MACHINE_SURFACES
         ):
             expected_names = {t.name for t in tool_catalog}
             recovered = _recover_textual_tool_call(assistant_text, expected_names)
@@ -1907,7 +2116,7 @@ async def _run_planner_loop(
             # signal (op_kind="other" handled, or LLM has nothing
             # more to add).
             if (
-                session.surface == "agent_staged"
+                session.surface in _STAGED_STATE_MACHINE_SURFACES
                 and session.stage in _MANDATORY_TOOL_CALL_STAGES
             ):
                 retries_for_step += 1
@@ -1999,19 +2208,40 @@ async def _run_planner_loop(
             # the existing flow_id / node_id injection runs. Multi-field
             # types fall back to the flat-stripped spec (no wrap needed).
             if (
-                session.surface == "agent_staged"
+                session.surface in _STAGED_STATE_MACHINE_SURFACES
                 and session.stage == "fill_settings"
                 and tc.name.startswith(_ADD_PREFIX)
             ):
                 picked_type = tc.name.removeprefix(_ADD_PREFIX)
+                # W71 v1.13B — auto-coerce the formula bare-string shape
+                # before the inner-input wrap runs. The LLM emits
+                # ``{"function": "<expression>"}`` (one key, value is
+                # the formula text) when it confuses the inner
+                # ``function`` STRING field with the outer ``function``
+                # OBJECT wrapper. Coerce to the proper FunctionInput
+                # envelope so the wrap can proceed normally.
+                if picked_type == "formula":
+                    tool_args = _coerce_formula_bare_string_args(
+                        tool_args, user_prompt=session.user_prompt
+                    )
                 inner_field = get_staged_fill_inner_field_name(picked_type)
-                if inner_field is not None and inner_field not in tool_args:
-                    # Wrap every key in tool_args under inner_field, except
-                    # planner-injected fields (flow_id / node_id) which
-                    # belong at the envelope level. The LLM never sees
-                    # those at fill_settings, so in practice tool_args
-                    # contains only inner-shape keys at this point — but
-                    # the conditional defends against future schema drift.
+                # W71 v1.2 + v1.13B — wrap inner-shape args under the
+                # canonical envelope field name. Stronger
+                # outer-envelope detection than the original
+                # ``inner_field in tool_args``: the value at
+                # ``inner_field`` must be a dict OR a JSON-encoded
+                # string that parses to a dict (the v1.4 universal
+                # unwrap will handle the latter at the executor
+                # seam). A bare scalar (e.g. FunctionInput's inner
+                # ``function`` STRING that the LLM mistakenly placed
+                # at the wrapper level for formula) is collision
+                # noise and SHOULD be wrapped.
+                already_wrapped = (
+                    inner_field is not None
+                    and inner_field in tool_args
+                    and _looks_like_outer_envelope_value(tool_args.get(inner_field))
+                )
+                if inner_field is not None and not already_wrapped:
                     inner_args = {
                         k: v
                         for k, v in tool_args.items()
@@ -2145,6 +2375,16 @@ async def _run_planner_loop(
                 _collect_staged_upstream_schemas(session) or None
             )
 
+            # W71 v2.0 — agent_live applies LIVE to the canvas
+            # (mode="apply"), then runs a post-apply observation
+            # (real subgraph run in Performance / schema-eval in
+            # Development) and feeds the runtime outcome back to
+            # the LLM. agent_staged + agent_complex stay on
+            # mode="stage" — they bundle the staged ops into a
+            # diff for batch user review at the end.
+            dispatch_mode: str = (
+                "apply" if session.surface == "agent_live" else "stage"
+            )
             # Dispatch — execute_tool_call is meant to never raise (returns rejected
             # result instead) but we wrap defensively.
             try:
@@ -2155,7 +2395,7 @@ async def _run_planner_loop(
                     insertion_context=insertion_context,
                     session_id=session.session_id,
                     user_id=session.user_id,
-                    mode="stage",
+                    mode=dispatch_mode,  # type: ignore[arg-type]
                     flow=flow,
                     dry_run_cache=dry_run_cache,
                     llm_provided_node_id=llm_provided_node_id,
@@ -2211,6 +2451,128 @@ async def _run_planner_loop(
                 )
                 continue
 
+            # W71 v2.0 — agent_live post-apply observation. The
+            # node is already in ``flow.nodes`` (mode="apply"); now
+            # observe the runtime outcome and decide whether to
+            # commit or auto-undo. On observation failure we delete
+            # the just-added node and feed the runtime error back
+            # to the LLM as the next round's tool reply, counting
+            # toward the per-step retry budget.
+            if (
+                session.surface == "agent_live"
+                and tc.name.startswith(_ADD_PREFIX)
+                and result.status in ("applied", "warned")
+                and isinstance(result.node_id, int)
+            ):
+                from flowfile_core.ai.agents.live_observation import (
+                    format_observation_block,
+                    observe_after_apply,
+                )
+
+                live_node_id = result.node_id
+                obs = observe_after_apply(flow, live_node_id)
+                obs_block = format_observation_block(obs)
+
+                # Append the observation block to the existing tool
+                # reply so the LLM sees it on its next round.
+                tool_msg.content = (tool_msg.content or "").rstrip() + "\n\n" + obs_block
+
+                if not obs.success:
+                    # Auto-undo: delete the just-added node so the
+                    # canvas returns to the last successful state.
+                    try:
+                        flow.delete_node(live_node_id)
+                    except Exception:
+                        logger.exception(
+                            "agent_live: undo (delete_node=%s) failed",
+                            live_node_id,
+                        )
+
+                    retries_for_step += 1
+                    if retries_for_step >= max_retries_per_step:
+                        session.status = "failed"
+                        session.touch()
+                        yield PlannerEvent(
+                            event="error",
+                            payload={
+                                "message": (
+                                    f"agent_live: {max_retries_per_step} consecutive "
+                                    "runtime failures on the same step "
+                                    f"(node_type={tc.name.removeprefix(_ADD_PREFIX)}); "
+                                    "giving up and leaving the canvas at the last "
+                                    "successful state."
+                                ),
+                                "session_id": session.session_id,
+                            },
+                        )
+                        return
+                    yield PlannerEvent(
+                        event="tool_call_rejected",
+                        payload={
+                            "id": tc.id,
+                            "name": tc.name,
+                            "reason": "runtime_error",
+                            "detail": obs.error_message,
+                            "op_kind": op_kind,
+                            "rationale": rationale,
+                            "arg_summary": arg_summary,
+                        },
+                    )
+                    continue
+
+                # Observation succeeded — record the applied node
+                # and reset the per-step retry budget.
+                session.applied_results.append(
+                    diff_module.AppliedNodeRecord(
+                        tool_name=tc.name,
+                        audit_id=result.audit_id,
+                        node_id=live_node_id,
+                        node_type=tc.name.removeprefix(_ADD_PREFIX),
+                        rationale=rationale or "",
+                        output_schema=obs.output_schema,
+                    )
+                )
+                retries_for_step = 0
+                if live_node_id not in session.staged_node_ids:
+                    session.staged_node_ids.append(live_node_id)
+
+                # Reset stage so the next round starts a fresh
+                # classify→pick→fill cycle (multi-node turns
+                # serialize as N×4 rounds, same as agent_staged).
+                prev_stage = session.stage
+                sessions.reset_stage_state(session)
+                _log_stage_transition(
+                    session,
+                    from_stage=prev_stage,
+                    to_stage=session.stage,
+                    tool_name=tc.name,
+                    completed_op=tc.name,
+                )
+                yield PlannerEvent(
+                    event="tool_call_applied",
+                    payload={
+                        "id": tc.id,
+                        "name": tc.name,
+                        "node_id": live_node_id,
+                        "output_schema": obs.output_schema,
+                        "sample_rows": obs.sample_rows,
+                        "op_kind": op_kind,
+                        "rationale": rationale,
+                        "arg_summary": arg_summary,
+                    },
+                )
+                yield PlannerEvent(
+                    event="stage_advanced",
+                    payload={
+                        "from": prev_stage,
+                        "to": session.stage,
+                        "completed_op": tc.name,
+                        "session_id": session.session_id,
+                        "op_kind_meta": "live_apply",
+                    },
+                )
+                continue
+
             # W71 — agent_staged stage transitions on meta tool success.
             # Each meta tool sets a piece of session state and advances the
             # stage; the next loop iteration re-renders the system prompt
@@ -2218,7 +2580,7 @@ async def _run_planner_loop(
             # surfaced to the frontend so the agent panel can render the
             # current step ("Step 2/4: picking upstream").
             if (
-                session.surface == "agent_staged"
+                session.surface in _STAGED_STATE_MACHINE_SURFACES
                 and tc.name == _CLASSIFY_INTENT_NAME
                 and isinstance(result.extra, dict)
             ):
@@ -2260,7 +2622,7 @@ async def _run_planner_loop(
                 continue
 
             if (
-                session.surface == "agent_staged"
+                session.surface in _STAGED_STATE_MACHINE_SURFACES
                 and tc.name == _PICK_NODE_TYPE_NAME
                 and isinstance(result.extra, dict)
             ):
@@ -2292,7 +2654,7 @@ async def _run_planner_loop(
                 continue
 
             if (
-                session.surface == "agent_staged"
+                session.surface in _STAGED_STATE_MACHINE_SURFACES
                 and tc.name == _PICK_UPSTREAM_NAME
                 and isinstance(result.extra, dict)
             ):
@@ -2379,7 +2741,7 @@ async def _run_planner_loop(
                 # the next round starts a fresh classify→pick→fill cycle.
                 # Multi-node turns serialize naturally as N×4 rounds without
                 # any history pruning.
-                if session.surface == "agent_staged" and (
+                if session.surface in _STAGED_STATE_MACHINE_SURFACES and (
                     tc.name.startswith(_ADD_PREFIX)
                     or tc.name in _STAGED_SINGLE_OP_TOOL_NAMES
                 ):

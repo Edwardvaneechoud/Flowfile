@@ -244,10 +244,26 @@ def test_explain_surface_is_read_only() -> None:
         assert tool.name.startswith("flowfile.schema."), tool.name
 
 
-def test_agent_complex_surface_is_full() -> None:
+def test_agent_complex_surface_is_full_minus_writers() -> None:
+    """W71 v2.1 — ``agent_complex`` returns the full catalog minus the
+    writer-shaped node tools (output / database_writer /
+    cloud_storage_writer / catalog_writer). Pre-v2.1 it was strictly
+    ``== full``; the writer-block policy intentionally trims those
+    four tools so the LLM never sees them.
+    """
+    from flowfile_core.ai.safety import AGENT_BLOCKED_NODE_TYPES
+
     full = build_tool_catalog()
     agent_complex = build_tool_catalog(surface="agent_complex")
-    assert {tool.name for tool in full} == {tool.name for tool in agent_complex}
+    blocked_names = {f"flowfile.graph.add_{nt}" for nt in AGENT_BLOCKED_NODE_TYPES}
+
+    full_names = {tool.name for tool in full}
+    agent_names = {tool.name for tool in agent_complex}
+    assert full_names - agent_names == blocked_names, (
+        f"agent_complex must drop exactly the writer tools; got dropped="
+        f"{full_names - agent_names!r}"
+    )
+    assert blocked_names.isdisjoint(agent_names)
 
 
 def test_unknown_surface_raises() -> None:
@@ -578,6 +594,17 @@ def test_w56v2_agent_payload_examples_only_for_divergent_nodes() -> None:
         # defaults to row-oriented and silently corrupts alignment because
         # both validate as list[list]). Worked example disambiguates.
         "manual_input",
+        # W71 v1.12C — ``FunctionInput.function`` is a Flowfile expression
+        # string (SQL-style ``[column]`` references), NOT raw Polars. LLMs
+        # consistently emit ``pl.col('x') + pl.col('y')`` into this field
+        # because the schema only constrains it as ``str``. Worked example
+        # locks in the ``[column]`` shape.
+        "formula",
+        # W71 v2.2 — explore_data needs NO settings; example is the
+        # empty-shape ``{}`` envelope so the LLM emits an empty inner
+        # at fill_settings instead of fabricating GraphicWalkerInput
+        # values it has no signal for.
+        "explore_data",
     }
     actual = set(NODE_AGENT_PAYLOAD_EXAMPLES)
     extra = actual - expected

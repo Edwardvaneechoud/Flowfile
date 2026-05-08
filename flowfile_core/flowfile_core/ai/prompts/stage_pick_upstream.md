@@ -31,17 +31,50 @@ Resolution priority (apply in order; first match wins):
 
 Shape rules:
 
-* `upstream_node_ids` is a list of integers. Single-input node types
-  (filter, sort, group_by, formula, select, unique, etc.) take
-  exactly one entry. Joins take exactly one (the LEFT input). Union
-  takes multiple. Source-only types (read, manual_input,
-  database_reader, etc.) take an empty list `[]`.
-* `right_input_node_id` is the RIGHT input for join-shaped types
-  (join, cross_join, fuzzy_match). Set to `null` for every other
-  type.
+* For **non-join** node types the spec exposes
+  `upstream_node_ids` (a list of ints) and `right_input_node_id`
+  (null). Single-input types (filter, sort, group_by, formula,
+  select, unique, etc.) take exactly one entry in the list; union
+  takes multiple; source-only types (read, manual_input, etc.) take
+  an empty list.
+* For **join-shaped** node types (`join`, `cross_join`,
+  `fuzzy_match`) the spec exposes `left_input_node_id` and
+  `right_input_node_id` — both REQUIRED scalar integers, both must
+  be different ids. There is no `upstream_node_ids` field for these
+  types. The LEFT side's columns appear FIRST in the output; the
+  RIGHT side's columns appear second.
 * The id values are constrained by the enum to live ids plus ids the
   agent has already staged this session. You cannot pick an id that
   doesn't exist.
+
+## Worked examples for join-shaped types
+
+`join` — asymmetric (left = preserved / driving side):
+
+```
+User: "look up customer details for each order"
+Live nodes:
+  - 3 (read)  schema: order_id, customer_id, amount
+  - 5 (read)  schema: customer_id, name, email
+Pick: left_input_node_id=3 (orders, the driving side whose rows
+      are preserved), right_input_node_id=5 (customers, the lookup
+      side).
+```
+
+`cross_join` — order-symmetric (LEFT columns first in output):
+
+```
+User: "compute the percentage of customers per city vs the total"
+Live nodes:
+  - 2 (group_by)     schema: city, customer_count
+  - 5 (record_count) schema: total_customers   (single-row total)
+Pick: left_input_node_id=2 (per-city, columns first in output),
+      right_input_node_id=5 (broadcast total, columns second).
+Output schema: city, customer_count, total_customers.
+```
+
+`fuzzy_match` — same convention as `join` (LEFT preserved, columns
+first).
 
 Avoid attaching new nodes downstream of sink types (`output`,
 `database_writer`, `cloud_storage_writer`, `catalog_writer`,

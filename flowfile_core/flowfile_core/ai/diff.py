@@ -305,6 +305,33 @@ class StagedToolEntry(BaseModel):
     staged_node_payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class AppliedNodeRecord(BaseModel):
+    """W71 v2.0 — one node applied LIVE during an ``agent_live``
+    session. Unlike :class:`StagedToolEntry` these describe nodes
+    that are already in ``flow.nodes`` — applied via
+    ``execute_tool_call(mode="apply")`` rather than staged. The
+    record is kept on ``AgentSession.applied_results`` purely for
+    chat-trail rendering, audit, and the auto-undo path
+    (``node_id`` is the value passed to ``flow.delete_node`` on
+    runtime failure).
+    """
+
+    tool_name: str = Field(min_length=1)
+    audit_id: int | None = None
+    node_id: int
+    """The id assigned by the executor / planner — the live node id
+    in ``flow.nodes`` after the apply succeeds."""
+    node_type: str = Field(min_length=1)
+    rationale: str = ""
+    output_schema: list[dict[str, Any]] = Field(default_factory=list)
+    """The real (Performance-mode runtime) or sample-derived
+    (Development-mode) output schema captured in the post-apply
+    observation. Same shape as
+    ``StagedToolEntry.staged_node_payload['predicted_output_schema']``
+    so frontend rendering can branch on the surface alone, not the
+    record shape."""
+
+
 def bundle_staged_results(staged: list[StagedToolEntry]) -> GraphDiff:
     """Sort staged results into the four :class:`GraphDiff` buckets.
 

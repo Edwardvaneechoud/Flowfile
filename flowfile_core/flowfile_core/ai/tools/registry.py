@@ -550,6 +550,16 @@ def _full_catalog() -> list[ToolSpec]:
     return tools
 
 
+_AGENT_SURFACES_THAT_BLOCK_WRITERS: frozenset[str] = frozenset(
+    {"agent_complex", "agent_staged", "agent_live"}
+)
+"""W71 v2.1 — agent surfaces never see add_<writer> tools in their
+catalog. Writers go to external destinations (files, DBs, cloud) and
+the user always adds them manually. ``surface=None`` (the full
+catalog used by tests / introspection) keeps everything; only the
+agent surfaces are filtered."""
+
+
 def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
     """Return the tool catalog, optionally filtered by surface.
 
@@ -558,17 +568,35 @@ def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
     :data:`SURFACE_PRESETS` lookup. ``"agent_complex"`` is the
     single-shot full-catalog convenience alias.
 
+    W71 v2.1 — for agent-shaped surfaces (``agent_complex`` /
+    ``agent_staged`` / ``agent_live``) the
+    :data:`AGENT_BLOCKED_NODE_TYPES` writer set is filtered out of the
+    returned catalog so the LLM never sees an ``add_output`` /
+    ``add_database_writer`` / etc. tool entry. Defense-in-depth pairs
+    with the executor refusal in ``_handle_add_node``: even if the
+    LLM hallucinates the call, the executor refuses with a
+    ``writer_blocked`` reason.
+
     Raises ``KeyError`` for unknown surface names so callers get a hard
     failure rather than a silently empty catalog.
     """
+    from flowfile_core.ai.safety import AGENT_BLOCKED_NODE_TYPES
+
     catalog = _full_catalog()
+
+    def _strip_writers(tools: list[ToolSpec]) -> list[ToolSpec]:
+        blocked_names = {
+            mcp_tool_name("graph", f"add_{nt}") for nt in AGENT_BLOCKED_NODE_TYPES
+        }
+        return [tool for tool in tools if tool.name not in blocked_names]
+
     if surface is None:
         return catalog
     if surface == "agent_complex":
         # ``agent_complex`` is documented as the full catalog; resolve it
         # explicitly so callers don't have to know about the SURFACE_PRESETS
-        # quirk.
-        return catalog
+        # quirk. Writers are filtered out per v2.1.
+        return _strip_writers(catalog)
     if surface in SURFACE_PRESETS:
         names = SURFACE_PRESETS[surface]
     else:
@@ -577,7 +605,10 @@ def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
             f"Unknown surface {surface!r}. Valid: {valid}. "
             "(Use surface=None to return the full catalog.)"
         )
-    return [tool for tool in catalog if tool.name in names]
+    filtered = [tool for tool in catalog if tool.name in names]
+    if surface in _AGENT_SURFACES_THAT_BLOCK_WRITERS:
+        filtered = _strip_writers(filtered)
+    return filtered
 
 
 # Sanity check at import time: every literal in the public type aliases

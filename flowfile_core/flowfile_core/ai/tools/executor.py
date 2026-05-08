@@ -706,6 +706,32 @@ def _format_settings_validation_refusal(
     if example is None:
         example = _synthesize_example_from_schema(field_schema)
 
+    # W71 v1.13B — FunctionInput-specific disambiguation. The naming
+    # collision (outer ``function`` parameter holding a FunctionInput
+    # object whose inner ``function`` field is a string) trips small
+    # models into reading *"got str"* as *"send a str"* — the LLM
+    # inverts the constraint on the second retry. Detect the case
+    # narrowly (FunctionInput summary + received str) and emit a
+    # rewritten refusal that names the OUTER vs INNER ``function``
+    # references explicitly, dropping the misread-prone *"not as a
+    # JSON-encoded string"* clause.
+    if (
+        node_type == "formula"
+        and isinstance(received, str)
+        and "FunctionInput" in expected_summary
+    ):
+        truncated = received if len(received) <= 80 else received[:77] + "..."
+        return (
+            "formula's `function` parameter is an OBJECT with two keys:\n"
+            "  - `field`: the new column descriptor, e.g. "
+            '{"name": "full_name", "data_type": "String"}\n'
+            "  - `function`: the row-wise expression STRING in "
+            "[column_name] syntax, e.g. \"[first] + ' ' + [last]\"\n"
+            f"Your call sent `function` as a single string ({truncated!r}). "
+            'Re-emit as: {"field": {"name": "<col>", "data_type": '
+            '"<type>"}, "function": "<your-expression>"}.'
+        )
+
     parts = [
         f"Field `{loc_str}` expects {expected_summary} matching the schema in tool "
         f"`flowfile.graph.add_{node_type}` (see catalog); got {received_type}.",
@@ -761,6 +787,31 @@ def _handle_add_node(
             extra_upstream_positions=extra_upstream_positions,
         )
         insertion_context = insertion_context.model_copy(update={"pos_x": resolved_x, "pos_y": resolved_y})
+
+    # W71 v2.1 — agent surfaces are not allowed to stage writer-shaped
+    # node types (output / database_writer / cloud_storage_writer /
+    # catalog_writer). The catalog filter in registry.build_tool_catalog
+    # already hides them from the LLM-facing tool list, but the LLM can
+    # hallucinate a call name (or a future regression could re-expose
+    # the tool); refuse here so the safety property holds regardless of
+    # how the call reached us.
+    if node_type in safety.AGENT_BLOCKED_NODE_TYPES:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason="writer_blocked",
+            refusal_detail=(
+                f"node_type {node_type!r} writes to an external destination "
+                "(file / database / cloud / catalog). The AI agent is not "
+                "allowed to stage writer nodes — the user adds these "
+                "manually. Suggest the writer to the user instead, or pick "
+                "a transformation node (filter, sort, group_by, formula, "
+                "select, …) for the next step."
+            ),
+        )
 
     settings_cls = get_settings_class_for_node_type(node_type)
     if settings_cls is None:
@@ -847,6 +898,60 @@ def _handle_add_node(
             refusal_reason="upstream_is_sink",
             refusal_detail=_format_sink_upstream_refusal(flow, sink_upstreams),
         )
+
+    # --- Refusal stage 1.6: join-shaped wire validation (W71 v1.16) ---
+    # Defense-in-depth: the v1.15A spec REQUIRES left_input_node_id +
+    # right_input_node_id for join-shaped types, and the planner's
+    # post-pick_upstream check enforces shape. But providers
+    # (OpenRouter, Groq) don't always validate ``required`` strictly,
+    # and the LLM occasionally ignores the spec and emits the legacy
+    # ``upstream_node_ids: [left, right]`` shape with right_input_node_id
+    # null — both ids in the list. The downstream
+    # ``flow_node.add_node_connection`` then silently OVERWRITES
+    # ``main_inputs`` on the second main-port call (line 638-641 has
+    # ``input <= 2 → main_inputs = [from_node]`` which clobbers
+    # previous), leaving the join with only one wire (last write wins)
+    # and the LLM gets *"applied"* without any error. That's the
+    # 2026-05-08 cross_join dogfood failure mode. Refuse here so the
+    # error reaches the LLM and the retry path produces correct shape.
+    from flowfile_core.ai.tools.meta_ops import JOIN_SHAPED_NODE_TYPES
+    if node_type in JOIN_SHAPED_NODE_TYPES:
+        upstream_ids_for_check = list(insertion_context.upstream_node_ids or [])
+        right_id_for_check = insertion_context.right_input_node_id
+        violation: str | None = None
+        if right_id_for_check is None:
+            violation = (
+                f"join-shaped node `{node_type}` requires a RIGHT input. Pick the "
+                "right upstream via ``right_input_node_id`` (the spec for "
+                f"{node_type} exposes ``left_input_node_id`` + ``right_input_node_id``, "
+                "both required scalars). The LEFT input goes in "
+                "``upstream_node_ids[0]``; do NOT put both ids in "
+                "``upstream_node_ids`` — they go in separate fields."
+            )
+        elif len(upstream_ids_for_check) != 1:
+            violation = (
+                f"join-shaped node `{node_type}` requires exactly ONE LEFT upstream "
+                f"(``upstream_node_ids`` must have one element); got "
+                f"{upstream_ids_for_check!r}. The right input goes in "
+                "``right_input_node_id`` (separate scalar field), not as a second "
+                "entry in ``upstream_node_ids``."
+            )
+        elif upstream_ids_for_check[0] == right_id_for_check:
+            violation = (
+                f"join-shaped node `{node_type}` cannot use the same id "
+                f"({right_id_for_check}) for both LEFT and RIGHT inputs — a node "
+                "cannot join to itself. Pick two different upstream ids."
+            )
+        if violation is not None:
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow.flow_id,
+                refusal_reason="join_wire_invalid",
+                refusal_detail=violation,
+            )
 
     # W62 — stamp the resolved layout coordinates onto the settings object.
     # The apply path (``_apply_add_node`` → ``flow.add_<node_type>(settings)``)
@@ -1025,14 +1130,24 @@ def _apply_add_node(flow, node_type: str, settings: BaseModel, ctx: InsertionCon
 
     target_id = settings.node_id
     main_ids = [uid for uid in ctx.upstream_node_ids if uid != ctx.right_input_node_id]
+    # W71 v1.16 — ``NodeConnection.create_from_simple_input`` takes the
+    # SEMANTIC ``input_type`` ("main" / "right" / "left"), NOT the
+    # connection-class string ("input-0" / "input-1"). The pre-v1.16
+    # code passed ``input_type="input-0"`` / ``"input-1"`` which fell
+    # through the match block to the default ``_ → "input-0"``, so
+    # BOTH the main and right wires got connection_class "input-0" —
+    # `add_node_connection` then routed both to ``main_inputs`` and the
+    # second call silently overwrote the first (the ``input <= 2``
+    # branch in flow_node.py:638 clobbers main_inputs each time).
+    # Pass the semantic names so the connection class lands correctly.
     for uid in main_ids:
         connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=uid, to_id=target_id, input_type="input-0", output_handle="output-0"
+            from_id=uid, to_id=target_id, input_type="main", output_handle="output-0"
         )
         add_connection(flow, connection)
     if ctx.right_input_node_id is not None:
         right_connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=ctx.right_input_node_id, to_id=target_id, input_type="input-1", output_handle="output-0"
+            from_id=ctx.right_input_node_id, to_id=target_id, input_type="right", output_handle="output-0"
         )
         add_connection(flow, right_connection)
 
@@ -2024,6 +2139,21 @@ def _handle_meta(
         )
 
     if op == "pick_upstream":
+        # W71 v1.15A — for join-shaped node types the spec uses a
+        # symmetric scalar pair (``left_input_node_id`` +
+        # ``right_input_node_id``). When the LLM emits that shape,
+        # translate to the legacy list+scalar representation BEFORE
+        # the coercion / validation runs so the downstream consumers
+        # (planner session state, ``_handle_add_node`` insertion
+        # context) see exactly what they did pre-v1.15.
+        raw_left_input = tool_args.get("left_input_node_id")
+        if raw_left_input is not None:
+            raw_left_coerced = _coerce_to_int_or_self(raw_left_input)
+            if isinstance(raw_left_coerced, int) and not isinstance(raw_left_coerced, bool):
+                tool_args = dict(tool_args)  # copy, then translate
+                tool_args["upstream_node_ids"] = [raw_left_coerced]
+                tool_args.pop("left_input_node_id", None)
+                redacted_args = safety.redact_secrets(tool_args)
         raw_upstream = tool_args.get("upstream_node_ids")
         raw_right = tool_args.get("right_input_node_id")
         rationale = tool_args.get("rationale", "")

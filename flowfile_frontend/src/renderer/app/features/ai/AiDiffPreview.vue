@@ -415,6 +415,12 @@ const handleReject = (): void => {
   background-color: var(--color-background-secondary, #f6f8fa);
   border: 1px solid var(--color-border-primary, #e1e4e8);
   font-size: 12px;
+  /* Bound the preview height so a long change list doesn't push the
+     composer below the drawer fold. Internal scroll keeps everything
+     reachable; the footer below is sticky-bottom so Accept/Reject
+     never scroll out of view. */
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 .ai-diff-preview__header {
@@ -746,8 +752,16 @@ const handleReject = (): void => {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
-  padding-top: 6px;
+  padding: 6px 0 0;
   border-top: 1px solid var(--color-border-primary, #e1e4e8);
+  /* Stick to the bottom of the scrollable .ai-diff-preview so the
+     Accept/Reject buttons stay reachable when the change list is
+     longer than the panel height. Opaque background keeps scrolled
+     content from bleeding through; z-index lifts above sibling cards. */
+  position: sticky;
+  bottom: 0;
+  background-color: var(--color-background-secondary, #f6f8fa);
+  z-index: 1;
 }
 
 .ai-diff-preview__btn {

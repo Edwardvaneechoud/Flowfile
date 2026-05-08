@@ -334,7 +334,7 @@ export const streamLineageQuestion = async (
 export interface AgentStartRequest {
   flow_id: number;
   prompt: string;
-  surface?: "agent" | "agent_complex";
+  surface?: "agent" | "agent_complex" | "agent_staged" | "agent_live";
   samples_mode?: "off" | "regex";
   provider: string;
   model?: string | null;
@@ -397,6 +397,22 @@ export interface AgentToolCallRejected {
   arg_summary?: string | null;
 }
 
+/** W71 v2.0 — ``tool_call_applied`` event payload. Emitted by the
+ *  ``agent_live`` planner after a successful apply + post-apply
+ *  observation (the new node is already in ``flow.nodes`` server-
+ *  side). Frontend triggers a canvas refresh so the user sees the
+ *  node materialise immediately. */
+export interface AgentToolCallApplied {
+  id: string;
+  name: string;
+  node_id: number;
+  output_schema: Record<string, unknown>[];
+  sample_rows?: Record<string, unknown>[];
+  op_kind?: AgentOpKind;
+  rationale?: string | null;
+  arg_summary?: string | null;
+}
+
 export interface AgentCompleteResult {
   session_id: string;
   diff_id: string | null;
@@ -432,6 +448,7 @@ export interface AgentSessionHandlers {
   onToolCallStaged?: (entry: AgentToolCallStaged) => void;
   onToolCallWarned?: (entry: AgentToolCallStaged) => void;
   onToolCallRejected?: (refusal: AgentToolCallRejected) => void;
+  onToolCallApplied?: (entry: AgentToolCallApplied) => void;
   onDriftDetected?: (drift: AgentDriftDetail, sessionId: string) => void;
   onPaused?: (reason: string, sessionId: string) => void;
   onRetry?: (attempt: number, max: number) => void;
@@ -475,6 +492,9 @@ const dispatchPlannerEvent = (parsed: ParsedEvent, handlers: AgentSessionHandler
       break;
     case "tool_call_rejected":
       handlers.onToolCallRejected?.(payload as unknown as AgentToolCallRejected);
+      break;
+    case "tool_call_applied":
+      handlers.onToolCallApplied?.(payload as unknown as AgentToolCallApplied);
       break;
     case "drift_detected": {
       const drift = (payload as { drift?: AgentDriftDetail }).drift;

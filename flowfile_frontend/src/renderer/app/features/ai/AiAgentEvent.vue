@@ -63,7 +63,8 @@ const isToolStep = computed<boolean>(() => {
     kind === "tool_call_proposed" ||
     kind === "tool_call_staged" ||
     kind === "tool_call_warned" ||
-    kind === "tool_call_rejected"
+    kind === "tool_call_rejected" ||
+    kind === "tool_call_applied"
   );
 });
 
@@ -98,6 +99,12 @@ const toolStepHeadline = computed<string>(() => {
   if (props.event.kind === "tool_call_rejected") {
     const detail = _str(props.event.payload ?? {}, "detail");
     return detail ? `Rejected ${name}: ${detail}` : `Rejected ${name}`;
+  }
+  // W71 v2.0 — agent_live applies live to the canvas; distinct
+  // wording from staged so the user reads "Applied X" and knows
+  // the canvas just mutated.
+  if (props.event.kind === "tool_call_applied") {
+    return name ? `Applied ${name}` : "Applied a step";
   }
   return name;
 });
@@ -301,7 +308,8 @@ const thinkingHtml = computed<string>(() => {
 
 .ai-agent-event--tool_call_proposed,
 .ai-agent-event--tool_call_staged,
-.ai-agent-event--tool_call_warned {
+.ai-agent-event--tool_call_warned,
+.ai-agent-event--tool_call_applied {
   /* W38 — rationale rendering needs more breathing room than mechanical summaries. */
   padding: 8px 12px;
   font-size: 13px;
@@ -315,6 +323,13 @@ const thinkingHtml = computed<string>(() => {
 
 .ai-agent-event--tool_call_warned {
   border-left-color: var(--color-warning, #d4a72c);
+}
+
+/* W71 v2.0 — agent_live applies show with the same accent colour
+   as the live-mode surface chip so the canvas-mutation visual
+   language is consistent. */
+.ai-agent-event--tool_call_applied {
+  border-left-color: var(--color-accent, #7c3aed);
 }
 
 .ai-agent-event--drift_detected,

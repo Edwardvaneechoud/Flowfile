@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Final
 
 from flowfile_core.ai.providers.base import ToolSpec
+from flowfile_core.ai.safety import AGENT_BLOCKED_NODE_TYPES
 from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
 
 JSON_SCHEMA_DIALECT: Final[str] = "https://json-schema.org/draft/2020-12/schema"
@@ -50,6 +51,62 @@ OP_KIND_NAMES: Final[tuple[str, ...]] = (
 CLASSIFY_INTENT_TOOL_NAME: Final[str] = "flowfile.meta.classify_intent"
 PICK_NODE_TYPE_TOOL_NAME: Final[str] = "flowfile.meta.pick_node_type"
 PICK_UPSTREAM_TOOL_NAME: Final[str] = "flowfile.meta.pick_upstream"
+
+
+# W71 v1.14B — node types that take TWO upstream inputs (a primary
+# ``upstream_node_ids`` list AND a separate ``right_input_node_id``).
+# Pick_upstream upgrades ``right_input_node_id`` to *required* when the
+# picked type is in this set so cross-join / join / fuzzy-match never
+# stage with only one wire connected (2026-05-08 dogfood: agent
+# attached cross_join to node 2 alone, missing input-1).
+JOIN_SHAPED_NODE_TYPES: Final[frozenset[str]] = frozenset(
+    {"join", "cross_join", "fuzzy_match"}
+)
+
+
+def _pick_node_type_disambiguation_text() -> str:
+    """W71 v1.14A.1 — render the do/don't list of palette-label vs
+    node_type confusions for inlining into the ``pick_node_type``
+    tool's description AND its ``node_type`` parameter description.
+
+    The same data v1.12B already surfaces in the catalog
+    disambiguation block, but at the *spec* level: the
+    function-calling decoder attends to tool spec text far more
+    than to system-prompt prose buried 30k tokens deep. This catches
+    the bypass case (LLM emits ``pick_node_type`` directly at the
+    classify stage, where the catalog disambiguation isn't
+    rendered).
+
+    Caches at module load so repeated session starts are cheap.
+    Returns ``""`` when the helpers can't be loaded (defensive — the
+    spec still works, just without the disambiguation note).
+    """
+    try:
+        from flowfile_core.ai.tools.node_docs import palette_label_for
+    except Exception:
+        return ""
+
+    pairs: list[tuple[str, str]] = []
+    for nt in sorted(NODE_TYPE_TO_SETTINGS_CLASS.keys()):
+        label = palette_label_for(nt)
+        if not label or label == nt:
+            continue
+        snake = label.lower().replace(" ", "_")
+        if snake != nt and snake.replace("-", "_") != nt:
+            pairs.append((nt, label))
+    if not pairs:
+        return ""
+
+    lines = [
+        "Common confusions (these are the palette LABEL snake-cased — NOT valid enum values):",
+    ]
+    for nt, label in pairs:
+        bad = label.lower().replace(" ", "_")
+        lines.append(f"  - use `{nt}` (NOT `{bad}`, palette label \"{label}\")")
+    return "\n".join(lines)
+
+
+_DISAMBIGUATION_TEXT: Final[str] = _pick_node_type_disambiguation_text()
 
 
 META_OPS_TOOLS: Final[list[ToolSpec]] = [
@@ -145,7 +202,12 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
         description=(
             "W71 stage-1 node-type picker for the agent_staged surface (add path). "
             "Given the user's request and the per-node guidance in the system prompt's "
-            "tool catalog, pick the single node_type to add."
+            "tool catalog, pick the single node_type to add. "
+            "IMPORTANT: ``node_type`` is the registered snake_case identifier (e.g. "
+            "``sort``, ``select``, ``unique``) — DO NOT snake-case the palette label "
+            "(e.g. ``sort_data``, ``select_data``, ``drop_duplicates`` will all be "
+            "rejected). See the enum and the disambiguation list on the node_type "
+            "parameter."
         ),
         long_description=(
             "Stage 1 of the agent_staged state machine, reached after classify_intent "
@@ -162,10 +224,26 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
             "properties": {
                 "node_type": {
                     "type": "string",
-                    "enum": sorted(NODE_TYPE_TO_SETTINGS_CLASS.keys()),
+                    # W71 v2.1 — drop writer-shaped node types (output,
+                    # database_writer, cloud_storage_writer,
+                    # catalog_writer) so the AI agent surfaces can
+                    # never stage one. Writers go to external
+                    # destinations (files, DBs, cloud) and the user
+                    # always adds them manually for safety.
+                    "enum": sorted(
+                        nt
+                        for nt in NODE_TYPE_TO_SETTINGS_CLASS.keys()
+                        if nt not in AGENT_BLOCKED_NODE_TYPES
+                    ),
                     "description": (
                         "The chosen node type. Must be one of Flowfile's registered "
-                        "types listed in the catalog above."
+                        "types — exactly as it appears in the enum (snake_case "
+                        "node_type identifier, NOT the snake-cased palette label). "
+                        "Writer-shaped node types (output, database_writer, "
+                        "cloud_storage_writer, catalog_writer) are intentionally "
+                        "absent from the enum — those write to external destinations "
+                        "and must be added manually by the user.\n\n"
+                        + _DISAMBIGUATION_TEXT
                     ),
                 },
                 "rationale": {
@@ -185,6 +263,8 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
 def build_pick_upstream_spec(
     live_node_ids: list[int],
     staged_node_ids: list[int] | None = None,
+    *,
+    picked_node_type: str | None = None,
 ) -> ToolSpec:
     """W71 — build the stage-2 upstream picker with a fresh enum.
 
@@ -193,6 +273,15 @@ def build_pick_upstream_spec(
     *filter → sort* by attaching the second add to the first's
     not-yet-applied node id). Build per-turn — the static spec would go
     stale between LLM rounds.
+
+    W71 v1.14B — when ``picked_node_type`` is in
+    :data:`JOIN_SHAPED_NODE_TYPES` the spec marks
+    ``right_input_node_id`` as required (drops the ``null`` option,
+    adds the field to ``required[]``). Otherwise — including when
+    ``picked_node_type`` is unknown — the field stays optional with a
+    nullable type. Catches the cross_join / join / fuzzy_match
+    failure mode where the LLM stages with only ``upstream_node_ids``
+    populated and leaves the right input dangling.
 
     Returns an empty-enum spec when no upstreams exist (truly cold flow);
     callers handle this case as a refusal — the only valid downstream
@@ -211,24 +300,107 @@ def build_pick_upstream_spec(
             ordered.append(nid)
 
     enum_values: list[int] = sorted(ordered)
+    is_join_shaped = (
+        picked_node_type is not None and picked_node_type in JOIN_SHAPED_NODE_TYPES
+    )
+    rationale_field: dict = {
+        "type": "string",
+        "description": (
+            "One short sentence explaining why these upstreams are "
+            "the right input for the new node."
+        ),
+    }
+
+    if is_join_shaped:
+        # W71 v1.15A — for join-shaped node types the spec uses TWO
+        # SCALAR fields (``left_input_node_id`` + ``right_input_node_id``),
+        # both required, mirroring the UI's L/R port labels and the
+        # user mental model. The asymmetric ``upstream_node_ids`` (list)
+        # + ``right_input_node_id`` (scalar) shape that pre-v1.15
+        # spec exposed forced the LLM to learn two unrelated field
+        # shapes for what it intuitively models as two equivalent
+        # inputs. Symmetric scalar pair removes that asymmetry.
+        # Translation back to the legacy ``upstream_node_ids`` /
+        # ``right_input_node_id`` representation happens in
+        # ``executor._handle_meta`` so downstream consumers (planner
+        # session state, _handle_add_node) are unchanged.
+        return ToolSpec(
+            name=PICK_UPSTREAM_TOOL_NAME,
+            description=(
+                f"W71 stage-2 upstream picker for ``{picked_node_type}`` "
+                "(join-shaped: two distinct inputs — LEFT and RIGHT). "
+                "Both inputs are REQUIRED. The picker exposes the union "
+                "of live + agent-staged node ids as the enum."
+            ),
+            long_description=(
+                f"Stage 2 of the agent_staged state machine for the "
+                f"join-shaped node type ``{picked_node_type}``. Pick "
+                "TWO distinct upstream node ids — one for the LEFT "
+                "input, one for the RIGHT input.\n\n"
+                "**Convention**: the LEFT side's columns appear FIRST "
+                "in the output schema, then the RIGHT side's columns. "
+                f"For ``join`` / ``fuzzy_match`` (asymmetric), the LEFT "
+                "is the *preserved* / *driving* table for left-join "
+                "semantics. For ``cross_join`` (commutative — A×B has "
+                "the same rows as B×A), the choice is arbitrary; "
+                "pick whichever side you want first in the output.\n\n"
+                "Picking the same id for both LEFT and RIGHT is "
+                "invalid (a node cannot join to itself); pick two "
+                "different ids."
+            ),
+            parameters={
+                "$schema": JSON_SCHEMA_DIALECT,
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "left_input_node_id": {
+                        "type": "integer",
+                        "enum": enum_values,
+                        "description": (
+                            "The LEFT input node id. Its columns appear "
+                            "first in the output schema. For asymmetric "
+                            "joins (join / fuzzy_match) this is the "
+                            "preserved / driving side."
+                        ),
+                    },
+                    "right_input_node_id": {
+                        "type": "integer",
+                        "enum": enum_values,
+                        "description": (
+                            "The RIGHT input node id. Its columns appear "
+                            "second in the output schema. Must be a "
+                            "DIFFERENT id from ``left_input_node_id``."
+                        ),
+                    },
+                    "rationale": rationale_field,
+                },
+                "required": [
+                    "left_input_node_id",
+                    "right_input_node_id",
+                    "rationale",
+                ],
+            },
+        )
+
     return ToolSpec(
         name=PICK_UPSTREAM_TOOL_NAME,
         description=(
             "W71 stage-2 upstream picker for the agent_staged surface (add path). "
             "Pick the node id(s) from the live graph that the new node should "
-            "attach to. Use right_input_node_id for join-shaped node types."
+            "attach to."
         ),
         long_description=(
             "Stage 2 of the agent_staged state machine, reached after "
             "pick_node_type. Pick the upstream node id(s) from the subgraph "
             "in your system prompt — these are the nodes whose schema the new "
             "node will read from.\n\n"
-            "Most node types take one upstream (filter, sort, group_by, etc.). "
-            "Joins take two: the left input goes in upstream_node_ids[0]; the "
-            "right input goes in right_input_node_id. Union takes multiple "
-            "upstreams in upstream_node_ids. Source-only node types (read, "
+            "Most node types take one upstream (filter, sort, group_by, etc.) "
+            "— pass a single-element list ``[node_id]``. Union takes multiple "
+            "upstreams in ``upstream_node_ids``. Source-only node types (read, "
             "manual_input, database_reader, etc.) get an empty upstream list — "
-            "the host accepts that.\n\n"
+            "the host accepts that. Join-shaped types (join / cross_join / "
+            "fuzzy_match) use a different spec shape (LEFT + RIGHT scalars) "
+            "exposed when those types are picked.\n\n"
             "The id values are constrained by the enum to live + agent-staged "
             "node ids, so you cannot pick an invalid id. Picking the right one "
             "is your job: match the schema columns shown for each node to what "
@@ -246,26 +418,23 @@ def build_pick_upstream_spec(
                         "enum": enum_values,
                     },
                     "description": (
-                        "Primary input upstream node ids. Empty array for "
-                        "source-only node types. The integers must be drawn "
-                        "from the enum above (live or agent-staged ids)."
+                        "Upstream node ids. Empty array for source-only "
+                        "node types; one-element list for the typical "
+                        "single-input case; multiple for ``union``. The "
+                        "integers must be drawn from the enum above (live "
+                        "or agent-staged ids)."
                     ),
                 },
                 "right_input_node_id": {
                     "type": ["integer", "null"],
                     "enum": [*enum_values, None],
                     "description": (
-                        "Right input for join-shaped node types (join, "
-                        "cross_join, fuzzy_match). Null for everything else."
+                        "Legacy field — leave null for non-join types. "
+                        "Join-shaped types now use a different spec "
+                        "(left_input_node_id + right_input_node_id)."
                     ),
                 },
-                "rationale": {
-                    "type": "string",
-                    "description": (
-                        "One short sentence explaining why these upstreams are "
-                        "the right input for the new node."
-                    ),
-                },
+                "rationale": rationale_field,
             },
             "required": ["upstream_node_ids", "rationale"],
         },

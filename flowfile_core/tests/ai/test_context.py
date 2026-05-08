@@ -1216,3 +1216,492 @@ def test_render_prompt_context_no_lazyframe_collect_on_random_split_upstream(
     # Sanity: the snapshot still rendered both nodes.
     snapshot_ids = sorted(n.node_id for n in ctx.snapshot.nodes)
     assert snapshot_ids == [1, 2]
+
+
+# --------------------------------------------------------------------------- #
+# W71 v1.12B — palette label vs node_type disambiguation                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_pick_type_prompt_warns_against_palette_labels() -> None:
+    """W71 v1.12B — at the ``pick_type`` stage of agent_staged the
+    catalog block must be followed by a do/don't section listing the
+    palette-label vs node_type confusions that have caused real
+    failures (sort_data, select_data, etc.). Without it small models
+    snake-case the palette label and submit it as the enum value,
+    burning a retry on every type-pick.
+    """
+    text = assemble_system_prompt("agent_staged", stage="pick_type")
+    assert "## Important: enum is" in text, (
+        "v1.12B disambiguation block missing from pick_type system prompt"
+    )
+    # Two of the failure modes the user dogfooded — must be listed.
+    assert "sort_data" in text and "``sort``" in text
+    assert "select_data" in text and "``select``" in text
+
+
+def test_classify_stage_now_includes_palette_disambiguation() -> None:
+    """W71 v1.14A.3 — supersedes the v1.12B *"only at pick_type"*
+    posture. Some models (qwen3-vl-32b on 2026-05-08) bypass
+    classify_intent and emit pick_node_type directly at the classify
+    stage. The classify-stage prompt must therefore carry the
+    palette-label disambiguation too so the warning reaches the LLM
+    on bypass paths.
+    """
+    text = assemble_system_prompt("agent_staged", stage="classify")
+    assert "## Important: enum is" in text, (
+        "v1.14A.3: classify stage system prompt must include the "
+        "palette-label disambiguation block (bypass-path defense)"
+    )
+    assert "sort_data" in text and "``sort``" in text
+
+
+# --------------------------------------------------------------------------- #
+# W71 v1.12C — formula description + on-demand function list                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_formula_node_docs_uses_flowfile_expression_syntax() -> None:
+    """W71 v1.12C — the formula long description and chat-mode
+    instructions must reflect the *actual* Flowfile expression
+    syntax (SQL-style ``[column_name]``) instead of the previous
+    Polars-Python pseudo-code (``pl.col('first')``). Mentions of
+    ``pl.col`` are tolerated only when used as a *negative* example
+    (i.e. *"NOT ``pl.col``"*); the docstring must point at
+    ``polars_code`` as the alternative for raw Polars work.
+    """
+    from flowfile_core.ai.tools.node_docs import (
+        NODE_LONG_DESCRIPTIONS,
+        NODE_USER_INSTRUCTIONS,
+    )
+
+    long_desc = NODE_LONG_DESCRIPTIONS["formula"]
+    user_inst = NODE_USER_INSTRUCTIONS["formula"]
+    for body, label in ((long_desc, "long_description"), (user_inst, "user_instruction")):
+        assert "[" in body and "]" in body, (
+            f"formula {label} should reference SQL-style [column] syntax; got: {body!r}"
+        )
+        # If pl.col appears it must be contrasted with the SQL-style
+        # alternative (negation context). Bare advocacy is the failure
+        # we're guarding against.
+        if "pl.col" in body:
+            assert "not" in body.lower() or "instead of" in body.lower(), (
+                f"formula {label} mentions pl.col without contrasting "
+                f"against the actual [column_name] syntax; got: {body!r}"
+            )
+        # The cross-reference to polars_code is the user-facing escape
+        # hatch for raw Polars work — must be present so the LLM has
+        # somewhere to route requests this tool can't satisfy. Chat-mode
+        # instructions may use the friendly palette label ("Polars
+        # code"); agent docs reference the registered node_type id.
+        polars_ref_present = "polars_code" in body or "Polars code" in body
+        assert polars_ref_present, (
+            f"formula {label} must cross-reference polars_code as the "
+            f"raw-Polars alternative; got: {body!r}"
+        )
+
+
+def test_formula_long_description_leads_with_row_wise_constraint() -> None:
+    """W71 v1.13A — the formula long_description must lead with the
+    *"ROW-WISE ONLY — CANNOT aggregate"* assertion. Mid-paragraph
+    guidance is the wrong place for a hard constraint; small models
+    read past it and pick formula for count/sum/avg requests.
+    """
+    from flowfile_core.ai.tools.node_docs import (
+        NODE_LONG_DESCRIPTIONS,
+        NODE_USER_INSTRUCTIONS,
+    )
+
+    long_desc = NODE_LONG_DESCRIPTIONS["formula"]
+    user_inst = NODE_USER_INSTRUCTIONS["formula"]
+    # Anchor the constraint near the start so it's the first thing
+    # the LLM reads — both surfaces (catalog + chat-mode) get it.
+    for body, label in ((long_desc, "long_description"), (user_inst, "user_instruction")):
+        head = body[:200]  # generous lead window
+        head_lower = head.lower()
+        assert "row-wise" in head_lower, (
+            f"formula {label} must lead with the row-wise constraint; "
+            f"got head: {head!r}"
+        )
+        assert "cannot" in head_lower, (
+            f"formula {label} lead must explicitly say 'CANNOT'; got head: {head!r}"
+        )
+        assert "aggregat" in head_lower, (
+            f"formula {label} lead must mention aggregation; got head: {head!r}"
+        )
+
+
+def test_pick_type_prompt_includes_tool_selection_rules() -> None:
+    """W71 v1.13A — the agent_staged ``pick_type`` system prompt
+    carries the explicit do/don't list naming the four commonly-
+    confused choices (``record_count`` / ``group_by`` / ``formula`` /
+    ``polars_code``) so small models can read the rules instead of
+    inferring them from prose.
+    """
+    text = assemble_system_prompt("agent_staged", stage="pick_type")
+    assert "## Tool selection rules" in text, (
+        "v1.13A: pick_type system prompt missing the tool-selection-rules block"
+    )
+    for label in ("record_count", "group_by", "formula", "polars_code"):
+        assert label in text, f"v1.13A rules block missing reference to {label!r}"
+    # The "row-wise only" assertion must appear AGAIN here (the rules
+    # block reinforces the long_description's lead constraint).
+    assert "row-wise" in text.lower(), (
+        "v1.13A rules block must reiterate that formula is row-wise only"
+    )
+
+
+def test_pick_node_type_spec_description_carries_disambiguation() -> None:
+    """W71 v1.14A.1 — the function-calling spec for
+    ``flowfile.meta.pick_node_type`` (description AND the
+    ``node_type`` parameter description) carries the palette-label
+    vs node_type confusion list. Decoders attend to tool-spec text
+    far more than to prompt prose, so this catches the bypass case
+    (LLM emits ``pick_node_type`` at the classify stage, where the
+    catalog-side disambiguation isn't rendered).
+    """
+    from flowfile_core.ai.tools.meta_ops import (
+        META_OPS_TOOLS,
+        PICK_NODE_TYPE_TOOL_NAME,
+    )
+
+    spec = next(s for s in META_OPS_TOOLS if s.name == PICK_NODE_TYPE_TOOL_NAME)
+    # Headline disambiguation note in the tool description.
+    assert "snake-case the palette label" in spec.description.lower() or "palette label" in spec.description.lower(), (
+        f"v1.14A.1: pick_node_type description missing palette-label warning; got: {spec.description!r}"
+    )
+    # Detailed do/don't list inside the node_type parameter description.
+    nt_desc = spec.parameters["properties"]["node_type"]["description"]
+    assert "Common confusions" in nt_desc, nt_desc
+    # Two of the cases the user dogfooded.
+    assert "sort_data" in nt_desc and "`sort`" in nt_desc, nt_desc
+    assert "select_data" in nt_desc and "`select`" in nt_desc, nt_desc
+
+
+def test_catalog_headers_inline_node_type_for_add_tools() -> None:
+    """W71 v1.14A.2 — every ``flowfile.graph.add_<type>`` catalog entry
+    renders its snake_case node_type beside the heading so the LLM
+    sees the enum value at every entry, not only in the trailing
+    disambiguation block.
+    """
+    text = assemble_system_prompt("agent_staged", stage="pick_type")
+    # Spot-check four common confusions: sort, select, unique, sample.
+    for nt in ("sort", "select", "unique", "sample"):
+        marker = f"### flowfile.graph.add_{nt}  (node_type: `{nt}`)"
+        assert marker in text, (
+            f"v1.14A.2: catalog header for {nt!r} missing inline node_type marker. "
+            f"Expected to find: {marker!r}"
+        )
+
+
+def test_pick_upstream_spec_requires_right_input_for_join_shaped_types() -> None:
+    """W71 v1.14B — for join-shaped node types (join, cross_join,
+    fuzzy_match) the ``right_input_node_id`` field on
+    ``pick_upstream`` is REQUIRED, not optional. Stops the LLM from
+    staging cross_join with only one upstream wire connected.
+    """
+    from flowfile_core.ai.tools.meta_ops import build_pick_upstream_spec
+
+    # Non-join: stays optional.
+    spec_filter = build_pick_upstream_spec(
+        live_node_ids=[1, 2, 3], picked_node_type="filter"
+    )
+    required_filter = spec_filter.parameters.get("required", [])
+    assert "right_input_node_id" not in required_filter, required_filter
+    # The type still allows null.
+    rtype = spec_filter.parameters["properties"]["right_input_node_id"]["type"]
+    assert "null" in rtype, rtype
+
+    # Each join-shaped type: required AND no null in the type union.
+    for nt in ("join", "cross_join", "fuzzy_match"):
+        spec = build_pick_upstream_spec(
+            live_node_ids=[1, 2, 3], picked_node_type=nt
+        )
+        required = spec.parameters.get("required", [])
+        assert "right_input_node_id" in required, (
+            f"v1.14B: right_input_node_id must be required for {nt!r}; "
+            f"got required={required}"
+        )
+        rfield = spec.parameters["properties"]["right_input_node_id"]
+        assert rfield["type"] == "integer", (
+            f"v1.14B: right_input_node_id type for {nt!r} must be plain "
+            f"integer (no null); got {rfield['type']!r}"
+        )
+
+    # Unknown / None picked_node_type: backward-compatible (optional).
+    spec_unknown = build_pick_upstream_spec(live_node_ids=[1, 2])
+    required_unknown = spec_unknown.parameters.get("required", [])
+    assert "right_input_node_id" not in required_unknown
+
+
+def test_pick_upstream_spec_join_shaped_uses_left_right_scalars() -> None:
+    """W71 v1.15A — for join-shaped node types the pick_upstream spec
+    exposes a SYMMETRIC scalar pair (``left_input_node_id`` +
+    ``right_input_node_id``), both required, and drops the
+    ``upstream_node_ids`` list field entirely. This removes the
+    asymmetric-shape confusion that pre-v1.15 forced the LLM to
+    learn (list+scalar for what it intuitively models as two
+    equivalent inputs).
+    """
+    from flowfile_core.ai.tools.meta_ops import build_pick_upstream_spec
+
+    for nt in ("join", "cross_join", "fuzzy_match"):
+        spec = build_pick_upstream_spec(
+            live_node_ids=[1, 2, 3], picked_node_type=nt
+        )
+        props = spec.parameters["properties"]
+        # Both LEFT and RIGHT are top-level scalar integer fields.
+        assert "left_input_node_id" in props, f"{nt}: missing left_input_node_id"
+        assert "right_input_node_id" in props, f"{nt}: missing right_input_node_id"
+        assert props["left_input_node_id"]["type"] == "integer", props["left_input_node_id"]
+        assert props["right_input_node_id"]["type"] == "integer", props["right_input_node_id"]
+        # The legacy list field is GONE for join-shaped types.
+        assert "upstream_node_ids" not in props, (
+            f"{nt}: upstream_node_ids list still in spec — should be replaced by "
+            "left_input_node_id + right_input_node_id"
+        )
+        # Both scalars are required; rationale also required.
+        required = spec.parameters.get("required", [])
+        assert "left_input_node_id" in required, f"{nt}: left_input_node_id must be required"
+        assert "right_input_node_id" in required, f"{nt}: right_input_node_id must be required"
+
+
+def test_pick_upstream_spec_non_join_keeps_list_shape() -> None:
+    """W71 v1.15A — non-join types (and the no-picked-type fallback)
+    keep the legacy ``upstream_node_ids`` list + nullable
+    ``right_input_node_id``. Only join-shaped types get the
+    symmetric-pair shape.
+    """
+    from flowfile_core.ai.tools.meta_ops import build_pick_upstream_spec
+
+    for nt in ("filter", "sort", "group_by", "union", None):
+        kwargs = {"live_node_ids": [1, 2, 3]}
+        if nt is not None:
+            kwargs["picked_node_type"] = nt
+        spec = build_pick_upstream_spec(**kwargs)
+        props = spec.parameters["properties"]
+        assert "upstream_node_ids" in props, f"{nt}: missing list field"
+        assert props["upstream_node_ids"]["type"] == "array"
+        # No left_input_node_id on non-join specs.
+        assert "left_input_node_id" not in props, (
+            f"{nt}: spec should not carry left_input_node_id"
+        )
+        rtype = props["right_input_node_id"]["type"]
+        # Nullable scalar for non-join; the field is documented as
+        # legacy and should be left null.
+        assert "null" in rtype, f"{nt}: right_input_node_id should still allow null; got {rtype!r}"
+
+
+def test_pick_upstream_dispatch_translates_left_right_to_legacy() -> None:
+    """W71 v1.15A — when the LLM emits the new symmetric shape
+    (``left_input_node_id`` + ``right_input_node_id``) for a
+    join-shaped node, the executor's ``_handle_meta`` ``pick_upstream``
+    branch translates it to the legacy ``upstream_node_ids`` /
+    ``right_input_node_id`` representation so downstream consumers
+    (planner session state, ``_handle_add_node``) are unchanged.
+    """
+    from flowfile_core.ai.tools import executor as executor_module
+    from flowfile_core.ai.tools.executor import InsertionContext
+    from flowfile_core.flowfile.flow_graph import FlowGraph
+    from flowfile_core.schemas import schemas
+    from flowfile_core.schemas import input_schema
+
+    flow = FlowGraph(
+        flow_settings=schemas.FlowSettings(
+            flow_id=1,
+            execution_mode="Performance",
+            execution_location="local",
+            path="/tmp/test_v15a_translation",
+        ),
+        name="v15a_translation_test",
+    )
+    raw = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="x", data_type="Integer")],
+            data=[[1]],
+        ),
+    )
+    flow.add_manual_input(raw)
+
+    result = executor_module.execute_tool_call(
+        tool_name="flowfile.meta.pick_upstream",
+        tool_args={
+            "left_input_node_id": 2,
+            "right_input_node_id": 5,
+            "rationale": "left=per-city counts, right=global total",
+        },
+        insertion_context=InsertionContext(
+            upstream_node_ids=[], right_input_node_id=None
+        ),
+        flow=flow,
+        flow_id=1,
+        session_id="test-v15a",
+        user_id=1,
+    )
+    assert result.status == "applied", result
+    # The handler's extra dict carries the legacy fields, with the
+    # left scalar wrapped into upstream_node_ids and right preserved
+    # as the scalar.
+    assert result.extra["upstream_node_ids"] == [2], result.extra
+    assert result.extra["right_input_node_id"] == 5, result.extra
+
+
+def test_join_user_instruction_warns_against_cross_in_chat_mode() -> None:
+    """W71 v2.2 — chat-mode reads ``NODE_USER_INSTRUCTIONS``, not the
+    agent-side ``NODE_LONG_DESCRIPTIONS``. The 2026-05-08 dogfood
+    showed the chat-mode plan offered ``join`` for a no-key
+    broadcast task, then got confused when it realised there was no
+    key column. Strengthen the chat-mode prose so the LLM never
+    suggests ``join`` for a no-key combination — point it at
+    ``cross_join`` directly.
+    """
+    from flowfile_core.ai.tools.node_docs import NODE_USER_INSTRUCTIONS
+
+    body = NODE_USER_INSTRUCTIONS["join"]
+    body_lower = body.lower()
+    # Lead with the key-based constraint.
+    assert "key-based" in body_lower or "key based" in body_lower or "requires" in body_lower
+    # Cross-reference cross_join as the no-key alternative.
+    assert "cross_join" in body, body
+    # `how` field doesn't include "cross".
+    assert "no `cross`" in body_lower or "not include" in body_lower or "no \"cross\"" in body_lower
+
+
+def test_cross_join_user_instruction_names_broadcast_pattern() -> None:
+    """W71 v2.2 — chat-mode cross_join entry must explicitly name the
+    *broadcast a single-row value* pattern (the percentage-of-total
+    use case from the 2026-05-08 dogfood) so the LLM proposes
+    cross_join for those tasks instead of confusing itself with
+    join + missing key.
+    """
+    from flowfile_core.ai.tools.node_docs import NODE_USER_INSTRUCTIONS
+
+    body = NODE_USER_INSTRUCTIONS["cross_join"]
+    body_lower = body.lower()
+    # The lead frames it as the no-key tool.
+    assert "no-key" in body_lower or "no key" in body_lower or "without a key" in body_lower
+    # Names the broadcast pattern explicitly.
+    assert "broadcast" in body_lower
+    # The percentage example is the canonical motivator.
+    assert "percentage" in body_lower or "total" in body_lower
+
+
+def test_explore_data_doc_signals_no_settings_required() -> None:
+    """W71 v2.2 — the agent should add ``explore_data`` without
+    fabricating settings; the user's framing was *"the agent can
+    just say, and now you can explore the data with an explore data!
+    I added it to the canvas."* Both the agent-side and chat-mode
+    descriptions must lead with the no-settings signal so the LLM
+    emits an empty inner object at fill_settings.
+    """
+    from flowfile_core.ai.tools.node_docs import (
+        NODE_AGENT_PAYLOAD_EXAMPLES,
+        NODE_LONG_DESCRIPTIONS,
+        NODE_USER_INSTRUCTIONS,
+    )
+
+    long_desc = NODE_LONG_DESCRIPTIONS["explore_data"]
+    user_inst = NODE_USER_INSTRUCTIONS["explore_data"]
+    for body, label in ((long_desc, "long_description"), (user_inst, "user_instruction")):
+        body_lower = body.lower()
+        assert "no settings" in body_lower or "no configuration" in body_lower, (
+            f"explore_data {label} must lead with the no-settings signal; "
+            f"got: {body!r}"
+        )
+
+    # The payload example must show the empty-shape envelope so the
+    # LLM at fill_settings sees an unambiguous template.
+    example = NODE_AGENT_PAYLOAD_EXAMPLES["explore_data"]
+    assert "graphic_walker_input" in example
+    assert "{}" in example  # the inner is empty
+
+
+def test_pick_type_prompt_includes_join_vs_cross_join_section() -> None:
+    """W71 v2.2 — the agent_staged ``pick_type`` system prompt has a
+    dedicated *"Join vs cross_join"* section that names both nodes
+    and the key-required vs no-key distinction so the LLM picks the
+    right one when the user describes a broadcast pattern.
+    """
+    text = assemble_system_prompt("agent_staged", stage="pick_type")
+    assert "## Join vs cross_join" in text, (
+        "v2.2: pick_type prompt missing the dedicated join-vs-cross_join section"
+    )
+    # Both node types named.
+    assert "`join`" in text and "`cross_join`" in text
+    # The broadcast / no-key trigger words are present.
+    text_lower = text.lower()
+    assert "broadcast" in text_lower
+    assert "percentage" in text_lower
+    # The decision rule is unambiguous.
+    assert "no `cross` option" in text_lower or "no \"cross\"" in text_lower or "not `join`" in text_lower
+
+
+def test_join_long_description_uses_left_right_only() -> None:
+    """W71 v1.15B — the join / cross_join / fuzzy_match long
+    descriptions must use the LEFT/RIGHT vocabulary exclusively.
+    Drop the confusing *"main"* / *"input-0"* / *"input-1"* aliases
+    that pre-v1.15 leaked into the prose.
+    """
+    from flowfile_core.ai.tools.node_docs import NODE_LONG_DESCRIPTIONS
+
+    for nt in ("join", "cross_join", "fuzzy_match"):
+        body = NODE_LONG_DESCRIPTIONS[nt]
+        body_lower = body.lower()
+        assert "left" in body_lower, f"{nt}: must mention left"
+        assert "right" in body_lower, f"{nt}: must mention right"
+        # The triple-naming aliases are gone.
+        assert "input-0" not in body_lower, f"{nt}: drop the input-0 alias; got {body!r}"
+        assert "input-1" not in body_lower, f"{nt}: drop the input-1 alias; got {body!r}"
+        # "main" appears only in inline contexts unrelated to input
+        # naming. Specifically forbid the pre-v1.15 phrase ``main /
+        # left`` or ``= main``.
+        assert "main / left" not in body_lower, body
+        assert "= main" not in body_lower, body
+
+
+def test_pick_upstream_prompt_includes_worked_example_for_joins() -> None:
+    """W71 v1.15C — the pick_upstream stage prompt carries worked
+    examples for join-shaped types so the LLM has a concrete shape
+    to copy. The stage_pick_upstream.md content is loaded and joined
+    into the system prompt at the agent_staged pick_upstream stage.
+    """
+    text = assemble_system_prompt("agent_staged", stage="pick_upstream")
+    assert "## Worked examples for join-shaped types" in text, (
+        "v1.15C: pick_upstream prompt missing the worked-examples section"
+    )
+    # Both the asymmetric (join) and symmetric (cross_join) examples
+    # must be present and use the new field names.
+    assert "left_input_node_id" in text and "right_input_node_id" in text
+    # The cross_join output-column-order convention is the
+    # disambiguation rule — test it's reiterated in the example.
+    assert "first in the output" in text.lower() or "columns first" in text.lower(), text
+
+
+def test_formula_fill_settings_prompt_includes_function_reference() -> None:
+    """W71 v1.12C — at stage 3 ``fill_settings`` for ``formula`` ONLY,
+    the system prompt must carry a ``## Formula functions`` block
+    listing the Flowfile expression library so the LLM can pick valid
+    function names. Other node types must NOT carry this block — the
+    function list is long and irrelevant outside the formula tool.
+    """
+    formula_prompt = assemble_system_prompt(
+        "agent_staged", stage="fill_settings", picked_node_type="formula"
+    )
+    assert "Formula functions" in formula_prompt, (
+        "v1.12C: formula fill_settings prompt missing the function reference block"
+    )
+
+    group_by_prompt = assemble_system_prompt(
+        "agent_staged", stage="fill_settings", picked_node_type="group_by"
+    )
+    assert "Formula functions" not in group_by_prompt, (
+        "v1.12C: function reference block leaked into a non-formula fill_settings prompt"
+    )
+
+    pick_type_prompt = assemble_system_prompt("agent_staged", stage="pick_type")
+    assert "Formula functions" not in pick_type_prompt, (
+        "v1.12C: function reference must not appear in the pick_type catalog "
+        "(it would cost tokens on every pick_type round)"
+    )

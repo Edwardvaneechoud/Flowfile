@@ -1488,3 +1488,226 @@ def test_delete_node_refuses_bool_node_id(call_kwargs: dict[str, Any]) -> None:
     )
     assert result.status == "rejected"
     assert "bool" in (result.refusal_detail or "")
+
+
+# --------------------------------------------------------------------------- #
+# W71 v1.16 — join-shaped wire validation                                      #
+# --------------------------------------------------------------------------- #
+
+
+def _flow_with_two_inputs() -> FlowGraph:
+    """Two manual_input nodes — minimal setup for staging a cross_join."""
+    flow = FlowGraph(flow_settings=_flow_settings(), name="join_wire_test")
+    raw_a = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="city", data_type="String")],
+            data=[["EU"]],
+        ),
+    )
+    flow.add_manual_input(raw_a)
+    raw_b = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=2,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="total", data_type="Integer")],
+            data=[[1]],
+        ),
+    )
+    flow.add_manual_input(raw_b)
+    flow.get_node(1).get_predicted_schema()
+    flow.get_node(2).get_predicted_schema()
+    return flow
+
+
+def _cross_join_args(node_id: int = 3) -> dict[str, Any]:
+    settings = input_schema.NodeCrossJoin(
+        flow_id=1,
+        node_id=node_id,
+        cross_join_input=transform_schema.CrossJoinInput(
+            left_select=transform_schema.JoinInputs(renames=[]),
+            right_select=transform_schema.JoinInputs(renames=[]),
+        ),
+    )
+    return settings.model_dump(mode="json")
+
+
+def test_cross_join_refused_when_right_input_missing(call_kwargs: dict[str, Any]) -> None:
+    """W71 v1.16 — staging a cross_join with only ``upstream_node_ids``
+    populated and ``right_input_node_id`` null must REFUSE. Without
+    this check, the silent ``main_inputs`` overwrite in
+    ``flow_node.add_node_connection`` (line 638-641) leaves the join
+    with a single wire and the LLM sees *"applied"* despite a broken
+    graph (2026-05-08 cross_join dogfood)."""
+    flow = _flow_with_two_inputs()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_cross_join",
+        tool_args=_cross_join_args(node_id=3),
+        # The buggy emission: both ids in upstream_node_ids list, right
+        # null. The validator must reject.
+        insertion_context=InsertionContext(
+            upstream_node_ids=[1, 2], right_input_node_id=None
+        ),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert "join-shaped" in (result.refusal_detail or "")
+    assert "right" in (result.refusal_detail or "").lower()
+    # The flow must NOT have a partially-wired cross_join node.
+    assert flow.get_node(3) is None
+
+
+def test_cross_join_refused_when_left_and_right_are_same(call_kwargs: dict[str, Any]) -> None:
+    """W71 v1.16 — a node cannot join to itself; reject when LEFT
+    and RIGHT resolve to the same id."""
+    flow = _flow_with_two_inputs()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_cross_join",
+        tool_args=_cross_join_args(node_id=3),
+        insertion_context=InsertionContext(
+            upstream_node_ids=[1], right_input_node_id=1
+        ),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert "cannot use the same id" in (result.refusal_detail or "")
+
+
+def test_agent_writer_node_types_refused_with_writer_blocked(call_kwargs: dict[str, Any]) -> None:
+    """W71 v2.1 — the agent surfaces are not allowed to stage
+    writer-shaped node types (output / database_writer /
+    cloud_storage_writer / catalog_writer). Even if the LLM somehow
+    forces an ``add_<writer>`` call (e.g. by hallucinating the tool
+    name past the catalog filter), the executor refuses with
+    ``refusal_reason="writer_blocked"`` and a clear message pointing
+    the user to add the writer manually. The refusal fires BEFORE
+    Pydantic settings validation, so the call rejects regardless of
+    whether the tool_args are a valid settings shape."""
+    flow = _flow_with_orders()
+    # Minimal payload — writer-block fires before settings validation.
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_output",
+        tool_args={"flow_id": 1, "node_id": 2},
+        insertion_context=InsertionContext(upstream_node_ids=[1]),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "writer_blocked"
+    assert "external destination" in (result.refusal_detail or "")
+    # The writer node never gets staged — the live graph stays
+    # exactly as it was.
+    assert flow.get_node(2) is None
+
+
+def test_agent_writer_blocked_at_apply_mode_too(call_kwargs: dict[str, Any]) -> None:
+    """W71 v2.1 — same refusal fires for ``mode="apply"`` (the
+    agent_live path). Defense-in-depth: a writer hallucination on
+    agent_live cannot land on the canvas even momentarily."""
+    flow = _flow_with_orders()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_database_writer",
+        tool_args={"flow_id": 1, "node_id": 3},
+        insertion_context=InsertionContext(upstream_node_ids=[1]),
+        flow=flow,
+        mode="apply",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "writer_blocked"
+    assert flow.get_node(3) is None
+
+
+def test_pick_node_type_enum_excludes_writers() -> None:
+    """W71 v2.1 — the ``pick_node_type`` tool spec's ``node_type``
+    enum drops every writer-shaped type (output / database_writer
+    / cloud_storage_writer / catalog_writer) so the LLM literally
+    cannot pick one at stage 1. ``explore_data`` (read-only viewer)
+    stays in the enum."""
+    from flowfile_core.ai.safety import AGENT_BLOCKED_NODE_TYPES
+    from flowfile_core.ai.tools.meta_ops import (
+        META_OPS_TOOLS,
+        PICK_NODE_TYPE_TOOL_NAME,
+    )
+
+    spec = next(s for s in META_OPS_TOOLS if s.name == PICK_NODE_TYPE_TOOL_NAME)
+    enum_values = spec.parameters["properties"]["node_type"]["enum"]
+    for blocked in AGENT_BLOCKED_NODE_TYPES:
+        assert blocked not in enum_values, (
+            f"writer node_type {blocked!r} must be hidden from the "
+            f"pick_node_type enum; got enum={enum_values!r}"
+        )
+    # explore_data (a read-only viewer) is intentionally allowed.
+    assert "explore_data" in enum_values
+
+
+def test_join_input_how_rejects_cross_value() -> None:
+    """W71 v1.17 — ``JoinInput.how`` is narrowed to ``JoinKeyStrategy``
+    (no ``"cross"``). The dedicated ``cross_join`` node type is the
+    only path for Cartesian joins, so the LLM cannot accidentally
+    bypass it via ``join + how="cross"``. Pydantic validation refuses
+    that value with the standard *"Input should be 'inner', 'left',
+    'right', 'full', 'semi', 'anti', 'outer'"* enum error.
+    """
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as excinfo:
+        transform_schema.JoinInput(
+            join_mapping=[],
+            left_select=transform_schema.JoinInputs(renames=[]),
+            right_select=transform_schema.JoinInputs(renames=[]),
+            how="cross",
+        )
+    msg = str(excinfo.value)
+    assert "cross" in msg.lower()
+    # The error must list the valid options so the LLM can self-correct.
+    assert "inner" in msg and "left" in msg and "outer" in msg
+
+
+def test_join_input_how_accepts_inner_left_right(call_kwargs: dict[str, Any]) -> None:
+    """W71 v1.17 — every key-based join strategy is still accepted."""
+    for how in ("inner", "left", "right", "full", "semi", "anti", "outer"):
+        ji = transform_schema.JoinInput(
+            join_mapping=[],
+            left_select=transform_schema.JoinInputs(renames=[]),
+            right_select=transform_schema.JoinInputs(renames=[]),
+            how=how,
+        )
+        assert ji.how == how
+
+
+def test_cross_join_succeeds_with_one_left_and_one_right(call_kwargs: dict[str, Any]) -> None:
+    """W71 v1.16 — the correct shape (one upstream + distinct right
+    input) stages cleanly. Both wires end up on the join node."""
+    flow = _flow_with_two_inputs()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_cross_join",
+        tool_args=_cross_join_args(node_id=3),
+        insertion_context=InsertionContext(
+            upstream_node_ids=[1], right_input_node_id=2
+        ),
+        flow=flow,
+        mode="apply",
+        **call_kwargs,
+    )
+    assert result.status in ("applied", "warned"), result.refusal_detail
+    join_node = flow.get_node(3)
+    assert join_node is not None
+    # Both wires must be present on the join node.
+    main_input_ids = [n.node_id for n in (join_node.node_inputs.main_inputs or [])]
+    assert main_input_ids == [1], main_input_ids
+    assert (
+        join_node.node_inputs.right_input is not None
+        and join_node.node_inputs.right_input.node_id == 2
+    )

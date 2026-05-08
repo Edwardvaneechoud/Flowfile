@@ -79,12 +79,18 @@ class AgentStartRequest(BaseModel):
 
     flow_id: int = Field(ge=0)
     prompt: str = Field(min_length=1, max_length=5_000)
-    surface: Literal["agent_complex", "agent_staged"] = "agent_staged"
+    surface: Literal["agent_complex", "agent_staged", "agent_live"] = "agent_staged"
     """W71 v1.10 — defaults to ``agent_staged`` (multi-stage state
     machine). Big-model power users can opt into ``agent_complex``
     (single-shot full catalog) by passing it explicitly. The legacy
     two-stage ``agent`` surface was removed in v1.10 — it was the
-    failure mode that motivated W71 in the first place."""
+    failure mode that motivated W71 in the first place.
+    W71 v2.0 — third option ``agent_live`` mirrors the
+    ``agent_staged`` state machine but applies each step LIVE to
+    the canvas (mode=apply, not stage), runs the affected subgraph
+    (Performance) or evaluates a sample (Development), and feeds
+    the runtime observation back to the LLM. Auto-undoes the just-
+    added node on runtime failure and retries up to 3×."""
     samples_mode: Literal["off", "regex"] = "off"
     provider: str = Field(default="anthropic", min_length=1)
     model: str | None = None

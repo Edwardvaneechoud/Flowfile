@@ -31,7 +31,7 @@ export const MAX_PERSISTED_MESSAGES = 200;
 export const chatPersistenceKey = (flowId: number | null): string =>
   `${PERSISTENCE_KEY}.${flowId === null ? "unscoped" : flowId}`;
 
-export type PersistedAgentSurface = "agent_complex" | "agent_staged";
+export type PersistedAgentSurface = "agent_complex" | "agent_staged" | "agent_live";
 
 export interface PersistedAiState {
   messages: ChatMessage[];

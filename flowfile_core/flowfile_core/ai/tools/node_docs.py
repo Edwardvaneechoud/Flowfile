@@ -117,15 +117,23 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "Often the first step after 'read' / 'manual_input'."
     ),
     "formula": (
-        "Add or replace a single column with a Polars expression. Use to derive new "
-        "columns from existing ones — string concatenation, arithmetic, conditional "
-        "values, type casts. Don't use to aggregate across rows — use 'group_by' or "
-        "'record_count' for that; the formula evaluates within each row only. Don't "
-        "use to drop columns — that's 'select'. Example: "
-        '{"function": {"field": {"name": "full_name"}, '
-        "\"function\": \"pl.col('first') + ' ' + pl.col('last')\"}}. "
-        "Often paired upstream of 'group_by' (after deriving a key) or after "
-        "'join' (combining columns from both sides)."
+        "**ROW-WISE ONLY — CANNOT aggregate, count, sum, average, min, max, "
+        "or compute across rows.** For aggregation use ``group_by``; for raw "
+        "row count use ``record_count``; for window / multi-column / "
+        "aggregation logic that ``[col]`` syntax can't express use "
+        "``polars_code``. Pick ``formula`` ONLY when the new column can be "
+        "derived from the SAME row's existing columns (string concat, "
+        "arithmetic, conditional, type cast). "
+        "Adds or replaces a single column using Flowfile's expression "
+        "language. **Syntax is NOT raw Polars.** Column references are "
+        "SQL-style ``[column_name]`` (square brackets), not "
+        "``pl.col('column_name')``. Operators ``+``, ``-``, ``*``, ``/``, "
+        "``==``, ``!=``, ``and``, ``or`` work; the canonical function "
+        "library is documented at stage 3 (fill_settings) when you pick this "
+        "node type. Examples: ``[first] + ' ' + [last]`` (string concat), "
+        "``[amount] * 1.21`` (arithmetic). Often paired upstream of "
+        "``group_by`` (after deriving a key) or after ``join`` (combining "
+        "columns from both sides)."
     ),
     "select": (
         "Project, rename, drop, or reorder columns; can also cast types. Use when "
@@ -272,36 +280,61 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "'flowfile.codegen.generate_sql_query' to author the SELECT."
     ),
     "join": (
-        "Join two inputs on key columns (left, inner, right, outer, semi, anti). "
-        "Use whenever the user says 'lookup', 'merge', 'attach', 'enrich', or "
-        "'combine A with B on column'. Requires connecting both inputs (input-0 "
-        "= main / left, input-1 = right). Match column names exactly; cast types "
-        "with 'formula' upstream if they don't match. Don't use 'cross_join' for "
-        "key-based merges; reserve cross for cartesian. Don't use 'fuzzy_match' "
-        "if the keys are exact — fuzzy is slower and approximate. Example: "
+        "**KEY-BASED join. REQUIRES at least one equality key pair in "
+        "``join_mapping``. If you don't have a key column to match on, "
+        "use ``cross_join`` instead — `join` will have nothing to "
+        "match on and is the wrong tool.** Strategies: left, inner, "
+        "right, outer, full, semi, anti — `how` does NOT include "
+        "``\"cross\"`` (the enum is inner/left/right/full/semi/anti/"
+        "outer; cross/Cartesian goes through the dedicated "
+        "``cross_join`` node). Use whenever the user says 'lookup', "
+        "'merge', 'attach', 'enrich on column X', or 'combine A with "
+        "B on column'. Takes TWO inputs: the LEFT side (driving "
+        "table — its rows are preserved for left-joins; its columns "
+        "appear first in the output) and the RIGHT side (joining "
+        "table). Match column names exactly; cast types with "
+        "'formula' upstream if they don't match. Don't use "
+        "'fuzzy_match' if the keys are exact — fuzzy is slower and "
+        "approximate. Example: "
         '{"join_input": {"join_mapping": [{"left_col": "user_id", '
         '"right_col": "id"}], "how": "left"}}. '
         "Often paired with 'select' downstream to drop redundant key columns."
     ),
     "cross_join": (
-        "Cartesian join: every row of input-0 paired with every row of input-1. "
-        "Use sparingly — output size is N×M. Appropriate when you genuinely need "
-        "every combination (calendar × dimensions, scenario expansion). Don't use "
-        "as a fallback when 'join' types confuse you; pick the right 'join' "
-        "instead. Example: no key columns needed — just connect both inputs. "
-        "Often paired with 'filter' immediately downstream to prune the cartesian "
-        "to a meaningful subset."
+        "**Cartesian / NO-KEY join. The ONLY way to combine two "
+        "inputs WITHOUT a key column.** Every LEFT row paired with "
+        "every RIGHT row. Order-symmetric (A×B has the same rows as "
+        "B×A) — but the LEFT columns appear first in the output, "
+        "then the RIGHT columns. **Triggers**: any task where the "
+        "user wants to combine two streams and there's no shared "
+        "key — the canonical pattern is *broadcasting a single-row "
+        "total* onto every row of a larger table (e.g. 'percentage "
+        "of customers per city vs the total': group_by → "
+        "record_count gives the total → cross_join attaches the "
+        "total to every per-city row → formula computes the "
+        "percentage). Other uses: every-combination expansion "
+        "(calendar × dimensions, scenario grids). DO NOT use "
+        "`join` for these patterns — `join` requires a key "
+        "(``join_mapping``) and will fail or produce nothing if "
+        "you don't have one. No key columns needed here — just "
+        "connect both inputs. Pitfall: output is N×M rows; for a "
+        "1k × 1k input you get 1M rows. Restrict by broadcasting "
+        "a single-row side, or pair with 'filter' downstream to "
+        "prune. Often paired upstream of 'formula' (compute ratios "
+        "using the broadcast value)."
     ),
     "fuzzy_match": (
-        "Approximate-match join: pair rows by similarity rather than exact key "
-        "equality. Use for record-linkage on names / addresses / free-text where "
-        "exact join would miss obvious matches. Slower than 'join' and produces "
-        "match scores. Don't use when keys are exact identifiers (UUIDs, ints, "
-        "stable codes) — 'join' is faster and exact. Don't use as a substitute "
-        "for cleaning — normalise casing / whitespace upstream with 'formula' "
-        "first. Output adds a similarity score column. Often paired downstream "
-        "of 'graph_solver' (cluster the matched pairs) or with 'filter' to keep "
-        "only high-confidence matches."
+        "Approximate-match join: pair LEFT rows with RIGHT rows by "
+        "similarity rather than exact key equality. Use for record-linkage "
+        "on names / addresses / free-text where exact join would miss "
+        "obvious matches. Slower than 'join' and produces match scores. "
+        "Don't use when keys are exact identifiers (UUIDs, ints, stable "
+        "codes) — 'join' is faster and exact. Don't use as a substitute "
+        "for cleaning — normalise casing / whitespace upstream with "
+        "'formula' first. Output adds a similarity score column; LEFT "
+        "columns appear before RIGHT in the output. Often paired "
+        "downstream of 'graph_solver' (cluster the matched pairs) or with "
+        "'filter' to keep only high-confidence matches."
     ),
     "record_count": (
         "Output a single row containing the row count of the upstream input. Use "
@@ -312,12 +345,19 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "Often paired downstream of 'filter' (count survivors) or as a debug tap."
     ),
     "explore_data": (
-        "Profile the upstream input — column types, null counts, distinct counts, "
-        "summary statistics. Use for data discovery: 'what does this dataset look "
-        "like?'. Output is a wide diagnostic table; not typically connected "
-        "downstream. Don't use as a transform — it does not change the data, "
-        "it produces a profile artefact. Often the only downstream of a 'read' "
-        "during initial flow exploration."
+        "**NO settings required — emit an empty object ``{}`` for the "
+        "settings (the planner injects flow_id / node_id / upstream "
+        "automatically).** Profile the upstream input — column types, "
+        "null counts, distinct counts, summary statistics. Use for "
+        "data discovery: 'what does this dataset look like?', or as a "
+        "lightweight 'now you can inspect the result' inspector at "
+        "the end of a transformation chain. Output is a wide "
+        "diagnostic table; not typically connected downstream. Don't "
+        "fabricate field values — there's nothing to fill. The LLM "
+        "should announce something like *\"Added an explore_data "
+        "node; you can inspect the data on the canvas\"* and stop. "
+        "Don't use as a transform — it does not change the data, it "
+        "produces a profile artefact."
     ),
     "union": (
         "Concatenate two or more inputs row-wise, optionally aligning by name or "
@@ -473,14 +513,23 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "data', to compute use 'Formula'. Filter only removes rows."
     ),
     "formula": (
-        "Settings panel: a single 'Output column' name, a Polars expression "
-        "editor for the formula body, and a 'Data type' selector for the "
-        "output. Worked example: 'add a full_name column from first + last' "
-        "→ drag 'Formula' from Transformations, set Output column=full_name, "
-        "expression=`pl.col('first') + ' ' + pl.col('last')`. Pitfall: "
+        "**ROW-WISE ONLY — CANNOT count, sum, average, or aggregate across "
+        "rows.** For aggregation use 'Group by' or 'Record count'. Pick "
+        "Formula only when the new column comes from the SAME row's "
+        "existing values (concat, arithmetic, conditional, type cast). "
+        "Settings panel: a single 'Output column' name, a Flowfile "
+        "expression editor for the formula body, and a 'Data type' "
+        "selector for the output. **Syntax**: SQL-style ``[column_name]`` "
+        "references (square brackets), NOT Polars-Python. Worked example: "
+        "'add a full_name column from first + last' → drag 'Formula' from "
+        "Transformations, set Output column=full_name, expression="
+        "``[first] + ' ' + [last]``. Pitfall 1: NOT Polars syntax — "
+        "``pl.col('first')`` doesn't work; use ``[first]``. Pitfall 2: "
         "Formula is row-wise — it cannot aggregate across rows. To compute "
         "totals or per-group statistics use 'Group by' first, then a "
-        "Formula on the aggregated result."
+        "Formula on the aggregated result. Pitfall 3: For multi-column "
+        "transforms or window functions use 'Polars code' instead — that "
+        "node accepts real Polars-Python."
     ),
     "select": (
         "Settings panel: a row per upstream column with checkboxes for "
@@ -629,26 +678,48 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "fail here usually work in 'Polars code'."
     ),
     "join": (
-        "Settings panel: 'Join columns' on the left (the user adds key "
-        "pairs: left column = right column) and a 'Join Type' selector "
-        "(left / inner / right / outer / semi / anti). Two inputs are "
-        "expected — input-0 is the left side, input-1 is the right side. "
-        "Worked example: 'enrich orders with customer info' → drag 'Join' "
-        "from Combine Operations, connect orders to input-0 and customers "
-        "to input-1, add Join columns row: customer_id = id, set Join "
-        "Type to left. Pitfall: column data types must match — if "
-        "left.customer_id is an integer but right.id is a string, the "
-        "join produces no matches; cast types upstream with 'Formula'."
+        "**KEY-BASED join — REQUIRES equality keys (`join_mapping`)**. "
+        "If you don't have a key column to match on, you need "
+        "`cross_join` instead, NOT this node. Settings panel: 'Join "
+        "columns' on the left (the user adds key pairs: left column "
+        "= right column — required, at least one pair) and a 'Join "
+        "Type' selector with these options ONLY: left / inner / "
+        "right / outer / full / semi / anti. There is NO `cross` "
+        "option here — Cartesian / cross-product joins are the "
+        "dedicated `cross_join` node's job. Two inputs are expected "
+        "— LEFT (its rows / columns come first) and RIGHT. Worked "
+        "example: 'enrich orders with customer info' → drag 'Join' "
+        "from Combine Operations, connect orders to LEFT and "
+        "customers to RIGHT, add Join columns row: customer_id = "
+        "id, set Join Type to left. Pitfall: column data types must "
+        "match — if left.customer_id is an integer but right.id is "
+        "a string, the join produces no matches; cast types upstream "
+        "with 'Formula'. Pitfall 2: trying to broadcast a single-row "
+        "total onto every row of a larger table is NOT a job for "
+        "join — there's no key to match on. Use `cross_join` for "
+        "that pattern."
     ),
     "cross_join": (
-        "Settings panel: no key columns — every left row pairs with every "
-        "right row. The two-input shape (input-0 left, input-1 right) is "
-        "the same as Join. Worked example: 'every product × every region "
-        "combination' → drag 'Cross join' from Combine Operations, "
-        "connect products to input-0 and regions to input-1. Pitfall: "
-        "the output is N×M rows; for a 1k × 1k input you get 1M rows. "
-        "Use 'Filter data' immediately downstream to prune to a "
-        "meaningful subset."
+        "**Cartesian / NO-KEY join — every LEFT row × every RIGHT "
+        "row.** This is the ONLY way to combine two inputs without "
+        "a key column. Use cases: broadcasting a single-row total "
+        "onto every row of a larger table (e.g. attach the global "
+        "customer count to per-city counts so a downstream Formula "
+        "can compute percentages), exhaustive combinations "
+        "(calendar × dimensions, scenario expansion), or any "
+        "'every A with every B' pattern. Settings panel: no key "
+        "columns — just left/right column selection. Two inputs: "
+        "LEFT (its columns appear first in the output), RIGHT "
+        "(columns appear second). Worked example: 'compute the "
+        "percentage of customers per city vs the total' → group_by "
+        "city → record_count (total in 1 row) → cross_join the "
+        "per-city output (LEFT) with the total (RIGHT) → formula "
+        "= [customer_count] / [total] * 100. DON'T use 'Join' for "
+        "this — Join requires a key column you don't have. Pitfall: "
+        "the output is N×M rows; for a 1k × 1k input you get 1M "
+        "rows. Use 'Filter data' immediately downstream to prune "
+        "to a meaningful subset, or restrict to broadcasting a "
+        "single-row side."
     ),
     "fuzzy_match": (
         "Settings panel: a list of column pairs to compare (left column "
@@ -671,12 +742,14 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "adds a per-row id; this collapses to one count row."
     ),
     "explore_data": (
-        "Settings panel: minimal — pick which columns to profile (or "
-        "'all'). The node produces a wide diagnostic table with "
-        "per-column statistics: type, null count, distinct count, "
-        "min / max / mean. Worked example: 'I just loaded a CSV; what "
-        "does the data look like?' → drag 'Explore data' from Output "
-        "Operations, connect to the Read node, run. Pitfall: this is "
+        "**No settings — just connect it.** The node produces a wide "
+        "diagnostic table with per-column statistics: type, null "
+        "count, distinct count, min / max / mean. Worked example: 'I "
+        "just loaded a CSV; what does the data look like?' → drag "
+        "'Explore data' from Output Operations, connect to the Read "
+        "node, run. The agent doesn't need to configure anything for "
+        "this node — it can just announce that it was added and let "
+        "you inspect the data on the canvas. Pitfall: this is "
         "diagnostic only — it doesn't transform the data and isn't "
         "typically connected to downstream transformation nodes."
     ),
@@ -885,6 +958,19 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
 # because the JSON Schema alone is unambiguous. Adding one would burn tokens
 # without improving accuracy.
 NODE_AGENT_PAYLOAD_EXAMPLES: Final[dict[str, str]] = {
+    # W71 v2.2 — explore_data takes NO settings; the planner injects
+    # flow_id / node_id / upstream and the LLM emits an empty inner
+    # object. Listed so ``_trim_example_to_inner_shape`` produces a
+    # bare ``{}`` at fill_settings, signalling unambiguously that
+    # nothing needs filling. The LLM is encouraged to announce it
+    # was added rather than fabricate config.
+    "explore_data": (
+        "{\n"
+        '  "flow_id": 1,\n'
+        '  "node_id": 99,\n'
+        '  "graphic_walker_input": {}\n'
+        "}"
+    ),
     "group_by": (
         "{\n"
         '  "flow_id": 1,\n'
@@ -968,6 +1054,23 @@ NODE_AGENT_PAYLOAD_EXAMPLES: Final[dict[str, str]] = {
         '    "column_to_split": "tags",\n'
         '    "split_by_fixed_value": true,\n'
         '    "split_fixed_value": ","\n'
+        "  }\n"
+        "}"
+    ),
+    # W71 v1.12C — formula uses Flowfile expression language (SQL-style
+    # ``[column_name]`` references), NOT raw Polars. The Pydantic shape
+    # is small (one ``function`` field with a name + the expression
+    # string) but the SYNTAX is the divergence the LLM trips on. The
+    # full canonical function list is appended at stage-3 fill_settings
+    # via ``_build_single_node_block`` ONLY when ``picked_node_type ==
+    # "formula"`` so the catalog stays cheap.
+    "formula": (
+        "{\n"
+        '  "flow_id": 1,\n'
+        '  "node_id": 99,\n'
+        '  "function": {\n'
+        '    "field": {"name": "full_name", "data_type": "String"},\n'
+        '    "function": "[first] + \' \' + [last]"\n'
         "  }\n"
         "}"
     ),

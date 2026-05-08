@@ -59,6 +59,13 @@ _SURFACE_BUDGETS: dict[str, SurfaceBudget] = {
     # ``agent_complex`` ceiling.
     "agent_staged": (48_000, 4_000),
     "agent_complex": (96_000, 4_000),
+    # W71 v2.0 — agent_live: same per-call shape as agent_staged
+    # (the state machine is identical through stage 4); the only
+    # difference is the post-apply observation block that replaces
+    # the staged-bundle bookkeeping. Observation blocks are small
+    # (schema list + handful of sample rows ≈ 1-2 KB chars), so
+    # the existing budget covers them with no headroom hit.
+    "agent_live": (48_000, 4_000),
     "docgen": (32_000, 8_000),
     # W34 settings autocomplete: tiny prompt (schema column list + partial text)
     # and tiny response (≤5 short suggestions). Smaller than cmd_k to preserve

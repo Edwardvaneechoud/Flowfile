@@ -991,6 +991,99 @@ def test_fill_settings_dispatch_wraps_inner_args_for_group_by() -> None:
     assert any(c.get("agg") == "sum" for c in inner.get("agg_cols", []))
 
 
+def test_fill_settings_formula_bare_string_coerces_to_function_input() -> None:
+    """W71 v1.13B — when the LLM emits the formula tool with only the
+    bare expression string at the wrapper key (the most common
+    confusion: outer ``function`` parameter holds a FunctionInput
+    object, but the LLM puts the inner ``function`` STRING value
+    there), the planner auto-coerces the missing ``field`` descriptor
+    so the call stages cleanly instead of refusing 3× and failing.
+    """
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.user_prompt = "add a derived greeting column from name"
+    sess.stage = "fill_settings"
+    sess.picked_op_kind = "add"
+    sess.picked_node_type = "formula"
+    sess.picked_upstream_ids = [1]
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-fill-bare-formula",
+                        name="flowfile.graph.add_formula",
+                        # Bare-string emission: only the expression
+                        # under ``function``, no ``field`` object.
+                        arguments={"function": "'Hi ' + [region]"},
+                    )
+                ]
+            ),
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    assert len(sess.staged_results) == 1, (
+        "v1.13B: bare-string formula must auto-coerce to a valid "
+        f"FunctionInput envelope; got {sess.staged_results}"
+    )
+    payload = sess.staged_results[0].staged_node_payload or {}
+    settings = payload.get("settings") or {}
+    function_input = settings.get("function") or {}
+    assert isinstance(function_input, dict), function_input
+    assert function_input.get("function") == "'Hi ' + [region]"
+    field = function_input.get("field") or {}
+    assert isinstance(field, dict)
+    # Best-effort name extraction from "a derived greeting column"
+    # → "greeting" (matches the ``a <name> column`` pattern). If the
+    # extraction picks up something else, accept the fallback as long
+    # as it's a non-empty identifier.
+    name = field.get("name")
+    assert isinstance(name, str) and name, field
+
+
+def test_fill_settings_formula_refusal_text_disambiguates_function_field() -> None:
+    """W71 v1.13B — when the auto-coerce can't apply (e.g. the LLM
+    sent something other than a single-key bare-string shape), the
+    refusal text must NOT use the misread-prone *"not as a JSON-
+    encoded string"* phrasing. Instead it should name the OUTER
+    function (parameter, FunctionInput object) vs INNER function
+    (expression string) explicitly.
+    """
+    from flowfile_core.ai.tools import executor as executor_module
+    from flowfile_core.schemas.input_schema import NodeFormula
+    from pydantic import ValidationError
+
+    # Reproduce the validation error: NodeFormula.function must be a
+    # FunctionInput object, but we feed a bare string. Then call the
+    # refusal helper directly and assert its text.
+    try:
+        NodeFormula.model_validate({
+            "flow_id": 1,
+            "node_id": 99,
+            "function": "[first] + ' ' + [last]",
+        })
+    except ValidationError as exc:
+        text = executor_module._format_settings_validation_refusal(
+            exc=exc, settings_cls=NodeFormula, node_type="formula"
+        )
+    else:
+        raise AssertionError("expected ValidationError for bare-string function")
+
+    # The disambiguation block must be present.
+    assert "OBJECT with two keys" in text, text
+    assert "`field`" in text and "`function`" in text, text
+    assert "[column_name]" in text or "[col" in text, text
+    # The misread-prone phrasing is gone for this branch.
+    assert "JSON-encoded string" not in text, (
+        "v1.13B: FunctionInput refusal must drop the ambiguous "
+        f"'not as a JSON-encoded string' clause; got: {text!r}"
+    )
+
+
 def test_stage_fill_settings_injects_session_upstream_into_insertion_context() -> None:
     """At fill_settings, the planner pre-resolves InsertionContext from
     session state (picked_upstream_ids, picked_right_input_id) — the LLM
@@ -1178,6 +1271,184 @@ def test_multi_node_turn_serializes_through_two_classify_cycles() -> None:
     )
 
 
+def test_pick_upstream_user_message_includes_staged_session_block() -> None:
+    """W71 v1.12A — at the second cycle's pick_upstream stage, the user
+    message must surface the staged-this-session node's id, type, and
+    predicted columns. Without this, the LLM picks an upstream id from
+    the enum blind (it knows id 2 is in the enum but has no idea which
+    columns it exposes), which hurts accuracy on long chains.
+    """
+    flow = _make_flow()
+    sess = _make_session(flow)
+
+    provider = _ScriptedProvider(
+        [
+            # Cycle 1: filter (stages node 2 — output schema mirrors node 1).
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c1-classify",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "add", "rationale": "first add"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c1-pick-type",
+                        name=PICK_NODE_TYPE_TOOL_NAME,
+                        arguments={"node_type": "filter", "rationale": "row predicate"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c1-pick-up",
+                        name=PICK_UPSTREAM_TOOL_NAME,
+                        arguments={
+                            "upstream_node_ids": [1],
+                            "right_input_node_id": None,
+                            "rationale": "from manual_input",
+                        },
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c1-fill",
+                        name="flowfile.graph.add_filter",
+                        arguments={
+                            "filter_input": {
+                                "filter_type": "advanced",
+                                "advanced_filter": "[region]=='EU'",
+                            }
+                        },
+                    )
+                ]
+            ),
+            # Cycle 2: sort downstream of the staged filter.
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c2-classify",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "add", "rationale": "second add"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c2-pick-type",
+                        name=PICK_NODE_TYPE_TOOL_NAME,
+                        arguments={"node_type": "sort", "rationale": "order by amount"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c2-pick-up",
+                        name=PICK_UPSTREAM_TOOL_NAME,
+                        arguments={
+                            "upstream_node_ids": [2],
+                            "right_input_node_id": None,
+                            "rationale": "downstream of filter",
+                        },
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c2-fill",
+                        name="flowfile.graph.add_sort",
+                        arguments={"sort_input": [{"column": "amount", "how": "desc"}]},
+                    )
+                ]
+            ),
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    # Cycle 2's pick_upstream is provider.calls[6] (0-indexed: c1×4 + c2-classify + c2-pick-type).
+    cycle2_pick_up_call = provider.calls[6]
+    assert cycle2_pick_up_call["tools"][0].name == PICK_UPSTREAM_TOOL_NAME
+    user_msg = cycle2_pick_up_call["messages"][1].content or ""
+    assert "## Staged this session" in user_msg, (
+        "v1.12A: pick_upstream user message must include the staged-this-session "
+        f"block on cycle 2; got: {user_msg!r}"
+    )
+    # The staged filter (node 2) and at least one of its predicted columns
+    # (region, inherited from manual_input) must appear in the addendum.
+    assert "node 2" in user_msg, user_msg
+    assert "filter" in user_msg, user_msg
+    assert "region" in user_msg, (
+        "addendum should surface the staged node's predicted columns so the "
+        f"LLM can verify the upstream is appropriate; got: {user_msg!r}"
+    )
+
+
+def test_pick_upstream_user_message_unchanged_when_no_staged_results() -> None:
+    """W71 v1.12A — first-cycle pick_upstream (no prior staged adds)
+    must NOT carry a *"## Staged this session"* block. The block only
+    appears when there's something staged in the same session to show.
+    """
+    flow = _make_flow()
+    sess = _make_session(flow)
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c1-classify",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "add", "rationale": "first add"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c1-pick-type",
+                        name=PICK_NODE_TYPE_TOOL_NAME,
+                        arguments={"node_type": "filter", "rationale": "row predicate"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c1-pick-up",
+                        name=PICK_UPSTREAM_TOOL_NAME,
+                        arguments={
+                            "upstream_node_ids": [1],
+                            "right_input_node_id": None,
+                            "rationale": "from manual_input",
+                        },
+                    )
+                ]
+            ),
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    cycle1_pick_up_call = provider.calls[2]
+    assert cycle1_pick_up_call["tools"][0].name == PICK_UPSTREAM_TOOL_NAME
+    user_msg = cycle1_pick_up_call["messages"][1].content or ""
+    assert "## Staged this session" not in user_msg, (
+        "v1.12A: addendum must not appear when no add_* has been staged this session"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # AgentSession.reset_stage_state                                               #
 # --------------------------------------------------------------------------- #
@@ -1199,3 +1470,285 @@ def test_reset_stage_state_clears_picked_fields() -> None:
     assert sess.picked_node_type is None
     assert sess.picked_upstream_ids == []
     assert sess.picked_right_input_id is None
+
+
+# --------------------------------------------------------------------------- #
+# W71 v2.0 — agent_live REPL surface                                           #
+# --------------------------------------------------------------------------- #
+
+
+def _make_live_session(flow: FlowGraph, *, user_id: int = 1) -> sessions.AgentSession:
+    snapshot = sessions.capture_graph_snapshot(flow)
+    return sessions.AgentSession(
+        flow_id=flow.flow_id,
+        user_id=user_id,
+        user_prompt="filter to EU rows",
+        surface="agent_live",
+        provider_name="fake",
+        snapshot=snapshot,
+        max_steps=16,
+    )
+
+
+def _filter_cycle(*, prefix: str, node_type: str, upstream: int) -> list[_Step]:
+    """Helper — produce the 4 scripted steps for a single classify→
+    pick_type→pick_upstream→fill_settings cycle."""
+    return [
+        _Step(
+            tool_calls=[
+                ToolCall(
+                    id=f"{prefix}-classify",
+                    name=CLASSIFY_INTENT_TOOL_NAME,
+                    arguments={"op_kind": "add", "rationale": "live add"},
+                )
+            ]
+        ),
+        _Step(
+            tool_calls=[
+                ToolCall(
+                    id=f"{prefix}-pick-type",
+                    name=PICK_NODE_TYPE_TOOL_NAME,
+                    arguments={"node_type": node_type, "rationale": f"add {node_type}"},
+                )
+            ]
+        ),
+        _Step(
+            tool_calls=[
+                ToolCall(
+                    id=f"{prefix}-pick-up",
+                    name=PICK_UPSTREAM_TOOL_NAME,
+                    arguments={
+                        "upstream_node_ids": [upstream],
+                        "right_input_node_id": None,
+                        "rationale": f"upstream {upstream}",
+                    },
+                )
+            ]
+        ),
+    ]
+
+
+def test_agent_live_applies_each_step_to_live_graph() -> None:
+    """W71 v2.0 — agent_live applies every staged add LIVE; each
+    new node lands in ``flow.nodes`` immediately, not in
+    ``staged_results``. The session's ``applied_results`` carries
+    one record per successfully-applied node and ``staged_results``
+    stays empty (no batch diff)."""
+    flow = _make_flow()
+    sess = _make_live_session(flow)
+
+    provider = _ScriptedProvider(
+        [
+            *_filter_cycle(prefix="c1", node_type="filter", upstream=1),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c1-fill",
+                        name="flowfile.graph.add_filter",
+                        arguments={
+                            "filter_input": {
+                                "filter_type": "advanced",
+                                "advanced_filter": "[region]=='EU'",
+                            }
+                        },
+                    )
+                ]
+            ),
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    # The filter node is on the LIVE graph — not just staged.
+    new_node_ids = [n.node_id for n in flow.nodes]
+    assert 2 in new_node_ids, f"agent_live must apply live; got nodes {new_node_ids!r}"
+    # No staged_results bundle — agent_live uses applied_results instead.
+    assert sess.staged_results == [], sess.staged_results
+    assert len(sess.applied_results) == 1
+    rec = sess.applied_results[0]
+    assert rec.tool_name == "flowfile.graph.add_filter"
+    assert rec.node_id == 2
+    assert rec.node_type == "filter"
+    # Output schema captured from the live observation.
+    assert any(c.get("name") == "region" for c in rec.output_schema)
+
+
+def test_agent_live_undoes_failed_step_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """W71 v2.0 — when the post-apply observation fails (runtime
+    error from the actual polars run), the just-added node is
+    deleted from the live graph (``flow.nodes`` returns to the
+    last successful state), the error is fed back to the LLM as
+    the next round's tool reply, and the per-step retry budget
+    advances. After max_retries_per_step the run fails cleanly."""
+    from flowfile_core.ai.agents import live_observation
+
+    # Force the observation to fail every time. This simulates a
+    # runtime polars error (e.g. ColumnNotFoundError) without
+    # depending on the real polars path.
+    def _always_fail(flow_arg, node_id):
+        return live_observation.ObservationResult(
+            success=False,
+            node_id=node_id,
+            node_type="filter",
+            error_kind="ColumnNotFoundError",
+            error_message="'amout' not found. Available: order_id, region, amount",
+        )
+
+    monkeypatch.setattr(live_observation, "observe_after_apply", _always_fail)
+
+    flow = _make_flow()
+    sess = _make_live_session(flow)
+
+    # Three consecutive fill attempts will all observe-fail; the
+    # planner should auto-undo each time and exhaust the retry
+    # budget on the third failure.
+    fill_attempts = [
+        _Step(
+            tool_calls=[
+                ToolCall(
+                    id=f"fill-attempt-{i}",
+                    name="flowfile.graph.add_filter",
+                    arguments={
+                        "filter_input": {
+                            "filter_type": "advanced",
+                            "advanced_filter": "[amout]=='EU'",
+                        }
+                    },
+                )
+            ]
+        )
+        for i in range(3)
+    ]
+
+    provider = _ScriptedProvider(
+        [
+            *_filter_cycle(prefix="c1", node_type="filter", upstream=1),
+            *fill_attempts,
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(_drain(run_planner_session(
+        session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()
+    )))
+
+    # Live graph is back to its pre-run state — the failing node
+    # was auto-undone every time.
+    new_node_ids = sorted(n.node_id for n in flow.nodes)
+    assert new_node_ids == [1], (
+        f"agent_live must auto-undo the failing node; got nodes {new_node_ids!r}"
+    )
+    # No applied_results recorded (no successful step).
+    assert sess.applied_results == []
+    # Run terminated as failed after the third retry.
+    assert sess.status == "failed"
+    error_events = [e for e in events if e.event == "error"]
+    assert error_events, f"expected error event; got events {[e.event for e in events]}"
+    assert "agent_live" in (error_events[-1].payload.get("message") or "")
+    # The runtime error reached the LLM via the tool replies that
+    # rode each retry round.
+    tool_msgs = [m for m in sess.messages if m.role == "tool"]
+    assert any("ColumnNotFoundError" in (m.content or "") for m in tool_msgs), (
+        "runtime error must appear in the tool replies the LLM saw"
+    )
+
+
+def test_agent_live_observation_includes_schema_in_tool_reply() -> None:
+    """W71 v2.0 — on a successful apply, the post-apply tool reply
+    embeds the output schema so the LLM can reason about what
+    columns the new node produced. (Sample rows are best-effort
+    and may be empty in Development mode; schema is the
+    load-bearing observation.)"""
+    flow = _make_flow()
+    sess = _make_live_session(flow)
+
+    provider = _ScriptedProvider(
+        [
+            *_filter_cycle(prefix="c1", node_type="filter", upstream=1),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c1-fill",
+                        name="flowfile.graph.add_filter",
+                        arguments={
+                            "filter_input": {
+                                "filter_type": "advanced",
+                                "advanced_filter": "[region]=='EU'",
+                            }
+                        },
+                    )
+                ]
+            ),
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    # The tool reply for the add_filter call must carry the
+    # observation block.
+    tool_replies = [
+        m for m in sess.messages
+        if m.role == "tool" and m.name == "flowfile.graph.add_filter"
+    ]
+    assert tool_replies, f"expected at least one tool reply; got {[m.role for m in sess.messages]}"
+    content = tool_replies[-1].content or ""
+    assert "Output schema:" in content, content
+    assert "region" in content, "schema columns from live observation must reach the LLM"
+
+
+def test_agent_live_does_not_use_staged_results() -> None:
+    """W71 v2.0 — agent_live multi-add runs leave
+    ``staged_results`` empty and populate ``applied_results``
+    instead. Confirms the surface flips the entire post-apply
+    bookkeeping path."""
+    flow = _make_flow()
+    sess = _make_live_session(flow)
+
+    provider = _ScriptedProvider(
+        [
+            *_filter_cycle(prefix="c1", node_type="filter", upstream=1),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c1-fill",
+                        name="flowfile.graph.add_filter",
+                        arguments={
+                            "filter_input": {
+                                "filter_type": "advanced",
+                                "advanced_filter": "[region]=='EU'",
+                            }
+                        },
+                    )
+                ]
+            ),
+            *_filter_cycle(prefix="c2", node_type="sort", upstream=2),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="c2-fill",
+                        name="flowfile.graph.add_sort",
+                        arguments={
+                            "sort_input": [{"column": "amount", "how": "desc"}],
+                        },
+                    )
+                ]
+            ),
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    assert sess.staged_results == [], (
+        f"agent_live must NOT use staged_results; got {len(sess.staged_results)} entries"
+    )
+    assert len(sess.applied_results) == 2, (
+        f"expected one applied_results entry per add; got {len(sess.applied_results)}"
+    )
+    assert sess.applied_results[0].node_type == "filter"
+    assert sess.applied_results[1].node_type == "sort"
+    # Both nodes are live on the canvas.
+    live_ids = sorted(n.node_id for n in flow.nodes)
+    assert live_ids == [1, 2, 3], live_ids

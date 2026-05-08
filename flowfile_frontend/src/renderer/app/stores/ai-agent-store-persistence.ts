@@ -71,6 +71,7 @@ const VALID_EVENT_KINDS: ReadonlySet<AgentEvent["kind"]> = new Set([
   "tool_call_staged",
   "tool_call_warned",
   "tool_call_rejected",
+  "tool_call_applied",
   "drift_detected",
   "paused",
   "retry",

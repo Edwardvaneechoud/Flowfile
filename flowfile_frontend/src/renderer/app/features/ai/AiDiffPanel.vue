@@ -136,6 +136,12 @@ const handleDismissStaleNotice = (): void => {
 <style scoped>
 .ai-diff-panel {
   margin-bottom: 8px;
+  /* Flex-child rules so the panel can shrink inside .ai-assistant__chat
+     when the drawer is short. Pairs with the bounded scroll +
+     sticky-bottom footer on the inner .ai-diff-preview so a long
+     change list never pushes the composer below the drawer fold. */
+  flex-shrink: 1;
+  min-height: 0;
 }
 
 .ai-diff-panel__toast {

@@ -429,7 +429,30 @@ RefusalReason = Literal[
     "self_loop_prevented",
     "settings_validation",
     "upstream_is_sink",
+    "join_wire_invalid",
+    "writer_blocked",
 ]
+
+
+# W71 v2.1 — node types the AI agent surfaces (``agent_staged`` /
+# ``agent_complex`` / ``agent_live``) are NOT allowed to stage. These
+# all WRITE TO EXTERNAL DESTINATIONS — files, databases, cloud
+# buckets, the catalog. The user always adds these manually so a
+# rogue / hallucinated agent run can't push to a production sink.
+#
+# ``explore_data`` is intentionally NOT in this set even though the
+# planner classifies it as a "sink" for upstream-attachment purposes
+# — it's a read-only viewer that renders sample data in the UI, no
+# external side-effects, so the agent can legitimately add it as a
+# debugging step at the end of a flow.
+AGENT_BLOCKED_NODE_TYPES: frozenset[str] = frozenset(
+    {
+        "output",
+        "database_writer",
+        "cloud_storage_writer",
+        "catalog_writer",
+    }
+)
 
 
 def validate_column_references(
@@ -537,6 +560,8 @@ __all__ = [
     "RefusalReason",
     "detect_network_egress",
     "validate_column_references",
+    # W71 v2.1 — agent writer-block policy
+    "AGENT_BLOCKED_NODE_TYPES",
     # W15 audit re-exports — kept stable since W15 (do not remove without a contract bump)
     "MAX_ARGS_BYTES",
     "AuditEvent",

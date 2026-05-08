@@ -161,9 +161,16 @@ onMounted(async () => {
 const handleAgentSurfaceChange = (event: Event): void => {
   const target = event.target as HTMLSelectElement;
   const value = target.value;
-  // W71 v1.10 — legacy "agent" surface removed; only agent_staged
-  // (default) and agent_complex (single-shot full catalog) remain.
-  if (value === "agent_complex" || value === "agent_staged") {
+  // W71 v1.10 — legacy "agent" surface removed; agent_staged
+  // (default) and agent_complex (single-shot full catalog) are
+  // the original options.
+  // W71 v2.0 — agent_live is the third option: REPL-style with
+  // real-time execution after each step.
+  if (
+    value === "agent_complex" ||
+    value === "agent_staged" ||
+    value === "agent_live"
+  ) {
     aiStore.setSelectedAgentSurface(value);
   }
 };
@@ -461,6 +468,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
       >
         <option value="agent_staged">staged (default)</option>
         <option value="agent_complex">single-shot full</option>
+        <option value="agent_live">live (REPL — runs each step)</option>
       </select>
       <label
         v-if="!isDisabledByFlag"
@@ -566,6 +574,8 @@ const timelineItems = computed<TimelineItem[]>(() => {
           'ai-assistant__surface-chip--legacy':
             agentStore.currentSurface === 'agent' ||
             agentStore.currentSurface === 'agent_complex',
+          'ai-assistant__surface-chip--live':
+            agentStore.currentSurface === 'agent_live',
         }"
         role="status"
         aria-label="Active agent surface"
@@ -575,13 +585,16 @@ const timelineItems = computed<TimelineItem[]>(() => {
           {{ agentStore.currentSurface }}
         </span>
       </div>
-      <!-- W71 — agent_staged stage badge. Only renders for the staged
-           surface; legacy ``agent`` / ``agent_complex`` surfaces show
-           nothing (the badge has no meaning there). -->
+      <!-- W71 — agent_staged stage badge. Renders for both
+           staged and live surfaces (they share the same 4-stage
+           state machine through fill_settings); legacy ``agent``
+           and ``agent_complex`` show nothing — the badge has no
+           meaning there. -->
       <div
         v-if="
           agentStore.status === 'running' &&
-          agentStore.currentSurface === 'agent_staged'
+          (agentStore.currentSurface === 'agent_staged' ||
+            agentStore.currentSurface === 'agent_live')
         "
         class="ai-assistant__stage-badge"
         role="status"
@@ -981,6 +994,16 @@ const timelineItems = computed<TimelineItem[]>(() => {
   background-color: var(--color-warning-soft, rgba(204, 119, 0, 0.08));
   border-color: var(--color-warning, #cc7700);
   color: var(--color-warning, #cc7700);
+}
+
+/* W71 v2.0 — live surface chip: distinct accent so the user
+   immediately sees the agent is mutating the canvas live (not
+   bundling for review). Mid-saturation amethyst — not a warning
+   colour, but visually different from the default staged chip. */
+.ai-assistant__surface-chip--live {
+  background-color: var(--color-accent-soft, rgba(124, 58, 237, 0.1));
+  border-color: var(--color-accent, #7c3aed);
+  color: var(--color-accent, #7c3aed);
 }
 
 .ai-assistant__surface-chip-label {

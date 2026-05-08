@@ -31,6 +31,7 @@ its own resolver and does not need to opt in here).
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections import deque
 from pathlib import Path
@@ -63,6 +64,7 @@ SurfaceLiteral = Literal[
     "explain",
     "agent_complex",
     "agent_staged",
+    "agent_live",
     "docgen",
     "settings_autocomplete",
     "lineage",
@@ -83,6 +85,10 @@ SURFACE_TO_LEVEL: dict[str, PromptLevel] = {
     # :func:`assemble_system_prompt` routes to a stage-specific suffix
     # via :data:`_STAGE_TO_PROMPT` instead of using this level mapping.
     "agent_staged": "planner",
+    # W71 v2.0 — ``agent_live`` shares the same per-stage suffix
+    # routing as ``agent_staged`` (its state machine is identical
+    # through fill_settings); ``planner`` is the no-stage fallback.
+    "agent_live": "planner",
     "docgen": "assist",
     # Settings autocomplete (W34) maps to copilot — short-context suggestion-shaped
     # output. The strict-JSON-only instruction is added inline by the autocomplete
@@ -410,7 +416,10 @@ def assemble_system_prompt(
         raise ValueError(f"Unknown surface {surface!r}. Expected one of {sorted(get_args(SurfaceLiteral))}.")
 
     base = _load_prompt("base")
-    if surface == "agent_staged" and stage:
+    # W71 v2.0 — ``agent_live`` reuses the same per-stage suffix
+    # routing as ``agent_staged``: identical state machine through
+    # fill_settings, only the post-apply behaviour differs.
+    if surface in ("agent_staged", "agent_live") and stage:
         suffix_name = _STAGE_TO_PROMPT.get(stage, SURFACE_TO_LEVEL[surface])
     else:
         suffix_name = SURFACE_TO_LEVEL[surface]
@@ -488,10 +497,28 @@ def _build_catalog_block(
 
     full_catalog = build_tool_catalog()
 
-    if surface == "agent_staged":
+    if surface in ("agent_staged", "agent_live"):
         if stage == "pick_type":
             tools = build_tool_catalog(surface="agent_complex")
-            return _render_tool_catalog(tools)
+            catalog_block = _render_tool_catalog(tools)
+            # W71 v1.12B — append palette-label vs node_type
+            # disambiguation. Only at pick_type (other stages don't
+            # pick types and don't need the warning).
+            disambig = _build_palette_label_disambiguation_block()
+            if disambig:
+                return f"{catalog_block}\n\n{disambig}"
+            return catalog_block
+        if stage == "classify":
+            # W71 v1.14A.3 — some models bypass classify_intent and
+            # emit pick_node_type directly at this stage (observed
+            # 2026-05-08, qwen3-vl-32b: emitted ``node_type=sort_data``
+            # at the classify-stage prompt, which lacks the catalog +
+            # v1.12B disambiguation). Surface the disambiguation block
+            # at classify too so the warning reaches the LLM regardless
+            # of bypass. Cheap (~600 chars) and only runs at the
+            # classify round, which has the smallest budget anyway.
+            disambig = _build_palette_label_disambiguation_block()
+            return disambig or ""
         if stage == "fill_settings" and picked_node_type:
             return _build_single_node_block(picked_node_type, full_catalog)
         return ""
@@ -506,6 +533,127 @@ def _build_catalog_block(
         node_tools = [tool for tool in full_catalog if tool.name.startswith(_NODE_TYPE_TOOL_PREFIX)]
         return _render_node_reference(node_tools)
     return ""
+
+
+@functools.lru_cache(maxsize=1)
+def _palette_label_disambiguation_pairs() -> tuple[tuple[str, str], ...]:
+    """W71 v1.12B — return ``(node_type, palette_label)`` pairs where
+    snake-casing the palette label produces a different identifier
+    from the registered ``node_type``.
+
+    These are the exact mismatches that confuse small LLMs into
+    emitting the snake-cased palette label as a ``node_type`` — e.g.
+    palette label *"Sort"* → ``"sort"`` ≠ registered
+    ``"sort"``. The disambiguation block (rendered ONLY at
+    ``stage="pick_type"``) lists these so the LLM sees the explicit
+    do/don't pairing.
+
+    Cached at module level — palette labels are static at runtime.
+    """
+    try:
+        from flowfile_core.ai.tools.node_docs import palette_label_for
+        from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
+    except Exception:
+        return ()
+
+    pairs: list[tuple[str, str]] = []
+    for nt in sorted(NODE_TYPE_TO_SETTINGS_CLASS.keys()):
+        label = palette_label_for(nt)
+        if not label or label == nt:
+            continue
+        # Snake-case the palette label and compare to the node_type.
+        snake = label.lower().replace(" ", "_")
+        if snake != nt and snake.replace("-", "_") != nt:
+            pairs.append((nt, label))
+    return tuple(pairs)
+
+
+def _build_palette_label_disambiguation_block() -> str:
+    """W71 v1.12B — render the do/don't section warning the LLM that
+    the function-calling enum is the snake_case ``node_type``, not
+    the snake-cased palette label. Only rendered at the
+    ``pick_type`` stage of ``agent_staged`` (where the LLM is about
+    to pick a node_type).
+    """
+    pairs = _palette_label_disambiguation_pairs()
+    if not pairs:
+        return ""
+
+    lines: list[str] = [
+        "## Important: enum is `node_type`, NOT the palette label",
+        "",
+        (
+            "The function-calling enum on ``flowfile.meta.pick_node_type`` "
+            "is the registered snake_case ``node_type``. The catalog above "
+            "leads with the palette label (in *italics* or quotes). DO NOT "
+            "snake-case the palette label and submit it — the enum will "
+            "reject every value not on this list. Common confusions:"
+        ),
+        "",
+    ]
+    for nt, label in pairs:
+        lines.append(f"- ✅ ``{nt}``  ❌ ``{label.lower().replace(' ', '_')}`` (palette label *\"{label}\"*)")
+    return "\n".join(lines)
+
+
+@functools.lru_cache(maxsize=1)
+def _formula_function_names() -> tuple[str, ...]:
+    """W71 v1.12C — fetch the canonical Flowfile expression-function list.
+
+    Sourced from ``polars_expr_transformer.function_overview``, the same
+    surface the chat-side ``GET /editor/expressions`` route uses. Cached
+    via ``lru_cache`` so the polars_expr_transformer import is paid once
+    per process — and only when stage-3 fill_settings actually renders
+    a formula prompt (NOT at module import or in unrelated paths).
+    Falls back to a hard-coded short list if the import fails (e.g.
+    test environments without the package installed) so the catalog
+    stays renderable.
+    """
+    try:
+        from polars_expr_transformer.function_overview import get_all_expressions
+    except Exception:
+        return ()
+    try:
+        names = get_all_expressions()
+    except Exception:
+        return ()
+    return tuple(sorted({str(n) for n in names if isinstance(n, str) and n}))
+
+
+def _build_formula_function_reference_block() -> str:
+    """W71 v1.12C — append a compact alphabetical list of available
+    Flowfile-expression functions. Renders ONLY at stage-3
+    ``fill_settings`` when the picked node type is ``formula`` (gated by
+    the caller in ``_build_single_node_block``) so smaller catalog
+    surfaces (pick_type, agent_complex full catalog) don't carry the
+    function-name dump on every round.
+    """
+    names = _formula_function_names()
+    if not names:
+        # Hard-coded fallback when polars_expr_transformer is unavailable
+        # (test environments). Short list of widely-used functions.
+        names = (
+            "concat",
+            "contains",
+            "lowercase",
+            "round",
+            "to_date",
+            "to_int",
+            "to_string",
+            "trim",
+            "uppercase",
+        )
+    body = ", ".join(f"``{n}``" for n in names)
+    return (
+        "## Formula functions (Flowfile expression library)\n"
+        "\n"
+        "Available functions you can use inside the ``function`` field. "
+        "Call them like ``uppercase([col])`` or ``concat([first], ' ', "
+        "[last])``. Column references use SQL-style ``[column_name]`` "
+        "(square brackets), NOT ``pl.col(...)``.\n"
+        "\n"
+        f"{body}"
+    )
 
 
 def _build_single_node_block(node_type: str, full_catalog: list[Any]) -> str:
@@ -552,6 +700,15 @@ def _build_single_node_block(node_type: str, full_catalog: list[Any]) -> str:
         lines.append("```json")
         lines.append(example)
         lines.append("```")
+        lines.append("")
+
+    # W71 v1.12C — when the picked type is ``formula``, append the
+    # canonical Flowfile-expression function list. Gated to this exact
+    # case so the catalog at pick_type / agent_complex never carries
+    # the (potentially long) function-name dump on every round.
+    if node_type == "formula":
+        lines.append(_build_formula_function_reference_block())
+
     return "\n".join(lines).rstrip()
 
 
@@ -613,7 +770,17 @@ def _render_tool_catalog(tools: list[Any]) -> str:
         "",
     ]
     for tool in documented:
-        lines.append(f"### {tool.name}")
+        # W71 v1.14A.2 — for ``flowfile.graph.add_<type>`` entries, render
+        # the snake_case node_type beside the heading so the LLM sees the
+        # enum value at every catalog entry, not only in the trailing
+        # disambiguation block. Catches the common confusion where the
+        # LLM snake-cases the palette label (*"Sort data"* → ``sort_data``)
+        # — the heading now reads ``add_sort  (node_type: `sort`)``.
+        if tool.name.startswith(_NODE_TYPE_TOOL_PREFIX):
+            node_type = tool.name.removeprefix(_NODE_TYPE_TOOL_PREFIX)
+            lines.append(f"### {tool.name}  (node_type: `{node_type}`)")
+        else:
+            lines.append(f"### {tool.name}")
         lines.append(tool.long_description.strip())
         if tool.agent_payload_example:
             lines.append("")
