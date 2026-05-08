@@ -238,6 +238,26 @@ class LiteLLMProvider:
             )
 
 
+_STAGE_FILL_TOOL_PREFIX = "flowfile.graph.add_"
+
+
+def _is_fill_settings_call(tools: list[ToolSpec] | None) -> bool:
+    """W71 v1.6 — return True iff the call is the agent_staged stage-3
+    ``fill_settings`` round.
+
+    Marker: exactly one tool in the array, named
+    ``flowfile.graph.add_<type>``. No other AI surface produces this
+    shape (legacy agent_complex has ~40 tools; staged classify /
+    pick_type / pick_upstream expose ``flowfile.meta.*`` only;
+    single-stage non-add ops expose ``update_node_settings`` /
+    ``delete_node`` / ``connect`` / ``delete_connection``; chat &
+    intent_classifier carry no tools at all).
+    """
+    if not tools or len(tools) != 1:
+        return False
+    return tools[0].name.startswith(_STAGE_FILL_TOOL_PREFIX)
+
+
 def _dev_log_prompt(
     *,
     provider: str,
@@ -257,7 +277,26 @@ def _dev_log_prompt(
     Strip before release — content is unredacted (samples may leak PII),
     volume is high, and ``print`` bypasses log routing / structured
     logging entirely.
+
+    W71 v1.6 — gated to stage-3 (``fill_settings``) calls only. The
+    user explicitly asked for stage-3-only output during dogfood
+    debugging: that's where the LLM has to produce the real settings
+    JSON and where small-model failures (text-JSON in content,
+    misshaped fields) actually happen. Earlier stages (classify /
+    pick_type / pick_upstream) succeed reliably and just produce
+    noise in the terminal. The stage-3 marker is "exactly one tool
+    whose name starts with ``flowfile.graph.add_``" — that's the
+    only place this combination occurs (legacy ``agent_complex`` has
+    ~40 tools; ``agent_staged`` other stages expose either
+    ``flowfile.meta.*`` or single-stage ops). All other prompts
+    (chat, intent_classifier, the meta stages, single-stage non-add
+    ops) are silenced. Set ``FLOWFILE_AI_LOG_PROMPTS=true`` and tail
+    ``~/.flowfile/ai_prompts/YYYY-MM-DD.jsonl`` for the full record
+    when broader visibility is needed.
     """
+    if not _is_fill_settings_call(tools):
+        return
+
     import sys as _sys
 
     out = _sys.stderr  # uvicorn's INFO access lines also go to stderr

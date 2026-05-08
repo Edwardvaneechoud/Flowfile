@@ -188,6 +188,15 @@ const _renderStageAdvanced = (p: Record<string, unknown>): string => {
   }
   if (to === "single_stage_op" && opKind) return `Routing to ${opKind} operation.`;
 
+  // W71 v1.6 — ``op_kind === "other"`` keeps stage at classify. Skip
+  // rendering the meta-routing line entirely in that case so the
+  // chat trail doesn't show a misleading *"Stage: classify → classify"*
+  // for every chat-style follow-up. The LLM's actual reply rides as a
+  // separate ``thinking`` event.
+  if (opKind === "other" && from === "classify" && to === "classify") {
+    return "";
+  }
+
   // Fallback — muted "stage: X → Y" for any transition we didn't enumerate.
   if (from && to) return `Stage: ${from} → ${to}.`;
   return "";

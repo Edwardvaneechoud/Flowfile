@@ -147,6 +147,14 @@ _PICK_CATEGORY_NAME = "flowfile.meta.pick_category"
 # the loop hot path.
 _CLASSIFY_INTENT_NAME = CLASSIFY_INTENT_TOOL_NAME
 _PICK_NODE_TYPE_NAME = PICK_NODE_TYPE_TOOL_NAME
+
+# W71 v1.6 — stages where text-JSON tool-call recovery is safe to apply.
+# At ``classify`` the LLM sometimes emits a "summary" of past calls in
+# its content after a successful add (it's reset back to classify and
+# has nothing useful to do); recovering those would re-execute the
+# already-staged ops. Restrict recovery to the stages where the LLM is
+# expected to emit exactly one tool call to a known tool.
+_TEXT_JSON_RECOVERY_STAGES: frozenset[str] = frozenset({"fill_settings", "single_stage_op"})
 _PICK_UPSTREAM_NAME = PICK_UPSTREAM_TOOL_NAME
 
 # W71 — non-add ops that the staged surface dispatches via ``single_stage_op``.
@@ -1032,7 +1040,197 @@ def _log_stage_transition(
     logger.info("planner.staged %s", " ".join(parts))
 
 
-def _refresh_system_prompt_for_stage(session: sessions.AgentSession) -> None:
+def _recover_textual_tool_call(
+    content: str,
+    expected_tool_names: set[str],
+) -> ToolCall | None:
+    """W71 v1.6 — last-resort parse for LLMs that emit a function-call
+    invocation as **text content** rather than via the function-calling
+    API.
+
+    Llama-3.3-70b on OpenRouter / Groq occasionally produces this
+    pattern even when the tools array has exactly one entry::
+
+        Sorting by the number of customers per city
+        flowfile.graph.add_sort({"sort_input": [{"column": "...", "how": "desc"}]})
+
+    The planner's ``response.tool_calls`` is empty in that case and
+    the loop terminates with no diff staged — exactly the symptom the
+    2026-05-08 PM dogfood reproduced. This helper finds the call
+    pattern in ``content``, parses the JSON args, and returns a
+    synthetic :class:`ToolCall` so the dispatch can proceed.
+
+    Robustness rules:
+
+    * Only matches against ``expected_tool_names`` (the catalog the
+      current stage exposed). Defends against the model emitting an
+      unrelated tool name in its prose.
+    * Returns ``None`` when **multiple** distinct expected names match
+      — that's almost always a "summary of past calls" style message
+      after a successful add (the LLM walked through what it just did
+      and re-emitted the JSON envelope of each call). Re-firing those
+      would double-stage. The loop's normal "no tool calls →
+      terminate" path handles the summary case correctly.
+    * The ``stage`` gate (see ``_TEXT_JSON_RECOVERY_STAGES``) provides
+      an additional defence: classify-stage summaries are excluded
+      entirely.
+    """
+    if not content or not expected_tool_names:
+        return None
+
+    found: list[tuple[str, dict[str, Any]]] = []
+    for tool_name in expected_tool_names:
+        marker = f"{tool_name}("
+        idx = content.find(marker)
+        if idx < 0:
+            continue
+        # Walk balanced parens to find the JSON args. Track string
+        # context so an open-paren or close-paren character inside a
+        # JSON string doesn't throw the depth count off.
+        start = idx + len(marker)
+        depth = 1
+        end = -1
+        in_str = False
+        esc = False
+        for i in range(start, len(content)):
+            c = content[i]
+            if esc:
+                esc = False
+                continue
+            if in_str and c == "\\":
+                esc = True
+                continue
+            if c == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end < 0:
+            continue
+        try:
+            args = json.loads(content[start:end])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(args, dict):
+            found.append((tool_name, args))
+
+    if len(found) != 1:
+        return None
+    tool_name, args = found[0]
+    # Synthetic id for the tool message correlation. Stable hash of the
+    # call string keeps it deterministic for tests; the planner's
+    # ``role="tool"`` reply uses this id so the LLM can correlate on
+    # the next turn.
+    sha = abs(hash((tool_name, json.dumps(args, sort_keys=True)))) % 10_000_000
+    return ToolCall(
+        id=f"recovered_{tool_name.replace('.', '_')}_{sha}",
+        name=tool_name,
+        arguments=args,
+    )
+
+
+def _build_fill_settings_user_message(
+    session: sessions.AgentSession, flow: FlowGraph
+) -> str | None:
+    """W71 v1.5 — focused user message for the ``fill_settings`` stage.
+
+    By the time we reach stage 3, the only context the LLM needs is:
+
+    1. **The user's actual ask** (their original prompt; for auto-promote
+       sessions this includes the chat transcript that produced the
+       intent).
+    2. **The picked upstream's column schema** so the LLM can reference
+       valid column names in the new node's settings. Reading the rest
+       of the subgraph at this point is a distraction.
+
+    Without this slim, ~4.5k chars of irrelevant subgraph + every other
+    node's settings dict ride into stage 3 and small models like
+    llama-3.3-70b end up writing a rationale instead of calling the
+    only-tool-in-its-array (dogfood 2026-05-08 PM).
+
+    Returns ``None`` when there's no picked upstream (i.e. the helper
+    was called outside fill_settings or stage 2 didn't produce one).
+    """
+    from flowfile_core.ai.context.builder import _safe_get_predicted_schema
+
+    upstream_ids = list(session.picked_upstream_ids or [])
+    if session.picked_right_input_id is not None:
+        upstream_ids.append(session.picked_right_input_id)
+    if not upstream_ids:
+        return None
+
+    lines: list[str] = ["## Your task", "", session.user_prompt.strip(), ""]
+
+    # Helper to render one upstream's column block from staged_results
+    # when the node isn't in flow.nodes yet (chained add within one
+    # user turn — the prior add hasn't been applied because this
+    # session's diff is still being assembled).
+    def _staged_schema_for(node_id: int) -> list[dict[str, Any]] | None:
+        for entry in session.staged_results:
+            payload = entry.staged_node_payload if isinstance(entry.staged_node_payload, dict) else None
+            if payload is None:
+                continue
+            settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+            staged_id = settings.get("node_id") if isinstance(settings, dict) else None
+            if staged_id != node_id:
+                continue
+            preds = payload.get("predicted_output_schema")
+            if isinstance(preds, list):
+                return preds
+            return None
+        return None
+
+    for uid in upstream_ids:
+        node = flow.get_node(uid)
+        cols_text: list[str] = []
+        if node is not None:
+            predicted = _safe_get_predicted_schema(node)
+            if predicted:
+                for col in predicted:
+                    name = getattr(col, "column_name", "?")
+                    dtype = getattr(col, "data_type", "Unknown")
+                    cols_text.append(f"- {name}: {dtype}")
+        else:
+            staged_preds = _staged_schema_for(uid)
+            if staged_preds is not None:
+                for col in staged_preds:
+                    if isinstance(col, dict):
+                        cols_text.append(
+                            f"- {col.get('name', '?')}: {col.get('data_type', 'Unknown')}"
+                        )
+
+        label_kind = (
+            "Right input"
+            if session.picked_right_input_id is not None and uid == session.picked_right_input_id
+            else "Upstream"
+        )
+        if cols_text:
+            lines.append(f"## {label_kind} node {uid} columns")
+            lines.append("")
+            lines.extend(cols_text)
+            lines.append("")
+        else:
+            # Schema-unknown path. Emit the marker so the LLM knows to
+            # refuse rather than hallucinate column names. Mirrors the
+            # ``schema: unknown`` posture of ``render_user_message``.
+            lines.append(f"## {label_kind} node {uid} columns")
+            lines.append("")
+            lines.append("schema: unknown — upstream has no predicted schema")
+            lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _refresh_system_prompt_for_stage(
+    session: sessions.AgentSession, flow: FlowGraph | None = None
+) -> None:
     """W71 — replace ``session.messages[0]`` with a freshly-rendered system
     prompt for the current stage.
 
@@ -1046,6 +1244,14 @@ def _refresh_system_prompt_for_stage(session: sessions.AgentSession) -> None:
     history intact (assistant turns, tool replies). The prompt cache is
     invalidated by the change but per-stage prompts are smaller, so the
     re-keyed cache is cheap to fill.
+
+    W71 v1.5 — when ``flow`` is provided AND the stage is
+    ``fill_settings``, also rewrite ``session.messages[1]`` (the user
+    message) with a focused mini-prompt that contains only the user's
+    goal + the picked upstream's column schema. The full subgraph
+    embedded by :func:`_build_initial_messages` is irrelevant once the
+    upstream is locked in; keeping it bloats the prompt and confuses
+    smaller models like llama-3.3-70b.
     """
     if session.surface != "agent_staged":
         return
@@ -1059,6 +1265,16 @@ def _refresh_system_prompt_for_stage(session: sessions.AgentSession) -> None:
         picked_node_type=session.picked_node_type,
     )
     session.messages[0] = Message(role="system", content=new_system)
+
+    if (
+        session.stage == "fill_settings"
+        and flow is not None
+        and len(session.messages) >= 2
+        and session.messages[1].role == "user"
+    ):
+        slim_user = _build_fill_settings_user_message(session, flow)
+        if slim_user is not None:
+            session.messages[1] = Message(role="user", content=slim_user)
 
 
 def _build_staged_tool_catalog(
@@ -1403,8 +1619,11 @@ async def _run_planner_loop(
         # iteration's system prompt was set in ``_build_initial_messages``;
         # subsequent stage advances need a re-render so the LLM sees the
         # right per-stage suffix and (at fill_settings) the picked type's
-        # single-node block.
-        _refresh_system_prompt_for_stage(session)
+        # single-node block. v1.5 also slims the user message at
+        # fill_settings to drop the full subgraph noise — passing
+        # ``flow`` lets the helper resolve the picked upstream's
+        # predicted schema for the focused mini-prompt.
+        _refresh_system_prompt_for_stage(session, flow)
 
         try:
             if session.surface == "agent_staged" and session.stage in ("pick_upstream", "fill_settings"):
@@ -1455,6 +1674,40 @@ async def _run_planner_loop(
         session.messages.append(assistant_msg)
 
         tool_calls = list(response.tool_calls or [])
+
+        # W71 v1.6 — last-resort text-JSON recovery for small models
+        # that emit the function call as content prose instead of via
+        # the function-calling API. Gated to fill_settings /
+        # single_stage_op so the recovery never re-fires the
+        # "summary of past calls" pattern that classify-stage emits
+        # after a successful add. See ``_recover_textual_tool_call``.
+        if (
+            not tool_calls
+            and assistant_text
+            and session.surface == "agent_staged"
+            and session.stage in _TEXT_JSON_RECOVERY_STAGES
+        ):
+            expected_names = {t.name for t in tool_catalog}
+            recovered = _recover_textual_tool_call(assistant_text, expected_names)
+            if recovered is not None:
+                tool_calls = [recovered]
+                # Patch the assistant message we just appended so the
+                # provider sees a coherent history on subsequent rounds
+                # — the recovered tool_call gets paired with a
+                # ``role="tool"`` reply downstream, which requires the
+                # corresponding tool_calls to have appeared on the
+                # prior assistant turn.
+                session.messages[-1] = Message(
+                    role="assistant",
+                    content=assistant_text or None,
+                    tool_calls=[recovered],
+                )
+                logger.info(
+                    "planner.staged session=%s recovered_text_json_tool_call tool=%s stage=%s",
+                    session.session_id[:8],
+                    recovered.name,
+                    session.stage,
+                )
 
         # W38 — when the assistant turn is pure prose (no tool calls), surface
         # it as a ``thinking`` event so the user sees what the model said.

@@ -541,6 +541,146 @@ def test_pick_upstream_coerces_common_llama_misshapes(
     )
 
 
+def test_fill_settings_user_message_drops_full_subgraph() -> None:
+    """W71 v1.5 — at the fill_settings stage the planner replaces the
+    user message with a focused mini-prompt that contains only the
+    user's goal and the picked upstream's column schema. The 4.5k-char
+    full subgraph that rides into stage 1 / stage 2 is dropped — it
+    just confuses smaller models when the upstream is already chosen."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "fill_settings"
+    sess.picked_op_kind = "add"
+    sess.picked_node_type = "filter"
+    sess.picked_upstream_ids = [1]
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-fill-slim",
+                        name="flowfile.graph.add_filter",
+                        arguments={
+                            "filter_input": {
+                                "filter_type": "advanced",
+                                "advanced_filter": "[region]=='EU'",
+                            }
+                        },
+                    )
+                ]
+            ),
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    # Inspect the user message the planner sent on the fill_settings
+    # round (provider.calls[0]). It MUST contain the goal + the picked
+    # upstream's columns, and NOT the other nodes' settings dicts /
+    # the full subgraph header.
+    user_msg = provider.calls[0]["messages"][1]
+    body = user_msg.content or ""
+    # Goal text from session.user_prompt is preserved.
+    assert "filter to EU rows" in body, body
+    # Picked upstream (node 1, manual_input) columns are present.
+    for col in ("order_id", "region", "amount"):
+        assert col in body, f"expected upstream column {col!r} in slim user message; got: {body}"
+    # Markers from the full subgraph rendering are absent.
+    assert "## Subgraph" not in body, "stage 3 should drop the full subgraph"
+    # The slim user message is markedly smaller than the full subgraph
+    # the planner ships at earlier stages — set a generous ceiling so
+    # the test doesn't break on tiny copy tweaks but still catches a
+    # regression that re-bloats the prompt.
+    assert len(body) < 1500, f"slim user message bloated to {len(body)} chars"
+
+
+def test_text_json_tool_call_recovery_at_fill_settings() -> None:
+    """W71 v1.6 — llama-3.3-70b occasionally emits the function call as
+    text content rather than via the function-calling API at stage 3.
+    The recovery path parses the call out of content, synthesizes a
+    real ``ToolCall``, and the dispatch proceeds normally — saving the
+    user from a silent termination with no diff to accept.
+
+    Reproduces the 2026-05-08 PM dogfood symptom: at fill_settings the
+    LLM emits *"Sorting by the number of customers per city
+    flowfile.graph.add_sort({...})"* with no real tool_calls, and the
+    chat trail shows no *"Staged sort"* line. After v1.6, the call is
+    recovered and stages cleanly."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "fill_settings"
+    sess.picked_op_kind = "add"
+    sess.picked_node_type = "sort"
+    sess.picked_upstream_ids = [1]
+
+    # The LLM emits NO tool_calls; instead the call invocation rides on
+    # the assistant's prose content. v1.6 picks it up.
+    text_content = (
+        "Sorting by the number of customers per city\n"
+        'flowfile.graph.add_sort({"sort_input": [{"column": "amount", "how": "desc"}]})'
+    )
+    provider = _ScriptedProvider(
+        [
+            _Step(content=text_content, finish_reason="stop"),
+            # After successful (recovered) add, the planner resets to
+            # classify and asks again; emit no tool call to exit.
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    # The recovery path successfully staged the sort.
+    assert len(sess.staged_results) == 1, (
+        f"recovery should have produced one staged op; got "
+        f"{[r.tool_name for r in sess.staged_results]}"
+    )
+    assert sess.staged_results[0].tool_name == "flowfile.graph.add_sort"
+    payload = sess.staged_results[0].staged_node_payload or {}
+    settings = payload.get("settings") or {}
+    sort_input = settings.get("sort_input")
+    assert isinstance(sort_input, list) and len(sort_input) == 1
+    assert sort_input[0].get("column") == "amount"
+    assert sort_input[0].get("how") == "desc"
+
+
+def test_text_json_tool_call_recovery_skipped_at_classify() -> None:
+    """W71 v1.6 — recovery does NOT fire at the classify stage. After a
+    successful add, the LLM is reset to classify and sometimes emits a
+    "summary" of past calls in its content. Recovering those would
+    re-execute already-staged ops. The classify-stage summary should
+    end the loop cleanly with the prose surfaced as a thinking event."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.stage = "classify"
+
+    # Summary-style content that mentions multiple flowfile.graph.add_*
+    # tool names — the kind of prose the LLM emits AFTER it just ran a
+    # successful chain. A naive recovery would fire on each name and
+    # double-stage; the gating by stage + the "exactly one tool match"
+    # rule prevents it.
+    summary_content = (
+        "I performed the following calls:\n"
+        'flowfile.meta.classify_intent({"op_kind": "add", "rationale": "x"})\n'
+        'flowfile.graph.add_sort({"sort_input": [{"column": "amount", "how": "desc"}]})\n'
+    )
+    provider = _ScriptedProvider(
+        [
+            _Step(content=summary_content, finish_reason="stop"),
+        ]
+    )
+
+    asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
+
+    # Nothing got staged — the loop exited as a no-op.
+    assert sess.staged_results == [], (
+        f"classify-stage summary should not be recovered; got staged_results "
+        f"{[r.tool_name for r in sess.staged_results]}"
+    )
+
+
 def test_universal_json_string_unwrap_handles_misencoded_add_args() -> None:
     """W71 v1.4 — the executor's universal unwrap pass recovers
     ``add_*`` calls that arrive with structured fields encoded as JSON
