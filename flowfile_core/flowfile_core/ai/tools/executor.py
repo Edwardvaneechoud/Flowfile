@@ -1,29 +1,31 @@
-"""Tool executor with prospective schema validation — W31.
+"""Tool executor with prospective schema validation.
 
-Per plan §6.3, ``execute_tool_call`` is the single entry point for the LLM's
-typed tool calls. The executor:
+``execute_tool_call`` is the single entry point for the LLM's typed tool
+calls. The executor:
 
 1. Parses the MCP-shaped tool name (``flowfile.<domain>.<op>``).
 2. Resolves the target ``FlowGraph`` via ``flow_file_handler.get_flow``.
 3. Dispatches per-domain (``graph`` / ``schema`` / ``codegen`` / ``meta``).
 4. For ``graph.add_<node_type>``: validates settings via the Pydantic class,
-   refuses on network egress (W25 §9.6), resolves upstream schemas via the
-   D011 tier handler, validates column refs, predicts output schema (mirror
-   for static/source/passthrough; kernel dry-run for dynamic — D003), then
-   either applies via ``getattr(flow, f"add_{node_type}")(settings)`` or
-   stages the payload for W41 to compose into a GraphDiff.
-5. Emits one :class:`AuditEvent` per call (W15) with secrets redacted.
+   refuses on network egress, resolves upstream schemas via the tier
+   handler, validates column refs, predicts output schema (mirror for
+   static/source/passthrough; kernel dry-run for dynamic), then either
+   applies via ``getattr(flow, f"add_{node_type}")(settings)`` or stages
+   the payload for the diff layer to compose into a GraphDiff.
+5. Emits one :class:`AuditEvent` per call with secrets redacted.
 
-The executor does NOT do its own ``pl.scan_*`` calls — per the project rule
-"the collect of polars data only takes place in the worker — use nodes
-already", all data-touching paths go through the existing ``add_<node_type>``
-infrastructure (which is worker-aware) or through ``kernel_runtime``.
+The executor does NOT do its own ``pl.scan_*`` calls — per the project
+rule "the collect of polars data only takes place in the worker — use
+nodes already", all data-touching paths go through the existing
+``add_<node_type>`` infrastructure (which is worker-aware) or through
+``kernel_runtime``.
 
-Coordination with W41: ``mode="stage"`` returns ``staged_node_payload`` with
-the validated settings + predicted schema; W41 composes a list of those into
-a ``GraphDiff`` and wires the accept path through
-``HistoryManager.capture_if_changed`` for a single undo point. W31 does NOT
-call ``audit.update_diff_action`` — that's W41's contract.
+Coordination with the diff layer: ``mode="stage"`` returns
+``staged_node_payload`` with the validated settings + predicted schema;
+the diff layer composes a list of those into a ``GraphDiff`` and wires
+the accept path through ``HistoryManager.capture_if_changed`` for a
+single undo point. The executor does NOT call
+``audit.update_diff_action`` — that's the diff layer's contract.
 """
 
 from __future__ import annotations
@@ -59,25 +61,25 @@ ResultStatus = Literal["applied", "staged", "warned", "rejected"]
 _TOOL_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^flowfile\.(graph|schema|codegen|meta)\.(.+)$")
 
 #: Settings field paths for code-bearing nodes — used for the network-egress
-#: check (§9.6). Each tuple is ``(node_type, attr_path)``.
+#: check. Each tuple is ``(node_type, attr_path)``.
 _CODE_BEARING: Final[dict[str, tuple[str, ...]]] = {
     "polars_code": ("polars_code_input", "polars_code"),
     "python_script": ("python_script_input", "code"),
     "sql_query": ("sql_query_input", "sql_code"),
 }
 
-# W71 v2.13 — refusal text for polars_code bodies that include ``import``
-# statements. Only rendered to the LLM when the LLM has already made the
-# mistake; the standing prompt has no mention of the imports rule, so we
-# don't burn context on every polars_code-related round.
+# Refusal text for polars_code bodies that include ``import`` statements.
+# Only rendered to the LLM when the LLM has already made the mistake;
+# the standing prompt has no mention of the imports rule, so we don't
+# burn context on every polars_code-related round.
 #
 # Rationale: ``polars_code_parser._validate_code`` rejects ALL
-# ``ast.Import`` / ``ast.ImportFrom`` nodes. Today
-# ``flow.add_polars_code`` swallows the ValueError into
-# ``node.results.errors`` — the LLM never sees it and the failure
-# surfaces only at run time. The pre-flight in ``_handle_add_node`` /
-# ``_handle_update_node_settings`` short-circuits with this refusal so
-# the LLM gets one round to fix the body using the pre-bound names.
+# ``ast.Import`` / ``ast.ImportFrom`` nodes. ``flow.add_polars_code``
+# swallows the ValueError into ``node.results.errors`` — the LLM never
+# sees it and the failure surfaces only at run time. The pre-flight in
+# ``_handle_add_node`` / ``_handle_update_node_settings`` short-circuits
+# with this refusal so the LLM gets one round to fix the body using the
+# pre-bound names.
 _POLARS_CODE_IMPORT_REFUSAL: Final[str] = (
     "polars_code rejected: imports are forbidden in this sandbox. "
     "``pl`` is already available — drop ``import polars as pl`` "
@@ -95,7 +97,7 @@ def _validate_polars_code_body_or_reject(
     user_id: int,
     flow_id: int,
 ) -> "ToolExecutionResult | None":
-    """W71 v2.13 — pre-flight polars_code sandbox validation.
+    """Pre-flight polars_code sandbox validation.
 
     Catches forbidden imports (and any other sandbox violation
     ``polars_code_parser`` raises) BEFORE ``flow.add_polars_code``
@@ -135,7 +137,7 @@ def _validate_polars_code_body_or_reject(
     return None
 
 
-#: Layout offsets used by :func:`_resolve_insertion_position` (W62) when
+#: Layout offsets used by :func:`_resolve_insertion_position` when
 #: ``InsertionContext.pos_x`` / ``pos_y`` are unset. Mirrors the canonical
 #: spacings of :func:`flowfile_core.flowfile.util.calculate_layout.calculate_layered_layout`
 #: (``x_spacing=250, y_spacing=100, initial_y=50``) so AI-staged nodes lay out
@@ -153,7 +155,7 @@ class InsertionContext(BaseModel):
     ``right_input_node_id`` is connected to ``input-1`` (right) for joins.
 
     ``pos_x`` / ``pos_y`` may be ``None`` to ask the executor to derive a
-    layout position from the upstream's canvas coordinates (W62). When the
+    layout position from the upstream's canvas coordinates. When the
     caller wants (0, 0) literally, it must pass ``0.0`` explicitly — the
     sentinel-vs-default distinction is the whole point of the ``None`` shape.
     """
@@ -241,11 +243,11 @@ class ToolExecutionResult(BaseModel):
     """Outcome of one ``execute_tool_call``.
 
     * ``applied`` — node was added/wired to the real graph (mode=apply, no
-      D011 warnings).
-    * ``staged`` — settings + predicted schema captured for W41 (mode=stage),
-      no real-graph mutation.
-    * ``warned`` — tool ran but produced D011 warnings (e.g. upstream schema
-      unknown; column-ref validation deferred until run).
+      schema warnings).
+    * ``staged`` — settings + predicted schema captured for the diff
+      layer (mode=stage), no real-graph mutation.
+    * ``warned`` — tool ran but produced schema warnings (e.g. upstream
+      schema unknown; column-ref validation deferred until run).
     * ``rejected`` — refusal (Pydantic validation, network egress, unknown
       columns, ...).
     """
@@ -290,35 +292,35 @@ def execute_tool_call(
     fresh cache is created (no cross-call hit). Long-running planner sessions
     should reuse one cache so identical proposals don't re-pay the kernel cost.
 
-    ``llm_provided_node_id`` and ``audit_meta`` are W54 surfaces. The planner
-    sets ``llm_provided_node_id`` when the LLM emitted ``node_id`` itself
-    (instead of letting the planner allocate); the executor then validates
-    the id is fresh + non-self-looping. ``audit_meta`` rides on every
-    ``add_*`` audit row under ``tool_args["__planner_meta__"]`` so future
-    self-loops are diagnosable from the audit row alone (the existing
-    ``AuditEvent.extra`` field is dropped before persistence — see
-    plan §6).
+    The planner sets ``llm_provided_node_id`` when the LLM emitted
+    ``node_id`` itself (instead of letting the planner allocate); the
+    executor then validates the id is fresh + non-self-looping.
+    ``audit_meta`` rides on every ``add_*`` audit row under
+    ``tool_args["__planner_meta__"]`` so future self-loops are
+    diagnosable from the audit row alone (the existing
+    ``AuditEvent.extra`` field is dropped before persistence).
 
-    ``staged_offset_index`` is W62 — the count of prior in-batch staged adds
-    anchored at the same upstream. Callers (planner / Cmd+K) thread it so
-    fan-outs from one upstream stack vertically instead of overlapping. Only
-    consulted when ``insertion_context.pos_x`` / ``pos_y`` are both ``None``.
+    ``staged_offset_index`` is the count of prior in-batch staged adds
+    anchored at the same upstream. Callers (planner / Cmd+K) thread it
+    so fan-outs from one upstream stack vertically instead of overlapping.
+    Only consulted when ``insertion_context.pos_x`` / ``pos_y`` are both
+    ``None``.
 
-    ``extra_upstream_positions`` is W62 — a caller-supplied
-    ``{node_id: (pos_x, pos_y)}`` map merged into the upstream lookup before
-    the live graph. The planner uses this to anchor chained adds onto prior
-    in-batch staged-but-unapplied upstreams (which by definition aren't in
-    ``flow.nodes`` yet).
+    ``extra_upstream_positions`` is a caller-supplied
+    ``{node_id: (pos_x, pos_y)}`` map merged into the upstream lookup
+    before the live graph. The planner uses this to anchor chained adds
+    onto prior in-batch staged-but-unapplied upstreams (which by
+    definition aren't in ``flow.nodes`` yet).
     """
-    # W71 v1.5 — universal lenient JSON-string unwrap for CONTAINERS.
-    # Smaller open-weights models (llama-3.3-70b, in particular)
-    # routinely pass structured tool args as JSON-encoded strings rather
-    # than native objects / arrays. ``upstream_node_ids: "[3]"``,
-    # ``groupby_input: "{\"agg_cols\": ...}"`` — Pydantic cannot
-    # reverse-coerce these and burns retry budget on a recoverable
-    # type-wrap mistake. Apply the unwrap pass at the top of dispatch so
-    # every handler (add_*, update_node_settings, the meta ops, schema
-    # ops) gets the same forgiveness uniformly.
+    # Universal lenient JSON-string unwrap for CONTAINERS. Smaller
+    # open-weights models (llama-3.3-70b, in particular) routinely pass
+    # structured tool args as JSON-encoded strings rather than native
+    # objects / arrays. ``upstream_node_ids: "[3]"``, ``groupby_input:
+    # "{\"agg_cols\": ...}"`` — Pydantic cannot reverse-coerce these and
+    # burns retry budget on a recoverable type-wrap mistake. Apply the
+    # unwrap pass at the top of dispatch so every handler (add_*,
+    # update_node_settings, the meta ops, schema ops) gets the same
+    # forgiveness uniformly.
     #
     # Scalar str→int / str→float coercion (``node_id: "5"``) is left to
     # Pydantic's lax-mode model validation — see
@@ -487,11 +489,11 @@ def _handle_graph(
             extra_upstream_schemas=extra_upstream_schemas,
         )
 
-    # ``run_node`` / ``propose_subgraph`` were removed from the catalog in
-    # W46 (graph_ops.py 2026-05-05) and stay out — autonomous run-node is
-    # unsafe (worker collects, user code, external systems); propose_subgraph
-    # is redundant with W40's per-step staging. This rejection branch stays
-    # as defence-in-depth in case a future workstream re-adds either before
+    # ``run_node`` / ``propose_subgraph`` are not in the catalog —
+    # autonomous run-node is unsafe (worker collects, user code,
+    # external systems); propose_subgraph is redundant with the
+    # planner's per-step staging. This rejection branch stays as
+    # defence-in-depth in case a future workstream re-adds either before
     # wiring an implementation.
     return _reject_and_audit(
         tool_name=tool_name,
@@ -589,10 +591,10 @@ def _synthesize_example_from_schema(
 ) -> Any:
     """Synthesize a structurally-faithful placeholder for a JSON-Schema fragment.
 
-    Used in W67 settings-validation refusals to give the LLM a template payload
-    it can pattern-match on. Required object fields are filled; optional fields
-    are skipped to keep the example minimal. Cycle / depth bound prevents
-    runaway recursion on self-referential schemas.
+    Used in settings-validation refusals to give the LLM a template
+    payload it can pattern-match on. Required object fields are filled;
+    optional fields are skipped to keep the example minimal. Cycle /
+    depth bound prevents runaway recursion on self-referential schemas.
     """
     if schema is None or depth >= max_depth:
         return None
@@ -695,12 +697,12 @@ def _detect_sink_upstreams(flow, upstream_ids: list[int]) -> list[tuple[int, str
     sink in ``flow.nodes`` (i.e. ``NodeTemplate.output == 0``).
 
     Sinks (``explore_data`` / ``output`` / ``database_writer`` /
-    ``cloud_storage_writer`` / ``catalog_writer``) consume data and have no
-    output port, so wiring a downstream node to one is a static error. The
-    LLM occasionally proposes this when chat history doesn't disambiguate
-    and the resolver Tier-6 fallback (post-2026-05-07 fix) skips sinks —
-    this guard catches the explicit-Tier-1 case where the LLM names a sink
-    in ``upstream_node_ids`` directly.
+    ``cloud_storage_writer`` / ``catalog_writer``) consume data and have
+    no output port, so wiring a downstream node to one is a static error.
+    The LLM occasionally proposes this when chat history doesn't
+    disambiguate and the Tier-6 fallback skips sinks — this guard catches
+    the explicit-Tier-1 case where the LLM names a sink in
+    ``upstream_node_ids`` directly.
 
     Ids absent from ``flow.nodes`` (i.e. staged-this-session or invalid)
     are silently skipped here; the missing-id case is handled by downstream
@@ -751,13 +753,11 @@ def _format_settings_validation_refusal(
     """Translate a Pydantic ``ValidationError`` on a settings class into a
     course-correctable refusal detail.
 
-    Rationale (W67 Defect 2): the bare ``str(exc)`` is a stack-shaped string
-    the LLM treats as opaque. Live transcript 2026-05-06 showed the agent
-    looping 3× on ``raw_data_format`` because it never learned the field is
-    structured. The translated message names the failing field, the expected
-    shape (from the inlined catalog schema), the received Python type, and
-    embeds a concrete example payload — same field-and-shape contract W53
-    landed for the connection-validation site.
+    The bare ``str(exc)`` is a stack-shaped string the LLM treats as
+    opaque, leading to retry loops on the same misshapen field. The
+    translated message names the failing field, the expected shape (from
+    the inlined catalog schema), the received Python type, and embeds
+    a concrete example payload.
     """
     errors = exc.errors()
     if not errors:
@@ -778,15 +778,14 @@ def _format_settings_validation_refusal(
     if example is None:
         example = _synthesize_example_from_schema(field_schema)
 
-    # W71 v1.13B — FunctionInput-specific disambiguation. The naming
-    # collision (outer ``function`` parameter holding a FunctionInput
-    # object whose inner ``function`` field is a string) trips small
-    # models into reading *"got str"* as *"send a str"* — the LLM
-    # inverts the constraint on the second retry. Detect the case
-    # narrowly (FunctionInput summary + received str) and emit a
-    # rewritten refusal that names the OUTER vs INNER ``function``
-    # references explicitly, dropping the misread-prone *"not as a
-    # JSON-encoded string"* clause.
+    # FunctionInput-specific disambiguation. The naming collision (outer
+    # ``function`` parameter holding a FunctionInput object whose inner
+    # ``function`` field is a string) trips small models into reading
+    # *"got str"* as *"send a str"* — the LLM inverts the constraint on
+    # the second retry. Detect the case narrowly (FunctionInput summary
+    # + received str) and emit a rewritten refusal that names the OUTER
+    # vs INNER ``function`` references explicitly, dropping the
+    # misread-prone *"not as a JSON-encoded string"* clause.
     if (
         node_type == "formula"
         and isinstance(received, str)
@@ -838,19 +837,19 @@ def _handle_add_node(
     extra_upstream_positions: dict[int, tuple[float, float]] | None = None,
     extra_upstream_schemas: dict[int, Any] | None = None,
 ) -> ToolExecutionResult:
-    # W54 — every audit row this function emits piggybacks on tool_args
-    # under the namespaced ``__planner_meta__`` key. Rebind ``redacted_args``
-    # once at the top so all downstream rejection / record_event sites pick
-    # it up automatically. (Why tool_args and not AuditEvent.extra: the
-    # extra field is silently dropped by record_event — the AiAuditEvent
-    # ORM has no ``extra`` column. See plan §6.)
+    # Every audit row this function emits piggybacks on tool_args under
+    # the namespaced ``__planner_meta__`` key. Rebind ``redacted_args``
+    # once at the top so all downstream rejection / record_event sites
+    # pick it up automatically. (Why tool_args and not AuditEvent.extra:
+    # the extra field is silently dropped by record_event — the
+    # AiAuditEvent ORM has no ``extra`` column.)
     if audit_meta is not None:
         redacted_args = {**redacted_args, "__planner_meta__": audit_meta}
 
-    # W62 — auto-layout: when the caller didn't supply pos_x/pos_y (both
-    # ``None``), derive them from the upstream's canvas position so AI-staged
-    # nodes don't pile up at (0, 0). When the caller passed explicit floats —
-    # including ``0.0`` — they win verbatim.
+    # Auto-layout: when the caller didn't supply pos_x/pos_y (both
+    # ``None``), derive them from the upstream's canvas position so
+    # AI-staged nodes don't pile up at (0, 0). When the caller passed
+    # explicit floats — including ``0.0`` — they win verbatim.
     if insertion_context.pos_x is None and insertion_context.pos_y is None:
         resolved_x, resolved_y = _resolve_insertion_position(
             flow,
@@ -860,13 +859,13 @@ def _handle_add_node(
         )
         insertion_context = insertion_context.model_copy(update={"pos_x": resolved_x, "pos_y": resolved_y})
 
-    # W71 v2.1 — agent surfaces are not allowed to stage writer-shaped
-    # node types (output / database_writer / cloud_storage_writer /
-    # catalog_writer). The catalog filter in registry.build_tool_catalog
-    # already hides them from the LLM-facing tool list, but the LLM can
-    # hallucinate a call name (or a future regression could re-expose
-    # the tool); refuse here so the safety property holds regardless of
-    # how the call reached us.
+    # Agent surfaces are not allowed to stage writer-shaped node types
+    # (output / database_writer / cloud_storage_writer / catalog_writer).
+    # The catalog filter in registry.build_tool_catalog already hides
+    # them from the LLM-facing tool list, but the LLM can hallucinate a
+    # call name (or a future regression could re-expose the tool);
+    # refuse here so the safety property holds regardless of how the
+    # call reached us.
     if node_type in safety.AGENT_BLOCKED_NODE_TYPES:
         return _reject_and_audit(
             tool_name=tool_name,
@@ -897,7 +896,7 @@ def _handle_add_node(
             refusal_detail=f"unknown node type: {node_type!r}",
         )
 
-    # --- W54 stage 0: LLM-provided node_id validation ---
+    # --- Stage 0: LLM-provided node_id validation ---
     # Only fires when the planner observed the LLM emit ``node_id`` itself
     # rather than letting the planner allocate. The id must be fresh
     # (not in the live graph), not a duplicate of another agent-staged id,
@@ -938,10 +937,10 @@ def _handle_add_node(
             )
 
     # --- Refusal stage 1: Pydantic shape ---
-    # W71 v2.8D — manual_input has a columnar ``raw_data_format`` schema
-    # but LLMs naturally emit row-oriented data and dict-of-types columns
-    # (audit log 2026-05-09). Normalize before validation so the strict
-    # refusal path stays for genuinely bad payloads.
+    # manual_input has a columnar ``raw_data_format`` schema but LLMs
+    # naturally emit row-oriented data and dict-of-types columns.
+    # Normalize before validation so the strict refusal path stays for
+    # genuinely bad payloads.
     if node_type == "manual_input":
         tool_args = _normalize_manual_input_args(tool_args)
     try:
@@ -957,7 +956,7 @@ def _handle_add_node(
             refusal_detail=_format_settings_validation_refusal(exc=exc, settings_cls=settings_cls, node_type=node_type),
         )
 
-    # --- Refusal stage 1.5: upstream sink validation (2026-05-07) ---
+    # --- Refusal stage 1.5: upstream sink validation ---
     # The Tier-6 resolver fallback already filters sinks (see planner.py).
     # This guard catches the explicit case where the LLM named a sink in
     # ``upstream_node_ids`` directly (Tier 1) — the resolver respects
@@ -977,21 +976,21 @@ def _handle_add_node(
             refusal_detail=_format_sink_upstream_refusal(flow, sink_upstreams),
         )
 
-    # --- Refusal stage 1.6: join-shaped wire validation (W71 v1.16) ---
-    # Defense-in-depth: the v1.15A spec REQUIRES left_input_node_id +
-    # right_input_node_id for join-shaped types, and the planner's
-    # post-pick_upstream check enforces shape. But providers
-    # (OpenRouter, Groq) don't always validate ``required`` strictly,
-    # and the LLM occasionally ignores the spec and emits the legacy
-    # ``upstream_node_ids: [left, right]`` shape with right_input_node_id
-    # null — both ids in the list. The downstream
+    # --- Refusal stage 1.6: join-shaped wire validation ---
+    # Defense-in-depth: the pick_upstream tool spec REQUIRES
+    # left_input_node_id + right_input_node_id for join-shaped types,
+    # and the planner's post-pick_upstream check enforces shape. But
+    # providers (OpenRouter, Groq) don't always validate ``required``
+    # strictly, and the LLM occasionally ignores the spec and emits the
+    # legacy ``upstream_node_ids: [left, right]`` shape with
+    # right_input_node_id null — both ids in the list. The downstream
     # ``flow_node.add_node_connection`` then silently OVERWRITES
-    # ``main_inputs`` on the second main-port call (line 638-641 has
-    # ``input <= 2 → main_inputs = [from_node]`` which clobbers
+    # ``main_inputs`` on the second main-port call (the input <= 2
+    # branch sets ``main_inputs = [from_node]`` which clobbers
     # previous), leaving the join with only one wire (last write wins)
-    # and the LLM gets *"applied"* without any error. That's the
-    # 2026-05-08 cross_join dogfood failure mode. Refuse here so the
-    # error reaches the LLM and the retry path produces correct shape.
+    # and the LLM gets *"applied"* without any error. Refuse here so
+    # the error reaches the LLM and the retry path produces correct
+    # shape.
     from flowfile_core.ai.tools.meta_ops import JOIN_SHAPED_NODE_TYPES
     if node_type in JOIN_SHAPED_NODE_TYPES:
         upstream_ids_for_check = list(insertion_context.upstream_node_ids or [])
@@ -1043,16 +1042,17 @@ def _handle_add_node(
                 refusal_detail=violation,
             )
 
-    # W62 — stamp the resolved layout coordinates onto the settings object.
-    # The apply path (``_apply_add_node`` → ``flow.add_<node_type>(settings)``)
-    # reads ``settings.pos_x`` / ``settings.pos_y`` (via
-    # ``set_node_information``) when stamping the canvas position; the
-    # ``InsertionContext`` itself is only consulted for connection wiring.
-    # Only stamp when the LLM did NOT include pos_x / pos_y in its tool_args
-    # — explicit caller intent (even ``0.0``) wins. Detect via key presence
-    # in ``tool_args`` rather than ``settings.pos_x == 0`` because
-    # ``NodeBase`` defaults pos_x / pos_y to 0 and we can't distinguish
-    # "LLM said 0" from "LLM omitted it" once Pydantic has run.
+    # Stamp the resolved layout coordinates onto the settings object.
+    # The apply path (``_apply_add_node`` →
+    # ``flow.add_<node_type>(settings)``) reads ``settings.pos_x`` /
+    # ``settings.pos_y`` (via ``set_node_information``) when stamping the
+    # canvas position; the ``InsertionContext`` itself is only consulted
+    # for connection wiring. Only stamp when the LLM did NOT include
+    # pos_x / pos_y in its tool_args — explicit caller intent (even
+    # ``0.0``) wins. Detect via key presence in ``tool_args`` rather
+    # than ``settings.pos_x == 0`` because ``NodeBase`` defaults pos_x /
+    # pos_y to 0 and we can't distinguish "LLM said 0" from "LLM
+    # omitted it" once Pydantic has run.
     settings_pos_x_explicit = "pos_x" in tool_args and tool_args["pos_x"] is not None
     settings_pos_y_explicit = "pos_y" in tool_args and tool_args["pos_y"] is not None
     if (
@@ -1087,7 +1087,7 @@ def _handle_add_node(
                 refusal_detail=f"blocked: {', '.join(egress_labels)}",
             )
 
-        # --- Refusal stage 2.5: polars_code sandbox validation (W71 v2.13) ---
+        # --- Refusal stage 2.5: polars_code sandbox validation ---
         polars_rejection = _validate_polars_code_body_or_reject(
             node_type=node_type,
             code=code,
@@ -1100,7 +1100,7 @@ def _handle_add_node(
         if polars_rejection is not None:
             return polars_rejection
 
-    # --- Resolve upstream schemas (D011 tiers 0-1, warn on tier 2) ---
+    # --- Resolve upstream schemas (tiers 0-1, warn on tier 2) ---
     upstream_ids = list(insertion_context.upstream_node_ids)
     if insertion_context.right_input_node_id is not None and insertion_context.right_input_node_id not in upstream_ids:
         upstream_ids.append(insertion_context.right_input_node_id)
@@ -1233,16 +1233,16 @@ def _apply_add_node(flow, node_type: str, settings: BaseModel, ctx: InsertionCon
 
     target_id = settings.node_id
     main_ids = [uid for uid in ctx.upstream_node_ids if uid != ctx.right_input_node_id]
-    # W71 v1.16 — ``NodeConnection.create_from_simple_input`` takes the
-    # SEMANTIC ``input_type`` ("main" / "right" / "left"), NOT the
-    # connection-class string ("input-0" / "input-1"). The pre-v1.16
-    # code passed ``input_type="input-0"`` / ``"input-1"`` which fell
-    # through the match block to the default ``_ → "input-0"``, so
-    # BOTH the main and right wires got connection_class "input-0" —
-    # `add_node_connection` then routed both to ``main_inputs`` and the
-    # second call silently overwrote the first (the ``input <= 2``
-    # branch in flow_node.py:638 clobbers main_inputs each time).
-    # Pass the semantic names so the connection class lands correctly.
+    # ``NodeConnection.create_from_simple_input`` takes the SEMANTIC
+    # ``input_type`` ("main" / "right" / "left"), NOT the
+    # connection-class string ("input-0" / "input-1"). Passing
+    # ``input_type="input-0"`` / ``"input-1"`` falls through to the
+    # default ``_ → "input-0"`` in the match block, so BOTH the main and
+    # right wires would get connection_class "input-0" —
+    # ``add_node_connection`` then routes both to ``main_inputs`` and
+    # the second call silently overwrites the first (the ``input <= 2``
+    # branch in flow_node.py clobbers main_inputs each time). Pass the
+    # semantic names so the connection class lands correctly.
     for uid in main_ids:
         connection = input_schema.NodeConnection.create_from_simple_input(
             from_id=uid, to_id=target_id, input_type="main", output_handle="output-0"
@@ -1271,23 +1271,22 @@ _CONNECTION_ID_ARROW_RE: Final = re.compile(
 
 
 def _coerce_connection_id_to_flat(tool_args: dict[str, Any]) -> dict[str, Any]:
-    """W71 v2.8C — accept the LLM's natural ``connection_id`` shape.
+    """Accept the LLM's natural ``connection_id`` shape.
 
-    Audit log 2026-05-09 showed the LLM emitting
-    ``{"connection_id": "1→2"}`` for a delete_connection call,
-    which got rejected with *"missing required field:
-    from_node_id"* — burning a retry round before the LLM
-    re-emitted the structured ``{from_node_id, to_node_id}``
-    shape. Same posture as v1.4's universal JSON-string unwrap:
-    accept the LLM's natural emission rather than forcing the
-    function-calling API to teach it the strict shape via
+    The LLM occasionally emits ``{"connection_id": "1→2"}`` for a
+    delete_connection call. Without this coercion, that gets rejected
+    with *"missing required field: from_node_id"* — burning a retry
+    round before the LLM re-emits the structured
+    ``{from_node_id, to_node_id}`` shape. Same posture as the universal
+    JSON-string unwrap: accept the LLM's natural emission rather than
+    forcing the function-calling API to teach it the strict shape via
     refusal-loop attrition.
 
     Recognises three arrow-style separators commonly seen in LLM
     outputs (``->``, ``→``, and ``:``) so we don't have to enumerate
-    every possible whitespace / Unicode variant. Returns
-    ``tool_args`` unchanged when ``connection_id`` is absent or
-    can't be parsed — defensive for the strict-shape path.
+    every possible whitespace / Unicode variant. Returns ``tool_args``
+    unchanged when ``connection_id`` is absent or can't be parsed —
+    defensive for the strict-shape path.
     """
     raw = tool_args.get("connection_id")
     if raw is None:
@@ -1394,21 +1393,20 @@ def _normalize_manual_input_data(data: Any, columns: Any) -> Any:
 
 
 def _normalize_manual_input_args(tool_args: dict[str, Any]) -> dict[str, Any]:
-    """W71 v2.8D — accept the LLM's natural ``raw_data_format`` shapes.
+    """Accept the LLM's natural ``raw_data_format`` shapes.
 
     The schema (``schemas.input_schema.RawData``) demands columnar:
 
       columns: [{name, data_type}, ...]
       data:    [<col0_values>, <col1_values>, ...]   # data[i] = column i
 
-    Audit logs from 2026-05-09 show the LLM consistently emitting
-    row-oriented data (one inner list per record) and — less often —
-    ``columns`` as a dict-of-types, even though the in-prompt example
-    is canonical. The JSON-Schema rendering of ``data: list[list]`` is
-    unconstrained at the inner level (``items: {}``), so the schema
-    doesn't teach the columnar invariant. Same posture as v2.8C's
-    ``_coerce_connection_id_to_flat``: accept the LLM's natural
-    emission rather than burning retry rounds on shape attrition.
+    LLMs consistently emit row-oriented data (one inner list per
+    record) and — less often — ``columns`` as a dict-of-types, even
+    though the in-prompt example is canonical. The JSON-Schema rendering
+    of ``data: list[list]`` is unconstrained at the inner level
+    (``items: {}``), so the schema doesn't teach the columnar invariant.
+    Same posture as ``_coerce_connection_id_to_flat``: accept the LLM's
+    natural emission rather than burning retry rounds on shape attrition.
 
     Three recoverable shapes (returns ``tool_args`` unchanged when
     nothing matches — preserves the strict refusal path for genuinely
@@ -1453,10 +1451,9 @@ def _build_node_connection_from_flat(tool_args: dict[str, Any]) -> input_schema.
     We avoid ``create_from_simple_input`` because it silently downgrades unrecognised
     input_type values to ``"input-0"`` (input_schema.py: ``create_from_simple_input``).
 
-    W71 v2.8C — runs ``_coerce_connection_id_to_flat`` first so an
-    LLM emitting ``{"connection_id": "5→6"}`` (audit log
-    2026-05-09) is rewritten to the structured shape before
-    validation, instead of burning a retry round on the
+    Runs ``_coerce_connection_id_to_flat`` first so an LLM emitting
+    ``{"connection_id": "5→6"}`` is rewritten to the structured shape
+    before validation, instead of burning a retry round on the
     "missing required field" refusal.
     """
     tool_args = _coerce_connection_id_to_flat(tool_args)
@@ -1481,16 +1478,16 @@ def _build_node_connection_from_flat(tool_args: dict[str, Any]) -> input_schema.
 
 
 def _format_connection_validation_error(exc: ValidationError) -> str:
-    """Translate Pydantic field paths from internal ``NodeConnection`` field names
-    back to the flat tool-spec field names (``input_class``, ``output_class``,
-    ``from_node_id``, ``to_node_id``). Otherwise the W53 retry loop hands the LLM
-    error messages referring to fields it never sees in the tool schema.
+    """Translate Pydantic field paths from internal ``NodeConnection``
+    field names back to the flat tool-spec field names (``input_class``,
+    ``output_class``, ``from_node_id``, ``to_node_id``). Otherwise the
+    retry loop hands the LLM error messages referring to fields it never
+    sees in the tool schema.
 
-    2026-05-07 — appends a concrete example payload when any error names an
-    integer field (mirrors W67's ``_format_settings_validation_refusal``: when
-    the LLM JSON-string-encodes ids, raw Pydantic prose isn't enough — the
-    example shape teaches the corrected call in one retry instead of the
-    cascading-retry exhaustion the dogfood trace showed).
+    Appends a concrete example payload when any error names an integer
+    field — when the LLM JSON-string-encodes ids, raw Pydantic prose
+    isn't enough; the example shape teaches the corrected call in one
+    retry instead of cascading-retry exhaustion.
     """
     parts = []
     int_field_error = False
@@ -1549,16 +1546,15 @@ def _handle_connect(
             refusal_detail=f"connection validation failed: {exc}",
         )
 
-    # W71 v2.10A — same-id ``connect`` is a self-loop the runtime
-    # cycle check at ``flow_graph.add_connection`` would catch
-    # later, but only at apply-time (after the diff bundle ships
-    # and rolls back). Reject at staging so the LLM gets immediate
-    # feedback on the same round and re-emits with valid distinct
-    # ids. Mirrors v1.16's join-shaped self-loop posture. Audit
-    # log 2026-05-09 showed the LLM emit ``connect 7→7`` as the
-    # third op of a re-route batch; without this guard the entire
-    # 6-op diff aborted with *"422: Connecting node 7 -> 7 would
-    # create a cycle"* and the user had to re-prompt from scratch.
+    # Same-id ``connect`` is a self-loop the runtime cycle check at
+    # ``flow_graph.add_connection`` would catch later — but only at
+    # apply-time (after the diff bundle ships and rolls back). Reject
+    # at staging so the LLM gets immediate feedback on the same round
+    # and re-emits with valid distinct ids. Mirrors the join-shaped
+    # self-loop posture above. Without this guard, an LLM-emitted
+    # ``connect 7→7`` aborts the whole diff at apply-time with
+    # *"422: Connecting node 7 -> 7 would create a cycle"* and the
+    # user has to re-prompt from scratch.
     from_id = connection.output_connection.node_id
     to_id = connection.input_connection.node_id
     if from_id == to_id:
@@ -1577,8 +1573,8 @@ def _handle_connect(
             ),
         )
 
-    # 2026-05-07 — refuse explicit ``connect`` calls whose upstream side is a
-    # sink. ``output_connection.node_id`` is the FROM (upstream) side; if it
+    # Refuse explicit ``connect`` calls whose upstream side is a sink.
+    # ``output_connection.node_id`` is the FROM (upstream) side; if it
     # has no output port, the connection is a static error.
     upstream_id = connection.output_connection.node_id
     sink_upstreams = _detect_sink_upstreams(flow, [upstream_id])
@@ -1807,20 +1803,20 @@ def _handle_update_node_settings(
     dry_run_cache: DryRunCache,
     extra_upstream_schemas: dict[int, Any] | None = None,
 ) -> ToolExecutionResult:
-    """W47 — modify an existing node's settings.
+    """Modify an existing node's settings.
 
-    Mirrors :func:`_handle_add_node`'s shape: validates new settings via the
-    Pydantic class for the live node's type, runs the network-egress check
-    for code-bearing settings, resolves upstream schemas via the D011 tier
-    handler from the existing wiring, validates column references, predicts
-    the new output schema (mirror for static, kernel dry-run for dynamic),
-    then either stages the modification for a :class:`GraphDiff` or
-    re-fires the production ``add_<node_type>`` path so the live node
-    inherits the new settings.
+    Mirrors :func:`_handle_add_node`'s shape: validates new settings via
+    the Pydantic class for the live node's type, runs the network-egress
+    check for code-bearing settings, resolves upstream schemas via the
+    tier handler from the existing wiring, validates column references,
+    predicts the new output schema (mirror for static, kernel dry-run
+    for dynamic), then either stages the modification for a
+    :class:`GraphDiff` or re-fires the production ``add_<node_type>``
+    path so the live node inherits the new settings.
 
     The stage payload carries ``kind="modification"`` plus old and new
-    settings dicts so the diff preview can render an old-vs-new view; the
-    old-settings capture happens at stage time (not apply time) so a
+    settings dicts so the diff preview can render an old-vs-new view;
+    the old-settings capture happens at stage time (not apply time) so a
     rejected diff reverts to what the user was looking at when reviewing.
     """
     node_id_raw = tool_args.get("node_id")
@@ -1929,7 +1925,7 @@ def _handle_update_node_settings(
                 refusal_detail=f"blocked: {', '.join(egress_labels)}",
             )
 
-        # --- Refusal stage 2.5: polars_code sandbox validation (W71 v2.13) ---
+        # --- Refusal stage 2.5: polars_code sandbox validation ---
         polars_rejection = _validate_polars_code_body_or_reject(
             node_type=node_type,
             code=code,
@@ -2177,9 +2173,9 @@ def _handle_schema(
         )
 
     if op == "read_node_preview":
-        # Preview is metadata-only in W31 — actual sample-row return belongs
-        # to a later workstream that wires the existing GET /node?get_data
-        # path through the audit pipeline.
+        # Preview is metadata-only — actual sample-row return is not
+        # wired here. Use the existing GET /node?get_data=true path for
+        # row data.
         return _reject_and_audit(
             tool_name=tool_name,
             tool_args=redacted_args,
@@ -2187,7 +2183,7 @@ def _handle_schema(
             user_id=user_id,
             flow_id=flow.flow_id,
             refusal_reason=None,
-            refusal_detail="schema.read_node_preview not implemented in W31; use the existing GET /node?get_data=true",
+            refusal_detail="schema.read_node_preview not implemented; use the existing GET /node?get_data=true",
         )
 
     return _reject_and_audit(
@@ -2211,9 +2207,8 @@ def _handle_codegen(
     flow_id: int,
 ) -> ToolExecutionResult:
     """Codegen tools are LLM-facing proposals — the LLM should call
-    ``flowfile.graph.add_polars_code`` etc. directly with its generated code.
-    W31 returns a friendly hint; W40's planner replaces this stub with actual
-    LLM-driven code generation."""
+    ``flowfile.graph.add_polars_code`` etc. directly with its generated
+    code. This stub returns a friendly hint."""
     audit_row = _record_event(
         session_id=session_id,
         user_id=user_id,
@@ -2230,7 +2225,7 @@ def _handle_codegen(
         staged_node_payload={
             "codegen_op": op,
             "hint": (
-                "Codegen tools are not directly executed in W31. Generate the code "
+                "Codegen tools are not directly executed. Generate the code "
                 f"yourself and call flowfile.graph.add_{op.replace('generate_', '').replace('_code', '_code')} "
                 "with the proposed snippet."
             ),
@@ -2239,12 +2234,11 @@ def _handle_codegen(
 
 
 def _unwrap_json_string_values(value: Any) -> Any:
-    """W71 v1.5 — recursively unwrap JSON-encoded string CONTAINERS in
-    tool args.
+    """Recursively unwrap JSON-encoded string CONTAINERS in tool args.
 
     Smaller open-weights models routinely emit structured tool args as
     JSON-encoded strings rather than native objects / arrays. Two
-    failure modes seen in dogfood that this still handles:
+    common failure modes:
 
     * ``upstream_node_ids: "[3, 4]"`` (the field is array<int>; model
       emits a string).
@@ -2252,10 +2246,10 @@ def _unwrap_json_string_values(value: Any) -> Any:
       delivered as a JSON-string).
 
     Pydantic cannot reverse-coerce a JSON-string into a dict / list at
-    validation time, so the planner used to spend its retry budget
-    re-asking the model to fix shape. Pre-unwrapping at the executor
-    seam means the rest of the pipeline (Pydantic validation, custom
-    handlers) sees the native types it expects.
+    validation time, so without this the planner spends its retry
+    budget re-asking the model to fix shape. Pre-unwrapping at the
+    executor seam means the rest of the pipeline (Pydantic validation,
+    custom handlers) sees the native types it expects.
 
     The heuristic is intentionally narrow: only attempt to JSON-parse
     strings that **start with ``{`` or ``[``**. This protects free-form
@@ -2266,16 +2260,13 @@ def _unwrap_json_string_values(value: Any) -> Any:
     being parsed accidentally.
 
     Bare scalar parse-results — int, float, bool, null — are NOT
-    returned. The earlier W71 v1.4 implementation eagerly unwrapped
-    digit-prefixed strings into ints, which corrupted str-typed fields
-    on the 2026-05-09 dogfood failure: the LLM correctly emitted
-    ``BasicFilter.value = "1"``, this function turned it into ``1``,
-    Pydantic rejected the int for a str field, and the rejection blamed
-    the LLM ("got int") for the wrong shape. Pydantic v2 lax mode
-    handles ``str → int`` coercion at the model layer when a field
-    actually wants an int (verified by
-    ``test_connect_string_node_ids_get_example_nudge``), so leaving
-    scalars as strings is both safe and correct.
+    returned. Eagerly unwrapping digit-prefixed strings into ints
+    corrupts str-typed fields: when the LLM correctly emits
+    ``BasicFilter.value = "1"``, turning that into ``1`` makes Pydantic
+    reject the int for a str field and the rejection blames the LLM
+    for the wrong shape. Pydantic v2 lax mode handles ``str → int``
+    coercion at the model layer when a field actually wants an int, so
+    leaving scalars as strings is both safe and correct.
 
     Walks dicts and lists recursively so partially-encoded payloads
     (e.g. ``{"join_input": {"join_mapping": "[{...}]"}}``) get fully
@@ -2311,7 +2302,7 @@ def _unwrap_json_string_values(value: Any) -> Any:
 
 
 def _coerce_to_int_or_self(value: Any) -> Any:
-    """W71 v1.3 — small helper for lenient ``int | null`` parsing.
+    """Small helper for lenient ``int | null`` parsing.
 
     Returns the parsed int when ``value`` is a stringified int (``"4"``)
     or None when it's an empty string. Otherwise returns the original
@@ -2338,7 +2329,7 @@ def _coerce_to_int_or_self(value: Any) -> Any:
 
 
 def _coerce_to_int_list_or_self(value: Any) -> Any:
-    """W71 v1.3 — coerce common llama-70b mis-shapes back to ``list[int]``.
+    """Coerce common llama-70b mis-shapes back to ``list[int]``.
 
     Accepts:
 
@@ -2389,7 +2380,7 @@ def _handle_meta(
     user_id: int,
     flow_id: int,
 ) -> ToolExecutionResult:
-    """Dispatch the W71 staged meta ops.
+    """Dispatch the staged meta ops.
 
     * ``classify_intent`` — stage 0: returns ``extra["op_kind"]``.
     * ``pick_node_type`` — stage 1: returns ``extra["node_type"]``.
@@ -2400,8 +2391,6 @@ def _handle_meta(
     against the schema (enum / type), emit one ``AuditEvent``, return
     ``status="applied"`` with the chosen value(s) on ``extra`` so the
     planner can mutate session state.
-
-    W71 v1.10 — ``pick_category`` (legacy two-stage agent) was removed.
     """
     if op == "emit_plan":
         plan = tool_args.get("plan")
@@ -2470,10 +2459,10 @@ def _handle_meta(
         )
 
     if op == "verify_completion":
-        # W71 v2.12 — opt-in verify-completion gate. The LLM certifies
-        # whether every step of the user's plan has a corresponding
-        # successful tool call. is_complete=True → loop terminates;
-        # False → planner restarts at classify for the missing steps.
+        # Opt-in verify-completion gate. The LLM certifies whether every
+        # step of the user's plan has a corresponding successful tool
+        # call. is_complete=True → loop terminates; False → planner
+        # restarts at classify for the missing steps.
         is_complete = tool_args.get("is_complete")
         rationale = tool_args.get("rationale", "")
         if not isinstance(is_complete, bool):
@@ -2539,13 +2528,13 @@ def _handle_meta(
         )
 
     if op == "pick_upstream":
-        # W71 v1.15A — for join-shaped node types the spec uses a
-        # symmetric scalar pair (``left_input_node_id`` +
-        # ``right_input_node_id``). When the LLM emits that shape,
-        # translate to the legacy list+scalar representation BEFORE
-        # the coercion / validation runs so the downstream consumers
-        # (planner session state, ``_handle_add_node`` insertion
-        # context) see exactly what they did pre-v1.15.
+        # For join-shaped node types the spec uses a symmetric scalar
+        # pair (``left_input_node_id`` + ``right_input_node_id``). When
+        # the LLM emits that shape, translate to the legacy
+        # list+scalar representation BEFORE the coercion / validation
+        # runs so the downstream consumers (planner session state,
+        # ``_handle_add_node`` insertion context) see the canonical
+        # form.
         raw_left_input = tool_args.get("left_input_node_id")
         if raw_left_input is not None:
             raw_left_coerced = _coerce_to_int_or_self(raw_left_input)
@@ -2558,16 +2547,16 @@ def _handle_meta(
         raw_right = tool_args.get("right_input_node_id")
         rationale = tool_args.get("rationale", "")
 
-        # W71 v1.3 — coerce common llama-70b mis-shapes back to the
-        # expected list[int]. Without this, every dogfood run on
-        # llama-3.3-70b spends its retry budget on the same predictable
-        # type errors. Three mistakes seen in practice:
+        # Coerce common llama-70b mis-shapes back to the expected
+        # list[int]. Without this, every llama-3.3-70b run spends its
+        # retry budget on the same predictable type errors. Three
+        # mistakes seen in practice:
         #   1. ``upstream_node_ids: 4`` (single int, not wrapped in a list)
         #   2. ``upstream_node_ids: "4"`` (JSON-encoded as string)
         #   3. ``upstream_node_ids: "[4]"`` or ``"4,5"`` (CSV string)
-        # Each gets coerced to ``[4]`` / ``[4, 5]`` rather than rejected.
-        # We only coerce — if the result still doesn't match list[int]
-        # the original rejection still fires below.
+        # Each gets coerced to ``[4]`` / ``[4, 5]`` rather than
+        # rejected. We only coerce — if the result still doesn't match
+        # list[int] the original rejection fires below.
         raw_upstream = _coerce_to_int_list_or_self(raw_upstream)
         raw_right = _coerce_to_int_or_self(raw_right)
 

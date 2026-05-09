@@ -1,27 +1,27 @@
-"""Disk-persisted ``AgentSession`` records — owned by W42; in-memory shape by W40.
+"""Disk-persisted ``AgentSession`` records.
 
-W40 ships the **in-memory** session lifecycle. W42 swaps the in-memory store
-for a disk-backed sidecar under ``{storage.ai_sessions_directory}/{flow_id}/``
-(per plan §5.6) without touching the public surface (``register_session`` /
-``get_session`` / ``pop_session`` / ``clear_for_tests``) — same pattern
-W41's ``_DIFFS`` store now follows. The active repo is module-level
-``_REPO``; ``clear_for_tests`` swaps it for a fresh
-:class:`flowfile_core.ai.session_store.InMemorySessionRepository` so tests
-never touch real user data.
+The session lifecycle is in-memory; the store is disk-backed via a sidecar
+under ``{storage.ai_sessions_directory}/{flow_id}/`` exposing the public
+surface ``register_session`` / ``get_session`` / ``pop_session`` /
+``clear_for_tests``. The active repo is module-level ``_REPO``;
+``clear_for_tests`` swaps it for a fresh
+:class:`flowfile_core.ai.session_store.InMemorySessionRepository` so
+tests never touch real user data.
 
-Per D006 (snapshot+warn-and-pause), :func:`capture_graph_snapshot` records the
-shape of the live graph at agent-start and :func:`detect_drift` compares the
-live graph to that snapshot before each tool dispatch. Drift detection is
-**id-set-only** (W45): we surface deletions (``missing_node_ids``) and
-external additions (``external_added_node_ids``, excluding the agent's own
-``staged_node_ids``). Hash-based mutation detection (settings/schema changes)
-was removed in W45 because the executor's upstream schema warm-up
-(``_resolve_upstream_schemas`` calling ``get_predicted_schema(force=True)``)
-mutated live nodes as a side-effect, making the agent self-drift on its own
-staging. Restoring hash-based drift is a separate workstream.
+:func:`capture_graph_snapshot` records the shape of the live graph at
+agent-start and :func:`detect_drift` compares the live graph to that
+snapshot before each tool dispatch. Drift detection is **id-set-only**:
+we surface deletions (``missing_node_ids``) and external additions
+(``external_added_node_ids``, excluding the agent's own
+``staged_node_ids``). Hash-based mutation detection (settings/schema
+changes) was tried but removed because the executor's upstream schema
+warm-up (``_resolve_upstream_schemas`` calling
+``get_predicted_schema(force=True)``) mutated live nodes as a
+side-effect, making the agent self-drift on its own staging. Restoring
+hash-based drift is a separate workstream.
 
-Per D007, sessions are sidecar-by-default and never embedded in ``.flowfile``
-unless the user opts in via the export toggle (W43).
+Sessions are sidecar-by-default and never embedded in ``.flowfile``
+unless the user opts in via the export toggle.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
-# Wire types — D006 snapshot + drift                                           #
+# Wire types — snapshot + drift                                                #
 # --------------------------------------------------------------------------- #
 
 
@@ -64,36 +64,32 @@ SessionStatus = Literal[
     "aborted",
     "failed",
 ]
-"""Session lifecycle. ``paused_user_action`` (W42) is the cold-start state a
+"""Session lifecycle. ``paused_user_action`` is the cold-start state a
 ``running`` session flips to when the in-memory mirror is empty — the
 previous SSE stream is dead, the user must explicitly re-attach via
 ``POST /ai/agent/{session_id}/resume?action=continue``.
 
-``awaiting_user_input`` (W49) is the post-completion sub-state when the
+``awaiting_user_input`` is the post-completion sub-state when the
 planner stops with a clarifying question (no tool calls, last assistant
 message looks like a question, ``staged_results`` empty). Distinct from
 ``completed`` so the frontend can render *"Agent waiting for your reply…"*
 instead of the misleading *"finished — nothing to stage"*. Both
 ``awaiting_user_input`` and ``completed`` are followup-resumable via
-``POST /ai/agent/{session_id}/followup`` — see W49 for the wire shape."""
+``POST /ai/agent/{session_id}/followup``."""
 
 PlannerSurface = Literal["agent_complex", "agent_staged", "agent_live"]
-"""W71 v1.10 — legacy ``"agent"`` surface (two-stage with
-``flowfile.meta.pick_category``) was removed: it was the failure mode
-that triggered W71 (small open-weights models silently fall back to
-text-JSON-in-content instead of using the function-calling API).
-``agent_staged`` covers the small-model case via a one-tool-per-round
-state machine; ``agent_complex`` covers single-shot full-catalog use;
-W71 v2.0 — ``agent_live`` is a third opt-in surface that mirrors
+"""``agent_staged`` covers the small-model case via a
+one-tool-per-round state machine. ``agent_complex`` covers single-shot
+full-catalog use. ``agent_live`` is a third opt-in surface that mirrors
 ``agent_staged``'s state machine through fill_settings but applies
 each step LIVE to the canvas (mode="apply" not "stage"), runs the
 affected subgraph (Performance) or evaluates a sample (Development),
-and feeds the runtime observation back to the LLM as the next
-tool reply. On runtime failure the just-added node is auto-deleted
-and the LLM retries up to ``max_retries_per_step``; the canvas is
-always at the last-successful state. No staged_results bundle —
-every action is live; the chat trail's ``applied_results`` list is
-the equivalent record-of-truth for that surface."""
+and feeds the runtime observation back to the LLM as the next tool
+reply. On runtime failure the just-added node is auto-deleted and the
+LLM retries up to ``max_retries_per_step``; the canvas is always at
+the last-successful state. No staged_results bundle — every action is
+live; the chat trail's ``applied_results`` list is the equivalent
+record-of-truth for that surface."""
 SamplesMode = Literal["off", "regex"]
 
 
@@ -106,12 +102,13 @@ PlannerStage = Literal[
     "single_stage_op",
     "verify_completion",
 ]
-"""W71 — current state in the ``agent_staged`` multi-stage state machine.
+"""Current state in the ``agent_staged`` multi-stage state machine.
 
-Each stage exposes exactly one tool to the function-calling API so smaller
-models comply with the API rather than emitting text-JSON. The legacy
-``agent`` and ``agent_complex`` surfaces ignore this field — only the
-``agent_staged`` surface drives transitions through it.
+Each stage exposes exactly one tool to the function-calling API so
+smaller models comply with the API rather than emitting text-JSON. The
+``agent_complex`` surface ignores this field — only the
+``agent_staged`` (and ``agent_live``) surface drives transitions
+through it.
 
 * ``classify`` — exposes ``flowfile.meta.classify_intent``; the LLM picks
   an :data:`PlannerOpKind` value. Default at session start.
@@ -135,7 +132,7 @@ PlannerOpKind = Literal[
     "disconnect",
     "other",
 ]
-"""W71 — the user-intent kind chosen by ``classify_intent`` at stage 0.
+"""The user-intent kind chosen by ``classify_intent`` at stage 0.
 
 ``add`` advances through stages ``pick_type → pick_upstream → fill_settings``.
 ``modify`` / ``delete`` / ``connect`` / ``disconnect`` advance to
@@ -146,13 +143,14 @@ response (used for clarifying questions, "what does this flow do?", etc.).
 
 
 class GraphSnapshot(BaseModel):
-    """D006 snapshot — captured at agent-start; compared per-step for drift.
+    """Graph snapshot captured at agent-start; compared per-step for drift.
 
-    Tracks the set of node ids that existed at agent-start, plus each node's
-    ``node_type`` (W45 — used by :class:`DriftDetail` so the frontend banner
-    can render *"Filter node 6 was deleted"* even after the node is gone).
+    Tracks the set of node ids that existed at agent-start, plus each
+    node's ``node_type`` (used by :class:`DriftDetail` so the frontend
+    banner can render *"Filter node 6 was deleted"* even after the
+    node is gone).
 
-    Hash-based settings/schema drift was removed in W45 — see module docstring.
+    Hash-based settings/schema drift was removed — see module docstring.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -192,15 +190,16 @@ class DriftDetail(BaseModel):
 class AgentSession(BaseModel):
     """A planner session.
 
-    In-memory today; W42 will pickle this to disk under
-    ``{user_data_directory}/ai_sessions/{flow_id}/``. The shape is chosen to
-    round-trip cleanly through ``model_dump(mode="json")``.
+    Persisted to disk under
+    ``{user_data_directory}/ai_sessions/{flow_id}/``. The shape is
+    chosen to round-trip cleanly through ``model_dump(mode="json")``.
 
     ``staged_results`` accumulates the planner's per-step
-    :class:`flowfile_core.ai.diff.StagedToolEntry` entries; on completion they
-    are bundled into a :class:`flowfile_core.ai.diff.GraphDiff` via
-    :func:`flowfile_core.ai.diff.bundle_staged_results` and registered with
-    W41's :func:`flowfile_core.ai.diff.register_diff`.
+    :class:`flowfile_core.ai.diff.StagedToolEntry` entries; on
+    completion they are bundled into a
+    :class:`flowfile_core.ai.diff.GraphDiff` via
+    :func:`flowfile_core.ai.diff.bundle_staged_results` and registered
+    via :func:`flowfile_core.ai.diff.register_diff`.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, protected_namespaces=())
@@ -220,7 +219,7 @@ class AgentSession(BaseModel):
     messages: list[Message] = Field(default_factory=list)
     staged_results: list[StagedToolEntry] = Field(default_factory=list)
     applied_results: list[AppliedNodeRecord] = Field(default_factory=list)
-    """W71 v2.0 — per-step applied-live record for ``surface=agent_live``.
+    """Per-step applied-live record for ``surface=agent_live``.
     Mirrors ``staged_results`` for the chat-trail rendering and the
     audit / undo paths, but the records describe nodes ALREADY in
     ``flow.nodes`` (not staged proposals). Empty for the other
@@ -238,64 +237,61 @@ class AgentSession(BaseModel):
     ``GraphDiff.rationale`` when the loop completes."""
     staged_node_ids: list[int] = Field(default_factory=list)
     """Node ids the agent has staged this session via ``add_<node_type>``
-    tool calls — used to exclude the agent's own additions from W45's
+    tool calls — used to exclude the agent's own additions from the
     ``external_added_node_ids`` drift bucket."""
     selected_node_ids: list[int] = Field(default_factory=list)
-    """W57 — node ids the user had selected on the canvas at session start.
-    Read by ``planner._resolve_insertion_context`` as a fallback signal for
-    the contextual upstream when the LLM does not provide an explicit
-    ``upstream_node_ids`` arg AND no in-batch staged-add chain is in flight.
-    Wired in from ``AgentStartRequest.selected_node_ids`` (frontend reads
-    from the live flow store at start time)."""
+    """Node ids the user had selected on the canvas at session start.
+    Read by ``planner._resolve_insertion_context`` as a fallback signal
+    for the contextual upstream when the LLM does not provide an
+    explicit ``upstream_node_ids`` arg AND no in-batch staged-add chain
+    is in flight. Wired in from ``AgentStartRequest.selected_node_ids``
+    (frontend reads from the live flow store at start time)."""
     pinned_node_ids: list[int] = Field(default_factory=list)
-    """W57 — node ids the user pinned via ``@``-mention (W24) at session
-    start. Read by ``planner._resolve_insertion_context`` as a tier below
-    selection. Currently always empty — no v0 wire path populates it; the
+    """Node ids the user pinned via ``@``-mention at session start.
+    Read by ``planner._resolve_insertion_context`` as a tier below
+    selection. Currently always empty — no wire path populates it; the
     field is structurally present so a future workstream can extract
-    ``@``-mentions from the user prompt without an additional schema bump."""
+    ``@``-mentions from the user prompt without a schema bump."""
     stage: PlannerStage = "plan"
-    """W71 v2.4 — multi-stage state-machine surfaces (agent_staged /
-    agent_live) start at the **plan** stage where the LLM emits a
-    short markdown plan via ``flowfile.meta.emit_plan`` before the
+    """Multi-stage state-machine surfaces (agent_staged / agent_live)
+    start at the **plan** stage where the LLM emits a short markdown
+    plan via ``flowfile.meta.emit_plan`` before the
     classify→pick→fill cycle starts. Single-shot ``agent_complex``
     ignores ``stage`` entirely. ``reset_stage_state`` resets to
-    ``"classify"`` (NOT ``"plan"``) so multi-node turns don't
-    re-plan after each successful add — the plan covers the whole
-    user request and only fires once at session start."""
-    """W71 — current stage in the ``agent_staged`` state machine. Ignored
-    by legacy ``agent`` / ``agent_complex`` surfaces. Reset to
-    ``"classify"`` after each successful ``add_*`` or single-stage non-add
-    op via :func:`reset_stage_state` so multi-node turns serialize cleanly."""
+    ``"classify"`` (NOT ``"plan"``) so multi-node turns don't re-plan
+    after each successful add — the plan covers the whole user request
+    and only fires once at session start."""
     picked_op_kind: PlannerOpKind | None = None
-    """W71 — the op_kind chosen by ``classify_intent`` at stage 0. Drives
-    ``single_stage_op`` surface selection for non-add intents. Cleared by
-    :func:`reset_stage_state`."""
+    """The op_kind chosen by ``classify_intent`` at stage 0. Drives
+    ``single_stage_op`` surface selection for non-add intents. Cleared
+    by :func:`reset_stage_state`."""
     picked_node_type: str | None = None
-    """W71 — the node type chosen by ``pick_node_type`` at stage 1.
-    Used by the planner to build a per-turn one-tool catalog for stage 3
+    """The node type chosen by ``pick_node_type`` at stage 1. Used by
+    the planner to build a per-turn one-tool catalog for stage 3
     (``fill_settings``). Cleared by :func:`reset_stage_state`."""
     picked_upstream_ids: list[int] = Field(default_factory=list)
-    """W71 — primary-input upstream node ids chosen by ``pick_upstream``
-    at stage 2. Injected into the ``add_<type>`` call's
-    ``InsertionContext`` at stage 3. Cleared by :func:`reset_stage_state`."""
+    """Primary-input upstream node ids chosen by ``pick_upstream`` at
+    stage 2. Injected into the ``add_<type>`` call's
+    ``InsertionContext`` at stage 3. Cleared by
+    :func:`reset_stage_state`."""
     picked_right_input_id: int | None = None
-    """W71 — optional right-input node id chosen by ``pick_upstream`` at
+    """Optional right-input node id chosen by ``pick_upstream`` at
     stage 2 (join-shaped node types only). Injected into the
     ``InsertionContext.right_input_node_id`` at stage 3. Cleared by
     :func:`reset_stage_state`."""
     verify_plan_completion: bool = False
-    """W71 v2.12 — opt-in: when True, ``op_kind="other"`` at classify
-    advances to ``stage="verify_completion"`` for one extra LLM round
-    before terminating. Wired in from ``AgentStartRequest``. Default
-    off (no extra LLM round per agent run)."""
+    """Opt-in: when True, ``op_kind="other"`` at classify advances to
+    ``stage="verify_completion"`` for one extra LLM round before
+    terminating. Wired in from ``AgentStartRequest``. Default off (no
+    extra LLM round per agent run)."""
     verify_round_consumed: bool = False
-    """W71 v2.12 — one-shot guard for the verify-completion gate. Set
-    True after the LLM returns from ``flowfile.meta.verify_completion``.
-    If the LLM said ``is_complete=false`` and a subsequent classify
-    round still ends with ``op_kind="other"``, the loop terminates
-    without re-entering verify (capped at one verify round per loop
-    so a stubborn ``is_complete=false`` can't ping-pong). Not reset
-    by ``reset_stage_state`` — the cap is per-session, not per-stage."""
+    """One-shot guard for the verify-completion gate. Set True after
+    the LLM returns from ``flowfile.meta.verify_completion``. If the
+    LLM said ``is_complete=false`` and a subsequent classify round
+    still ends with ``op_kind="other"``, the loop terminates without
+    re-entering verify (capped at one verify round per loop so a
+    stubborn ``is_complete=false`` can't ping-pong). Not reset by
+    ``reset_stage_state`` — the cap is per-session, not per-stage."""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -305,7 +301,7 @@ class AgentSession(BaseModel):
 
 
 def reset_stage_state(session: AgentSession) -> None:
-    """W71 — reset the ``agent_staged`` state machine back to stage 0.
+    """Reset the ``agent_staged`` state machine back to stage 0.
 
     Called by the planner after each successful ``add_*`` (at stage
     ``fill_settings``) or successful single-stage non-add op (at stage
@@ -313,8 +309,8 @@ def reset_stage_state(session: AgentSession) -> None:
     classify→pick→fill cycle so multi-node turns work without history
     pruning.
 
-    No-op for legacy ``agent`` / ``agent_complex`` surfaces — they don't
-    drive transitions through these fields.
+    No-op for ``agent_complex`` — that surface doesn't drive
+    transitions through these fields.
     """
     session.stage = "classify"
     session.picked_op_kind = None
@@ -324,7 +320,7 @@ def reset_stage_state(session: AgentSession) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Snapshot capture + id-set drift detection (W45)                              #
+# Snapshot capture + id-set drift detection                                    #
 # --------------------------------------------------------------------------- #
 
 
@@ -335,13 +331,13 @@ def _node_type(node: object) -> str:
 
 
 def capture_graph_snapshot(flow: FlowGraph) -> GraphSnapshot:
-    """Take a D006 snapshot of ``flow``.
+    """Take a snapshot of ``flow``.
 
     Pure read: walks ``flow.nodes`` once and records each node's id and
-    ``node_type``. No settings hashing, no schema callbacks fired — id-set
-    drift only (W45). Safe to call before every agent step (the planner
-    only captures once at start and on explicit re-snapshot via
-    ``resume(action="continue")``).
+    ``node_type``. No settings hashing, no schema callbacks fired —
+    id-set drift only. Safe to call before every agent step (the
+    planner only captures once at start and on explicit re-snapshot
+    via ``resume(action="continue")``).
     """
     node_ids: list[int] = []
     node_types: dict[int, str] = {}
@@ -404,7 +400,7 @@ def revalidate_staged_results_against_live(
 ) -> tuple[list[StagedToolEntry], list[tuple[StagedToolEntry, _StagedDropReason]]]:
     """Drop staged entries that are inconsistent with the live graph.
 
-    Used by the planner's resume-from-drift path (W54). Two drop reasons:
+    Used by the planner's resume-from-drift path. Two drop reasons:
 
     * ``live_id_collision`` — an ``add_*`` entry's ``node_id`` is now in the
       live graph (the user manually created a node with that id during the
@@ -472,15 +468,18 @@ def detect_drift(
       the snapshot nor staged by the agent. The user added it externally
       mid-run and the planner's view of the world is now stale.
 
-    ``agent_staged_node_ids`` is the set of node ids the planner has staged
-    this session (passed via :attr:`AgentSession.staged_node_ids`). Excluded
-    from the external-added bucket so the agent's own work never looks like
-    drift to itself. ``mode="stage"`` doesn't actually leak ids into the live
-    graph today (W31's executor refuses live mutation in stage mode), but
-    excluding them is defensive against future code paths that might.
+    ``agent_staged_node_ids`` is the set of node ids the planner has
+    staged this session (passed via
+    :attr:`AgentSession.staged_node_ids`). Excluded from the
+    external-added bucket so the agent's own work never looks like
+    drift to itself. ``mode="stage"`` doesn't actually leak ids into
+    the live graph today (the executor refuses live mutation in stage
+    mode), but excluding them is defensive against future code paths
+    that might.
 
-    Hash-based mutation detection (settings/schema changes) was removed in
-    W45 — see module docstring. Restoring it is a separate workstream.
+    Hash-based mutation detection (settings/schema changes) was
+    removed — see module docstring. Restoring it is a separate
+    workstream.
     """
     staged = agent_staged_node_ids or set()
 
@@ -520,7 +519,7 @@ def detect_drift(
 
 
 # --------------------------------------------------------------------------- #
-# Repository delegation — W42 swap; public surface unchanged                   #
+# Repository delegation — public surface stable across in-memory and disk     #
 # --------------------------------------------------------------------------- #
 
 
@@ -607,17 +606,17 @@ def clear_for_tests() -> None:
 def list_sessions_for_user(user_id: int) -> list[AgentSession]:
     """Return all active sessions belonging to ``user_id``.
 
-    Used by the (future) ``GET /ai/agent/sessions`` route — out of scope
-    for W40 but cheap to expose.
+    Used by the (future) ``GET /ai/agent/sessions`` route — cheap to
+    expose now even though the route doesn't ship yet.
     """
     return get_session_repo().list_for_user(user_id)
 
 
 def list_archived_sessions(user_id: int, flow_id: int) -> list[AgentSession]:
-    """W42 — archived terminal sessions for ``(user_id, flow_id)``.
+    """Archived terminal sessions for ``(user_id, flow_id)``.
 
     In-memory backend always returns ``[]`` (no archive). Disk backend
-    returns the FIFO archive entries sorted recent-first. Used by W43's
+    returns the FIFO archive entries sorted recent-first. Used by the
     "open recent chats" UI.
     """
     return get_session_repo().list_archived(user_id=user_id, flow_id=flow_id)

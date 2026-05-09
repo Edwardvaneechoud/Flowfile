@@ -1,16 +1,16 @@
-// SSE consumer for the AI chat stream (W20).
+// SSE consumer for the AI chat stream.
 //
-// The browser's native EventSource only supports GET, but POST /ai/chat/stream
-// has a JSON body — so this client hand-rolls a minimal SSE parser over a
-// fetch + ReadableStream. Future W42 will extend this with `Last-Event-ID`
-// echo for resumption; the parser is already cursor-friendly, so that change
-// is additive.
+// The browser's native EventSource only supports GET, but POST
+// /ai/chat/stream has a JSON body — so this client hand-rolls a
+// minimal SSE parser over fetch + ReadableStream. The parser is
+// cursor-friendly so resume-with-`Last-Event-ID` extensions are
+// additive.
 //
 // Wire format produced by `flowfile_core/ai/streaming.py`:
 //   - Comment lines `: keepalive\n\n` every 15s — silently dropped.
 //   - `event: chunk\ndata: {"content_delta": "..."}\n\n`
-//   - `event: tool_call\nid: <call_id>\ndata: {...}\n\n`  (W31+; not emitted
-//     by W20's read-only chat surface but the parser handles them anyway).
+//   - `event: tool_call\nid: <call_id>\ndata: {...}\n\n`  (not emitted
+//     by the read-only chat surface but the parser handles them anyway).
 //   - `event: done\ndata: {"finish_reason": "stop"}\n\n`
 //   - `event: error\ndata: {"message": "..."}\n\n`
 
@@ -28,13 +28,13 @@ export interface ChatStreamRequest {
   surface?: string | null;
   messages: ChatMessageBody[];
   max_tokens?: number | null;
-  // W28 — backend builds a context-rich PromptContext via W22 when set.
-  // Omitted = backwards-compatible W26 identity-only prompt.
+  // Backend builds a context-rich PromptContext when set.
+  // Omitted = identity-only prompt.
   flow_id?: number | null;
   selected_node_ids?: number[] | null;
-  // W24's parsed mention strings (e.g. ["@flow", "@node:filter_3"]).
-  // When omitted and no selection is set, the backend defaults to
-  // ``@flow`` so chat is grounded in the whole graph by default.
+  // Parsed mention strings (e.g. ["@flow", "@node:filter_3"]). When
+  // omitted and no selection is set, the backend defaults to ``@flow``
+  // so chat is grounded in the whole graph by default.
   mentions?: string[] | null;
 }
 
@@ -114,8 +114,8 @@ const dispatch = (parsed: ParsedEvent, handlers: ChatStreamHandlers): void => {
       break;
     }
     case "tool_call": {
-      // W20 is read-only, but the parser tolerates tool_call so W31 can plug
-      // tool dispatch in without rewriting the wire layer.
+      // The chat surface is read-only, but the parser tolerates
+      // tool_call so other surfaces share the wire layer.
       break;
     }
     default:
@@ -277,10 +277,10 @@ export const streamRunFailureExplanation = async (
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> => {
-  // W23 — POSTs the failure context to ``/ai/explain_run_failure``. The
-  // backend builds the rich W22 prompt server-side; the client just hands
-  // off ``{flow_id, node_id, error_message?, ...}`` and consumes the same
-  // SSE wire format ``streamChat`` uses.
+  // POSTs the failure context to ``/ai/explain_run_failure``. The
+  // backend builds the rich prompt server-side; the client just hands
+  // off ``{flow_id, node_id, error_message?, ...}`` and consumes the
+  // same SSE wire format ``streamChat`` uses.
   await _postSseRequest("ai/explain_run_failure", body, handlers, signal);
 };
 
@@ -289,10 +289,10 @@ export const streamGenerateDocumentation = async (
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> => {
-  // W50 — POSTs ``{flow_id, provider, ...}`` to ``/ai/generate_documentation``.
-  // The backend pins every node in the flow into W22's render_prompt_context
-  // and appends a markdown-shape contract; the client just consumes the same
-  // SSE wire format the chat + run-failure routes use.
+  // POSTs ``{flow_id, provider, ...}`` to ``/ai/generate_documentation``.
+  // The backend pins every node in the flow into ``render_prompt_context``
+  // and appends a markdown-shape contract; the client just consumes
+  // the same SSE wire format the chat + run-failure routes use.
   await _postSseRequest("ai/generate_documentation", body, handlers, signal);
 };
 
@@ -301,10 +301,11 @@ export const streamInlineAction = async (
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> => {
-  // W21 — POSTs ``{flow_id, node_id, action, provider, ...}`` to
-  // ``/ai/inline_action``. The backend builds the schema-grounded W22 prompt
-  // and appends an action-specific instruction block; the client consumes
-  // the same SSE wire format as the chat / run-failure / docgen routes.
+  // POSTs ``{flow_id, node_id, action, provider, ...}`` to
+  // ``/ai/inline_action``. The backend builds the schema-grounded
+  // prompt and appends an action-specific instruction block; the
+  // client consumes the same SSE wire format as the chat /
+  // run-failure / docgen routes.
   await _postSseRequest("ai/inline_action", body, handlers, signal);
 };
 
@@ -313,17 +314,18 @@ export const streamLineageQuestion = async (
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> => {
-  // W51 — POSTs ``{flow_id, question, provider, focus_node_id?, ...}`` to
+  // POSTs ``{flow_id, question, provider, focus_node_id?, ...}`` to
   // ``/ai/lineage_question``. The backend resolves the flow's catalog
   // registration via ``flow.flow_settings.source_registration_id`` (or
-  // falls back to ``latest_run_info``), builds a per-node history block,
-  // and appends the user's question; the client consumes the same SSE
-  // wire format as the chat / run-failure / docgen / inline-action routes.
+  // falls back to ``latest_run_info``), builds a per-node history
+  // block, and appends the user's question; the client consumes the
+  // same SSE wire format as the chat / run-failure / docgen /
+  // inline-action routes.
   await _postSseRequest("ai/lineage_question", body, handlers, signal);
 };
 
 // --------------------------------------------------------------------------- //
-// W40 — multi-turn planner agent                                                //
+// Multi-turn planner agent                                                     //
 // --------------------------------------------------------------------------- //
 
 export interface AgentStartRequest {
@@ -338,31 +340,30 @@ export interface AgentStartRequest {
   max_retries_per_step?: number;
   session_id?: string | null;
   /**
-   * W57 — node ids the user has selected on the canvas at start time.
-   * The planner reads this in ``_resolve_insertion_context`` as a fallback
-   * upstream signal when the LLM does not emit explicit
-   * ``upstream_node_ids``. Mirrors the chat route's selection-passing
-   * pattern (W28). When the request is built inside the store, the store
-   * pulls selection from ``useFlowStore().vueFlowInstance`` automatically;
-   * callers can override by setting this field explicitly.
+   * Node ids the user has selected on the canvas at start time.
+   * The planner reads this in ``_resolve_insertion_context`` as a
+   * fallback upstream signal when the LLM does not emit explicit
+   * ``upstream_node_ids``. When the request is built inside the
+   * store, the store pulls selection from
+   * ``useFlowStore().vueFlowInstance`` automatically; callers can
+   * override by setting this field explicitly.
    */
   selected_node_ids?: number[] | null;
   /**
-   * W71 v2.7 — when ``true`` the agent state machine starts at
-   * ``stage="classify"`` instead of the v2.4 default
-   * ``stage="plan"``. Set by ``_dispatchPromotedAgent`` (auto-
-   * promote-from-chat) since the chat-mode response that preceded
-   * the promotion already produced a plan-shaped narrative;
-   * emitting a fresh plan would burn an extra round and duplicate
-   * the chat output. Direct agent runs leave this falsy so the
-   * plan stage fires.
+   * When ``true`` the agent state machine starts at
+   * ``stage="classify"`` instead of the default ``stage="plan"``.
+   * Set by ``_dispatchPromotedAgent`` (auto-promote-from-chat) since
+   * the chat-mode response that preceded the promotion already
+   * produced a plan-shaped narrative; emitting a fresh plan would
+   * burn an extra round and duplicate the chat output. Direct
+   * agent runs leave this falsy so the plan stage fires.
    */
   skip_plan?: boolean;
   /**
-   * W71 v2.12 — opt-in: when ``true`` the agent runs one extra LLM
-   * round at ``stage="verify_completion"`` after classify picks
-   * ``op_kind="other"`` (intending to terminate). The LLM walks
-   * the plan as a checklist and either certifies completion
+   * Opt-in: when ``true`` the agent runs one extra LLM round at
+   * ``stage="verify_completion"`` after classify picks
+   * ``op_kind="other"`` (intending to terminate). The LLM walks the
+   * plan as a checklist and either certifies completion
    * (``is_complete=true`` → loop terminates) or sends control back
    * to ``classify`` for the missing op (``is_complete=false``).
    * Default off because of the extra LLM round per run.
@@ -377,18 +378,18 @@ export interface AgentDriftDetail {
   node_types?: Record<string, string> | null;
 }
 
-/** W38 op_kind classifies a tool call for UI gating + styling. */
+/** Op_kind classifies a tool call for UI gating + styling. */
 export type AgentOpKind = "meta" | "graph" | "schema" | "codegen" | "unknown";
 
 export interface AgentToolCallProposed {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
-  /** W38 — meta ops are hidden from the user-visible chat trail. */
+  /** Meta ops are hidden from the user-visible chat trail. */
   op_kind?: AgentOpKind;
-  /** W38 — model's plain-English "what this step does"; null if no preamble. */
+  /** Model's plain-English "what this step does"; null if no preamble. */
   rationale?: string | null;
-  /** W38 — server-generated fallback when ``rationale`` is null. */
+  /** Server-generated fallback when ``rationale`` is null. */
   arg_summary?: string | null;
 }
 
@@ -413,11 +414,11 @@ export interface AgentToolCallRejected {
   arg_summary?: string | null;
 }
 
-/** W71 v2.0 — ``tool_call_applied`` event payload. Emitted by the
+/** ``tool_call_applied`` event payload. Emitted by the
  *  ``agent_live`` planner after a successful apply + post-apply
- *  observation (the new node is already in ``flow.nodes`` server-
- *  side). Frontend triggers a canvas refresh so the user sees the
- *  node materialise immediately. */
+ *  observation (the new node is already in ``flow.nodes`` server-side).
+ *  Frontend triggers a canvas refresh so the user sees the node
+ *  materialise immediately. */
 export interface AgentToolCallApplied {
   id: string;
   name: string;
@@ -437,15 +438,15 @@ export interface AgentCompleteResult {
   diff_payload: Record<string, unknown> | null;
 }
 
-/** W71 — `stage_advanced` event payload. Emitted by the agent_staged
- * planner each time the state machine transitions: classify → pick_type
- * → pick_upstream → fill_settings, and back to classify after a node
- * is staged. The frontend uses this to render a per-stage badge.
+/** `stage_advanced` event payload. Emitted by the agent_staged planner
+ * each time the state machine transitions: classify → pick_type →
+ * pick_upstream → fill_settings, and back to classify after a node is
+ * staged. The frontend uses this to render a per-stage badge.
  *
- * `from` and `to` carry the stage names; `op_kind`, `picked_node_type`,
- * `picked_upstream_ids` are present on the relevant transitions only.
- * `completed_op` is the tool name when the transition fires after a
- * successful add or single-stage non-add op. */
+ * `from` and `to` carry the stage names; `op_kind`,
+ * `picked_node_type`, `picked_upstream_ids` are present on the
+ * relevant transitions only. `completed_op` is the tool name when the
+ * transition fires after a successful add or single-stage non-add op. */
 export interface AgentStageAdvanced {
   from: string;
   to: string;
@@ -470,11 +471,12 @@ export interface AgentSessionHandlers {
   onRetry?: (attempt: number, max: number) => void;
   onAbort?: (sessionId: string) => void;
   onComplete?: (result: AgentCompleteResult) => void;
-  /** W49 — emitted instead of ``onComplete`` when the planner ends on a
-   * clarifying question. The store flips to ``awaiting_user_input`` and
-   * the frontend routes the next user message through ``streamAgentFollowup``. */
+  /** Emitted instead of ``onComplete`` when the planner ends on a
+   * clarifying question. The store flips to ``awaiting_user_input``
+   * and the frontend routes the next user message through
+   * ``streamAgentFollowup``. */
   onAwaitingUserInput?: (result: AgentAwaitingUserInputResult) => void;
-  /** W71 — emitted by the agent_staged surface on each stage transition. */
+  /** Emitted by the agent_staged surface on each stage transition. */
   onStageAdvanced?: (payload: AgentStageAdvanced) => void;
   onInfo?: (payload: Record<string, unknown>) => void;
   onError?: (message: string) => void;
@@ -603,17 +605,18 @@ export const streamAgentSession = async (
   signal?: AbortSignal,
   lastEventId?: string,
 ): Promise<void> => {
-  // W40 — POSTs the user's goal to ``/ai/agent/start``. The backend opens a
-  // session, registers a snapshot, and streams ``PlannerEvent``s as SSE.
-  // Per-event types: ``thinking`` / ``tool_call_proposed`` /
-  // ``tool_call_staged`` / ``tool_call_warned`` / ``tool_call_rejected`` /
-  // ``drift_detected`` / ``paused`` / ``retry`` / ``abort`` / ``complete`` /
-  // ``error`` / ``info``. ``id:`` carries ``f"{session_id}.{step_count}"``
-  // for W42 resumption.
-  // W42 — when ``lastEventId`` is set, the server's replay buffer flushes
-  // any buffered frames newer than the cursor before live streaming
-  // resumes. The /start route accepts the header for symmetry; in normal
-  // use the cursor only matters on /resume.
+  // POSTs the user's goal to ``/ai/agent/start``. The backend opens a
+  // session, registers a snapshot, and streams ``PlannerEvent``s as
+  // SSE. Per-event types: ``thinking`` / ``tool_call_proposed`` /
+  // ``tool_call_staged`` / ``tool_call_warned`` /
+  // ``tool_call_rejected`` / ``drift_detected`` / ``paused`` /
+  // ``retry`` / ``abort`` / ``complete`` / ``error`` / ``info``.
+  // ``id:`` carries ``f"{session_id}.{step_count}"`` for resumption.
+  //
+  // When ``lastEventId`` is set, the server's replay buffer flushes any
+  // buffered frames newer than the cursor before live streaming
+  // resumes. The /start route accepts the header for symmetry; in
+  // normal use the cursor only matters on /resume.
   const token = await authService.getToken();
   if (!token) {
     handlers.onError?.("Not authenticated. Please log in again.");
@@ -658,8 +661,8 @@ export interface AgentFollowupRequest {
   rejected_diff_id?: string | null;
 }
 
-/** W49 — emitted (instead of ``complete``) when a planner round ends with
- * a clarifying question and no staged ops. The frontend renders this as
+/** Emitted (instead of ``complete``) when a planner round ends with a
+ * clarifying question and no staged ops. The frontend renders this as
  * *"Agent waiting for your reply…"* and routes the next user message
  * through the followup endpoint. */
 export interface AgentAwaitingUserInputResult {
@@ -674,12 +677,12 @@ export const streamAgentFollowup = async (
   signal?: AbortSignal,
   lastEventId?: string,
 ): Promise<void> => {
-  // W49 — POSTs ``{action, message?, rejected_diff_id?}`` to
-  // ``/ai/agent/{session_id}/followup``. The backend appends a synthetic
-  // ``role="user"`` turn (rejection note OR user message) to the planner's
-  // conversation, re-snapshots the graph (D006), and re-enters the loop.
-  // The SSE wire format matches ``/start`` / ``/resume`` so the same
-  // ``AgentSessionHandlers`` consumes it.
+  // POSTs ``{action, message?, rejected_diff_id?}`` to
+  // ``/ai/agent/{session_id}/followup``. The backend appends a
+  // synthetic ``role="user"`` turn (rejection note OR user message)
+  // to the planner's conversation, re-snapshots the graph, and
+  // re-enters the loop. The SSE wire format matches ``/start`` /
+  // ``/resume`` so the same ``AgentSessionHandlers`` consumes it.
   const token = await authService.getToken();
   if (!token) {
     handlers.onError?.("Not authenticated. Please log in again.");
@@ -717,11 +720,12 @@ export const resumeAgentSessionStream = async (
   signal?: AbortSignal,
   lastEventId?: string,
 ): Promise<void> => {
-  // W40 — resume after drift via SSE. Body ``{action: "continue"}`` is the
-  // SSE-stream form; ``"discard"`` is JSON-only and lives in api/ai.api.ts.
-  // W42 — ``lastEventId`` is forwarded as the ``Last-Event-ID`` header so
-  // the server's replay buffer flushes buffered frames newer than the
-  // cursor before the live planner resumes.
+  // Resume after drift via SSE. Body ``{action: "continue"}`` is the
+  // SSE-stream form; ``"discard"`` is JSON-only and lives in
+  // api/ai.api.ts. ``lastEventId`` is forwarded as the
+  // ``Last-Event-ID`` header so the server's replay buffer flushes
+  // buffered frames newer than the cursor before the live planner
+  // resumes.
   const token = await authService.getToken();
   if (!token) {
     handlers.onError?.("Not authenticated. Please log in again.");
@@ -754,7 +758,7 @@ export const resumeAgentSessionStream = async (
 };
 
 // --------------------------------------------------------------------------- //
-// W58 — Chat → Agent auto-promotion routing                                     //
+// Chat → Agent auto-promotion routing                                          //
 // --------------------------------------------------------------------------- //
 
 export interface RouteHistoryEntry {
@@ -797,12 +801,13 @@ export const routeMessage = async (
   body: RouteRequestBody,
   signal?: AbortSignal,
 ): Promise<RouteResponseBody> => {
-  // W58 — POSTs ``{message, provider, model?}`` to ``/ai/route``. The
-  // backend's classifier collapses every internal failure mode (timeout,
-  // parse error, provider hiccup) into ``verdict="chat"``, so the only
-  // non-200 outcomes here are the standard 4xx provider / auth / flag
-  // failures. ``AiStreamHttpError`` mirrors the existing chat-stream
-  // error shape so the store's failure handling stays uniform.
+  // POSTs ``{message, provider, model?}`` to ``/ai/route``. The
+  // backend's classifier collapses every internal failure mode
+  // (timeout, parse error, provider hiccup) into ``verdict="chat"``,
+  // so the only non-200 outcomes here are the standard 4xx provider /
+  // auth / flag failures. ``AiStreamHttpError`` mirrors the existing
+  // chat-stream error shape so the store's failure handling stays
+  // uniform.
   const token = await authService.getToken();
   if (!token) {
     throw new AiStreamHttpError(401, "Not authenticated. Please log in again.");

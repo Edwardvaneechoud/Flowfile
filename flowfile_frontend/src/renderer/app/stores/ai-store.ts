@@ -1,15 +1,15 @@
-// AI Store — chat-drawer state for the read-only chat surface (W20).
+// AI Store — chat-drawer state for the read-only chat surface.
 //
 // Only owns *what's currently being talked about* — the open/close flag
 // for the drawer is mirrored from `editor-store.ts` so other panels can
 // participate in `hideAllPanels()` without coupling to this module. The
 // chat payload + streaming state live here.
 //
-// Persistence is per-flow + browser-local (W27 → W43). Each flow's chat
-// trail lives under `flowfile.ai.chat.v1.{flow_id}` in `localStorage` so
-// switching flows shows the right conversation, and chat survives
-// Electron app restart. The `flowStore.flowId` watcher below performs an
-// atomic save-then-load swap on flow switch so round-tripping A → B → A
+// Persistence is per-flow + browser-local. Each flow's chat trail lives
+// under `flowfile.ai.chat.v1.{flow_id}` in `localStorage` so switching
+// flows shows the right conversation, and chat survives Electron app
+// restart. The `flowStore.flowId` watcher below performs an atomic
+// save-then-load swap on flow switch so round-tripping A → B → A
 // preserves A's history.
 
 import { defineStore } from "pinia";
@@ -59,25 +59,21 @@ export interface ChatMessage {
 
 export type StreamingState = "idle" | "streaming" | "error";
 
-/** 2026-05-09 — unified send-mode enum that replaced the dual
- * ``autoPromote`` (sticky session preference) + ``agentMode``
- * (per-send checkbox in the drawer header) controls. The drawer
- * surfaces this as a single dropdown next to Send.
+/** Unified send-mode enum that drives the drawer's Send dropdown.
  *   - ``"chat"`` — read-only chat. Send dispatches the chat path; the
  *     classifier never auto-promotes regardless of intent.
  *   - ``"auto"`` (default) — Send dispatches chat by default; the
  *     classifier auto-promotes to agent when an editing intent is
- *     detected. Today's W58 ``autoPromote: true`` behaviour.
+ *     detected.
  *   - ``"agent"`` — Send always dispatches the agent path with the
- *     configured surface. Today's W40 explicit-agent behaviour, but
- *     sticky across sends instead of per-send. */
+ *     configured surface. Sticky across sends instead of per-send. */
 export type AiMode = "chat" | "auto" | "agent";
 
 const _AI_MODES: ReadonlyArray<AiMode> = ["chat", "auto", "agent"];
 
 /** Per-tab sessionStorage key for the user's send-mode preference.
- * Survives page refresh; resets fresh on tab close (matches the user's
- * 2026-05-09 ask). Mirrors ``flow-store.ts``'s sessionStorage idiom. */
+ * Survives page refresh; resets fresh on tab close. Mirrors
+ * ``flow-store.ts``'s sessionStorage idiom. */
 const MODE_STORAGE_KEY = "flowfile.ai.mode";
 
 const _readPersistedMode = (): AiMode | null => {
@@ -119,10 +115,10 @@ const nextMessageId = (): number => {
   return _messageCounter;
 };
 
-// W27 → W43 — browser-side persistence. Throttled writes coalesce streaming
-// chunk deltas into ~4 saves/sec instead of one per token. W43 made
-// persistence per-flow (`localStorage` keyed by flow_id) so switching flows
-// shows the right conversation and chat survives Electron restart.
+// Browser-side persistence. Throttled writes coalesce streaming chunk
+// deltas into ~4 saves/sec instead of one per token. Persistence is
+// per-flow (`localStorage` keyed by flow_id) so switching flows shows
+// the right conversation and chat survives Electron restart.
 const PERSIST_THROTTLE_MS = 250;
 
 // `flowStore.flowId` is initialised to `-1` for "no flow loaded" (see
@@ -139,7 +135,7 @@ export const useAiStore = defineStore("ai", () => {
   // every tick.
   const flowStore = useFlowStore();
 
-  // ----- providers (from W12 / W16) -----
+  // ----- providers -----
   const providers = ref<AiProvider[]>([]);
   const providersLoading = ref(false);
   const providersError = ref<string | null>(null);
@@ -147,20 +143,20 @@ export const useAiStore = defineStore("ai", () => {
   const selectedProvider = ref<string | null>(null);
   const selectedModel = ref<string | null>(null);
 
-  // W71 v1.9 — user-selectable agent surface. Defaults to ``agent_live``
-  // so the REPL-style canvas-mutating surface is what new sessions
-  // get; users can switch to ``agent_staged`` (multi-stage planner) or
+  // User-selectable agent surface. Defaults to ``agent_live`` so the
+  // REPL-style canvas-mutating surface is what new sessions get; users
+  // can switch to ``agent_staged`` (multi-stage planner) or
   // ``agent_complex`` (single-shot full catalog) via the settings
   // popover. Persisted alongside the other AI selections via
   // ``ai-store-persistence``.
   const selectedAgentSurface = ref<"agent_complex" | "agent_staged" | "agent_live">("agent_live");
 
-  // W71 v2.12 — opt-in verify-completion gate. When true, after
-  // classify picks ``op_kind="other"`` the agent runs one extra
-  // LLM round at ``stage="verify_completion"`` to walk the plan as
-  // a checklist before the loop terminates. Default off (extra
-  // round per run); the user opts in via the agent settings panel
-  // checkbox. Persisted per-flow alongside ``selectedAgentSurface``.
+  // Opt-in verify-completion gate. When true, after classify picks
+  // ``op_kind="other"`` the agent runs one extra LLM round at
+  // ``stage="verify_completion"`` to walk the plan as a checklist
+  // before the loop terminates. Default off (extra round per run); the
+  // user opts in via the agent settings panel checkbox. Persisted
+  // per-flow alongside ``selectedAgentSurface``.
   const verifyPlanCompletion = ref<boolean>(false);
 
   // ----- messages -----
@@ -171,36 +167,34 @@ export const useAiStore = defineStore("ai", () => {
   const streamError = ref<string | null>(null);
   let activeAbort: AbortController | null = null;
 
-  // W71 v2.10C — track the IMMEDIATELY previous interaction kind so
-  // ``_dispatchPromotedAgent`` can decide whether to skip the v2.4
-  // plan stage. The pre-v2.10C check (``messages.value.some(m =>
-  // m.role === "assistant")``) was too coarse — old chat replies
-  // remained in history after subsequent agent runs and the
-  // skip-plan path fired even when the agent had been the most
-  // recent activity. The user expected: previous action was a
-  // chat reply → skip plan (chat already produced reasoning);
-  // previous action was an agent run → run plan (no fresh chat
-  // reasoning since). This ref captures that ordering directly.
-  // Set to ``"chat"`` when the streaming chat reply finishes; set
-  // to ``"agent"`` when the agent run completes (via the
-  // status-watcher in ``ai-agent-store.ts``); ``null`` only at
-  // session start before either has fired.
+  // Track the IMMEDIATELY previous interaction kind so
+  // ``_dispatchPromotedAgent`` can decide whether to skip the plan
+  // stage. The naive "any assistant message in history" check is too
+  // coarse — old chat replies remain in history after subsequent agent
+  // runs, so the skip-plan path would fire even when the agent had
+  // been the most recent activity. The required behaviour: previous
+  // action was a chat reply → skip plan (chat already produced
+  // reasoning); previous action was an agent run → run plan (no fresh
+  // chat reasoning since). This ref captures that ordering directly.
+  // Set to ``"chat"`` when the streaming chat reply finishes; set to
+  // ``"agent"`` when the agent run completes (via the status-watcher
+  // in ``ai-agent-store.ts``); ``null`` only at session start before
+  // either has fired.
   const lastInteractionKind = ref<"chat" | "agent" | null>(null);
 
-  // ----- 2026-05-09 — unified send-mode -----
-  // ``mode`` is the single source of truth for "what does Send do?" and
-  // replaces the dual W40 ``agentMode`` (per-send checkbox) + W58
-  // ``autoPromote`` (sticky session preference). See ``AiMode`` for
-  // semantics. Persisted to sessionStorage (per-tab, survives refresh,
-  // resets on tab close). Migrated from any legacy ``autoPromote``
-  // value found in the localStorage chat blob on first hydrate.
+  // ----- Unified send-mode -----
+  // ``mode`` is the single source of truth for "what does Send do?".
+  // See ``AiMode`` for semantics. Persisted to sessionStorage (per-tab,
+  // survives refresh, resets on tab close). Migrated from any legacy
+  // ``autoPromote`` value found in the localStorage chat blob on first
+  // hydrate.
   //
-  // ``agentModeAccepted`` is the post-promotion accept flag preserved
-  // from the W58-round-7 design: when the (currently hidden) promotion
-  // banner's "Continue as agent" button is clicked, this flips to
-  // ``true`` and short-circuits classification on subsequent sends so
-  // every future message goes straight to the agent. Cleared by
-  // ``undoPromotion`` and ``clearMessages``.
+  // ``agentModeAccepted`` is the post-promotion accept flag: when the
+  // (currently hidden) promotion banner's "Continue as agent" button
+  // is clicked, this flips to ``true`` and short-circuits
+  // classification on subsequent sends so every future message goes
+  // straight to the agent. Cleared by ``undoPromotion`` and
+  // ``clearMessages``.
   // Initialised to the default; the actual seed runs in the hydration
   // block below once ``_hydrated`` is available. Declaring it here
   // (rather than after `_hydrated`) so it stays grouped with the other
@@ -209,15 +203,15 @@ export const useAiStore = defineStore("ai", () => {
   const agentModeAccepted = ref<boolean>(false);
   const promotionBanner = ref<{ reason: string; message: string } | null>(null);
 
-  // ----- W27 + W43 hydrate from localStorage under the active flow's key -----
+  // ----- Hydrate from localStorage under the active flow's key -----
   // Order matters: hydrate refs BEFORE wiring the watch so the initial
   // assignment doesn't trigger a redundant write of what we just read.
   // Flow id is read from the flow store at hydration time so the right
-  // per-flow bucket loads — this is the W43 update to the W27 path. When
-  // no flow is loaded yet (flow store sentinel `-1`) we fall through to
-  // the `unscoped` bucket which round-trips correctly once the user later
-  // opens a flow (the watcher saves the unscoped state under that key
-  // before swapping to the new flow's state).
+  // per-flow bucket loads. When no flow is loaded yet (flow store
+  // sentinel `-1`) we fall through to the `unscoped` bucket which
+  // round-trips correctly once the user later opens a flow (the
+  // watcher saves the unscoped state under that key before swapping to
+  // the new flow's state).
   const _hydrated = loadPersistedAiState(undefined, _scopedFlowId(flowStore.flowId));
   if (_hydrated.messages.length > 0) {
     messages.value = _hydrated.messages;
@@ -234,10 +228,9 @@ export const useAiStore = defineStore("ai", () => {
   if (_hydrated.selectedModel !== null) {
     selectedModel.value = _hydrated.selectedModel;
   }
-  // 2026-05-09 — seed ``mode`` from sessionStorage (per-tab, fresh on
-  // tab close); fall back to the legacy ``autoPromote`` from the
-  // localStorage blob when no sessionStorage value is present
-  // (one-shot migration shim).
+  // Seed ``mode`` from sessionStorage (per-tab, fresh on tab close);
+  // fall back to the legacy ``autoPromote`` from the localStorage blob
+  // when no sessionStorage value is present (migration shim).
   mode.value = _seedMode(_hydrated.autoPromote);
   if (_hydrated.agentModeAccepted !== null && _hydrated.agentModeAccepted !== undefined) {
     agentModeAccepted.value = _hydrated.agentModeAccepted;
@@ -289,10 +282,10 @@ export const useAiStore = defineStore("ai", () => {
     );
   };
 
-  // 2026-05-09 — `mode` lives in sessionStorage, not the localStorage
-  // chat blob, so it gets its own writer. ``immediate: true`` writes
-  // the seeded value once at store init so subsequent reads (other
-  // tabs / dev tools) see the live value.
+  // `mode` lives in sessionStorage, not the localStorage chat blob,
+  // so it gets its own writer. ``immediate: true`` writes the seeded
+  // value once at store init so subsequent reads (other tabs / dev
+  // tools) see the live value.
   watch(mode, (value) => _writePersistedMode(value), { immediate: true });
 
   // `flush: "sync"` so each mutation is evaluated against the current
@@ -309,7 +302,7 @@ export const useAiStore = defineStore("ai", () => {
   watch(streamingState, queuePersist, { flush: "sync" });
   watch(agentModeAccepted, queuePersist, { flush: "sync" });
 
-  // W43 — flow switch handler. Persist the *outgoing* flow's chat under its
+  // Flow switch handler. Persist the *outgoing* flow's chat under its
   // own key BEFORE clearing `messages.value`, then load the *incoming*
   // flow's persisted state (or fresh defaults if none). `flush: "sync"`
   // mirrors the queuePersist watchers so the save lands before any
@@ -357,18 +350,18 @@ export const useAiStore = defineStore("ai", () => {
       if (loaded.selectedModel !== null) {
         selectedModel.value = loaded.selectedModel;
       }
-      // 2026-05-09 — ``mode`` is session-global (sessionStorage), NOT
-      // per-flow, so a flow switch doesn't touch it. Only
-      // ``agentModeAccepted`` resets per-flow ("Continue as agent" is a
+      // ``mode`` is session-global (sessionStorage), NOT per-flow, so
+      // a flow switch doesn't touch it. Only ``agentModeAccepted``
+      // resets per-flow ("Continue as agent" is a
       // conversation-scoped commitment, not a session-scoped one).
       agentModeAccepted.value = loaded.agentModeAccepted ?? false;
-      // W71 v1.9 — selectedAgentSurface is a per-flow session
-      // preference (matches autoPromote semantics). Fall back to the
-      // store's default when the flow has no persisted value.
+      // selectedAgentSurface is a per-flow session preference. Fall
+      // back to the store's default when the flow has no persisted
+      // value.
       selectedAgentSurface.value = loaded.selectedAgentSurface ?? "agent_live";
-      // W71 v2.12 — verifyPlanCompletion is per-flow alongside the
-      // surface picker. Falls back to off (default) when the
-      // incoming flow has no persisted value.
+      // verifyPlanCompletion is per-flow alongside the surface picker.
+      // Falls back to off (default) when the incoming flow has no
+      // persisted value.
       verifyPlanCompletion.value = loaded.verifyPlanCompletion ?? false;
       promotionBanner.value = null;
       streamError.value = null;
@@ -420,8 +413,8 @@ export const useAiStore = defineStore("ai", () => {
     abortStream();
     messages.value = [];
     promotionBanner.value = null;
-    // W58 round 7 — clearing the chat resets the session-scoped accept;
-    // a fresh chat shouldn't inherit the prior session's mode commitment.
+    // Clearing the chat resets the session-scoped accept; a fresh chat
+    // shouldn't inherit the prior session's mode commitment.
     agentModeAccepted.value = false;
   };
 
@@ -464,10 +457,9 @@ export const useAiStore = defineStore("ai", () => {
     selectedAgentSurface.value = surface;
   };
 
-  // W71 v2.12 — opt-in verify-completion mode setter. Mirror of the
-  // surface setter so the AiAssistant.vue checkbox flips the flag
-  // through the same store-action pattern as the other agent
-  // settings.
+  // Opt-in verify-completion mode setter. Mirror of the surface setter
+  // so the AiAssistant.vue checkbox flips the flag through the same
+  // store-action pattern as the other agent settings.
   const setVerifyPlanCompletion = (value: boolean): void => {
     verifyPlanCompletion.value = value;
   };
@@ -490,10 +482,10 @@ export const useAiStore = defineStore("ai", () => {
     }
   };
 
-  // W58 — open a chat stream for the *current* tail of `messages` (no extra
-  // user message push). Used by both ``sendMessage`` (after pushing the
-  // user message itself) and ``undoPromotion`` (where the user message
-  // is already in history from the original promoted send).
+  // Open a chat stream for the *current* tail of `messages` (no extra
+  // user message push). Used by both ``sendMessage`` (after pushing
+  // the user message itself) and ``undoPromotion`` (where the user
+  // message is already in history from the original promoted send).
   const _openChatStream = async (): Promise<void> => {
     if (selectedProvider.value === null) {
       streamError.value = "Pick a provider first.";
@@ -526,16 +518,16 @@ export const useAiStore = defineStore("ai", () => {
       .filter((m) => !m.pending && m.content.trim().length > 0)
       .map((m) => ({ role: m.role, content: m.content }));
 
-    // W28 — pass the active flow_id so the backend can build a rich
-    // PromptContext via W22 (subgraph + schemas). Omitted when no flow is
-    // loaded yet → backend falls back to the W26 identity-only prompt.
+    // Pass the active flow_id so the backend can build a rich
+    // PromptContext (subgraph + schemas). Omitted when no flow is
+    // loaded yet → backend falls back to the identity-only prompt.
     const flowStore = useFlowStore();
     const activeFlowId = flowStore.flowId ?? null;
 
-    // W24 — forward the user's `@`-mentions and the canvas selection so
-    // the backend's `render_prompt_context` pins the right subgraph
+    // Forward the user's `@`-mentions and the canvas selection so the
+    // backend's `render_prompt_context` pins the right subgraph
     // instead of silently defaulting to `@flow`. Mirrors the agent
-    // path's `_readCanvasSelection` (ai-agent-store.ts:58-68).
+    // path's `_readCanvasSelection` in ai-agent-store.ts.
     let lastUserText = "";
     for (let i = messages.value.length - 1; i >= 0; i -= 1) {
       if (messages.value[i].role === "user") {
@@ -571,14 +563,13 @@ export const useAiStore = defineStore("ai", () => {
           onDone: () => {
             reactivePlaceholder.pending = false;
             streamingState.value = "idle";
-            // W71 v2.10C — chat reply finished. Mark this as the
-            // most-recent interaction so the next
-            // ``_dispatchPromotedAgent`` call can skip the v2.4
-            // plan stage (the chat reply IS the plan-equivalent).
-            // The status-watcher in ai-agent-store flips this back
-            // to ``"agent"`` whenever an agent run completes —
-            // which is what makes the per-turn ordering work
-            // correctly across mixed chat/agent sessions.
+            // Chat reply finished. Mark this as the most-recent
+            // interaction so the next ``_dispatchPromotedAgent`` call
+            // can skip the plan stage (the chat reply IS the
+            // plan-equivalent). The status-watcher in ai-agent-store
+            // flips this back to ``"agent"`` whenever an agent run
+            // completes — which is what makes the per-turn ordering
+            // work correctly across mixed chat/agent sessions.
             lastInteractionKind.value = "chat";
           },
           onError: (message) => {
@@ -625,17 +616,18 @@ export const useAiStore = defineStore("ai", () => {
     }
   };
 
-  // W58 — dispatch a freshly-promoted agent run. The caller (``sendMessage``)
-  // is responsible for pushing the user message into ``messages`` *before*
-  // invoking this helper — that's how round-6's optimistic-push UX works,
-  // and skipping the push here also means the message can't accidentally
-  // duplicate when the caller already did it.
+  // Dispatch a freshly-promoted agent run. The caller
+  // (``sendMessage``) is responsible for pushing the user message into
+  // ``messages`` *before* invoking this helper — that's how the
+  // optimistic-push UX works, and skipping the push here also means
+  // the message can't accidentally duplicate when the caller already
+  // did it.
   //
-  // Round-5: the agent's ``prompt`` is *enriched* with the recent chat
-  // transcript (so the planner knows what to implement, e.g. when the user
-  // says *"Can you implement?"* after a chat turn that proposed concrete
-  // nodes). Per-turn payload is capped at 2 K chars to bound the first-call
-  // token cost.
+  // The agent's ``prompt`` is *enriched* with the recent chat
+  // transcript (so the planner knows what to implement, e.g. when the
+  // user says *"Can you implement?"* after a chat turn that proposed
+  // concrete nodes). Per-turn payload is capped at 2 K chars to bound
+  // the first-call token cost.
   const _dispatchPromotedAgent = async (text: string, reason: string): Promise<void> => {
     const flowStore = useFlowStore();
     const flowId = flowStore.flowId;
@@ -650,18 +642,16 @@ export const useAiStore = defineStore("ai", () => {
     const enrichedPrompt = _buildPromotedAgentPrompt(text);
     promotionBanner.value = { reason, message: text };
 
-    // W71 v2.10C (refined) — skip the plan stage ONLY when the
-    // IMMEDIATELY-PREVIOUS interaction was a chat reply (i.e.
-    // there's fresh chat-mode reasoning the agent can lean on).
-    // The earlier coarse check (``messages.value.some(m => m.role
-    // === "assistant")``) misfired in the common pattern: chat
-    // → "yes implement" → agent runs → user types follow-up. The
-    // old chat reply is still in messages, so the coarse check
-    // returned true and skip_plan fired even though the most
+    // Skip the plan stage ONLY when the IMMEDIATELY-PREVIOUS
+    // interaction was a chat reply (i.e. there's fresh chat-mode
+    // reasoning the agent can lean on). A coarse "any assistant
+    // message in history" check would misfire in the common pattern:
+    // chat → "yes implement" → agent runs → user types follow-up.
+    // The old chat reply is still in messages, so the coarse check
+    // would return true and skip_plan would fire even though the most
     // recent activity was the AGENT run (which leaves no chat
-    // reasoning in its wake). User-reported 2026-05-09: agent
-    // jumped straight to modify ops on a follow-up without
-    // re-planning, even though the previous turn was an agent run.
+    // reasoning in its wake) — making the agent jump straight to
+    // modify ops on a follow-up without re-planning.
     //
     // ``lastInteractionKind`` is the per-turn signal:
     //   - ``"chat"``  → chat assistant reply just landed (skip plan)
@@ -673,10 +663,10 @@ export const useAiStore = defineStore("ai", () => {
     await agentStore.start({
       flow_id: flowId,
       prompt: enrichedPrompt,
-      // W71 v1.9 — auto-promote-from-chat (W58) honors the user's
-      // selected agent surface (defaults to ``agent_live``). The
-      // direct agent-mode toggle in ``AiAssistant.vue`` reads the same
-      // ref so both dispatch paths stay consistent.
+      // Auto-promote-from-chat honors the user's selected agent
+      // surface (defaults to ``agent_live``). The direct agent-mode
+      // toggle in ``AiAssistant.vue`` reads the same ref so both
+      // dispatch paths stay consistent.
       surface: selectedAgentSurface.value,
       provider: selectedProvider.value ?? "anthropic",
       model: selectedModel.value ?? null,
@@ -685,18 +675,19 @@ export const useAiStore = defineStore("ai", () => {
     });
   };
 
-  // W58 round 5 — assemble the enriched agent prompt. Returns ``text``
-  // verbatim when there's no prior chat history (first message of a
-  // session — the agent doesn't need a transcript header for a single
-  // turn). When there is prior chat, frames it as an explicit transcript
-  // followed by the current confirmation so the planner reads it as
-  // *"context, then instruction"* rather than as a continuous user message.
+  // Assemble the enriched agent prompt. Returns ``text`` verbatim when
+  // there's no prior chat history (first message of a session — the
+  // agent doesn't need a transcript header for a single turn). When
+  // there is prior chat, frames it as an explicit transcript followed
+  // by the current confirmation so the planner reads it as
+  // *"context, then instruction"* rather than as a continuous user
+  // message.
   //
-  // Round-6 nuance: the latest user message has been pushed optimistically
-  // by ``sendMessage`` before classification, so the trailing entry in
-  // ``messages`` is *the same* as ``text``. Strip it from the transcript
-  // so the prompt doesn't render *"User: Can you implement?"* in the body
-  // *and* repeat it in the *"User's latest message"* tail.
+  // The latest user message has been pushed optimistically by
+  // ``sendMessage`` before classification, so the trailing entry in
+  // ``messages`` is *the same* as ``text``. Strip it from the
+  // transcript so the prompt doesn't render *"User: Can you implement?"*
+  // in the body *and* repeat it in the *"User's latest message"* tail.
   const _PROMOTED_AGENT_TURN_CAP = 2_000;
   const _PROMOTED_AGENT_HISTORY_TURNS = 4;
   const _buildPromotedAgentPrompt = (text: string): string => {
@@ -746,16 +737,16 @@ export const useAiStore = defineStore("ai", () => {
     // — the banner is contextual to the in-flight run, not the chat.
     promotionBanner.value = null;
 
-    // W58 round 6 — capture the chat history for the classifier *before*
-    // we push the new user message so the classifier sees only the prior
+    // Capture the chat history for the classifier *before* we push
+    // the new user message so the classifier sees only the prior
     // turns. Then push the message *immediately* so it appears in the
     // chat trail while the classifier round-trip is in flight (~800 ms
     // p50 / ~1500 ms p95). Without optimistic push the user sees their
     // input vanish during the routing await — feels like a UI glitch.
     //
-    // Round 7: the ``agentModeAccepted`` short-circuit takes precedence
-    // over the user's ``mode`` choice. The user clicked "Continue as
-    // agent" on a prior promotion banner, so every subsequent send in
+    // The ``agentModeAccepted`` short-circuit takes precedence over
+    // the user's ``mode`` choice. If the user clicked "Continue as
+    // agent" on a prior promotion banner, every subsequent send in
     // this session skips classification and dispatches as agent
     // directly. Otherwise: classification only happens in ``"auto"``
     // mode — ``"chat"`` skips it (force-chat) and ``"agent"`` bypasses
@@ -782,10 +773,11 @@ export const useAiStore = defineStore("ai", () => {
     };
     messages.value.push(userMessage);
 
-    // W58 round 7 — once accepted, every send goes straight to the agent
-    // without re-classifying. We still gate on a flow being loaded; otherwise
-    // dispatching the agent would surface a confusing "Open a flow first"
-    // error from ``_dispatchPromotedAgent`` for what looks like a normal chat.
+    // Once accepted, every send goes straight to the agent without
+    // re-classifying. We still gate on a flow being loaded; otherwise
+    // dispatching the agent would surface a confusing "Open a flow
+    // first" error from ``_dispatchPromotedAgent`` for what looks
+    // like a normal chat.
     if (agentModeAccepted.value && flowStore.flowId !== null) {
       await _dispatchPromotedAgent(text, "session set to continue as agent");
       return;
@@ -828,16 +820,17 @@ export const useAiStore = defineStore("ai", () => {
   };
 
   const undoPromotion = async (): Promise<void> => {
-    // W58 — banner "Click here to keep this as chat instead" affordance.
+    // Banner "Click here to keep this as chat instead" affordance.
     // Aborts the in-flight agent run, flips the session mode to
-    // ``"chat"`` (so a follow-up Send doesn't re-classify the same way),
-    // then re-dispatches the saved message as a regular chat. The user
-    // message is already in ``messages`` from the original promoted
-    // send — we skip pushing it again to keep the chat trail readable.
+    // ``"chat"`` (so a follow-up Send doesn't re-classify the same
+    // way), then re-dispatches the saved message as a regular chat.
+    // The user message is already in ``messages`` from the original
+    // promoted send — we skip pushing it again to keep the chat trail
+    // readable.
     //
-    // Round 7: also reset ``agentModeAccepted`` since "back to chat" and
-    // "continue as agent" are mutually exclusive — leaving the accept on
-    // would force the next send back to agent and erase the undo.
+    // Also reset ``agentModeAccepted`` since "back to chat" and
+    // "continue as agent" are mutually exclusive — leaving the accept
+    // on would force the next send back to agent and erase the undo.
     const banner = promotionBanner.value;
     if (banner === null) return;
     promotionBanner.value = null;
@@ -855,12 +848,12 @@ export const useAiStore = defineStore("ai", () => {
   };
 
   const acceptPromotion = (): void => {
-    // W58 round 7 — banner "Continue as agent" affordance. The user has
-    // confirmed they want subsequent sends to go directly to the agent.
-    // Flip the session-scoped flag so ``sendMessage`` skips
-    // ``routeMessage`` going forward; clear the banner since its job is
-    // done. We do NOT abort the in-flight agent run — accepting means
-    // *"keep going"*, not *"start over"*.
+    // Banner "Continue as agent" affordance. The user has confirmed
+    // they want subsequent sends to go directly to the agent. Flip
+    // the session-scoped flag so ``sendMessage`` skips ``routeMessage``
+    // going forward; clear the banner since its job is done. We do NOT
+    // abort the in-flight agent run — accepting means *"keep going"*,
+    // not *"start over"*.
     if (promotionBanner.value === null) return;
     agentModeAccepted.value = true;
     promotionBanner.value = null;
@@ -872,12 +865,13 @@ export const useAiStore = defineStore("ai", () => {
     errorMessage: string,
     nodeName?: string,
   ): Promise<void> => {
-    // W23 — "Fix with AI" entry point. Opens the drawer, drops a synthetic
+    // "Fix with AI" entry point. Opens the drawer, drops a synthetic
     // user/assistant pair into the chat, then streams the server-built
-    // failure explanation into the assistant placeholder. The wire-level
-    // user message is composed by the backend via W22's render_prompt_context;
-    // the chat-visible synthetic turn is purely cosmetic so the user has a
-    // visual anchor for what they just asked.
+    // failure explanation into the assistant placeholder. The
+    // wire-level user message is composed by the backend via
+    // ``render_prompt_context``; the chat-visible synthetic turn is
+    // purely cosmetic so the user has a visual anchor for what they
+    // just asked.
     openAiDrawer();
 
     if (streamingState.value === "streaming") {
@@ -974,13 +968,13 @@ export const useAiStore = defineStore("ai", () => {
   };
 
   const generateDocumentation = async (flowId: number, flowName?: string): Promise<void> => {
-    // W50 — "Generate documentation" entry point. Same shape as
+    // "Generate documentation" entry point. Same shape as
     // ``explainRunFailure``: opens the drawer, drops a synthetic
     // user/assistant pair into the chat, then streams the server-built
     // markdown doc into the assistant placeholder. The wire-level user
-    // message is composed by the backend via W22's render_prompt_context
-    // (surface="docgen") + the W50 ``## Documentation request`` block;
-    // the chat-visible synthetic turn is purely cosmetic.
+    // message is composed by the backend via ``render_prompt_context``
+    // (surface="docgen") + the ``## Documentation request`` block; the
+    // chat-visible synthetic turn is purely cosmetic.
     openAiDrawer();
 
     if (streamingState.value === "streaming") {
@@ -1073,14 +1067,14 @@ export const useAiStore = defineStore("ai", () => {
     action: InlineActionType,
     nodeName?: string,
   ): Promise<void> => {
-    // W21 — Inline ✨ menu entry point. Same shape as ``explainRunFailure``
+    // Inline ✨ menu entry point. Same shape as ``explainRunFailure``
     // / ``generateDocumentation``: opens the drawer, drops a synthetic
     // user/assistant pair into the chat, then streams the server-built
     // response into the assistant placeholder. The wire-level user
-    // message is composed by the backend via W22's render_prompt_context
-    // (surface="explain") + the W21 ``## Action`` block; the chat-visible
-    // synthetic turn is purely cosmetic so the user has a visual anchor
-    // for what they just asked.
+    // message is composed by the backend via ``render_prompt_context``
+    // (surface="explain") + the ``## Action`` block; the chat-visible
+    // synthetic turn is purely cosmetic so the user has a visual
+    // anchor for what they just asked.
     openAiDrawer();
 
     if (streamingState.value === "streaming") {
@@ -1280,14 +1274,14 @@ export const useAiStore = defineStore("ai", () => {
     question: string,
     focusNodeId?: number,
   ): Promise<void> => {
-    // W51 — "Ask about lineage" entry point. Same shape as
+    // "Ask about lineage" entry point. Same shape as
     // ``generateDocumentation`` / ``runInlineAction``: opens the drawer,
     // drops a synthetic user/assistant pair into the chat, then streams
     // the server-built lineage answer into the assistant placeholder.
-    // The wire-level user message is composed by the backend via W22's
-    // render_prompt_context (surface="lineage") + the W51 ``## Run
-    // history`` + ``## Question`` blocks; the chat-visible synthetic
-    // turn is purely cosmetic.
+    // The wire-level user message is composed by the backend via
+    // ``render_prompt_context`` (surface="lineage") + the
+    // ``## Run history`` + ``## Question`` blocks; the chat-visible
+    // synthetic turn is purely cosmetic.
     openAiDrawer();
 
     if (streamingState.value === "streaming") {
@@ -1410,8 +1404,8 @@ export const useAiStore = defineStore("ai", () => {
     setSelectedAgentSurface,
     verifyPlanCompletion,
     setVerifyPlanCompletion,
-    // W71 v2.10C — exposed so ai-agent-store's status watcher can
-    // flip it to "agent" when a run terminates.
+    // Exposed so ai-agent-store's status watcher can flip it to
+    // "agent" when a run terminates.
     lastInteractionKind,
     abortStream,
     sendMessage,
@@ -1424,20 +1418,20 @@ export const useAiStore = defineStore("ai", () => {
     dismissPromotionBanner,
     undoPromotion,
     acceptPromotion,
-    // 2026-05-07 — public re-export of ``_buildPromotedAgentPrompt`` so
+    // Public re-export of ``_buildPromotedAgentPrompt`` so
     // ``AiAssistant.vue``'s manual-Agent-toggle path can fold in chat
     // history the same way auto-promotion does. Without this, flipping
-    // the explicit Agent toggle and typing *"Implement the plan"* sent
-    // a context-less prompt to the planner, which then asked *"I'm not
-    // sure which specific plan you'd like me to implement?"* — the
-    // prior chat assistant had laid out the plan but the agent never
-    // saw it.
+    // the explicit Agent toggle and typing *"Implement the plan"*
+    // sends a context-less prompt to the planner, which then asks
+    // *"I'm not sure which specific plan you'd like me to implement?"*
+    // — the prior chat assistant has laid out the plan but the agent
+    // never saw it.
     buildAgentPromptWithHistory: _buildPromotedAgentPrompt,
   };
 });
 
 const inlineActionUserPrompt = (action: InlineActionType, headline: string): string => {
-  // Cosmetic-only — the wire-level prompt is built server-side by W22.
+  // Cosmetic-only — the wire-level prompt is built server-side.
   // Keep these short and human-readable so the chat shows a clean trace
   // of what the user clicked.
   switch (action) {

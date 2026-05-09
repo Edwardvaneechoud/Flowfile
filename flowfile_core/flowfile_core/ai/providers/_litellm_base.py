@@ -101,15 +101,6 @@ class LiteLLMProvider:
         stream: bool,
         response_format: dict[str, Any] | None = None,
     ) -> LiteLLMKwargs:
-        # TODO REMOVE WHEN GOING LIVE — dev-only verbose prompt dump.
-        # Logs the full assembled messages right before they're sent to the
-        # provider so the user can see exactly what the LLM sees. Covers
-        # every AI route (chat / planner / run-failure / autocomplete /
-        # docgen / lineage / inline-actions / command-palette / suggest /
-        # intent-router) because every one of them goes through this seam.
-        # Strip before release — content is unredacted (samples may leak PII)
-        # and the volume is high.
-        _dev_log_prompt(provider=self.name, model=self.model, messages=messages, tools=tools, stream=stream)
         kwargs: LiteLLMKwargs = {
             "model": self.model,
             "messages": [_message_to_litellm(m) for m in messages],
@@ -235,100 +226,6 @@ class LiteLLMProvider:
                 finish_reason=finish_reason,
                 latency_ms=latency_ms,
                 error=error,
-            )
-
-
-_STAGE_FILL_TOOL_PREFIX = "flowfile.graph.add_"
-
-
-def _is_fill_settings_call(tools: list[ToolSpec] | None) -> bool:
-    """W71 v1.6 — return True iff the call is the agent_staged stage-3
-    ``fill_settings`` round.
-
-    Marker: exactly one tool in the array, named
-    ``flowfile.graph.add_<type>``. No other AI surface produces this
-    shape (legacy agent_complex has ~40 tools; staged classify /
-    pick_type / pick_upstream expose ``flowfile.meta.*`` only;
-    single-stage non-add ops expose ``update_node_settings`` /
-    ``delete_node`` / ``connect`` / ``delete_connection``; chat &
-    intent_classifier carry no tools at all).
-    """
-    if not tools or len(tools) != 1:
-        return False
-    return tools[0].name.startswith(_STAGE_FILL_TOOL_PREFIX)
-
-
-def _dev_log_prompt(
-    *,
-    provider: str,
-    model: str,
-    messages: list[Message],
-    tools: list[ToolSpec] | None,
-    stream: bool,
-) -> None:
-    """TODO REMOVE WHEN GOING LIVE — dump every AI prompt to the core log.
-
-    Uses ``print(flush=True)`` rather than ``logger.info`` because the
-    project's runtime logging is highly customised: ``PipelineHandler``
-    has ``propagate=False`` and its own handler, while module-named
-    loggers inherit the root logger's config — which in Electron / IDE
-    runs is not always wired to a visible stream. ``print`` is the
-    dumbest thing that works; the user explicitly asked for visibility.
-    Strip before release — content is unredacted (samples may leak PII),
-    volume is high, and ``print`` bypasses log routing / structured
-    logging entirely.
-
-    W71 v1.6 — gated to stage-3 (``fill_settings``) calls only. The
-    user explicitly asked for stage-3-only output during dogfood
-    debugging: that's where the LLM has to produce the real settings
-    JSON and where small-model failures (text-JSON in content,
-    misshaped fields) actually happen. Earlier stages (classify /
-    pick_type / pick_upstream) succeed reliably and just produce
-    noise in the terminal. The stage-3 marker is "exactly one tool
-    whose name starts with ``flowfile.graph.add_``" — that's the
-    only place this combination occurs (legacy ``agent_complex`` has
-    ~40 tools; ``agent_staged`` other stages expose either
-    ``flowfile.meta.*`` or single-stage ops). All other prompts
-    (chat, intent_classifier, the meta stages, single-stage non-add
-    ops) are silenced. Set ``FLOWFILE_AI_LOG_PROMPTS=true`` and tail
-    ``~/.flowfile/ai_prompts/YYYY-MM-DD.jsonl`` for the full record
-    when broader visibility is needed.
-    """
-    if not _is_fill_settings_call(tools):
-        return
-
-    import sys as _sys
-
-    out = _sys.stderr  # uvicorn's INFO access lines also go to stderr
-    total_chars = sum(len(m.content or "") for m in messages)
-    tool_count = len(tools) if tools else 0
-    print(
-        f"\n[DEV-PROMPT-DUMP — REMOVE WHEN GOING LIVE] provider={provider} "
-        f"model={model} mode={'stream' if stream else 'chat'} "
-        f"messages={len(messages)} total_chars={total_chars} "
-        f"total_tokens~{total_chars // 4} tools={tool_count}",
-        file=out,
-        flush=True,
-    )
-    for i, m in enumerate(messages):
-        content = m.content or ""
-        print(
-            f"[DEV-PROMPT-DUMP] [{i + 1}/{len(messages)}] role={m.role} "
-            f"chars={len(content)}\n"
-            f"----- BEGIN {m.role.upper()} MESSAGE -----\n"
-            f"{content}\n"
-            f"----- END {m.role.upper()} MESSAGE -----",
-            file=out,
-            flush=True,
-        )
-    if tools:
-        for i, t in enumerate(tools):
-            desc = (t.description or "")[:200]
-            print(
-                f"[DEV-PROMPT-DUMP] tool [{i + 1}/{len(tools)}] "
-                f"name={t.name} description={desc}",
-                file=out,
-                flush=True,
             )
 
 

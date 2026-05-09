@@ -1,27 +1,24 @@
-"""Level 3 — Planner (multi-turn, plan-then-execute). Owned by W40.
+"""Multi-turn agent planner — opens a session, plans, and dispatches tool calls.
 
-Per plan §2 / §6.4 / §5.6, the planner:
+The planner:
 
 * opens a session via ``POST /ai/agent/start``;
-* surfaces a narrowed tool catalog using D002's two-stage pattern (default
-  ``surface="agent"`` calls ``flowfile.meta.pick_category`` first, then the
-  matching ``CATEGORY_PRESETS`` for the rest of the loop; ``surface=
-  "agent_complex"`` exposes the full catalog in one shot);
-* dispatches each LLM tool call through W31's :func:`execute_tool_call` with
-  ``mode="stage"`` — the live graph is never mutated mid-run (per §9.2
-  "Level 3 agent never auto-applies");
-* runs D006's snapshot+warn-and-pause check before every dispatch — if the
-  user mutated the canvas mid-run, the loop yields ``drift_detected`` +
-  ``paused`` and exits cleanly so the route can return JSON / SSE-close
-  while the session waits for ``POST /ai/agent/{session_id}/resume``;
+* surfaces a narrowed tool catalog (default ``surface="agent"`` uses a
+  two-stage pick_category pattern; ``surface="agent_complex"`` exposes the
+  full catalog in one shot);
+* dispatches each LLM tool call through :func:`execute_tool_call` with
+  ``mode="stage"`` — the live graph is never mutated mid-run;
+* snapshots the graph before every dispatch — if the user mutated the
+  canvas mid-run, yields ``drift_detected`` + ``paused`` and exits cleanly
+  so the route can close the SSE while the session waits for
+  ``POST /ai/agent/{session_id}/resume``;
 * retries a rejected step up to ``max_retries_per_step`` times by feeding
   the executor's ``refusal_detail`` back as a ``role="tool"`` message and
   asking the LLM to correct;
 * on completion, bundles the per-step :class:`StagedToolEntry` list into a
   single :class:`flowfile_core.ai.diff.GraphDiff` via
-  :func:`flowfile_core.ai.diff.bundle_staged_results` and registers it via
-  W41's :func:`flowfile_core.ai.diff.register_diff` — the user reviews the
-  diff via the W35 ``AiDiffPreview`` and accepts atomically.
+  :func:`flowfile_core.ai.diff.bundle_staged_results` and registers it for
+  the user to review and accept atomically through ``AiDiffPreview``.
 
 The function is a **pure async generator** that never raises — every
 failure mode becomes a :class:`PlannerEvent` of type ``"error"`` /
@@ -29,19 +26,15 @@ failure mode becomes a :class:`PlannerEvent` of type ``"error"`` /
 wrapper can stream the failure to the client without a structured
 exception escaping the generator boundary.
 
-W42 swaps the in-memory session store for a disk-backed sidecar; W40 only
-needs the in-memory shape. The ``PlannerEvent`` ``id:`` headers carry
-``f"{session_id}.{step_count}"`` so EventSource clients *can* re-attach via
-``Last-Event-ID`` once W42 lands the replay buffer — W40's resume route is
-exclusively for D006 drift-pause, not connection drop.
+The ``PlannerEvent`` ``id:`` headers carry ``f"{session_id}.{step_count}"``
+so EventSource clients can re-attach via ``Last-Event-ID`` against the
+replay buffer.
 
-System prompt: ``prompts/base.md`` + ``prompts/planner.md`` (D008) — the
-``copilot`` level wouldn't fit; planner-level prompt language is
-intentionally distinct.
+System prompt: ``prompts/base.md`` + ``prompts/planner.md``.
 
-The W11 lazy-litellm contract is preserved — this module must not import
-``litellm`` at load time. The provider call goes through the W11 seam,
-which lazy-loads litellm in its own subclass.
+The lazy-litellm contract is preserved — this module must not import
+``litellm`` at load time. The provider call goes through the provider
+seam, which lazy-loads litellm in its own subclass.
 """
 
 from __future__ import annotations
@@ -87,12 +80,10 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_MAX_STEPS: int = 32
-"""Per-session planner-loop budget. Bumped from 12 for W71 because the
-``agent_staged`` surface fans each node-add into 4 LLM rounds (classify
-→ pick_type → pick_upstream → fill_settings); a 3-node user turn now
-needs at least 12 rounds. Legacy ``agent`` / ``agent_complex`` surfaces
-rarely hit even half of this — wasted budget is free, missed budget
-truncates the user's plan."""
+"""Per-session planner-loop budget. The ``agent_staged`` surface fans
+each node-add into 4 LLM rounds (classify → pick_type → pick_upstream →
+fill_settings), so a 3-node user turn needs at least 12 rounds. Wasted
+budget is free; missed budget truncates the user's plan."""
 DEFAULT_MAX_RETRIES_PER_STEP: int = 3
 DEFAULT_MAX_TOKENS: int = 2_048
 RATIONALE_MAX_LEN: int = 500
@@ -115,8 +106,8 @@ PlannerEventName = Literal[
     "error",
     "info",
 ]
-"""W49 — ``awaiting_user_input`` is emitted *instead of* ``complete`` when
-the planner loop ends with no tool calls AND no staged results AND the last
+"""``awaiting_user_input`` is emitted *instead of* ``complete`` when the
+planner loop ends with no tool calls AND no staged results AND the last
 assistant message looks like a clarifying question. The session flips to
 ``awaiting_user_input`` (not ``completed``) so the frontend can surface
 *"Agent waiting for your reply…"* and the followup endpoint accepts the
@@ -145,11 +136,10 @@ class PlannerEvent(BaseModel):
 
 _ADD_PREFIX = "flowfile.graph.add_"
 
-# W71 v2.0 — surfaces that share the agent_staged state machine
-# (classify→pick_type→pick_upstream→fill_settings).
-# ``agent_live`` differs only in the post-apply behaviour (lives
-# in flow.nodes immediately + observation), so every place the
-# state-machine logic gates on ``agent_staged`` must also include
+# Surfaces that share the staged state machine
+# (classify → pick_type → pick_upstream → fill_settings). ``agent_live``
+# differs only in post-apply behaviour (lives in flow.nodes immediately +
+# observation), so every gate on ``agent_staged`` must also include
 # ``agent_live``.
 _STAGED_STATE_MACHINE_SURFACES: frozenset[str] = frozenset({"agent_staged", "agent_live"})
 
@@ -159,8 +149,8 @@ def _coerce_formula_bare_string_args(
     *,
     user_prompt: str,
 ) -> dict[str, Any]:
-    """W71 v1.13B — auto-coerce the LLM's *bare-expression-string* shape
-    for ``add_formula`` at agent_staged ``fill_settings``.
+    """Auto-coerce the LLM's *bare-expression-string* shape for
+    ``add_formula`` at agent_staged ``fill_settings``.
 
     Smaller models routinely confuse the FunctionInput envelope's
     inner ``function`` field (a string expression) with the OUTER
@@ -168,10 +158,9 @@ def _coerce_formula_bare_string_args(
     ``{"function": "[first] + ' ' + [last]"}`` — only the expression
     string keyed under the wrapper-field name, no ``field``
     descriptor. The downstream Pydantic validation then refuses with
-    *"function expects FunctionInput, got str"*; v1.13B's refusal
-    rewrite (executor.py) makes the message readable, but the
-    cleanest UX is to recognise the intent and fill in the missing
-    ``field`` rather than refuse.
+    *"function expects FunctionInput, got str"*; the cleanest UX is
+    to recognise the intent and fill in the missing ``field`` rather
+    than refuse.
 
     Coercion rule (narrow):
 
@@ -211,16 +200,16 @@ def _coerce_formula_bare_string_args(
 
 
 def _looks_like_outer_envelope_value(value: Any) -> bool:
-    """W71 v1.13B — does ``value`` look like an outer-envelope's
-    inner-class value (a dict, possibly JSON-encoded)?
+    """Does ``value`` look like an outer-envelope's inner-class value
+    (a dict, possibly JSON-encoded)?
 
     Returns True for ``{...}`` and for ``"{\\"...\\": ...}"`` (JSON
-    string that parses to a dict). The v1.4 universal unwrap will
-    convert the JSON-string variant to a dict at the executor seam,
-    so both cases mean *"the LLM provided the outer envelope"* — no
-    planner-side wrap needed. Returns False for scalars (bare
-    expression strings, ints, lists), which are inner-schema
-    collision noise that DOES need the wrap.
+    string that parses to a dict). The universal unwrap converts the
+    JSON-string variant to a dict at the executor seam, so both cases
+    mean *"the LLM provided the outer envelope"* — no planner-side
+    wrap needed. Returns False for scalars (bare expression strings,
+    ints, lists), which are inner-schema collision noise that DOES
+    need the wrap.
     """
     if isinstance(value, dict):
         return True
@@ -248,8 +237,8 @@ _FORMULA_NAME_PATTERNS: tuple[tuple[str, int], ...] = (
 
 def _derive_formula_output_column_name(user_prompt: str) -> str:
     """Best-effort extraction of the user's intended output-column name
-    for ``v1.13B``'s formula bare-string coercion. Falls back to
-    ``"derived"`` when no recognizable pattern fires.
+    for the formula bare-string coercion. Falls back to ``"derived"``
+    when no recognizable pattern fires.
     """
     import re
 
@@ -264,31 +253,28 @@ def _derive_formula_output_column_name(user_prompt: str) -> str:
                 return candidate
     return "derived"
 
-# W71 — staged-flow tool name lookups. Mirrored from ``meta_ops`` so the
-# planner can branch on tool name without re-importing the constants in
-# the loop hot path.
+# Staged-flow tool name lookups. Mirrored from ``meta_ops`` so the planner
+# can branch on tool name without re-importing the constants in the loop
+# hot path.
 _EMIT_PLAN_NAME = EMIT_PLAN_TOOL_NAME
 _CLASSIFY_INTENT_NAME = CLASSIFY_INTENT_TOOL_NAME
 _PICK_NODE_TYPE_NAME = PICK_NODE_TYPE_TOOL_NAME
 _VERIFY_COMPLETION_NAME = VERIFY_COMPLETION_TOOL_NAME
 
-# W71 v1.6 / v1.8 — recovery is now applied at all agent_staged stages
-# (the "exactly one match" + "name must be in expected_tool_names"
-# rules in ``_recover_textual_tool_call`` defend against the after-add
-# summary pattern). This frozenset stays in place to identify the
-# **mandatory-tool-call** stages where an empty ``tool_calls`` —
-# even after recovery — should route through the retry path rather
-# than terminating the loop (W71 v1.7). At ``classify`` an empty
-# ``tool_calls`` is still a valid termination signal: the LLM
-# decided op_kind="other" (silently) or the user got their answer.
+# Stages where an empty ``tool_calls`` — even after textual-tool-call recovery
+# in ``_recover_textual_tool_call`` — should route through the retry path
+# rather than terminating the loop. At ``classify`` an empty ``tool_calls``
+# is a valid termination signal: the LLM decided op_kind="other" or the
+# user got their answer.
 _MANDATORY_TOOL_CALL_STAGES: frozenset[str] = frozenset(
     {"pick_type", "pick_upstream", "fill_settings", "single_stage_op", "verify_completion"}
 )
 _PICK_UPSTREAM_NAME = PICK_UPSTREAM_TOOL_NAME
 
-# W71 — non-add ops that the staged surface dispatches via ``single_stage_op``.
-# The planner uses this set to decide when to call ``reset_stage_state`` after
-# a successful single-stage op so the next round restarts at ``classify``.
+# Non-add ops that the staged surface dispatches via ``single_stage_op``.
+# The planner uses this set to decide when to call ``reset_stage_state``
+# after a successful single-stage op so the next round restarts at
+# ``classify``.
 _STAGED_SINGLE_OP_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "flowfile.graph.update_node_settings",
@@ -298,26 +284,26 @@ _STAGED_SINGLE_OP_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
-# W57 — settings-field names that express primary upstream dependency for
-# single-input nodes. The catalog generator (``tools/registry.py``) auto-derives
-# JSON Schema from the per-node Pydantic settings classes, so the LLM sees
-# both ``upstream_node_ids`` (planner-injected) AND these legacy connection-state
-# fields. When the LLM emits the settings field but omits ``upstream_node_ids``,
-# the resolver canonicalises the two views.
+# Settings-field names that express primary upstream dependency for
+# single-input nodes. The catalog generator (``tools/registry.py``)
+# auto-derives JSON Schema from the per-node Pydantic settings classes,
+# so the LLM sees both ``upstream_node_ids`` (planner-injected) AND
+# these legacy connection-state fields. When the LLM emits the settings
+# field but omits ``upstream_node_ids``, the resolver canonicalises the
+# two views.
 #
-# Audit (2026-05-06): ``depending_on_id`` (NodeSingleInput base) is the
-# canonical primary-upstream field. ``depending_on_ids`` (NodeMultiInput) is
-# excluded — multi-upstream insertion context is out of v0 scope. Other
+# Only ``depending_on_id`` (NodeSingleInput base) is canonical primary
+# upstream. ``depending_on_ids`` (NodeMultiInput) is excluded —
+# multi-upstream insertion context is out of v0 scope. Other
 # upstream-shaped fields (``ApplyModelSettings.upstream_node_id``,
 # ``EvaluateModelSettings.upstream_train_node_id``) are nested in ML
-# sub-settings and reference auxiliary cross-flow links, not the primary
-# data input — also excluded.
+# sub-settings and reference auxiliary cross-flow links, not the
+# primary data input — also excluded.
 _SETTINGS_DEPENDENCY_FIELDS: tuple[str, ...] = ("depending_on_id",)
 
-# W38 — single short sentence per step, ≤ 20 words per the prompt instruction;
-# we capture up to ~280 chars (a generous cap that tolerates the model running
-# slightly long) and trim trailing whitespace. Rationale longer than this is
-# almost always the model writing a paragraph — clipping keeps the chat scannable.
+# Capture a single short rationale (~280 chars) and trim trailing
+# whitespace. Rationale longer than this is almost always the model
+# writing a paragraph — clipping keeps the chat scannable.
 _RATIONALE_MAX_CHARS: int = 280
 
 
@@ -325,14 +311,14 @@ OpKind = Literal["meta", "graph", "schema", "codegen", "unknown"]
 
 
 def _classify_op_kind(tool_name: str) -> OpKind:
-    """Map a fully-qualified tool name to its op_kind for the W38 UI gating.
+    """Map a fully-qualified tool name to its op_kind for UI gating.
 
-    ``flowfile.meta.*`` are LLM-internal routing decisions (D002 two-stage
-    selection) and the frontend hides them. ``flowfile.graph.*`` are the
-    user-facing canvas mutations that need a rationale. ``flowfile.schema.*``
-    are read-only introspection calls — we still show them so the user
-    knows the agent is "looking at" something. ``flowfile.codegen.*`` are
-    code generation helpers that only show up under ``agent_complex``.
+    ``flowfile.meta.*`` are LLM-internal routing decisions and the
+    frontend hides them. ``flowfile.graph.*`` are the user-facing canvas
+    mutations that need a rationale. ``flowfile.schema.*`` are read-only
+    introspection calls — we still show them so the user knows the agent
+    is "looking at" something. ``flowfile.codegen.*`` are code generation
+    helpers that only show up under ``agent_complex``.
     """
     if tool_name.startswith("flowfile.meta."):
         return "meta"
@@ -390,16 +376,16 @@ _QUESTION_TOKENS: tuple[str, ...] = (
     "shall we",
     "did you mean",
 )
-"""W49 — interrogative tokens used by :func:`_looks_like_question` when an
+"""Interrogative tokens used by :func:`_looks_like_question` when an
 assistant message is missing a trailing ``?`` (the model occasionally drops
 it, especially on shorter clarifying turns). Lower-cased substring match —
 ``"do you want"`` and ``"do you have"`` are both covered by ``"do you"``."""
 
 
 def _looks_like_question(text: str | None) -> bool:
-    """W49 — true if ``text`` reads like a clarifying question to the user.
+    """True if ``text`` reads like a clarifying question to the user.
 
-    Two cheap signals that catch the live transcripts the spec captured:
+    Two cheap signals:
 
     * **Ends with ``?``** — wins regardless of length / wording.
     * **Lower-cased substring contains an interrogative token** from
@@ -407,9 +393,9 @@ def _looks_like_question(text: str | None) -> bool:
       preambles even when the trailing ``?`` is missing, and *"Do you want
       me to ..."* when the model gets verbose.
 
-    Whitespace-only or ``None`` returns ``False``. No NLP — a regex / token
-    list keeps the planner free of model-driven classification cost on a
-    path that fires on every loop exit. False positives on declarative
+    Whitespace-only or ``None`` returns ``False``. No NLP — a token list
+    keeps the planner free of model-driven classification cost on a path
+    that fires on every loop exit. False positives on declarative
     sentences containing ``"how"`` or ``"which"`` (e.g. *"This is how the
     join works."*) are tolerable: the only consequence is the frontend
     renders *"Agent waiting for your reply…"* instead of *"Agent finished
@@ -666,9 +652,9 @@ def _read_settings_dependency_field(args: dict[str, Any]) -> int | None:
 def _format_ambiguous_insertion_detail(flow: FlowGraph) -> str:
     """Build a refusal_detail string listing the live candidates.
 
-    Used by the W57 ambiguity refusal so the LLM can retry with explicit
-    ``upstream_node_ids``. Walks ``flow.nodes`` once; defensive against
-    a node missing ``node_id`` / ``node_type``.
+    Used by the ambiguous-insertion refusal so the LLM can retry with
+    explicit ``upstream_node_ids``. Walks ``flow.nodes`` once; defensive
+    against a node missing ``node_id`` / ``node_type``.
     """
     parts: list[str] = []
     for node in flow.nodes:
@@ -693,11 +679,11 @@ def _resolve_insertion_context(
     """Build an :class:`InsertionContext` for a tool call.
 
     Returns ``(insertion_context, ambiguous_detail_or_none)``. The second
-    element is always ``None`` post-2026-05-07 — the W57 ambiguity-refusal
-    tier was reverted after live UX showed it too aggressive. Tuple shape
-    preserved so existing destructuring at call sites keeps working.
+    element is always ``None`` — the ambiguity-refusal tier was reverted
+    after live UX showed it too aggressive. Tuple shape preserved so
+    existing destructuring at call sites keeps working.
 
-    Tier order (W57 + 2026-05-07 revert; 7 tiers):
+    Tier order (7 tiers):
 
     1. LLM-provided ``args["upstream_node_ids"]`` (explicit override always
        wins).
@@ -708,18 +694,15 @@ def _resolve_insertion_context(
        is set, the resolver canonicalises.
     3. Most-recent in-batch staged ``add_*`` from ``session.staged_results``
        (chained transformations: add_filter → add_sort).
-    4. ``session.selected_node_ids`` (W57) — the user's canvas selection at
-       start time.
-    5. ``session.pinned_node_ids`` (W57) — ``@``-mention targets at start
+    4. ``session.selected_node_ids`` — the user's canvas selection at start
        time.
+    5. ``session.pinned_node_ids`` — ``@``-mention targets at start time.
     6. Most-recently-added live node whose ``NodeTemplate.output > 0``
        — i.e. skip terminal / sink types (``explore_data``, ``output``,
        ``database_writer``, ``cloud_storage_writer``, ``catalog_writer``)
-       in reverse order. (Was ``flow.nodes[-1]`` blindly until 2026-05-07
-       afternoon; the original W57 revert flagged this as the residual
-       risk and dogfood on the customer_deduplication template hit it
-       immediately — the template ends in ``explore_data`` and the
-       fallback was attaching the new node downstream of a sink.)
+       in reverse order. The walk-in-reverse-and-skip-sinks rule prevents
+       attaching a new node downstream of a sink on flows that end in
+       ``explore_data`` / writer nodes.
     7. Empty (truly cold flow — no nodes, OR all live nodes are terminals).
        The executor handles this (sources don't need an upstream;
        most node types refuse).
@@ -729,12 +712,12 @@ def _resolve_insertion_context(
     upstream_ids: list[int] = []
     ambiguous_detail: str | None = None
 
-    # Tier 0 (W71) — agent_staged stage 3: session state is canonical.
-    # The LLM at ``fill_settings`` doesn't see the upstream fields in its
-    # tool schema (they're stripped by ``build_staged_fill_tool_spec``);
-    # the upstream picker at stage 2 already resolved the choice and
-    # stored it on the session. Skip every other tier — these picks
-    # cannot be overridden by an LLM that didn't see the schema.
+    # Tier 0 — staged stage 3: session state is canonical. The LLM at
+    # ``fill_settings`` doesn't see the upstream fields in its tool
+    # schema (they're stripped by ``build_staged_fill_tool_spec``); the
+    # upstream picker at stage 2 already resolved the choice and stored
+    # it on the session. Skip every other tier — these picks cannot be
+    # overridden by an LLM that didn't see the schema.
     if session.surface in _STAGED_STATE_MACHINE_SURFACES and session.stage == "fill_settings":
         upstream_ids = [uid for uid in (session.picked_upstream_ids or []) if isinstance(uid, int)]
 
@@ -799,7 +782,7 @@ def _resolve_insertion_context(
                     continue
         # else / no non-sink found: Tier 7 — leave upstream_ids empty.
 
-    # W71 — at fill_settings, right input is also session-canonical.
+    # At fill_settings, right input is also session-canonical.
     if session.surface in _STAGED_STATE_MACHINE_SURFACES and session.stage == "fill_settings":
         right_input_node_id = session.picked_right_input_id
     else:
@@ -808,9 +791,9 @@ def _resolve_insertion_context(
 
     pos_x = args.get("pos_x")
     pos_y = args.get("pos_y")
-    # W62 — leave pos_x / pos_y as ``None`` when the LLM didn't supply
-    # numbers so the executor's auto-layout resolver kicks in. The LLM
-    # never invents screen coordinates in practice.
+    # Leave pos_x / pos_y as ``None`` when the LLM didn't supply numbers
+    # so the executor's auto-layout resolver kicks in. The LLM never
+    # invents screen coordinates in practice.
     pos_x_val = float(pos_x) if isinstance(pos_x, int | float) else None
     pos_y_val = float(pos_y) if isinstance(pos_y, int | float) else None
 
@@ -827,8 +810,8 @@ def _count_prior_staged_with_same_upstream(
     session: sessions.AgentSession,
     upstream_node_ids: list[int],
 ) -> int:
-    """W62 — count prior in-batch staged ``add_*`` entries anchored at the
-    same upstream as ``upstream_node_ids``. Threaded into the executor as
+    """Count prior in-batch staged ``add_*`` entries anchored at the same
+    upstream as ``upstream_node_ids``. Threaded into the executor as
     ``staged_offset_index`` so fan-outs from one upstream stack vertically
     instead of overlapping. Chained adds (each with a different upstream)
     naturally see 0 here and lay out as a straight horizontal chain.
@@ -851,12 +834,12 @@ def _count_prior_staged_with_same_upstream(
 def _collect_staged_upstream_positions(
     session: sessions.AgentSession,
 ) -> dict[int, tuple[float, float]]:
-    """W62 — build ``{node_id: (pos_x, pos_y)}`` for every prior in-batch
-    staged ``add_*`` so the executor's auto-layout resolver can anchor
-    chained adds onto staged-but-unapplied upstreams. Without this the
-    second add in a multi-step plan can't find its upstream in
-    ``flow.nodes`` (the prior add is only staged, not applied), and the
-    resolver falls back to the cold-flow seed at (50, 50).
+    """Build ``{node_id: (pos_x, pos_y)}`` for every prior in-batch staged
+    ``add_*`` so the executor's auto-layout resolver can anchor chained
+    adds onto staged-but-unapplied upstreams. Without this the second add
+    in a multi-step plan can't find its upstream in ``flow.nodes`` (the
+    prior add is only staged, not applied), and the resolver falls back
+    to the cold-flow seed at (50, 50).
     """
     out: dict[int, tuple[float, float]] = {}
     for entry in session.staged_results:
@@ -886,18 +869,17 @@ def _collect_staged_upstream_positions(
 
 
 def _staged_dict_to_flowfile_column(col: dict[str, Any]) -> Any:
-    """W71 v1.11 — reconstruct a ``FlowfileColumn``-shaped object from a
-    serialized predicted_output_schema dict.
+    """Reconstruct a ``FlowfileColumn``-shaped object from a serialized
+    predicted_output_schema dict.
 
     ``predictor.schema_to_dict_list`` projects a ``FlowfileColumn`` to
     ``{"name": ..., "data_type": ..., "nullable": True}`` for the wire
-    payload (and disk persistence). To feed that back into the
-    predictor's mirror-graph as an upstream ``predicted_schema``, we
-    need objects that quack like ``FlowfileColumn`` — at minimum
-    ``column_name`` and ``data_type`` attributes. The mirror's
-    schema_callback closures only read those two; the rest of the
-    dataclass fields are populated with safe defaults so reflection /
-    repr / private attributes don't trip.
+    payload (and disk persistence). To feed that back into the predictor's
+    mirror-graph as an upstream ``predicted_schema``, we need objects
+    that quack like ``FlowfileColumn`` — at minimum ``column_name`` and
+    ``data_type`` attributes. The mirror's schema_callback closures only
+    read those two; the rest of the dataclass fields are populated with
+    safe defaults so reflection / repr / private attributes don't trip.
 
     Uses ``__new__`` to bypass ``FlowfileColumn.__init__`` (which
     requires a heavy ``PlType`` argument we don't have on the staging
@@ -934,9 +916,8 @@ def _staged_dict_to_flowfile_column(col: dict[str, Any]) -> Any:
 def _collect_staged_upstream_schemas(
     session: sessions.AgentSession,
 ) -> dict[int, list[Any]]:
-    """W71 v1.11 — build ``{node_id: list[FlowfileColumn-like]}`` for every
-    prior in-batch staged ``add_*`` whose predicted output schema is
-    known.
+    """Build ``{node_id: list[FlowfileColumn-like]}`` for every prior
+    in-batch staged ``add_*`` whose predicted output schema is known.
 
     Mirrors :func:`_collect_staged_upstream_positions`'s shape (same
     walk over ``session.staged_results``) so the executor receives a
@@ -944,10 +925,9 @@ def _collect_staged_upstream_schemas(
     this BEFORE the live-graph ``flow.get_node(uid)`` lookup at Tier
     0a (see ``predictor._resolve_upstream_schemas``). Without it,
     chained add_* calls in a single agent turn produce *"upstream node
-    N not found in flow"* warnings on every step — which the LLM
-    reads as a failure signal and tries to "fix" by re-staging with
-    new ids, leading to a 14-node runaway loop on smaller models
-    (Qwen 32B / agent_complex, 2026-05-08 dogfood).
+    N not found in flow"* warnings on every step — which the LLM reads
+    as a failure signal and tries to "fix" by re-staging with new ids,
+    leading to runaway loops on smaller models.
     """
     out: dict[int, list[Any]] = {}
     for entry in session.staged_results:
@@ -984,18 +964,19 @@ append ``... [truncated]`` so the LLM knows the echo is partial and can
 def _extract_staged_settings_for_reply(result: ToolExecutionResult) -> str | None:
     """Return a compact JSON of the just-staged settings, for the LLM tool reply.
 
-    2026-05-07 — without this, the only post-staging signal the LLM gets back
-    is ``status: staged | predicted columns: ...``. When the user later asks
-    to modify the same node, the LLM has to invent the full settings dict
-    (W47 contract: pass the *full* settings) — including fields it can't
-    know like ``pos_x`` / ``pos_y`` / ``user_id`` / ``depending_on_id``,
-    which it then hallucinates with random-looking values that overwrite
-    the real ones. Echoing the staged settings closes that loop.
+    Without this, the only post-staging signal the LLM gets back is
+    ``status: staged | predicted columns: ...``. When the user later
+    asks to modify the same node, the LLM has to invent the full
+    settings dict (the update contract requires the *full* settings) —
+    including fields it can't know like ``pos_x`` / ``pos_y`` /
+    ``user_id`` / ``depending_on_id``, which it then hallucinates with
+    random-looking values that overwrite the real ones. Echoing the
+    staged settings closes that loop.
 
     Handles both ``add_*`` payloads (settings under ``"settings"``) and
-    W47 modification payloads (settings under ``"new_settings"``). Returns
-    ``None`` for op shapes without a settings dict (connect / delete_node
-    / delete_connection).
+    modification payloads (settings under ``"new_settings"``). Returns
+    ``None`` for op shapes without a settings dict (connect /
+    delete_node / delete_connection).
     """
     payload = result.staged_node_payload
     if not isinstance(payload, dict):
@@ -1020,7 +1001,7 @@ def _summarise_result_for_llm(result: ToolExecutionResult) -> str:
     The LLM sees this as the ``role="tool"`` reply that closes the loop on
     its prior tool call. Keep it terse but include enough signal for the
     LLM to correct on retry: refusal reason / detail, predicted columns,
-    warnings, and (2026-05-07) the just-staged settings dict so subsequent
+    warnings, and the just-staged settings dict so subsequent
     ``update_node_settings`` calls can copy current values rather than
     hallucinate them.
     """
@@ -1055,13 +1036,13 @@ def _payload_node_id(payload: dict[str, Any] | None) -> int | None:
     For ``add_*`` payloads the id lives on the validated settings dict
     (``payload["settings"]["node_id"]``); the planner emits this for
     ``staged_node_ids`` tracking and for the ``tool_call_staged`` event.
-    For W47 ``update_node_settings`` modification payloads, the id is
-    a top-level field — modifications target an existing node, so the
+    For ``update_node_settings`` modification payloads, the id is a
+    top-level field — modifications target an existing node, so the
     inner ``new_settings.node_id`` is not authoritative (and might be
     omitted by the LLM). We return the top-level ``node_id`` in that
     case for the event payload, but the planner does NOT add modification
     targets to ``staged_node_ids`` (that list is for net-new nodes; the
-    W45 drift detector treats modification targets as unchanged).
+    drift detector treats modification targets as unchanged).
     """
     if not isinstance(payload, dict):
         return None
@@ -1091,11 +1072,11 @@ def _check_self_loop(
 ) -> str | None:
     """Return a refusal_detail string if ``proposed_node_id`` would self-loop, else None.
 
-    W54 universal invariant: a new node's ``node_id`` may never equal any of
-    its own ``upstream_node_ids`` or its ``right_input_node_id``. Catches all
-    three plausible upstream causes (LLM-provided collision, stale
-    staged_results post-resume, live-graph drift) regardless of which one
-    fired — the apply_diff cycle error is the same.
+    Universal invariant: a new node's ``node_id`` may never equal any of
+    its own ``upstream_node_ids`` or its ``right_input_node_id``. Catches
+    all three plausible upstream causes (LLM-provided collision, stale
+    staged_results post-resume, live-graph drift) regardless of which
+    one fired — the apply_diff cycle error is the same.
     """
     upstream = list(insertion_context.upstream_node_ids or [])
     right_input = insertion_context.right_input_node_id
@@ -1134,8 +1115,8 @@ def _resolve_current_surface(session: sessions.AgentSession) -> str:
 
     * ``surface="agent_complex"`` — one-shot full catalog (single round
       with every tool exposed). Big-model power-user path.
-    * ``surface="agent_staged"`` — W71 multi-stage state machine. The
-      tool catalog is per-stage:
+    * ``surface="agent_staged"`` — multi-stage state machine. The tool
+      catalog is per-stage:
       - ``classify`` → ``"staged_classify"``.
       - ``pick_type`` → ``"staged_pick_type"``.
       - ``pick_upstream`` → ``"staged_pick_upstream"`` (planner overrides
@@ -1146,15 +1127,11 @@ def _resolve_current_surface(session: sessions.AgentSession) -> str:
       - ``single_stage_op`` → ``"staged_modify"`` / ``"staged_delete"``
         / ``"staged_connect"`` / ``"staged_disconnect"`` per
         ``picked_op_kind``.
-
-    W71 v1.10 — legacy ``surface="agent"`` (two-stage ``pick_category``)
-    was removed; the literal type rejects it at request validation, so
-    it can't reach this function.
     """
     if session.surface == "agent_complex":
         return "agent_complex"
-    # session.surface in _STAGED_STATE_MACHINE_SURFACES — only remaining alternative.
-    # W71 v2.4 — plan stage runs once at session start.
+    # session.surface in _STAGED_STATE_MACHINE_SURFACES — only remaining
+    # alternative. Plan stage runs once at session start.
     if session.stage == "plan":
         return "staged_plan"
     if session.stage == "single_stage_op" and session.picked_op_kind is not None:
@@ -1171,32 +1148,28 @@ def _resolve_current_surface(session: sessions.AgentSession) -> str:
         return "staged_pick_upstream"
     if session.stage == "fill_settings":
         # Telemetry-only: the planner overrides the catalog with a
-        # per-turn ``build_staged_fill_tool_spec`` call before
-        # dispatch.
+        # per-turn ``build_staged_fill_tool_spec`` call before dispatch.
         return "staged_pick_upstream"
-    # W71 v2.12 — opt-in verify-completion gate. Reached only when
-    # classify picked op_kind="other" AND session.verify_plan_completion
-    # AND not already consumed this loop.
+    # Opt-in verify-completion gate. Reached only when classify picked
+    # op_kind="other" AND session.verify_plan_completion AND not already
+    # consumed this loop.
     if session.stage == "verify_completion":
         return "staged_verify_completion"
     return "staged_classify"
 
 
 def _build_initial_messages(flow: FlowGraph, session: sessions.AgentSession) -> list[Message]:
-    """Build ``[system, user]`` from W22 + the user's goal.
+    """Build ``[system, user]`` from the prompt context + the user's goal.
 
     The system block comes from ``assemble_system_prompt(surface)`` (via
-    ``render_prompt_context``) — D008's ``base.md`` + ``planner.md`` for
-    both ``agent`` and ``agent_complex``. The user block is W22's
-    deterministic subgraph snapshot followed by a ``## Goal`` block.
+    ``render_prompt_context``) — ``base.md`` + ``planner.md``. The user
+    block is the deterministic subgraph snapshot followed by a ``## Goal``
+    block.
 
-    **Context bug fix (D1 from W40 diagnostic 2026-05-04):** previously
-    called with ``pinned_node_ids=[]`` and no ``mentions``, so the user
-    saw ``## Subgraph (empty)`` regardless of canvas state — the agent
-    was context-blind and refused every cold-flow request even when nodes
-    existed. Pass ``mentions="@flow"`` so the resolver expands to all
-    current nodes (mirrors W28's chat-route fix and W23's "Fix with AI"
-    pattern).
+    Pass ``mentions="@flow"`` so the resolver expands to all current
+    nodes — without that the user block would render as
+    ``## Subgraph (empty)`` regardless of canvas state and the agent
+    would refuse every cold-flow request even when nodes existed.
     """
     ctx = render_prompt_context(
         flow,
@@ -1225,7 +1198,7 @@ def _log_stage_transition(
     upstream_node_ids: list[int] | None = None,
     completed_op: str | None = None,
 ) -> None:
-    """W71 — emit a structured INFO line per stage transition.
+    """Emit a structured INFO line per stage transition.
 
     Pairs with the prompt log (``FLOWFILE_AI_LOG_PROMPTS=true``) to give
     a complete debugging picture without enabling DEBUG: the prompt log
@@ -1296,7 +1269,7 @@ def _walk_balanced_braces(content: str, start_idx: int) -> int:
 def _try_parse_function_call_shape(
     content: str, expected_tool_names: set[str]
 ) -> list[tuple[str, dict[str, Any]]]:
-    """W71 v1.6 shape — find ``<tool_name>(<json>)`` invocations.
+    """Find ``<tool_name>(<json>)`` invocations in text content.
 
     Walks balanced parens (string-aware) for each expected tool name.
     Returns a list of ``(name, args)`` matches. The caller decides
@@ -1348,8 +1321,8 @@ def _try_parse_function_call_shape(
 def _try_parse_json_object_shape(
     content: str, expected_tool_names: set[str]
 ) -> list[tuple[str, dict[str, Any]]]:
-    """W71 v1.8 shape — find ``{"name": "...", "parameters": {...}}``
-    or the ``"arguments"`` alias.
+    """Find ``{"name": "...", "parameters": {...}}`` or the
+    ``"arguments"`` alias as text content.
 
     Llama-3.3-8b (and other small open-weights models) often emit the
     OpenAI-style function-call envelope as text content rather than via
@@ -1390,16 +1363,15 @@ def _recover_textual_tool_call(
     content: str,
     expected_tool_names: set[str],
 ) -> ToolCall | None:
-    """W71 v1.6 + v1.8 — last-resort parse for LLMs that emit a
-    function-call invocation as **text content** rather than via the
-    function-calling API.
+    """Last-resort parse for LLMs that emit a function-call invocation
+    as **text content** rather than via the function-calling API.
 
     Two LLM-emitted shapes are recognised:
 
-    * **v1.6 shape** — ``flowfile.graph.add_sort({"sort_input": ...})``.
+    * **Function-call shape** — ``flowfile.graph.add_sort({"sort_input": ...})``.
       Llama-3.3-70b's typical fallback when it almost-but-not-quite
       uses the function-calling API.
-    * **v1.8 shape** — ``{"name": "flowfile.meta.classify_intent",
+    * **JSON-object shape** — ``{"name": "flowfile.meta.classify_intent",
       "parameters": {"op_kind": "add", ...}}`` (OpenAI-envelope form).
       Llama-3.3-8b's typical fallback even at the simplest stage 0.
       The ``"arguments"`` alias is also accepted because some models
@@ -1446,7 +1418,7 @@ def _recover_textual_tool_call(
 def _build_fill_settings_user_message(
     session: sessions.AgentSession, flow: FlowGraph
 ) -> str | None:
-    """W71 v1.5 — focused user message for the ``fill_settings`` stage.
+    """Focused user message for the ``fill_settings`` stage.
 
     By the time we reach stage 3, the only context the LLM needs is:
 
@@ -1460,7 +1432,7 @@ def _build_fill_settings_user_message(
     Without this slim, ~4.5k chars of irrelevant subgraph + every other
     node's settings dict ride into stage 3 and small models like
     llama-3.3-70b end up writing a rationale instead of calling the
-    only-tool-in-its-array (dogfood 2026-05-08 PM).
+    only-tool-in-its-array.
 
     Returns ``None`` when there's no picked upstream (i.e. the helper
     was called outside fill_settings or stage 2 didn't produce one).
@@ -1538,13 +1510,13 @@ def _build_fill_settings_user_message(
 def _build_pick_upstream_staged_addendum(
     session: sessions.AgentSession,
 ) -> str | None:
-    """W71 v1.12A — render a *"## Staged this session"* block listing
-    each prior in-batch staged ``add_*`` with its node id, type, and
-    predicted output schema.
+    """Render a *"## Staged this session"* block listing each prior
+    in-batch staged ``add_*`` with its node id, type, and predicted
+    output schema.
 
     The pick_upstream user message at session start carries the live
     subgraph but says NOTHING about nodes the agent has staged earlier
-    in the same session. Per v1.11 those staged ids ARE in the
+    in the same session. The staged ids ARE in the
     ``pick_upstream_node_ids`` enum (``meta_ops.build_pick_upstream_spec``
     walks ``session.staged_node_ids``), so the LLM can pick them — but
     blind, without column context. On long chains that hurts accuracy.
@@ -1591,7 +1563,7 @@ def _build_pick_upstream_staged_addendum(
 def _refresh_system_prompt_for_stage(
     session: sessions.AgentSession, flow: FlowGraph | None = None
 ) -> None:
-    """W71 — replace ``session.messages[0]`` with a freshly-rendered system
+    """Replace ``session.messages[0]`` with a freshly-rendered system
     prompt for the current stage.
 
     No-op when the surface is not ``agent_staged`` or when the session
@@ -1605,13 +1577,13 @@ def _refresh_system_prompt_for_stage(
     invalidated by the change but per-stage prompts are smaller, so the
     re-keyed cache is cheap to fill.
 
-    W71 v1.5 — when ``flow`` is provided AND the stage is
-    ``fill_settings``, also rewrite ``session.messages[1]`` (the user
-    message) with a focused mini-prompt that contains only the user's
-    goal + the picked upstream's column schema. The full subgraph
-    embedded by :func:`_build_initial_messages` is irrelevant once the
-    upstream is locked in; keeping it bloats the prompt and confuses
-    smaller models like llama-3.3-70b.
+    When ``flow`` is provided AND the stage is ``fill_settings``, also
+    rewrite ``session.messages[1]`` (the user message) with a focused
+    mini-prompt that contains only the user's goal + the picked
+    upstream's column schema. The full subgraph embedded by
+    :func:`_build_initial_messages` is irrelevant once the upstream is
+    locked in; keeping it bloats the prompt and confuses smaller models
+    like llama-3.3-70b.
     """
     if session.surface not in _STAGED_STATE_MACHINE_SURFACES:
         return
@@ -1637,13 +1609,13 @@ def _refresh_system_prompt_for_stage(
             session.messages[1] = Message(role="user", content=slim_user)
         return
 
-    # W71 v1.12A — at the pick_upstream stage, append a
-    # *"## Staged this session"* block to the user message so the LLM
-    # can see the predicted columns of nodes it staged earlier in the
-    # same session (those ids appear in the upstream-id enum but
-    # otherwise have no schema context). Rebuild from the original
-    # subgraph + goal each time so re-entries to pick_upstream within
-    # one session don't accumulate stale staged blocks.
+    # At the pick_upstream stage, append a *"## Staged this session"*
+    # block to the user message so the LLM can see the predicted columns
+    # of nodes it staged earlier in the same session (those ids appear
+    # in the upstream-id enum but otherwise have no schema context).
+    # Rebuild from the original subgraph + goal each time so re-entries
+    # to pick_upstream within one session don't accumulate stale staged
+    # blocks.
     if (
         session.stage == "pick_upstream"
         and flow is not None
@@ -1668,7 +1640,7 @@ def _build_staged_tool_catalog(
     session: sessions.AgentSession,
     flow: FlowGraph,
 ) -> tuple[list, str | None]:
-    """W71 — build the per-turn tool catalog for ``agent_staged``.
+    """Build the per-turn tool catalog for ``agent_staged``.
 
     Returns ``(tools, error_detail)``. Most stages dispatch through the
     static ``SURFACE_PRESETS`` lookup; two stages need per-turn dynamic
@@ -1697,11 +1669,11 @@ def _build_staged_tool_catalog(
 
     if session.stage == "pick_upstream":
         live_ids = _collect_live_node_ids(flow)
-        # W71 v1.14B — pass session.picked_node_type so the spec
-        # makes ``right_input_node_id`` REQUIRED for join-shaped
-        # node types (join / cross_join / fuzzy_match). Without
-        # this, cross_join staged with only one upstream wire and
-        # the second input dangled (2026-05-08 dogfood).
+        # Pass session.picked_node_type so the spec makes
+        # ``right_input_node_id`` REQUIRED for join-shaped node types
+        # (join / cross_join / fuzzy_match). Without this, cross_join
+        # could stage with only one upstream wire and the second input
+        # would dangle.
         spec = build_pick_upstream_spec(
             live_ids,
             list(session.staged_node_ids),
@@ -1735,7 +1707,7 @@ def inject_followup_message(
     message: str | None = None,
     rejected_diff_id: str | None = None,
 ) -> Message:
-    """W49 — append the synthetic followup turn to ``session.messages``.
+    """Append the synthetic followup turn to ``session.messages``.
 
     Two action shapes:
 
@@ -1806,7 +1778,7 @@ async def run_planner_session(
     Mutations to the in-memory ``session`` (status, step_count,
     staged_results, messages, drift_detail, diff_id, rationale) are
     in-place — callers can inspect the session after the generator
-    exhausts. W42 disk-persists these fields verbatim.
+    exhausts. The disk-persistence layer mirrors these fields verbatim.
     """
     try:
         async for event in _run_planner_loop(
@@ -1837,11 +1809,11 @@ async def _run_planner_loop(
     max_tokens: int,
     max_retries_per_step: int,
 ) -> AsyncIterator[PlannerEvent]:
-    # ``aborted`` is honored as an early-exit (the abort route flips status
-    # to ``aborted`` between iterations). Same for ``running`` (normal start),
-    # ``paused_drift`` (resume after D006 drift), ``paused_user_action``
-    # (W42 cold-start re-attach), and ``completed`` / ``awaiting_user_input``
-    # (W49 post-completion followup re-entry).
+    # ``aborted`` is honored as an early-exit (the abort route flips
+    # status to ``aborted`` between iterations). Same for ``running``
+    # (normal start), ``paused_drift`` (resume after drift detection),
+    # ``paused_user_action`` (cold-start re-attach), and ``completed`` /
+    # ``awaiting_user_input`` (post-completion followup re-entry).
     if session.status == "aborted":
         yield PlannerEvent(event="abort", payload={"session_id": session.session_id})
         return
@@ -1859,16 +1831,16 @@ async def _run_planner_loop(
         return
 
     if session.status in ("completed", "awaiting_user_input"):
-        # W49 — post-completion followup re-entry. The route already
-        # appended the synthetic ``user`` / ``tool`` message that drives
-        # the next planner turn; everything we do here is housekeeping so
-        # the resumed run starts from a clean slate:
+        # Post-completion followup re-entry. The route already appended
+        # the synthetic ``user`` / ``tool`` message that drives the next
+        # planner turn; everything we do here is housekeeping so the
+        # resumed run starts from a clean slate:
         #
-        # * **Re-snapshot the graph (D006).** The user may have mutated
-        #   the canvas between completion and the followup, so we capture
-        #   a fresh baseline. The very next ``detect_drift`` round
-        #   compares against this; if drift fires, the loop pauses
-        #   exactly like a mid-run mutation would.
+        # * **Re-snapshot the graph.** The user may have mutated the
+        #   canvas between completion and the followup, so we capture a
+        #   fresh baseline. The very next ``detect_drift`` round compares
+        #   against this; if drift fires, the loop pauses exactly like a
+        #   mid-run mutation would.
         # * **Drop the prior diff bookkeeping.** ``staged_results`` /
         #   ``staged_node_ids`` / ``diff_id`` reflect the *previous* round
         #   (rejected, abandoned, or never-bundled). Keeping them would
@@ -1876,8 +1848,8 @@ async def _run_planner_loop(
         #   already-rejected ops on the next ``complete``.
         # * **Reset retry / drift bookkeeping.** ``rationale`` is rebuilt
         #   from the next assistant turn; ``last_assistant_text`` was
-        #   used by W49's question-detection on the prior completion and
-        #   is no longer authoritative.
+        #   used by question-detection on the prior completion and is no
+        #   longer authoritative.
         was_completion = session.status
         session.snapshot = sessions.capture_graph_snapshot(flow)
         session.staged_results = []
@@ -1898,12 +1870,13 @@ async def _run_planner_loop(
         )
 
     if session.status == "paused_user_action":
-        # W42 — cold-start resume. The previous SSE stream is dead and an
+        # Cold-start resume. The previous SSE stream is dead and an
         # arbitrary amount of time has passed. Re-snapshot, clear the
-        # pause reason, flip to running. We don't revalidate staged_results
-        # eagerly here — the subsequent drift_detect run will surface any
-        # missing upstream as a paused_drift event (and that path already
-        # owns ``revalidate_staged_results_against_live``).
+        # pause reason, flip to running. We don't revalidate
+        # staged_results eagerly here — the subsequent drift_detect run
+        # will surface any missing upstream as a paused_drift event (and
+        # that path already owns
+        # ``revalidate_staged_results_against_live``).
         session.snapshot = sessions.capture_graph_snapshot(flow)
         session.pause_reason = None
         session.status = "running"
@@ -1915,7 +1888,7 @@ async def _run_planner_loop(
         session.pause_reason = None
         session.status = "running"
 
-        # W54 — staged_results hygiene. Drop entries whose node_id now
+        # Staged_results hygiene. Drop entries whose node_id now
         # collides with a live node (user manually added one mid-pause)
         # or whose upstream references an id that no longer exists (user
         # deleted the upstream). One audit row per drop so the cause is
@@ -1985,9 +1958,10 @@ async def _run_planner_loop(
             )
             return
 
-        # D006 — drift check before every dispatch. ``staged_node_ids``
-        # excludes the agent's own staged additions from the external-added
-        # bucket so the planner doesn't self-pause on its own work (W45 Q1).
+        # Drift check before every dispatch. ``staged_node_ids``
+        # excludes the agent's own staged additions from the
+        # external-added bucket so the planner doesn't self-pause on its
+        # own work.
         drift = sessions.detect_drift(
             flow,
             session.snapshot,
@@ -2010,14 +1984,14 @@ async def _run_planner_loop(
 
         current_surface = _resolve_current_surface(session)
 
-        # W71 — refresh the system prompt for the current stage. The first
+        # Refresh the system prompt for the current stage. The first
         # iteration's system prompt was set in ``_build_initial_messages``;
         # subsequent stage advances need a re-render so the LLM sees the
         # right per-stage suffix and (at fill_settings) the picked type's
-        # single-node block. v1.5 also slims the user message at
+        # single-node block. The helper also slims the user message at
         # fill_settings to drop the full subgraph noise — passing
-        # ``flow`` lets the helper resolve the picked upstream's
-        # predicted schema for the focused mini-prompt.
+        # ``flow`` lets it resolve the picked upstream's predicted
+        # schema for the focused mini-prompt.
         _refresh_system_prompt_for_stage(session, flow)
 
         try:
@@ -2037,7 +2011,7 @@ async def _run_planner_loop(
             return
 
         # --- Provider call ---
-        # W71 — pass surface/session_id/user_id through so the prompt log
+        # Pass surface/session_id/user_id through so the prompt log
         # (FLOWFILE_AI_LOG_PROMPTS=true) tags each entry with the stage
         # the call came from. Without this, every planner entry lands as
         # ``surface=null`` and you can't grep by stage post-hoc.
@@ -2070,15 +2044,14 @@ async def _run_planner_loop(
 
         tool_calls = list(response.tool_calls or [])
 
-        # W71 v1.6 + v1.8 — last-resort text-JSON recovery for small
-        # models that emit the function call as content prose instead
-        # of via the function-calling API. Applied at ALL agent_staged
-        # stages now (v1.8): llama-3.3-8b fails this way at stage 0
-        # too, not just stage 3. The "exactly one match" + "name must
-        # be in expected_tool_names" rules in
-        # ``_recover_textual_tool_call`` are sufficient to defend
-        # against the after-add summary pattern (multiple distinct
-        # tool names → declines).
+        # Last-resort text-JSON recovery for small models that emit the
+        # function call as content prose instead of via the
+        # function-calling API. Applied at ALL agent_staged stages —
+        # llama-3.3-8b can fail this way at stage 0 too, not just stage
+        # 3. The "exactly one match" + "name must be in
+        # expected_tool_names" rules in ``_recover_textual_tool_call``
+        # are sufficient to defend against the after-add summary pattern
+        # (multiple distinct tool names → declines).
         if (
             not tool_calls
             and assistant_text
@@ -2106,28 +2079,26 @@ async def _run_planner_loop(
                     session.stage,
                 )
 
-        # W38 — when the assistant turn is pure prose (no tool calls), surface
-        # it as a ``thinking`` event so the user sees what the model said.
-        # When tool calls follow, the same text rides on each ``tool_call_*``
-        # event as ``rationale`` (the W38 contract), so emitting both would
+        # When the assistant turn is pure prose (no tool calls), surface
+        # it as a ``thinking`` event so the user sees what the model
+        # said. When tool calls follow, the same text rides on each
+        # ``tool_call_*`` event as ``rationale``, so emitting both would
         # render the same sentence twice in the chat trail.
         if assistant_text and not tool_calls:
             yield PlannerEvent(event="thinking", payload={"text": assistant_text})
 
         if not tool_calls:
-            # W71 v1.7 — at mandatory-tool-call stages, an empty
-            # ``tool_calls`` (even after v1.6/v1.8 text-JSON recovery
-            # tried) means the LLM emitted unparseable prose — e.g.
-            # llama-70b's token-corruption case
+            # At mandatory-tool-call stages, an empty ``tool_calls``
+            # (even after text-JSON recovery tried) means the LLM emitted
+            # unparseable prose — e.g. llama-70b's token-corruption case
             # ("altimoreFiltering to rows ..."). Treat it as a
             # no-progress retry instead of a terminal "nothing to
             # stage": append a synthetic reminder so the next round
             # explicitly tells the LLM what's expected, and route
             # through the existing ``max_retries_per_step`` budget.
-            # Classify stage stays on the legacy break path —
-            # there an empty ``tool_calls`` is a valid termination
-            # signal (op_kind="other" handled, or LLM has nothing
-            # more to add).
+            # Classify stage stays on the legacy break path — there an
+            # empty ``tool_calls`` is a valid termination signal
+            # (op_kind="other" handled, or LLM has nothing more to add).
             if (
                 session.surface in _STAGED_STATE_MACHINE_SURFACES
                 and session.stage in _MANDATORY_TOOL_CALL_STAGES
@@ -2179,13 +2150,14 @@ async def _run_planner_loop(
 
         any_succeeded_this_round = False
 
-        # W38 — capture the assistant preamble that landed alongside this turn's
-        # tool calls; it's the natural-language "what this step does" that the
-        # planner.md prompt asks the model to emit. Shared across every tool
-        # call in this round (the model writes one preamble per turn, even when
-        # it ends up emitting multiple calls). Falls back to ``None`` when the
-        # model skipped the preamble — the per-call ``arg_summary`` covers the
-        # rendering gap.
+        # Capture the assistant preamble that landed alongside this
+        # turn's tool calls; it's the natural-language "what this step
+        # does" that the planner.md prompt asks the model to emit.
+        # Shared across every tool call in this round (the model writes
+        # one preamble per turn, even when it ends up emitting multiple
+        # calls). Falls back to ``None`` when the model skipped the
+        # preamble — the per-call ``arg_summary`` covers the rendering
+        # gap.
         rationale_for_round = _capture_rationale(assistant_text)
 
         for tc in tool_calls:
@@ -2212,13 +2184,14 @@ async def _run_planner_loop(
 
             # Inject planner-managed args for add_* dispatches
             tool_args: dict[str, Any] = dict(tc.arguments) if tc.arguments else {}
-            # W71 v1.2 — at fill_settings on agent_staged, the LLM-facing
-            # tool spec exposes only the inner-input shape (e.g.
+            # At fill_settings on agent_staged, the LLM-facing tool
+            # spec exposes only the inner-input shape (e.g.
             # ``GroupByInput``: top-level ``agg_cols``) for single-input
             # node types. The executor's settings validation expects the
-            # full Pydantic envelope (``NodeGroupBy.groupby_input.agg_cols``),
-            # so wrap the LLM's args under the resolved field name before
-            # the existing flow_id / node_id injection runs. Multi-field
+            # full Pydantic envelope
+            # (``NodeGroupBy.groupby_input.agg_cols``), so wrap the
+            # LLM's args under the resolved field name before the
+            # existing flow_id / node_id injection runs. Multi-field
             # types fall back to the flat-stripped spec (no wrap needed).
             if (
                 session.surface in _STAGED_STATE_MACHINE_SURFACES
@@ -2226,8 +2199,8 @@ async def _run_planner_loop(
                 and tc.name.startswith(_ADD_PREFIX)
             ):
                 picked_type = tc.name.removeprefix(_ADD_PREFIX)
-                # W71 v1.13B — auto-coerce the formula bare-string shape
-                # before the inner-input wrap runs. The LLM emits
+                # Auto-coerce the formula bare-string shape before the
+                # inner-input wrap runs. The LLM emits
                 # ``{"function": "<expression>"}`` (one key, value is
                 # the formula text) when it confuses the inner
                 # ``function`` STRING field with the outer ``function``
@@ -2238,17 +2211,15 @@ async def _run_planner_loop(
                         tool_args, user_prompt=session.user_prompt
                     )
                 inner_field = get_staged_fill_inner_field_name(picked_type)
-                # W71 v1.2 + v1.13B — wrap inner-shape args under the
-                # canonical envelope field name. Stronger
-                # outer-envelope detection than the original
-                # ``inner_field in tool_args``: the value at
-                # ``inner_field`` must be a dict OR a JSON-encoded
-                # string that parses to a dict (the v1.4 universal
-                # unwrap will handle the latter at the executor
-                # seam). A bare scalar (e.g. FunctionInput's inner
-                # ``function`` STRING that the LLM mistakenly placed
-                # at the wrapper level for formula) is collision
-                # noise and SHOULD be wrapped.
+                # Wrap inner-shape args under the canonical envelope
+                # field name. Stronger outer-envelope detection than the
+                # naive ``inner_field in tool_args``: the value at
+                # ``inner_field`` must be a dict OR a JSON-encoded string
+                # that parses to a dict (the universal unwrap will
+                # handle the latter at the executor seam). A bare scalar
+                # (e.g. FunctionInput's inner ``function`` STRING that
+                # the LLM mistakenly placed at the wrapper level for
+                # formula) is collision noise and SHOULD be wrapped.
                 already_wrapped = (
                     inner_field is not None
                     and inner_field in tool_args
@@ -2266,10 +2237,11 @@ async def _run_planner_loop(
                         if k in {"flow_id", "node_id", "upstream_node_ids", "right_input_node_id"}
                     }
                     tool_args[inner_field] = inner_args
-            # W54 — capture provenance: did the LLM emit ``node_id`` itself,
-            # or did the planner allocate? Both values flow into audit_meta
-            # so the audit row alone shows whether a self-loop traced back
-            # to an LLM hallucination or a planner allocation collision.
+            # Capture provenance: did the LLM emit ``node_id`` itself,
+            # or did the planner allocate? Both values flow into
+            # audit_meta so the audit row alone shows whether a
+            # self-loop traced back to an LLM hallucination or a planner
+            # allocation collision.
             llm_provided_node_id: int | None = None
             allocated_node_id: int | None = None
             if tc.name.startswith(_ADD_PREFIX):
@@ -2285,7 +2257,7 @@ async def _run_planner_loop(
 
             insertion_context, ambiguous_detail = _resolve_insertion_context(session, tc, flow)
 
-            # W54 — build audit_meta for instrumentation. Rides on
+            # Build audit_meta for instrumentation. Rides on
             # tool_args["__planner_meta__"] in the persisted audit row.
             # Always populated for add_* calls (success or rejected) so
             # any future self-loop is diagnosable from the audit row alone.
@@ -2300,19 +2272,14 @@ async def _run_planner_loop(
                     "staged_node_ids_at_stage": list(session.staged_node_ids),
                 }
 
-            # W57 ambiguity-refusal block removed 2026-05-07 — the resolver
-            # now falls back to ``live_nodes[-1]`` for the multi-live-node
-            # case rather than refusing. ``ambiguous_detail`` is always
-            # ``None`` post-revert; preserved in the tuple shape for call-
-            # site destructuring stability.
-
-            # W54 — universal self-loop invariant guard. Catches all three
+            # Universal self-loop invariant guard. Catches all three
             # plausible upstream causes (LLM-provided collision, stale
-            # staged_results post-resume, live-graph drift). When it fires,
-            # treat as ``tool_call_rejected`` with refusal_reason
-            # ``self_loop_prevented``; counts toward W53's retry budget;
-            # writes its own audit row (we never reach execute_tool_call,
-            # which is what would otherwise persist the audit).
+            # staged_results post-resume, live-graph drift). When it
+            # fires, treat as ``tool_call_rejected`` with refusal_reason
+            # ``self_loop_prevented``; counts toward the retry budget;
+            # writes its own audit row (we never reach
+            # execute_tool_call, which is what would otherwise persist
+            # the audit).
             if tc.name.startswith(_ADD_PREFIX):
                 proposed = tool_args.get("node_id")
                 if isinstance(proposed, int):
@@ -2362,13 +2329,13 @@ async def _run_planner_loop(
                         )
                         continue
 
-            # W62 — count prior staged adds anchored at the same upstream so
-            # fan-outs stack vertically rather than overlap. ``add_*`` calls
-            # only; non-add ops aren't laid out. Also build a position map for
-            # in-batch staged-but-unapplied upstreams so the executor's
-            # resolver can anchor chained adds (filter → sort) onto the
-            # prior staged add — which by definition isn't in ``flow.nodes``
-            # yet.
+            # Count prior staged adds anchored at the same upstream so
+            # fan-outs stack vertically rather than overlap. ``add_*``
+            # calls only; non-add ops aren't laid out. Also build a
+            # position map for in-batch staged-but-unapplied upstreams so
+            # the executor's resolver can anchor chained adds (filter →
+            # sort) onto the prior staged add — which by definition
+            # isn't in ``flow.nodes`` yet.
             if tc.name.startswith(_ADD_PREFIX):
                 staged_offset_index = _count_prior_staged_with_same_upstream(
                     session, insertion_context.upstream_node_ids
@@ -2379,22 +2346,22 @@ async def _run_planner_loop(
             else:
                 staged_offset_index = 0
                 extra_upstream_positions = None
-            # W71 v1.11 — staged-but-not-yet-applied upstream schemas.
-            # Threaded through every dispatch (add_* AND
-            # update_node_settings) so the predictor's Tier 0a sees them
-            # and stops emitting *"upstream not found"* warnings for
-            # nodes the agent staged earlier in the same session.
+            # Staged-but-not-yet-applied upstream schemas. Threaded
+            # through every dispatch (add_* AND update_node_settings) so
+            # the predictor's Tier 0a sees them and stops emitting
+            # *"upstream not found"* warnings for nodes the agent staged
+            # earlier in the same session.
             extra_upstream_schemas: dict[int, Any] | None = (
                 _collect_staged_upstream_schemas(session) or None
             )
 
-            # W71 v2.0 — agent_live applies LIVE to the canvas
-            # (mode="apply"), then runs a post-apply observation
-            # (real subgraph run in Performance / schema-eval in
-            # Development) and feeds the runtime outcome back to
-            # the LLM. agent_staged + agent_complex stay on
-            # mode="stage" — they bundle the staged ops into a
-            # diff for batch user review at the end.
+            # ``agent_live`` applies LIVE to the canvas
+            # (mode="apply"), then runs a post-apply observation (real
+            # subgraph run in Performance / schema-eval in Development)
+            # and feeds the runtime outcome back to the LLM.
+            # ``agent_staged`` + ``agent_complex`` stay on mode="stage" —
+            # they bundle the staged ops into a diff for batch user
+            # review at the end.
             dispatch_mode: str = (
                 "apply" if session.surface == "agent_live" else "stage"
             )
@@ -2474,13 +2441,12 @@ async def _run_planner_loop(
                 )
                 continue
 
-            # W71 v2.0 — agent_live post-apply observation. The
-            # node is already in ``flow.nodes`` (mode="apply"); now
-            # observe the runtime outcome and decide whether to
-            # commit or auto-undo. On observation failure we delete
-            # the just-added node and feed the runtime error back
-            # to the LLM as the next round's tool reply, counting
-            # toward the per-step retry budget.
+            # ``agent_live`` post-apply observation. The node is
+            # already in ``flow.nodes`` (mode="apply"); now observe the
+            # runtime outcome and decide whether to commit or auto-undo.
+            # On observation failure we delete the just-added node and
+            # feed the runtime error back to the LLM as the next round's
+            # tool reply, counting toward the per-step retry budget.
             if (
                 session.surface == "agent_live"
                 and tc.name.startswith(_ADD_PREFIX)
@@ -2603,18 +2569,18 @@ async def _run_planner_loop(
                 )
                 continue
 
-            # W71 — agent_staged stage transitions on meta tool success.
-            # Each meta tool sets a piece of session state and advances the
-            # stage; the next loop iteration re-renders the system prompt
-            # and exposes the next stage's tool. ``stage_advanced`` is
+            # Stage transitions on meta tool success. Each meta tool
+            # sets a piece of session state and advances the stage; the
+            # next loop iteration re-renders the system prompt and
+            # exposes the next stage's tool. ``stage_advanced`` is
             # surfaced to the frontend so the agent panel can render the
             # current step ("Step 2/4: picking upstream").
 
-            # W71 v2.4 — plan stage runs once at session start. The LLM
-            # emits a brief markdown plan via ``flowfile.meta.emit_plan``;
-            # the planner records the plan, surfaces it in the chat
-            # trail, and advances to ``classify`` so the normal
-            # state machine takes over.
+            # Plan stage runs once at session start. The LLM emits a
+            # brief markdown plan via ``flowfile.meta.emit_plan``; the
+            # planner records the plan, surfaces it in the chat trail,
+            # and advances to ``classify`` so the normal state machine
+            # takes over.
             if (
                 session.surface in _STAGED_STATE_MACHINE_SURFACES
                 and tc.name == _EMIT_PLAN_NAME
@@ -2663,12 +2629,11 @@ async def _run_planner_loop(
                         and session.verify_plan_completion
                         and not session.verify_round_consumed
                     ):
-                        # W71 v2.12 — opt-in verify-completion gate.
-                        # One extra LLM round at ``verify_completion``
-                        # confirms the plan is done before the loop
-                        # terminates. The one-shot
-                        # ``verify_round_consumed`` guard (set in the
-                        # verify-result handler below) prevents
+                        # Opt-in verify-completion gate. One extra LLM
+                        # round at ``verify_completion`` confirms the
+                        # plan is done before the loop terminates. The
+                        # one-shot ``verify_round_consumed`` guard (set
+                        # in the verify-result handler below) prevents
                         # ping-pong if a follow-up classify also picks
                         # ``op_kind="other"``.
                         session.stage = "verify_completion"
@@ -2677,7 +2642,7 @@ async def _run_planner_loop(
                     # again, which sees the rationale already in history
                     # and will most likely emit no tool call, ending the
                     # loop with the rationale as the final assistant
-                    # message (W49 question detection still routes to
+                    # message (question detection still routes to
                     # ``awaiting_user_input`` if it ends in a question).
                 _log_stage_transition(
                     session,
@@ -2705,7 +2670,7 @@ async def _run_planner_loop(
                 and tc.name == _VERIFY_COMPLETION_NAME
                 and isinstance(result.extra, dict)
             ):
-                # W71 v2.12 — opt-in verify-completion gate result.
+                # Opt-in verify-completion gate result.
                 is_complete_raw = result.extra.get("is_complete")
                 is_complete = is_complete_raw is True
                 rationale = str(result.extra.get("rationale") or "")
@@ -2832,18 +2797,18 @@ async def _run_planner_loop(
                         )
                     )
                     # Track ids the agent has staged so subsequent drift
-                    # checks can exclude them from external-added detection
-                    # (W45 Q1). Only ``add_<node_type>`` calls produce a
-                    # node_id — connection / delete payloads don't.
+                    # checks can exclude them from external-added
+                    # detection. Only ``add_<node_type>`` calls produce
+                    # a node_id — connection / delete payloads don't.
                     if tc.name.startswith(_ADD_PREFIX):
                         staged_id = _payload_node_id(result.staged_node_payload)
                         if staged_id is not None and staged_id not in session.staged_node_ids:
                             session.staged_node_ids.append(staged_id)
                 event_name: PlannerEventName = "tool_call_warned" if result.status == "warned" else "tool_call_staged"
-                # W42 — re-persist the session after each staging so a
-                # process crash mid-loop can resume against the up-to-date
-                # ``staged_results`` / ``staged_node_ids``. Best-effort: a
-                # checkpoint failure must not stall the planner.
+                # Re-persist the session after each staging so a process
+                # crash mid-loop can resume against the up-to-date
+                # ``staged_results`` / ``staged_node_ids``. Best-effort:
+                # a checkpoint failure must not stall the planner.
                 try:
                     session.touch()
                     # FileLock + JSON write inside register_session is sync;
@@ -2868,11 +2833,11 @@ async def _run_planner_loop(
                         "arg_summary": arg_summary,
                     },
                 )
-                # W71 — on agent_staged, reset the state machine after each
-                # successful add_* (stage 3) or single-stage non-add op so
-                # the next round starts a fresh classify→pick→fill cycle.
-                # Multi-node turns serialize naturally as N×4 rounds without
-                # any history pruning.
+                # On agent_staged, reset the state machine after each
+                # successful add_* (stage 3) or single-stage non-add op
+                # so the next round starts a fresh classify→pick→fill
+                # cycle. Multi-node turns serialize naturally as N×4
+                # rounds without any history pruning.
                 if session.surface in _STAGED_STATE_MACHINE_SURFACES and (
                     tc.name.startswith(_ADD_PREFIX)
                     or tc.name in _STAGED_SINGLE_OP_TOOL_NAMES
@@ -2927,13 +2892,14 @@ async def _run_planner_loop(
 
     # --- Loop ended (no more tool calls) ---
     if not session.staged_results:
-        # W49 — if the agent's last assistant message reads like a clarifying
-        # question, this is *not* "agent finished — nothing to stage"; the
-        # agent is waiting on the user. Flip to ``awaiting_user_input`` and
-        # emit a distinct SSE event so the frontend renders the right state.
-        # Both ``awaiting_user_input`` and ``completed`` are resumable via
-        # the W49 ``/followup`` endpoint, so the only difference is UX
-        # framing and the SSE event name.
+        # If the agent's last assistant message reads like a clarifying
+        # question, this is *not* "agent finished — nothing to stage";
+        # the agent is waiting on the user. Flip to
+        # ``awaiting_user_input`` and emit a distinct SSE event so the
+        # frontend renders the right state. Both ``awaiting_user_input``
+        # and ``completed`` are resumable via the ``/followup``
+        # endpoint, so the only difference is UX framing and the SSE
+        # event name.
         if _looks_like_question(session.last_assistant_text):
             session.status = "awaiting_user_input"
             session.touch()

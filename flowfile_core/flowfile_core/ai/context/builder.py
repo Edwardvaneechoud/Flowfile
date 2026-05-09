@@ -1,4 +1,4 @@
-"""Subgraph + schema + sample serialiser — owned by W22.
+"""Subgraph + schema + sample serialiser.
 
 Composes the per-call prompt context used by the AI surfaces:
 
@@ -6,27 +6,28 @@ Composes the per-call prompt context used by the AI surfaces:
   from one or more "pinned" nodes;
 * projects each visited node into a JSON-safe :class:`NodeSnapshot`;
 * renders the snapshot as the user message;
-* assembles the layered system prompt per **D008** (``prompts/base.md``
-  concatenated with ``prompts/{level}.md``);
+* assembles the layered system prompt (``prompts/base.md`` concatenated
+  with ``prompts/{level}.md``);
 * hands the rendered context to :mod:`flowfile_core.ai.context.budget`
   for token-budget truncation when needed.
 
-Sample rows are gated by ``samples_mode`` (default ``"off"`` per **D009**).
-PII regex scrubbing is **not** performed here — that is W25's seam.
+Sample rows are gated by ``samples_mode`` (default ``"off"``). PII
+scrubbing is **not** performed here — that is the safety module's seam.
 
 When ``resolve_schemas=True`` (the default) and an upstream node's
-``predicted_schema`` is ``None``, the builder applies **D011**'s tier-1
-step for predictable upstreams (``static`` / ``source`` /
+``predicted_schema`` is ``None``, the builder applies the tier-1
+resolver for predictable upstreams (``static`` / ``source`` /
 ``passthrough`` per
 :func:`flowfile_core.ai.tools.classification.is_predictable_via_mirror`)
 by calling :meth:`FlowNode.get_predicted_schema(force=True)`, which
-fires the registered ``schema_callback`` (or the ``_predicted_data_getter``
-fallback). Dynamic node types (``polars_code`` / ``python_script`` /
-``sql_query`` / ``pivot`` / etc.) stay ``schema_status="unknown"`` from
-this surface — kernel dry-run is W31-only per **D003** + **D012**.
-Callers that need the legacy cache-only behaviour pass
-``resolve_schemas=False`` (W34's ``settings_autocomplete`` path keeps
-its own resolver and does not need to opt in here).
+fires the registered ``schema_callback`` (or the
+``_predicted_data_getter`` fallback). Dynamic node types
+(``polars_code`` / ``python_script`` / ``sql_query`` / ``pivot`` /
+etc.) stay ``schema_status="unknown"`` from this surface — kernel
+dry-run is reserved for the executor path. Callers that need the
+cache-only behaviour pass ``resolve_schemas=False``
+(``settings_autocomplete`` keeps its own resolver and does not opt in
+here).
 """
 
 from __future__ import annotations
@@ -80,30 +81,32 @@ SURFACE_TO_LEVEL: dict[str, PromptLevel] = {
     "ghost_node": "copilot",
     "explain": "assist",
     "agent_complex": "planner",
-    # W71 — ``agent_staged`` falls back to ``planner`` only when no stage
-    # is supplied (defensive). When a stage IS supplied,
+    # ``agent_staged`` falls back to ``planner`` only when no stage is
+    # supplied (defensive). When a stage IS supplied,
     # :func:`assemble_system_prompt` routes to a stage-specific suffix
     # via :data:`_STAGE_TO_PROMPT` instead of using this level mapping.
     "agent_staged": "planner",
-    # W71 v2.0 — ``agent_live`` shares the same per-stage suffix
-    # routing as ``agent_staged`` (its state machine is identical
-    # through fill_settings); ``planner`` is the no-stage fallback.
+    # ``agent_live`` shares the same per-stage suffix routing as
+    # ``agent_staged`` (its state machine is identical through
+    # fill_settings); ``planner`` is the no-stage fallback.
     "agent_live": "planner",
     "docgen": "assist",
-    # Settings autocomplete (W34) maps to copilot — short-context suggestion-shaped
-    # output. The strict-JSON-only instruction is added inline by the autocomplete
-    # module's per-call system prompt rather than living in a fourth level file
-    # (D008 anchors level vocabulary to the three depth levels).
+    # Settings autocomplete maps to copilot — short-context
+    # suggestion-shaped output. The strict-JSON-only instruction is
+    # added inline by the autocomplete module's per-call system prompt
+    # rather than living in a fourth level file.
     "settings_autocomplete": "copilot",
-    # Lineage Q&A (W51) is a read-only Assist surface — same level mapping as
-    # ``docgen`` and ``explain``. The lineage-specific shape contract lives in
-    # the appended user-message block rather than a fourth level file.
+    # Lineage Q&A is a read-only Assist surface — same level mapping
+    # as ``docgen`` and ``explain``. The lineage-specific shape
+    # contract lives in the appended user-message block rather than a
+    # fourth level file.
     "lineage": "assist",
-    # W58 intent classifier — read-only single-shot judgement, level mapping
-    # is nominal (the classifier injects its own tight system prompt rather
-    # than using the layered W22 prompt). Mapped to ``copilot`` only because
-    # SURFACE_TO_LEVEL is exhaustive over SurfaceLiteral; ``assemble_system_prompt``
-    # is never called for this surface.
+    # Intent classifier — read-only single-shot judgement; level
+    # mapping is nominal (the classifier injects its own tight system
+    # prompt rather than using the layered prompt). Mapped to
+    # ``copilot`` only because SURFACE_TO_LEVEL is exhaustive over
+    # SurfaceLiteral; ``assemble_system_prompt`` is never called for
+    # this surface.
     "intent_classifier": "copilot",
 }
 
@@ -117,14 +120,14 @@ _STAGE_TO_PROMPT: dict[str, str] = {
     "single_stage_op": "planner",
     "verify_completion": "stage_verify_completion",
 }
-"""W71 — per-stage suffix file map for the ``agent_staged`` surface.
+"""Per-stage suffix file map for the ``agent_staged`` surface.
 
 Each stage gets its own short suffix prompt so the LLM only sees the
 guidance relevant to the choice it's about to make. ``single_stage_op``
-re-uses the legacy ``planner.md`` because the modify/delete/connect/
-disconnect ops follow the same staging discipline as the legacy agent
-surfaces (they emit one ``flowfile.graph.<op>`` call directly, no
-multi-stage cycle)."""
+re-uses ``planner.md`` because the modify/delete/connect/disconnect
+ops follow the same staging discipline as the legacy agent surfaces
+(they emit one ``flowfile.graph.<op>`` call directly, no multi-stage
+cycle)."""
 
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -179,7 +182,7 @@ class SubgraphSnapshot(BaseModel):
 
 
 class PromptContext(BaseModel):
-    """The full per-call prompt — system + user + W11 message list."""
+    """The full per-call prompt — system + user + message list."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -220,9 +223,9 @@ def render_prompt_context(
     contributes its resolved ``node_ids`` to the pinned set so the
     subgraph walk includes them.
 
-    ``resolve_schemas`` (default ``True``) applies **D011**'s tier-1
-    prospective-schema resolution for predictable upstreams (see module
-    docstring). Pass ``False`` to fall back to the legacy cache-only
+    ``resolve_schemas`` (default ``True``) applies the tier-1
+    prospective-schema resolution for predictable upstreams (see
+    module docstring). Pass ``False`` to fall back to the cache-only
     behaviour.
     """
 
@@ -287,8 +290,8 @@ def extract_subgraph(
     order so :mod:`budget` can drop the furthest-upstream entries first.
 
     ``resolve_schemas`` (default ``True``) is forwarded to
-    :func:`snapshot_node` — see the module docstring for the D011
-    semantics.
+    :func:`snapshot_node` — see the module docstring for the
+    schema-resolution semantics.
     """
 
     pinned_list = _coerce_to_list(pinned_node_ids)
@@ -345,12 +348,13 @@ def snapshot_node(
 ) -> NodeSnapshot:
     """Project ``node`` into a JSON-safe :class:`NodeSnapshot`.
 
-    Sample rows are only attached when ``samples_mode != "off"`` and the
-    node has cached predicted data with ``data`` populated. PII scrubbing
-    is **not** applied here — W25 wraps this seam.
+    Sample rows are only attached when ``samples_mode != "off"`` and
+    the node has cached predicted data with ``data`` populated. PII
+    scrubbing is **not** applied here — the safety module wraps this
+    seam.
 
     When ``resolve_schemas=True`` (default) and the cached predicted
-    schema is empty, this fires the W48 tier-1 resolver for predictable
+    schema is empty, this fires the tier-1 resolver for predictable
     upstreams; see the module docstring.
     """
 
@@ -387,28 +391,27 @@ def assemble_system_prompt(
     stage: str | None = None,
     picked_node_type: str | None = None,
 ) -> str:
-    """Compose the layered system prompt for ``surface`` per **D008**.
+    """Compose the layered system prompt for ``surface``.
 
     Reads ``prompts/base.md`` plus ``prompts/{level}.md`` (where
     ``level`` is mapped from ``surface`` via :data:`SURFACE_TO_LEVEL`),
-    strips HTML comment markers used in the W10 stubs, and joins them
-    with a blank line.
+    strips HTML comment markers, and joins them with a blank line.
 
-    Tool-calling surfaces (``agent``, ``agent_complex``, ``cmd_k``,
-    ``ghost_node``) get the W56 ``Tool catalog`` block — agent-shaped
+    Tool-calling surfaces (``agent_complex``, ``cmd_k``, ``ghost_node``,
+    and the staged surfaces) get a ``Tool catalog`` block — agent-shaped
     "when to call this tool" prose used to disambiguate which tool to
     dispatch. Read-only / advisory surfaces (``explain``, ``lineage``,
     ``docgen``) get a separate ``Flowfile node reference`` block built
     from per-node ``user_instructions`` (palette label, sidebar
     section, key settings, worked example, pitfalls) so the chat can
-    answer "how do I X" with the user's actual UI vocabulary instead
-    of inventing names like "transform node". ``settings_autocomplete``
+    answer "how do I X" with the user's actual UI vocabulary instead of
+    inventing names like "transform node". ``settings_autocomplete``
     is a constrained-JSON surface and skips both blocks.
 
-    W71 — for ``surface="agent_staged"`` the suffix is selected from
+    For ``surface="agent_staged"`` the suffix is selected from
     :data:`_STAGE_TO_PROMPT` per the supplied ``stage``. The catalog
-    block also varies by stage: the full catalog at ``"pick_type"``,
-    a single-node block at ``"fill_settings"`` (using
+    block also varies by stage: the full catalog at ``"pick_type"``, a
+    single-node block at ``"fill_settings"`` (using
     ``picked_node_type``), and an empty catalog at the other stages.
 
     Raises ``ValueError`` for unknown surfaces.
@@ -418,9 +421,9 @@ def assemble_system_prompt(
         raise ValueError(f"Unknown surface {surface!r}. Expected one of {sorted(get_args(SurfaceLiteral))}.")
 
     base = _load_prompt("base")
-    # W71 v2.0 — ``agent_live`` reuses the same per-stage suffix
-    # routing as ``agent_staged``: identical state machine through
-    # fill_settings, only the post-apply behaviour differs.
+    # ``agent_live`` reuses the same per-stage suffix routing as
+    # ``agent_staged``: identical state machine through fill_settings,
+    # only the post-apply behaviour differs.
     if surface in ("agent_staged", "agent_live") and stage:
         suffix_name = _STAGE_TO_PROMPT.get(stage, SURFACE_TO_LEVEL[surface])
     else:
@@ -437,20 +440,19 @@ _NODE_REFERENCE_HEADER = "## Flowfile node reference"
 # Surface that gets the full catalog block. ``agent_complex`` is the
 # one-shot full-catalog surface; ``agent_staged`` renders the catalog
 # only at the ``pick_type`` stage via the per-stage branch in
-# :func:`_build_catalog_block`. (Legacy ``agent`` surface was removed in
-# W71 v1.10.)
+# :func:`_build_catalog_block`.
 _FULL_CATALOG_SURFACES: frozenset[str] = frozenset({"agent_complex"})
 
-# Surfaces that get a narrowed catalog filtered to their D002 preset.
+# Surfaces that get a narrowed catalog filtered to their preset.
 _PRESET_CATALOG_SURFACES: frozenset[str] = frozenset({"cmd_k", "ghost_node"})
 
-# Read-only / advisory ("assist-level") surfaces — they don't call tools,
+# Read-only / advisory ("assist-level") surfaces — they don't call tools
 # but they advise the user about Flowfile, so they need user-facing UI
 # vocabulary. We give them a per-node-type reference rendered from
 # ``user_instructions`` (palette label, sidebar, settings labels, worked
 # example, pitfalls) so "how do I X" answers cite real UI elements
-# instead of hallucinating a "transform node" or "expression editor" —
-# the bug from the live transcript that motivated the post-W56-v1 widening.
+# instead of hallucinating names like "transform node" or "expression
+# editor".
 _ASSIST_CATALOG_SURFACES: frozenset[str] = frozenset({"explain", "lineage", "docgen"})
 
 _NODE_TYPE_TOOL_PREFIX = "flowfile.graph.add_"
@@ -462,14 +464,13 @@ def _build_catalog_block(
     stage: str | None = None,
     picked_node_type: str | None = None,
 ) -> str:
-    """Build the W56 narrative block for ``surface``.
+    """Build the narrative block for ``surface``.
 
-    One function, two render paths via a slice-selector per surface group
-    (per the user's W56 v2 spec). Two views over one source-of-truth:
+    Two views over one source-of-truth:
 
-    * **Tool-calling surfaces** (``agent`` / ``agent_complex`` /
-      ``cmd_k`` / ``ghost_node``) — emit ``## Tool catalog`` with each
-      tool's ``long_description`` plus, where set, a fenced
+    * **Tool-calling surfaces** (``agent_complex`` / ``cmd_k`` /
+      ``ghost_node``) — emit ``## Tool catalog`` with each tool's
+      ``long_description`` plus, where set, a fenced
       ``agent_payload_example`` showing the literal JSON the executor
       accepts. Agent-shaped: *"when to call this tool"*.
     * **Assist-level surfaces** (``explain`` / ``lineage`` / ``docgen``)
@@ -482,14 +483,15 @@ def _build_catalog_block(
     * ``settings_autocomplete`` — returns ``""`` (constrained-JSON
       output, no narrative grounding needed).
 
-    W71 — ``agent_staged`` is per-stage:
+    ``agent_staged`` is per-stage:
 
     * ``stage="pick_type"`` — full ``## Tool catalog`` with every node
       type's narrative grounding so the LLM picks the right one.
     * ``stage="fill_settings"`` — a single-node block scoped to
-      ``picked_node_type`` (description + payload example). Other stages
-      get ``""`` — they don't need catalog content because their decision
-      space is already constrained by the function-calling enum.
+      ``picked_node_type`` (description + payload example). Other
+      stages get ``""`` — they don't need catalog content because
+      their decision space is already constrained by the
+      function-calling enum.
 
     Lazy-imports ``tools.registry`` so the prompts package stays
     independently importable in tests that mock the catalog.
@@ -503,22 +505,20 @@ def _build_catalog_block(
         if stage == "pick_type":
             tools = build_tool_catalog(surface="agent_complex")
             catalog_block = _render_tool_catalog(tools)
-            # W71 v1.12B — append palette-label vs node_type
-            # disambiguation. Only at pick_type (other stages don't
-            # pick types and don't need the warning).
+            # Append palette-label vs node_type disambiguation. Only
+            # at pick_type (other stages don't pick types and don't
+            # need the warning).
             disambig = _build_palette_label_disambiguation_block()
             if disambig:
                 return f"{catalog_block}\n\n{disambig}"
             return catalog_block
         if stage == "classify":
-            # W71 v1.14A.3 — some models bypass classify_intent and
-            # emit pick_node_type directly at this stage (observed
-            # 2026-05-08, qwen3-vl-32b: emitted ``node_type=sort_data``
-            # at the classify-stage prompt, which lacks the catalog +
-            # v1.12B disambiguation). Surface the disambiguation block
-            # at classify too so the warning reaches the LLM regardless
-            # of bypass. Cheap (~600 chars) and only runs at the
-            # classify round, which has the smallest budget anyway.
+            # Some models bypass classify_intent and emit
+            # pick_node_type directly at this stage. Surface the
+            # disambiguation block at classify too so the warning
+            # reaches the LLM regardless of bypass. Cheap (~600 chars)
+            # and only runs at the classify round, which has the
+            # smallest budget anyway.
             disambig = _build_palette_label_disambiguation_block()
             return disambig or ""
         if stage == "fill_settings" and picked_node_type:
@@ -539,16 +539,14 @@ def _build_catalog_block(
 
 @functools.lru_cache(maxsize=1)
 def _palette_label_disambiguation_pairs() -> tuple[tuple[str, str], ...]:
-    """W71 v1.12B — return ``(node_type, palette_label)`` pairs where
-    snake-casing the palette label produces a different identifier
-    from the registered ``node_type``.
+    """Return ``(node_type, palette_label)`` pairs where snake-casing
+    the palette label produces a different identifier from the
+    registered ``node_type``.
 
     These are the exact mismatches that confuse small LLMs into
-    emitting the snake-cased palette label as a ``node_type`` — e.g.
-    palette label *"Sort"* → ``"sort"`` ≠ registered
-    ``"sort"``. The disambiguation block (rendered ONLY at
-    ``stage="pick_type"``) lists these so the LLM sees the explicit
-    do/don't pairing.
+    emitting the snake-cased palette label as a ``node_type``. The
+    disambiguation block (rendered at ``stage="pick_type"``) lists
+    these so the LLM sees the explicit do/don't pairing.
 
     Cached at module level — palette labels are static at runtime.
     """
@@ -571,11 +569,10 @@ def _palette_label_disambiguation_pairs() -> tuple[tuple[str, str], ...]:
 
 
 def _build_palette_label_disambiguation_block() -> str:
-    """W71 v1.12B — render the do/don't section warning the LLM that
-    the function-calling enum is the snake_case ``node_type``, not
-    the snake-cased palette label. Only rendered at the
-    ``pick_type`` stage of ``agent_staged`` (where the LLM is about
-    to pick a node_type).
+    """Render the do/don't section warning the LLM that the
+    function-calling enum is the snake_case ``node_type``, not the
+    snake-cased palette label. Rendered at the ``pick_type`` stage of
+    ``agent_staged`` (where the LLM is about to pick a node_type).
     """
     pairs = _palette_label_disambiguation_pairs()
     if not pairs:
@@ -600,7 +597,7 @@ def _build_palette_label_disambiguation_block() -> str:
 
 @functools.lru_cache(maxsize=1)
 def _formula_function_names() -> tuple[str, ...]:
-    """W71 v1.12C — fetch the canonical Flowfile expression-function list.
+    """Fetch the canonical Flowfile expression-function list.
 
     Sourced from ``polars_expr_transformer.function_overview``, the same
     surface the chat-side ``GET /editor/expressions`` route uses. Cached
@@ -632,27 +629,25 @@ def _build_sql_query_caveat_block() -> str:
     scoped to the one prompt where the LLM is about to stage a
     sql_query, exactly when the guidance is actionable.
 
-    Two pieces, both motivated by the 2026-05-09 dogfood:
+    Two pieces:
 
     * **Table-name convention.** Upstream inputs are registered
       positionally as ``input_1``, ``input_2``, ... by
       :func:`flowfile_core.flowfile.flow_data_engine.flow_data_engine.execute_sql_query`
-      (line 2742: ``ctx.register(f"input_{i + 1}", ...)``). The chat
-      LLM previously hallucinated ``join_<node_id>``-shaped table
-      names from the prior worked example; the agent inherited the
+      (``ctx.register(f"input_{i + 1}", ...)``). The chat LLM
+      previously hallucinated ``join_<node_id>``-shaped table names
+      from the prior worked example; the agent inherited the
       hallucination and produced ``FROM join_5`` SQL that hit
       ``relation 'join_5' was not found`` at runtime.
     * **Development-mode auto-undo.** ``add_sql_query`` does not
-      register a ``schema_callback`` (see
-      ``flow_graph.py`` ``add_sql_query``), so
-      ``_observe_development``'s ``get_predicted_schema(force=True)``
-      returns ``None`` and the host fails the observation with
-      ``UnpredictableSchema``, auto-undoing the just-added node.
-      Without this pre-warning the LLM hits the failure, hallucinates
-      a cause (transcript 2026-05-09: *"the kernel couldn't be
-      found"* — not in the error text), claims false success (*"I
-      added a sql_query node"* — but the node was deleted), or
-      burns its retry budget on identical re-attempts.
+      register a ``schema_callback`` (see ``flow_graph.py``
+      ``add_sql_query``), so ``_observe_development``'s
+      ``get_predicted_schema(force=True)`` returns ``None`` and the
+      host fails the observation with ``UnpredictableSchema``,
+      auto-undoing the just-added node. Without this pre-warning the
+      LLM hits the failure, hallucinates a cause, claims false
+      success (*"I added a sql_query node"* — but the node was
+      deleted), or burns its retry budget on identical re-attempts.
     """
     return (
         "## sql_query-specific guidance\n"
@@ -698,11 +693,11 @@ def _build_sql_query_caveat_block() -> str:
 
 
 def _build_formula_function_reference_block() -> str:
-    """W71 v1.12C — append a compact alphabetical list of available
-    Flowfile-expression functions. Renders ONLY at stage-3
-    ``fill_settings`` when the picked node type is ``formula`` (gated by
-    the caller in ``_build_single_node_block``) so smaller catalog
-    surfaces (pick_type, agent_complex full catalog) don't carry the
+    """Append a compact alphabetical list of available Flowfile-expression
+    functions. Renders ONLY at stage-3 ``fill_settings`` when the picked
+    node type is ``formula`` (gated by the caller in
+    ``_build_single_node_block``) so smaller catalog surfaces
+    (pick_type, agent_complex full catalog) don't carry the
     function-name dump on every round.
     """
     names = _formula_function_names()
@@ -1001,17 +996,9 @@ def _attach_samples(
     """
 
     if samples_mode == "off" or sample_rows <= 0:
-        logger.debug("_attach_samples short-circuit samples_mode=%s sample_rows=%d", samples_mode, sample_rows)
         return snapshot
 
     safety_config = FlowSafetyConfig(sample_mode=samples_mode, sample_row_count=sample_rows)
-    logger.debug(
-        "_attach_samples iterating nodes=%d samples_mode=%s sample_rows=%d",
-        len(snapshot.nodes),
-        samples_mode,
-        sample_rows,
-    )
-
     enriched: list[NodeSnapshot] = []
     for node_snapshot in snapshot.nodes:
         node = graph.get_node(node_snapshot.node_id)
@@ -1120,11 +1107,7 @@ def _safe_get_sample_data(node: FlowNode, n: int) -> list[dict[str, Any]] | None
 
     getter = getattr(node, "get_table_example", None)
     has_run = bool(getattr(getattr(node, "node_stats", None), "has_run_with_current_setup", False))
-    if not callable(getter):
-        logger.debug("sample-fetch skip node=%s reason=no-get_table_example", getattr(node, "node_id", "?"))
-        return None
-    if not has_run:
-        logger.debug("sample-fetch skip node=%s reason=not-run", getattr(node, "node_id", "?"))
+    if not callable(getter) or not has_run:
         return None
     try:
         example = getter(True)
@@ -1132,15 +1115,11 @@ def _safe_get_sample_data(node: FlowNode, n: int) -> list[dict[str, Any]] | None
         logger.exception("sample-fetch error node=%s", getattr(node, "node_id", "?"))
         return None
     if example is None:
-        logger.debug("sample-fetch skip node=%s reason=no-example", getattr(node, "node_id", "?"))
         return None
     rows = getattr(example, "data", None)
     if not rows:
-        logger.debug("sample-fetch skip node=%s reason=empty-data", getattr(node, "node_id", "?"))
         return None
-    sliced = list(rows)[:n] if n > 0 else []
-    logger.debug("sample-fetch ok node=%s rows=%d", getattr(node, "node_id", "?"), len(sliced))
-    return sliced
+    return list(rows)[:n] if n > 0 else []
 
 
 def _column_snapshot(column: FlowfileColumn) -> ColumnSnapshot:

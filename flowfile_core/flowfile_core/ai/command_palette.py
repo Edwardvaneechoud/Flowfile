@@ -1,31 +1,26 @@
-"""Command-palette logic — owned by W33.
+"""Command-palette logic.
 
 Pipes the cmd_k surface through the same composition every other AI
-surface uses: W22 prompt context → W30 tool catalog → W11 provider call
-under W14 scheduler → W31 executor (mode="stage") → W41 :class:`GraphDiff`
-register. The headline UX is "type a short imperative on the canvas, get
-a staged diff to accept".
+surface uses: prompt context → tool catalog → provider call under
+scheduler → executor (mode="stage") → :class:`GraphDiff` register. The
+headline UX is "type a short imperative on the canvas, get a staged
+diff to accept".
 
 Soft failures (timeout, no tool calls, parse error, provider error,
-all-refused) become a :class:`CommandPaletteResponse` with ``degraded=True``
-and a stable ``reason`` string — never 5xx — to mirror W34's autocomplete
-posture. The function never raises.
+all-refused) become a :class:`CommandPaletteResponse` with
+``degraded=True`` and a stable ``reason`` string — never 5xx — to
+mirror the autocomplete posture. The function never raises.
 
-Why a non-streaming POST and not SSE: cmd_k is a single round-trip with
-a sub-1s TTFB target (D010). Streaming overhead (header flush, framing,
+Why a non-streaming POST and not SSE: cmd_k is a single round-trip
+with a sub-1s TTFB target. Streaming overhead (header flush, framing,
 client SSE parser) is more expensive than a JSON response the client
-just inspects. SSE remains the right shape for chat (W20), run-failure
-explanations (W23), inline ✨ actions (W21), docgen (W50), and lineage
-(W51) — long-form text the user reads as it arrives.
+just inspects. SSE remains the right shape for chat, run-failure
+explanations, inline ✨ actions, docgen, and lineage — long-form text
+the user reads as it arrives.
 
-Surface lockstep: ``"cmd_k"`` is already part of W30's :data:`SurfaceLiteral`,
-W22's :data:`SURFACE_TO_LEVEL` (→ ``"copilot"``), W22's per-surface
-budget table, and every provider's ``surface_models``. W33 only consumes;
-no new surface vocabulary is introduced.
-
-The lazy-litellm contract from W11 / W12 / W13 is preserved — this module
-must not import ``litellm`` at module load time. Provider calls flow
-through the :class:`flowfile_core.ai.providers.base.Provider` Protocol seam.
+The lazy-litellm contract is preserved — this module must not import
+``litellm`` at module load time. Provider calls flow through the
+:class:`flowfile_core.ai.providers.base.Provider` Protocol seam.
 """
 
 from __future__ import annotations
@@ -64,11 +59,11 @@ logger = logging.getLogger(__name__)
 
 
 SURFACE: Final[str] = "cmd_k"
-"""The :data:`SurfaceLiteral` value W33 emits — kept as a constant so call
-sites and test assertions stay in lock-step."""
+"""The :data:`SurfaceLiteral` value cmd_k emits — kept as a constant so
+call sites and test assertions stay in lock-step."""
 
 DEFAULT_TIMEOUT_SECONDS: Final[float] = 8.0
-"""Hard timeout per call. D010 target is sub-1s TTFB / <3s total but BYOK
+"""Hard timeout per call. Target is sub-1s TTFB / <3s total but BYOK
 quality varies — 8s caps a slow provider before the user gives up."""
 
 DEFAULT_MAX_TOKENS: Final[int] = 1024
@@ -96,17 +91,17 @@ DegradedReason = Literal[
 class CommandPaletteInsertionContext(BaseModel):
     """Where the proposed nodes attach to the existing graph.
 
-    Mirrors W31's :class:`flowfile_core.ai.tools.executor.InsertionContext`
+    Mirrors :class:`flowfile_core.ai.tools.executor.InsertionContext`
     field-for-field so the request body can carry the same shape the
     executor expects without an adapter. Defaults align with cmd_k:
     ``upstream_node_ids=[]`` lets the LLM propose a source node;
-    practical use threads the user's selection or the canvas-context-menu
-    target node id in here.
+    practical use threads the user's selection or the
+    canvas-context-menu target node id in here.
 
-    ``pos_x`` / ``pos_y`` default to ``None`` (W62) so the executor derives
-    layout coordinates from the upstream's canvas position. Frontend callers
-    that already know the click coordinates may pass explicit floats — those
-    win verbatim.
+    ``pos_x`` / ``pos_y`` default to ``None`` so the executor derives
+    layout coordinates from the upstream's canvas position. Frontend
+    callers that already know the click coordinates may pass explicit
+    floats — those win verbatim.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -134,11 +129,11 @@ class CommandPaletteRequest(BaseModel):
 
 
 class RefusedToolCall(BaseModel):
-    """A tool call that was rejected by the W31 executor.
+    """A tool call that was rejected by the executor.
 
     The frontend surfaces these inline so the user understands why a
     proposed action didn't make it into the staged diff (e.g. "missing
-    columns: foo"). ``warnings`` carries any D011 deferred-validation
+    columns: foo"). ``warnings`` carries any deferred-validation
     notes.
     """
 
@@ -155,7 +150,7 @@ class CommandPaletteResponse(BaseModel):
 
     On success: ``diff_id`` and ``diff`` are populated; the frontend feeds
     ``diff`` into :class:`useAiDiffStore.setCurrentDiff` and the user
-    accepts/rejects via the existing W35 panel.
+    accepts/rejects via the existing diff panel.
 
     On soft failure: ``degraded=True`` and ``reason`` is set; ``diff_id``
     and ``diff`` are ``None``. The frontend renders the rationale (if
@@ -203,12 +198,12 @@ def _resolve_pinned_node_ids(
     selected_node_ids: list[int] | None,
     insertion_context: CommandPaletteInsertionContext | None,
 ) -> list[int]:
-    """Compose the W22 ``pinned_node_ids`` set from the request inputs.
+    """Compose the ``pinned_node_ids`` set from the request inputs.
 
-    Order: explicit selection wins; the insertion-context upstreams + right
-    input get appended deduplicated. Empty result lets the W22 builder
-    fall back to ``@flow`` so the LLM still sees the whole graph instead
-    of an empty subgraph.
+    Order: explicit selection wins; the insertion-context upstreams +
+    right input get appended deduplicated. Empty result lets the
+    prompt builder fall back to ``@flow`` so the LLM still sees the
+    whole graph instead of an empty subgraph.
     """
     pinned: list[int] = []
     seen: set[int] = set()
@@ -238,11 +233,11 @@ def _build_messages_for_palette(
 ) -> list[Message]:
     """Compose ``[system, user]`` for the cmd_k request.
 
-    The system message stacks W22's layered prompt (base + copilot suffix,
-    per :data:`SURFACE_TO_LEVEL["cmd_k"]`) on top of
-    :data:`_SYSTEM_PROMPT_SUFFIX`. The user message is W22's deterministic
-    subgraph block plus a ``## User request`` paragraph carrying the
-    typed prompt + the insertion context the server already knows about.
+    The system message stacks the layered prompt (base + copilot
+    suffix) on top of :data:`_SYSTEM_PROMPT_SUFFIX`. The user message
+    is the deterministic subgraph block plus a ``## User request``
+    paragraph carrying the typed prompt + the insertion context the
+    server already knows about.
     """
     pinned = _resolve_pinned_node_ids(
         selected_node_ids=selected_node_ids,
@@ -254,7 +249,7 @@ def _build_messages_for_palette(
         graph,
         pinned,
         surface=SURFACE,
-        samples_mode="off",  # D009 default; D012-clean.
+        samples_mode="off",  # default; never sends row data over the wire.
         mentions=mention_text,
     )
 
@@ -302,9 +297,9 @@ async def _call_provider_for_tools(
     Returns ``(response, error_reason)``. ``response`` is the LLM's
     :class:`ChatResponse` when successful; ``error_reason`` is non-None
     for soft failures (``"timeout"`` / ``"provider_error"``). Retry/backoff
-    is intentionally bypassed — cmd_k is fail-fast (no retries) so the W14
+    is intentionally bypassed — cmd_k is fail-fast (no retries) so the
     scheduler is consulted only for RPM tracking via ``acquire``. Same
-    posture as W34's autocomplete.
+    posture as the autocomplete path.
     """
 
     async def _do_call():
@@ -342,11 +337,11 @@ def _is_graph_mutation(tool_name: str) -> bool:
     """Filter the LLM's tool calls down to staged-diff candidates.
 
     Read-only tools in the surface (e.g. ``flowfile.schema.read_node_schema``)
-    are silently dropped — schemas are already in the W22 user message,
-    so the LLM rarely needs the call, and the executor's read path doesn't
-    feed a diff. W47 re-admits ``update_node_settings`` (modifications
+    are silently dropped — schemas are already in the user message, so
+    the LLM rarely needs the call and the executor's read path doesn't
+    feed a diff. ``update_node_settings`` is admitted (modifications
     bucket on :class:`GraphDiff`); ``run_node`` / ``propose_subgraph``
-    were dropped permanently in W46 and won't return.
+    are not in the catalog.
     """
     if tool_name.startswith(_ADD_PREFIX):
         return True
@@ -379,11 +374,11 @@ def _inject_id_overrides(
 ) -> dict[str, Any]:
     """Stamp server-controlled ids onto an ``add_*`` tool call's settings dict.
 
-    The system prompt tells the LLM to use placeholders for ``flow_id`` /
-    ``node_id``; the server is the source of truth for both. For
+    The system prompt tells the LLM to use placeholders for ``flow_id``
+    / ``node_id``; the server is the source of truth for both. For
     non-``add_*`` graph ops (``connect`` / ``delete_node`` /
     ``delete_connection``) we leave the LLM's ids untouched — those
-    operations reference *existing* node ids from the W22 prompt context,
+    operations reference *existing* node ids from the prompt context,
     not synthetic ones the server is about to create.
     """
     if not tool_name.startswith(_ADD_PREFIX):
@@ -401,13 +396,13 @@ def _bin_tool_results_to_diff(
     rationale: str | None,
     results: list[ToolExecutionResult],
 ) -> GraphDiff:
-    """Compose a :class:`GraphDiff` from W31 staged tool results.
+    """Compose a :class:`GraphDiff` from staged tool results.
 
     Mirrors :func:`flowfile_core.ai.diff_routes._bin_staged_results` —
-    same shape so a follow-up cleanup PR could lift the helper to a
-    shared module without touching call sites. Replicating inline keeps
-    W33 self-contained and avoids importing a private helper from the
-    diff_routes module (which is route-layer code).
+    same shape so a follow-up cleanup could lift the helper to a
+    shared module without touching call sites. Replicating inline
+    avoids importing a private helper from the diff_routes module
+    (which is route-layer code).
     """
     additions: list[StagedAddition] = []
     modifications: list[StagedSettingsUpdate] = []
@@ -504,18 +499,18 @@ async def run_command_palette(
 
     Pipeline:
 
-    1. W22 :func:`render_prompt_context(surface="cmd_k", samples_mode="off")`
+    1. :func:`render_prompt_context(surface="cmd_k", samples_mode="off")`
        for the layered system prompt + flow-context user block.
-    2. W30 :func:`build_tool_catalog(surface="cmd_k")` for the per-surface
+    2. :func:`build_tool_catalog(surface="cmd_k")` for the per-surface
        tool preset (filter / select / sort / unique / record_id +
        ``read_node_schema``).
-    3. W11 :meth:`Provider.chat(messages, tools=..., max_tokens=...)` under
-       W14's :meth:`RateLimitScheduler.acquire(surface="cmd_k")` and a
-       hard :func:`asyncio.wait_for` (D010 fail-fast).
-    4. W31 :func:`execute_tool_call(mode="stage", ...)` per LLM tool call —
+    3. :meth:`Provider.chat(messages, tools=..., max_tokens=...)` under
+       :meth:`RateLimitScheduler.acquire(surface="cmd_k")` and a hard
+       :func:`asyncio.wait_for` (fail-fast).
+    4. :func:`execute_tool_call(mode="stage", ...)` per LLM tool call —
        the executor handles refusal pipeline, schema prediction, and
        audit emission. We don't double-audit here.
-    5. W41 :func:`register_diff(GraphDiff(...))` — return the ``diff_id``.
+    5. :func:`register_diff(GraphDiff(...))` — return the ``diff_id``.
 
     Soft failures (timeout, no tool calls, provider error, all-refused)
     become a :class:`CommandPaletteResponse` with ``degraded=True`` and a
@@ -529,7 +524,7 @@ async def run_command_palette(
     sid = session_id or "cmdk-anonymous"
     flow_id = int(graph.flow_id)
 
-    # W30 preset
+    # Tool catalog preset for this surface
     tool_specs = list(build_tool_catalog(surface=SURFACE))
     if not tool_specs:
         # Defence-in-depth: ``SURFACE_PRESETS["cmd_k"]`` is non-empty, but a
@@ -543,7 +538,7 @@ async def run_command_palette(
         )
         return CommandPaletteResponse(degraded=True, reason="empty_catalog")
 
-    # W22 context + user instruction
+    # Context + user instruction
     messages = _build_messages_for_palette(
         graph=graph,
         prompt=prompt,
@@ -551,7 +546,7 @@ async def run_command_palette(
         insertion_context=insertion_context,
     )
 
-    # W11 provider call (W14 scheduler acquired inside)
+    # Provider call (rate-limit scheduler acquired inside)
     response, error = await _call_provider_for_tools(
         provider=provider,
         messages=messages,
@@ -610,17 +605,18 @@ async def run_command_palette(
             fresh_node_id=fresh_id,
         )
         try:
-            # W54 — ``llm_provided_node_id`` / ``audit_meta`` are intentionally
-            # unset here. ``_inject_id_overrides`` already forces ``fresh_id``
-            # into ``tool_args["node_id"]`` for every call, so the executor's
-            # LLM-provided-id validation has nothing to validate. The agent
-            # planner is the only surface where the LLM's emitted ``node_id``
-            # reaches the executor as-is.
+            # ``llm_provided_node_id`` / ``audit_meta`` are intentionally
+            # unset here. ``_inject_id_overrides`` already forces
+            # ``fresh_id`` into ``tool_args["node_id"]`` for every
+            # call, so the executor's LLM-provided-id validation has
+            # nothing to validate. The agent planner is the only
+            # surface where the LLM's emitted ``node_id`` reaches the
+            # executor as-is.
             #
-            # W62 — ``staged_offset_index=fresh_id_offset`` so successive
+            # ``staged_offset_index=fresh_id_offset`` makes successive
             # ``add_*`` calls in the same Cmd+K batch (which all share
-            # ``base_ic_obj`` and hence the same upstream) stack vertically
-            # instead of landing on the same coordinates.
+            # ``base_ic_obj`` and hence the same upstream) stack
+            # vertically instead of landing on the same coordinates.
             result = execute_tool_call(
                 flow_id=flow_id,
                 tool_name=call.name,

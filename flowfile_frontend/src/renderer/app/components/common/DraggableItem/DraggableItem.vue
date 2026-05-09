@@ -393,6 +393,7 @@ const captureGroupInitialStates = () => {
 };
 
 const startResizeRight = (e: MouseEvent) => {
+  registerClick();
   e.preventDefault();
   handleReziging(e);
   resizeDirection.value = "right";
@@ -415,6 +416,7 @@ const onResizeWidth = (e: MouseEvent) => {
 };
 
 const startResizeBottom = (e: MouseEvent) => {
+  registerClick();
   e.preventDefault();
   handleReziging(e);
   resizeDirection.value = "bottom";
@@ -437,6 +439,7 @@ const onResizeHeight = (e: MouseEvent) => {
 };
 
 const startResizeTop = (e: MouseEvent) => {
+  registerClick();
   e.preventDefault();
   handleReziging(e);
   resizeDirection.value = "top";
@@ -462,6 +465,7 @@ const onResizeTop = (e: MouseEvent) => {
 };
 
 const startResizeLeft = (e: MouseEvent) => {
+  registerClick();
   e.preventDefault();
   handleReziging(e);
   resizeDirection.value = "left";
