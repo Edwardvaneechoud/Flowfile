@@ -42,6 +42,7 @@ from flowfile_core.ai.tools.codegen_ops import CODEGEN_OPS_TOOLS
 from flowfile_core.ai.tools.graph_ops import GRAPH_OPS_TOOLS
 from flowfile_core.ai.tools.meta_ops import (
     CLASSIFY_INTENT_TOOL_NAME,
+    EMIT_PLAN_TOOL_NAME,
     META_OPS_TOOLS,
     PICK_NODE_TYPE_TOOL_NAME,
     PICK_UPSTREAM_TOOL_NAME,
@@ -68,6 +69,7 @@ SurfaceLiteral = Literal[
     "explain",
     "agent_complex",
     "agent_staged",
+    "staged_plan",
     "staged_classify",
     "staged_pick_type",
     "staged_pick_upstream",
@@ -505,6 +507,11 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
     # on ``session.stage`` to one of the per-stage entries below. The empty
     # frozenset is a placeholder that satisfies ``_check_preset_coverage``.
     "agent_staged": frozenset(),
+    # W71 v2.4 — pre-classify "plan" stage. The LLM emits a brief
+    # numbered plan before the classify→pick→fill cycle starts;
+    # one tool advertised so the LLM is forced through the
+    # function-calling API like every other staged stage.
+    "staged_plan": frozenset({EMIT_PLAN_TOOL_NAME}),
     "staged_classify": frozenset({CLASSIFY_INTENT_TOOL_NAME}),
     "staged_pick_type": frozenset({PICK_NODE_TYPE_TOOL_NAME}),
     # ``staged_pick_upstream`` is a placeholder — at runtime the planner

@@ -98,6 +98,7 @@ SamplesMode = Literal["off", "regex"]
 
 
 PlannerStage = Literal[
+    "plan",
     "classify",
     "pick_type",
     "pick_upstream",
@@ -251,7 +252,15 @@ class AgentSession(BaseModel):
     selection. Currently always empty — no v0 wire path populates it; the
     field is structurally present so a future workstream can extract
     ``@``-mentions from the user prompt without an additional schema bump."""
-    stage: PlannerStage = "classify"
+    stage: PlannerStage = "plan"
+    """W71 v2.4 — multi-stage state-machine surfaces (agent_staged /
+    agent_live) start at the **plan** stage where the LLM emits a
+    short markdown plan via ``flowfile.meta.emit_plan`` before the
+    classify→pick→fill cycle starts. Single-shot ``agent_complex``
+    ignores ``stage`` entirely. ``reset_stage_state`` resets to
+    ``"classify"`` (NOT ``"plan"``) so multi-node turns don't
+    re-plan after each successful add — the plan covers the whole
+    user request and only fires once at session start."""
     """W71 — current stage in the ``agent_staged`` state machine. Ignored
     by legacy ``agent`` / ``agent_complex`` surfaces. Reset to
     ``"classify"`` after each successful ``add_*`` or single-stage non-add

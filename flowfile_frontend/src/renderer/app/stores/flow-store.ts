@@ -44,6 +44,13 @@ export const useFlowStore = defineStore("flow", {
       // for re-fetch would loop. `pendingReloadCounter` is "external
       // mutation happened; please re-fetch" only.
       pendingReloadCounter: 0,
+      // W71 v2.3 — Monotonic counter bumped by `requestLayoutReset()`.
+      // `Canvas.vue` watches this and runs the same routine the
+      // "Reset layout graph" button triggers (applyStandardLayout +
+      // viewport reset + fitView). Used by the post-agent_live
+      // layout-reorganize prompt so the banner's [Reorganize] button
+      // can call into the canvas without prop-drilling.
+      pendingLayoutResetCounter: 0,
     };
   },
 
@@ -117,6 +124,17 @@ export const useFlowStore = defineStore("flow", {
     // debouncing (via `loadToken`) cancels stale runs.
     requestReload() {
       this.pendingReloadCounter += 1;
+    },
+
+    // W71 v2.3 — Signal "please re-run the standard auto-layout".
+    // Canvas.vue watches `pendingLayoutResetCounter` and runs the same
+    // routine the "Reset layout graph" button triggers
+    // (`handleResetLayoutGraph`: applyStandardLayout + viewport reset
+    // + fitView). Used by the post-agent_live layout-reorganize banner
+    // so the [Reorganize] button can call into the canvas without
+    // prop-drilling. Safe to call multiple times.
+    requestLayoutReset() {
+      this.pendingLayoutResetCounter += 1;
     },
   },
 });

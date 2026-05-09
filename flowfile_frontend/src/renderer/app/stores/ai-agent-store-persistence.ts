@@ -18,7 +18,22 @@ import type { AgentDriftDetail } from "../api/ai.api";
 import type { AgentCompleteResult } from "../services/aiStreamClient";
 import type { AgentEvent, AgentStoreStatus } from "./ai-agent-store";
 
+/** Bare prefix — kept for legacy migration / clearing. Pre-v2.6 the
+ *  agent store wrote to this single key regardless of which flow
+ *  was open, which leaked events across flows. v2.6 keys per-flow
+ *  via :func:`agentPersistenceKey`. Existing entries at the bare
+ *  key are ignored on load (drop-on-upgrade is acceptable since
+ *  the data was already cross-leaking). */
 export const AGENT_PERSISTENCE_KEY = "flowfile.ai.agent.v1";
+
+/** W71 v2.6 — flow-scoped storage key for the AI agent store.
+ *  Mirrors ``chatPersistenceKey`` in ``ai-store-persistence.ts``
+ *  so the agent's chat trail / events / status are isolated per
+ *  flow the same way the chat store is. ``null`` flow_id (no flow
+ *  loaded) maps to the ``"unscoped"`` bucket. */
+export const agentPersistenceKey = (flowId: number | null): string =>
+  `${AGENT_PERSISTENCE_KEY}.${flowId === null ? "unscoped" : flowId}`;
+
 export const MAX_PERSISTED_AGENT_EVENTS = 200;
 
 export interface PersistedAgentState {
@@ -142,13 +157,17 @@ const normaliseStatus = (raw: unknown): AgentStoreStatus => {
   return raw as AgentStoreStatus;
 };
 
-export const loadPersistedAgentState = (storage?: StorageLike | null): PersistedAgentState => {
+export const loadPersistedAgentState = (
+  storage?: StorageLike | null,
+  flowId: number | null = null,
+): PersistedAgentState => {
   const store = resolveStorage(storage);
   if (!store) return { ...EMPTY_STATE, events: [] };
 
+  const key = agentPersistenceKey(flowId);
   let raw: string | null;
   try {
-    raw = store.getItem(AGENT_PERSISTENCE_KEY);
+    raw = store.getItem(key);
   } catch {
     return { ...EMPTY_STATE, events: [] };
   }
@@ -159,7 +178,7 @@ export const loadPersistedAgentState = (storage?: StorageLike | null): Persisted
     parsed = JSON.parse(raw);
   } catch {
     try {
-      store.removeItem(AGENT_PERSISTENCE_KEY);
+      store.removeItem(key);
     } catch {
       // private mode / quota — best effort.
     }
@@ -188,6 +207,7 @@ export const loadPersistedAgentState = (storage?: StorageLike | null): Persisted
 export const persistAgentState = (
   state: PersistedAgentState,
   storage?: StorageLike | null,
+  flowId: number | null = null,
 ): void => {
   const store = resolveStorage(storage);
   if (!store) return;
@@ -209,17 +229,20 @@ export const persistAgentState = (
   }
 
   try {
-    store.setItem(AGENT_PERSISTENCE_KEY, payload);
+    store.setItem(agentPersistenceKey(flowId), payload);
   } catch {
     // QuotaExceededError or storage disabled — fail silent.
   }
 };
 
-export const clearPersistedAgentState = (storage?: StorageLike | null): void => {
+export const clearPersistedAgentState = (
+  storage?: StorageLike | null,
+  flowId: number | null = null,
+): void => {
   const store = resolveStorage(storage);
   if (!store) return;
   try {
-    store.removeItem(AGENT_PERSISTENCE_KEY);
+    store.removeItem(agentPersistenceKey(flowId));
   } catch {
     // ignore
   }

@@ -352,6 +352,17 @@ export interface AgentStartRequest {
    * callers can override by setting this field explicitly.
    */
   selected_node_ids?: number[] | null;
+  /**
+   * W71 v2.7 — when ``true`` the agent state machine starts at
+   * ``stage="classify"`` instead of the v2.4 default
+   * ``stage="plan"``. Set by ``_dispatchPromotedAgent`` (auto-
+   * promote-from-chat) since the chat-mode response that preceded
+   * the promotion already produced a plan-shaped narrative;
+   * emitting a fresh plan would burn an extra round and duplicate
+   * the chat output. Direct agent runs leave this falsy so the
+   * plan stage fires.
+   */
+  skip_plan?: boolean;
 }
 
 export interface AgentDriftDetail {

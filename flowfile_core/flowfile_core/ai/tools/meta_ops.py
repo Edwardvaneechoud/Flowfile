@@ -48,6 +48,7 @@ OP_KIND_NAMES: Final[tuple[str, ...]] = (
 )
 
 
+EMIT_PLAN_TOOL_NAME: Final[str] = "flowfile.meta.emit_plan"
 CLASSIFY_INTENT_TOOL_NAME: Final[str] = "flowfile.meta.classify_intent"
 PICK_NODE_TYPE_TOOL_NAME: Final[str] = "flowfile.meta.pick_node_type"
 PICK_UPSTREAM_TOOL_NAME: Final[str] = "flowfile.meta.pick_upstream"
@@ -110,6 +111,66 @@ _DISAMBIGUATION_TEXT: Final[str] = _pick_node_type_disambiguation_text()
 
 
 META_OPS_TOOLS: Final[list[ToolSpec]] = [
+    ToolSpec(
+        name=EMIT_PLAN_TOOL_NAME,
+        description=(
+            "W71 v2.4 stage-0' plan emitter for agent_staged / agent_live. "
+            "Before any classify→pick_type→pick_upstream→fill_settings cycle, "
+            "the LLM articulates a brief multi-step plan for the user's "
+            "request. The plan is shown in the chat trail; then the agent "
+            "starts executing the plan one node at a time. Fires ONCE at "
+            "session start; multi-node turns don't re-plan after each add."
+        ),
+        long_description=(
+            "Stage-0' (pre-classify) of the agent_staged / agent_live state "
+            "machine. Read the user's goal, the live subgraph, and the "
+            "conversation history above. Then call this tool with a SHORT "
+            "markdown plan (numbered list, ≤6 steps) that names the node "
+            "types you intend to add and what each one does. After this "
+            "round, the host advances to stage 1 (classify) and you start "
+            "executing the plan one step at a time.\n\n"
+            "Plan format guidance:\n"
+            "- Numbered list of concrete steps, each naming a Flowfile "
+            "  node_type (e.g. ``group_by``, ``cross_join``, ``formula``).\n"
+            "- 1 sentence per step describing what it does.\n"
+            "- Don't include settings details — those land at fill_settings.\n"
+            "- Don't propose writer nodes (output / database_writer / "
+            "  cloud_storage_writer / catalog_writer); you can suggest the "
+            "  user adds them but the agent isn't authorized to stage them.\n\n"
+            "If the user's request is a question or doesn't require canvas "
+            "changes, emit a one-line plan that says so (e.g. *\"User "
+            "asked a question; will respond without staging changes.\"*) — "
+            "the next stage will classify ``op_kind=other`` and the run "
+            "ends with the assistant's reply."
+        ),
+        parameters={
+            "$schema": JSON_SCHEMA_DIALECT,
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Multi-step plan as markdown. Numbered list, ≤6 "
+                        "steps; each step names a node_type and a one-"
+                        "sentence description. Surfaced to the user in "
+                        "the chat trail before the agent starts executing."
+                    ),
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": (
+                        "One short sentence summarizing the overall "
+                        "approach (e.g. *\"Group by city, broadcast the "
+                        "global total via cross_join, compute percentage "
+                        "with formula\"*). Surfaced as the run-start "
+                        "headline."
+                    ),
+                },
+            },
+            "required": ["plan", "rationale"],
+        },
+    ),
     ToolSpec(
         name=CLASSIFY_INTENT_TOOL_NAME,
         description=(
@@ -443,6 +504,8 @@ def build_pick_upstream_spec(
 
 __all__ = [
     "CLASSIFY_INTENT_TOOL_NAME",
+    "EMIT_PLAN_TOOL_NAME",
+    "JOIN_SHAPED_NODE_TYPES",
     "META_OPS_TOOLS",
     "OP_KIND_NAMES",
     "PICK_NODE_TYPE_TOOL_NAME",

@@ -109,6 +109,16 @@ class AgentStartRequest(BaseModel):
     empty list both resolve to "no selection" — the resolver will refuse
     on ambiguity rather than guess. Frontend reads this from the live
     flow store at start time."""
+    skip_plan: bool = False
+    """W71 v2.7 — when True, the agent_staged / agent_live state
+    machine starts at ``stage="classify"`` instead of the v2.4
+    default ``stage="plan"``. The auto-promote-from-chat path
+    (W58 / ``_dispatchPromotedAgent`` in the frontend) sets this
+    to True because the chat-mode response that preceded the
+    promotion already produced a plan-shaped narrative; emitting
+    a fresh plan would cost an extra round and duplicate the
+    chat-mode output. Direct agent runs (user typed with the
+    agent toggle on) leave this False so the plan stage fires."""
 
 
 class AgentResumeRequest(BaseModel):
@@ -340,6 +350,11 @@ async def agent_start(
     }
     if body.session_id is not None:
         session_kwargs["session_id"] = body.session_id
+    # W71 v2.7 — auto-promote-from-chat sets ``skip_plan=True`` so the
+    # session jumps straight into ``classify``; the plan stage is
+    # redundant when a chat-mode plan already preceded the agent run.
+    if body.skip_plan:
+        session_kwargs["stage"] = "classify"
     session = sessions.AgentSession(**session_kwargs)
     sessions.register_session(session)
 

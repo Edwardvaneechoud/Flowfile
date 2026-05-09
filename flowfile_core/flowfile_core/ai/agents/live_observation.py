@@ -33,9 +33,12 @@ free + the undo path explicitly visible at the planner layer.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+from flowfile_core.run_lock import get_flow_run_lock
 
 logger = logging.getLogger(__name__)
 
@@ -82,16 +85,22 @@ class ObservationResult:
     ``error_message`` in the prompt."""
 
 
-def observe_after_apply(flow: Any, node_id: int) -> ObservationResult:
+async def observe_after_apply(flow: Any, node_id: int) -> ObservationResult:
     """Run the post-apply observation for ``node_id`` on ``flow``.
 
     Single entry point. Reads ``flow.flow_settings.execution_mode``
-    to pick between the Performance (real ``get_resulting_data``)
-    and Development (schema-only via ``get_predicted_schema``)
-    paths. Catches any exception from the underlying flowfile
-    layer and returns it as an :class:`ObservationResult` with
-    ``success=False``; never re-raises so the planner can route
-    cleanly to its retry path.
+    to pick between the Performance (real run via
+    ``flow.trigger_fetch_node``) and Development (schema-only via
+    ``get_predicted_schema``) paths. Catches any exception from the
+    underlying flowfile layer and returns it as an
+    :class:`ObservationResult` with ``success=False``; never
+    re-raises so the planner can route cleanly to its retry path.
+
+    Async because both paths can dispatch synchronous worker calls
+    (``ExternalDfFetcher`` / ``websockets.sync.client.connect``) and
+    must release the FastAPI event loop, and because Performance
+    mode acquires the per-flow ``flow_run_lock`` to coordinate with
+    UI-driven runs (matching ``routes.trigger_fetch_node_data``).
 
     The LLM never sees this function directly — the planner's
     ``_observe_after_apply`` wrapper formats the result via
@@ -132,26 +141,73 @@ def observe_after_apply(flow: Any, node_id: int) -> ObservationResult:
         # missing settings field.
         pass
 
-    if execution_mode.lower() == "performance":
-        return _observe_performance(node, node_id, node_type)
-    return _observe_development(node, node_id, node_type)
+    # W71 v2.5 — ``explore_data`` is the user-facing data inspector;
+    # the chat trail's *"You can view the data in the explore_data
+    # panel to inspect the results"* announcement is meaningless if
+    # the panel is empty. Force the Performance-mode path (real
+    # ``trigger_fetch_node``) for this node type regardless of the
+    # flow's configured execution_mode so the panel always has data
+    # by the time the LLM advertises it.
+    if node_type == "explore_data" or execution_mode.lower() == "performance":
+        return await _observe_performance(flow, node, node_id, node_type)
+    return await _observe_development(node, node_id, node_type)
 
 
-def _observe_performance(node: Any, node_id: int, node_type: str) -> ObservationResult:
+async def _observe_performance(flow: Any, node: Any, node_id: int, node_type: str) -> ObservationResult:
     """Performance-mode observation: actually run the pipeline up to
     the node and capture both schema + sample rows.
 
-    Catches polars / pydantic runtime errors and returns them as
-    a failure ObservationResult so the planner can auto-undo.
+    Goes through ``flow.trigger_fetch_node`` — the same primitive
+    the UI's ``POST /node/trigger_fetch_data`` route uses
+    (``routes.py:244-259``) — so AI observations and user-initiated
+    runs are serialised through the per-flow ``flow_run_lock`` and
+    the ``flow.flow_settings.is_running`` guard. The lock is held
+    only for the duration of this fetch; concurrent runs queue
+    cleanly on the asyncio.Lock instead of busy-failing with 422.
+
+    The fetch itself runs on a worker thread via
+    ``asyncio.to_thread`` so the synchronous polars / worker IO
+    inside ``trigger_fetch_node`` doesn't block the FastAPI event
+    loop.
     """
-    try:
-        resulting_data = node.get_resulting_data()
-    except Exception as exc:
-        return _failure_from_exc(node_id, node_type, exc)
+    lock = get_flow_run_lock(flow.flow_id)
+    async with lock:
+        if flow.flow_settings.is_running:
+            return ObservationResult(
+                success=False,
+                node_id=node_id,
+                node_type=node_type,
+                error_kind="FlowAlreadyRunning",
+                error_message=(
+                    f"flow {flow.flow_id} is already running (likely a "
+                    "UI run or another agent observation); the agent will "
+                    "retry on the next round"
+                ),
+            )
+        try:
+            flow.validate_if_node_can_be_fetched(node_id)
+        except Exception as exc:
+            return _failure_from_exc(node_id, node_type, exc)
+        try:
+            await asyncio.to_thread(flow.trigger_fetch_node, node_id)
+        except Exception as exc:
+            return _failure_from_exc(node_id, node_type, exc)
+
+    # ``trigger_fetch_node`` writes the runtime error (if any) into
+    # ``node.results.errors`` rather than re-raising. Surface it as
+    # a failure observation so the planner's auto-undo path fires.
+    run_error = getattr(node.results, "errors", None)
+    if run_error:
+        return ObservationResult(
+            success=False,
+            node_id=node_id,
+            node_type=node_type,
+            error_kind="RunError",
+            error_message=str(run_error),
+        )
+
+    resulting_data = getattr(node.results, "resulting_data", None)
     if resulting_data is None:
-        # Some node paths return None on internal error without
-        # raising — surface that as a generic failure so the LLM
-        # gets some signal to retry.
         return ObservationResult(
             success=False,
             node_id=node_id,
@@ -175,10 +231,17 @@ def _observe_performance(node: Any, node_id: int, node_type: str) -> Observation
     )
 
 
-def _observe_development(node: Any, node_id: int, node_type: str) -> ObservationResult:
+async def _observe_development(node: Any, node_id: int, node_type: str) -> ObservationResult:
     """Development-mode observation: schema only via
     ``get_predicted_schema``. Cheaper — no kernel run beyond what
     the schema callback does internally.
+
+    Wrapped in ``asyncio.to_thread`` because the schema-prediction
+    fall-through (``flow_node._predicted_data_getter``) can still
+    invoke the node's function with predicted-empty inputs, which
+    for nodes like ``explore_data`` dispatches a synchronous
+    ``ExternalDfFetcher`` request to the worker. Keep that off the
+    event loop.
 
     Sample rows are best-effort: if the predicted schema produced
     a sample frame as a side effect (some flowfile node types
@@ -187,7 +250,7 @@ def _observe_development(node: Any, node_id: int, node_type: str) -> Observation
     observation block.
     """
     try:
-        predicted = node.get_predicted_schema(force=True)
+        predicted = await asyncio.to_thread(node.get_predicted_schema, force=True)
     except Exception as exc:
         return _failure_from_exc(node_id, node_type, exc)
     if predicted is None:

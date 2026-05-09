@@ -46,6 +46,7 @@ which lazy-loads litellm in its own subclass.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -67,6 +68,7 @@ from flowfile_core.ai.tools.executor import (
 )
 from flowfile_core.ai.tools.meta_ops import (
     CLASSIFY_INTENT_TOOL_NAME,
+    EMIT_PLAN_TOOL_NAME,
     PICK_NODE_TYPE_TOOL_NAME,
     PICK_UPSTREAM_TOOL_NAME,
     build_pick_upstream_spec,
@@ -264,6 +266,7 @@ def _derive_formula_output_column_name(user_prompt: str) -> str:
 # W71 — staged-flow tool name lookups. Mirrored from ``meta_ops`` so the
 # planner can branch on tool name without re-importing the constants in
 # the loop hot path.
+_EMIT_PLAN_NAME = EMIT_PLAN_TOOL_NAME
 _CLASSIFY_INTENT_NAME = CLASSIFY_INTENT_TOOL_NAME
 _PICK_NODE_TYPE_NAME = PICK_NODE_TYPE_TOOL_NAME
 
@@ -1149,6 +1152,9 @@ def _resolve_current_surface(session: sessions.AgentSession) -> str:
     if session.surface == "agent_complex":
         return "agent_complex"
     # session.surface in _STAGED_STATE_MACHINE_SURFACES — only remaining alternative.
+    # W71 v2.4 — plan stage runs once at session start.
+    if session.stage == "plan":
+        return "staged_plan"
     if session.stage == "single_stage_op" and session.picked_op_kind is not None:
         mapped = _AGENT_STAGED_OP_TO_SURFACE.get(session.picked_op_kind)
         if mapped is not None:
@@ -2386,9 +2392,19 @@ async def _run_planner_loop(
                 "apply" if session.surface == "agent_live" else "stage"
             )
             # Dispatch — execute_tool_call is meant to never raise (returns rejected
-            # result instead) but we wrap defensively.
+            # result instead) but we wrap defensively. Offload to a worker
+            # thread: the apply path runs ``flow.add_<node_type>(settings)``
+            # which can fall through ``_predicted_data_getter`` into a
+            # synchronous worker request (e.g. explore_data's
+            # ``analysis_preparation`` calls ``get_number_of_records`` on a
+            # predicted-empty frame, which dispatches to ``ExternalDfFetcher``
+            # with ``wait_on_completion=True``). That sync HTTP/websocket
+            # call must not run on the FastAPI event loop or the worker's
+            # completion frames pile up against an unread socket and the
+            # whole core process freezes.
             try:
-                result = execute_tool_call(
+                result = await asyncio.to_thread(
+                    execute_tool_call,
                     flow_id=session.flow_id,
                     tool_name=tc.name,
                     tool_args=tool_args,
@@ -2470,7 +2486,14 @@ async def _run_planner_loop(
                 )
 
                 live_node_id = result.node_id
-                obs = observe_after_apply(flow, live_node_id)
+                # observe_after_apply is async: Performance mode runs
+                # ``flow.trigger_fetch_node`` under the per-flow
+                # ``flow_run_lock`` (matching ``routes.trigger_fetch_node_data``)
+                # so AI observations are serialised with concurrent UI runs.
+                # Both modes offload the synchronous polars / worker IO via
+                # ``asyncio.to_thread`` so the SSE generator's event loop
+                # stays free.
+                obs = await observe_after_apply(flow, live_node_id)
                 obs_block = format_observation_block(obs)
 
                 # Append the observation block to the existing tool
@@ -2481,7 +2504,7 @@ async def _run_planner_loop(
                     # Auto-undo: delete the just-added node so the
                     # canvas returns to the last successful state.
                     try:
-                        flow.delete_node(live_node_id)
+                        await asyncio.to_thread(flow.delete_node, live_node_id)
                     except Exception:
                         logger.exception(
                             "agent_live: undo (delete_node=%s) failed",
@@ -2579,6 +2602,41 @@ async def _run_planner_loop(
             # and exposes the next stage's tool. ``stage_advanced`` is
             # surfaced to the frontend so the agent panel can render the
             # current step ("Step 2/4: picking upstream").
+
+            # W71 v2.4 — plan stage runs once at session start. The LLM
+            # emits a brief markdown plan via ``flowfile.meta.emit_plan``;
+            # the planner records the plan, surfaces it in the chat
+            # trail, and advances to ``classify`` so the normal
+            # state machine takes over.
+            if (
+                session.surface in _STAGED_STATE_MACHINE_SURFACES
+                and tc.name == _EMIT_PLAN_NAME
+                and isinstance(result.extra, dict)
+            ):
+                plan_text = str(result.extra.get("plan") or "").strip()
+                rationale = str(result.extra.get("rationale") or "")
+                prev_stage = session.stage
+                session.stage = "classify"
+                _log_stage_transition(
+                    session,
+                    from_stage=prev_stage,
+                    to_stage=session.stage,
+                    tool_name=tc.name,
+                )
+                yield PlannerEvent(
+                    event="stage_advanced",
+                    payload={
+                        "from": prev_stage,
+                        "to": session.stage,
+                        "plan": plan_text,
+                        "rationale": rationale,
+                        "session_id": session.session_id,
+                        "op_kind_meta": "plan",
+                    },
+                )
+                any_succeeded_this_round = True
+                continue
+
             if (
                 session.surface in _STAGED_STATE_MACHINE_SURFACES
                 and tc.name == _CLASSIFY_INTENT_NAME
@@ -2717,7 +2775,10 @@ async def _run_planner_loop(
                 # checkpoint failure must not stall the planner.
                 try:
                     session.touch()
-                    sessions.register_session(session)
+                    # FileLock + JSON write inside register_session is sync;
+                    # offload so the planner SSE generator doesn't stall
+                    # while the lock is contended.
+                    await asyncio.to_thread(sessions.register_session, session)
                 except Exception:
                     logger.exception(
                         "planner: session checkpoint after tool_call_staged failed (session=%s)",

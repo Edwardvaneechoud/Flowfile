@@ -109,6 +109,7 @@ SURFACE_TO_LEVEL: dict[str, PromptLevel] = {
 
 
 _STAGE_TO_PROMPT: dict[str, str] = {
+    "plan": "stage_plan",
     "classify": "stage_classify",
     "pick_type": "stage_pick_type",
     "pick_upstream": "stage_pick_upstream",

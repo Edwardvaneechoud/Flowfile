@@ -88,7 +88,7 @@ def _make_flow(flow_id: int = 1) -> FlowGraph:
 
 def _make_session(flow: FlowGraph, *, user_id: int = 1) -> sessions.AgentSession:
     snapshot = sessions.capture_graph_snapshot(flow)
-    return sessions.AgentSession(
+    sess = sessions.AgentSession(
         flow_id=flow.flow_id,
         user_id=user_id,
         user_prompt="filter to EU rows",
@@ -97,6 +97,13 @@ def _make_session(flow: FlowGraph, *, user_id: int = 1) -> sessions.AgentSession
         snapshot=snapshot,
         max_steps=16,
     )
+    # W71 v2.4 — session default is now ``stage="plan"`` for the
+    # multi-stage state machine, but most tests script from
+    # ``classify`` onward. Skip the plan stage by default so existing
+    # tests don't need to prepend an emit_plan step. v2.4-specific
+    # tests opt back into ``stage="plan"`` explicitly.
+    sess.stage = "classify"
+    return sess
 
 
 class _Step:
@@ -1271,6 +1278,99 @@ def test_multi_node_turn_serializes_through_two_classify_cycles() -> None:
     )
 
 
+def test_plan_stage_runs_before_classify_and_advances() -> None:
+    """W71 v2.4 — agent_staged sessions now start at ``stage="plan"``.
+    The LLM emits a brief markdown plan via
+    ``flowfile.meta.emit_plan``; the planner records the plan,
+    advances stage to ``classify``, then the normal cycle runs.
+    Multi-node turns don't re-plan (plan fires ONCE per session).
+    """
+    from flowfile_core.ai.tools.meta_ops import EMIT_PLAN_TOOL_NAME
+
+    flow = _make_flow()
+    sess = _make_session(flow)
+    # v2.4 tests opt back into the default-of-record so we exercise
+    # the full state machine including the plan stage. ``_make_session``
+    # otherwise overrides to ``"classify"`` for back-compat.
+    sess.stage = "plan"
+
+    plan_md = (
+        "1. group_by — group by city, count customer_id as customer_count.\n"
+        "2. sort — order by customer_count descending."
+    )
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-plan",
+                        name=EMIT_PLAN_TOOL_NAME,
+                        arguments={
+                            "plan": plan_md,
+                            "rationale": "Group by city, then sort.",
+                        },
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-classify",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "add", "rationale": "first add"},
+                    )
+                ]
+            ),
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(_drain(run_planner_session(
+        session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()
+    )))
+
+    # Plan round advertised emit_plan only.
+    plan_round_tools = provider.calls[0]["tools"]
+    assert len(plan_round_tools) == 1
+    assert plan_round_tools[0].name == EMIT_PLAN_TOOL_NAME
+    # Stage advanced — second round sees classify_intent.
+    classify_round_tools = provider.calls[1]["tools"]
+    assert classify_round_tools[0].name == CLASSIFY_INTENT_TOOL_NAME
+    # Plan came through as a stage_advanced event with op_kind_meta=plan.
+    plan_events = [
+        e for e in events
+        if e.event == "stage_advanced"
+        and e.payload.get("op_kind_meta") == "plan"
+    ]
+    assert len(plan_events) == 1, f"expected one plan stage_advanced; got {plan_events!r}"
+    assert plan_events[0].payload.get("plan") == plan_md
+    # Plan fires only once — no re-entry.
+    plan_advance_count = sum(
+        1 for e in events
+        if e.event == "stage_advanced" and e.payload.get("from") == "plan"
+    )
+    assert plan_advance_count == 1
+
+
+def test_emit_plan_tool_spec_has_plan_and_rationale_fields() -> None:
+    """W71 v2.4 — the emit_plan ToolSpec exposes ``plan`` and
+    ``rationale`` as required string fields. Regression-protects
+    the contract the planner dispatch + chat-trail renderer rely on.
+    """
+    from flowfile_core.ai.tools.meta_ops import (
+        EMIT_PLAN_TOOL_NAME,
+        META_OPS_TOOLS,
+    )
+
+    spec = next(s for s in META_OPS_TOOLS if s.name == EMIT_PLAN_TOOL_NAME)
+    props = spec.parameters["properties"]
+    assert "plan" in props and props["plan"]["type"] == "string"
+    assert "rationale" in props and props["rationale"]["type"] == "string"
+    required = spec.parameters.get("required", [])
+    assert "plan" in required and "rationale" in required
+
+
 def test_pick_upstream_user_message_includes_staged_session_block() -> None:
     """W71 v1.12A — at the second cycle's pick_upstream stage, the user
     message must surface the staged-this-session node's id, type, and
@@ -1479,7 +1579,7 @@ def test_reset_stage_state_clears_picked_fields() -> None:
 
 def _make_live_session(flow: FlowGraph, *, user_id: int = 1) -> sessions.AgentSession:
     snapshot = sessions.capture_graph_snapshot(flow)
-    return sessions.AgentSession(
+    sess = sessions.AgentSession(
         flow_id=flow.flow_id,
         user_id=user_id,
         user_prompt="filter to EU rows",
@@ -1488,6 +1588,12 @@ def _make_live_session(flow: FlowGraph, *, user_id: int = 1) -> sessions.AgentSe
         snapshot=snapshot,
         max_steps=16,
     )
+    # W71 v2.4 — same skip-plan-by-default posture as
+    # ``_make_session`` so v2.0 agent_live tests don't have to
+    # prepend an emit_plan step. v2.4 plan tests reset
+    # ``sess.stage = "plan"`` explicitly.
+    sess.stage = "classify"
+    return sess
 
 
 def _filter_cycle(*, prefix: str, node_type: str, upstream: int) -> list[_Step]:
@@ -1585,8 +1691,9 @@ def test_agent_live_undoes_failed_step_and_retries(monkeypatch: pytest.MonkeyPat
 
     # Force the observation to fail every time. This simulates a
     # runtime polars error (e.g. ColumnNotFoundError) without
-    # depending on the real polars path.
-    def _always_fail(flow_arg, node_id):
+    # depending on the real polars path. ``observe_after_apply`` is
+    # async so the planner awaits it; the stub mirrors that.
+    async def _always_fail(flow_arg, node_id):
         return live_observation.ObservationResult(
             success=False,
             node_id=node_id,

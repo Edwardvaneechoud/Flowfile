@@ -560,6 +560,38 @@ const timelineItems = computed<TimelineItem[]>(() => {
           Agent is waiting for your reply — type below and Send to continue the same session.
         </span>
       </div>
+      <!-- W71 v2.3 — post-agent_live layout-reorganize prompt.
+           agent_live commits each step to the canvas live; on a
+           multi-step run the new nodes can land in less-than-
+           tidy positions, so the banner offers a one-click route
+           to the existing "Reset layout graph" routine. Only
+           renders when the just-finished run was agent_live AND
+           at least one node was applied. Lives ABOVE the messages
+           container (not inside it) so the auto-scroll-to-bottom
+           in ``.ai-assistant__messages`` doesn't push it off-screen. -->
+      <div
+        v-if="agentStore.liveLayoutPromptVisible"
+        class="ai-assistant__layout-prompt"
+        role="status"
+      >
+        <span class="ai-assistant__layout-prompt-text">
+          Reorganize the canvas layout?
+        </span>
+        <div class="ai-assistant__layout-prompt-actions">
+          <button
+            class="ai-assistant__layout-prompt-btn ai-assistant__layout-prompt-btn--accept"
+            @click="agentStore.acceptLayoutReorganize"
+          >
+            Reorganize
+          </button>
+          <button
+            class="ai-assistant__layout-prompt-btn"
+            @click="agentStore.dismissLayoutReorganize"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
       <!-- W71 v1.1 — always-on surface chip. Renders for every active
            agent run regardless of surface so the operator can verify at
            a glance which agent (legacy two-stage / agent_complex /
@@ -814,6 +846,58 @@ const timelineItems = computed<TimelineItem[]>(() => {
   text-align: center;
   color: var(--color-text-muted, #6a737d);
   font-size: 13px;
+}
+
+/* W71 v2.3 — agent_live post-run layout-reorganize prompt. Sticks
+   to the top of the chat trail so the user sees it the moment the
+   run completes; auto-clears on the next session start (handled in
+   the store) or on dismiss / accept. */
+.ai-assistant__layout-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background-color: var(--color-accent-soft, rgba(124, 58, 237, 0.08));
+  border: 1px solid var(--color-accent, #7c3aed);
+  font-size: 13px;
+  color: var(--color-text-primary, #24292e);
+}
+
+.ai-assistant__layout-prompt-text {
+  flex: 1 1 auto;
+}
+
+.ai-assistant__layout-prompt-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.ai-assistant__layout-prompt-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-primary, #e1e4e8);
+  background-color: var(--color-background, #ffffff);
+  color: var(--color-text-primary, #24292e);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ai-assistant__layout-prompt-btn:hover {
+  background-color: var(--color-background-secondary, #f6f8fa);
+}
+
+.ai-assistant__layout-prompt-btn--accept {
+  background-color: var(--color-accent, #7c3aed);
+  color: #ffffff;
+  border-color: var(--color-accent, #7c3aed);
+}
+
+.ai-assistant__layout-prompt-btn--accept:hover {
+  filter: brightness(0.95);
 }
 
 .ai-assistant__notice {

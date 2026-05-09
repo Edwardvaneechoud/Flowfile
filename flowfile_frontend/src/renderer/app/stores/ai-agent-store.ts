@@ -148,7 +148,30 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
   const pickedNodeType = ref<string | null>(null);
   const currentSurface = ref<"agent" | "agent_complex" | "agent_staged" | "agent_live" | null>(null);
 
+  // W71 v2.3 — agent_live post-run layout-reorganize prompt.
+  // Counts the nodes the in-flight (or just-finished) agent_live
+  // session committed live to the canvas. On the ``complete``
+  // event, if this is non-zero AND the surface was agent_live, the
+  // banner shows up at the top of the chat trail with a
+  // [Reorganize] / [Dismiss] choice. Reset on each new session
+  // start so a re-run doesn't carry stale state.
+  const liveAppliedCount = ref<number>(0);
+  const liveLayoutPromptVisible = ref<boolean>(false);
+
   let activeAbort: AbortController | null = null;
+
+  // ----- Per-flow persistence helpers (W71 v2.6) -----
+  // The chat store keys per-flow via ``chatPersistenceKey(flowId)``.
+  // Pre-v2.6 this store wrote to a single global key, so opening a
+  // different flow leaked the previous flow's chat trail. Mirror
+  // the chat shape: every load/save passes ``_scopedFlowId(flowStore.flowId)``,
+  // and the ``flowStore.flowId`` watcher below swaps in-memory state
+  // on flow change. The local ``_pinnedFlowStore`` is used inside
+  // the SSE handlers / promise callbacks where ``useFlowStore()``
+  // would re-resolve a fresh ref each call.
+  const _pinnedFlowStore = useFlowStore();
+  const _scopedFlowId = (id: number | null | undefined): number | null =>
+    id === null || id === undefined || id < 0 ? null : id;
 
   // ----- Hydrate from sessionStorage -----
   // Order matters: hydrate refs BEFORE wiring the watchers so the initial
@@ -156,7 +179,7 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
   // normalises `running` → `idle` on load (the SSE stream is dead post-
   // refresh; W40 has no re-attach route). `paused_drift` survives so the
   // user can still hit the resume buttons via `currentSessionId` (W45 Q2).
-  const _hydrated = loadPersistedAgentState();
+  const _hydrated = loadPersistedAgentState(undefined, _scopedFlowId(_pinnedFlowStore.flowId));
   if (_hydrated.events.length > 0) events.value = _hydrated.events;
   if (_hydrated.currentSessionId) currentSessionId.value = _hydrated.currentSessionId;
   status.value = _hydrated.status;
@@ -192,14 +215,18 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     saveTimer = setTimeout(
       () => {
         saveTimer = null;
-        persistAgentState({
-          events: events.value,
-          currentSessionId: currentSessionId.value,
-          status: status.value,
-          driftDetail: driftDetail.value,
-          lastResult: lastResult.value,
-          error: error.value,
-        });
+        persistAgentState(
+          {
+            events: events.value,
+            currentSessionId: currentSessionId.value,
+            status: status.value,
+            driftDetail: driftDetail.value,
+            lastResult: lastResult.value,
+            error: error.value,
+          },
+          undefined,
+          _scopedFlowId(_pinnedFlowStore.flowId),
+        );
       },
       isStreaming ? AGENT_PERSIST_THROTTLE_MS : 0,
     );
@@ -214,6 +241,68 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
   watch(driftDetail, queuePersist, { deep: true, flush: "sync" });
   watch(lastResult, queuePersist, { deep: true, flush: "sync" });
   watch(error, queuePersist, { flush: "sync" });
+
+  // W71 v2.6 — per-flow swap. When the user opens a different flow,
+  // freeze the outgoing flow's agent state under its own key, then
+  // load the incoming flow's state (or fresh-empty defaults if no
+  // prior run on that flow). Mirrors ai-store.ts:237's chat-store
+  // pattern: abort any in-flight stream, persist outgoing, load
+  // incoming, reset transient session-only refs (currentSurface /
+  // stage / picked* / live*) since those describe a run on a
+  // specific flow and don't carry across.
+  watch(
+    () => _pinnedFlowStore.flowId,
+    (newId, oldId) => {
+      const outgoing = _scopedFlowId(oldId);
+      const incoming = _scopedFlowId(newId);
+      if (outgoing === incoming) return;
+
+      // Cut any live SSE on the outgoing flow so the in-memory
+      // state we're about to freeze isn't mutating mid-write.
+      if (activeAbort) {
+        try {
+          activeAbort.abort();
+        } catch {
+          /* prior controller already done */
+        }
+        activeAbort = null;
+      }
+
+      // Freeze outgoing.
+      persistAgentState(
+        {
+          events: events.value,
+          currentSessionId: currentSessionId.value,
+          status: status.value,
+          driftDetail: driftDetail.value,
+          lastResult: lastResult.value,
+          error: error.value,
+        },
+        undefined,
+        outgoing,
+      );
+
+      // Load incoming.
+      const loaded = loadPersistedAgentState(undefined, incoming);
+      events.value = loaded.events;
+      currentSessionId.value = loaded.currentSessionId;
+      status.value = loaded.status;
+      driftDetail.value = loaded.driftDetail;
+      lastResult.value = loaded.lastResult;
+      error.value = loaded.error;
+
+      // Per-session state always resets on a flow swap — these
+      // describe an in-flight run on the previous flow and don't
+      // carry over.
+      stage.value = "classify";
+      pickedOpKind.value = null;
+      pickedNodeType.value = null;
+      currentSurface.value = null;
+      aiDisabled.value = false;
+      liveAppliedCount.value = 0;
+      liveLayoutPromptVisible.value = false;
+    },
+  );
 
   const _newController = (): AbortController => {
     if (activeAbort) {
@@ -263,6 +352,9 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
         // events fire rapidly during a multi-step agent_live run.
         _appendEvent("tool_call_applied", entry as unknown as Record<string, unknown>);
         useFlowStore().requestReload();
+        // W71 v2.3 — track the applied count so the post-run banner
+        // only appears when at least one node landed on the canvas.
+        liveAppliedCount.value += 1;
       },
       onDriftDetected: (drift, sessionId) => {
         // Populate currentSessionId from the wire — start() can't because
@@ -312,6 +404,14 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
         if (result.session_id) currentSessionId.value = result.session_id;
         status.value = "awaiting_user_input";
         _appendEvent("awaiting_user_input", result as unknown as Record<string, unknown>);
+        // W71 v2.3 — agent_live runs frequently end with the model
+        // asking *"want me to do anything else?"*, which routes here
+        // (W49) instead of through ``onComplete``. Mirror the same
+        // layout-prompt trigger so the banner still appears when at
+        // least one node was committed live to the canvas.
+        if (currentSurface.value === "agent_live" && liveAppliedCount.value > 0) {
+          liveLayoutPromptVisible.value = true;
+        }
       },
       onComplete: (result) => {
         // Q2 W45 — propagate session_id from the wire on completion too.
@@ -320,6 +420,15 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
         status.value = "completed";
         lastResult.value = result;
         _appendEvent("complete", result as unknown as Record<string, unknown>);
+        // W71 v2.3 — post-run layout-reorganize prompt for agent_live
+        // ONLY. agent_staged and agent_complex bundle into a diff the
+        // user reviews before accept; agent_live commits each step to
+        // the canvas live, which in a multi-step run can leave the
+        // newly-added nodes scattered. Surface the banner so the user
+        // can opt into the existing "Reset layout graph" routine.
+        if (currentSurface.value === "agent_live" && liveAppliedCount.value > 0) {
+          liveLayoutPromptVisible.value = true;
+        }
         // Push the bundled GraphDiffPayload to the W35 diff store so the
         // existing AiDiffPanel renders accept/reject for the user.
         if (result.diff_payload) {
@@ -435,6 +544,10 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     stage.value = "classify";
     pickedOpKind.value = null;
     pickedNodeType.value = null;
+    // W71 v2.3 — fresh run wipes the layout-prompt state so a stale
+    // banner from a prior session can't linger.
+    liveAppliedCount.value = 0;
+    liveLayoutPromptVisible.value = false;
     // Capture the surface the run was started on so the badge UI can
     // gate on agent_staged-only without a separate prop. ``surface``
     // is required on AgentStartRequest; defensive ``?? null`` keeps
@@ -729,8 +842,10 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     currentSurface.value = null;
     aiDisabled.value = false;
     // Also wipe the persisted copy so a fresh refresh doesn't resurrect
-    // the cleared state from sessionStorage.
-    clearPersistedAgentState();
+    // the cleared state from sessionStorage. v2.6 — flow-scoped, so
+    // ``clear()`` only drops the active flow's bucket; other flows
+    // keep their agent history.
+    clearPersistedAgentState(undefined, _scopedFlowId(_pinnedFlowStore.flowId));
   };
 
   // Drop only the persisted ``diff_payload`` from the last completed run,
@@ -749,6 +864,21 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     lastResult.value = { ...current, diff_payload: null };
   };
 
+  // W71 v2.3 — post-run layout-reorganize prompt actions.
+  //
+  // ``acceptLayoutReorganize`` calls the existing canvas
+  // "Reset layout graph" routine via ``flowStore.requestLayoutReset()``
+  // (which Canvas.vue watches and dispatches to
+  // ``handleResetLayoutGraph``). Both helpers also dismiss the
+  // banner so it doesn't linger.
+  const acceptLayoutReorganize = (): void => {
+    useFlowStore().requestLayoutReset();
+    liveLayoutPromptVisible.value = false;
+  };
+  const dismissLayoutReorganize = (): void => {
+    liveLayoutPromptVisible.value = false;
+  };
+
   return {
     // state
     currentSessionId,
@@ -763,6 +893,9 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     pickedOpKind,
     pickedNodeType,
     currentSurface,
+    // W71 v2.3 — agent_live layout-reorganize prompt
+    liveAppliedCount,
+    liveLayoutPromptVisible,
     // actions
     start,
     resumeContinue,
@@ -774,5 +907,7 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     reattach,
     clear,
     clearLastResultDiffPayload,
+    acceptLayoutReorganize,
+    dismissLayoutReorganize,
   };
 });

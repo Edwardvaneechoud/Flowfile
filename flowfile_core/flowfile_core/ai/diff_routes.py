@@ -31,6 +31,7 @@ Error mapping mirrors W12 / W20 / W23 / W34:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -256,7 +257,13 @@ async def accept_diff(
     flow = _resolve_flow(graph_diff.flow_id)
 
     try:
-        result = diff.apply_diff(flow, graph_diff)
+        # apply_diff walks every staged add/modify/delete and calls
+        # flow.add_<node_type> for each — every call goes through
+        # @with_history_capture which serializes the entire live graph.
+        # That's hundreds of milliseconds to seconds of synchronous work
+        # for any non-trivial flow. Run it on a worker thread so this
+        # async route doesn't block the FastAPI event loop.
+        result = await asyncio.to_thread(diff.apply_diff, flow, graph_diff)
     except diff.DiffDriftError as exc:
         raise HTTPException(
             status_code=409,

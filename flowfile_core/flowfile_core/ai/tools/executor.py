@@ -2074,6 +2074,40 @@ def _handle_meta(
 
     W71 v1.10 — ``pick_category`` (legacy two-stage agent) was removed.
     """
+    if op == "emit_plan":
+        plan = tool_args.get("plan")
+        rationale = tool_args.get("rationale", "")
+        if not isinstance(plan, str) or not plan.strip():
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow_id,
+                refusal_reason=None,
+                refusal_detail=(
+                    "emit_plan: ``plan`` must be a non-empty string "
+                    "containing the markdown plan (numbered list of "
+                    "≤6 steps; each step names a node_type and a "
+                    "one-sentence description)."
+                ),
+            )
+        audit_row = _record_event(
+            session_id=session_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            flow_id=flow_id,
+            tool_args=redacted_args,
+            result_status="success",
+        )
+        return ToolExecutionResult(
+            status="applied",
+            tool_name=tool_name,
+            audit_id=audit_row.id if audit_row is not None else None,
+            executed_args=redacted_args,
+            extra={"plan": plan, "rationale": str(rationale or "")},
+        )
+
     if op == "classify_intent":
         op_kind = tool_args.get("op_kind")
         rationale = tool_args.get("rationale", "")

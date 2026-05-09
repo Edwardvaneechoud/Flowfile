@@ -526,6 +526,15 @@ export const useAiStore = defineStore("ai", () => {
       surface: selectedAgentSurface.value,
       provider: selectedProvider.value ?? "anthropic",
       model: selectedModel.value ?? null,
+      // W71 v2.7 — skip the v2.4 plan stage on auto-promoted runs.
+      // The chat-mode response that preceded this promotion already
+      // produced a plan-shaped narrative (steps, suggested nodes, the
+      // user said "yes"); re-emitting a structured plan via
+      // ``flowfile.meta.emit_plan`` would burn one round and
+      // duplicate the chat-mode output the user just confirmed.
+      // Direct agent runs (typed with the agent toggle on) keep the
+      // plan stage so the agent thinks globally before staging.
+      skip_plan: true,
     });
   };
 

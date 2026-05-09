@@ -246,6 +246,29 @@ const summary = computed<string>(() => {
 
 const isThinking = computed(() => props.event.kind === "thinking");
 
+// W71 v2.4 — the plan stage emits a ``stage_advanced`` event with
+// ``op_kind_meta="plan"`` carrying the LLM's structured markdown
+// plan in ``payload.plan``. Render it as a prominent bubble (same
+// shape as ``thinking`` events) so the user sees what the agent
+// intends to do before any nodes get staged. Falls back to the
+// mechanical "Stage: X → Y" summary when the plan field is empty.
+const isPlanStage = computed<boolean>(() => {
+  if (props.event.kind !== "stage_advanced") return false;
+  const meta = _str(props.event.payload ?? {}, "op_kind_meta");
+  return meta === "plan";
+});
+
+const planRationale = computed<string>(() =>
+  _str(props.event.payload ?? {}, "rationale"),
+);
+
+const planHtml = computed<string>(() => {
+  if (!isPlanStage.value) return "";
+  const planText = _str(props.event.payload ?? {}, "plan");
+  if (!planText.trim()) return "";
+  return sanitiseMarkdown(planText);
+});
+
 // Markdown for thinking events only. Other kinds are mechanical summaries
 // where markdown chars in tool args (e.g. a `*` in a filter expression)
 // shouldn't be silently transformed.
@@ -274,6 +297,25 @@ const thinkingHtml = computed<string>(() => {
           {{ toolStepRejectionDetail }}
         </p>
       </details>
+    </template>
+    <!-- W71 v2.4 — plan stage: render the structured markdown plan
+         + the one-line rationale prominently so the user sees the
+         agent's intent before any nodes get staged. eslint-disable:
+         v-html is sanitised. -->
+    <template v-else-if="isPlanStage">
+      <div class="ai-agent-event__plan-header">
+        <span class="ai-agent-event__plan-label">Plan</span>
+        <span v-if="planRationale" class="ai-agent-event__plan-rationale">
+          {{ planRationale }}
+        </span>
+      </div>
+      <!-- eslint-disable-next-line vue/no-v-html -->
+      <div
+        v-if="planHtml"
+        class="ai-agent-event__plan-body ai-agent-event__markdown"
+        v-html="planHtml"
+      />
+      <span v-else class="ai-agent-event__summary">{{ summary }}</span>
     </template>
     <!-- Thinking events → rendered markdown. eslint-disable: v-html is sanitised. -->
     <!-- eslint-disable-next-line vue/no-v-html -->
@@ -355,6 +397,45 @@ const thinkingHtml = computed<string>(() => {
   border-left-color: var(--color-border-primary, #d0d7de);
   padding: 2px 12px;
   font-style: italic;
+}
+
+/* W71 v2.4 — plan stage_advanced event renders prominently (not as a
+   muted trail line). The plan is the agent's intent statement and is
+   the load-bearing thing the user reads before any nodes get staged.
+   Override the muted base style with a thinking-style bubble. */
+.ai-agent-event--stage_advanced:has(.ai-agent-event__plan-header) {
+  font-size: 13px;
+  font-style: normal;
+  color: var(--color-text-primary, #24292e);
+  background-color: var(--color-background-secondary, #f6f8fa);
+  border-left: 2px solid var(--color-accent, #6f42c1);
+  padding: 8px 12px;
+}
+
+.ai-agent-event__plan-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ai-agent-event__plan-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--color-accent, #6f42c1);
+}
+
+.ai-agent-event__plan-rationale {
+  font-size: 12px;
+  color: var(--color-text-muted, #6a737d);
+  font-style: italic;
+}
+
+.ai-agent-event__plan-body {
+  font-size: 13px;
+  color: var(--color-text-primary, #24292e);
 }
 
 .ai-agent-event--tool_call_rejected {

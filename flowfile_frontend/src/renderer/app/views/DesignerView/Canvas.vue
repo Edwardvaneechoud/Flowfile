@@ -1123,6 +1123,19 @@ onMounted(async () => {
       }
     },
   );
+
+  // W71 v2.3 — Layout-reset signal. Bumped by
+  // ``flowStore.requestLayoutReset()`` from the post-agent_live
+  // banner's [Reorganize] button. Re-runs the same code path the
+  // manual "Reset layout graph" toolbar button triggers.
+  watch(
+    () => flowStore.pendingLayoutResetCounter,
+    (count, prev) => {
+      if (count > (prev ?? 0)) {
+        void handleResetLayoutGraph();
+      }
+    },
+  );
 });
 
 onUnmounted(() => {
