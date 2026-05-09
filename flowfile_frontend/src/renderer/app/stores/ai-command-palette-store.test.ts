@@ -1,4 +1,4 @@
-// W66 — unit tests for `useAiCommandPaletteStore` close / clearResult /
+// Unit tests for `useAiCommandPaletteStore` close / clearResult /
 // submit lifecycle.
 //
 // Three external surfaces are mocked at import time:
@@ -93,7 +93,7 @@ describe("close() preserves response (AC #3)", () => {
     expect(store.refused).toHaveLength(1);
     expect(store.rationale).toBe("**Bold** rationale survived the close.");
     expect(store.degradedReason).toBe("all_refused");
-    // Prompt also preserved (existing W33 behaviour).
+    // Prompt also preserved (existing palette behaviour).
     expect(store.prompt).toBe("a useful prompt");
 
     store.open();

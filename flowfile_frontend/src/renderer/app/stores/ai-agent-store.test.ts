@@ -1,4 +1,4 @@
-// W40 — unit tests for the agent store.
+// Unit tests for the agent store.
 //
 // The store wraps three pure-fetch / SSE wrappers from
 // `services/aiStreamClient` + `api/ai.api`. Both modules are mocked at
@@ -47,11 +47,11 @@ const mockSymbols = vi.hoisted(() => {
     getAgentSession: vi.fn(),
     diffStoreSetCurrentDiff: vi.fn(),
     editorStoreOpenAiDrawer: vi.fn(),
-    // W55 — diff-store `currentDiff` is read by the hydration block to
-    // skip clobbering an actively-staged diff. Tests mutate this state
-    // directly to control the branch.
+    // Diff-store `currentDiff` is read by the hydration block to
+    // skip clobbering an actively-staged diff. Tests mutate this
+    // state directly to control the branch.
     diffStoreState: { currentDiff: null as unknown },
-    // W55 — `loadPersistedAgentState` is mocked so tests can drive the
+    // `loadPersistedAgentState` is mocked so tests can drive the
     // hydration path without round-tripping a real `sessionStorage`
     // (vitest env is `node`; `window` is undefined). Default returns
     // empty state so the existing tests stay no-op on hydrate.
@@ -97,10 +97,11 @@ vi.mock("./ai-agent-store-persistence", () => ({
   clearPersistedAgentState: mockSymbols.clearPersistedAgentState,
 }));
 
-// W57 — `start()` reads canvas selection via `useFlowStore().vueFlowInstance`.
-// Tests drive that read by mutating ``flowStoreState.vueFlowInstance``; the
-// default of ``null`` mirrors the unmounted-canvas case (start() should
-// resolve ``selected_node_ids`` to ``null`` when no instance is available).
+// `start()` reads canvas selection via
+// `useFlowStore().vueFlowInstance`. Tests drive that read by mutating
+// ``flowStoreState.vueFlowInstance``; the default of ``null`` mirrors
+// the unmounted-canvas case (start() should resolve
+// ``selected_node_ids`` to ``null`` when no instance is available).
 type FakeSelectedNodeRef = { id: string; data?: { id?: number | string } };
 type FakeVueFlowInstance = {
   getSelectedNodes: { value: FakeSelectedNodeRef[] };
@@ -134,7 +135,7 @@ beforeEach(() => {
   mockSymbols.loadPersistedAgentState.mockImplementation(() => mockSymbols.emptyHydrated());
   mockSymbols.persistAgentState.mockReset();
   mockSymbols.clearPersistedAgentState.mockReset();
-  // W57 — reset the flow-store mock so a prior test's selection doesn't
+  // Reset the flow-store mock so a prior test's selection doesn't
   // leak into the next case.
   flowStoreState.vueFlowInstance = null;
 });
@@ -183,7 +184,7 @@ describe("useAiAgentStore - start", () => {
     expect(mockSymbols.editorStoreOpenAiDrawer).toHaveBeenCalled();
   });
 
-  it("captures drift_detected and freezes status at paused_drift (W45 shape)", async () => {
+  it("captures drift_detected and freezes status at paused_drift", async () => {
     const drift = {
       missing_node_ids: [1],
       external_added_node_ids: [42],
@@ -247,7 +248,7 @@ describe("useAiAgentStore - start", () => {
     expect(store.error).toBe(null);
   });
 
-  // W57 — selection auto-attach on start.
+  // Selection auto-attach on start.
   it("auto-attaches canvas selection to selected_node_ids when omitted", async () => {
     flowStoreState.vueFlowInstance = {
       getSelectedNodes: {
@@ -394,10 +395,10 @@ describe("useAiAgentStore - abort + clear", () => {
 });
 
 // --------------------------------------------------------------------------
-// W45 — currentSessionId from-wire propagation + Q4 resume state machine
+// currentSessionId from-wire propagation + resume state machine
 // --------------------------------------------------------------------------
 
-describe("useAiAgentStore - W45 Q2 currentSessionId from wire", () => {
+describe("useAiAgentStore - currentSessionId from wire", () => {
   it("onPaused populates currentSessionId from the SSE wire", async () => {
     mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
       handlers.onPaused?.("graph_changed", "sess-pause");
@@ -458,7 +459,7 @@ describe("useAiAgentStore - W45 Q2 currentSessionId from wire", () => {
   });
 });
 
-describe("useAiAgentStore - W45 Q4 resume state machine", () => {
+describe("useAiAgentStore - resume state machine", () => {
   it("paused → resumeContinue transitions paused_drift → running, next event lands", async () => {
     // First stream: pause.
     mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
@@ -484,11 +485,11 @@ describe("useAiAgentStore - W45 Q4 resume state machine", () => {
 });
 
 // --------------------------------------------------------------------------
-// W55 — diff-store rehydration on agent-store hydrate + onComplete defensive
+// Diff-store rehydration on agent-store hydrate + onComplete defensive
 // logging when the wire reports staged ops without a diff payload.
 // --------------------------------------------------------------------------
 
-describe("useAiAgentStore - W55 hydration → diff store sync", () => {
+describe("useAiAgentStore - hydration → diff store sync", () => {
   it("pushes lastResult.diff_payload into the diff store on hydrate", () => {
     const persistedDiff = { diff_id: "d-restored", flow_id: 1, additions: [] };
     mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
@@ -560,7 +561,7 @@ describe("useAiAgentStore - W55 hydration → diff store sync", () => {
   });
 });
 
-describe("useAiAgentStore - W55 onComplete defensive logging", () => {
+describe("useAiAgentStore - onComplete defensive logging", () => {
   it("warns when diff_payload is falsy AND a tool_call_staged event exists", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
@@ -616,11 +617,11 @@ describe("useAiAgentStore - W55 onComplete defensive logging", () => {
 });
 
 // --------------------------------------------------------------------------
-// W42 — reattach() across page-reload (cold-start re-attach + Last-Event-ID)
+// reattach() across page-reload (cold-start re-attach + Last-Event-ID)
 // --------------------------------------------------------------------------
 
 const _baseAgentSession = (overrides: Record<string, unknown> = {}) => ({
-  sessionId: "sess-w42",
+  sessionId: "sess-reattach",
   flowId: 1,
   status: "running",
   surface: "agent_complex",
@@ -637,7 +638,7 @@ const _baseAgentSession = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-describe("useAiAgentStore - W42 reattach", () => {
+describe("useAiAgentStore - reattach", () => {
   it("no-ops when currentSessionId is null", async () => {
     const store = useAiAgentStore();
     expect(store.currentSessionId).toBeNull();
@@ -777,7 +778,7 @@ describe("useAiAgentStore - W42 reattach", () => {
   });
 });
 
-describe("useAiAgentStore - W49 followup re-entry", () => {
+describe("useAiAgentStore - followup re-entry", () => {
   it("onAwaitingUserInput flips status to awaiting_user_input + appends event", async () => {
     mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
       handlers.onAwaitingUserInput?.({

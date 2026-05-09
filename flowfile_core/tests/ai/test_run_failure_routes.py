@@ -1,4 +1,4 @@
-"""W23 — "Fix with AI" run-failure endpoint tests.
+""""Fix with AI" run-failure endpoint tests.
 
 Cases:
 
@@ -6,7 +6,7 @@ Cases:
   a tiny linear flow, records a failed ``NodeResult`` on the filter,
   POSTs, and verifies the SSE response carries ``event: chunk`` blocks
   + ``event: done``. Inspects the captured ``messages`` argument to
-  ``provider.stream()`` to assert the W22 system prompt + the
+  ``provider.stream()`` to assert the system prompt + the
   ``## Failure`` block + the verbatim error string all reach the LLM.
 * ``test_explain_run_failure_client_error_message_wins`` — a stale
   ``latest_run_info`` is overridden by ``error_message`` in the body.
@@ -20,11 +20,11 @@ Cases:
 * ``test_explain_run_failure_node_not_found_returns_422`` — bogus
   ``node_id`` → 422.
 * ``test_explain_run_failure_unknown_provider_returns_404`` — bogus
-  ``provider`` → 404 with the supported-list detail (matches W20).
+  ``provider`` → 404 with the supported-list detail (matches).
 * ``test_explain_run_failure_unconfigured_returns_409`` — no BYOK row +
   no env var → 409 with the ``ProviderNotConfiguredError`` message.
 * ``test_explain_run_failure_disabled_returns_503`` — flipping
-  ``FEATURE_FLAG_AI`` off short-circuits at W17's gate.
+  ``FEATURE_FLAG_AI`` off short-circuits at's gate.
 * ``test_explain_run_failure_validates_required_fields`` — request
   validation on missing ``flow_id`` / ``node_id`` / ``provider``.
 * ``test_lazy_litellm_import_for_run_failure_routes`` — importing
@@ -52,7 +52,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
 
 # --------------------------------------------------------------------------- #
-# Shared fixtures                                                              #
+# Shared fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -70,8 +70,8 @@ class FakeProvider:
     """Bare ``Provider``-shaped stub.
 
     Records the kwargs ``stream()`` is called with so tests can inspect
-    the messages that reach the LLM (system prompt + the W22 user body
-    + the W23 ``## Failure`` block).
+    the messages that reach the LLM (system prompt + the user body
+    + the ``## Failure`` block).
     """
 
     def __init__(self, chunks: list[StreamChunk] | None = None) -> None:
@@ -108,7 +108,7 @@ def patch_get_configured_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[F
 
 
 # --------------------------------------------------------------------------- #
-# Flow fixture                                                                 #
+# Flow fixture #
 # --------------------------------------------------------------------------- #
 
 
@@ -195,7 +195,7 @@ def registered_flow() -> Iterator[FlowGraph]:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Happy path                                                                #
+# 1. Happy path #
 # --------------------------------------------------------------------------- #
 
 
@@ -230,15 +230,15 @@ def test_explain_run_failure_emits_provider_chunks(
     system_msg, user_msg = captured
 
     assert system_msg.role == "system"
-    # W22's assemble_system_prompt(surface="explain") concatenates base + assist;
+    #'s assemble_system_prompt(surface="explain") concatenates base + assist;
     # both files carry the schema-grounding contract phrase.
     assert system_msg.content.strip(), "system prompt must not be empty"
 
     assert user_msg.role == "user"
-    # W22 renders subgraph + node settings + schemas; the failing node and its
+    # renders subgraph + node settings + schemas; the failing node and its
     # upstream are present.
     assert "filter_eu" in user_msg.content or "node 2" in user_msg.content.lower()
-    # The W23 failure block is appended verbatim.
+    # The failure block is appended verbatim.
     assert "## Failure" in user_msg.content
     assert error_text in user_msg.content
     assert "read-only assist" in user_msg.content
@@ -248,7 +248,7 @@ def test_explain_run_failure_emits_provider_chunks(
 
 
 # --------------------------------------------------------------------------- #
-# 2. Client-supplied error wins                                                #
+# 2. Client-supplied error wins #
 # --------------------------------------------------------------------------- #
 
 
@@ -273,7 +273,7 @@ def test_explain_run_failure_client_error_message_wins(
 
 
 # --------------------------------------------------------------------------- #
-# 3. Server reads latest_run_info when client omits it                         #
+# 3. Server reads latest_run_info when client omits it #
 # --------------------------------------------------------------------------- #
 
 
@@ -298,7 +298,7 @@ def test_explain_run_failure_reads_latest_run_info(
 
 
 # --------------------------------------------------------------------------- #
-# 4. No recorded failure → 422                                                 #
+# 4. No recorded failure → 422 #
 # --------------------------------------------------------------------------- #
 
 
@@ -321,7 +321,7 @@ def test_explain_run_failure_no_recorded_failure_returns_422(
 
 
 # --------------------------------------------------------------------------- #
-# 5. Flow not found → 422                                                      #
+# 5. Flow not found → 422 #
 # --------------------------------------------------------------------------- #
 
 
@@ -343,7 +343,7 @@ def test_explain_run_failure_flow_not_found_returns_422(
 
 
 # --------------------------------------------------------------------------- #
-# 6. Node not found → 422                                                      #
+# 6. Node not found → 422 #
 # --------------------------------------------------------------------------- #
 
 
@@ -366,7 +366,7 @@ def test_explain_run_failure_node_not_found_returns_422(
 
 
 # --------------------------------------------------------------------------- #
-# 7. Unknown provider → 404                                                    #
+# 7. Unknown provider → 404 #
 # --------------------------------------------------------------------------- #
 
 
@@ -388,7 +388,7 @@ def test_explain_run_failure_unknown_provider_returns_404(
 
 
 # --------------------------------------------------------------------------- #
-# 8. Provider not configured → 409                                             #
+# 8. Provider not configured → 409 #
 # --------------------------------------------------------------------------- #
 
 
@@ -416,7 +416,7 @@ def test_explain_run_failure_unconfigured_returns_409(
 
 
 # --------------------------------------------------------------------------- #
-# 9. Feature flag off → 503                                                    #
+# 9. Feature flag off → 503 #
 # --------------------------------------------------------------------------- #
 
 
@@ -425,9 +425,9 @@ def test_explain_run_failure_disabled_returns_503(
     patch_get_configured_provider: FakeProvider,
     registered_flow: FlowGraph,
 ) -> None:
-    """Inheriting W17's router-level dependency means flipping the flag off
+    """Inheriting's router-level dependency means flipping the flag off
     must return 503 here too. Read ``FEATURE_FLAG_AI`` off the module via
-    ``core_settings`` (same fix W17 + W20 applied).
+    ``core_settings`` (same fix + applied).
     """
 
     original = core_settings.FEATURE_FLAG_AI.value
@@ -449,7 +449,7 @@ def test_explain_run_failure_disabled_returns_503(
 
 
 # --------------------------------------------------------------------------- #
-# 10. Request validation                                                       #
+# 10. Request validation #
 # --------------------------------------------------------------------------- #
 
 
@@ -473,7 +473,7 @@ def test_explain_run_failure_validates_required_fields(
 
 
 # --------------------------------------------------------------------------- #
-# 11. Lazy-litellm contract                                                    #
+# 11. Lazy-litellm contract #
 # --------------------------------------------------------------------------- #
 
 
@@ -487,7 +487,7 @@ def test_lazy_litellm_import_for_run_failure_routes() -> None:
     Caveat: a sibling test may have already imported ``litellm`` in this
     process (the suite shares a Python interpreter). When that's the
     case we can't observe the lazy contract, so the assertion is gated
-    on a clean snapshot — same posture as W12 / W20.
+    on a clean snapshot — same posture as /.
     """
 
     litellm_already_loaded = any(name == "litellm" or name.startswith("litellm.") for name in sys.modules)

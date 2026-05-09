@@ -1,4 +1,4 @@
-"""W10 — skeleton smoke test.
+"""skeleton smoke test.
 
 Asserts that:
 * every public submodule of ``flowfile_core.ai`` imports without error
@@ -70,7 +70,7 @@ def test_ai_router_mounted_on_app() -> None:
 
 
 def test_ai_prompt_stubs_exist() -> None:
-    """D008 layered prompts: each surface needs a file (even if empty)."""
+    """layered prompts: each surface needs a file (even if empty)."""
     from pathlib import Path
 
     import flowfile_core.ai as ai_pkg

@@ -1,4 +1,4 @@
-"""W42 — :mod:`flowfile_core.ai.session_store` tests.
+""":mod:`flowfile_core.ai.session_store` tests.
 
 Cases (~16):
 
@@ -55,7 +55,7 @@ from flowfile_core.ai.session_store import (
 from flowfile_core.ai.sessions import AgentSession, GraphSnapshot
 
 # --------------------------------------------------------------------------- #
-# Fixtures                                                                     #
+# Fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -95,7 +95,7 @@ def disk_repo(tmp_path: Path) -> DiskSessionRepository:
 
 
 # --------------------------------------------------------------------------- #
-# In-memory                                                                    #
+# In-memory #
 # --------------------------------------------------------------------------- #
 
 
@@ -128,7 +128,7 @@ def test_in_memory_clear(in_memory_repo: InMemorySessionRepository) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Disk                                                                         #
+# Disk #
 # --------------------------------------------------------------------------- #
 
 
@@ -358,7 +358,7 @@ def test_clear_wipes_disk_subtree(disk_repo: DiskSessionRepository) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Lazy litellm                                                                 #
+# Lazy litellm #
 # --------------------------------------------------------------------------- #
 
 
@@ -371,7 +371,7 @@ def test_lazy_litellm_contract() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Schema-version constant                                                      #
+# Schema-version constant #
 # --------------------------------------------------------------------------- #
 
 
@@ -395,7 +395,7 @@ def test_iter_recent_files_ordering(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# clear_for_tests fixture default — autouse from conftest                      #
+# clear_for_tests fixture default — autouse from conftest #
 # --------------------------------------------------------------------------- #
 
 

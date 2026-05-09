@@ -1,24 +1,25 @@
-"""W42 — :class:`flowfile_core.ai.diff.GraphDiff` persistence behind a repo ABC.
+""":class:`flowfile_core.ai.diff.GraphDiff` persistence behind a repo ABC.
 
 Mirror of :mod:`flowfile_core.ai.session_store` for staged diffs:
 
-* :class:`InMemoryDiffRepository` — preserves W41's ``_DIFFS: dict[str, GraphDiff]``
-  shape; default for tests.
+* :class:`InMemoryDiffRepository` — process-local dict shape;
+  default for tests.
 * :class:`DiskDiffRepository` — sidecar JSON at
-  ``{root}/{flow_id}/{session_id}.diff.json`` colocated with the session
-  file (per plan §5.6 layout). ``register_diff`` / ``get_diff`` / ``pop_diff``
+  ``{root}/{flow_id}/{session_id}.diff.json`` colocated with the
+  session file. ``register_diff`` / ``get_diff`` / ``pop_diff``
   delegate to the active repo via :mod:`flowfile_core.ai.diff`.
 
-Schema versioning rides on the on-disk JSON layer (top-level ``"_schema":
-"ai_diff.v1"``); unknown tag → ``None`` from :meth:`get` with a single WARN
-log. Atomic writes via ``tmp + os.replace`` under a per-diff
-``filelock.FileLock``.
+Schema versioning rides on the on-disk JSON layer (top-level
+``"_schema": "ai_diff.v1"``); unknown tag → ``None`` from
+:meth:`get` with a single WARN log. Atomic writes via
+``tmp + os.replace`` under a per-diff ``filelock.FileLock``.
 
-Diff lookup is keyed on ``diff_id`` (not ``session_id``), so the disk repo
-maintains a shadow index of ``diff_id → (flow_id, session_id)`` pairs so
-``get_diff`` doesn't have to walk every flow on every call. The index
-itself is per-instance and rebuilt lazily on a cold-start scan triggered by
-a missed lookup.
+Diff lookup is keyed on ``diff_id`` (not ``session_id``), so the
+disk repo maintains a shadow index of
+``diff_id → (flow_id, session_id)`` pairs so ``get_diff`` doesn't
+have to walk every flow on every call. The index itself is
+per-instance and rebuilt lazily on a cold-start scan triggered by a
+missed lookup.
 """
 
 from __future__ import annotations
@@ -74,7 +75,7 @@ class DiffRepository(Protocol):
 
 
 class InMemoryDiffRepository:
-    """Process-local dict-backed repo. Mirrors W41's original shape."""
+    """Process-local dict-backed repo."""
 
     def __init__(self) -> None:
         self._items: dict[str, GraphDiff] = {}

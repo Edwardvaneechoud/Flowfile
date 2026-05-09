@@ -1,4 +1,4 @@
-"""W34 — settings autocomplete tests.
+"""settings autocomplete tests.
 
 Cases (~14):
 
@@ -62,7 +62,7 @@ from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.configs import settings as core_settings
 
 # --------------------------------------------------------------------------- #
-# Fakes                                                                        #
+# Fakes #
 # --------------------------------------------------------------------------- #
 
 
@@ -159,7 +159,7 @@ def _scheduler() -> RateLimitScheduler:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Surface vocabulary lockstep                                               #
+# 1. Surface vocabulary lockstep #
 # --------------------------------------------------------------------------- #
 
 
@@ -170,7 +170,7 @@ def test_settings_autocomplete_surface_in_lockstep() -> None:
     from flowfile_core.ai.context import builder as ctx_builder
     from flowfile_core.ai.tools import registry as tool_registry
 
-    # 1. SurfaceLiteral covers it (W22 + W30, both)
+    # 1. SurfaceLiteral covers it (W22 +, both)
     assert "settings_autocomplete" in tool_registry.get_args(tool_registry.SurfaceLiteral)
     assert "settings_autocomplete" in ctx_builder.SURFACE_TO_LEVEL
     assert ctx_builder.SURFACE_TO_LEVEL["settings_autocomplete"] == "copilot"
@@ -179,7 +179,7 @@ def test_settings_autocomplete_surface_in_lockstep() -> None:
     assert tool_registry.SURFACE_PRESETS["settings_autocomplete"] == frozenset()
 
     # 3. _check_preset_coverage succeeds at import (already ran on first
-    #    import, but call it explicitly so the test is self-contained).
+    #  import, but call it explicitly so the test is self-contained).
     tool_registry._check_preset_coverage()  # must not raise
 
     # 4. Six providers all carry the surface in their `surface_models`
@@ -212,7 +212,7 @@ def test_settings_autocomplete_surface_in_lockstep() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 2. Column reference extraction                                               #
+# 2. Column reference extraction #
 # --------------------------------------------------------------------------- #
 
 
@@ -247,7 +247,7 @@ def test_extract_column_refs_complex_marks_incomplete() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 3. Formula suggestions: filtering + degraded                                 #
+# 3. Formula suggestions: filtering + degraded #
 # --------------------------------------------------------------------------- #
 
 
@@ -361,7 +361,7 @@ async def test_suggest_formula_degrades_when_upstream_missing() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 4. Join keys: filtering + degraded                                           #
+# 4. Join keys: filtering + degraded #
 # --------------------------------------------------------------------------- #
 
 
@@ -424,7 +424,7 @@ async def test_suggest_join_keys_degrades_when_either_schema_none() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 5. Provider call wiring                                                      #
+# 5. Provider call wiring #
 # --------------------------------------------------------------------------- #
 
 
@@ -531,7 +531,7 @@ async def test_markdown_fenced_json_is_unwrapped() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6. Routes                                                                    #
+# 6. Routes #
 # --------------------------------------------------------------------------- #
 
 
@@ -640,7 +640,7 @@ def test_route_join_keys_happy_path(authed_client: TestClient, monkeypatch: pyte
 
 
 # --------------------------------------------------------------------------- #
-# 7. Lazy-litellm contract                                                     #
+# 7. Lazy-litellm contract #
 # --------------------------------------------------------------------------- #
 
 

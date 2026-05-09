@@ -1,4 +1,4 @@
-"""W40 + W45 — :mod:`flowfile_core.ai.sessions` tests.
+""":mod:`flowfile_core.ai.sessions` tests.
 
 Cases:
 
@@ -89,12 +89,12 @@ def _reset_session_store() -> Iterator[None]:
 
 
 # --------------------------------------------------------------------------- #
-# Store round-trip                                                             #
+# Store round-trip #
 # --------------------------------------------------------------------------- #
 
 
 def test_agent_session_w57_fields_default_to_empty_lists() -> None:
-    """W57 — ``selected_node_ids`` and ``pinned_node_ids`` are present on
+    """``selected_node_ids`` and ``pinned_node_ids`` are present on
     ``AgentSession`` and default to empty lists."""
     sess = _make_session()
     assert sess.selected_node_ids == []
@@ -102,8 +102,8 @@ def test_agent_session_w57_fields_default_to_empty_lists() -> None:
 
 
 def test_agent_session_w57_fields_round_trip_through_model_dump() -> None:
-    """W57 — both fields survive ``model_dump(mode="json")`` so the disk-
-    persisted shape carries them correctly across W42 sidecar reads."""
+    """both fields survive ``model_dump(mode="json")`` so the disk-
+    persisted shape carries them correctly across sidecar reads."""
     flow = _flow_with_orders()
     snapshot = sessions.capture_graph_snapshot(flow)
     sess = sessions.AgentSession(
@@ -171,7 +171,7 @@ def test_list_sessions_for_user() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Snapshot capture                                                             #
+# Snapshot capture #
 # --------------------------------------------------------------------------- #
 
 
@@ -180,12 +180,12 @@ def test_capture_snapshot_basic() -> None:
     snap = sessions.capture_graph_snapshot(flow)
     assert snap.flow_id == 1
     assert snap.node_ids == (1,)
-    # W45 — settings_hashes / schema_signatures removed; node_types added.
+    # settings_hashes / schema_signatures removed; node_types added.
     assert snap.node_types == {1: "manual_input"}
 
 
 def test_capture_snapshot_records_node_types() -> None:
-    """W45 — ``node_types`` map is populated for every captured node."""
+    """``node_types`` map is populated for every captured node."""
     flow = _flow_with_orders()
     _add_orders(flow, node_id=2)
     snap = sessions.capture_graph_snapshot(flow)
@@ -193,7 +193,7 @@ def test_capture_snapshot_records_node_types() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Drift detection (W45 — id-set only)                                          #
+# Drift detection (W45 — id-set only) #
 # --------------------------------------------------------------------------- #
 
 
@@ -204,7 +204,7 @@ def test_detect_drift_no_change() -> None:
 
 
 def test_detect_drift_external_addition_fires() -> None:
-    """W45 — a node added after the snapshot that the agent didn't stage IS drift."""
+    """a node added after the snapshot that the agent didn't stage IS drift."""
     flow = _flow_with_orders()
     snap = sessions.capture_graph_snapshot(flow)
     _add_orders(flow, node_id=2)
@@ -215,7 +215,7 @@ def test_detect_drift_external_addition_fires() -> None:
 
 
 def test_detect_drift_agent_staged_addition_is_not_drift() -> None:
-    """W45 Q1 — the agent's own staged ids are excluded from external-added."""
+    """Q1 — the agent's own staged ids are excluded from external-added."""
     flow = _flow_with_orders()
     snap = sessions.capture_graph_snapshot(flow)
     _add_orders(flow, node_id=2)
@@ -235,7 +235,7 @@ def test_detect_drift_missing_node() -> None:
 
 
 def test_detect_drift_mixed_missing_and_external_added() -> None:
-    """W45 — both buckets can populate in the same call."""
+    """both buckets can populate in the same call."""
     flow = _flow_with_orders()
     _add_orders(flow, node_id=2)
     snap = sessions.capture_graph_snapshot(flow)
@@ -248,7 +248,7 @@ def test_detect_drift_mixed_missing_and_external_added() -> None:
 
 
 def test_drift_detail_includes_node_types_for_missing() -> None:
-    """W45 Q3 — node_type for a deleted node comes from the snapshot."""
+    """Q3 — node_type for a deleted node comes from the snapshot."""
     flow = _flow_with_orders()
     snap = sessions.capture_graph_snapshot(flow)
     flow.delete_node(1)
@@ -258,7 +258,7 @@ def test_drift_detail_includes_node_types_for_missing() -> None:
 
 
 def test_drift_detail_includes_node_types_for_external_added() -> None:
-    """W45 Q3 — node_type for a new external addition comes from the live node."""
+    """Q3 — node_type for a new external addition comes from the live node."""
     flow = _flow_with_orders()
     snap = sessions.capture_graph_snapshot(flow)
     _add_orders(flow, node_id=2)
@@ -277,13 +277,13 @@ def test_drift_detail_is_empty() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Lazy litellm contract                                                        #
+# Lazy litellm contract #
 # --------------------------------------------------------------------------- #
 
 
 def test_lazy_litellm_contract() -> None:
     # Importing sessions must not pull litellm — same posture every workstream
-    # since W11 has documented. If a prior test already imported litellm,
+    # since has documented. If a prior test already imported litellm,
     # drop and re-import to verify the contract holds.
     sys.modules.pop("litellm", None)
     sys.modules.pop("flowfile_core.ai.sessions", None)
@@ -308,12 +308,12 @@ def test_session_default_status_is_running() -> None:
     assert sess.status == "running"
     assert sess.step_count == 0
     assert sess.staged_results == []
-    assert sess.staged_node_ids == []  # W45 Q1
+    assert sess.staged_node_ids == []  # Q1
     assert sess.diff_id is None
 
 
 # --------------------------------------------------------------------------- #
-# W54 — staged_results hygiene on resume                                       #
+# staged_results hygiene on resume #
 # --------------------------------------------------------------------------- #
 
 
@@ -343,7 +343,7 @@ def _staged_add_entry(
 
 
 def test_revalidate_staged_results_drops_collision_with_live() -> None:
-    """W54 AC4 — a staged add whose node_id is now live (user-added during pause) is dropped."""
+    """AC4 — a staged add whose node_id is now live (user-added during pause) is dropped."""
     sess = _make_session()
     # Pre-pause: agent staged node 3 with upstream from live node 1.
     sess.staged_results = [_staged_add_entry(node_id=3, upstream_node_ids=[1])]
@@ -365,7 +365,7 @@ def test_revalidate_staged_results_drops_collision_with_live() -> None:
 
 
 def test_revalidate_staged_results_drops_dead_upstream_reference() -> None:
-    """W54 AC3 — a staged add referencing an upstream id that's no longer live is dropped."""
+    """AC3 — a staged add referencing an upstream id that's no longer live is dropped."""
     sess = _make_session()
     # Pre-pause: agent staged node 7 chained off live node 5 (which we'll delete).
     sess.staged_results = [_staged_add_entry(node_id=7, upstream_node_ids=[5])]

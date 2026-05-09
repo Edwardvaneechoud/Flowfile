@@ -1,11 +1,12 @@
-// W58 — unit tests for the chat → agent auto-promotion routing in `ai-store`.
+// Unit tests for the chat → agent auto-promotion routing in `ai-store`.
 //
 // The store wraps three external surfaces:
-//   - `services/aiStreamClient` for `streamChat` + the new `routeMessage` (W58).
+//   - `services/aiStreamClient` for `streamChat` + `routeMessage`.
 //   - `api/ai.api` for the BYOK provider listing + AiDisabledError.
 //   - `useAiAgentStore` for the agent-side dispatch.
-// All three are mocked at import time so the tests don't reach the network or
-// hit a real Pinia agent store. The same approach as ai-agent-store.test.ts.
+// All three are mocked at import time so the tests don't reach the
+// network or hit a real Pinia agent store. The same approach as
+// ai-agent-store.test.ts.
 
 import { setActivePinia, createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -181,8 +182,8 @@ describe("useAiStore - sendMessage with mode", () => {
   });
 
   it("forwards recent chat history to /ai/route", async () => {
-    // W58 round 2 — short follow-ups like "can you implement?" only
-    // classify correctly when the LLM sees the prior assistant suggestion.
+    // Short follow-ups like "can you implement?" only classify
+    // correctly when the LLM sees the prior assistant suggestion.
     // The store passes the last few non-pending messages to /ai/route.
     mockSymbols.routeMessage.mockResolvedValue({
       verdict: "agent",
@@ -221,10 +222,10 @@ describe("useAiStore - sendMessage with mode", () => {
     ]);
     expect(mockSymbols.agentStoreStart).toHaveBeenCalledTimes(1);
 
-    // W58 round 5 — the agent's prompt is enriched with the chat
-    // transcript so the planner knows what to build. Without this, the
-    // agent receives only "can you implement?" and asks the user to
-    // clarify what they want — defeating the auto-promotion.
+    // The agent's prompt is enriched with the chat transcript so the
+    // planner knows what to build. Without this, the agent receives
+    // only "can you implement?" and asks the user to clarify what
+    // they want — defeating the auto-promotion.
     const agentArgs = mockSymbols.agentStoreStart.mock.calls[0][0];
     expect(agentArgs.prompt).toContain("how do I count customers per city?");
     expect(agentArgs.prompt).toContain("Add a group_by node grouping on city");
@@ -234,8 +235,8 @@ describe("useAiStore - sendMessage with mode", () => {
   });
 
   it("dispatches the bare message when there's no prior chat history", async () => {
-    // W58 round 5 — first message of a session has no transcript to
-    // include; the enriched-prompt logic falls back to the verbatim text.
+    // First message of a session has no transcript to include; the
+    // enriched-prompt logic falls back to the verbatim text.
     mockSymbols.routeMessage.mockResolvedValue({
       verdict: "agent",
       kind: "build",
@@ -254,10 +255,10 @@ describe("useAiStore - sendMessage with mode", () => {
   });
 
   it("pushes the user message before awaiting /ai/route (optimistic UX)", async () => {
-    // W58 round 6 — without optimistic push the user's input clears, then
-    // they see *nothing* in the chat trail for the classifier latency
-    // (~800 ms p50 / ~1500 ms p95). Mirror the agent-mode dispatch's
-    // existing posture: push the message first, then route, then dispatch.
+    // Without optimistic push the user's input clears, then they see
+    // *nothing* in the chat trail for the classifier latency (~800 ms
+    // p50 / ~1500 ms p95). Mirror the agent-mode dispatch's existing
+    // posture: push the message first, then route, then dispatch.
     let captureSnapshot: { messageCount: number; lastContent: string | undefined } | null = null;
     mockSymbols.routeMessage.mockImplementation(async () => {
       // Inspect the store at the moment the classifier round-trip is in
@@ -431,7 +432,7 @@ describe("useAiStore - undoPromotion", () => {
   });
 
   it("also clears agentModeAccepted (mutually exclusive with continue-as-agent)", async () => {
-    // W58 round 7 — undo means "back to chat". If a prior accept set
+    // Undo means "back to chat". If a prior accept set
     // agentModeAccepted=true, leaving it on would force the next send
     // back to agent and silently erase the undo.
     mockSymbols.routeMessage.mockResolvedValue({
@@ -527,9 +528,9 @@ describe("useAiStore - acceptPromotion (round 7)", () => {
 });
 
 describe("useAiStore - mode default + autoPromote migration shim", () => {
-  // 2026-05-09 — `mode` lives in sessionStorage now; the test environment
-  // has no `window`, so `_readPersistedMode` returns null and the
-  // migration shim ALWAYS drives the seed in these tests. Asserts that:
+  // `mode` lives in sessionStorage now; the test environment has no
+  // `window`, so `_readPersistedMode` returns null and the migration
+  // shim ALWAYS drives the seed in these tests. Asserts that:
   //   - legacy `autoPromote: false` from localStorage seeds mode="chat"
   //   - legacy `autoPromote: true` / null / missing seeds mode="auto"
   it("seeds mode='chat' when legacy autoPromote=false is in localStorage", () => {

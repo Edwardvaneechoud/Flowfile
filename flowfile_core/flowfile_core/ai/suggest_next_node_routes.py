@@ -1,18 +1,18 @@
-"""HTTP route for edge ghost-node suggestions (W32).
+"""HTTP route for edge ghost-node suggestions.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
-``Depends(get_current_active_user)``; W17's feature-flag gate covers this
-through the parent ``ai_router``.
+``Depends(get_current_active_user)``; the feature-flag gate covers
+this through the parent ``ai_router``.
 
 Single endpoint:
 
-* ``POST /ai/suggest_next_node`` — JSON-in, JSON-out (non-streaming). The
-  ghost-node UX wants a fast synchronous result; SSE handshake overhead
-  isn't worth it for a sub-4s call (per D010).
+* ``POST /ai/suggest_next_node`` — JSON-in, JSON-out
+  (non-streaming). The ghost-node UX wants a fast synchronous
+  result; SSE handshake overhead isn't worth it for a sub-4s call.
 
-The provider call lives in :mod:`flowfile_core.ai.suggest_next_node`; this
-module is the thin route surface that resolves the flow + BYOK provider
-and maps errors onto HTTP status codes (mirrors the W34 / W23 pattern).
+The provider call lives in :mod:`flowfile_core.ai.suggest_next_node`;
+this module is the thin route surface that resolves the flow + BYOK
+provider and maps errors onto HTTP status codes.
 """
 
 from __future__ import annotations

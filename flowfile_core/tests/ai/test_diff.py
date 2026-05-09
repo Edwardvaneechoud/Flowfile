@@ -1,4 +1,4 @@
-"""W41 — ``GraphDiff`` staging tests.
+"""``GraphDiff`` staging tests.
 
 Cases:
 
@@ -33,7 +33,7 @@ Cases:
 * ``test_lazy_litellm_contract`` — importing ``flowfile_core.ai.diff``
   doesn't load ``litellm``.
 * ``test_end_to_end_stage_then_accept`` — full stage→accept loop with two
-  W31-staged ops; assert real graph mutated, every audit row flipped,
+  staged ops; assert real graph mutated, every audit row flipped,
   ``undo_count`` increased by exactly 1.
 """
 
@@ -60,7 +60,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 # --------------------------------------------------------------------------- #
-# Shared helpers + fixtures                                                    #
+# Shared helpers + fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -113,7 +113,7 @@ def _user_id() -> int:
 
 
 def _stage_filter(flow: FlowGraph, node_id: int = 2, upstream: int = 1) -> ToolExecutionResult:
-    """Run W31 ``execute_tool_call`` in ``stage`` mode against the test flow."""
+    """Run ``execute_tool_call`` in ``stage`` mode against the test flow."""
     return execute_tool_call(
         flow_id=flow.flow_id,
         tool_name="flowfile.graph.add_filter",
@@ -157,7 +157,7 @@ def registered_flow() -> Iterator[FlowGraph]:
 
 
 # --------------------------------------------------------------------------- #
-# 1. DiffStore round-trip                                                      #
+# 1. DiffStore round-trip #
 # --------------------------------------------------------------------------- #
 
 
@@ -176,7 +176,7 @@ def test_diff_store_roundtrip() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 2. collect_audit_ids preserves op order                                      #
+# 2. collect_audit_ids preserves op order #
 # --------------------------------------------------------------------------- #
 
 
@@ -206,7 +206,7 @@ def test_collect_audit_ids_preserves_op_order() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 3. apply_diff creates exactly one history snapshot                           #
+# 3. apply_diff creates exactly one history snapshot #
 # --------------------------------------------------------------------------- #
 
 
@@ -251,7 +251,7 @@ def test_apply_diff_creates_single_history_snapshot() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 4. apply_diff rolls back on mid-batch failure                                #
+# 4. apply_diff rolls back on mid-batch failure #
 # --------------------------------------------------------------------------- #
 
 
@@ -298,7 +298,7 @@ def test_apply_diff_rolls_back_on_midbatch_failure(monkeypatch: pytest.MonkeyPat
 
 
 # --------------------------------------------------------------------------- #
-# 5. apply_diff drift detection                                                #
+# 5. apply_diff drift detection #
 # --------------------------------------------------------------------------- #
 
 
@@ -330,12 +330,12 @@ def test_apply_diff_drift_detected() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 5b. W70 — diff inconsistency detection                                       #
+# 5b. — diff inconsistency detection #
 # --------------------------------------------------------------------------- #
 
 
 def test_validate_diff_rejects_phantom_connection_endpoint() -> None:
-    """W70 — staged connection references a node id that's neither live
+    """staged connection references a node id that's neither live
     nor in this diff's additions. Replicates the live audit trail: agent
     staged ``add_group_by(node_id=10, upstream_node_ids=[2])`` plus a
     redundant ``connect(from=2, to=77)`` where 77 was hallucinated.
@@ -368,7 +368,7 @@ def test_validate_diff_rejects_phantom_connection_endpoint() -> None:
 
 
 def test_validate_diff_accepts_in_batch_added_endpoint() -> None:
-    """W70 — chained additions where the connection references an id
+    """chained additions where the connection references an id
     being added in the same diff. Legal: in-batch references resolve.
     """
     flow = _flow_with_orders()
@@ -409,7 +409,7 @@ def test_validate_diff_accepts_in_batch_added_endpoint() -> None:
 def test_apply_diff_does_not_reach_apply_path_on_inconsistent_diff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """W70 — ``apply_diff`` short-circuits via validation before the
+    """``apply_diff`` short-circuits via validation before the
     per-op apply loop. Spies on ``_apply_add_node`` and ``add_connection``
     to assert zero invocations when the diff is inconsistent.
     """
@@ -462,7 +462,7 @@ def test_apply_diff_does_not_reach_apply_path_on_inconsistent_diff(
 
 
 # --------------------------------------------------------------------------- #
-# 6. Accept route flips audit actions                                          #
+# 6. Accept route flips audit actions #
 # --------------------------------------------------------------------------- #
 
 
@@ -516,7 +516,7 @@ def test_accept_route_flips_audit_actions(authed_client: TestClient, registered_
 
 
 # --------------------------------------------------------------------------- #
-# 7. Reject route — no mutation                                                #
+# 7. Reject route — no mutation #
 # --------------------------------------------------------------------------- #
 
 
@@ -559,7 +559,7 @@ def test_reject_route_no_mutation(authed_client: TestClient, registered_flow: Fl
 
 
 # --------------------------------------------------------------------------- #
-# 8. 404 unknown diff                                                          #
+# 8. 404 unknown diff #
 # --------------------------------------------------------------------------- #
 
 
@@ -573,7 +573,7 @@ def test_route_404_unknown_diff(authed_client: TestClient) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 9. 409 drift via the route                                                   #
+# 9. 409 drift via the route #
 # --------------------------------------------------------------------------- #
 
 
@@ -595,7 +595,7 @@ def test_route_409_drift(authed_client: TestClient, registered_flow: FlowGraph) 
     )
     diff_id = stage_response.json()["diff_id"]
 
-    # User mutates the canvas in between staging and accept (D006).
+    # User mutates the canvas in between staging and accept.
     registered_flow.delete_node(1)
 
     accept = authed_client.post(
@@ -613,12 +613,12 @@ def test_route_409_drift(authed_client: TestClient, registered_flow: FlowGraph) 
 
 
 # --------------------------------------------------------------------------- #
-# 9b. W70 — 422 diff_inconsistent via the route                                #
+# 9b. — 422 diff_inconsistent via the route #
 # --------------------------------------------------------------------------- #
 
 
 def test_route_422_diff_inconsistent(authed_client: TestClient, registered_flow: FlowGraph) -> None:
-    """W70 — Accept route returns 422 with a typed `diff_inconsistent`
+    """Accept route returns 422 with a typed `diff_inconsistent`
     detail when the staged diff carries a phantom connection endpoint,
     and the diff stays in the store so the user can Reject and ask the
     agent to retry.
@@ -665,7 +665,7 @@ def test_route_422_diff_inconsistent(authed_client: TestClient, registered_flow:
 
 
 # --------------------------------------------------------------------------- #
-# 10. 422 cross-flow mismatch                                                  #
+# 10. 422 cross-flow mismatch #
 # --------------------------------------------------------------------------- #
 
 
@@ -698,7 +698,7 @@ def test_route_422_cross_flow_mismatch(authed_client: TestClient, registered_flo
 
 
 # --------------------------------------------------------------------------- #
-# 11. 503 — feature flag off                                                   #
+# 11. 503 — feature flag off #
 # --------------------------------------------------------------------------- #
 
 
@@ -722,7 +722,7 @@ def test_route_503_when_feature_flag_off(authed_client: TestClient) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 12. Lazy litellm contract                                                    #
+# 12. Lazy litellm contract #
 # --------------------------------------------------------------------------- #
 
 
@@ -737,17 +737,17 @@ def test_lazy_litellm_contract() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 13. End-to-end stage→accept                                                  #
+# 13. End-to-end stage→accept #
 # --------------------------------------------------------------------------- #
 
 
 def test_end_to_end_stage_then_accept(authed_client: TestClient, registered_flow: FlowGraph) -> None:
-    """Two W31 staged ops — addition + a connect — drive through accept."""
+    """Two staged ops — addition + a connect — drive through accept."""
     staged_filter = _stage_filter(registered_flow, node_id=2, upstream=1)
     assert staged_filter.status == "staged"
 
     # Stage a connect from #1 to a future node #2 via the executor (mode=stage
-    # for ``connect`` doesn't validate against the live graph — that's W41's
+    # for ``connect`` doesn't validate against the live graph — that's's
     # apply step's job, where add_connection runs after the addition lands).
     connection_payload = input_schema.NodeConnection.create_from_simple_input(
         from_id=1, to_id=2, input_type="input-0", output_handle="output-0"
@@ -805,16 +805,16 @@ def test_end_to_end_stage_then_accept(authed_client: TestClient, registered_flow
     # Diff popped.
     assert diff.get_diff(diff_id) is None
 
-    _ = connection_payload  # Keep the helper exercised for the future W40 path.
+    _ = connection_payload  # Keep the helper exercised for the future path.
 
 
 # --------------------------------------------------------------------------- #
-# W47 — modifications bucket                                                   #
+# modifications bucket #
 # --------------------------------------------------------------------------- #
 
 
 def _flow_with_orders_and_filter(flow_id: int = 1) -> FlowGraph:
-    """``orders`` (id=1) → ``filter EU`` (id=2). Used by W47 tests to have an
+    """``orders`` (id=1) → ``filter EU`` (id=2). Used by tests to have an
     existing filter node available for `update_node_settings` to mutate.
 
     Mirrors the production ``_apply_add_node`` pattern (``add_filter`` then
@@ -852,7 +852,7 @@ def _filter_settings_dump(node_id: int, depending_on_id: int, expr: str) -> dict
 
 
 def test_staged_settings_update_roundtrip() -> None:
-    """W47 — :class:`StagedSettingsUpdate` round-trips with all required fields.
+    """:class:`StagedSettingsUpdate` round-trips with all required fields.
 
     Smoke test that the new bucket type is constructible and ``GraphDiff``
     accepts a populated ``modifications`` list.
@@ -873,7 +873,7 @@ def test_staged_settings_update_roundtrip() -> None:
 
 
 def test_bundle_staged_results_bins_modification() -> None:
-    """W47 — bundler routes ``flowfile.graph.update_node_settings`` payloads
+    """bundler routes ``flowfile.graph.update_node_settings`` payloads
     into the modifications bucket; mixed batch with an addition stays clean.
     """
     entries = [
@@ -918,11 +918,11 @@ def test_bundle_staged_results_bins_modification() -> None:
 
 
 def test_bundle_staged_results_dedupes_modifications_by_node_id() -> None:
-    """2026-05-07 — multiple ``update_node_settings`` calls on the same
+    """multiple ``update_node_settings`` calls on the same
     node within an agent run collapse to the latest one. Live trace
     14:21 showed the LLM emitting 4 identical ``update_node_settings``
     calls; without dedupe the diff preview surfaced *"4 modifications"*
-    with four identical cards stacked. The W47 contract is full-replace,
+    with four identical cards stacked. The contract is full-replace,
     so the latest call already reflects the cumulative intent.
     """
     initial_settings = _filter_settings_dump(node_id=2, depending_on_id=1, expr="[region]=='EU'")
@@ -993,7 +993,7 @@ def test_bundle_staged_results_dedupes_modifications_per_node() -> None:
 
 
 def test_bundle_staged_results_rejects_modification_without_kind() -> None:
-    """W47 — defensive: missing ``kind="modification"`` in the payload is
+    """defensive: missing ``kind="modification"`` in the payload is
     a programming error from upstream; raise so it surfaces as 422.
     """
     entries = [
@@ -1008,7 +1008,7 @@ def test_bundle_staged_results_rejects_modification_without_kind() -> None:
 
 
 def test_validate_diff_against_flow_drift_on_missing_modification_target() -> None:
-    """W47 — a modification targeting a node that's neither live nor in
+    """a modification targeting a node that's neither live nor in
     the diff's additions raises :class:`DiffDriftError` with the missing
     id surfaced. Mirrors how addition-upstream drift is reported.
     """
@@ -1031,7 +1031,7 @@ def test_validate_diff_against_flow_drift_on_missing_modification_target() -> No
 
 
 def test_validate_diff_against_flow_tolerates_modification_on_in_batch_addition() -> None:
-    """W47 — a modification targeting an in-batch addition is legal
+    """a modification targeting an in-batch addition is legal
     (parallel to addition-chaining via upstream ids). Apply order is
     additions → modifications, so the addition exists when the
     modification fires.
@@ -1061,7 +1061,7 @@ def test_validate_diff_against_flow_tolerates_modification_on_in_batch_addition(
 
 
 def test_apply_diff_modification_mutates_settings_and_single_undo_point() -> None:
-    """W47 — applying a single modification mutates the live node's
+    """applying a single modification mutates the live node's
     ``setting_input`` to the new value and registers exactly one BATCH
     snapshot on the undo stack.
     """
@@ -1092,7 +1092,7 @@ def test_apply_diff_modification_mutates_settings_and_single_undo_point() -> Non
 
 
 def test_apply_diff_modification_rolls_back_on_midbatch_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """W47 — when a downstream op raises after a modification has already
+    """when a downstream op raises after a modification has already
     fired, ``flow.undo()`` rolls the BATCH snapshot back and the live
     node's settings revert to the pre-apply value. The diff stays in the
     store so the user can fix-and-retry.
@@ -1136,7 +1136,7 @@ def test_apply_diff_modification_rolls_back_on_midbatch_failure(monkeypatch: pyt
 
 
 def test_apply_diff_modification_chained_after_addition() -> None:
-    """W47 — addition + modification of the freshly-added node in the
+    """addition + modification of the freshly-added node in the
     same diff. The bundler bins them; ``apply_diff`` walks additions
     first so the modification fires against a real node.
     """

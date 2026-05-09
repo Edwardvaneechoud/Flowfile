@@ -1,12 +1,13 @@
-// W35 — unit tests for the diff approval store.
+// Unit tests for the diff approval store.
 //
-// The store talks to W41 through three pure-fetch wrappers; we mock the
-// wrapper module so the tests don't reach the network. Mocking is done
-// by replacing the entire `services/aiDiffClient` module with a small
-// in-test factory; the real module reaches DOM globals (`window`,
-// `localStorage`) at import time, which the Node test environment
-// doesn't provide. The mock supplies its own `AiDiffHttpError` so the
-// `instanceof` checks in the store still match.
+// The store talks to the backend through three pure-fetch wrappers;
+// we mock the wrapper module so the tests don't reach the network.
+// Mocking is done by replacing the entire `services/aiDiffClient`
+// module with a small in-test factory; the real module reaches DOM
+// globals (`window`, `localStorage`) at import time, which the Node
+// test environment doesn't provide. The mock supplies its own
+// `AiDiffHttpError` so the `instanceof` checks in the store still
+// match.
 //
 // Pinia is set up per-test for isolation.
 
@@ -42,17 +43,18 @@ vi.mock("../services/aiDiffClient", () => ({
   rejectDiff: mockSymbols.rejectDiff,
 }));
 
-// `flow-store` transitively reaches `auth.service` which touches `window`
-// at module load. Mock it out — the diff store only calls `requestReload()`
-// after a successful accept (W46/Bug-1), and the test asserts that call.
+// `flow-store` transitively reaches `auth.service` which touches
+// `window` at module load. Mock it out — the diff store only calls
+// `requestReload()` after a successful accept, and the test asserts
+// that call.
 const mockRequestReload = vi.fn();
 vi.mock("./flow-store", () => ({
   useFlowStore: () => ({ requestReload: mockRequestReload }),
 }));
 
-// W49 — diff-store.reject() coordinates with the agent store after a
-// successful backend reject. Mock the agent store so tests can drive the
-// followup hand-off without spinning up a real Pinia agent store.
+// `diff-store.reject()` coordinates with the agent store after a
+// successful backend reject. Mock the agent store so tests can drive
+// the followup hand-off without spinning up a real Pinia agent store.
 const mockAgent = vi.hoisted(() => ({
   resumeAfterReject: vi.fn(),
   clearLastResultDiffPayload: vi.fn(),
@@ -82,11 +84,12 @@ vi.mock("./ai-agent-store", () => ({
   }),
 }));
 
-// 2026-05-07 — diff-store.accept() / reject() now push synthetic decision
-// messages into ``ai-store.messages`` so the chat trail records what the
-// user clicked plus any rejection note. Mock the store's messages array so
-// tests can assert push-shape without dragging the real ai-store import
-// chain (which transitively reaches ``auth.service`` and touches ``window``).
+// `diff-store.accept()` / `reject()` push synthetic decision messages
+// into ``ai-store.messages`` so the chat trail records what the user
+// clicked plus any rejection note. Mock the store's messages array
+// so tests can assert push-shape without dragging the real ai-store
+// import chain (which transitively reaches ``auth.service`` and
+// touches ``window``).
 const mockAiStoreMessages = vi.hoisted(() => ({ messages: [] as Array<Record<string, unknown>> }));
 vi.mock("./ai-store", () => ({
   useAiStore: () => ({ messages: mockAiStoreMessages.messages }),
@@ -136,9 +139,10 @@ const sampleStageRequest = (): StageDiffRequestShape => ({
       tool_name: "flowfile.graph.connect",
       audit_id: 102,
       staged_node_payload: {
-        // Mirrors `NodeConnection.model_dump()` from W31's executor — see
-        // `flowfile_core/.../ai/tools/executor.py:649`. Field names match the
-        // Pydantic shape exactly (no `_class` suffix); `connection_class`
+        // Mirrors `NodeConnection.model_dump()` from the executor —
+        // see `flowfile_core/.../ai/tools/executor.py`. Field names
+        // match the Pydantic shape exactly (no `_class` suffix);
+        // `connection_class`
         // values are canonical `output-N` / `input-N`.
         connection: {
           output_connection: { node_id: 3, connection_class: "output-0" },
@@ -365,7 +369,7 @@ describe("ai-diff-store — reject", () => {
   });
 });
 
-describe("ai-diff-store — chat-trail decision messages (2026-05-07)", () => {
+describe("ai-diff-store — chat-trail decision messages", () => {
   it("pushes an [Accepted] message with apply counts on accept-success", async () => {
     mockStage.mockResolvedValue(stageOk("diff-acc"));
     mockAccept.mockResolvedValue(acceptOk("diff-acc"));
@@ -435,7 +439,7 @@ describe("ai-diff-store — chat-trail decision messages (2026-05-07)", () => {
   });
 });
 
-describe("ai-diff-store — reject (W49 followup hand-off)", () => {
+describe("ai-diff-store — reject (followup hand-off)", () => {
   it("hands off to agentStore.resumeAfterReject when session is completed", async () => {
     mockStage.mockResolvedValue(stageOk("diff-w49"));
     mockReject.mockResolvedValue(rejectOk("diff-w49"));
@@ -578,15 +582,15 @@ describe("ai-diff-store — drift detail parsing", () => {
   });
 });
 
-// W70 — diff inconsistency: the agent's own staged diff is broken (e.g. a
-// `connect` op references a `to_node_id` that's neither live nor in the
-// diff's additions). Mirrors the 409-drift code path: same posture
-// (currentDiff stays staged so the user can Reject and retry), same
-// fall-back to http error when the wire shape doesn't match the typed
-// payload. The 422-`diff_inconsistent` shape is distinct from the
-// existing 422-string path (cross-flow mismatch / generic mid-batch
-// raise); the new parser must not capture those.
-describe("ai-diff-store — inconsistency detail parsing (W70)", () => {
+// Diff inconsistency: the agent's own staged diff is broken (e.g. a
+// `connect` op references a `to_node_id` that's neither live nor in
+// the diff's additions). Mirrors the 409-drift code path: same
+// posture (currentDiff stays staged so the user can Reject and
+// retry), same fall-back to http error when the wire shape doesn't
+// match the typed payload. The 422-`diff_inconsistent` shape is
+// distinct from the existing 422-string path (cross-flow mismatch /
+// generic mid-batch raise); the new parser must not capture those.
+describe("ai-diff-store — inconsistency detail parsing", () => {
   it("keeps currentDiff staged when the backend reports a 422 diff_inconsistent", async () => {
     mockStage.mockResolvedValue(stageOk("diff-1"));
     mockAccept.mockRejectedValue(
@@ -715,14 +719,15 @@ describe("ai-diff-store — inconsistency detail parsing (W70)", () => {
   });
 });
 
-// W61 — `connectionLabel` formats a staged `NodeConnection` for the diff preview.
-// Pre-fix the renderer read `output_connection_class` / `input_connection_class`
-// (with `_class` suffix) — neither field exists on the wire shape, so every
-// connection rendered as `#?.main → #?.main`. The fix matches the shape
-// `NodeConnection.model_dump()` actually produces (see `executor.py:649,797`
-// and `diff.py:260,279`) — `output_connection` / `input_connection`, no suffix.
-describe("aiDiffTypes — connectionLabel (W61, W68)", () => {
-  it("renders the default-handle case as bare `#<from> → #<to>` (W68)", async () => {
+// `connectionLabel` formats a staged `NodeConnection` for the diff
+// preview. Pre-fix the renderer read `output_connection_class` /
+// `input_connection_class` (with `_class` suffix) — neither field
+// exists on the wire shape, so every connection rendered as `#?.main
+// → #?.main`. The fix matches the shape `NodeConnection.model_dump()`
+// actually produces (see `executor.py` and `diff.py`) —
+// `output_connection` / `input_connection`, no suffix.
+describe("aiDiffTypes — connectionLabel", () => {
+  it("renders the default-handle case as bare `#<from> → #<to>`", async () => {
     const { connectionLabel } = await import("../features/ai/aiDiffTypes");
 
     const label = connectionLabel({
@@ -733,9 +738,10 @@ describe("aiDiffTypes — connectionLabel (W61, W68)", () => {
       audit_id: null,
     });
 
-    // Default handles (`output-0` / `input-0`) are internal wire identifiers;
-    // hiding them on the common single-input/single-output path drops the
-    // user-facing noise the original W61 fix introduced.
+    // Default handles (`output-0` / `input-0`) are internal wire
+    // identifiers; hiding them on the common single-input /
+    // single-output path drops the user-facing noise the original
+    // fix introduced.
     expect(label).toBe("#3 → #5");
     expect(label).not.toContain("main");
     expect(label).not.toContain("output-0");
@@ -801,9 +807,10 @@ describe("aiDiffTypes — connectionLabel (W61, W68)", () => {
   });
 
   it("formats the synthesised diff payload from `synthesiseDiffFromStageRequest` end-to-end", async () => {
-    // Round-trip check: a stage request shaped exactly like what W31's
-    // executor emits → synthesised payload → `connectionLabel` → bare form.
-    // Locks the wire shape ↔ renderer contract for this code path.
+    // Round-trip check: a stage request shaped exactly like what the
+    // executor emits → synthesised payload → `connectionLabel` →
+    // bare form. Locks the wire shape ↔ renderer contract for this
+    // code path.
     const { synthesiseDiffFromStageRequest, connectionLabel } =
       await import("../features/ai/aiDiffTypes");
 
@@ -833,12 +840,13 @@ describe("aiDiffTypes — connectionLabel (W61, W68)", () => {
   });
 });
 
-// W68 (richConnectionLabel + buildAdditionNodeTypes) — node-type-aware labels.
-// Renderer wants `read_csv #3 → group_by #5` instead of `#3 → #5` when type
-// info is available. Type comes from the diff's own additions for newly-staged
-// nodes; the Vue component layers a flow-store lookup on top for existing
-// nodes (untested at the unit level — we only test the pure helper here).
-describe("aiDiffTypes — richConnectionLabel (W68)", () => {
+// `richConnectionLabel` + `buildAdditionNodeTypes` — node-type-aware
+// labels. Renderer wants `read_csv #3 → group_by #5` instead of
+// `#3 → #5` when type info is available. Type comes from the diff's
+// own additions for newly-staged nodes; the Vue component layers a
+// flow-store lookup on top for existing nodes (untested at the unit
+// level — we only test the pure helper here).
+describe("aiDiffTypes — richConnectionLabel", () => {
   it("renders both sides with node type when both ids are in the lookup", async () => {
     const { richConnectionLabel } = await import("../features/ai/aiDiffTypes");
     const types = new Map<number, string>([
@@ -903,7 +911,7 @@ describe("aiDiffTypes — richConnectionLabel (W68)", () => {
   });
 });
 
-describe("aiDiffTypes — buildAdditionNodeTypes (W68)", () => {
+describe("aiDiffTypes — buildAdditionNodeTypes", () => {
   it("maps each addition's settings.node_id to its declared node_type", async () => {
     const { buildAdditionNodeTypes } = await import("../features/ai/aiDiffTypes");
     const map = buildAdditionNodeTypes({
@@ -990,7 +998,7 @@ describe("aiDiffTypes — buildAdditionNodeTypes (W68)", () => {
 });
 
 // --------------------------------------------------------------------------- #
-// W47 — modifications round-trip                                               #
+// Modifications round-trip                                                     #
 // --------------------------------------------------------------------------- #
 
 const sampleModificationStageRequest = (): StageDiffRequestShape => ({
@@ -1023,7 +1031,7 @@ const sampleModificationStageRequest = (): StageDiffRequestShape => ({
   ],
 });
 
-describe("ai-diff-store — modifications (W47)", () => {
+describe("ai-diff-store — modifications", () => {
   it("synthesises the modifications bucket from an update_node_settings staged result", async () => {
     mockStage.mockResolvedValue({ diff_id: "diff-mod-1", op_count: 1 });
     const store = useAiDiffStore();

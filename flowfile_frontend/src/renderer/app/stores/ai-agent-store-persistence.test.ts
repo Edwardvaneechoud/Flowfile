@@ -1,8 +1,8 @@
-// Unit tests for the agent-store persistence helpers (Bug-2 fix).
+// Unit tests for the agent-store persistence helpers.
 //
-// Pure helpers, no Vue/Pinia deps — same harness as W27's
-// `ai-store-persistence.test.ts`. Hand-rolls a `MockStorage` so we don't
-// need jsdom.
+// Pure helpers, no Vue/Pinia deps — same harness as
+// `ai-store-persistence.test.ts`. Hand-rolls a `MockStorage` so we
+// don't need jsdom.
 
 import { describe, expect, it } from "vitest";
 import {

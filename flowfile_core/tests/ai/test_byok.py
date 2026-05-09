@@ -1,9 +1,9 @@
-"""W12 — BYOK key storage tests.
+"""BYOK key storage tests.
 
 Cases:
 
 * ``test_credentials_table_exists_after_alembic`` — Alembic migration 012
-  lands the ``ai_provider_credentials`` table on a fresh DB; W29 widens the
+  lands the ``ai_provider_credentials`` table on a fresh DB; widens the
   expected column set with ``models``.
 * ``test_alembic_head_is_singular`` — ``alembic heads`` resolves to exactly
   one revision (guards against a branched migration history).
@@ -40,9 +40,7 @@ Cases:
 * ``test_lazy_litellm_import_for_credentials`` — ``import
   flowfile_core.ai.credentials`` does not pull ``litellm`` into ``sys.modules``.
 * ``test_credentials_per_user_unique`` — a second insert for the same
-  ``(user_id, provider)`` raises ``IntegrityError``.
-
-W29 cases:
+  ``(user_id, provider)`` raises ``IntegrityError``. cases:
 
 * ``test_upsert_stores_models_verbatim`` — ``models=[a, b, c]`` round-trips
   through the public projection in the same order.
@@ -53,7 +51,7 @@ W29 cases:
 * ``test_upsert_rejects_models_and_clear_models_together`` — Pydantic
   validator raises (mirrors the api_key / clear_api_key rule).
 * ``test_get_configured_provider_picks_first_model_when_no_surface_match`` —
-  step 4 of W29's resolver precedence.
+  step 4 of's resolver precedence.
 * ``test_get_configured_provider_prefers_surface_model_when_in_curated`` —
   step 3 wins over step 4 when the routed model is curated.
 * ``test_get_configured_provider_models_loses_to_stored_default`` —
@@ -166,7 +164,7 @@ def test_credentials_table_exists_after_alembic() -> None:
         "api_key_secret_id",
         "api_base",
         "default_model",
-        "models",  # W29
+        "models",  #
         "last_tested_at",
         "last_test_status",
         "last_test_error",
@@ -562,7 +560,7 @@ def test_list_provider_credentials_returns_all(local_user_id: int) -> None:
 def test_lazy_litellm_import_for_credentials() -> None:
     """``flowfile_core.ai.credentials`` is provider-import-free.
 
-    Mirrors the W11 / W15 lazy-import contract — importing this module must
+    Mirrors the / lazy-import contract — importing this module must
     not pull in ``litellm`` (which would eagerly load every per-vendor SDK).
     Snapshot ``sys.modules``, drop the relevant entries, re-import, assert.
     """
@@ -579,7 +577,7 @@ def test_lazy_litellm_import_for_credentials() -> None:
             sys.modules[mod_name] = mod
 
 
-# ---------- W29 — per-credential curated model list ----------
+# ---------- — per-credential curated model list ----------
 
 
 def test_upsert_stores_models_verbatim(local_user_id: int) -> None:
@@ -737,7 +735,7 @@ def test_alembic_013_upgrade_downgrade_round_trip(
 ) -> None:
     """Upgrade fresh DB to 012, insert a row, upgrade to 013, downgrade back.
 
-    Confirms the W29 column add is reversible and that pre-existing 012 rows
+    Confirms the column add is reversible and that pre-existing 012 rows
     survive the upgrade. Uses an isolated sqlite file routed through the
     same ``get_database_url`` seam the alembic ``env.py`` reads, so the
     URL we set is the one the migrations actually run against.

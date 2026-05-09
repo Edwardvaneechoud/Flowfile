@@ -1,24 +1,25 @@
-"""HTTP routes for settings autocomplete (W34).
+"""HTTP routes for settings autocomplete.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
-``Depends(get_current_active_user)``; W17's feature-flag gate covers these
-through the parent ``ai_router``.
+``Depends(get_current_active_user)``; the feature-flag gate covers
+these through the parent ``ai_router``.
 
 Two endpoints:
 
 * ``POST /ai/autocomplete/formula`` — schema-aware completions for a
   ``formula`` settings expression.
-* ``POST /ai/autocomplete/join_keys`` — proposed ``(left_col, right_col)``
-  pairs for a ``join`` settings panel.
+* ``POST /ai/autocomplete/join_keys`` — proposed
+  ``(left_col, right_col)`` pairs for a ``join`` settings panel.
 
-Both routes are non-streaming JSON — the autocomplete UX wants a fast
-synchronous result, not a stream. SSE is used by the chat (W20) and agent
-(W40) surfaces; autocomplete fires on keystrokes and a per-keystroke SSE
-handshake would burn the latency budget.
+Both routes are non-streaming JSON — the autocomplete UX wants a
+fast synchronous result, not a stream. SSE is used by the chat and
+agent surfaces; autocomplete fires on keystrokes and a per-keystroke
+SSE handshake would burn the latency budget.
 
 The provider call paths are pure functions in
-:mod:`flowfile_core.ai.autocomplete`; this module is the thin route surface
-that resolves the flow + BYOK provider and maps errors onto HTTP status codes.
+:mod:`flowfile_core.ai.autocomplete`; this module is the thin route
+surface that resolves the flow + BYOK provider and maps errors onto
+HTTP status codes.
 """
 
 from __future__ import annotations

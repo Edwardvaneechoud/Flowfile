@@ -1,17 +1,21 @@
-"""Node-type classification — W31.
+"""Node-type classification.
 
-W31 routes tool execution along three axes that depend on the node type:
+The executor routes tool execution along two axes that depend on
+the node type:
 
-* **target node bucket** ``static`` / ``dynamic`` / ``source`` / ``passthrough`` —
-  decides whether to predict via the ephemeral mirror-graph (``static`` /
-  ``source`` / ``passthrough``) or kernel dry-run (``dynamic``).
+* **target node bucket** ``static`` / ``dynamic`` / ``source`` /
+  ``passthrough`` — decides whether to predict via the ephemeral
+  mirror-graph (``static`` / ``source`` / ``passthrough``) or kernel
+  dry-run (``dynamic``).
 
-* **upstream tier (D011)** — when the upstream node's ``predicted_schema`` is
-  ``None``, we delegate to the existing ``schema_callback`` registered by the
-  production ``add_<node_type>`` method. The callbacks are worker-aware: they
-  use :class:`FlowDataEngine.create_from_path` (which routes through the worker
-  for non-trivial cases) or pure-Python derivers (e.g. GA's ``derive_schema``).
-  W31 does NOT do its own ``pl.scan_*`` calls — that would bypass the worker.
+* **upstream tier** — when the upstream node's ``predicted_schema``
+  is ``None``, we delegate to the existing ``schema_callback``
+  registered by the production ``add_<node_type>`` method. The
+  callbacks are worker-aware: they use
+  :class:`FlowDataEngine.create_from_path` (which routes through the
+  worker for non-trivial cases) or pure-Python derivers (e.g. GA's
+  ``derive_schema``). The executor does NOT do its own ``pl.scan_*``
+  calls — that would bypass the worker.
 
 The 21+1 explicit ``static`` set covers everything in
 ``NODE_TYPE_TO_SETTINGS_CLASS`` whose schema is derivable from

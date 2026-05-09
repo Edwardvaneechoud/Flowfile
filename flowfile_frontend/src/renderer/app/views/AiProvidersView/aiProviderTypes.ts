@@ -1,4 +1,4 @@
-// TypeScript types mirroring W12's Pydantic schemas in
+// TypeScript types mirroring the Pydantic schemas in
 // flowfile_core/flowfile_core/ai/credentials.py.
 //
 // FE convention: camelCase fields. The api.ts layer maps to/from the
@@ -13,7 +13,7 @@ export interface AiProviderCredential {
   hasKey: boolean;
   apiBase: string | null;
   defaultModel: string | null;
-  // W29 — curated model list. null or [] both mean "no curated list, use
+  // Curated model list. null or [] both mean "no curated list, use
   // defaultModel only". Order is preserved from the backend.
   models: string[] | null;
   lastTestedAt: string | null;
@@ -40,9 +40,9 @@ export interface AiProvider {
 // - apiKey="sk-..." → store/rotate in place
 // - clearApiKey     → drop secret (mutually exclusive with apiKey, 422 if both)
 // - apiBase / defaultModel: null leaves the field as-is, otherwise overwrites.
-// - models=null     → keep the existing curated list untouched (W29).
-// - models=[a, b]   → replace the curated list verbatim, in order (W29).
-// - models=[]       → clear the curated list (collapses with clearModels) (W29).
+// - models=null     → keep the existing curated list untouched.
+// - models=[a, b]   → replace the curated list verbatim, in order.
+// - models=[]       → clear the curated list (collapses with clearModels).
 // - clearModels     → null the curated list (mutually exclusive with non-empty models, 422).
 export interface AiProviderCredentialInput {
   apiKey: string | null;
@@ -58,20 +58,21 @@ export interface AiProviderTestResult {
   error: string | null;
 }
 
-// Server-side detail string raised by W17's require_ai_enabled when the flag
-// is off. The api.ts layer matches on this to convert the 503 into a typed
-// AiDisabledError that the view renders as a dedicated empty-state.
+// Server-side detail string raised by `require_ai_enabled` when the
+// flag is off. The api.ts layer matches on this to convert the 503
+// into a typed AiDisabledError that the view renders as a dedicated
+// empty-state.
 //
-// Mirrors flowfile_core.ai.feature_flag.DISABLED_DETAIL byte-for-byte; bumping
-// this string is a contract change shared with the backend.
+// Mirrors flowfile_core.ai.feature_flag.DISABLED_DETAIL byte-for-byte;
+// bumping this string is a contract change shared with the backend.
 export const AI_DISABLED_DETAIL = "AI features are disabled. Set FEATURE_FLAG_AI=true to enable.";
 
-// W18 — admin AI feature-flag toggle.
+// Admin AI feature-flag toggle.
 //
-// Mirrors flowfile_core.ai.admin_routes.FeatureFlagState. `persisted` is
-// always false in the W18 contract: the toggle lives in process memory.
-// Cross-restart persistence requires the user to set FEATURE_FLAG_AI in
-// their .env (which the UI surfaces as a hint).
+// Mirrors flowfile_core.ai.admin_routes.FeatureFlagState. `persisted`
+// is always false: the toggle lives in process memory. Cross-restart
+// persistence requires the user to set FEATURE_FLAG_AI in their .env
+// (which the UI surfaces as a hint).
 export interface AiFeatureFlagState {
   enabled: boolean;
   persisted: boolean;

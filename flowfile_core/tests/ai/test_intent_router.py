@@ -1,4 +1,4 @@
-"""W58 — chat → agent auto-promotion classifier tests.
+"""chat → agent auto-promotion classifier tests.
 
 The classifier was simplified in round 2 to a single LLM call with
 conversation history (no heuristic regexes). These tests cover the
@@ -60,7 +60,7 @@ from flowfile_core.ai.scheduler import RateLimitScheduler
 
 
 # --------------------------------------------------------------------------- #
-# Fakes                                                                        #
+# Fakes #
 # --------------------------------------------------------------------------- #
 
 
@@ -129,7 +129,7 @@ def _payload(kind: str, confidence: float, reason: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# LLM dispatch + history                                                       #
+# LLM dispatch + history #
 # --------------------------------------------------------------------------- #
 
 
@@ -238,7 +238,7 @@ async def test_classify_intent_promotes_build_with_history() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Failure modes                                                                #
+# Failure modes #
 # --------------------------------------------------------------------------- #
 
 
@@ -321,7 +321,7 @@ async def test_classify_intent_no_provider_falls_back() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Verdict mapping                                                              #
+# Verdict mapping #
 # --------------------------------------------------------------------------- #
 
 
@@ -352,7 +352,7 @@ def test_verdict_for_promotes_only_high_confidence_build() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Lazy-litellm contract                                                        #
+# Lazy-litellm contract #
 # --------------------------------------------------------------------------- #
 
 
@@ -364,12 +364,12 @@ def test_lazy_litellm_contract_for_intent_router() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Surface key — W58 round 4                                                    #
+# Surface key — round 4 #
 # --------------------------------------------------------------------------- #
 
 
 def test_intent_classifier_has_dedicated_surface_key() -> None:
-    """The classifier owns its own surface key — not borrowed from W34's
+    """The classifier owns its own surface key — not borrowed from's
     ``settings_autocomplete``. Audit-log filtering and per-surface model
     tuning treat the two as independent.
     """

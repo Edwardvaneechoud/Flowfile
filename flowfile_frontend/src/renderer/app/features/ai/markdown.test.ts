@@ -1,16 +1,16 @@
-// W66 — unit tests for the constrained markdown helper.
+// Unit tests for the constrained markdown helper.
 //
-// `renderSafeMarkdown` is the renderer behind the W35 diff preview's
+// `renderSafeMarkdown` is the renderer behind the diff preview's
 // rationale paragraph. The model emits markdown (bold, code, lists,
 // links, horizontal rules); the helper turns that into sanitised HTML
 // constrained to a small allow-list. Tests here cover both the happy
-// formatting path (AC #6 / #8) and the script-stripping safety guarantee
-// (AC #7).
+// formatting path and the script-stripping safety guarantee.
 //
 // AiDiffPreview.vue's "renderer" surface is just `v-html` over this
-// helper's output — the meaningful logic lives here. Same posture as
-// W61's `aiDiffTypes.test.ts` extracts (vitest is node-only, no jsdom,
-// so component-level rendering tests would need a different runner).
+// helper's output — the meaningful logic lives here. Same posture
+// as the `aiDiffTypes.test.ts` extracts (vitest is node-only, no
+// jsdom, so component-level rendering tests would need a different
+// runner).
 //
 // dompurify reaches for `window.trustedTypes` in node and falls back
 // gracefully — no jsdom polyfill needed for these assertions.

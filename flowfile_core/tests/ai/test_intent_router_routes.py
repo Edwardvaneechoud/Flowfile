@@ -1,4 +1,4 @@
-"""W58 — ``POST /ai/route`` endpoint tests.
+"""``POST /ai/route`` endpoint tests.
 
 Cases:
 
@@ -13,7 +13,7 @@ Cases:
 * ``test_route_unknown_provider_returns_404``.
 * ``test_route_unconfigured_returns_409``.
 * ``test_route_disabled_returns_503`` — ``FEATURE_FLAG_AI=False``
-  short-circuits via the W17 router-level dependency.
+  short-circuits via the router-level dependency.
 * ``test_route_validates_message_present`` — empty ``message`` → 422.
 * ``test_route_emits_audit_event`` — every classification persists an
   ``auto_promotion_classified`` audit row with the expected fields.
@@ -38,7 +38,7 @@ from flowfile_core.configs import settings as core_settings
 
 
 # --------------------------------------------------------------------------- #
-# Fixtures                                                                     #
+# Fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -103,7 +103,7 @@ def patch_classify(monkeypatch: pytest.MonkeyPatch):
 
 
 # --------------------------------------------------------------------------- #
-# Verdict mapping                                                              #
+# Verdict mapping #
 # --------------------------------------------------------------------------- #
 
 
@@ -184,7 +184,7 @@ def test_route_forwards_history_to_classifier(
     patch_get_configured_provider: _FakeProvider,
     patch_classify: dict[str, Any],
 ) -> None:
-    """W58 round 2 — the route forwards ``history`` to ``classify_intent``
+    """round 2 — the route forwards ``history`` to ``classify_intent``
     as a list of ``Message`` objects so the LLM can use prior chat context
     to disambiguate short follow-ups like *"can you implement?"*."""
     patch_classify["result"] = IntentClassification(
@@ -236,7 +236,7 @@ def test_route_promotes_pronoun_followup_after_build_shaped_prior_turn(
     patch_get_configured_provider: _FakeProvider,
     patch_classify: dict[str, Any],
 ) -> None:
-    """W58 round 4 regression — the *"Can you implement?"* smoke-test case.
+    """round 4 regression — the *"Can you implement?"* smoke-test case.
 
     A short pronoun-y follow-up after an assistant turn that proposed
     concrete nodes / steps must classify as ``build`` with confidence at
@@ -297,7 +297,7 @@ def test_route_promotes_pronoun_followup_after_build_shaped_prior_turn(
 
 
 # --------------------------------------------------------------------------- #
-# Failure-mode tolerance                                                       #
+# Failure-mode tolerance #
 # --------------------------------------------------------------------------- #
 
 
@@ -336,7 +336,7 @@ def test_route_returns_chat_verdict_when_classifier_fails(
 
 
 # --------------------------------------------------------------------------- #
-# Provider error mapping                                                       #
+# Provider error mapping #
 # --------------------------------------------------------------------------- #
 
 
@@ -375,7 +375,7 @@ def test_route_disabled_returns_503(
     patch_get_configured_provider: _FakeProvider,
     patch_classify: dict[str, Any],
 ) -> None:
-    """Inheriting W17's router-level dependency: flipping the flag off
+    """Inheriting's router-level dependency: flipping the flag off
     must return 503 here too. Read ``FEATURE_FLAG_AI`` off the module via
     ``core_settings`` rather than caching the symbol — see the
     :mod:`test_chat_routes` note for context."""
@@ -396,7 +396,7 @@ def test_route_disabled_returns_503(
 
 
 # --------------------------------------------------------------------------- #
-# Request validation                                                           #
+# Request validation #
 # --------------------------------------------------------------------------- #
 
 
@@ -417,7 +417,7 @@ def test_route_validates_provider_present(authed_client: TestClient) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Audit-event emission                                                         #
+# Audit-event emission #
 # --------------------------------------------------------------------------- #
 
 
@@ -465,9 +465,9 @@ def test_route_emits_audit_event(
     assert event.tool_args is not None
     args = event.tool_args
     assert args["event"] == "auto_promotion_classified"
-    # W58 round 4 — audit row carries the dedicated ``intent_classifier``
+    # round 4 — audit row carries the dedicated ``intent_classifier``
     # surface so post-launch tuning can filter classifier rows independently
-    # of the W34 ``settings_autocomplete`` autocomplete tier they used to
+    # of the ``settings_autocomplete`` autocomplete tier they used to
     # share.
     assert args["surface"] == "intent_classifier"
     assert args["kind"] == "build"
@@ -505,7 +505,7 @@ def test_route_audit_failure_does_not_break_response(
 
 
 # --------------------------------------------------------------------------- #
-# Lazy-litellm contract                                                        #
+# Lazy-litellm contract #
 # --------------------------------------------------------------------------- #
 
 

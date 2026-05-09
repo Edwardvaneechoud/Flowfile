@@ -1,18 +1,19 @@
 <script setup lang="ts">
-// W35 — Drawer-side wrapper that connects the renderer to the store.
+// Drawer-side wrapper that connects the renderer to the store.
 //
 // Mounted from `AiAssistant.vue` above the message list. Renders
-// nothing while no diff is staged (so the chat surface remains clean
-// for read-only conversation), and the diff preview otherwise. The
-// "last applied" toast is a brief confirmation that the user can
-// dismiss; it auto-clears when the next diff is staged.
+// nothing while no diff is staged (so the chat surface remains
+// clean for read-only conversation), and the diff preview
+// otherwise. The "last applied" toast is a brief confirmation that
+// the user can dismiss; it auto-clears when the next diff is staged.
 //
-// W49 — the optional rejection-note input now lives inside AiDiffPreview's
-// sticky footer (replaces Accept/Reject in-place when the user clicks
-// Reject). Keeps the confirmation in the same prominent location instead
-// of pushing it down toward the composer, where the buttons used to
-// visually collide with the composer's top border. AiDiffPreview emits
-// `reject` with a `note` payload (string | null); we forward it to the
+// The optional rejection-note input lives inside AiDiffPreview's
+// sticky footer (replaces Accept/Reject in-place when the user
+// clicks Reject). Keeps the confirmation in the same prominent
+// location instead of pushing it down toward the composer, where
+// the buttons used to visually collide with the composer's top
+// border. AiDiffPreview emits `reject` with a `note` payload
+// (string | null); we forward it to the
 // store as before.
 
 import { useAiDiffStore } from "../../stores/ai-diff-store";

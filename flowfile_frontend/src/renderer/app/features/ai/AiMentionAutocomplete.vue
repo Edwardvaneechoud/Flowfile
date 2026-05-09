@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// W24 — autocomplete dropdown for `@`-mentions in the AI chat composer.
+// Autocomplete dropdown for `@`-mentions in the AI chat composer.
 // Pure presentation: receives candidates + activeIndex from a parent
 // (which owns the parsing via `useMentionAutocomplete`) and emits picks
 // or dismissals back. Caret-relative positioning is the parent's call;

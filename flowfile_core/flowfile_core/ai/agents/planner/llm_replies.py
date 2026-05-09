@@ -15,7 +15,6 @@ from typing import Any
 
 from flowfile_core.ai.tools.executor import ToolExecutionResult
 
-
 _SETTINGS_REPLY_MAX_CHARS = 2000
 """Cap on the JSON-serialised settings echo in the LLM tool reply.
 

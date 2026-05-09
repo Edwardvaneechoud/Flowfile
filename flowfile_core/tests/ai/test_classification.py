@@ -1,4 +1,4 @@
-"""W31 — Node-type classification tests."""
+"""Node-type classification tests."""
 
 from __future__ import annotations
 

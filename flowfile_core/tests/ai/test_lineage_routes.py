@@ -1,4 +1,4 @@
-"""W51 — "Lineage Q&A across runs" endpoint tests.
+""""Lineage Q&A across runs" endpoint tests.
 
 Cases:
 
@@ -7,7 +7,7 @@ Cases:
   ``_collect_run_history`` to return a deterministic window, POSTs, and
   verifies the SSE response carries ``event: chunk`` blocks +
   ``event: done``. Inspects the captured ``messages`` argument to
-  ``provider.stream()`` to assert the W22 system prompt + the
+  ``provider.stream()`` to assert the system prompt + the
   ``## Run history`` + ``## Question`` blocks all reach the LLM.
 * ``test_lineage_question_pins_all_nodes_when_no_focus`` — capture
   ``render_prompt_context`` args; assert all flow node ids are passed
@@ -30,7 +30,7 @@ Cases:
   ``render_prompt_context`` args; assert ``surface="lineage"`` is
   passed.
 * ``test_lineage_question_samples_mode_forwarded`` — body's
-  ``samples_mode`` reaches W22's ``render_prompt_context`` call.
+  ``samples_mode`` reaches's ``render_prompt_context`` call.
 * ``test_lineage_question_history_limit_forwarded`` — body's
   ``history_limit`` is threaded through to
   ``catalog_service.list_runs(limit=...)``.
@@ -43,7 +43,7 @@ Cases:
 * ``test_lineage_question_unconfigured_returns_409`` — no BYOK row +
   no env var → 409 with the ``ProviderNotConfiguredError`` message.
 * ``test_lineage_question_disabled_returns_503`` — flipping
-  ``FEATURE_FLAG_AI`` off short-circuits at W17's gate.
+  ``FEATURE_FLAG_AI`` off short-circuits at's gate.
 * ``test_lineage_question_validates_required_fields`` — request
   validation on missing ``flow_id`` / ``provider`` / ``question``,
   including parametrised "blank question".
@@ -98,7 +98,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
 
 # --------------------------------------------------------------------------- #
-# Shared fixtures                                                              #
+# Shared fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -116,8 +116,8 @@ class FakeProvider:
     """Bare ``Provider``-shaped stub.
 
     Records the kwargs ``stream()`` is called with so tests can inspect
-    the messages that reach the LLM (system prompt + the W22 user body
-    + the W51 ``## Run history`` + ``## Question`` blocks).
+    the messages that reach the LLM (system prompt + the user body
+    + the ``## Run history`` + ``## Question`` blocks).
     """
 
     def __init__(self, chunks: list[StreamChunk] | None = None) -> None:
@@ -154,7 +154,7 @@ def patch_get_configured_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[F
 
 
 # --------------------------------------------------------------------------- #
-# Flow fixtures                                                                #
+# Flow fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -364,7 +364,7 @@ def registered_flow_with_in_memory_run() -> Iterator[FlowGraph]:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Happy path                                                                #
+# 1. Happy path #
 # --------------------------------------------------------------------------- #
 
 
@@ -397,9 +397,9 @@ def test_lineage_question_emits_provider_chunks(
     assert system_msg.content.strip(), "system prompt must not be empty"
 
     assert user_msg.role == "user"
-    # W22's render_prompt_context surfaces "## Subgraph" for the deterministic body.
+    #'s render_prompt_context surfaces "## Subgraph" for the deterministic body.
     assert "## Subgraph" in user_msg.content
-    # The W51 history + question blocks land verbatim.
+    # The history + question blocks land verbatim.
     assert "## Run history" in user_msg.content
     assert "Showing last 3 run(s)" in user_msg.content
     assert "## Question" in user_msg.content
@@ -412,7 +412,7 @@ def test_lineage_question_emits_provider_chunks(
 
 
 # --------------------------------------------------------------------------- #
-# 2. Pinned-node-id contract                                                   #
+# 2. Pinned-node-id contract #
 # --------------------------------------------------------------------------- #
 
 
@@ -498,7 +498,7 @@ def test_lineage_question_focus_node_not_in_flow_returns_422(
 
 
 # --------------------------------------------------------------------------- #
-# 3. Prompt block format                                                       #
+# 3. Prompt block format #
 # --------------------------------------------------------------------------- #
 
 
@@ -590,7 +590,7 @@ def test_lineage_question_falls_back_to_in_memory_run_info(
 
 
 # --------------------------------------------------------------------------- #
-# 4. Surface contract                                                          #
+# 4. Surface contract #
 # --------------------------------------------------------------------------- #
 
 
@@ -667,7 +667,7 @@ def test_lineage_question_history_limit_forwarded(
 
 
 # --------------------------------------------------------------------------- #
-# 4b. W48 — prospective schema reaches the lineage surface                     #
+# 4b. — prospective schema reaches the lineage surface #
 # --------------------------------------------------------------------------- #
 
 
@@ -678,12 +678,12 @@ _W48_LINEAGE_FLOW_ID = 9947
 def registered_cold_flow_for_w48() -> Iterator[FlowGraph]:
     """Same shape as ``registered_flow`` but with the filter's
     ``predicted_schema`` cleared post-construction so it lands cold —
-    the W48 path must auto-resolve it when ``render_prompt_context``
+    the path must auto-resolve it when ``render_prompt_context``
     walks the subgraph from the lineage route.
     """
 
     flow = _build_linear_flow(name="w48_lineage")
-    # Override the flow_id so we don't clash with the W51 ``_FLOW_ID`` fixture
+    # Override the flow_id so we don't clash with the ``_FLOW_ID`` fixture
     # if both fixtures are alive at the same time. The setter cascades to
     # flow_settings + every node's setting_input.
     flow.flow_id = _W48_LINEAGE_FLOW_ID
@@ -701,10 +701,10 @@ def test_lineage_question_user_block_contains_columns_for_un_run_static_upstream
     patch_collect_run_history: dict[str, Any],
     registered_cold_flow_for_w48: FlowGraph,
 ) -> None:
-    """W48 — a lineage question over a flow whose static upstream nodes
-    are un-run (``predicted_schema=None``) → the W22 user block carries
-    real column names instead of the ``schema: unknown`` sentinel. W51
-    inherits the W22 fix transparently."""
+    """a lineage question over a flow whose static upstream nodes
+    are un-run (``predicted_schema=None``) → the user block carries
+    real column names instead of the ``schema: unknown`` sentinel.
+    inherits the fix transparently."""
 
     response = authed_client.post(
         "/ai/lineage_question",
@@ -720,7 +720,7 @@ def test_lineage_question_user_block_contains_columns_for_un_run_static_upstream
     assert len(captured) == 2  # system + user (W22 + history + question)
     _system_msg, user_msg = captured
 
-    # The lineage user message is W22's body + history block + question.
+    # The lineage user message is's body + history block + question.
     # The filter's section must surface its columns — the bug-of-record
     # was the assistant seeing "schema: unknown" for the filter and
     # asking the user to run the upstream nodes.
@@ -729,7 +729,7 @@ def test_lineage_question_user_block_contains_columns_for_un_run_static_upstream
     assert "region" in user_msg.content
 
     filter_block_start = user_msg.content.find("### filter_eu")
-    assert filter_block_start != -1, "expected ### filter_eu header in W22 user block"
+    assert filter_block_start != -1, "expected ### filter_eu header in user block"
     # Find where the filter block ends — at the next ### header or at the
     # ## Run history block if no further nodes.
     next_header = user_msg.content.find("\n##", filter_block_start + 1)
@@ -739,13 +739,13 @@ def test_lineage_question_user_block_contains_columns_for_un_run_static_upstream
         else user_msg.content[filter_block_start:]
     )
     assert "schema: unknown" not in filter_block, (
-        f"filter block still reports schema: unknown — W48 fix not applied via lineage route. "
+        f"filter block still reports schema: unknown — fix not applied via lineage route. "
         f"Block:\n{filter_block[:500]}"
     )
 
 
 # --------------------------------------------------------------------------- #
-# 5. Error mapping                                                             #
+# 5. Error mapping #
 # --------------------------------------------------------------------------- #
 
 
@@ -811,7 +811,7 @@ def test_lineage_question_disabled_returns_503(
     patch_collect_run_history: dict[str, Any],
     registered_flow: FlowGraph,
 ) -> None:
-    """Inheriting W17's router-level dependency means flipping the flag
+    """Inheriting's router-level dependency means flipping the flag
     off must return 503 here too."""
 
     original = core_settings.FEATURE_FLAG_AI.value
@@ -828,7 +828,7 @@ def test_lineage_question_disabled_returns_503(
 
 
 # --------------------------------------------------------------------------- #
-# 6. Request validation                                                        #
+# 6. Request validation #
 # --------------------------------------------------------------------------- #
 
 
@@ -867,7 +867,7 @@ def test_lineage_question_rejects_oversize_history_limit(authed_client: TestClie
 
 
 # --------------------------------------------------------------------------- #
-# 7. Surface lockstep                                                          #
+# 7. Surface lockstep #
 # --------------------------------------------------------------------------- #
 
 
@@ -894,7 +894,7 @@ def test_lineage_surface_in_lockstep() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 8. Pure-function tests                                                       #
+# 8. Pure-function tests #
 # --------------------------------------------------------------------------- #
 
 
@@ -1029,7 +1029,7 @@ def test_parse_node_results_json_is_defensive() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 9. Lazy-litellm contract                                                     #
+# 9. Lazy-litellm contract #
 # --------------------------------------------------------------------------- #
 
 
@@ -1043,7 +1043,7 @@ def test_lazy_litellm_import_for_lineage_routes() -> None:
     Caveat: a sibling test may have already imported ``litellm`` in
     this process (the suite shares a Python interpreter). When that's
     the case we can't observe the lazy contract, so the assertion is
-    gated on a clean snapshot — same posture as W12 / W20 / W23 / W50.
+    gated on a clean snapshot — same posture as / / /.
     """
 
     litellm_already_loaded = any(name == "litellm" or name.startswith("litellm.") for name in sys.modules)

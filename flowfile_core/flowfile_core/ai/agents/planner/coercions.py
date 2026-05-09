@@ -18,7 +18,6 @@ import json
 import re
 from typing import Any
 
-
 _FORMULA_NAME_PATTERNS: tuple[tuple[str, int], ...] = (
     # Phrase forms the user typically uses to name a derived column.
     # Each pattern is (regex, group index) — group 1 captures the name.

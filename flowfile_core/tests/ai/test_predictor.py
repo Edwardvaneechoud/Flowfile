@@ -1,4 +1,4 @@
-"""W31 — Predictor + D011 tier handler tests."""
+"""Predictor + tier handler tests."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def _flow_with_orders(flow_id: int = 100) -> FlowGraph:
 
 
 # --------------------------------------------------------------------------- #
-# Mirror-graph predict                                                         #
+# Mirror-graph predict #
 # --------------------------------------------------------------------------- #
 
 
@@ -115,7 +115,7 @@ def test_mirror_isolation_does_not_mutate_real_graph() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# D011 tier handler                                                            #
+# tier handler #
 # --------------------------------------------------------------------------- #
 
 
@@ -178,7 +178,7 @@ def test_resolve_upstream_no_callback_warns() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Column-ref collection                                                        #
+# Column-ref collection #
 # --------------------------------------------------------------------------- #
 
 
@@ -238,7 +238,7 @@ def test_collect_column_refs_unknown_node_returns_empty() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# schema_to_dict_list                                                          #
+# schema_to_dict_list #
 # --------------------------------------------------------------------------- #
 
 

@@ -36,30 +36,30 @@ The lazy-litellm contract is preserved — this package must not import
 ``litellm`` at load time. The provider call goes through the provider
 seam, which lazy-loads litellm in its own subclass.
 
-The module was split into a package on 2026-05-09 for navigability.
-The public API is preserved verbatim — every symbol the old
-``planner.py`` exposed (including the underscored helpers tests reach
-for directly) is re-exported here so ``from flowfile_core.ai.agents.planner
-import ...`` continues to work without churn.
+The module was split into a package for navigability. The public API
+is preserved verbatim — every symbol the old ``planner.py`` exposed
+(including the underscored helpers tests reach for directly) is
+re-exported here so ``from flowfile_core.ai.agents.planner import ...``
+continues to work without churn.
 """
 
 from __future__ import annotations
 
 # Public types + constants
 from ._internal import (
-    DEFAULT_MAX_RETRIES_PER_STEP,
-    DEFAULT_MAX_STEPS,
-    DEFAULT_MAX_TOKENS,
-    OpKind,
-    PlannerEvent,
-    PlannerEventName,
-    RATIONALE_MAX_LEN,
     _ADD_PREFIX,
     _AGENT_STAGED_OP_TO_SURFACE,
     _MANDATORY_TOOL_CALL_STAGES,
     _SETTINGS_DEPENDENCY_FIELDS,
     _STAGED_SINGLE_OP_TOOL_NAMES,
     _STAGED_STATE_MACHINE_SURFACES,
+    DEFAULT_MAX_RETRIES_PER_STEP,
+    DEFAULT_MAX_STEPS,
+    DEFAULT_MAX_TOKENS,
+    RATIONALE_MAX_LEN,
+    OpKind,
+    PlannerEvent,
+    PlannerEventName,
     _check_self_loop,
     _classify_op_kind,
     _collect_live_node_ids,
@@ -118,8 +118,8 @@ from .staged_schemas import (
     _staged_dict_to_flowfile_column,
 )
 
-
 __all__ = [
+    # Public API — same surface the original ``planner.py`` exported.
     "DEFAULT_MAX_RETRIES_PER_STEP",
     "DEFAULT_MAX_STEPS",
     "DEFAULT_MAX_TOKENS",
@@ -128,6 +128,53 @@ __all__ = [
     "PlannerEvent",
     "PlannerEventName",
     "RATIONALE_MAX_LEN",
+    "inject_followup_message",
+    "run_planner_session",
+    # Internals re-exported because tests / agent_routes reach for
+    # them directly via the package facade. Listing them in __all__
+    # keeps ruff happy and documents the intentional public-from-tests
+    # surface.
+    "_ADD_PREFIX",
+    "_AGENT_STAGED_OP_TO_SURFACE",
+    "_MANDATORY_TOOL_CALL_STAGES",
+    "_REJECTED_DIFF_DEFAULT_NOTE",
+    "_SETTINGS_DEPENDENCY_FIELDS",
+    "_STAGED_SINGLE_OP_TOOL_NAMES",
+    "_STAGED_STATE_MACHINE_SURFACES",
+    "_allocate_node_id",
+    "_arg_summary",
+    "_arg_summary_for_add",
+    "_build_fill_settings_user_message",
+    "_build_initial_messages",
+    "_build_pick_upstream_staged_addendum",
+    "_build_staged_tool_catalog",
+    "_capture_rationale",
+    "_check_self_loop",
+    "_classify_op_kind",
+    "_coerce_formula_bare_string_args",
+    "_collect_live_node_ids",
+    "_collect_staged_upstream_positions",
+    "_collect_staged_upstream_schemas",
+    "_count_prior_staged_with_same_upstream",
+    "_derive_formula_output_column_name",
+    "_extract_staged_settings_for_reply",
+    "_format_ambiguous_insertion_detail",
+    "_format_columns",
+    "_log_stage_transition",
+    "_looks_like_outer_envelope_value",
+    "_looks_like_question",
+    "_op_count",
+    "_payload_node_id",
+    "_read_settings_dependency_field",
+    "_recover_textual_tool_call",
+    "_refresh_system_prompt_for_stage",
+    "_resolve_current_surface",
+    "_resolve_insertion_context",
+    "_staged_dict_to_flowfile_column",
+    "_summarise_result_for_llm",
+    "_try_parse_function_call_shape",
+    "_try_parse_json_object_shape",
+    "_walk_balanced_braces",
     "inject_followup_message",
     "run_planner_session",
 ]

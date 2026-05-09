@@ -1,4 +1,4 @@
-"""W22 — Context builder unit tests.
+"""Context builder unit tests.
 
 Covers the public surface of :mod:`flowfile_core.ai.context`:
 
@@ -44,7 +44,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 # --------------------------------------------------------------------------- #
-# Test fixtures                                                                #
+# Test fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -143,16 +143,16 @@ def linear_flow() -> FlowGraph:
 def cold_static_flow() -> FlowGraph:
     """orders (1) → filter_eu (2). predicted_schema NOT pre-warmed.
 
-    Used by the W48 tier-1 prospective-schema tests. ``filter`` is
+    Used by the tier-1 prospective-schema tests. ``filter`` is
     classified ``static`` (predictable via the mirror-graph path), so
-    the W48 helper should resolve its schema via the production
+    the helper should resolve its schema via the production
     schema-prediction path on the next ``render_prompt_context`` call.
     """
 
     flow = _basic_flow()
     _add_orders_input(flow)
     _add_filter(flow)
-    # Be explicit: ensure the filter's cache is empty so the W48 helper
+    # Be explicit: ensure the filter's cache is empty so the helper
     # is the only thing that can populate it during the test.
     flow.get_node(2).node_schema.predicted_schema = None
     return flow
@@ -162,9 +162,9 @@ def cold_static_flow() -> FlowGraph:
 def cold_dynamic_flow() -> FlowGraph:
     """orders (1) → polars_passthrough (2). polars_code is dynamic.
 
-    The W48 helper short-circuits via ``is_predictable_via_mirror`` for
+    The helper short-circuits via ``is_predictable_via_mirror`` for
     dynamic node types — chat / lineage / Assist must not trigger
-    kernel dry-run (D003 + D012). The snapshot stays
+    kernel dry-run. The snapshot stays
     ``schema_status="unknown"``.
     """
 
@@ -189,7 +189,7 @@ def cold_dynamic_flow() -> FlowGraph:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Subgraph extraction                                                       #
+# 1. Subgraph extraction #
 # --------------------------------------------------------------------------- #
 
 
@@ -229,7 +229,7 @@ def test_extract_subgraph_unknown_pin_returns_empty(linear_flow: FlowGraph) -> N
 
 
 # --------------------------------------------------------------------------- #
-# 2. Node projection                                                            #
+# 2. Node projection #
 # --------------------------------------------------------------------------- #
 
 
@@ -246,7 +246,7 @@ def test_snapshot_node_unknown_schema(linear_flow: FlowGraph) -> None:
     node = linear_flow.get_node(2)
     # Wipe predicted_schema to simulate a cold flow upstream.
     node.node_schema.predicted_schema = None
-    # W48: pass resolve_schemas=False to keep this test on the legacy
+    # pass resolve_schemas=False to keep this test on the legacy
     # cache-only path. Default-on would auto-resolve this static-schema
     # filter via FlowNode.get_predicted_schema(force=True).
     snap = snapshot_node(node, resolve_schemas=False)
@@ -266,7 +266,7 @@ def test_snapshot_node_samples_off_by_default(linear_flow: FlowGraph) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 3. Layered system-prompt assembly (D008)                                      #
+# 3. Layered system-prompt assembly #
 # --------------------------------------------------------------------------- #
 
 
@@ -298,7 +298,7 @@ def test_surface_to_level_covers_every_surface() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 4. Token estimator + budget                                                   #
+# 4. Token estimator + budget #
 # --------------------------------------------------------------------------- #
 
 
@@ -510,7 +510,7 @@ def test_apply_budget_truncation_step_order() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 5. Mentions                                                                   #
+# 5. Mentions #
 # --------------------------------------------------------------------------- #
 
 
@@ -590,7 +590,7 @@ def test_resolve_mentions_by_id_string(linear_flow: FlowGraph) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6. End-to-end render_prompt_context                                           #
+# 6. End-to-end render_prompt_context #
 # --------------------------------------------------------------------------- #
 
 
@@ -629,7 +629,7 @@ def test_render_prompt_context_samples_off_default(linear_flow: FlowGraph) -> No
 
 def test_render_prompt_context_unknown_schema_propagates(linear_flow: FlowGraph) -> None:
     linear_flow.get_node(1).node_schema.predicted_schema = None
-    # W48: pass resolve_schemas=False to keep this test on the legacy
+    # pass resolve_schemas=False to keep this test on the legacy
     # cache-only path. Default-on would auto-resolve this manual_input
     # source node and the assertion would flip to "known".
     ctx = render_prompt_context(linear_flow, [1], surface="explain", resolve_schemas=False)
@@ -646,14 +646,14 @@ def test_render_user_message_handles_empty_subgraph() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6b. W48 — prospective schema resolution in W22                                #
+# 6b. — prospective schema resolution in #
 # --------------------------------------------------------------------------- #
 
 
 def test_render_prompt_context_resolves_static_upstream_via_callback(
     cold_static_flow: FlowGraph,
 ) -> None:
-    """W48: a cold static-schema upstream (filter) gets force-resolved
+    """a cold static-schema upstream (filter) gets force-resolved
     when render_prompt_context runs with the default resolve_schemas=True."""
 
     filter_node = cold_static_flow.get_node(2)
@@ -672,7 +672,7 @@ def test_render_prompt_context_resolves_static_upstream_via_callback(
     # so same-session repeat reads hit tier 0 (mirrors predictor.py:255).
     assert (
         filter_node.node_schema.predicted_schema
-    ), "expected the W48 helper to populate the filter's predicted_schema cache in place"
+    ), "expected the helper to populate the filter's predicted_schema cache in place"
     # The rendered user message names the actual columns instead of the
     # "schema: unknown" sentinel.
     assert "schema: unknown" not in ctx.user
@@ -682,8 +682,8 @@ def test_render_prompt_context_resolves_static_upstream_via_callback(
 def test_render_prompt_context_leaves_dynamic_upstream_unknown(
     cold_dynamic_flow: FlowGraph,
 ) -> None:
-    """W48: dynamic node types (polars_code) stay schema_status='unknown'
-    from the chat surface — kernel dry-run is W31-only per D003 + D012."""
+    """dynamic node types (polars_code) stay schema_status='unknown'
+    from the chat surface — kernel dry-run is-only per +."""
 
     polars_node = cold_dynamic_flow.get_node(2)
     assert polars_node.node_type == "polars_code"
@@ -695,7 +695,7 @@ def test_render_prompt_context_leaves_dynamic_upstream_unknown(
     assert polars_snap.schema_columns is None
     assert "schema: unknown" in ctx.user
     # The chat-surface helper must not have populated the cache for
-    # dynamic types — that path lives in W31's executor.
+    # dynamic types — that path lives in's executor.
     assert polars_node.node_schema.predicted_schema in (None, [])
 
 
@@ -703,7 +703,7 @@ def test_render_prompt_context_in_place_mutation_persists_for_session(
     cold_static_flow: FlowGraph,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """W48: the helper fires once per cold node; subsequent
+    """the helper fires once per cold node; subsequent
     render_prompt_context calls hit the populated cache (tier 0)."""
 
     from flowfile_core.ai.context import builder
@@ -731,7 +731,7 @@ def test_render_prompt_context_in_place_mutation_persists_for_session(
 def test_render_prompt_context_resolve_schemas_false_preserves_legacy_behaviour(
     cold_static_flow: FlowGraph,
 ) -> None:
-    """W48: opt-out matches today's cache-only semantics — no callbacks
+    """opt-out matches today's cache-only semantics — no callbacks
     fired, no in-place mutation, status stays 'unknown' for un-warmed nodes."""
 
     filter_node = cold_static_flow.get_node(2)
@@ -756,8 +756,8 @@ def test_render_prompt_context_d012_clean(
     cold_static_flow: FlowGraph,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """W48: the chat / lineage / Assist context build never invokes
-    LazyFrame.collect — D012's worker-only-materialization invariant.
+    """the chat / lineage / Assist context build never invokes
+    LazyFrame.collect's worker-only-materialization invariant.
 
     Patches polars.LazyFrame.collect to raise; render_prompt_context must
     still complete on a cold static flow.
@@ -779,14 +779,14 @@ def test_render_prompt_context_d012_clean(
 
 
 # --------------------------------------------------------------------------- #
-# 7. Lazy-import contract                                                       #
+# 7. Lazy-import contract #
 # --------------------------------------------------------------------------- #
 
 
 def test_lazy_litellm_import_for_context() -> None:
     """Importing ``flowfile_core.ai.context.builder`` must not pull litellm.
 
-    Mirrors the W11 / W13 / W15 pattern.
+    Mirrors the / / pattern.
     """
 
     cleared: dict[str, Any] = {}
@@ -812,7 +812,7 @@ def test_lazy_litellm_import_for_context() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 8. BudgetReport dataclass defaults                                            #
+# 8. BudgetReport dataclass defaults #
 # --------------------------------------------------------------------------- #
 
 
@@ -830,7 +830,7 @@ def test_budget_report_dataclass_defaults() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W56 — per-node-type catalog block in assemble_system_prompt                  #
+# per-node-type catalog block in assemble_system_prompt #
 # --------------------------------------------------------------------------- #
 
 
@@ -848,9 +848,9 @@ _W56_REPRESENTATIVE_NODE_TOOLS = (
 
 @pytest.mark.parametrize("surface", ["agent_complex"])
 def test_w56_agent_surfaces_include_catalog_block(surface: SurfaceLiteral) -> None:
-    """W56 AC2 — agent_complex prompt includes the catalog header plus
+    """AC2 — agent_complex prompt includes the catalog header plus
     several representative node-type sections so the model sees
-    narrative grounding for each tool. (W71 v1.10 — legacy ``"agent"``
+    narrative grounding for each tool. (W71 — legacy ``"agent"``
     surface removed; ``agent_staged`` only renders the catalog at the
     ``pick_type`` stage, which is exercised by ``test_planner_staged.py``.)"""
     text = assemble_system_prompt(surface)
@@ -860,7 +860,7 @@ def test_w56_agent_surfaces_include_catalog_block(surface: SurfaceLiteral) -> No
 
 
 def test_w56_cmd_k_only_includes_preset_tools_in_catalog() -> None:
-    """W56 AC3 — cmd_k narrows the catalog to its preset's tools."""
+    """AC3 — cmd_k narrows the catalog to its preset's tools."""
     from flowfile_core.ai.tools.registry import SURFACE_PRESETS
 
     text = assemble_system_prompt("cmd_k")
@@ -877,7 +877,7 @@ def test_w56_cmd_k_only_includes_preset_tools_in_catalog() -> None:
 
 
 def test_w56_ghost_node_only_includes_preset_tools_in_catalog() -> None:
-    """W56 AC3 — ghost_node narrows the catalog to its preset's tools."""
+    """AC3 — ghost_node narrows the catalog to its preset's tools."""
     from flowfile_core.ai.tools.registry import SURFACE_PRESETS
 
     text = assemble_system_prompt("ghost_node")
@@ -894,14 +894,14 @@ def test_w56_ghost_node_only_includes_preset_tools_in_catalog() -> None:
 
 @pytest.mark.parametrize("surface", ["explain", "lineage", "docgen", "settings_autocomplete"])
 def test_w56_read_only_surfaces_do_not_get_tool_catalog(surface: SurfaceLiteral) -> None:
-    """W56 AC4 — read-only surfaces never see the agent-shaped Tool catalog
+    """AC4 — read-only surfaces never see the agent-shaped Tool catalog
     block (it'd be misleading — they can't call tools)."""
     text = assemble_system_prompt(surface)
     assert _W56_CATALOG_HEADER not in text, f"{surface} should not include the agent-shaped Tool catalog block"
 
 
 # --------------------------------------------------------------------------- #
-# W56 v2 — node-reference block on read-only / advisory surfaces                #
+# v2 — node-reference block on read-only / advisory surfaces #
 # --------------------------------------------------------------------------- #
 #
 # Motivated by the live transcript where the chat surface (uses
@@ -917,7 +917,7 @@ _W56_NODE_REFERENCE_HEADER = "## Flowfile node reference"
 
 @pytest.mark.parametrize("surface", ["explain", "lineage", "docgen"])
 def test_w56_advisory_surfaces_include_node_reference_block(surface: SurfaceLiteral) -> None:
-    """W56 v2 — explain / lineage / docgen carry a node-reference block.
+    """v2 — explain / lineage / docgen carry a node-reference block.
 
     The chat surface (surface="explain") was hallucinating UI elements
     because it had zero Flowfile vocabulary in its prompt. The node
@@ -930,7 +930,7 @@ def test_w56_advisory_surfaces_include_node_reference_block(surface: SurfaceLite
 
 @pytest.mark.parametrize("surface", ["explain", "lineage", "docgen"])
 def test_w56_node_reference_cites_real_palette_labels(surface: SurfaceLiteral) -> None:
-    """W56 v2 — node-reference block cites real palette labels from nodes.py.
+    """v2 — node-reference block cites real palette labels from nodes.py.
 
     Specifically asserts the user-transcript-relevant labels appear:
     'Group by' (the actual palette name for group_by), 'Filter data',
@@ -958,7 +958,7 @@ def test_w56_node_reference_cites_real_palette_labels(surface: SurfaceLiteral) -
 
 
 def test_w56_node_reference_includes_user_transcript_repro() -> None:
-    """W56 v2 — the customers-per-city worked example from the user
+    """v2 — the customers-per-city worked example from the user
     transcript is in the prompt verbatim (the example that motivated
     the v2 widening).
     """
@@ -971,7 +971,7 @@ def test_w56_node_reference_includes_user_transcript_repro() -> None:
 
 
 def test_w56_node_reference_omits_ops_tools() -> None:
-    """W56 v2 — read-only surfaces only see node-type tools, not ops.
+    """v2 — read-only surfaces only see node-type tools, not ops.
 
     The user can't call graph_ops / schema_ops / codegen_ops / meta from
     the canvas; surfacing them in the chat-facing reference would only
@@ -986,7 +986,7 @@ def test_w56_node_reference_omits_ops_tools() -> None:
 
 
 def test_w56_settings_autocomplete_skips_both_blocks() -> None:
-    """W56 v2 — settings_autocomplete is constrained-JSON output only;
+    """v2 — settings_autocomplete is constrained-JSON output only;
     it doesn't need either narrative block."""
     text = assemble_system_prompt("settings_autocomplete")
     assert _W56_CATALOG_HEADER not in text
@@ -994,7 +994,7 @@ def test_w56_settings_autocomplete_skips_both_blocks() -> None:
 
 
 def test_w56_node_reference_sorted_for_cache_stability() -> None:
-    """W56 v2 — node-reference headings are alphabetical (cache hygiene)."""
+    """v2 — node-reference headings are alphabetical (cache hygiene)."""
     text = assemble_system_prompt("explain")
     block_start = text.find(_W56_NODE_REFERENCE_HEADER)
     assert block_start >= 0
@@ -1007,7 +1007,7 @@ def test_w56_node_reference_sorted_for_cache_stability() -> None:
 
 
 def test_w56_explain_surface_token_budget_reasonable() -> None:
-    """W56 v2 — the chat / advisory prompt stays within a sensible bound.
+    """v2 — the chat / advisory prompt stays within a sensible bound.
 
     The chat surface combines base.md + assist.md + the node reference;
     expect ~5-8 K tokens total. We cap at 12 K (chars/4) to flag any
@@ -1023,9 +1023,7 @@ def test_w56_explain_surface_token_budget_reasonable() -> None:
 
 
 def test_w56_agent_surface_token_budget_under_70_pct_of_agent_budget() -> None:
-    """W56 AC6 — full-catalog agent prompt fits inside the per-call budget.
-
-    W71 v1.10 — legacy ``"agent"`` surface removed; the equivalent
+    """AC6 — full-catalog agent prompt fits inside the per-call budget. — legacy ``"agent"`` surface removed; the equivalent
     full-catalog prompt now lives on ``agent_complex`` (96K budget).
     The static prompt has to carry the catalog plus the layered base +
     planner suffix and still leave room for the per-call user message
@@ -1043,7 +1041,7 @@ def test_w56_agent_surface_token_budget_under_70_pct_of_agent_budget() -> None:
 
 
 def test_w56_catalog_block_does_not_leak_html_comments() -> None:
-    """W56 — the catalog block uses plain markdown only; no HTML comment markers."""
+    """the catalog block uses plain markdown only; no HTML comment markers."""
     text = assemble_system_prompt("agent_complex")
     # The HTML-comment guard from test_assemble_system_prompt_per_surface already
     # covers the layered prompts, but the catalog block is generated fresh —
@@ -1053,7 +1051,7 @@ def test_w56_catalog_block_does_not_leak_html_comments() -> None:
 
 
 def test_w56_catalog_block_renders_descriptions_in_stable_order() -> None:
-    """W56 — catalog ordering is stable (alphabetical by tool name).
+    """catalog ordering is stable (alphabetical by tool name).
 
     Stable ordering means the prompt-cache hash is deterministic across
     process restarts, which matters for any caching layer downstream.
@@ -1068,14 +1066,14 @@ def test_w56_catalog_block_renders_descriptions_in_stable_order() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W65 — sample fetch must use cached endpoint, not _predicted_data_getter      #
+# sample fetch must use cached endpoint, not _predicted_data_getter #
 # --------------------------------------------------------------------------- #
 
 
 def test_render_prompt_context_default_samples_mode_is_off(linear_flow: FlowGraph) -> None:
-    """W65 — calling ``render_prompt_context`` without an explicit
+    """calling ``render_prompt_context`` without an explicit
     ``samples_mode`` must produce snapshots whose columns carry no ``sample``
-    values. Pins the dev-default flip from ``"regex"`` to ``"off"`` per D009.
+    values. Pins the dev-default flip from ``"regex"`` to ``"off"`` per.
     """
 
     ctx = render_prompt_context(linear_flow, [3], surface="explain")
@@ -1089,9 +1087,9 @@ def test_render_prompt_context_never_invokes_predicted_data_getter(
     linear_flow: FlowGraph,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """W65 — even with samples_mode="regex" (opt-in), the sample-fetch path
+    """even with samples_mode="regex" (opt-in), the sample-fetch path
     must read from the cached :meth:`FlowNode.get_table_example` endpoint
-    and never call ``_predicted_data_getter``. Pre-W65, ``_safe_get_sample_data``
+    and never call ``_predicted_data_getter``. previously, ``_safe_get_sample_data``
     invoked the getter unconditionally — running the node's ``_function``
     on materialized upstream data and triggering ``.collect()`` for any
     node whose function does so (random_split, train_model).
@@ -1112,7 +1110,7 @@ def test_render_prompt_context_never_invokes_predicted_data_getter(
 
 
 def test_safe_get_sample_data_returns_none_when_node_not_run(linear_flow: FlowGraph) -> None:
-    """W65 — :func:`_safe_get_sample_data` returns ``None`` for nodes that
+    """:func:`_safe_get_sample_data` returns ``None`` for nodes that
     haven't been run with their current setup. Cached samples only —
     no node execution from the chat path.
     """
@@ -1128,7 +1126,7 @@ def test_safe_get_sample_data_returns_none_when_node_not_run(linear_flow: FlowGr
 def test_safe_get_sample_data_reads_from_example_data_generator(
     linear_flow: FlowGraph,
 ) -> None:
-    """W65 — when ``node.results.example_data_generator`` is populated (the
+    """when ``node.results.example_data_generator`` is populated (the
     post-run cache surface), :func:`_safe_get_sample_data` returns the
     cached rows up to ``n``. Mirrors what ``GET /node/data`` does.
     """
@@ -1163,9 +1161,9 @@ def test_safe_get_sample_data_reads_from_example_data_generator(
 def test_render_prompt_context_no_lazyframe_collect_on_random_split_upstream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """W65 — extends ``test_render_prompt_context_d012_clean`` to the actual
+    """extends ``test_render_prompt_context_d012_clean`` to the actual
     hang flow. Build a ``read → random_split`` graph; monkeypatch
-    ``pl.LazyFrame.collect`` to raise; run ``render_prompt_context``. Pre-W65
+    ``pl.LazyFrame.collect`` to raise; run ``render_prompt_context``. previously
     the sample-fetch path called ``random_split._function(...)`` which
     invoked ``.collect()`` directly — this test would fail.
     """
@@ -1219,12 +1217,12 @@ def test_render_prompt_context_no_lazyframe_collect_on_random_split_upstream(
 
 
 # --------------------------------------------------------------------------- #
-# W71 v1.12B — palette label vs node_type disambiguation                       #
+# — palette label vs node_type disambiguation #
 # --------------------------------------------------------------------------- #
 
 
 def test_pick_type_prompt_warns_against_palette_labels() -> None:
-    """W71 v1.12B — at the ``pick_type`` stage of agent_staged the
+    """at the ``pick_type`` stage of agent_staged the
     catalog block must be followed by a do/don't section listing the
     palette-label vs node_type confusions that have caused real
     failures (sort_data, select_data, etc.). Without it small models
@@ -1241,11 +1239,11 @@ def test_pick_type_prompt_warns_against_palette_labels() -> None:
 
 
 def test_classify_stage_includes_multi_step_discipline_section() -> None:
-    """W71 v2.9B — the classify-stage prompt has a *"Multi-step
+    """the classify-stage prompt has a *"Multi-step
     discipline"* section that tells the LLM not to terminate with
     plan steps remaining. Specifically calls out the *"insert a
     node mid-flow without rewiring"* failure mode that bit the
-    2026-05-09 dogfood (agent added unique but stopped before
+    an earlier dogfood (agent added unique but stopped before
     reconnecting downstream nodes).
     """
     text = assemble_system_prompt("agent_staged", stage="classify")
@@ -1262,14 +1260,14 @@ def test_classify_stage_includes_multi_step_discipline_section() -> None:
 
 
 def test_classify_stage_includes_re_add_prevention_section() -> None:
-    """W71 v2.11A — classify prompt warns against re-adding a
+    """classify prompt warns against re-adding a
     same-type node already staged in the session. Direct response
     to the 2026-05-09 cross_join cascade dogfood (LLM re-staged
     cross_join after misreading a predictor warning).
     """
     text = assemble_system_prompt("agent_staged", stage="classify")
     text_lower = text.lower()
-    # Sub-block heading anchors the v2.11A insertion.
+    # Sub-block heading anchors the insertion.
     assert "re-adding a node that's already staged" in text_lower
     # Cross_join worked example — specific to this dogfood.
     assert "cross_join cascade" in text_lower
@@ -1281,7 +1279,7 @@ def test_classify_stage_includes_re_add_prevention_section() -> None:
 
 
 def test_classify_stage_now_includes_palette_disambiguation() -> None:
-    """W71 v1.14A.3 — supersedes the v1.12B *"only at pick_type"*
+    """supersedes the *"only at pick_type"*
     posture. Some models (qwen3-vl-32b on 2026-05-08) bypass
     classify_intent and emit pick_node_type directly at the classify
     stage. The classify-stage prompt must therefore carry the
@@ -1297,12 +1295,12 @@ def test_classify_stage_now_includes_palette_disambiguation() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W71 v1.12C — formula description + on-demand function list                   #
+# — formula description + on-demand function list #
 # --------------------------------------------------------------------------- #
 
 
 def test_formula_node_docs_uses_flowfile_expression_syntax() -> None:
-    """W71 v1.12C — the formula long description and chat-mode
+    """the formula long description and chat-mode
     instructions must reflect the *actual* Flowfile expression
     syntax (SQL-style ``[column_name]``) instead of the previous
     Polars-Python pseudo-code (``pl.col('first')``). Mentions of
@@ -1342,7 +1340,7 @@ def test_formula_node_docs_uses_flowfile_expression_syntax() -> None:
 
 
 def test_formula_long_description_leads_with_row_wise_constraint() -> None:
-    """W71 v1.13A — the formula long_description must lead with the
+    """the formula long_description must lead with the
     *"ROW-WISE ONLY — CANNOT aggregate"* assertion. Mid-paragraph
     guidance is the wrong place for a hard constraint; small models
     read past it and pick formula for count/sum/avg requests.
@@ -1372,7 +1370,7 @@ def test_formula_long_description_leads_with_row_wise_constraint() -> None:
 
 
 def test_filter_long_description_teaches_string_typed_value() -> None:
-    """2026-05-09 — the filter agent docstring must spell out that
+    """the filter agent docstring must spell out that
     ``basic_filter.value`` is a JSON string (even for numeric
     comparisons) and that ``operator`` names are snake_case, not
     symbols. Both points were missing and led to the "got int"
@@ -1420,7 +1418,7 @@ def test_filter_long_description_teaches_string_typed_value() -> None:
 
 
 def test_pick_type_prompt_includes_tool_selection_rules() -> None:
-    """W71 v1.13A — the agent_staged ``pick_type`` system prompt
+    """the agent_staged ``pick_type`` system prompt
     carries the explicit do/don't list naming the four commonly-
     confused choices (``record_count`` / ``group_by`` / ``formula`` /
     ``polars_code``) so small models can read the rules instead of
@@ -1440,7 +1438,7 @@ def test_pick_type_prompt_includes_tool_selection_rules() -> None:
 
 
 def test_pick_node_type_spec_description_carries_disambiguation() -> None:
-    """W71 v1.14A.1 — the function-calling spec for
+    """the function-calling spec for
     ``flowfile.meta.pick_node_type`` (description AND the
     ``node_type`` parameter description) carries the palette-label
     vs node_type confusion list. Decoders attend to tool-spec text
@@ -1467,7 +1465,7 @@ def test_pick_node_type_spec_description_carries_disambiguation() -> None:
 
 
 def test_catalog_headers_inline_node_type_for_add_tools() -> None:
-    """W71 v1.14A.2 — every ``flowfile.graph.add_<type>`` catalog entry
+    """every ``flowfile.graph.add_<type>`` catalog entry
     renders its snake_case node_type beside the heading so the LLM
     sees the enum value at every entry, not only in the trailing
     disambiguation block.
@@ -1483,7 +1481,7 @@ def test_catalog_headers_inline_node_type_for_add_tools() -> None:
 
 
 def test_pick_upstream_spec_requires_right_input_for_join_shaped_types() -> None:
-    """W71 v1.14B — for join-shaped node types (join, cross_join,
+    """for join-shaped node types (join, cross_join,
     fuzzy_match) the ``right_input_node_id`` field on
     ``pick_upstream`` is REQUIRED, not optional. Stops the LLM from
     staging cross_join with only one upstream wire connected.
@@ -1523,11 +1521,11 @@ def test_pick_upstream_spec_requires_right_input_for_join_shaped_types() -> None
 
 
 def test_pick_upstream_spec_join_shaped_uses_left_right_scalars() -> None:
-    """W71 v1.15A — for join-shaped node types the pick_upstream spec
+    """for join-shaped node types the pick_upstream spec
     exposes a SYMMETRIC scalar pair (``left_input_node_id`` +
     ``right_input_node_id``), both required, and drops the
     ``upstream_node_ids`` list field entirely. This removes the
-    asymmetric-shape confusion that pre-v1.15 forced the LLM to
+    asymmetric-shape confusion that previously forced the LLM to
     learn (list+scalar for what it intuitively models as two
     equivalent inputs).
     """
@@ -1555,7 +1553,7 @@ def test_pick_upstream_spec_join_shaped_uses_left_right_scalars() -> None:
 
 
 def test_pick_upstream_spec_non_join_keeps_list_shape() -> None:
-    """W71 v1.15A — non-join types (and the no-picked-type fallback)
+    """non-join types (and the no-picked-type fallback)
     keep the legacy ``upstream_node_ids`` list + nullable
     ``right_input_node_id``. Only join-shaped types get the
     symmetric-pair shape.
@@ -1581,7 +1579,7 @@ def test_pick_upstream_spec_non_join_keeps_list_shape() -> None:
 
 
 def test_pick_upstream_dispatch_translates_left_right_to_legacy() -> None:
-    """W71 v1.15A — when the LLM emits the new symmetric shape
+    """when the LLM emits the new symmetric shape
     (``left_input_node_id`` + ``right_input_node_id``) for a
     join-shaped node, the executor's ``_handle_meta`` ``pick_upstream``
     branch translates it to the legacy ``upstream_node_ids`` /
@@ -1637,8 +1635,8 @@ def test_pick_upstream_dispatch_translates_left_right_to_legacy() -> None:
 
 
 def test_join_user_instruction_warns_against_cross_in_chat_mode() -> None:
-    """W71 v2.2 — chat-mode reads ``NODE_USER_INSTRUCTIONS``, not the
-    agent-side ``NODE_LONG_DESCRIPTIONS``. The 2026-05-08 dogfood
+    """chat-mode reads ``NODE_USER_INSTRUCTIONS``, not the
+    agent-side ``NODE_LONG_DESCRIPTIONS``. An earlier dogfood
     showed the chat-mode plan offered ``join`` for a no-key
     broadcast task, then got confused when it realised there was no
     key column. Strengthen the chat-mode prose so the LLM never
@@ -1658,9 +1656,9 @@ def test_join_user_instruction_warns_against_cross_in_chat_mode() -> None:
 
 
 def test_cross_join_user_instruction_names_broadcast_pattern() -> None:
-    """W71 v2.2 — chat-mode cross_join entry must explicitly name the
+    """chat-mode cross_join entry must explicitly name the
     *broadcast a single-row value* pattern (the percentage-of-total
-    use case from the 2026-05-08 dogfood) so the LLM proposes
+    use case from an earlier dogfood) so the LLM proposes
     cross_join for those tasks instead of confusing itself with
     join + missing key.
     """
@@ -1677,7 +1675,7 @@ def test_cross_join_user_instruction_names_broadcast_pattern() -> None:
 
 
 def test_explore_data_doc_signals_no_settings_required() -> None:
-    """W71 v2.2 — the agent should add ``explore_data`` without
+    """the agent should add ``explore_data`` without
     fabricating settings; the user's framing was *"the agent can
     just say, and now you can explore the data with an explore data!
     I added it to the canvas."* Both the agent-side and chat-mode
@@ -1707,7 +1705,7 @@ def test_explore_data_doc_signals_no_settings_required() -> None:
 
 
 def test_pick_type_prompt_includes_join_vs_cross_join_section() -> None:
-    """W71 v2.2 — the agent_staged ``pick_type`` system prompt has a
+    """the agent_staged ``pick_type`` system prompt has a
     dedicated *"Join vs cross_join"* section that names both nodes
     and the key-required vs no-key distinction so the LLM picks the
     right one when the user describes a broadcast pattern.
@@ -1727,10 +1725,10 @@ def test_pick_type_prompt_includes_join_vs_cross_join_section() -> None:
 
 
 def test_join_long_description_uses_left_right_only() -> None:
-    """W71 v1.15B — the join / cross_join / fuzzy_match long
+    """the join / cross_join / fuzzy_match long
     descriptions must use the LEFT/RIGHT vocabulary exclusively.
     Drop the confusing *"main"* / *"input-0"* / *"input-1"* aliases
-    that pre-v1.15 leaked into the prose.
+    that previously leaked into the prose.
     """
     from flowfile_core.ai.tools.node_docs import NODE_LONG_DESCRIPTIONS
 
@@ -1743,14 +1741,14 @@ def test_join_long_description_uses_left_right_only() -> None:
         assert "input-0" not in body_lower, f"{nt}: drop the input-0 alias; got {body!r}"
         assert "input-1" not in body_lower, f"{nt}: drop the input-1 alias; got {body!r}"
         # "main" appears only in inline contexts unrelated to input
-        # naming. Specifically forbid the pre-v1.15 phrase ``main /
+        # naming. Specifically forbid the previously phrase ``main /
         # left`` or ``= main``.
         assert "main / left" not in body_lower, body
         assert "= main" not in body_lower, body
 
 
 def test_pick_upstream_prompt_includes_worked_example_for_joins() -> None:
-    """W71 v1.15C — the pick_upstream stage prompt carries worked
+    """the pick_upstream stage prompt carries worked
     examples for join-shaped types so the LLM has a concrete shape
     to copy. The stage_pick_upstream.md content is loaded and joined
     into the system prompt at the agent_staged pick_upstream stage.
@@ -1768,7 +1766,7 @@ def test_pick_upstream_prompt_includes_worked_example_for_joins() -> None:
 
 
 def test_formula_fill_settings_prompt_includes_function_reference() -> None:
-    """W71 v1.12C — at stage 3 ``fill_settings`` for ``formula`` ONLY,
+    """at stage 3 ``fill_settings`` for ``formula`` ONLY,
     the system prompt must carry a ``## Formula functions`` block
     listing the Flowfile expression library so the LLM can pick valid
     function names. Other node types must NOT carry this block — the
@@ -1796,7 +1794,7 @@ def test_formula_fill_settings_prompt_includes_function_reference() -> None:
 
 
 def test_polars_code_doc_says_pl_is_already_available() -> None:
-    """W71 v2.13B — short standing-prompt nudge on the polars_code docs:
+    """short standing-prompt nudge on the polars_code docs:
     ``pl`` is already in scope, so the LLM should NOT prefix the body
     with ``import polars as pl``. Pairs with the
     ``polars_code_import_forbidden`` refusal in executor.py — the
@@ -1832,7 +1830,7 @@ def test_polars_code_doc_says_pl_is_already_available() -> None:
 
 
 def test_verify_completion_stage_prompt_renders() -> None:
-    """W71 v2.12 — the verify_completion stage suffix is wired up:
+    """the verify_completion stage suffix is wired up:
     ``assemble_system_prompt(surface="agent_staged",
     stage="verify_completion")`` returns the new
     ``stage_verify_completion.md`` content with the LLM-facing anchor
@@ -1847,7 +1845,7 @@ def test_verify_completion_stage_prompt_renders() -> None:
     assert "is_complete=true" in text
     assert "is_complete=false" in text
     # Inserted-node-mid-flow guidance — direct response to the
-    # 2026-05-09 dogfood that motivated v2.12 (chat-mode plan with
+    # an earlier dogfood that motivated (chat-mode plan with
     # add-then-rewire steps where the agent terminated after step 1).
     assert "inserted-node-mid-flow" in text_lower or "inserted node mid-flow" in text_lower
     # The one-shot guard reminder so the LLM knows it can't ping-pong.
@@ -1864,14 +1862,14 @@ def test_verify_completion_stage_prompt_renders() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Honest runtime-failure reporting — direct response to the 2026-05-09        #
-# dogfood where the agent hit ``UnpredictableSchema`` on sql_query,           #
-# hallucinated *"the kernel couldn't be found"* (not in the error text),      #
-# and falsely told the user *"I added a sql_query node"* after the host had   #
-# already auto-undone it. The fix has two pieces: (1) generic guidance in     #
-# stage_fill_settings.md teaching the LLM to read the ``✗`` observation       #
-# block honestly, and (2) a conditional Development-mode caveat for           #
-# sql_query / polars_code that pre-warns the LLM before the failure.          #
+# Honest runtime-failure reporting — direct response to the 2026-05-09 #
+# dogfood where the agent hit ``UnpredictableSchema`` on sql_query, #
+# hallucinated *"the kernel couldn't be found"* (not in the error text), #
+# and falsely told the user *"I added a sql_query node"* after the host had #
+# already auto-undone it. The fix has two pieces: (1) generic guidance in #
+# stage_fill_settings.md teaching the LLM to read the ``✗`` observation #
+# block honestly, and (2) a conditional Development-mode caveat for #
+# sql_query / polars_code that pre-warns the LLM before the failure. #
 # --------------------------------------------------------------------------- #
 
 
@@ -1920,7 +1918,7 @@ def test_fill_settings_renders_sql_query_caveat_when_picked() -> None:
         "guidance section"
     )
 
-    # Table-name convention — the actual reason the 2026-05-09 retry
+    # Table-name convention — the actual reason the retry
     # failed with ``relation 'join_5' was not found``.
     assert "input_1" in text, (
         "missing the ``input_1`` table-name reminder — without this "
@@ -1977,8 +1975,7 @@ def test_fill_settings_other_types_do_NOT_render_sql_query_caveat() -> None:
 def test_sql_query_long_description_names_input_1_table_convention() -> None:
     """The agent's pick_type catalog has to surface the
     ``input_1``/``input_2`` table-name convention or the LLM has no
-    way to write correct SQL. Direct response to the 2026-05-09
-    dogfood where the agent wrote ``FROM join_5`` and got ``relation
+    way to write correct SQL. Direct response to an earlier dogfood where the agent wrote ``FROM join_5`` and got ``relation
     'join_5' was not found``.
     """
     from flowfile_core.ai.tools.node_docs import NODE_LONG_DESCRIPTIONS

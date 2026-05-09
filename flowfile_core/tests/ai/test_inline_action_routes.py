@@ -1,4 +1,4 @@
-"""W21 — inline ✨ menu endpoint tests.
+"""inline ✨ menu endpoint tests.
 
 Cases:
 
@@ -6,7 +6,7 @@ Cases:
   tiny linear flow with a filter node, POSTs ``action="explain"``, and
   verifies the SSE response carries ``event: chunk`` blocks +
   ``event: done``. Inspects the captured ``messages`` argument to
-  ``provider.stream()`` to assert the W22 system prompt + the
+  ``provider.stream()`` to assert the system prompt + the
   ``## Action: explain`` block + ``tools=None`` all reach the LLM.
 * ``test_inline_action_per_action_user_message_distinct`` — parametrised
   per action (``explain`` / ``add_description``); each carries a
@@ -21,11 +21,11 @@ Cases:
 * ``test_inline_action_node_not_found_returns_422`` — bogus ``node_id``
   → 422.
 * ``test_inline_action_unknown_provider_returns_404`` — bogus
-  ``provider`` → 404 with the supported-list detail (matches W20 / W23).
+  ``provider`` → 404 with the supported-list detail (matches /).
 * ``test_inline_action_unconfigured_returns_409`` — no BYOK row + no
   env var → 409 with the ``ProviderNotConfiguredError`` message.
 * ``test_inline_action_disabled_returns_503`` — flipping
-  ``FEATURE_FLAG_AI`` off short-circuits at W17's gate.
+  ``FEATURE_FLAG_AI`` off short-circuits at's gate.
 * ``test_inline_action_validates_required_fields`` — request validation
   on missing ``flow_id`` / ``node_id`` / ``provider`` / ``action`` and
   invalid ``action`` literal.
@@ -58,7 +58,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 # --------------------------------------------------------------------------- #
-# Shared fixtures                                                              #
+# Shared fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -76,8 +76,8 @@ class FakeProvider:
     """Bare ``Provider``-shaped stub.
 
     Records the kwargs ``stream()`` is called with so tests can inspect
-    the messages that reach the LLM (system prompt + the W22 user body
-    + the W21 ``## Action`` block).
+    the messages that reach the LLM (system prompt + the user body
+    + the ``## Action`` block).
     """
 
     def __init__(self, chunks: list[StreamChunk] | None = None) -> None:
@@ -114,7 +114,7 @@ def patch_get_configured_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[F
 
 
 # --------------------------------------------------------------------------- #
-# Flow fixtures                                                                #
+# Flow fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -239,7 +239,7 @@ def registered_polars_flow() -> Iterator[FlowGraph]:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Happy path                                                                #
+# 1. Happy path #
 # --------------------------------------------------------------------------- #
 
 
@@ -273,9 +273,9 @@ def test_inline_action_emits_provider_chunks(
     assert system_msg.content.strip(), "system prompt must not be empty"
 
     assert user_msg.role == "user"
-    # W22 puts the failing node and its upstream in the deterministic body.
+    # puts the failing node and its upstream in the deterministic body.
     assert "filter_eu" in user_msg.content or "node 2" in user_msg.content.lower()
-    # The W21 action block is appended verbatim with the action name.
+    # The action block is appended verbatim with the action name.
     assert "## Action: explain" in user_msg.content
     assert "id `2`" in user_msg.content
     assert "type `filter`" in user_msg.content
@@ -287,7 +287,7 @@ def test_inline_action_emits_provider_chunks(
 
 
 # --------------------------------------------------------------------------- #
-# 2. Per-action user-message distinct                                          #
+# 2. Per-action user-message distinct #
 # --------------------------------------------------------------------------- #
 
 
@@ -322,7 +322,7 @@ def test_inline_action_per_action_user_message_distinct(
 
 
 # --------------------------------------------------------------------------- #
-# 3. regenerate_code requires code-bearing node                                #
+# 3. regenerate_code requires code-bearing node #
 # --------------------------------------------------------------------------- #
 
 
@@ -348,7 +348,7 @@ def test_regenerate_code_requires_code_bearing_node(
 
 
 # --------------------------------------------------------------------------- #
-# 4. regenerate_code on polars_code node → 200                                 #
+# 4. regenerate_code on polars_code node → 200 #
 # --------------------------------------------------------------------------- #
 
 
@@ -374,7 +374,7 @@ def test_regenerate_code_on_polars_code_node_returns_200(
 
 
 # --------------------------------------------------------------------------- #
-# 5. Flow not found → 422                                                      #
+# 5. Flow not found → 422 #
 # --------------------------------------------------------------------------- #
 
 
@@ -396,7 +396,7 @@ def test_inline_action_flow_not_found_returns_422(
 
 
 # --------------------------------------------------------------------------- #
-# 6. Node not found → 422                                                      #
+# 6. Node not found → 422 #
 # --------------------------------------------------------------------------- #
 
 
@@ -419,7 +419,7 @@ def test_inline_action_node_not_found_returns_422(
 
 
 # --------------------------------------------------------------------------- #
-# 7. Unknown provider → 404                                                    #
+# 7. Unknown provider → 404 #
 # --------------------------------------------------------------------------- #
 
 
@@ -441,7 +441,7 @@ def test_inline_action_unknown_provider_returns_404(
 
 
 # --------------------------------------------------------------------------- #
-# 8. Provider not configured → 409                                             #
+# 8. Provider not configured → 409 #
 # --------------------------------------------------------------------------- #
 
 
@@ -469,7 +469,7 @@ def test_inline_action_unconfigured_returns_409(
 
 
 # --------------------------------------------------------------------------- #
-# 9. Feature flag off → 503                                                    #
+# 9. Feature flag off → 503 #
 # --------------------------------------------------------------------------- #
 
 
@@ -478,9 +478,9 @@ def test_inline_action_disabled_returns_503(
     patch_get_configured_provider: FakeProvider,
     registered_filter_flow: FlowGraph,
 ) -> None:
-    """Inheriting W17's router-level dependency means flipping the flag off
+    """Inheriting's router-level dependency means flipping the flag off
     must return 503 here too. Read ``FEATURE_FLAG_AI`` off the module via
-    ``core_settings`` (same fix W17 + W20 + W23 + W50 applied).
+    ``core_settings`` (same fix + + + applied).
     """
 
     original = core_settings.FEATURE_FLAG_AI.value
@@ -502,7 +502,7 @@ def test_inline_action_disabled_returns_503(
 
 
 # --------------------------------------------------------------------------- #
-# 10. Request validation                                                       #
+# 10. Request validation #
 # --------------------------------------------------------------------------- #
 
 
@@ -544,7 +544,7 @@ def test_inline_action_rejects_invalid_action_literal(
 
 
 # --------------------------------------------------------------------------- #
-# 11. samples_mode forwarded to W22                                            #
+# 11. samples_mode forwarded to #
 # --------------------------------------------------------------------------- #
 
 
@@ -582,7 +582,7 @@ def test_inline_action_samples_mode_forwarded(
 
 
 # --------------------------------------------------------------------------- #
-# 12. Tools=None invariant across actions                                      #
+# 12. Tools=None invariant across actions #
 # --------------------------------------------------------------------------- #
 
 
@@ -610,7 +610,7 @@ def test_inline_action_tools_none_invariant(
 
 
 # --------------------------------------------------------------------------- #
-# 13. Lazy-litellm contract                                                    #
+# 13. Lazy-litellm contract #
 # --------------------------------------------------------------------------- #
 
 
@@ -624,7 +624,7 @@ def test_lazy_litellm_import_for_inline_action_routes() -> None:
     Caveat: a sibling test may have already imported ``litellm`` in this
     process (the suite shares a Python interpreter). When that's the
     case we can't observe the lazy contract, so the assertion is gated
-    on a clean snapshot — same posture as W12 / W20 / W23 / W50.
+    on a clean snapshot — same posture as / / /.
     """
 
     litellm_already_loaded = any(name == "litellm" or name.startswith("litellm.") for name in sys.modules)

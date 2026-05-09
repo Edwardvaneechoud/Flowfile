@@ -482,6 +482,116 @@ export const useAiStore = defineStore("ai", () => {
     }
   };
 
+  // Shared streaming pipeline for the read-only chat surfaces
+  // (run-failure, docgen, inline action, lineage). Each surface follows
+  // the same pattern: open drawer, push synthetic user + assistant
+  // placeholder, set streaming/abort state, dispatch the surface's SSE
+  // call, drain into the placeholder, settle on done/error/abort.
+  // Surface-specific bits flow in through ``streamFn`` (which body to
+  // POST + which endpoint) and ``onSuccess`` (post-stream side effect,
+  // e.g. write back to nodeStore for ``add_description``).
+  //
+  // Why a helper instead of separate composables: each surface needs
+  // access to closure-private state (``activeAbort``, ``nextMessageId``)
+  // that is intentionally not part of the store's public surface.
+  // Pulling the pattern up here keeps a single source of truth for the
+  // streaming/abort lifecycle.
+  interface StreamedSurfaceOptions {
+    userVisibleText: string;
+    streamFn: (handlers: {
+      onChunk: (delta: string) => void;
+      onDone: () => void;
+      onError: (message: string) => void;
+    }, signal: AbortSignal) => Promise<void>;
+    /** Optional post-success side effect; receives the final assistant text. */
+    onSuccess?: (finalContent: string) => void;
+  }
+
+  const _runStreamedChatSurface = async (opts: StreamedSurfaceOptions): Promise<void> => {
+    openAiDrawer();
+
+    if (streamingState.value === "streaming") {
+      // Don't trample an in-flight stream. The button click counts as
+      // user intent to open the drawer; the streaming guard mirrors
+      // ``sendMessage``.
+      return;
+    }
+    if (selectedProvider.value === null) {
+      streamError.value = "Pick a provider first.";
+      streamingState.value = "error";
+      return;
+    }
+
+    const userMessage: ChatMessage = {
+      id: nextMessageId(),
+      createdAt: Date.now(),
+      role: "user",
+      content: opts.userVisibleText,
+    };
+    const assistantPlaceholder: ChatMessage = {
+      id: nextMessageId(),
+      createdAt: Date.now(),
+      role: "assistant",
+      content: "",
+      pending: true,
+    };
+    messages.value.push(userMessage, assistantPlaceholder);
+    // Re-read through the reactive Proxy so per-chunk mutations re-render.
+    const reactivePlaceholder = messages.value[messages.value.length - 1];
+
+    streamingState.value = "streaming";
+    streamError.value = null;
+
+    activeAbort = new AbortController();
+    let sawErrorEvent = false;
+    try {
+      await opts.streamFn(
+        {
+          onChunk: (delta) => {
+            reactivePlaceholder.content += delta;
+          },
+          onDone: () => {
+            reactivePlaceholder.pending = false;
+            streamingState.value = "idle";
+            if (opts.onSuccess) {
+              opts.onSuccess(reactivePlaceholder.content);
+            }
+          },
+          onError: (message) => {
+            sawErrorEvent = true;
+            reactivePlaceholder.error = message;
+            reactivePlaceholder.pending = false;
+            streamingState.value = "error";
+            streamError.value = message;
+          },
+        },
+        activeAbort.signal,
+      );
+      reactivePlaceholder.pending = false;
+      if (streamingState.value === "streaming") {
+        streamingState.value = "idle";
+      }
+    } catch (err) {
+      reactivePlaceholder.pending = false;
+      const message =
+        err instanceof AiStreamHttpError
+          ? `HTTP ${err.status}: ${err.detail}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      const isAbort = err instanceof DOMException && err.name === "AbortError";
+      if (isAbort) {
+        streamingState.value = "idle";
+      } else if (!sawErrorEvent) {
+        reactivePlaceholder.error = message;
+        streamingState.value = "error";
+        streamError.value = message;
+      }
+    } finally {
+      activeAbort = null;
+    }
+  };
+
   // Open a chat stream for the *current* tail of `messages` (no extra
   // user message push). Used by both ``sendMessage`` (after pushing
   // the user message itself) and ``undoPromotion`` (where the user
@@ -865,200 +975,57 @@ export const useAiStore = defineStore("ai", () => {
     errorMessage: string,
     nodeName?: string,
   ): Promise<void> => {
-    // "Fix with AI" entry point. Opens the drawer, drops a synthetic
-    // user/assistant pair into the chat, then streams the server-built
-    // failure explanation into the assistant placeholder. The
-    // wire-level user message is composed by the backend via
-    // ``render_prompt_context``; the chat-visible synthetic turn is
-    // purely cosmetic so the user has a visual anchor for what they
-    // just asked.
-    openAiDrawer();
-
-    if (streamingState.value === "streaming") {
-      // Don't trample an in-flight chat. The button click counts as
-      // user intent to open the drawer; the streaming guard mirrors
-      // ``sendMessage``.
-      return;
-    }
-    if (selectedProvider.value === null) {
-      streamError.value = "Pick a provider first.";
-      streamingState.value = "error";
-      return;
-    }
-
+    // "Fix with AI" entry point. Drops a synthetic user/assistant pair
+    // into the chat then streams the server-built failure explanation
+    // into the assistant placeholder. The wire-level user message is
+    // composed by the backend via ``render_prompt_context``; the
+    // chat-visible synthetic turn is purely cosmetic so the user has a
+    // visual anchor for what they just asked.
     const trimmedError = errorMessage.trim();
     const headline = nodeName ? `node "${nodeName}"` : `node ${nodeId}`;
     const userVisibleText = trimmedError
       ? `Help me fix this error in ${headline}:\n\n${trimmedError}`
       : `Help me fix this error in ${headline}.`;
 
-    const userMessage: ChatMessage = {
-      id: nextMessageId(),
-      createdAt: Date.now(),
-      role: "user",
-      content: userVisibleText,
-    };
-    const assistantPlaceholder: ChatMessage = {
-      id: nextMessageId(),
-      createdAt: Date.now(),
-      role: "assistant",
-      content: "",
-      pending: true,
-    };
-    messages.value.push(userMessage, assistantPlaceholder);
-    // See note in `sendMessage` — mutate through the reactive Proxy so each
-    // chunk re-renders the message rather than landing in one paint.
-    const reactivePlaceholder = messages.value[messages.value.length - 1];
-
-    streamingState.value = "streaming";
-    streamError.value = null;
-
-    activeAbort = new AbortController();
-    let sawErrorEvent = false;
-    try {
-      await streamRunFailureExplanation(
-        {
-          flow_id: flowId,
-          node_id: nodeId,
-          provider: selectedProvider.value,
-          model: selectedModel.value,
-          error_message: trimmedError || null,
-        },
-        {
-          onChunk: (delta) => {
-            reactivePlaceholder.content += delta;
+    await _runStreamedChatSurface({
+      userVisibleText,
+      streamFn: (handlers, signal) =>
+        streamRunFailureExplanation(
+          {
+            flow_id: flowId,
+            node_id: nodeId,
+            provider: selectedProvider.value!,
+            model: selectedModel.value,
+            error_message: trimmedError || null,
           },
-          onDone: () => {
-            reactivePlaceholder.pending = false;
-            streamingState.value = "idle";
-          },
-          onError: (message) => {
-            sawErrorEvent = true;
-            reactivePlaceholder.error = message;
-            reactivePlaceholder.pending = false;
-            streamingState.value = "error";
-            streamError.value = message;
-          },
-        },
-        activeAbort.signal,
-      );
-      reactivePlaceholder.pending = false;
-      if (streamingState.value === "streaming") {
-        streamingState.value = "idle";
-      }
-    } catch (err) {
-      reactivePlaceholder.pending = false;
-      const message =
-        err instanceof AiStreamHttpError
-          ? `HTTP ${err.status}: ${err.detail}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      const isAbort = err instanceof DOMException && err.name === "AbortError";
-      if (isAbort) {
-        streamingState.value = "idle";
-      } else if (!sawErrorEvent) {
-        reactivePlaceholder.error = message;
-        streamingState.value = "error";
-        streamError.value = message;
-      }
-    } finally {
-      activeAbort = null;
-    }
+          handlers,
+          signal,
+        ),
+    });
   };
 
   const generateDocumentation = async (flowId: number, flowName?: string): Promise<void> => {
-    // "Generate documentation" entry point. Same shape as
-    // ``explainRunFailure``: opens the drawer, drops a synthetic
-    // user/assistant pair into the chat, then streams the server-built
-    // markdown doc into the assistant placeholder. The wire-level user
+    // "Generate documentation" entry point. The wire-level user
     // message is composed by the backend via ``render_prompt_context``
     // (surface="docgen") + the ``## Documentation request`` block; the
     // chat-visible synthetic turn is purely cosmetic.
-    openAiDrawer();
-
-    if (streamingState.value === "streaming") {
-      return;
-    }
-    if (selectedProvider.value === null) {
-      streamError.value = "Pick a provider first.";
-      streamingState.value = "error";
-      return;
-    }
-
     const trimmedName = flowName?.trim();
     const headline = trimmedName ? `\`${trimmedName}\`` : `flow ${flowId}`;
     const userVisibleText = `Generate documentation for ${headline}.`;
 
-    const userMessage: ChatMessage = {
-      id: nextMessageId(),
-      createdAt: Date.now(),
-      role: "user",
-      content: userVisibleText,
-    };
-    const assistantPlaceholder: ChatMessage = {
-      id: nextMessageId(),
-      createdAt: Date.now(),
-      role: "assistant",
-      content: "",
-      pending: true,
-    };
-    messages.value.push(userMessage, assistantPlaceholder);
-    const reactivePlaceholder = messages.value[messages.value.length - 1];
-
-    streamingState.value = "streaming";
-    streamError.value = null;
-
-    activeAbort = new AbortController();
-    let sawErrorEvent = false;
-    try {
-      await streamGenerateDocumentation(
-        {
-          flow_id: flowId,
-          provider: selectedProvider.value,
-          model: selectedModel.value,
-        },
-        {
-          onChunk: (delta) => {
-            reactivePlaceholder.content += delta;
+    await _runStreamedChatSurface({
+      userVisibleText,
+      streamFn: (handlers, signal) =>
+        streamGenerateDocumentation(
+          {
+            flow_id: flowId,
+            provider: selectedProvider.value!,
+            model: selectedModel.value,
           },
-          onDone: () => {
-            reactivePlaceholder.pending = false;
-            streamingState.value = "idle";
-          },
-          onError: (message) => {
-            sawErrorEvent = true;
-            reactivePlaceholder.error = message;
-            reactivePlaceholder.pending = false;
-            streamingState.value = "error";
-            streamError.value = message;
-          },
-        },
-        activeAbort.signal,
-      );
-      reactivePlaceholder.pending = false;
-      if (streamingState.value === "streaming") {
-        streamingState.value = "idle";
-      }
-    } catch (err) {
-      reactivePlaceholder.pending = false;
-      const message =
-        err instanceof AiStreamHttpError
-          ? `HTTP ${err.status}: ${err.detail}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      const isAbort = err instanceof DOMException && err.name === "AbortError";
-      if (isAbort) {
-        streamingState.value = "idle";
-      } else if (!sawErrorEvent) {
-        reactivePlaceholder.error = message;
-        streamingState.value = "error";
-        streamError.value = message;
-      }
-    } finally {
-      activeAbort = null;
-    }
+          handlers,
+          signal,
+        ),
+    });
   };
 
   const runInlineAction = async (
@@ -1067,111 +1034,43 @@ export const useAiStore = defineStore("ai", () => {
     action: InlineActionType,
     nodeName?: string,
   ): Promise<void> => {
-    // Inline ✨ menu entry point. Same shape as ``explainRunFailure``
-    // / ``generateDocumentation``: opens the drawer, drops a synthetic
-    // user/assistant pair into the chat, then streams the server-built
-    // response into the assistant placeholder. The wire-level user
-    // message is composed by the backend via ``render_prompt_context``
-    // (surface="explain") + the ``## Action`` block; the chat-visible
-    // synthetic turn is purely cosmetic so the user has a visual
-    // anchor for what they just asked.
-    openAiDrawer();
-
-    if (streamingState.value === "streaming") {
-      // Don't trample an in-flight request.
-      return;
-    }
-    if (selectedProvider.value === null) {
-      streamError.value = "Pick a provider first.";
-      streamingState.value = "error";
-      return;
-    }
-
+    // Inline ✨ menu entry point. The wire-level user message is composed
+    // by the backend via ``render_prompt_context`` (surface="explain") +
+    // the ``## Action`` block; the chat-visible synthetic turn is purely
+    // cosmetic. ``add_description`` action additionally writes the
+    // generated text back to the node's description field via nodeStore
+    // — handled in the ``onSuccess`` post-stream hook.
     const headline = nodeName ? `\`${nodeName}\`` : `node ${nodeId}`;
     const userVisibleText = inlineActionUserPrompt(action, headline);
 
-    const userMessage: ChatMessage = {
-      id: nextMessageId(),
-      createdAt: Date.now(),
-      role: "user",
-      content: userVisibleText,
-    };
-    const assistantPlaceholder: ChatMessage = {
-      id: nextMessageId(),
-      createdAt: Date.now(),
-      role: "assistant",
-      content: "",
-      pending: true,
-    };
-    messages.value.push(userMessage, assistantPlaceholder);
-    const reactivePlaceholder = messages.value[messages.value.length - 1];
-
-    streamingState.value = "streaming";
-    streamError.value = null;
-
-    activeAbort = new AbortController();
-    let sawErrorEvent = false;
-    try {
-      await streamInlineAction(
-        {
-          flow_id: flowId,
-          node_id: nodeId,
-          action,
-          provider: selectedProvider.value,
-          model: selectedModel.value,
-        },
-        {
-          onChunk: (delta) => {
-            reactivePlaceholder.content += delta;
+    await _runStreamedChatSurface({
+      userVisibleText,
+      streamFn: (handlers, signal) =>
+        streamInlineAction(
+          {
+            flow_id: flowId,
+            node_id: nodeId,
+            action,
+            provider: selectedProvider.value!,
+            model: selectedModel.value,
           },
-          onDone: () => {
-            reactivePlaceholder.pending = false;
-            streamingState.value = "idle";
-            if (action === "add_description") {
-              const generated = reactivePlaceholder.content.trim();
-              if (generated) {
-                useNodeStore()
-                  .setNodeDescription(nodeId, generated)
-                  .catch(() => {
-                    // node-store already logs; the streamed text remains
-                    // visible in the chat so the user can copy-paste as a fallback.
-                  });
-              }
-            }
-          },
-          onError: (message) => {
-            sawErrorEvent = true;
-            reactivePlaceholder.error = message;
-            reactivePlaceholder.pending = false;
-            streamingState.value = "error";
-            streamError.value = message;
-          },
-        },
-        activeAbort.signal,
-      );
-      reactivePlaceholder.pending = false;
-      if (streamingState.value === "streaming") {
-        streamingState.value = "idle";
-      }
-    } catch (err) {
-      reactivePlaceholder.pending = false;
-      const message =
-        err instanceof AiStreamHttpError
-          ? `HTTP ${err.status}: ${err.detail}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      const isAbort = err instanceof DOMException && err.name === "AbortError";
-      if (isAbort) {
-        streamingState.value = "idle";
-      } else if (!sawErrorEvent) {
-        reactivePlaceholder.error = message;
-        streamingState.value = "error";
-        streamError.value = message;
-      }
-    } finally {
-      activeAbort = null;
-    }
+          handlers,
+          signal,
+        ),
+      onSuccess: (finalContent) => {
+        if (action === "add_description") {
+          const generated = finalContent.trim();
+          if (generated) {
+            useNodeStore()
+              .setNodeDescription(nodeId, generated)
+              .catch(() => {
+                // node-store already logs; the streamed text remains
+                // visible in the chat so the user can copy-paste as a fallback.
+              });
+          }
+        }
+      },
+    });
   };
 
   const runBulkAddDescriptions = async (
@@ -1274,25 +1173,13 @@ export const useAiStore = defineStore("ai", () => {
     question: string,
     focusNodeId?: number,
   ): Promise<void> => {
-    // "Ask about lineage" entry point. Same shape as
-    // ``generateDocumentation`` / ``runInlineAction``: opens the drawer,
-    // drops a synthetic user/assistant pair into the chat, then streams
-    // the server-built lineage answer into the assistant placeholder.
-    // The wire-level user message is composed by the backend via
-    // ``render_prompt_context`` (surface="lineage") + the
-    // ``## Run history`` + ``## Question`` blocks; the chat-visible
-    // synthetic turn is purely cosmetic.
-    openAiDrawer();
-
-    if (streamingState.value === "streaming") {
-      return;
-    }
-    if (selectedProvider.value === null) {
-      streamError.value = "Pick a provider first.";
-      streamingState.value = "error";
-      return;
-    }
-
+    // "Ask about lineage" entry point. The wire-level user message is
+    // composed by the backend via ``render_prompt_context``
+    // (surface="lineage") + the ``## Run history`` + ``## Question``
+    // blocks; the chat-visible synthetic turn is purely cosmetic. The
+    // empty-question guard runs BEFORE ``_runStreamedChatSurface`` so
+    // we don't open the drawer + push a placeholder for an obviously
+    // bad call.
     const trimmedQuestion = question.trim();
     if (!trimmedQuestion) {
       streamError.value = "Type a lineage question first.";
@@ -1301,77 +1188,22 @@ export const useAiStore = defineStore("ai", () => {
     }
 
     const userVisibleText = `[Lineage] ${trimmedQuestion}`;
-    const userMessage: ChatMessage = {
-      id: nextMessageId(),
-      createdAt: Date.now(),
-      role: "user",
-      content: userVisibleText,
-    };
-    const assistantPlaceholder: ChatMessage = {
-      id: nextMessageId(),
-      createdAt: Date.now(),
-      role: "assistant",
-      content: "",
-      pending: true,
-    };
-    messages.value.push(userMessage, assistantPlaceholder);
-    const reactivePlaceholder = messages.value[messages.value.length - 1];
 
-    streamingState.value = "streaming";
-    streamError.value = null;
-
-    activeAbort = new AbortController();
-    let sawErrorEvent = false;
-    try {
-      await streamLineageQuestion(
-        {
-          flow_id: flowId,
-          question: trimmedQuestion,
-          provider: selectedProvider.value,
-          model: selectedModel.value,
-          focus_node_id: focusNodeId ?? null,
-        },
-        {
-          onChunk: (delta) => {
-            reactivePlaceholder.content += delta;
+    await _runStreamedChatSurface({
+      userVisibleText,
+      streamFn: (handlers, signal) =>
+        streamLineageQuestion(
+          {
+            flow_id: flowId,
+            question: trimmedQuestion,
+            provider: selectedProvider.value!,
+            model: selectedModel.value,
+            focus_node_id: focusNodeId ?? null,
           },
-          onDone: () => {
-            reactivePlaceholder.pending = false;
-            streamingState.value = "idle";
-          },
-          onError: (message) => {
-            sawErrorEvent = true;
-            reactivePlaceholder.error = message;
-            reactivePlaceholder.pending = false;
-            streamingState.value = "error";
-            streamError.value = message;
-          },
-        },
-        activeAbort.signal,
-      );
-      reactivePlaceholder.pending = false;
-      if (streamingState.value === "streaming") {
-        streamingState.value = "idle";
-      }
-    } catch (err) {
-      reactivePlaceholder.pending = false;
-      const message =
-        err instanceof AiStreamHttpError
-          ? `HTTP ${err.status}: ${err.detail}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      const isAbort = err instanceof DOMException && err.name === "AbortError";
-      if (isAbort) {
-        streamingState.value = "idle";
-      } else if (!sawErrorEvent) {
-        reactivePlaceholder.error = message;
-        streamingState.value = "error";
-        streamError.value = message;
-      }
-    } finally {
-      activeAbort = null;
-    }
+          handlers,
+          signal,
+        ),
+    });
   };
 
   return {

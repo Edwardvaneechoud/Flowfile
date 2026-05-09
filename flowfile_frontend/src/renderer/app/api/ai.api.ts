@@ -1,18 +1,15 @@
-// Frontend API surface for the AI subsystem (W20 + W23 + W34 + W50).
+// Frontend API surface for the AI subsystem.
 //
-// Right now this is a re-export shim around five seams:
-//   - `streamChat` for the read-only chat stream (W20).
-//   - `streamRunFailureExplanation` for "Fix with AI" on a failed node (W23).
+// This is a re-export shim around five seams:
+//   - `streamChat` for the read-only chat stream.
+//   - `streamRunFailureExplanation` for "Fix with AI" on a failed node.
 //   - `streamGenerateDocumentation` for the canvas-level "Generate
-//     documentation" action (W50).
-//   - `fetchFormulaSuggestions` / `fetchJoinKeySuggestions` for settings
-//     autocomplete (W34) — fast non-streaming JSON.
-//   - the W12 BYOK provider listing reused so the chat panel can pick a
-//     configured provider without forcing the user back to the settings tab.
-//
-// W30+ will add tool-catalog endpoints, W22 will add context-aware variants
-// of `streamChat`, W43 will add per-flow session listing — all extending
-// this module rather than replacing it.
+//     documentation" action.
+//   - `fetchFormulaSuggestions` / `fetchJoinKeySuggestions` for
+//     settings autocomplete — fast non-streaming JSON.
+//   - the BYOK provider listing reused so the chat panel can pick a
+//     configured provider without forcing the user back to the
+//     settings tab.
 
 import axios from "../services/axios.config";
 import { fetchAiProviders } from "../views/AiProvidersView/api";
@@ -54,7 +51,7 @@ export {
 export { AiDisabledError, AI_DISABLED_DETAIL };
 
 // --------------------------------------------------------------------------
-// Settings autocomplete (W34) — non-streaming JSON wrappers around
+// Settings autocomplete — non-streaming JSON wrappers around
 // /ai/autocomplete/{formula,join_keys}.
 // --------------------------------------------------------------------------
 
@@ -146,8 +143,9 @@ const fromPyJoinKeyPair = (raw: PyJoinKeyPair): JoinKeyPair => ({
   rationale: raw.rationale,
 });
 
-// 503 with W17's DISABLED_DETAIL becomes AiDisabledError so callers can
-// render a dedicated empty-state without sniffing axios error shapes.
+// 503 with the disabled-detail marker becomes AiDisabledError so
+// callers can render a dedicated empty-state without sniffing axios
+// error shapes.
 const isAiDisabledError = (error: unknown): boolean => {
   const detail = (error as { response?: { data?: { detail?: unknown }; status?: number } })
     ?.response?.data?.detail;
@@ -220,10 +218,10 @@ export const fetchJoinKeySuggestions = async (
 };
 
 // --------------------------------------------------------------------------
-// Edge ghost-node suggestions (W32) — non-streaming JSON wrapper around
+// Edge ghost-node suggestions — non-streaming JSON wrapper around
 // /ai/suggest_next_node. Matches the autocomplete shape: a hover-fast
-// synchronous call with a degraded fallback when the LLM can't produce a
-// schema-grounded result.
+// synchronous call with a degraded fallback when the LLM can't produce
+// a schema-grounded result.
 // --------------------------------------------------------------------------
 
 export interface SchemaColumn {
@@ -327,9 +325,9 @@ export const fetchNextNodeSuggestions = async (
 };
 
 // --------------------------------------------------------------------------
-// Cmd+K command palette (W33) — non-streaming JSON wrapper around
+// Cmd+K command palette — non-streaming JSON wrapper around
 // /ai/command_palette. Returns the staged GraphDiff in the same shape
-// W35's `useAiDiffStore.setCurrentDiff(...)` expects, so the frontend
+// `useAiDiffStore.setCurrentDiff(...)` expects, so the frontend
 // composes the existing diff panel without a follow-up GET.
 // --------------------------------------------------------------------------
 
@@ -446,17 +444,19 @@ export const submitCommandPalette = async (
 };
 
 // --------------------------------------------------------------------------
-// Multi-turn planner agent (W40) — non-streaming sibling endpoints. The SSE
-// start + resume-continue paths live in services/aiStreamClient.ts; this file
-// owns the JSON-only abort / discard-resume / status-snapshot fetches.
+// Multi-turn planner agent — non-streaming sibling endpoints. The SSE
+// start + resume-continue paths live in services/aiStreamClient.ts;
+// this file owns the JSON-only abort / discard-resume / status-snapshot
+// fetches.
 // --------------------------------------------------------------------------
 
 export interface AgentDriftDetail {
   missingNodeIds: number[];
   externalAddedNodeIds: number[];
-  /** Snapshot-time ``node_type`` for each id appearing in either bucket
-   * (W45 Q3). Frontend renders typed messages — *"Filter node 6 was deleted"*.
-   * Optional: falls back to bare ids when an id is missing. */
+  /** Snapshot-time ``node_type`` for each id appearing in either
+   * bucket. Frontend renders typed messages — *"Filter node 6 was
+   * deleted"*. Optional: falls back to bare ids when an id is
+   * missing. */
   nodeTypes: Record<number, string>;
 }
 
@@ -498,7 +498,7 @@ export interface AgentSessionState {
   rationale: string | null;
   pauseReason: string | null;
   driftDetail: AgentDriftDetail | null;
-  // W71 — agent_staged state-machine fields. Always present on the wire
+  // agent_staged state-machine fields. Always present on the wire
   // (Pydantic defaults stage="classify"); legacy surfaces stay at
   // "classify" + null and the UI hides the stage badge.
   stage: AgentStage;

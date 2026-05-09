@@ -1,12 +1,11 @@
-"""W50 — "Generate documentation" endpoint tests.
+""""Generate documentation" endpoint tests.
 
 Cases:
 
 * ``test_generate_documentation_emits_provider_chunks`` — happy path:
   builds a tiny linear flow, POSTs, and verifies the SSE response
   carries ``event: chunk`` blocks + ``event: done``. Inspects the
-  captured ``messages`` argument to ``provider.stream()`` to assert the
-  W22 system prompt + the ``## Documentation request`` block + the
+  captured ``messages`` argument to ``provider.stream()`` to assert the system prompt + the ``## Documentation request`` block + the
   flow-name + the read-only contract all reach the LLM.
 * ``test_generate_documentation_pins_all_nodes`` — capture
   ``render_prompt_context`` args; assert all flow node ids are passed
@@ -26,11 +25,11 @@ Cases:
   row + no env var → 409 with the ``ProviderNotConfiguredError``
   message.
 * ``test_generate_documentation_disabled_returns_503`` — flipping
-  ``FEATURE_FLAG_AI`` off short-circuits at W17's gate.
+  ``FEATURE_FLAG_AI`` off short-circuits at's gate.
 * ``test_generate_documentation_validates_required_fields`` — request
   validation on missing ``flow_id`` / ``provider``.
 * ``test_generate_documentation_samples_mode_forwarded`` — body's
-  ``samples_mode`` reaches W22's ``render_prompt_context`` call.
+  ``samples_mode`` reaches's ``render_prompt_context`` call.
 * ``test_lazy_litellm_import_for_docgen_routes`` — importing
   ``flowfile_core.ai.docgen_routes`` doesn't pull ``litellm`` into
   ``sys.modules``.
@@ -56,7 +55,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 # --------------------------------------------------------------------------- #
-# Shared fixtures                                                              #
+# Shared fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -74,8 +73,8 @@ class FakeProvider:
     """Bare ``Provider``-shaped stub.
 
     Records the kwargs ``stream()`` is called with so tests can inspect
-    the messages that reach the LLM (system prompt + the W22 user body
-    + the W50 ``## Documentation request`` block).
+    the messages that reach the LLM (system prompt + the user body
+    + the ``## Documentation request`` block).
     """
 
     def __init__(self, chunks: list[StreamChunk] | None = None) -> None:
@@ -112,7 +111,7 @@ def patch_get_configured_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[F
 
 
 # --------------------------------------------------------------------------- #
-# Flow fixtures                                                                #
+# Flow fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -130,7 +129,7 @@ def _flow_settings(*, name: str = "w50_test") -> schemas.FlowSettings:
 
 
 def _build_linear_flow(*, name: str = "w50_test") -> FlowGraph:
-    """``orders (1) → filter_eu (2)`` — same shape as W23's fixture."""
+    """``orders (1) → filter_eu (2)`` — same shape as's fixture."""
 
     flow = FlowGraph(flow_settings=_flow_settings(name=name), name=name)
 
@@ -210,7 +209,7 @@ def registered_empty_flow() -> Iterator[FlowGraph]:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Happy path                                                                #
+# 1. Happy path #
 # --------------------------------------------------------------------------- #
 
 
@@ -242,9 +241,9 @@ def test_generate_documentation_emits_provider_chunks(
     assert system_msg.content.strip(), "system prompt must not be empty"
 
     assert user_msg.role == "user"
-    # W22's render_prompt_context surfaces "## Subgraph" for the deterministic body.
+    #'s render_prompt_context surfaces "## Subgraph" for the deterministic body.
     assert "## Subgraph" in user_msg.content
-    # The W50 documentation block is appended verbatim.
+    # The documentation block is appended verbatim.
     assert "## Documentation request" in user_msg.content
     assert "Flow name: `w50_test`" in user_msg.content
     assert "# Flow: w50_test" in user_msg.content
@@ -256,7 +255,7 @@ def test_generate_documentation_emits_provider_chunks(
 
 
 # --------------------------------------------------------------------------- #
-# 2. All nodes are pinned                                                      #
+# 2. All nodes are pinned #
 # --------------------------------------------------------------------------- #
 
 
@@ -291,7 +290,7 @@ def test_generate_documentation_pins_all_nodes(
 
 
 # --------------------------------------------------------------------------- #
-# 3. Flow name in prompt                                                       #
+# 3. Flow name in prompt #
 # --------------------------------------------------------------------------- #
 
 
@@ -312,7 +311,7 @@ def test_generate_documentation_uses_flow_name_in_prompt(
 
 
 # --------------------------------------------------------------------------- #
-# 4. Fallback when flow name is empty                                          #
+# 4. Fallback when flow name is empty #
 # --------------------------------------------------------------------------- #
 
 
@@ -333,7 +332,7 @@ def test_generate_documentation_falls_back_when_flow_name_empty(
 
 
 # --------------------------------------------------------------------------- #
-# 5. Flow not found → 422                                                      #
+# 5. Flow not found → 422 #
 # --------------------------------------------------------------------------- #
 
 
@@ -350,7 +349,7 @@ def test_generate_documentation_flow_not_found_returns_422(
 
 
 # --------------------------------------------------------------------------- #
-# 6. Empty flow → 422                                                          #
+# 6. Empty flow → 422 #
 # --------------------------------------------------------------------------- #
 
 
@@ -368,7 +367,7 @@ def test_generate_documentation_empty_flow_returns_422(
 
 
 # --------------------------------------------------------------------------- #
-# 7. Unknown provider → 404                                                    #
+# 7. Unknown provider → 404 #
 # --------------------------------------------------------------------------- #
 
 
@@ -385,7 +384,7 @@ def test_generate_documentation_unknown_provider_returns_404(
 
 
 # --------------------------------------------------------------------------- #
-# 8. Provider not configured → 409                                             #
+# 8. Provider not configured → 409 #
 # --------------------------------------------------------------------------- #
 
 
@@ -408,7 +407,7 @@ def test_generate_documentation_unconfigured_returns_409(
 
 
 # --------------------------------------------------------------------------- #
-# 9. Feature flag off → 503                                                    #
+# 9. Feature flag off → 503 #
 # --------------------------------------------------------------------------- #
 
 
@@ -417,9 +416,9 @@ def test_generate_documentation_disabled_returns_503(
     patch_get_configured_provider: FakeProvider,
     registered_flow: FlowGraph,
 ) -> None:
-    """Inheriting W17's router-level dependency means flipping the flag
+    """Inheriting's router-level dependency means flipping the flag
     off must return 503 here too. Read ``FEATURE_FLAG_AI`` off the
-    module via ``core_settings`` (same posture as W17 / W20 / W23)."""
+    module via ``core_settings`` (same posture as / /)."""
 
     original = core_settings.FEATURE_FLAG_AI.value
     core_settings.FEATURE_FLAG_AI.set(False)
@@ -435,7 +434,7 @@ def test_generate_documentation_disabled_returns_503(
 
 
 # --------------------------------------------------------------------------- #
-# 10-11. Request validation                                                    #
+# 10-11. Request validation #
 # --------------------------------------------------------------------------- #
 
 
@@ -457,7 +456,7 @@ def test_generate_documentation_validates_required_fields(
 
 
 # --------------------------------------------------------------------------- #
-# 12. samples_mode forwarded to W22                                            #
+# 12. samples_mode forwarded to #
 # --------------------------------------------------------------------------- #
 
 
@@ -489,7 +488,7 @@ def test_generate_documentation_samples_mode_forwarded(
 
 
 # --------------------------------------------------------------------------- #
-# 13. Lazy-litellm contract                                                    #
+# 13. Lazy-litellm contract #
 # --------------------------------------------------------------------------- #
 
 
@@ -503,7 +502,7 @@ def test_lazy_litellm_import_for_docgen_routes() -> None:
     Caveat: a sibling test may have already imported ``litellm`` in this
     process (the suite shares a Python interpreter). When that's the
     case we can't observe the lazy contract, so the assertion is gated
-    on a clean snapshot — same posture as W12 / W20 / W23.
+    on a clean snapshot — same posture as / /.
     """
 
     litellm_already_loaded = any(name == "litellm" or name.startswith("litellm.") for name in sys.modules)

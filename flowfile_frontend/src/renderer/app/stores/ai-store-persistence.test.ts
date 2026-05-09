@@ -1,7 +1,8 @@
-// W27 + W43 — unit tests for the chat-history persistence helpers.
+// Unit tests for the chat-history persistence helpers.
 //
-// The helpers are intentionally pure (no Vue, no Pinia, no real DOM) so a
-// hand-rolled `Storage` mock is enough — no jsdom / happy-dom needed.
+// The helpers are intentionally pure (no Vue, no Pinia, no real DOM)
+// so a hand-rolled `Storage` mock is enough — no jsdom / happy-dom
+// needed.
 
 import { describe, expect, it } from "vitest";
 
@@ -16,10 +17,10 @@ import {
 } from "./ai-store-persistence";
 import type { ChatMessage } from "./ai-store";
 
-// Pre-W43 callers wrote under the bare `PERSISTENCE_KEY`; W43 routes
-// no-flow callers (the helper's default) through the `unscoped` bucket.
-// The legacy tests in this file all want the no-flow path, so reuse the
-// resolved key rather than spelling the suffix in every assertion.
+// No-flow callers (the helper's default) write through the
+// `unscoped` bucket. Legacy tests in this file all want the no-flow
+// path, so reuse the resolved key rather than spelling the suffix in
+// every assertion.
 const UNSCOPED_KEY = chatPersistenceKey(null);
 
 interface MockStorage {
@@ -256,10 +257,10 @@ describe("highestPersistedMessageId", () => {
   });
 });
 
-describe("acceptance criteria — full round-trip mirroring W27 spec", () => {
-  // Spec-criterion 5 verbatim: "mock sessionStorage, push messages,
-  // re-instantiate the store, assert messages restored. Negative case:
-  // corrupt JSON in sessionStorage → store hydrates as empty (no crash)."
+describe("acceptance criteria — full round-trip", () => {
+  // Mock sessionStorage, push messages, re-instantiate the store,
+  // assert messages restored. Negative case: corrupt JSON in
+  // sessionStorage → store hydrates as empty (no crash).
   it("push messages then re-load → messages restored", () => {
     const storage = makeStorage();
 
@@ -295,12 +296,12 @@ describe("acceptance criteria — full round-trip mirroring W27 spec", () => {
 });
 
 // ---------------------------------------------------------------------------
-// W43 — per-flow scoping. The chat trail is now keyed by `flow_id` so
-// switching flows shows the right conversation; localStorage is the
-// default surface so the trail survives Electron app restart.
+// Per-flow scoping. The chat trail is keyed by `flow_id` so switching
+// flows shows the right conversation; localStorage is the default
+// surface so the trail survives Electron app restart.
 // ---------------------------------------------------------------------------
 
-describe("chatPersistenceKey (W43)", () => {
+describe("chatPersistenceKey", () => {
   it("formats a real flow id as the v1-suffixed key", () => {
     expect(chatPersistenceKey(7)).toBe(`${PERSISTENCE_KEY}.7`);
   });
@@ -315,7 +316,7 @@ describe("chatPersistenceKey (W43)", () => {
   });
 });
 
-describe("per-flow round-trip (W43)", () => {
+describe("per-flow round-trip", () => {
   it("persists each flow's messages under its own key", () => {
     const storage = makeStorage();
     const flow7Messages: ChatMessage[] = [
@@ -434,7 +435,7 @@ describe("per-flow round-trip (W43)", () => {
   });
 });
 
-describe("quota + corruption (W43)", () => {
+describe("quota + corruption", () => {
   it("swallows quota errors when persisting under a per-flow key", () => {
     const storage = makeStorage();
     storage.setItem = () => {
@@ -476,12 +477,13 @@ describe("quota + corruption (W43)", () => {
   });
 });
 
-describe("selectedAgentSurface round-trip (2026-05-09)", () => {
-  // Regression: `_AGENT_SURFACE_VALUES` was missing `"agent_live"` so a
-  // user who picked "Live (REPL)" in settings had their choice written
-  // to localStorage fine, but the load validator rejected the unknown
-  // literal and silently fell back to default `"agent_staged"`. The
-  // user's selection survived neither refresh nor restart.
+describe("selectedAgentSurface round-trip", () => {
+  // Regression: `_AGENT_SURFACE_VALUES` was missing `"agent_live"` so
+  // a user who picked "Live (REPL)" in settings had their choice
+  // written to localStorage fine, but the load validator rejected the
+  // unknown literal and silently fell back to default
+  // `"agent_staged"`. The user's selection survived neither refresh
+  // nor restart.
   it.each(["agent_complex", "agent_staged", "agent_live"] as const)(
     "round-trips %s",
     (surface) => {
@@ -516,7 +518,7 @@ describe("selectedAgentSurface round-trip (2026-05-09)", () => {
   });
 });
 
-describe("clearPersistedAiState (W43)", () => {
+describe("clearPersistedAiState", () => {
   it("clears only the targeted flow's key", () => {
     const storage = makeStorage();
     persistAiState(

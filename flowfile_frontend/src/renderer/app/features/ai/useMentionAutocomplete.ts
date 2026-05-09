@@ -1,4 +1,4 @@
-// W24 — `@`-mention autocomplete composable.
+// `@`-mention autocomplete composable.
 //
 // Wraps a textarea + its bound text ref to provide:
 //   - kind / ref candidates as the user types `@…`

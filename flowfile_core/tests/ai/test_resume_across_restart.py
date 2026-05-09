@@ -1,4 +1,4 @@
-"""W42 — cross-restart resume integration tests.
+"""cross-restart resume integration tests.
 
 Drives the FastAPI ``/ai/agent/*`` routes against a tmp_path-rooted
 :class:`DiskSessionRepository` so we can simulate process-restart
@@ -56,7 +56,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas
 
 # --------------------------------------------------------------------------- #
-# Helpers — minimal flow + scripted provider                                   #
+# Helpers — minimal flow + scripted provider #
 # --------------------------------------------------------------------------- #
 
 
@@ -134,7 +134,7 @@ def _filter_args() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Fixtures                                                                     #
+# Fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -210,7 +210,7 @@ def patch_provider(monkeypatch: pytest.MonkeyPatch) -> _FakeProvider:
 
 
 # --------------------------------------------------------------------------- #
-# Tests                                                                        #
+# Tests #
 # --------------------------------------------------------------------------- #
 
 

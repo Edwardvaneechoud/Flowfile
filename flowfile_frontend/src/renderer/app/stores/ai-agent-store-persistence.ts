@@ -1,36 +1,37 @@
-// Browser-side session persistence for the W40 planner agent store.
+// Browser-side session persistence for the planner agent store.
 //
-// Mirrors the W27 pattern (`ai-store-persistence.ts`) — the regular chat
-// drawer already persists across refresh; the agent's events / drift detail
-// / session id were getting wiped on every page reload, which is a real UX
-// loss when the user runs an agent then F5s. Same shape: pure helpers, no
-// Vue/Pinia deps, `sessionStorage` for per-tab semantics, MAX cap to keep
-// the JSON payload bounded.
+// Mirrors the chat persistence pattern (`ai-store-persistence.ts`)
+// — the regular chat drawer already persists across refresh; the
+// agent's events / drift detail / session id need the same
+// treatment so a page reload mid-run doesn't wipe everything.
+// Same shape: pure helpers, no Vue/Pinia deps, `sessionStorage` for
+// per-tab semantics, MAX cap to keep the JSON payload bounded.
 //
-// Hydration normalises an in-flight `status === "running"` to `"idle"`
-// because the SSE stream is gone post-refresh and there is no re-attach
-// route in W40 (the resume route is for D006 drift-pause only). Same rule
-// for `paused_drift` — the user can still see the drift detail and pick up
-// from there using the existing resume buttons (W45 Q2 wired
-// `currentSessionId` from the wire so the buttons fire correctly).
+// Hydration normalises an in-flight `status === "running"` to
+// `"idle"` because the SSE stream is gone post-refresh and there is
+// no re-attach route (the resume route is for drift-pause only).
+// Same rule for `paused_drift` — the user can still see the drift
+// detail and pick up from there using the existing resume buttons
+// (``currentSessionId`` is captured from the wire so the buttons
+// fire correctly).
 
 import type { AgentDriftDetail } from "../api/ai.api";
 import type { AgentCompleteResult } from "../services/aiStreamClient";
 import type { AgentEvent, AgentStoreStatus } from "./ai-agent-store";
 
-/** Bare prefix — kept for legacy migration / clearing. Pre-v2.6 the
- *  agent store wrote to this single key regardless of which flow
- *  was open, which leaked events across flows. v2.6 keys per-flow
- *  via :func:`agentPersistenceKey`. Existing entries at the bare
- *  key are ignored on load (drop-on-upgrade is acceptable since
- *  the data was already cross-leaking). */
+/** Bare prefix — kept for legacy migration / clearing. Pre-flow-scoping
+ *  the agent store wrote to this single key regardless of which flow
+ *  was open, which leaked events across flows. The current scheme
+ *  keys per-flow via :func:`agentPersistenceKey`. Existing entries
+ *  at the bare key are ignored on load (drop-on-upgrade is
+ *  acceptable since the data was already cross-leaking). */
 export const AGENT_PERSISTENCE_KEY = "flowfile.ai.agent.v1";
 
-/** W71 v2.6 — flow-scoped storage key for the AI agent store.
- *  Mirrors ``chatPersistenceKey`` in ``ai-store-persistence.ts``
- *  so the agent's chat trail / events / status are isolated per
- *  flow the same way the chat store is. ``null`` flow_id (no flow
- *  loaded) maps to the ``"unscoped"`` bucket. */
+/** Flow-scoped storage key for the AI agent store. Mirrors
+ *  ``chatPersistenceKey`` in ``ai-store-persistence.ts`` so the
+ *  agent's chat trail / events / status are isolated per flow the
+ *  same way the chat store is. ``null`` flow_id (no flow loaded)
+ *  maps to the ``"unscoped"`` bucket. */
 export const agentPersistenceKey = (flowId: number | null): string =>
   `${AGENT_PERSISTENCE_KEY}.${flowId === null ? "unscoped" : flowId}`;
 
@@ -93,12 +94,12 @@ const VALID_EVENT_KINDS: ReadonlySet<AgentEvent["kind"]> = new Set([
   "abort",
   "complete",
   "awaiting_user_input",
-  // W71 v2.4 — ``stage_advanced`` is the kind used for the plan
-  // bubble (op_kind_meta="plan") AND every classify→pick→fill
-  // transition. Missing from the persistence allow-list pre-v2.10
-  // meant the entire plan + stage trail was DROPPED on every page
-  // refresh — only tool_call_* events survived. Adding it here
-  // restores the chat-trail continuity across reloads.
+  // ``stage_advanced`` is the kind used for the plan bubble
+  // (op_kind_meta="plan") AND every classify→pick→fill transition.
+  // Must be in the persistence allow-list so the chat-trail
+  // continuity survives page reloads — without it only
+  // tool_call_* events would persist and the entire plan + stage
+  // trail would be dropped.
   "stage_advanced",
   "info",
 ]);
@@ -157,10 +158,11 @@ const sanitizeLastResult = (raw: unknown): AgentCompleteResult | null => {
 const normaliseStatus = (raw: unknown): AgentStoreStatus => {
   if (typeof raw !== "string") return "idle";
   if (!VALID_STATUSES.has(raw as AgentStoreStatus)) return "idle";
-  // The SSE stream is dead post-refresh; W40 has no re-attach route. A
-  // session that was "running" has effectively been orphaned — collapse
-  // to "idle" so the UI shows a fresh slate. `paused_drift` survives
-  // because the resume route lets the user pick back up.
+  // The SSE stream is dead post-refresh; there's no re-attach route.
+  // A session that was "running" has effectively been orphaned —
+  // collapse to "idle" so the UI shows a fresh slate.
+  // `paused_drift` survives because the resume route lets the user
+  // pick back up.
   if (raw === "running") return "idle";
   return raw as AgentStoreStatus;
 };

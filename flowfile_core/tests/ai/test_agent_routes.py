@@ -1,4 +1,4 @@
-"""W40 — :mod:`flowfile_core.ai.agent_routes` tests.
+""":mod:`flowfile_core.ai.agent_routes` tests.
 
 Cases:
 
@@ -46,7 +46,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas
 
 # --------------------------------------------------------------------------- #
-# Test helpers                                                                 #
+# Test helpers #
 # --------------------------------------------------------------------------- #
 
 
@@ -158,7 +158,7 @@ def _filter_args() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Start                                                                        #
+# Start #
 # --------------------------------------------------------------------------- #
 
 
@@ -260,7 +260,7 @@ def test_start_persists_selected_node_ids_on_session(
     registered_flow: FlowGraph,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """W57 — ``selected_node_ids`` round-trips through ``AgentStartRequest``
+    """``selected_node_ids`` round-trips through ``AgentStartRequest``
     onto ``AgentSession.selected_node_ids``. Pre-allocates a session_id so we
     can read the session record back without racing the SSE stream."""
     fake = _FakeProvider(
@@ -294,7 +294,7 @@ def test_start_defaults_selected_node_ids_to_empty_when_omitted(
     registered_flow: FlowGraph,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """W57 — omitting ``selected_node_ids`` defaults to ``[]`` rather than
+    """omitting ``selected_node_ids`` defaults to ``[]`` rather than
     raising; the field is optional on the wire."""
     fake = _FakeProvider(
         tool_calls_per_step=[[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())]]
@@ -348,7 +348,7 @@ def test_start_422_session_id_collision(
 
 
 # --------------------------------------------------------------------------- #
-# Resume                                                                       #
+# Resume #
 # --------------------------------------------------------------------------- #
 
 
@@ -464,7 +464,7 @@ def test_resume_404_cross_user(
 
 
 # --------------------------------------------------------------------------- #
-# Abort                                                                        #
+# Abort #
 # --------------------------------------------------------------------------- #
 
 
@@ -512,7 +512,7 @@ def test_abort_flips_running_session(authed_client: TestClient, registered_flow:
 
 
 # --------------------------------------------------------------------------- #
-# Get state                                                                    #
+# Get state #
 # --------------------------------------------------------------------------- #
 
 
@@ -546,7 +546,7 @@ def test_get_state_returns_snapshot(authed_client: TestClient, registered_flow: 
 
 
 # --------------------------------------------------------------------------- #
-# Feature flag                                                                 #
+# Feature flag #
 # --------------------------------------------------------------------------- #
 
 
@@ -577,7 +577,7 @@ def test_503_when_feature_flag_off(
         r4 = authed_client.post("/ai/agent/anything/resume", json={"action": "discard"})
         assert r4.status_code == 503
 
-        # Followup (W49)
+        # Followup
         r5 = authed_client.post(
             "/ai/agent/anything/followup",
             json={"action": "user_message", "message": "x"},
@@ -588,7 +588,7 @@ def test_503_when_feature_flag_off(
 
 
 # --------------------------------------------------------------------------- #
-# W49 — Followup endpoint                                                      #
+# Followup endpoint #
 # --------------------------------------------------------------------------- #
 
 

@@ -1,4 +1,4 @@
-"""W18 — admin AI feature-flag toggle tests.
+"""admin AI feature-flag toggle tests.
 
 Cases:
 
@@ -212,7 +212,7 @@ def test_endpoint_reachable_when_flag_off(
     response = admin_client.post("/system/feature_flags/ai", json={"enabled": True})
     assert response.status_code == 200, response.text
 
-    # Flip back off and verify the AI router is still gated by W17 — i.e.
+    # Flip back off and verify the AI router is still gated by — i.e.
     # the admin endpoint is NOT under the same dependency.
     core_settings.FEATURE_FLAG_AI.set(False)
     ai_response = admin_client.get("/ai/health")
@@ -277,7 +277,7 @@ def test_response_shape_is_stable(
 ) -> None:
     """The frontend reads ``enabled`` and ``persisted`` — guard the contract.
 
-    ``persisted`` is intentionally always ``False`` in W18; cross-restart
+    ``persisted`` is intentionally always ``False`` in; cross-restart
     persistence is the user's responsibility (set ``FEATURE_FLAG_AI=true`` in
     ``.env``). If a future workstream adds a write-to-disk path, that change
     should be opt-in via a separate field rather than flipping this one.

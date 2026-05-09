@@ -1,4 +1,4 @@
-"""W18 — admin endpoint for the AI feature flag.
+"""Admin endpoint for the AI feature flag.
 
 Mounted under ``/system`` in :mod:`flowfile_core.main` — **outside** the
 ``/ai/*`` router. The whole point of this endpoint is to flip the AI gate
@@ -49,8 +49,8 @@ class FeatureFlagState(BaseModel):
         ...,
         description=(
             "False when the value lives only in process memory; True would mean the change "
-            "survives a restart. W18 always returns False — restart-survival requires the "
-            "user to set FEATURE_FLAG_AI in their .env."
+            "survives a restart. Always False here — restart-survival requires the user to "
+            "set FEATURE_FLAG_AI in their .env."
         ),
     )
 

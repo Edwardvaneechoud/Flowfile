@@ -1,4 +1,4 @@
-"""W62 — :func:`flowfile_core.ai.tools.executor._resolve_insertion_position` tests.
+""":func:`flowfile_core.ai.tools.executor._resolve_insertion_position` tests.
 
 Pure unit tests for the auto-layout resolver. The resolver derives
 ``(pos_x, pos_y)`` for an AI-staged node from the live graph: most-recent
@@ -79,7 +79,7 @@ def _make_flow_with_node(node_id: int, pos_x: float, pos_y: float) -> FlowGraph:
 
 
 # --------------------------------------------------------------------------- #
-# Single upstream                                                              #
+# Single upstream #
 # --------------------------------------------------------------------------- #
 
 
@@ -91,7 +91,7 @@ def test_resolves_from_single_upstream() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Chained — each new call has a different upstream                              #
+# Chained — each new call has a different upstream #
 # --------------------------------------------------------------------------- #
 
 
@@ -117,7 +117,7 @@ def test_chain_offsets_horizontally() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Fan-out — same upstream, multiple offset indices                             #
+# Fan-out — same upstream, multiple offset indices #
 # --------------------------------------------------------------------------- #
 
 
@@ -130,13 +130,13 @@ def test_fan_out_uses_staged_offset_index() -> None:
     assert p0 == (expected_x, 200.0)
     assert p1 == (expected_x, 200.0 + _AUTO_LAYOUT_Y_SPACING)
     assert p2 == (expected_x, 200.0 + 2 * _AUTO_LAYOUT_Y_SPACING)
-    # Distinct y values — the bug that prompted W62 was the y-stack being a
+    # Distinct y values — the bug that prompted was the y-stack being a
     # single point (all overlap).
     assert len({p0[1], p1[1], p2[1]}) == 3
 
 
 # --------------------------------------------------------------------------- #
-# Cold flow / fallback                                                         #
+# Cold flow / fallback #
 # --------------------------------------------------------------------------- #
 
 
@@ -159,7 +159,7 @@ def test_no_upstream_with_offset_index_stacks() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Multi-upstream picks most-recent                                             #
+# Multi-upstream picks most-recent #
 # --------------------------------------------------------------------------- #
 
 
@@ -177,7 +177,7 @@ def test_picks_most_recent_upstream() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Robustness                                                                   #
+# Robustness #
 # --------------------------------------------------------------------------- #
 
 
@@ -198,7 +198,7 @@ def test_skips_unknown_then_uses_known_upstream() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Canonical-constant lockstep                                                   #
+# Canonical-constant lockstep #
 # --------------------------------------------------------------------------- #
 
 
@@ -221,7 +221,7 @@ def test_uses_canonical_layout_constants() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Defensive — non-numeric pos_x on upstream                                    #
+# Defensive — non-numeric pos_x on upstream #
 # --------------------------------------------------------------------------- #
 
 

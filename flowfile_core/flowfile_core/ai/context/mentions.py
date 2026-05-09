@@ -1,9 +1,10 @@
-"""Backend ``@``-mention parsing primitive — owned by W22.
+"""Backend ``@``-mention parsing primitive.
 
-Resolves ``@node:<ref>``, ``@schema:<ref>``, ``@flow``, ``@selection``
-references in user messages so :mod:`flowfile_core.ai.context.builder`
-can pin the right subgraph. The frontend autocomplete UI (suggestion
-list, completion dropdown) is W24's responsibility.
+Resolves ``@node:<ref>``, ``@schema:<ref>``, ``@flow``,
+``@selection`` references in user messages so
+:mod:`flowfile_core.ai.context.builder` can pin the right subgraph.
+The frontend autocomplete UI (suggestion list, completion dropdown)
+lives in the frontend.
 
 Design notes
 ------------
@@ -51,9 +52,10 @@ _REF_RE = re.compile(
 class Mention:
     """A parsed ``@``-mention.
 
-    ``span`` is the half-open ``[start, end)`` range in the source text
-    (useful for the W24 frontend if it wants to highlight or replace).
-    ``ref`` is ``None`` for bare ``@flow`` / ``@selection``.
+    ``span`` is the half-open ``[start, end)`` range in the source
+    text (useful for the frontend autocomplete if it wants to
+    highlight or replace). ``ref`` is ``None`` for bare ``@flow`` /
+    ``@selection``.
     """
 
     kind: MentionKind

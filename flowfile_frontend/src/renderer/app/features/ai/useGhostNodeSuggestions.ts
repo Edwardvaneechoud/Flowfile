@@ -1,14 +1,16 @@
-// Edge-hover wiring for the W32 ghost-node surface.
+// Edge-hover wiring for the ghost-node surface.
 //
-// VueFlow exposes per-edge mouse events on `<VueFlow @edge-mouse-enter>` /
-// `@edge-mouse-leave`. This composable wraps those into a debounced request
-// to the AI store, anchored at the edge midpoint, and returns visibility
-// state the popup component can render against.
+// VueFlow exposes per-edge mouse events on
+// `<VueFlow @edge-mouse-enter>` / `@edge-mouse-leave`. This
+// composable wraps those into a debounced request to the AI store,
+// anchored at the edge midpoint, and returns visibility state the
+// popup component can render against.
 //
-// Debounce is 400 ms — short enough that a deliberate hover commits, long
-// enough that a hover-flick across multiple edges doesn't fire N requests.
-// W14 rate-limit accounting still applies if the timer leaks (it shouldn't),
-// so this is best-effort UX rather than a hard contract.
+// Debounce is 400 ms — short enough that a deliberate hover commits,
+// long enough that a hover-flick across multiple edges doesn't fire
+// N requests. Rate-limit accounting still applies if the timer leaks
+// (it shouldn't), so this is best-effort UX rather than a hard
+// contract.
 //
 // Lifecycle:
 //   - on edge-mouse-enter: schedule a request after the debounce window

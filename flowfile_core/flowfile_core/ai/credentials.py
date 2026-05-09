@@ -1,35 +1,40 @@
-"""AI BYOK credentials — DB CRUD + Pydantic schemas (plan §6.5, §8).
+"""AI BYOK credentials — DB CRUD + Pydantic schemas.
 
-Owned by W12. Keeps the credential layer **provider-import-free** so importing
-``flowfile_core.ai.credentials`` doesn't pull in ``litellm`` (verified by a
-snapshot test). The runtime seam — loading credentials and instantiating a
+Keeps the credential layer **provider-import-free** so importing
+``flowfile_core.ai.credentials`` doesn't pull in ``litellm``
+(verified by a snapshot test). The runtime seam — loading
+credentials and instantiating a
 :class:`~flowfile_core.ai.providers.base.Provider` — lives in
 :mod:`flowfile_core.ai.byok`. The HTTP routes live in
 :mod:`flowfile_core.ai.byok_routes`.
 
 Design notes:
 
-* **Secret rotation in place.** When ``upsert_provider_credential`` receives
-  a new ``api_key`` and a credential row with an existing
-  ``api_key_secret_id``, we mutate the ``Secret.encrypted_value`` of the
-  referenced row rather than creating a new ``Secret`` row. Matches
-  ``flowfile_core.flowfile.database_connection_manager.db_connections.update_database_connection``
-  precedent and keeps secret ids stable for any future audit references.
-* **Secret name convention.** ``ai:{provider}:api_key:{user_id}:{credential_id}``
-  — descriptive only; the FK ``ai_provider_credentials.api_key_secret_id``
-  is the unambiguous link. Avoids name clashes with other features that
+* **Secret rotation in place.** When ``upsert_provider_credential``
+  receives a new ``api_key`` and a credential row with an existing
+  ``api_key_secret_id``, we mutate the ``Secret.encrypted_value`` of
+  the referenced row rather than creating a new ``Secret`` row.
+  Matches the
+  ``database_connection_manager.db_connections.update_database_connection``
+  precedent and keeps secret ids stable for any future audit
+  references.
+* **Secret name convention.**
+  ``ai:{provider}:api_key:{user_id}:{credential_id}`` — descriptive
+  only; the FK ``ai_provider_credentials.api_key_secret_id`` is the
+  unambiguous link. Avoids name clashes with other features that
   share the ``secrets`` table.
 * **Explicit clear semantics.** The Pydantic input has a separate
-  ``clear_api_key: bool`` flag (and W29's ``clear_models``) so the user can
-  rotate to "no key" / "no curated model list" without deleting and
-  recreating the whole row. ``api_key=None`` / ``models=None`` mean "keep
-  existing"; the clear flag is mutually exclusive with the corresponding
-  value (raises 422).
-* **Models as JSON-in-Text (W29).** ``AiProviderCredential.models`` is a
-  nullable ``Text`` column holding a JSON-encoded ``list[str]`` so the
-  schema works on SQLite and PG identically (matches the pattern used by
-  ``flow_runs.node_results_json``, ``configs.tags`` etc.). All
-  encode/decode happens here so callers see ``list[str] | None``.
+  ``clear_api_key: bool`` flag (and ``clear_models``) so the user
+  can rotate to "no key" / "no curated model list" without deleting
+  and recreating the whole row. ``api_key=None`` / ``models=None``
+  mean "keep existing"; the clear flag is mutually exclusive with
+  the corresponding value (raises 422).
+* **Models as JSON-in-Text.** ``AiProviderCredential.models`` is a
+  nullable ``Text`` column holding a JSON-encoded ``list[str]`` so
+  the schema works on SQLite and PG identically (matches the
+  pattern used by ``flow_runs.node_results_json``, ``configs.tags``
+  etc.). All encode/decode happens here so callers see
+  ``list[str] | None``.
 """
 
 from __future__ import annotations
@@ -183,7 +188,7 @@ def upsert_provider_credential(
     elif payload.api_key is not None:
         _store_or_rotate_api_key(db, cred, user_id, payload.api_key.get_secret_value())
 
-    # W29 — curated model list. ``clear_models`` and ``models=[]`` collapse to
+    # Curated model list. ``clear_models`` and ``models=[]`` collapse to
     # the same NULL state so callers don't have to distinguish the two on read.
     if payload.clear_models or (payload.models is not None and len(payload.models) == 0):
         cred.models = None

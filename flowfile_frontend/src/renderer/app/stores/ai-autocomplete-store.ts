@@ -1,9 +1,10 @@
-// Pinia store for the W34 settings-autocomplete surface.
+// Pinia store for the settings-autocomplete surface.
 //
-// Distinct from the W20 chat store because cancellation semantics differ —
-// chat cancels per-message (long-running stream); autocomplete cancels per
-// keystroke (short fast JSON). Sharing one AbortController across surfaces
-// would mean a chat send aborts an in-flight formula suggestion fetch.
+// Distinct from the chat store because cancellation semantics differ
+// — chat cancels per-message (long-running stream); autocomplete
+// cancels per keystroke (short fast JSON). Sharing one AbortController
+// across surfaces would mean a chat send aborts an in-flight formula
+// suggestion fetch.
 //
 // The store doesn't cache results — autocomplete is fire-and-forget with the
 // CodeMirror dropdown owning the rendered list. We only track the single
@@ -60,10 +61,8 @@ export const useAiAutocompleteStore = defineStore("aiAutocomplete", () => {
 
   // Inject the user's chat provider / model when the caller didn't
   // pin one. Without this, a body with no ``provider`` field falls
-  // through to the route's default and 409s if that default isn't
-  // the user's configured provider — a real failure on 2026-05-09
-  // when the route still defaulted to ``"google"`` for users running
-  // on Anthropic / OpenAI / OpenRouter. The caller's explicit value
+  // through to the route's default and 409s if that default isn't the
+  // user's configured provider. The caller's explicit value
   // (``aiCompletions.ts`` passes one via ``opts.getProvider``) wins;
   // this only fills the gap when the body omits the field
   // (``Join.vue`` does).

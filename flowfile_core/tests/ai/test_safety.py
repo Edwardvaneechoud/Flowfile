@@ -1,10 +1,10 @@
-"""W25 — PII scrubber + safety layer tests.
+"""PII scrubber + safety layer tests.
 
 Cases:
 
-* ``test_default_sample_mode_is_off`` — D009 default-off invariant.
+* ``test_default_sample_mode_is_off`` — default-off invariant.
 * ``test_flow_safety_config_defaults`` — :class:`FlowSafetyConfig` defaults
-  match D009 (mode off, row count 5, no consent stamps).
+  match (mode off, row count 5, no consent stamps).
 * ``test_flow_safety_config_rejects_negative_row_count`` — Pydantic rejects
   ``sample_row_count=-1`` and ``sample_row_count=101``.
 * ``test_flow_safety_config_rejects_unknown_mode`` — Literal narrowing.
@@ -61,7 +61,7 @@ Cases:
 * ``test_detect_network_egress_dedupes_labels`` — multiple ``requests.*``
   calls yield one ``"requests"`` label.
 * ``test_w15_audit_reexports_intact`` — :mod:`flowfile_core.ai.safety` still
-  re-exports the W15 audit surface.
+  re-exports the audit surface.
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ from flowfile_core.ai.safety import (
 )
 
 # ---------------------------------------------------------------------------
-# D009 defaults
+# defaults
 # ---------------------------------------------------------------------------
 
 
@@ -136,7 +136,7 @@ def test_flow_safety_config_forbids_extra_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
-# prepare_samples — D009 / §9.1 modes
+# prepare_samples / §9.1 modes
 # ---------------------------------------------------------------------------
 
 
@@ -488,12 +488,12 @@ def test_scrub_value_regex_handles_scalar() -> None:
 
 
 # ---------------------------------------------------------------------------
-# W15 audit re-export contract (additive constraint)
+# audit re-export contract (additive constraint)
 # ---------------------------------------------------------------------------
 
 
 def test_w15_audit_reexports_intact() -> None:
-    """W15 documented these names as importable from safety; W25 must keep them."""
+    """documented these names as importable from safety; must keep them."""
     assert MAX_ARGS_BYTES > 0
     assert AuditEvent is safety.AuditEvent
     assert record_event is safety.record_event

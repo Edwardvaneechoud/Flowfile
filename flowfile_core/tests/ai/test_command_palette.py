@@ -1,8 +1,8 @@
-"""W33 — Cmd+K command palette tests.
+"""Cmd+K command palette tests.
 
 Coverage (~14 cases on :func:`run_command_palette`):
 
-* Surface vocabulary in lockstep across W30 / W22 / providers.
+* Surface vocabulary in lockstep across / / providers.
 * Tools are passed to the provider (cmd_k surface uses tool calls; not JSON-mode).
 * Tool-list size matches ``SURFACE_PRESETS["cmd_k"]``.
 * Server-assigned ``node_id`` injection on ``add_*`` tool calls.
@@ -15,7 +15,7 @@ Coverage (~14 cases on :func:`run_command_palette`):
 * Partial refusal: one valid + one invalid → diff with the valid op +
   ``refused`` list carries the invalid one.
 * Lazy-litellm contract.
-* W31 audit emission isn't double-counted by W33.
+* audit emission isn't double-counted by.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 # --------------------------------------------------------------------------- #
-# Test helpers                                                                 #
+# Test helpers #
 # --------------------------------------------------------------------------- #
 
 
@@ -110,7 +110,7 @@ def _filter_settings_for_unknown(node_id: int = 99) -> dict[str, Any]:
 class _FakeProvider:
     """Records the kwargs the module called ``chat()`` with.
 
-    Matches W34 / W32's ``_FakeProvider`` shape — sleep-before-response
+    Matches /'s ``_FakeProvider`` shape — sleep-before-response
     enables timeout testing; ``raise_exc`` exercises the provider-error
     branch; ``tool_calls`` lets each test set the LLM's response shape.
     """
@@ -172,7 +172,7 @@ def _scheduler() -> RateLimitScheduler:
 
 @pytest.fixture(autouse=True)
 def _clear_diff_store() -> None:
-    """Wipe the W41 in-memory diff store between cases.
+    """Wipe the in-memory diff store between cases.
 
     ``register_diff`` is a process-local dict; without a clean slate the
     integration tests bleed diff_ids into each other and assertions on
@@ -182,13 +182,12 @@ def _clear_diff_store() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Surface vocabulary lockstep                                               #
+# 1. Surface vocabulary lockstep #
 # --------------------------------------------------------------------------- #
 
 
 def test_cmd_k_surface_in_lockstep() -> None:
-    """``cmd_k`` exists in W30 ``SurfaceLiteral`` × ``SURFACE_PRESETS`` ×
-    W22 ``SURFACE_TO_LEVEL`` × every provider's ``surface_models``."""
+    """``cmd_k`` exists in ``SurfaceLiteral`` × ``SURFACE_PRESETS`` × ``SURFACE_TO_LEVEL`` × every provider's ``surface_models``."""
     from typing import get_args as _get_args
 
     from flowfile_core.ai.context import builder as ctx_builder
@@ -198,7 +197,7 @@ def test_cmd_k_surface_in_lockstep() -> None:
     assert "cmd_k" in ctx_builder.SURFACE_TO_LEVEL
     assert ctx_builder.SURFACE_TO_LEVEL["cmd_k"] == "copilot"
     assert "cmd_k" in tool_registry.SURFACE_PRESETS
-    # cmd_k preset is non-empty (~6 tools per W30).
+    # cmd_k preset is non-empty (~6 tools per).
     assert tool_registry.SURFACE_PRESETS["cmd_k"]
     tool_registry._check_preset_coverage()  # must not raise
 
@@ -223,7 +222,7 @@ def test_cmd_k_surface_in_lockstep() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 2. Provider-call wiring: tools must be passed                                #
+# 2. Provider-call wiring: tools must be passed #
 # --------------------------------------------------------------------------- #
 
 
@@ -269,7 +268,7 @@ async def test_tools_match_cmd_k_preset_size() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 3. Server-assigned id injection                                              #
+# 3. Server-assigned id injection #
 # --------------------------------------------------------------------------- #
 
 
@@ -332,14 +331,14 @@ async def test_multi_op_sequence_assigns_distinct_ids() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 4. Happy path: diff registered + accept-ready                                #
+# 4. Happy path: diff registered + accept-ready #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
 async def test_happy_path_single_op_registers_diff() -> None:
     """End-to-end: single ``add_filter`` tool call → ``diff_id`` retrievable
-    from the W41 store, ready for the W35 accept route."""
+    from the store, ready for the accept route."""
     flow = _flow_with_orders()
     tool_call = ToolCall(
         id="t1",
@@ -364,7 +363,7 @@ async def test_happy_path_single_op_registers_diff() -> None:
     assert response.op_count == 1
     assert response.rationale == "Filter rows where region == 'EU'."
 
-    # Diff must be retrievable via the W41 store — that's how W35 accepts it.
+    # Diff must be retrievable via the store — that's how accepts it.
     stored = get_diff(response.diff_id)
     assert stored is not None
     assert stored.session_id == "cmdk-test"
@@ -374,7 +373,7 @@ async def test_happy_path_single_op_registers_diff() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 5. Read-only tool calls dropped silently                                     #
+# 5. Read-only tool calls dropped silently #
 # --------------------------------------------------------------------------- #
 
 
@@ -382,7 +381,7 @@ async def test_happy_path_single_op_registers_diff() -> None:
 async def test_read_only_tool_calls_dropped() -> None:
     """``flowfile.schema.read_node_schema`` is in the cmd_k preset (so the
     LLM CAN call it for grounding) but it's read-only — never feeds a diff.
-    The W33 path silently drops these without affecting the staged-op count.
+    The path silently drops these without affecting the staged-op count.
     """
     flow = _flow_with_orders()
     add_call = ToolCall(
@@ -412,7 +411,7 @@ async def test_read_only_tool_calls_dropped() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6. Soft failure paths                                                        #
+# 6. Soft failure paths #
 # --------------------------------------------------------------------------- #
 
 
@@ -475,8 +474,7 @@ async def test_degrades_when_all_calls_refused() -> None:
     → ``degraded=true, reason="all_refused"``; ``refused`` carries the details
     so the frontend can show why.
 
-    Insertion context with ``upstream_node_ids=[1]`` is required to trigger
-    W31's column-ref validation pipeline — the executor only validates refs
+    Insertion context with ``upstream_node_ids=[1]`` is required to trigger's column-ref validation pipeline — the executor only validates refs
     when it has an upstream schema to validate against (D011 tier 1+).
     """
     flow = _flow_with_orders()
@@ -504,7 +502,7 @@ async def test_degrades_when_all_calls_refused() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 7. Partial refusal still stages the valid ops                                #
+# 7. Partial refusal still stages the valid ops #
 # --------------------------------------------------------------------------- #
 
 
@@ -540,16 +538,16 @@ async def test_partial_refusal_stages_valid_ops() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 8. Insertion context flows from the request                                  #
+# 8. Insertion context flows from the request #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
 async def test_w62_default_insertion_context_resolves_non_zero_coords() -> None:
-    """W62 — when the frontend leaves ``insertion_context.pos_x`` /
+    """when the frontend leaves ``insertion_context.pos_x`` /
     ``pos_y`` unset (or doesn't pass an ``insertion_context`` at all), the
     executor's auto-layout resolver fills in coords derived from the
-    upstream. Pre-W62 the staged ops always landed at (0, 0) so the user
+    upstream. previously the staged ops always landed at (0, 0) so the user
     had to manually drag them apart. Multi-op fan-out from the same
     upstream stacks vertically via ``staged_offset_index``.
     """
@@ -579,7 +577,7 @@ async def test_w62_default_insertion_context_resolves_non_zero_coords() -> None:
 
     coord_a = (additions[0].insertion_context.pos_x, additions[0].insertion_context.pos_y)
     coord_b = (additions[1].insertion_context.pos_x, additions[1].insertion_context.pos_y)
-    # Pre-W62 regression: both at (0, 0).
+    # previously regression: both at (0, 0).
     assert coord_a != (0.0, 0.0)
     assert coord_b != (0.0, 0.0)
     # Cmd+K fan-out: both anchored at node 1, so same x and the second
@@ -620,14 +618,14 @@ async def test_insertion_context_threaded_into_executor() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 9. Lazy-litellm contract                                                     #
+# 9. Lazy-litellm contract #
 # --------------------------------------------------------------------------- #
 
 
 def test_lazy_litellm_contract() -> None:
     """``import flowfile_core.ai.command_palette`` mustn't drag in litellm.
 
-    Mirror of W30 / W31 / W32 / W34 / W41 / W50 / W51 — the W11 / W12 / W13
+    Mirror of / / / / / / — the / /
     contract is process-wide.
     """
     litellm_already_loaded = any(name == "litellm" or name.startswith("litellm.") for name in sys.modules)

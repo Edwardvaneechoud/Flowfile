@@ -1,29 +1,32 @@
-"""1-row kernel dry-run for code-bearing nodes — W31 / D003.
+"""1-row kernel dry-run for code-bearing nodes.
 
 Code-bearing tool calls (``flowfile.graph.add_polars_code`` /
-``add_python_script`` / ``add_sql_query``) cannot have their output schema
-predicted by inspecting settings. D003 says: dry-run the proposed code on a
-single row of upstream data via the existing ``kernel_runtime`` Docker sandbox,
-read the output schema from the materialised parquet.
+``add_python_script`` / ``add_sql_query``) cannot have their output
+schema predicted by inspecting settings. The strategy is to dry-run
+the proposed code on a single row of upstream data via the existing
+``kernel_runtime`` Docker sandbox, then read the output schema from
+the materialised parquet.
 
-This module is the single seam tests stub: :func:`_run_kernel_for_dry_run` is
-the only function that touches the real kernel client, so a test fixture can
-replace it without poking the rest of the executor logic.
+This module is the single seam tests stub:
+:func:`_run_kernel_for_dry_run` is the only function that touches
+the real kernel client, so a test fixture can replace it without
+poking the rest of the executor logic.
 
-The :class:`DryRunCache` LRU keys on ``(code_hash, sample_hash)``. Identical
-``(code, sample-row)`` pairs hit cache on subsequent calls — important for an
-agent that tries the same proposal twice while iterating.
+The :class:`DryRunCache` LRU keys on ``(code_hash, sample_hash)``.
+Identical ``(code, sample-row)`` pairs hit cache on subsequent calls
+— important for an agent that tries the same proposal twice while
+iterating.
 
-**Cost.** Cold kernel: ~30s container start. Warm: 100–300ms HTTP+execute on a
-1-row sample. Acceptable for an agent step that's already on a multi-second
-budget. The cache amortises repeats.
+**Cost.** Cold kernel: ~30s container start. Warm: 100–300ms
+HTTP+execute on a 1-row sample. Acceptable for an agent step that's
+already on a multi-second budget. The cache amortises repeats.
 
-**Sample-row sourcing.** Per user direction (schema-driven): prefer
-``upstream.data_frame.head(1)`` when the upstream has been materialised; fall
-back to a 1-row null Polars LazyFrame built from the upstream's resolved
-``predicted_schema`` (which the D011 tier handler always populates for tiers
-0–2; tier-3 upstreams cause the executor to short-circuit before reaching this
-module).
+**Sample-row sourcing.** Schema-driven: prefer
+``upstream.data_frame.head(1)`` when the upstream has been
+materialised; fall back to a 1-row null Polars LazyFrame built from
+the upstream's resolved ``predicted_schema`` (which the upstream-tier
+handler always populates for tiers 0–2; tier-3 upstreams cause the
+executor to short-circuit before reaching this module).
 """
 
 from __future__ import annotations
@@ -134,7 +137,7 @@ def _resolve_sample_row(
     otherwise a null-row LazyFrame built from the resolved schema.
 
     Returns ``None`` if neither path is available (which should not happen if
-    the executor honours the D011 tier handler before calling here)."""
+    the executor honours the upstream-tier handler before calling here)."""
     upstream_node = flow.get_node(upstream_id) if hasattr(flow, "get_node") else None
     if upstream_node is not None:
         # Best-effort: use real materialised data when present.
@@ -197,7 +200,7 @@ def dry_run_code(
     """Dry-run ``code`` on a 1-row sample of the upstream, return predicted schema.
 
     Raises ``RuntimeError`` if no upstream sample can be resolved (caller should
-    have screened via the D011 tier handler before calling) or if the kernel
+    have screened via the upstream-tier handler before calling) or if the kernel
     dry-run fails.
     """
     if not upstream_node_ids:

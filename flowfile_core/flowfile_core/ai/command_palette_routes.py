@@ -1,13 +1,15 @@
-"""HTTP route for the Cmd+K command palette (W33).
+"""HTTP route for the Cmd+K command palette.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
-``Depends(get_current_active_user)``; W17's feature-flag gate covers this
-through the parent ``ai_router``.
+``Depends(get_current_active_user)``; the feature-flag gate covers
+this through the parent ``ai_router``.
 
-The route resolves the flow + provider identically to W34's autocomplete
-routes, then calls :func:`flowfile_core.ai.command_palette.run_command_palette`.
-That function never raises — soft failures become a 200 response with
-``degraded=true``. The route still maps the obvious 4xx cases up front:
+The route resolves the flow + provider identically to the
+autocomplete routes, then calls
+:func:`flowfile_core.ai.command_palette.run_command_palette`. That
+function never raises — soft failures become a 200 response with
+``degraded=true``. The route still maps the obvious 4xx cases up
+front:
 
 * ``404`` — provider name is not in :data:`PROVIDERS`.
 * ``409`` — :class:`ProviderNotConfiguredError`.
@@ -15,11 +17,11 @@ That function never raises — soft failures become a 200 response with
 * ``503`` — ``FEATURE_FLAG_AI`` off (inherited router-level).
 
 Once the LLM call starts, every soft failure surfaces inside the
-:class:`CommandPaletteResponse` so the frontend renders a single error
-state. The diff (if any) is registered with W41's ``DiffStore`` before
-the response is returned, so the frontend's call to
-``useAiDiffStore.setCurrentDiff(response.diff)`` is enough to wire up
-accept/reject without an extra round-trip.
+:class:`CommandPaletteResponse` so the frontend renders a single
+error state. The diff (if any) is registered with the ``DiffStore``
+before the response is returned, so the frontend's call to
+``useAiDiffStore.setCurrentDiff(response.diff)`` is enough to wire
+up accept/reject without an extra round-trip.
 """
 
 from __future__ import annotations
@@ -76,8 +78,8 @@ async def submit_command_palette(
     """Run one Cmd+K command-palette request and return the staged diff.
 
     The route is thin — provider resolution + flow resolution + thin
-    error mapping. The actual LLM call + W31 staging + W41 register all
-    happen inside :func:`run_command_palette`.
+    error mapping. The actual LLM call + executor staging + diff
+    register all happen inside :func:`run_command_palette`.
 
     Errors before the LLM call:
 

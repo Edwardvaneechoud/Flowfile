@@ -1,4 +1,4 @@
-"""W15 — Audit log infra tests.
+"""Audit log infra tests.
 
 Cases:
 
@@ -331,7 +331,7 @@ def test_truncate_args_passes_through_small_payload() -> None:
 def test_lazy_litellm_import() -> None:
     """``flowfile_core.ai.audit`` is independent of provider machinery.
 
-    Mirrors W11's lazy-import contract — importing the audit module must not
+    Mirrors's lazy-import contract — importing the audit module must not
     pull in litellm. We unconditionally restore the original modules
     afterwards so other tests' references (e.g. ``safety``'s re-exported
     ``AuditEvent`` class identity) stay consistent.

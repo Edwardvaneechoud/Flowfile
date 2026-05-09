@@ -1,4 +1,4 @@
-"""W20 — read-only chat-stream endpoint tests.
+"""read-only chat-stream endpoint tests.
 
 Cases:
 
@@ -10,26 +10,24 @@ Cases:
 * ``test_chat_stream_unconfigured_returns_409`` — no BYOK row + no env var
   + not ollama → 409 with the ``ProviderNotConfiguredError`` message.
 * ``test_chat_stream_disabled_returns_503`` — ``FEATURE_FLAG_AI=False``
-  short-circuits with W17's 503 (the gate inherited from ``ai_router``).
+  short-circuits with's 503 (the gate inherited from ``ai_router``).
 * ``test_chat_stream_validates_messages_present`` — empty ``messages``
   list returns 422 from Pydantic.
 * ``test_chat_stream_validates_role_whitelist`` — ``role: "tool"`` is
-  rejected at the request boundary; W20 is read-only, no tool messages.
+  rejected at the request boundary; is read-only, no tool messages.
 * ``test_chat_stream_passes_max_tokens_through`` — body's ``max_tokens``
   reaches the provider stub.
 * ``test_chat_stream_no_tools_passed_to_provider`` — the route passes
-  ``tools=None``; tool execution is W31's job.
+  ``tools=None``; tool execution is's job.
 * ``test_lazy_litellm_import_for_chat_routes`` — importing
   ``flowfile_core.ai.chat_routes`` doesn't pull ``litellm`` into
-  ``sys.modules``.
-
-W26 cases:
+  ``sys.modules``. cases:
 
 * ``test_chat_stream_prepends_assist_prompt_for_surface_explain`` — when
   ``surface="explain"``, the provider sees ``[system (W22 assist), user]``.
 * ``test_chat_stream_prepends_default_prompt_when_surface_missing`` — no
   ``surface`` field → falls back to the default surface (``"explain"`` →
-  ``assist`` per W22's ``SURFACE_TO_LEVEL``).
+  ``assist`` per's ``SURFACE_TO_LEVEL``).
 * ``test_chat_stream_falls_back_when_surface_unknown`` — ``surface="bogus"``
   is silently coerced to the default (we don't 422 a chat call).
 * ``test_chat_stream_uses_copilot_prompt_for_surface_cmd_k`` — covers a
@@ -187,13 +185,13 @@ def test_chat_stream_unconfigured_returns_409(authed_client: TestClient, monkeyp
 def test_chat_stream_disabled_returns_503(
     authed_client: TestClient, patch_get_configured_provider: FakeProvider
 ) -> None:
-    """Inheriting W17's router-level dependency means flipping the flag off
+    """Inheriting's router-level dependency means flipping the flag off
     must return 503 here too. Read ``FEATURE_FLAG_AI`` off the module via
     ``core_settings`` rather than caching the symbol — ``test_feature_flag``
     calls ``importlib.reload(core_settings)``, which rebinds the
     ``MutableBool`` to a fresh instance, and any stale ``from settings
     import FEATURE_FLAG_AI`` bound earlier in the test session points at
-    the dead one. Same fix W17 already applied to
+    the dead one. Same fix already applied to
     ``feature_flag.is_ai_enabled``.
     """
     original = core_settings.FEATURE_FLAG_AI.value
@@ -272,7 +270,7 @@ def test_chat_stream_no_tools_passed_to_provider(
     assert patch_get_configured_provider.last_call_kwargs.get("tools") is None
 
 
-# ---------- 10. W26 — server-issued system prompt ----------
+# ---------- 10. — server-issued system prompt ----------
 
 
 def _provider_messages(fake: FakeProvider) -> list[Any]:
@@ -283,7 +281,7 @@ def _provider_messages(fake: FakeProvider) -> list[Any]:
 def test_chat_stream_prepends_assist_prompt_for_surface_explain(
     authed_client: TestClient, patch_get_configured_provider: FakeProvider
 ) -> None:
-    """``surface="explain"`` should land on W22's ``assist`` suffix.
+    """``surface="explain"`` should land on's ``assist`` suffix.
 
     Provider sees ``[system (base + assist), user]`` in that order; the
     system content carries both the base contract ("Flowfile's AI
@@ -359,7 +357,7 @@ def test_chat_stream_falls_back_when_surface_unknown(
 def test_chat_stream_uses_copilot_prompt_for_surface_cmd_k(
     authed_client: TestClient, patch_get_configured_provider: FakeProvider
 ) -> None:
-    """``surface="cmd_k"`` resolves to W22's ``copilot`` suffix.
+    """``surface="cmd_k"`` resolves to's ``copilot`` suffix.
 
     Covers the non-default surface→level path so a regression that wires
     every surface to the same prompt is caught.
@@ -412,14 +410,14 @@ def test_chat_stream_server_prompt_precedes_client_system_message(
     assert user_msg.content == "describe flowfile"
 
 
-# ---------- 11. W28 — flow context wired in when ``flow_id`` is set ----------
+# ---------- 11. — flow context wired in when ``flow_id`` is set ----------
 
 
 _W28_FLOW_ID = 9928
 
 
 def _build_simple_flow_for_chat() -> FlowGraph:
-    """``orders (1) → filter_eu (2)``. Same shape as W23's fixture but
+    """``orders (1) → filter_eu (2)``. Same shape as's fixture but
     with a distinct ``flow_id`` so the two test files don't collide on
     the ``flow_file_handler._flows`` singleton when run together."""
 
@@ -487,14 +485,14 @@ def test_chat_stream_calls_render_prompt_context_when_flow_id_set(
     patch_get_configured_provider: FakeProvider,
     registered_flow_for_w28: FlowGraph,
 ) -> None:
-    """W28 — POST with ``flow_id`` set → backend calls W22's
+    """POST with ``flow_id`` set → backend calls's
     ``render_prompt_context``; provider receives ``[system (W22 layered
     prompt), user (W22 user-context block), user (question)]``.
 
-    The W22 user block must reference the actual node names from the
+    The user block must reference the actual node names from the
     flow. This is the test that fails if the smoke-test scenario regresses
     — asking "what is this flow about?" returning "I don't have any flow
-    loaded" was the bug that motivated W28.
+    loaded" was the bug that motivated.
     """
     response = authed_client.post(
         "/ai/chat/stream",
@@ -507,7 +505,7 @@ def test_chat_stream_calls_render_prompt_context_when_flow_id_set(
     assert response.status_code == 200
 
     captured = patch_get_configured_provider.last_call_kwargs["messages"]
-    # System (W22 layered) + W22 user block + the user's question.
+    # System (W22 layered) + user block + the user's question.
     assert len(captured) == 3
     system_msg, ctx_user_msg, question_msg = captured
 
@@ -516,7 +514,7 @@ def test_chat_stream_calls_render_prompt_context_when_flow_id_set(
     assert "# Assist mode" in system_msg.content
 
     assert ctx_user_msg.role == "user"
-    # W22's render_user_message includes node names by default — at least
+    #'s render_user_message includes node names by default — at least
     # one of the two registered nodes must surface, otherwise the chat is
     # still un-grounded and the smoke-test bug is back.
     assert "filter_eu" in ctx_user_msg.content or "orders" in ctx_user_msg.content
@@ -531,11 +529,11 @@ def test_chat_stream_calls_render_prompt_context_when_flow_id_set(
 def test_chat_stream_without_flow_id_uses_w26_identity_path(
     authed_client: TestClient, patch_get_configured_provider: FakeProvider
 ) -> None:
-    """W28 — when ``flow_id`` is omitted, behaviour matches W26 exactly:
+    """when ``flow_id`` is omitted, behaviour matches exactly:
     a single system prompt followed by the user's message. No
-    ``render_prompt_context`` call, no extra W22 user block.
+    ``render_prompt_context`` call, no extra user block.
 
-    Pins the backwards-compat invariant — every existing W20 / W26 test
+    Pins the backwards-compat invariant — every existing / test
     path stays green without changes when ``flow_id`` is unset.
     """
     response = authed_client.post(
@@ -548,7 +546,7 @@ def test_chat_stream_without_flow_id_uses_w26_identity_path(
     assert response.status_code == 200
 
     captured = patch_get_configured_provider.last_call_kwargs["messages"]
-    # No flow_id → no W22 user block. Just system + user.
+    # No flow_id → no user block. Just system + user.
     assert len(captured) == 2
     system_msg, user_msg = captured
     assert system_msg.role == "system"
@@ -559,7 +557,7 @@ def test_chat_stream_without_flow_id_uses_w26_identity_path(
 def test_chat_stream_flow_id_not_found_returns_422(
     authed_client: TestClient, patch_get_configured_provider: FakeProvider
 ) -> None:
-    """W28 — bogus ``flow_id`` → 422 with a clear detail. Mirrors W23's
+    """bogus ``flow_id`` → 422 with a clear detail. Mirrors's
     flow-not-found shape."""
     response = authed_client.post(
         "/ai/chat/stream",
@@ -581,7 +579,7 @@ def test_chat_stream_selected_node_ids_reach_render_prompt_context(
     patch_get_configured_provider: FakeProvider,
     registered_flow_for_w28: FlowGraph,
 ) -> None:
-    """W28 — ``selected_node_ids`` from the body reaches W22's
+    """``selected_node_ids`` from the body reaches's
     ``pinned_node_ids`` parameter (positional arg #2 in
     ``render_prompt_context(graph, pinned_node_ids, *, surface, ...)``).
     """
@@ -606,7 +604,7 @@ def test_chat_stream_selected_node_ids_reach_render_prompt_context(
         },
     )
     assert response.status_code == 200
-    # Second positional arg is pinned_node_ids per W22's signature.
+    # Second positional arg is pinned_node_ids per's signature.
     assert captured_args["args"][1] == [2]
 
 
@@ -616,7 +614,7 @@ def test_chat_stream_mentions_forwarded_to_render_prompt_context(
     patch_get_configured_provider: FakeProvider,
     registered_flow_for_w28: FlowGraph,
 ) -> None:
-    """W28 — when the client provides parsed ``mentions`` (W24's output),
+    """when the client provides parsed ``mentions`` (W24's output),
     they reach ``render_prompt_context`` as a single space-joined string
     for ``_coerce_mentions`` to parse server-side. Multiple mentions
     keep their order so node-id resolution is deterministic.
@@ -650,10 +648,10 @@ def test_chat_stream_defaults_to_at_flow_when_no_pin_or_mentions(
     patch_get_configured_provider: FakeProvider,
     registered_flow_for_w28: FlowGraph,
 ) -> None:
-    """W28 — ``flow_id`` set but no ``selected_node_ids`` and no
+    """``flow_id`` set but no ``selected_node_ids`` and no
     ``mentions`` → server defaults to ``@flow`` so the chat is still
     context-grounded by default. This is the smoke-test fix that
-    motivated W28. With an explicit selection, the auto-default
+    motivated. With an explicit selection, the auto-default
     suppresses (covered above by the selected-node-ids test).
     """
     captured: dict[str, Any] = {}
@@ -678,17 +676,17 @@ def test_chat_stream_defaults_to_at_flow_when_no_pin_or_mentions(
     assert captured["kwargs"]["mentions"] == "@flow"
 
 
-# ---------- 11b. W48 — prospective schema reaches the chat surface ----------
+# ---------- 11b. — prospective schema reaches the chat surface ----------
 
 _W48_FLOW_ID = 9948
 
 
 @pytest.fixture
 def registered_cold_flow_for_w48() -> Iterator[FlowGraph]:
-    """Same shape as the W28 fixture but with the filter's
+    """Same shape as the fixture but with the filter's
     ``predicted_schema`` cleared post-construction so it lands cold —
-    the exact scenario W48 fixes. ``orders`` (manual_input) keeps its
-    cached schema; the filter must be auto-resolved by the W48 helper
+    the exact scenario fixes. ``orders`` (manual_input) keeps its
+    cached schema; the filter must be auto-resolved by the helper
     when ``render_prompt_context`` walks it.
     """
     flow = FlowGraph(
@@ -732,7 +730,7 @@ def registered_cold_flow_for_w48() -> Iterator[FlowGraph]:
     flow.get_node(2).name = "filter_eu"
 
     # Cold filter: the cache is empty, but the schema_callback / fallback
-    # path is intact. W48 should resolve it on the next render_prompt_context.
+    # path is intact. should resolve it on the next render_prompt_context.
     flow.get_node(2).node_schema.predicted_schema = None
 
     flow_file_handler._flows[flow.flow_id] = flow
@@ -747,8 +745,8 @@ def test_chat_stream_user_block_contains_columns_for_un_run_static_upstream(
     patch_get_configured_provider: FakeProvider,
     registered_cold_flow_for_w48: FlowGraph,
 ) -> None:
-    """W48 — POST with ``flow_id`` set on a flow whose static upstream
-    nodes are un-run (``predicted_schema=None``) → the W22 user block
+    """POST with ``flow_id`` set on a flow whose static upstream
+    nodes are un-run (``predicted_schema=None``) → the user block
     surfaces real column names instead of the ``schema: unknown``
     sentinel. Mirrors the live transcript bug: user asked about column
     averages on a cold flow and the assistant refused, citing unknown
@@ -765,7 +763,7 @@ def test_chat_stream_user_block_contains_columns_for_un_run_static_upstream(
     assert response.status_code == 200
 
     captured = patch_get_configured_provider.last_call_kwargs["messages"]
-    assert len(captured) == 3  # system + W22 user + question
+    assert len(captured) == 3  # system + user + question
     _system_msg, ctx_user_msg, _question_msg = captured
 
     # The filter must report a known schema — the bug-of-record was the
@@ -778,11 +776,11 @@ def test_chat_stream_user_block_contains_columns_for_un_run_static_upstream(
     # (We slice by the node header; the orders node above it is
     # always-known so a global "schema: unknown" check would be too loose.)
     filter_block_start = ctx_user_msg.content.find("### filter_eu")
-    assert filter_block_start != -1, "expected ### filter_eu header in W22 user block"
+    assert filter_block_start != -1, "expected ### filter_eu header in user block"
     filter_block = ctx_user_msg.content[filter_block_start:]
     assert (
         "schema: unknown" not in filter_block
-    ), f"filter block still reports schema: unknown — W48 fix not applied. Block:\n{filter_block[:500]}"
+    ), f"filter block still reports schema: unknown — fix not applied. Block:\n{filter_block[:500]}"
 
 
 # ---------- 9. lazy litellm import ----------
@@ -798,7 +796,7 @@ def test_lazy_litellm_import_for_chat_routes() -> None:
     Caveat: a sibling test may have already imported ``litellm`` in this
     process (the suite shares a Python interpreter). When that's the case
     we can't observe the lazy contract, so the assertion is gated on a
-    clean snapshot — same posture as W12's
+    clean snapshot — same posture as's
     ``test_lazy_litellm_import_for_credentials``.
     """
     litellm_already_loaded = any(name == "litellm" or name.startswith("litellm.") for name in sys.modules)
@@ -819,14 +817,14 @@ def test_lazy_litellm_import_for_chat_routes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# W56 v2 — POST /ai/chat/preview (debug endpoint)
+# v2 — POST /ai/chat/preview (debug endpoint)
 # ---------------------------------------------------------------------------
 
 
 def test_chat_preview_returns_assembled_messages_as_json(
     authed_client: TestClient, patch_get_configured_provider: FakeProvider
 ) -> None:
-    """W56 v2 — preview returns the exact messages /chat/stream would send,
+    """v2 — preview returns the exact messages /chat/stream would send,
     without invoking the provider. Lets the user verify what the LLM sees.
     """
     response = authed_client.post(
@@ -845,7 +843,7 @@ def test_chat_preview_returns_assembled_messages_as_json(
     assert body["messages"][0]["role"] == "system"
     assert body["messages"][1]["role"] == "user"
     assert body["messages"][1]["content"] == "How do I count customers per city?"
-    # The system prompt must include the W56 v2 node reference for the
+    # The system prompt must include the v2 node reference for the
     # chat surface — that's the whole point of the preview endpoint
     # (let the user verify the catalog is reaching the LLM).
     assert "## Flowfile node reference" in body["messages"][0]["content"]
@@ -858,7 +856,7 @@ def test_chat_preview_returns_assembled_messages_as_json(
 def test_chat_preview_does_not_call_provider(
     authed_client: TestClient, patch_get_configured_provider: FakeProvider
 ) -> None:
-    """W56 v2 — preview is inspection-only; the provider's stream() must
+    """v2 — preview is inspection-only; the provider's stream() must
     not be invoked. FakeProvider records its last stream() call kwargs;
     an empty dict means stream() was never called.
     """
@@ -905,7 +903,7 @@ def test_chat_preview_disabled_returns_503(
 
 
 # --------------------------------------------------------------------------- #
-# W65 — chat preamble must never invoke _predicted_data_getter                  #
+# chat preamble must never invoke _predicted_data_getter #
 # --------------------------------------------------------------------------- #
 
 _W65_FLOW_ID = 9965
@@ -914,7 +912,7 @@ _W65_FLOW_ID = 9965
 def _build_random_split_flow_for_w65() -> FlowGraph:
     """``customers (1) → random_split (2)``. Reproduces the customer-churn-knn
     template's hang shape: ``random_split`` is the canonical
-    `_function`-with-`.collect()` node — pre-W65 the chat preamble's
+    `_function`-with-`.collect()` node — previously the chat preamble's
     `_attach_samples` would call its `_predicted_data_getter`, which runs
     `_function` synchronously and triggers a full upstream materialization
     inside the FastAPI request handler.
@@ -982,9 +980,9 @@ def test_chat_stream_does_not_invoke_predicted_data_getter_on_random_split_flow(
     patch_get_configured_provider: FakeProvider,
     registered_random_split_flow_for_w65: FlowGraph,
 ) -> None:
-    """W65 regression — chat preamble on a flow with a ``random_split``
+    """regression — chat preamble on a flow with a ``random_split``
     upstream node must complete without invoking ``_predicted_data_getter``
-    on any node. Pre-W65, the dev-default ``samples_mode="regex"`` plus the
+    on any node. previously, the dev-default ``samples_mode="regex"`` plus the
     lack of explicit pass-through at the chat route triggered
     ``_attach_samples`` → ``_safe_get_sample_data`` →
     ``node._predicted_data_getter()`` → ``self._function(*[...])`` →
@@ -1025,7 +1023,7 @@ def test_chat_stream_passes_samples_mode_off_explicitly(
     patch_get_configured_provider: FakeProvider,
     registered_flow_for_w28: FlowGraph,
 ) -> None:
-    """W65 — the chat route must pass ``samples_mode="off"`` explicitly to
+    """the chat route must pass ``samples_mode="off"`` explicitly to
     ``render_prompt_context`` rather than relying on the builder default.
     Defence-in-depth: a future patch can't reintroduce the hang by flipping
     a default.

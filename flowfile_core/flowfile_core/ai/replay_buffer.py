@@ -1,10 +1,12 @@
-"""W42 — SSE replay buffer for ``Last-Event-ID`` reconnects.
+"""SSE replay buffer for ``Last-Event-ID`` reconnects.
 
-W13 already emits ``id: {session_id}.{step_count}`` on every ``tool_call`` /
-``planner_event`` SSE frame, and :func:`flowfile_core.ai.streaming.resumable_sse_stream`
-already cursor-skips a live provider stream past a known ``last_event_id``.
-What's been missing is the *server-side ring* that those cursors read from
-when the live stream is gone (process restart, network drop, kill -9, etc.):
+The streaming layer already emits ``id: {session_id}.{step_count}``
+on every ``tool_call`` / ``planner_event`` SSE frame, and
+:func:`flowfile_core.ai.streaming.resumable_sse_stream` already
+cursor-skips a live provider stream past a known ``last_event_id``.
+This module provides the *server-side ring* that those cursors read
+from when the live stream is gone (process restart, network drop,
+kill -9, etc.):
 
 * :class:`ReplayBuffer` keeps the last ``cap`` SSE frames per
   ``(flow_id, session_id)`` in an in-memory mirror **and** in an

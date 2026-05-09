@@ -31,9 +31,9 @@ export const sanitiseMarkdown = (text: string): string => {
   return DOMPurify.sanitize(raw);
 };
 
-// W66 — constrained markdown renderer for surfaces where the LLM emits
-// short prose (Cmd+K rationale today; reusable for the chat / agent
-// rationale surfaces planned in W43 / W58 / W60).
+// Constrained markdown renderer for surfaces where the LLM emits
+// short prose (Cmd+K rationale; reusable for the chat / agent
+// rationale surfaces).
 //
 // Differs from `sanitiseMarkdown`:
 // - Allow-list is enforced at marked's renderer layer — `html` and
@@ -66,7 +66,7 @@ const configureRenderSafeMarked = (): void => {
       html(): string {
         return "";
       },
-      // Markdown image syntax (`![alt](url)`) is not in the W66
+      // Markdown image syntax (`![alt](url)`) is not in the
       // allow-list — render as nothing so the LLM can't smuggle an
       // image (or an `onerror`-bearing one) via markdown.
       image(): string {

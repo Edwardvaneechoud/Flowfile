@@ -1,8 +1,9 @@
-"""Google Gemini adapter — free-tier default per plan §8.2.
+"""Google Gemini adapter — free-tier default.
 
-Owned by W11. Gemini 2.x Flash is the bundled first-run demo model: 250–1000
-req/day, no card required, native tool-use and streaming. ``provider_factory``
-is the entry point; W12 will plug the BYOK key.
+Gemini 2.x Flash is the bundled first-run demo model: 250–1000
+req/day, no card required, native tool-use and streaming.
+``provider_factory`` is the entry point; the BYOK seam plugs in the
+key.
 """
 
 from typing import ClassVar

@@ -1,4 +1,4 @@
-"""W31 — Tool executor tests.
+"""Tool executor tests.
 
 Cases (mirrors the plan-mode test list):
 
@@ -51,7 +51,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 # --------------------------------------------------------------------------- #
-# Test helpers                                                                 #
+# Test helpers #
 # --------------------------------------------------------------------------- #
 
 
@@ -142,7 +142,7 @@ def stub_kernel(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict[str, Any]
 
 
 # --------------------------------------------------------------------------- #
-# 1. Static apply                                                              #
+# 1. Static apply #
 # --------------------------------------------------------------------------- #
 
 
@@ -168,7 +168,7 @@ def test_static_apply_returns_predicted_schema(call_kwargs: dict[str, Any]) -> N
 
 
 # --------------------------------------------------------------------------- #
-# 2. Unknown-columns refusal                                                   #
+# 2. Unknown-columns refusal #
 # --------------------------------------------------------------------------- #
 
 
@@ -205,7 +205,7 @@ def test_unknown_columns_refusal(call_kwargs: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 3. Dynamic node dry-run cache                                                #
+# 3. Dynamic node dry-run cache #
 # --------------------------------------------------------------------------- #
 
 
@@ -252,7 +252,7 @@ def test_dynamic_node_dry_run_cache(call_kwargs: dict[str, Any], stub_kernel: li
 
 
 # --------------------------------------------------------------------------- #
-# 4. Source target via mirror-graph (no upstream needed)                       #
+# 4. Source target via mirror-graph (no upstream needed) #
 # --------------------------------------------------------------------------- #
 
 
@@ -284,7 +284,7 @@ def test_source_target_via_mirror(call_kwargs: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 5. Network egress refusal                                                    #
+# 5. Network egress refusal #
 # --------------------------------------------------------------------------- #
 
 
@@ -315,7 +315,7 @@ def test_network_egress_refusal(call_kwargs: dict[str, Any], stub_kernel: list[d
 def test_polars_code_with_import_refuses_with_guidance(
     call_kwargs: dict[str, Any], stub_kernel: list[dict[str, Any]]
 ) -> None:
-    """W71 v2.13 — polars_code bodies that include ``import polars as pl``
+    """polars_code bodies that include ``import polars as pl``
     (or any other ``import``) are rejected with a refusal that names the
     pre-bound symbols (``pl``, ``col``, ``lit``, dtypes). Without this
     rejection the agent never sees the parser error: ``flow.add_polars_code``
@@ -362,7 +362,7 @@ def test_polars_code_with_import_refuses_with_guidance(
 
 
 # --------------------------------------------------------------------------- #
-# 6. Audit redacts secret refs                                                 #
+# 6. Audit redacts secret refs #
 # --------------------------------------------------------------------------- #
 
 
@@ -392,7 +392,7 @@ def test_audit_redacts_secrets(call_kwargs: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6b. Connect tool flat-shape contract                                         #
+# 6b. Connect tool flat-shape contract #
 # --------------------------------------------------------------------------- #
 
 
@@ -458,7 +458,7 @@ def test_connect_flat_shape_with_explicit_classes(call_kwargs: dict[str, Any]) -
 def test_connect_invalid_input_class_surfaces_tool_field_name(call_kwargs: dict[str, Any]) -> None:
     """A bad ``input_class`` must produce a refusal that mentions the flat
     tool-spec field name (``input_class``) rather than the internal Pydantic
-    field path (``input_connection.connection_class``) — otherwise the W53
+    field path (``input_connection.connection_class``) — otherwise the
     retry loop hands the LLM a field name it has never been shown."""
     flow = _flow_with_orders_and_filter()
     result = execute_tool_call(
@@ -498,10 +498,10 @@ def test_connect_missing_required_field_is_refused(call_kwargs: dict[str, Any]) 
 
 
 def test_connect_string_node_ids_get_example_nudge(call_kwargs: dict[str, Any]) -> None:
-    """2026-05-07 — when ``from_node_id`` / ``to_node_id`` come in as
+    """when ``from_node_id`` / ``to_node_id`` come in as
     non-coercible strings (live dogfood: LLM sent ``"node_3"`` /
     ``"<placeholder>"`` shapes), the connect refusal appends a concrete
-    example payload so the LLM corrects on retry. Mirrors W67's enrichment
+    example payload so the LLM corrects on retry. Mirrors's enrichment
     for ``add_*`` settings refusals.
     """
     flow = _flow_with_orders_and_filter()
@@ -524,7 +524,7 @@ def test_connect_string_node_ids_get_example_nudge(call_kwargs: dict[str, Any]) 
     # Pydantic's original error survives, mapped to flat field names.
     assert "from_node_id" in detail
     assert "to_node_id" in detail
-    # And the new W67-style example is appended.
+    # And the new-style example is appended.
     assert "Example payload" in detail
     assert '"from_node_id": 3' in detail
     assert '"to_node_id": 5' in detail
@@ -550,7 +550,7 @@ def test_delete_connection_accepts_flat_shape(call_kwargs: dict[str, Any]) -> No
 
 
 def test_delete_connection_idempotent_when_already_removed(call_kwargs: dict[str, Any]) -> None:
-    """W71 v2.8A — calling delete_connection on a connection that's
+    """calling delete_connection on a connection that's
     already gone returns silently instead of raising 422. This makes
     the AI diff applier tolerant of redundant ops produced by
     update_node_settings's implicit rewire (audit log 2026-05-09).
@@ -571,7 +571,7 @@ def test_delete_connection_idempotent_when_already_removed(call_kwargs: dict[str
     assert result1.status == "applied"
     assert flow.get_node(2).node_inputs.main_inputs == []
 
-    # Second delete on the SAME wire — silent no-op (was 422 pre-v2.8).
+    # Second delete on the SAME wire — silent no-op (was 422 previously).
     result2 = execute_tool_call(
         flow_id=flow.flow_id,
         tool_name="flowfile.graph.delete_connection",
@@ -589,7 +589,7 @@ def test_delete_connection_idempotent_when_already_removed(call_kwargs: dict[str
 
 
 def test_add_connection_idempotent_when_already_present(call_kwargs: dict[str, Any]) -> None:
-    """W71 v2.8A — calling connect for a wire that already exists
+    """calling connect for a wire that already exists
     returns silently. Diff-apply path can land redundant
     connections_added ops after update_node_settings has already
     rewired via add_node_step.
@@ -613,7 +613,7 @@ def test_add_connection_idempotent_when_already_present(call_kwargs: dict[str, A
 
 
 def test_delete_connection_accepts_arrow_id_shape(call_kwargs: dict[str, Any]) -> None:
-    """W71 v2.8C — accept the LLM's natural ``connection_id`` shape
+    """accept the LLM's natural ``connection_id`` shape
     (``"5→6"`` / ``"5->6"`` / ``"5:6"``) so a misbehaving emission
     doesn't burn a refusal-loop round before the structured shape
     arrives. Audit log 2026-05-09 showed the LLM emitting
@@ -626,7 +626,7 @@ def test_delete_connection_accepts_arrow_id_shape(call_kwargs: dict[str, Any]) -
     result = execute_tool_call(
         flow_id=flow.flow_id,
         tool_name="flowfile.graph.delete_connection",
-        # The LLM-natural shape — pre-v2.8C this was rejected.
+        # The LLM-natural shape — previously this was rejected.
         tool_args={"flow_id": flow.flow_id, "connection_id": "1→2"},
         insertion_context=InsertionContext(),
         flow=flow,
@@ -640,7 +640,7 @@ def test_delete_connection_accepts_arrow_id_shape(call_kwargs: dict[str, Any]) -
 
 
 # --------------------------------------------------------------------------- #
-# 7-9. D011 tiered handling                                                    #
+# 7-9. tiered handling #
 # --------------------------------------------------------------------------- #
 
 
@@ -730,7 +730,7 @@ def test_d011_tier_2_warn_and_stage(call_kwargs: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 10. Stage mode                                                               #
+# 10. Stage mode #
 # --------------------------------------------------------------------------- #
 
 
@@ -758,14 +758,14 @@ def test_stage_mode_returns_payload(call_kwargs: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 10b. W62 — auto-layout for staged nodes                                       #
+# 10b. — auto-layout for staged nodes #
 # --------------------------------------------------------------------------- #
 
 
 def test_w62_default_pos_resolves_from_upstream(call_kwargs: dict[str, Any]) -> None:
-    """W62 regression — when InsertionContext leaves ``pos_x`` / ``pos_y``
+    """regression — when InsertionContext leaves ``pos_x`` / ``pos_y``
     unset (the default), the executor derives non-(0, 0) coords from the
-    upstream node. Pre-W62 the staged payload always carried (0.0, 0.0)."""
+    upstream node. previously the staged payload always carried (0.0, 0.0)."""
     from flowfile_core.ai.tools.executor import (
         _AUTO_LAYOUT_X_SPACING,
         _AUTO_LAYOUT_Y_SPACING,
@@ -798,12 +798,12 @@ def test_w62_default_pos_resolves_from_upstream(call_kwargs: dict[str, Any]) -> 
     ic = payload["insertion_context"]
     assert ic["pos_x"] == 400.0 + _AUTO_LAYOUT_X_SPACING
     assert ic["pos_y"] == 300.0
-    # W62 also stamps the resolved coords onto settings so the apply path
+    # also stamps the resolved coords onto settings so the apply path
     # (which reads ``settings.pos_x`` via ``set_node_information``) lands
     # the node at the resolved position.
     assert payload["settings"]["pos_x"] == 400.0 + _AUTO_LAYOUT_X_SPACING
     assert payload["settings"]["pos_y"] == 300.0
-    # Sanity: not the pre-W62 (0, 0) bug.
+    # Sanity: not the previously (0, 0) bug.
     assert (ic["pos_x"], ic["pos_y"]) != (0.0, 0.0)
     # Layout offset Δy unused for a single anchor — staged_offset_index defaults to 0.
     _ = _AUTO_LAYOUT_Y_SPACING  # imported to assert it exists
@@ -937,12 +937,12 @@ def test_w62_staged_offset_index_stacks_fan_out(call_kwargs: dict[str, Any]) -> 
 
 
 # --------------------------------------------------------------------------- #
-# 11. Meta classify_intent (W71)                                               #
+# 11. Meta classify_intent #
 # --------------------------------------------------------------------------- #
 #
-# W71 v1.10 — ``test_meta_pick_category`` was deleted. The legacy
+# — ``test_meta_pick_category`` was deleted. The legacy
 # ``flowfile.meta.pick_category`` tool was removed alongside the
-# ``surface=agent`` two-stage flow it powered. The W71 staged meta
+# ``surface=agent`` two-stage flow it powered. The staged meta
 # tools (``classify_intent`` / ``pick_node_type`` / ``pick_upstream``)
 # are exercised end-to-end by ``test_planner_staged.py``; the
 # executor-side ``_handle_meta`` dispatch they go through is the same
@@ -950,7 +950,7 @@ def test_w62_staged_offset_index_stacks_fan_out(call_kwargs: dict[str, Any]) -> 
 
 
 # --------------------------------------------------------------------------- #
-# 12. Invalid tool name                                                        #
+# 12. Invalid tool name #
 # --------------------------------------------------------------------------- #
 
 
@@ -969,7 +969,7 @@ def test_invalid_tool_name(call_kwargs: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 13. Lazy litellm contract                                                    #
+# 13. Lazy litellm contract #
 # --------------------------------------------------------------------------- #
 
 
@@ -989,7 +989,7 @@ def test_lazy_litellm_contract() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 14. Formula is static — no kernel call                                       #
+# 14. Formula is static — no kernel call #
 # --------------------------------------------------------------------------- #
 
 
@@ -1019,12 +1019,12 @@ def test_formula_predicts_via_mirror_not_kernel(call_kwargs: dict[str, Any], stu
 
 
 # --------------------------------------------------------------------------- #
-# W54 — LLM-provided node_id validation                                        #
+# LLM-provided node_id validation #
 # --------------------------------------------------------------------------- #
 
 
 def test_add_with_llm_provided_colliding_node_id_is_refused(call_kwargs: dict[str, Any]) -> None:
-    """W54 AC2 — LLM emits ``add_filter(node_id=3, upstream_node_ids=[3])``.
+    """AC2 — LLM emits ``add_filter(node_id=3, upstream_node_ids=[3])``.
 
     The executor refuses with ``self_loop_prevented`` *before* Pydantic validation;
     no node is staged or applied; an audit row records the rejection.
@@ -1064,7 +1064,7 @@ def test_add_with_llm_provided_colliding_node_id_is_refused(call_kwargs: dict[st
 
 
 def test_add_with_llm_provided_id_already_live_is_refused(call_kwargs: dict[str, Any]) -> None:
-    """W54 — LLM-provided node_id collides with an existing live node id."""
+    """LLM-provided node_id collides with an existing live node id."""
     flow = _flow_with_orders()  # contains node 1
     args = _filter_args(node_id=1, depending_on_id=1, expr="[region]=='EU'")
 
@@ -1085,7 +1085,7 @@ def test_add_with_llm_provided_id_already_live_is_refused(call_kwargs: dict[str,
 
 
 # --------------------------------------------------------------------------- #
-# Sanity: ToolExecutionResult shape                                            #
+# Sanity: ToolExecutionResult shape #
 # --------------------------------------------------------------------------- #
 
 
@@ -1105,19 +1105,19 @@ def test_executor_module_exposes_seam() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W67 — settings-validation refusal enrichment                                  #
+# settings-validation refusal enrichment #
 # --------------------------------------------------------------------------- #
 
 
 def _add_manual_input_args_with_string_raw_data() -> dict[str, Any]:
-    """W67 — replicate a settings-validation refusal that the W71 v1.4
+    """replicate a settings-validation refusal that the
     universal JSON-string unwrap can't recover.
 
     Originally this fixture passed ``raw_data_format`` as a JSON-encoded
     string (``'{"columns": [], "data": []}'``) — exactly the live-
-    transcript shape llama-70b emits. v1.4 unwraps that automatically at
+    transcript shape llama-70b emits. unwraps that automatically at
     the executor seam, so the refusal path is no longer reached for
-    JSON-parseable strings. To keep the W67 refusal-enrichment tests
+    JSON-parseable strings. To keep the refusal-enrichment tests
     meaningful, the fixture now sends a string that isn't JSON-shaped
     (doesn't start with ``{`` / ``[`` / a digit) — the unwrap declines
     to attempt a parse and Pydantic still rejects with the original
@@ -1133,9 +1133,9 @@ def _add_manual_input_args_with_string_raw_data() -> dict[str, Any]:
 
 
 def test_w67_settings_validation_refusal_uses_new_reason(call_kwargs: dict[str, Any]) -> None:
-    """W67 Defect 2 — Pydantic ``ValidationError`` on settings flips
+    """Defect 2 — Pydantic ``ValidationError`` on settings flips
     ``refusal_reason`` to the new ``"settings_validation"`` literal (was
-    ``None`` before W67)."""
+    ``None`` before)."""
     flow = _flow_with_orders()
     result = execute_tool_call(
         flow_id=flow.flow_id,
@@ -1151,7 +1151,7 @@ def test_w67_settings_validation_refusal_uses_new_reason(call_kwargs: dict[str, 
 
 
 def test_w67_settings_validation_refusal_includes_field_and_shape(call_kwargs: dict[str, Any]) -> None:
-    """W67 Defect 2 — refusal detail names the failing field, the expected
+    """Defect 2 — refusal detail names the failing field, the expected
     shape, the received Python type, and points the LLM back at the catalog
     entry for the tool. Live-transcript replication."""
     flow = _flow_with_orders()
@@ -1175,7 +1175,7 @@ def test_w67_settings_validation_refusal_includes_field_and_shape(call_kwargs: d
 
 
 def test_w67_settings_validation_refusal_includes_concrete_example(call_kwargs: dict[str, Any]) -> None:
-    """W67 Defect 2 — refusal detail embeds a JSON example payload that
+    """Defect 2 — refusal detail embeds a JSON example payload that
     parses cleanly and has the structural keys (``columns``, ``data``) so
     the LLM has a concrete template to pattern-match on."""
     import json
@@ -1215,7 +1215,7 @@ def test_w67_settings_validation_refusal_includes_concrete_example(call_kwargs: 
 
 
 # --------------------------------------------------------------------------- #
-# W71 v2.8D — manual_input shape tolerance                                     #
+# — manual_input shape tolerance #
 # --------------------------------------------------------------------------- #
 
 
@@ -1251,7 +1251,7 @@ def test_normalize_columns_canonical_passthrough_is_identity() -> None:
 
 
 def test_normalize_data_row_oriented_transposes_when_shape_disambiguates() -> None:
-    """User dogfood payload (2026-05-09): 2 columns × 6 rows in row-oriented
+    """User dogfood payload: 2 columns × 6 rows in row-oriented
     shape. ``len(data) != len(columns)`` so we can transpose unambiguously."""
     columns = [
         {"name": "category", "data_type": "String"},
@@ -1461,7 +1461,7 @@ def test_executor_canonical_manual_input_still_validates(call_kwargs: dict[str, 
 
 
 # --------------------------------------------------------------------------- #
-# W47 — update_node_settings                                                   #
+# update_node_settings #
 # --------------------------------------------------------------------------- #
 
 
@@ -1503,7 +1503,7 @@ def _update_settings_args(
 
 
 def test_update_node_settings_stage_returns_modification_payload(call_kwargs: dict[str, Any]) -> None:
-    """W47 — ``mode="stage"`` returns ``staged_node_payload`` with
+    """``mode="stage"`` returns ``staged_node_payload`` with
     ``kind="modification"`` and old + new settings populated; the live
     node is not mutated.
     """
@@ -1539,7 +1539,7 @@ def test_update_node_settings_stage_returns_modification_payload(call_kwargs: di
 
 
 def test_update_node_settings_apply_mutates_live_node(call_kwargs: dict[str, Any]) -> None:
-    """W47 — ``mode="apply"`` re-fires ``add_<node_type>`` with the new
+    """``mode="apply"`` re-fires ``add_<node_type>`` with the new
     settings; the existing node's ``setting_input`` reflects the change
     on the next read.
     """
@@ -1565,8 +1565,8 @@ def test_update_node_settings_apply_mutates_live_node(call_kwargs: dict[str, Any
 
 
 def test_update_node_settings_pydantic_refusal(call_kwargs: dict[str, Any]) -> None:
-    """W47 refusal stage 1 — bad Pydantic shape surfaces as
-    ``settings_validation``. The W67 enriched-detail message routes
+    """refusal stage 1 — bad Pydantic shape surfaces as
+    ``settings_validation``. The enriched-detail message routes
     through the same path as ``add_*``.
     """
     flow = _flow_with_orders_and_filter()
@@ -1590,7 +1590,7 @@ def test_update_node_settings_pydantic_refusal(call_kwargs: dict[str, Any]) -> N
 def test_update_node_settings_network_egress_refusal(
     call_kwargs: dict[str, Any], stub_kernel: list[dict[str, Any]]
 ) -> None:
-    """W47 refusal stage 2 — network-egress check fires on code-bearing
+    """refusal stage 2 — network-egress check fires on code-bearing
     nodes via the same ``_extract_code`` path used by ``add_*``.
     """
     flow = _flow_with_orders()
@@ -1625,7 +1625,7 @@ def test_update_node_settings_network_egress_refusal(
 
 
 def test_update_node_settings_unknown_columns_refusal(call_kwargs: dict[str, Any]) -> None:
-    """W47 refusal stage 3 — column refs validated against live upstream
+    """refusal stage 3 — column refs validated against live upstream
     schemas. Mirrors the ``add_*`` path; the upstream resolution comes
     from the live node's existing wiring rather than insertion_context.
     """
@@ -1659,7 +1659,7 @@ def test_update_node_settings_unknown_columns_refusal(call_kwargs: dict[str, Any
 
 
 def test_update_node_settings_unknown_node_id(call_kwargs: dict[str, Any]) -> None:
-    """W47 — modification target must exist on the live graph. Bare
+    """modification target must exist on the live graph. Bare
     integer with no live node yields a generic refusal.
     """
     flow = _flow_with_orders()
@@ -1678,7 +1678,7 @@ def test_update_node_settings_unknown_node_id(call_kwargs: dict[str, Any]) -> No
 
 
 def test_update_node_settings_missing_node_id_arg(call_kwargs: dict[str, Any]) -> None:
-    """W47 — defensive: missing top-level ``node_id`` rejects with a
+    """defensive: missing top-level ``node_id`` rejects with a
     deterministic detail before touching the live graph.
     """
     flow = _flow_with_orders_and_filter()
@@ -1696,7 +1696,7 @@ def test_update_node_settings_missing_node_id_arg(call_kwargs: dict[str, Any]) -
 
 
 # --------------------------------------------------------------------------- #
-# 2026-05-07 — sink-as-upstream refusal                                         #
+# sink-as-upstream refusal #
 # --------------------------------------------------------------------------- #
 
 
@@ -1720,7 +1720,7 @@ def test_add_node_refuses_when_upstream_is_sink(call_kwargs: dict[str, Any]) -> 
     """An ``add_<type>`` call whose ``upstream_node_ids`` names a sink
     (``NodeTemplate.output == 0``) is refused with ``upstream_is_sink``
     before any wiring happens. Mirrors the customer_deduplication dogfood
-    failure (2026-05-07): LLM picked node 4 (``explore_data``) as the
+    failure: LLM picked node 4 (``explore_data``) as the
     upstream for an ``add_group_by``.
     """
     flow = _flow_with_orders_and_explore_data()
@@ -1743,7 +1743,7 @@ def test_add_node_refuses_when_upstream_is_sink(call_kwargs: dict[str, Any]) -> 
 
 
 def test_connect_refuses_self_loop(call_kwargs: dict[str, Any]) -> None:
-    """W71 v2.10A — calling ``flowfile.graph.connect`` with the same
+    """calling ``flowfile.graph.connect`` with the same
     id for ``from_node_id`` and ``to_node_id`` is rejected at
     staging time with ``refusal_reason="self_loop_connection"``.
     Catches the cycle the runtime check at flow_graph.py:4853 would
@@ -1829,22 +1829,22 @@ def test_add_node_passes_when_upstream_is_non_sink(call_kwargs: dict[str, Any]) 
 
 
 # --------------------------------------------------------------------------- #
-# W71 v2.14 — refuse unrequested wires from freshly-staged source nodes        #
-# into pre-existing live nodes                                                 #
+# — refuse unrequested wires from freshly-staged source nodes #
+# into pre-existing live nodes #
 # --------------------------------------------------------------------------- #
 
 
 def test_connect_refuses_unrequested_wire_from_staged_source_to_live(
     call_kwargs: dict[str, Any],
 ) -> None:
-    """W71 v2.14 — when the planner has staged a source node (e.g.
+    """when the planner has staged a source node (e.g.
     ``add_manual_input``) earlier in this session AND the LLM emits
     ``flowfile.graph.connect`` wiring that fresh source into a
     PRE-EXISTING live node, the host refuses with
     ``refusal_reason="unrequested_wire_to_live"``. The user did not
     explicitly ask for the wire — the agent's narration about
     "showing the new data alongside …" is rationalisation, not user
-    intent. See 2026-05-09 dogfood: planner staged ``add_manual_input``
+    intent. See an earlier dogfood: planner staged ``add_manual_input``
     (city/state lookup, id 11) AND ``connect 11→4`` where node 4 was
     a live ``explore_data``; the wire was never requested and would
     silently re-route node 4's input.
@@ -1875,7 +1875,7 @@ def test_connect_refuses_unrequested_wire_from_staged_source_to_live(
 def test_connect_allows_staged_to_staged_in_same_session(
     call_kwargs: dict[str, Any],
 ) -> None:
-    """W71 v2.14 — wiring two nodes both staged in this session is
+    """wiring two nodes both staged in this session is
     allowed (e.g. chained transforms, or a freshly-added source feeding
     a freshly-added consumer). Pins that the asymmetric refusal does
     NOT block legitimate same-session chains.
@@ -1902,7 +1902,7 @@ def test_connect_allows_staged_to_staged_in_same_session(
 def test_connect_allows_live_to_live_without_audit_meta(
     call_kwargs: dict[str, Any],
 ) -> None:
-    """W71 v2.14 — wiring two pre-existing live nodes is allowed and
+    """wiring two pre-existing live nodes is allowed and
     the new refusal does NOT fire when ``audit_meta`` is absent (the
     cmd_k / inline_action / docgen surfaces don't pass it). This pins
     the paranoia clause that empty ``staged_source_node_ids_at_stage``
@@ -1934,7 +1934,7 @@ def test_connect_allows_live_to_live_without_audit_meta(
 
 
 def test_connect_allows_live_to_staged_source(call_kwargs: dict[str, Any]) -> None:
-    """W71 v2.14 — wiring a pre-existing live upstream into a freshly-
+    """wiring a pre-existing live upstream into a freshly-
     staged source node id is allowed. Pins the asymmetry of the rule:
     the refusal triggers only when ``from_id`` is a same-session-staged
     SOURCE node going INTO a live downstream — not the reverse.
@@ -1959,7 +1959,7 @@ def test_connect_allows_live_to_staged_source(call_kwargs: dict[str, Any]) -> No
 
 
 def test_connect_allows_staged_non_source_to_live(call_kwargs: dict[str, Any]) -> None:
-    """W71 v2.14 — only staged SOURCE nodes are guarded. A staged
+    """only staged SOURCE nodes are guarded. A staged
     non-source (e.g. ``add_filter``) wired into a pre-existing live
     node is NOT refused — the rule is scoped specifically to source-
     only types per the user's narrowing of the scope.
@@ -1984,7 +1984,7 @@ def test_connect_allows_staged_non_source_to_live(call_kwargs: dict[str, Any]) -
 
 
 # --------------------------------------------------------------------------- #
-# 2026-05-07 — node_id coercion in non-Pydantic handlers                        #
+# node_id coercion in non-Pydantic handlers #
 # --------------------------------------------------------------------------- #
 
 
@@ -2009,7 +2009,7 @@ def test_delete_node_coerces_string_node_id(call_kwargs: dict[str, Any]) -> None
 
 
 def test_delete_node_refuses_non_coercible_node_id(call_kwargs: dict[str, Any]) -> None:
-    """Truly non-numeric strings still refuse with the W67-style example."""
+    """Truly non-numeric strings still refuse with the-style example."""
     flow = _flow_with_orders()
     result = execute_tool_call(
         flow_id=flow.flow_id,
@@ -2060,7 +2060,7 @@ def test_delete_node_refuses_bool_node_id(call_kwargs: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W71 v1.16 — join-shaped wire validation                                      #
+# — join-shaped wire validation #
 # --------------------------------------------------------------------------- #
 
 
@@ -2103,12 +2103,12 @@ def _cross_join_args(node_id: int = 3) -> dict[str, Any]:
 
 
 def test_cross_join_refused_when_right_input_missing(call_kwargs: dict[str, Any]) -> None:
-    """W71 v1.16 — staging a cross_join with only ``upstream_node_ids``
+    """staging a cross_join with only ``upstream_node_ids``
     populated and ``right_input_node_id`` null must REFUSE. Without
     this check, the silent ``main_inputs`` overwrite in
     ``flow_node.add_node_connection`` (line 638-641) leaves the join
     with a single wire and the LLM sees *"applied"* despite a broken
-    graph (2026-05-08 cross_join dogfood)."""
+    graph."""
     flow = _flow_with_two_inputs()
     result = execute_tool_call(
         flow_id=flow.flow_id,
@@ -2131,7 +2131,7 @@ def test_cross_join_refused_when_right_input_missing(call_kwargs: dict[str, Any]
 
 
 def test_cross_join_refused_when_left_and_right_are_same(call_kwargs: dict[str, Any]) -> None:
-    """W71 v1.16 — a node cannot join to itself; reject when LEFT
+    """a node cannot join to itself; reject when LEFT
     and RIGHT resolve to the same id."""
     flow = _flow_with_two_inputs()
     result = execute_tool_call(
@@ -2150,7 +2150,7 @@ def test_cross_join_refused_when_left_and_right_are_same(call_kwargs: dict[str, 
 
 
 def test_agent_writer_node_types_refused_with_writer_blocked(call_kwargs: dict[str, Any]) -> None:
-    """W71 v2.1 — the agent surfaces are not allowed to stage
+    """the agent surfaces are not allowed to stage
     writer-shaped node types (output / database_writer /
     cloud_storage_writer / catalog_writer). Even if the LLM somehow
     forces an ``add_<writer>`` call (e.g. by hallucinating the tool
@@ -2179,7 +2179,7 @@ def test_agent_writer_node_types_refused_with_writer_blocked(call_kwargs: dict[s
 
 
 def test_agent_writer_blocked_at_apply_mode_too(call_kwargs: dict[str, Any]) -> None:
-    """W71 v2.1 — same refusal fires for ``mode="apply"`` (the
+    """same refusal fires for ``mode="apply"`` (the
     agent_live path). Defense-in-depth: a writer hallucination on
     agent_live cannot land on the canvas even momentarily."""
     flow = _flow_with_orders()
@@ -2198,7 +2198,7 @@ def test_agent_writer_blocked_at_apply_mode_too(call_kwargs: dict[str, Any]) -> 
 
 
 def test_pick_node_type_enum_excludes_writers() -> None:
-    """W71 v2.1 — the ``pick_node_type`` tool spec's ``node_type``
+    """the ``pick_node_type`` tool spec's ``node_type``
     enum drops every writer-shaped type (output / database_writer
     / cloud_storage_writer / catalog_writer) so the LLM literally
     cannot pick one at stage 1. ``explore_data`` (read-only viewer)
@@ -2221,7 +2221,7 @@ def test_pick_node_type_enum_excludes_writers() -> None:
 
 
 def test_join_input_how_rejects_cross_value() -> None:
-    """W71 v1.17 — ``JoinInput.how`` is narrowed to ``JoinKeyStrategy``
+    """``JoinInput.how`` is narrowed to ``JoinKeyStrategy``
     (no ``"cross"``). The dedicated ``cross_join`` node type is the
     only path for Cartesian joins, so the LLM cannot accidentally
     bypass it via ``join + how="cross"``. Pydantic validation refuses
@@ -2244,7 +2244,7 @@ def test_join_input_how_rejects_cross_value() -> None:
 
 
 def test_join_input_how_accepts_inner_left_right(call_kwargs: dict[str, Any]) -> None:
-    """W71 v1.17 — every key-based join strategy is still accepted."""
+    """every key-based join strategy is still accepted."""
     for how in ("inner", "left", "right", "full", "semi", "anti", "outer"):
         ji = transform_schema.JoinInput(
             join_mapping=[],
@@ -2256,7 +2256,7 @@ def test_join_input_how_accepts_inner_left_right(call_kwargs: dict[str, Any]) ->
 
 
 def test_cross_join_succeeds_with_one_left_and_one_right(call_kwargs: dict[str, Any]) -> None:
-    """W71 v1.16 — the correct shape (one upstream + distinct right
+    """the correct shape (one upstream + distinct right
     input) stages cleanly. Both wires end up on the join node."""
     flow = _flow_with_two_inputs()
     result = execute_tool_call(
@@ -2283,13 +2283,13 @@ def test_cross_join_succeeds_with_one_left_and_one_right(call_kwargs: dict[str, 
 
 
 # --------------------------------------------------------------------------- #
-# W71 v1.5 — _unwrap_json_string_values: scalar preservation                   #
+# — _unwrap_json_string_values: scalar preservation #
 # --------------------------------------------------------------------------- #
 
 
 def test_unwrap_preserves_digit_string_for_str_fields() -> None:
-    """W71 v1.5 — `_unwrap_json_string_values` no longer collapses bare
-    numeric strings into ints. Motivated by 2026-05-09 dogfood:
+    """`_unwrap_json_string_values` no longer collapses bare
+    numeric strings into ints. Motivated by an earlier dogfood:
     `BasicFilter.value` (a `str` field) was being corrupted from "1"
     into 1, causing Pydantic to reject the LLM's correct payload with
     a misleading "got int" error. Pydantic v2 lax mode handles
@@ -2324,9 +2324,9 @@ def test_unwrap_preserves_digit_string_for_str_fields() -> None:
 
 
 def test_add_filter_basic_numeric_value_accepts_string(call_kwargs: dict[str, Any]) -> None:
-    """W71 v1.5 — `basic_filter.value="1"` survives the executor's unwrap
+    """`basic_filter.value="1"` survives the executor's unwrap
     pass and reaches `BasicFilter` validation as a string. Regression
-    test for the 2026-05-09 dogfood: the agent's `email_count > 1`
+    test for an earlier dogfood: the agent's `email_count > 1`
     filter was rejected with "got int" because the unwrap heuristic
     converted the LLM's correct `"1"` string into `int(1)`.
 

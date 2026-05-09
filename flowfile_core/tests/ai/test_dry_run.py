@@ -1,4 +1,4 @@
-"""W31 — Dry-run cache + sample-row sourcing tests.
+"""Dry-run cache + sample-row sourcing tests.
 
 The kernel call itself is mocked at the ``_run_kernel_for_dry_run`` seam so
 these tests don't need Docker. The cache, hash determinism, and null-row
@@ -21,7 +21,7 @@ from flowfile_core.ai.tools.dry_run import (
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 
 # --------------------------------------------------------------------------- #
-# DryRunCache                                                                  #
+# DryRunCache #
 # --------------------------------------------------------------------------- #
 
 
@@ -69,7 +69,7 @@ def test_default_cache_capacity() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Hash helpers                                                                 #
+# Hash helpers #
 # --------------------------------------------------------------------------- #
 
 
@@ -93,7 +93,7 @@ def test_hash_sample_distinguishes_data() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Null-row construction                                                        #
+# Null-row construction #
 # --------------------------------------------------------------------------- #
 
 
@@ -120,7 +120,7 @@ def test_build_null_row_handles_unknown_dtype_string_fallback() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# dry_run_code orchestration                                                   #
+# dry_run_code orchestration #
 # --------------------------------------------------------------------------- #
 
 

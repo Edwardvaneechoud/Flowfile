@@ -4,8 +4,7 @@ Flowfile's AI Assistant helps you build and reason about pipelines in plain lang
 
 Every suggestion is grounded in the live node graph — so the model references the columns and node types you actually have, not what it imagines.
 
-<!-- TODO screenshot: AI drawer open on a flow with a few nodes, showing the Send dropdown (Chat / Auto / Agent) and an in-progress assistant message. Aim for a wide shot that includes the canvas + drawer side-by-side. -->
-![AI drawer overview, with the Send-mode dropdown visible](../assets/images/ai/drawer_overview.png)
+![Flowfile AI Assistant in action](../assets/images/ai/ai-overview.gif)
 
 How a change is applied depends on the surface you pick:
 

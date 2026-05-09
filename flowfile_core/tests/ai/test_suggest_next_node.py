@@ -1,8 +1,8 @@
-"""W32 — edge ghost-node suggestions tests.
+"""edge ghost-node suggestions tests.
 
 Coverage (~22 cases):
 
-* Surface vocabulary in lockstep across W30 / W22 / providers.
+* Surface vocabulary in lockstep across / / providers.
 * Allowed node-type set derived from ``SURFACE_PRESETS["ghost_node"]``.
 * Pydantic validation of LLM output: drops candidates with bad settings.
 * Schema-grounding: drops candidates citing missing columns; passes valid ones.
@@ -49,7 +49,7 @@ from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.configs import settings as core_settings
 
 # --------------------------------------------------------------------------- #
-# Fakes                                                                        #
+# Fakes #
 # --------------------------------------------------------------------------- #
 
 
@@ -177,13 +177,12 @@ def _select_settings(*, old_name: str) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Surface vocabulary lockstep                                               #
+# 1. Surface vocabulary lockstep #
 # --------------------------------------------------------------------------- #
 
 
 def test_ghost_node_surface_in_lockstep() -> None:
-    """``ghost_node`` exists in W30 ``SurfaceLiteral`` × ``SURFACE_PRESETS`` ×
-    W22 ``SURFACE_TO_LEVEL`` × every provider's ``surface_models``."""
+    """``ghost_node`` exists in ``SurfaceLiteral`` × ``SURFACE_PRESETS`` × ``SURFACE_TO_LEVEL`` × every provider's ``surface_models``."""
     from flowfile_core.ai.context import builder as ctx_builder
     from flowfile_core.ai.tools import registry as tool_registry
 
@@ -231,13 +230,13 @@ def test_allowed_node_types_derived_from_preset() -> None:
     assert "group_by" in _ALLOWED_NODE_TYPES
     # read_node_schema is a tool, not a node type — must not leak in.
     assert "read_node_schema" not in _ALLOWED_NODE_TYPES
-    # Dynamic-only node types are not in the ghost preset (per W30 curation).
+    # Dynamic-only node types are not in the ghost preset (per curation).
     assert "polars_code" not in _ALLOWED_NODE_TYPES
     assert "python_script" not in _ALLOWED_NODE_TYPES
 
 
 # --------------------------------------------------------------------------- #
-# 2. Schema-grounding: hallucinated columns dropped                            #
+# 2. Schema-grounding: hallucinated columns dropped #
 # --------------------------------------------------------------------------- #
 
 
@@ -335,7 +334,7 @@ async def test_drops_candidate_outside_ghost_node_preset() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 3. Degraded / failure paths                                                  #
+# 3. Degraded / failure paths #
 # --------------------------------------------------------------------------- #
 
 
@@ -430,7 +429,7 @@ async def test_degrades_when_all_candidates_filtered() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 4. Provider call wiring                                                      #
+# 4. Provider call wiring #
 # --------------------------------------------------------------------------- #
 
 
@@ -537,13 +536,13 @@ async def test_markdown_fenced_json_unwrapped() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 5. Predicted-schema attachment                                               #
+# 5. Predicted-schema attachment #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
 async def test_predicted_schema_attached_for_static_node() -> None:
-    """A static node like ``select`` predicts its output schema via the W31
+    """A static node like ``select`` predicts its output schema via the
     mirror path. The frontend uses this to show downstream-friendly previews."""
     # Use real FlowfileColumn so predict_schema_via_mirror's promise-stub install
     # has the right shape.
@@ -579,7 +578,7 @@ async def test_predicted_schema_attached_for_static_node() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6. Routes                                                                    #
+# 6. Routes #
 # --------------------------------------------------------------------------- #
 
 
@@ -696,7 +695,7 @@ def test_route_happy_path(authed_client: TestClient, monkeypatch: pytest.MonkeyP
 
 
 # --------------------------------------------------------------------------- #
-# 7. Lazy-litellm contract                                                     #
+# 7. Lazy-litellm contract #
 # --------------------------------------------------------------------------- #
 
 

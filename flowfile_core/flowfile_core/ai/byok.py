@@ -1,16 +1,15 @@
-"""BYOK runtime seam — load credentials and instantiate a Provider (W12).
+"""BYOK runtime seam — load credentials and instantiate a Provider.
 
-Owned by W12. This is the module downstream callers use when they need a
-configured :class:`~flowfile_core.ai.providers.base.Provider` for a given
-``(user, provider, surface)`` triple. Kept separate from
-:mod:`flowfile_core.ai.credentials` so the credential CRUD layer stays
-``litellm``-import-free (``import flowfile_core.ai.credentials`` doesn't
-trigger any provider-class import; this module does).
+This is the module downstream callers use when they need a
+configured :class:`~flowfile_core.ai.providers.base.Provider` for a
+given ``(user, provider, surface)`` triple. Kept separate from
+:mod:`flowfile_core.ai.credentials` so the credential CRUD layer
+stays ``litellm``-import-free (``import flowfile_core.ai.credentials``
+doesn't trigger any provider-class import; this module does).
 
-Resolution order for the model passed to ``provider_factory`` (W29 widens
-W12's original 4-step order with two list-aware steps so OpenRouter /
-Groq users can curate several free models per credential and still get
-sensible per-surface defaults):
+Resolution order for the model passed to ``provider_factory``
+(list-aware so OpenRouter / Groq users can curate several free
+models per credential and still get sensible per-surface defaults):
 
 1. Explicit ``model=`` argument (caller knows best — chat-drawer per-request
    overrides land here).
@@ -114,7 +113,7 @@ def get_configured_provider(
         if resolved_model is None and cred.default_model is not None:
             resolved_model = cred.default_model
 
-        # W29 — consult the user's curated models list when neither an
+        # Consult the user's curated models list when neither an
         # explicit ``model=`` nor a stored ``default_model`` won. Step 3:
         # if a per-surface routing target appears in the user's list,
         # honour it. Step 4: otherwise, take the first listed model as

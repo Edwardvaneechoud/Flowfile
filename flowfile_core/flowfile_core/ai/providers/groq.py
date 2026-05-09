@@ -1,7 +1,7 @@
 """Groq adapter — fast streaming for low-TTFB surfaces.
 
-Owned by W11. ~30 RPM free-tier limit (plan §8.2) makes Groq a good fit for
-``cmd_k`` and ghost-node surfaces, where one user keystroke = one call.
+~30 RPM free-tier limit makes Groq a good fit for ``cmd_k`` and
+ghost-node surfaces, where one user keystroke = one call.
 """
 
 from typing import ClassVar
@@ -20,10 +20,10 @@ class GroqProvider(LiteLLMProvider):
         "ghost_node": "llama-3.3-70b-versatile",
         "explain": "llama-3.3-70b-versatile",
         "agent_complex": "llama-3.3-70b-versatile",
-        # W71 — Groq's llama-3.3-70b is the canonical small-model target
-        # for agent_staged. The function-calling failures we saw on
-        # agent / agent_complex (text-JSON-in-content) go away when the
-        # tools array has exactly one entry per round.
+        # Groq's llama-3.3-70b is the canonical small-model target
+        # for agent_staged. The function-calling failures seen on
+        # full-catalog surfaces (text-JSON-in-content) go away when
+        # the tools array has exactly one entry per round.
         "agent_staged": "llama-3.3-70b-versatile",
         "docgen": "llama-3.3-70b-versatile",
         "settings_autocomplete": "llama-3.3-70b-versatile",

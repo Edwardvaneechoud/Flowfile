@@ -1,8 +1,9 @@
 """OpenAI adapter — GPT-* with structured outputs and tool use.
 
-Owned by W11. ``gpt-4.1-mini`` is the cost/quality default; users override per
-surface via ``provider_factory(..., model=...)``. Strict structured outputs are
-litellm-handled; we surface them as plain ``ChatResponse`` content.
+``gpt-4.1-mini`` is the cost/quality default; users override per
+surface via ``provider_factory(..., model=...)``. Strict structured
+outputs are litellm-handled; we surface them as plain
+``ChatResponse`` content.
 """
 
 from typing import ClassVar
@@ -21,7 +22,7 @@ class OpenAIProvider(LiteLLMProvider):
         "ghost_node": "gpt-4.1-mini",
         "explain": "gpt-4.1",
         "agent_complex": "gpt-4.1",
-        # W71 — agent_staged stays on the mini tier: each LLM round sees
+        # ``agent_staged`` stays on the mini tier: each LLM round sees
         # one tool with a tight enum, so the cheap model is sufficient
         # and the four-round cycle stays well within rate limits.
         "agent_staged": "gpt-4.1-mini",

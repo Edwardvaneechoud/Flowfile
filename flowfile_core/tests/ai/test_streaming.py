@@ -1,4 +1,4 @@
-"""W13 — SSE streaming primitives tests.
+"""SSE streaming primitives tests.
 
 Cases:
 
@@ -13,7 +13,7 @@ Cases:
   followed by ``finish_reason`` → ``event: done``.
 * ``test_sse_stream_emits_tool_call_with_id`` — tool_call_delta surfaces
   the ``id:`` line that drives resumption.
-* ``test_sse_stream_invokes_on_checkpoint_at_tool_boundary`` — W42 seam:
+* ``test_sse_stream_invokes_on_checkpoint_at_tool_boundary`` — seam:
   the async hook fires once per complete ``ToolCall``.
 * ``test_sse_stream_propagates_provider_exception_as_error_event`` —
   upstream raises mid-stream → ``event: error`` emitted and the iterator
@@ -368,7 +368,7 @@ def test_lazy_litellm_import() -> None:
     """Importing ``flowfile_core.ai.streaming`` must not pull in litellm.
 
     Mirrors W11/W15's lazy-import contract. Restore is unconditional (per
-    the W15 review note) so cross-test class identities stay consistent.
+    the review note) so cross-test class identities stay consistent.
     """
     cleared: dict[str, Any] = {}
     for mod_name in list(sys.modules):
@@ -438,7 +438,7 @@ def test_sse_event_format_comment_and_named_forms() -> None:
 
 
 def test_keepalive_interval_constant() -> None:
-    """W22 / W42 lean on this constant; pinning the value protects them."""
+    """lean on this constant; pinning the value protects them."""
     assert KEEPALIVE_INTERVAL_SECONDS == 15.0
 
 

@@ -1,9 +1,9 @@
-"""Level 1 — Assist (single-turn, on-demand). Owned by Phase 1 workstreams.
+"""Assist level — single-turn, on-demand.
 
-Surfaces: ``AiAssistant.vue`` chat (W20), inline ✨ menu (W21), Fix-with-AI
-on run failure (W23). Read-only — no tool calls; no graph mutation.
+Surfaces: ``AiAssistant.vue`` chat, inline ✨ menu, Fix-with-AI on
+run failure. Read-only — no tool calls; no graph mutation.
 
-System prompt: ``prompts/base.md`` + ``prompts/assist.md`` (D008).
+System prompt: ``prompts/base.md`` + ``prompts/assist.md``.
 
-Stub until Phase 1.
+Stub.
 """

@@ -3,8 +3,7 @@
 //
 // Click toggles the AI sidebar (editorStore.isAiOpen). The kbd hint
 // advertises Cmd+K, which is bound to the same toggle in Canvas.vue
-// (rewired from the AI command palette per polish.md 2026-05-06 —
-// palette is dormant but reversible).
+// (the AI command palette is dormant but reversible).
 
 import { computed } from "vue";
 import { useEditorStore } from "../../stores/editor-store";

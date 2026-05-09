@@ -21,12 +21,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from flowfile_core.ai import audit as audit_module
 from flowfile_core.ai import diff as diff_module
 from flowfile_core.ai import safety, sessions
-from flowfile_core.ai.providers.base import Message, Provider, ToolCall
+from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.scheduler import RateLimitScheduler, default_scheduler
 from flowfile_core.ai.tools.classification import classify_node_type
 from flowfile_core.ai.tools.dry_run import DryRunCache
 from flowfile_core.ai.tools.executor import (
-    InsertionContext,
     ToolExecutionResult,  # noqa: F401  (re-exported via __init__ for tests)
     execute_tool_call,
 )
@@ -49,9 +48,9 @@ from ._internal import (
     _STAGED_STATE_MACHINE_SURFACES,
     DEFAULT_MAX_RETRIES_PER_STEP,
     DEFAULT_MAX_TOKENS,
+    RATIONALE_MAX_LEN,
     PlannerEvent,
     PlannerEventName,
-    RATIONALE_MAX_LEN,
     _check_self_loop,
     _classify_op_kind,
     _collect_live_node_ids,
@@ -65,8 +64,8 @@ from .catalog import (
 from .coercions import _coerce_formula_bare_string_args, _looks_like_outer_envelope_value
 from .insertion import (
     _allocate_node_id,
-    _count_prior_staged_with_same_upstream,
     _collect_staged_upstream_positions,
+    _count_prior_staged_with_same_upstream,
     _resolve_insertion_context,
 )
 from .llm_replies import _payload_node_id, _summarise_result_for_llm
@@ -406,7 +405,10 @@ async def _run_planner_loop(
         _refresh_system_prompt_for_stage(session, flow)
 
         try:
-            if session.surface in _STAGED_STATE_MACHINE_SURFACES and session.stage in ("pick_upstream", "fill_settings"):
+            if (
+                session.surface in _STAGED_STATE_MACHINE_SURFACES
+                and session.stage in ("pick_upstream", "fill_settings")
+            ):
                 tool_catalog, dyn_err = _build_staged_tool_catalog(session, flow)
                 if dyn_err is not None:
                     session.status = "failed"
@@ -683,13 +685,13 @@ async def _run_planner_loop(
                     "staged_node_ids_at_stage": list(session.staged_node_ids),
                 }
             elif tc.name == "flowfile.graph.connect":
-                # W71 v2.14 — pre-filter source-only staged ids so the
-                # executor's ``unrequested_wire_to_live`` backstop can
-                # refuse wires from freshly-staged source nodes into
-                # pre-existing live nodes. The list is snapshot-at-stage
-                # so any later acceptance of the diff (which transitions
-                # ids from staged → live) naturally disables the guard
-                # on subsequent rounds.
+                # Pre-filter source-only staged ids so the executor's
+                # ``unrequested_wire_to_live`` backstop can refuse
+                # wires from freshly-staged source nodes into
+                # pre-existing live nodes. The list is snapshot-at-
+                # stage so any later acceptance of the diff (which
+                # transitions ids from staged → live) naturally
+                # disables the guard on subsequent rounds.
                 staged_source_node_ids: list[int] = []
                 for entry in session.staged_results:
                     if not entry.tool_name.startswith(_ADD_PREFIX):

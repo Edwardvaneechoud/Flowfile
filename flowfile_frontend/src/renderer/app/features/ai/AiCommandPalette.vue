@@ -1,11 +1,11 @@
 <script setup lang="ts">
-// W33 — Cmd+K command palette overlay.
+// Cmd+K command palette overlay.
 //
-// A fixed-position single-line input centered above the canvas. Esc closes;
-// Enter submits; while loading the input is disabled and a spinner shows.
-// On success the W35 diff panel takes over (the store calls
-// `useAiDiffStore.setCurrentDiff(...)` and the AI drawer opens) — this
-// component fades out.
+// A fixed-position single-line input centered above the canvas. Esc
+// closes; Enter submits; while loading the input is disabled and a
+// spinner shows. On success the diff panel takes over (the store
+// calls `useAiDiffStore.setCurrentDiff(...)` and the AI drawer
+// opens) — this component fades out.
 //
 // Mounted once from Canvas.vue. The Cmd+K binding lives there too.
 //
@@ -40,14 +40,14 @@ const canSubmit = computed(
     palette.prompt.trim().length > 0,
 );
 
-// W36 — model picker. Mirrors the chat drawer's pattern (AiAssistant.vue):
-// prefer the W29-curated `credential.models` list, fall back to the singleton
-// `defaultModel`, and only render the <select> when there are 2+ options.
-// Existing behaviour is preserved verbatim for users with a single default
-// model: the picker just doesn't render. The picker writes to the same
-// `aiStore.selectedModel` that the palette already forwards on each request,
-// so changing it routes the next call to the picked model and survives across
-// surfaces (W27 persistence covers it via the existing watcher).
+// Model picker. Mirrors the chat drawer's pattern (AiAssistant.vue):
+// prefer the curated `credential.models` list, fall back to the
+// singleton `defaultModel`, and only render the <select> when there
+// are 2+ options. Existing behaviour is preserved verbatim for users
+// with a single default model: the picker just doesn't render. The
+// picker writes to the same `aiStore.selectedModel` that the palette
+// already forwards on each request, so changing it routes the next
+// call to the picked model and survives across surfaces.
 const selectedProviderMeta = computed(() => {
   const name = aiStore.selectedProvider;
   if (!name) return null;
@@ -84,9 +84,10 @@ watch(
 );
 
 onMounted(async () => {
-  // Pre-load the provider list once so the first cmd+k press doesn't
-  // race the BYOK fetch. The W20 drawer already does this on its own
-  // mount, but the palette may be the first AI surface a user opens.
+  // Pre-load the provider list once so the first cmd+k press
+  // doesn't race the BYOK fetch. The chat drawer already does this
+  // on its own mount, but the palette may be the first AI surface
+  // a user opens.
   if (aiStore.providers.length === 0) {
     try {
       await aiStore.loadProviders();
@@ -112,7 +113,7 @@ const doSubmit = async (): Promise<void> => {
   if (!canSubmit.value) return;
   if (!aiStore.selectedProvider) return;
   // Pull selection from the live VueFlow instance the same way the
-  // chat drawer does (D005 — palette mounted from Canvas.vue).
+  // chat drawer does (palette mounted from Canvas.vue).
   const instance = flowStore.vueFlowInstance;
   let selectedNodeIds: number[] | undefined;
   let upstreamNodeIds: number[] = [];
@@ -139,10 +140,10 @@ const doSubmit = async (): Promise<void> => {
   });
 };
 
-// W66 — backdrop click is intentionally a no-op. Cmd+K closes via Esc or
-// the explicit ✕ close button only; this matches VS Code / Raycast / Linear
-// command-palette conventions and stops a stray click from erasing the
-// rationale / error / refusal block the user is reading.
+// Backdrop click is intentionally a no-op. Cmd+K closes via Esc or
+// the explicit ✕ close button only; this matches VS Code / Raycast
+// / Linear command-palette conventions and stops a stray click from
+// erasing the rationale / error / refusal block the user is reading.
 
 const handleClose = (): void => {
   if (!palette.loading) palette.close();

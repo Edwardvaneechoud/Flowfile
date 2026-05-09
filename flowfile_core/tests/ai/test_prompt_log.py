@@ -1,4 +1,4 @@
-"""W59 — Prompt logging for debugging.
+"""Prompt logging for debugging.
 
 Cases:
 

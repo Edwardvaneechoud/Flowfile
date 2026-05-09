@@ -1,4 +1,4 @@
-"""W33 — Cmd+K command-palette route tests.
+"""Cmd+K command-palette route tests.
 
 Coverage (~7 cases):
 
@@ -9,7 +9,7 @@ Coverage (~7 cases):
   the route itself maps :class:`ProviderNotConfiguredError` to ``409``.
 * ``422`` on missing flow.
 * ``422`` on Pydantic validation (blank prompt).
-* ``503`` when the W17 feature flag is off.
+* ``503`` when the feature flag is off.
 * Soft failures pass through as 200 with ``degraded=true``.
 """
 
@@ -33,7 +33,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 # --------------------------------------------------------------------------- #
-# Fixtures                                                                     #
+# Fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -123,7 +123,7 @@ def authed_client() -> Iterator[TestClient]:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Happy path                                                                #
+# 1. Happy path #
 # --------------------------------------------------------------------------- #
 
 
@@ -164,7 +164,7 @@ def test_route_happy_path(authed_client: TestClient, monkeypatch: pytest.MonkeyP
 
 
 # --------------------------------------------------------------------------- #
-# 2. 404 unknown provider                                                      #
+# 2. 404 unknown provider #
 # --------------------------------------------------------------------------- #
 
 
@@ -182,7 +182,7 @@ def test_route_404_unknown_provider(authed_client: TestClient) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 3. 409 unconfigured provider                                                 #
+# 3. 409 unconfigured provider #
 # --------------------------------------------------------------------------- #
 
 
@@ -211,7 +211,7 @@ def test_route_409_unconfigured(authed_client: TestClient, monkeypatch: pytest.M
 
 
 # --------------------------------------------------------------------------- #
-# 4. 422 flow not found                                                        #
+# 4. 422 flow not found #
 # --------------------------------------------------------------------------- #
 
 
@@ -234,7 +234,7 @@ def test_route_422_flow_not_found(authed_client: TestClient, monkeypatch: pytest
 
 
 # --------------------------------------------------------------------------- #
-# 5. 422 validation                                                            #
+# 5. 422 validation #
 # --------------------------------------------------------------------------- #
 
 
@@ -257,7 +257,7 @@ def test_route_422_validation(authed_client: TestClient, payload: dict[str, Any]
 
 
 # --------------------------------------------------------------------------- #
-# 6. 503 W17 gate                                                              #
+# 6. 503 gate #
 # --------------------------------------------------------------------------- #
 
 
@@ -276,7 +276,7 @@ def test_route_503_when_flag_off(authed_client: TestClient) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 7. Soft failure passes through as 200 + degraded                             #
+# 7. Soft failure passes through as 200 + degraded #
 # --------------------------------------------------------------------------- #
 
 

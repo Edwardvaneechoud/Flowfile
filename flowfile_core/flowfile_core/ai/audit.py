@@ -1,23 +1,22 @@
-"""AI audit log — persistence + query layer for plan §9.4.
+"""AI audit log — persistence + query layer.
 
-Owned by W15. Every Level 1/2/3 surface that mutates a flow or burns tokens
-should call :func:`record_event` with an :class:`AuditEvent`. Read-back is via
-:func:`query_events`; the ``GET /ai/audit/{flow_id}`` HTTP route lands once
-W11/W12 wire auth-gated AI surfaces, and will wrap this same helper.
+Every AI surface that mutates a flow or burns tokens should call
+:func:`record_event` with an :class:`AuditEvent`. Read-back is via
+:func:`query_events`.
 
 Design notes:
 
 * ``flow_id`` is an in-memory runtime integer, not an FK to
-  ``flow_registrations`` — draft flows aren't always registered but still
-  produce auditable AI actions. W43 may revisit when chat-history persistence
-  introduces stronger flow identity guarantees.
-* ``tool_args`` is JSON-serialised and capped at :data:`MAX_ARGS_BYTES` so a
-  misbehaving tool-call payload can't bloat the DB. PII scrubbing of the args
-  themselves is W25's responsibility (``safety.py``); the truncation here is
-  byte-budget only.
-* The function emits a structured log line for the existing logger pipeline
-  (plan §6.5) in addition to persisting — useful when running with
-  ``FLOWFILE_TESTING=1`` or when a downstream metrics scraper wants a tail.
+  ``flow_registrations`` — draft flows aren't always registered but
+  still produce auditable AI actions.
+* ``tool_args`` is JSON-serialised and capped at
+  :data:`MAX_ARGS_BYTES` so a misbehaving tool-call payload can't
+  bloat the DB. PII scrubbing of the args themselves is the safety
+  module's responsibility; the truncation here is byte-budget only.
+* The function emits a structured log line for the existing logger
+  pipeline in addition to persisting — useful when running with
+  ``FLOWFILE_TESTING=1`` or when a downstream metrics scraper wants
+  a tail.
 """
 
 from __future__ import annotations
@@ -162,9 +161,9 @@ def query_events(
 ) -> list[AiAuditEvent]:
     """Read audit events. Filters compose; ordered DESC by ``created_at``.
 
-    The future ``GET /ai/audit/{flow_id}`` route is a thin auth-gated wrapper
-    around this. Until then, callers (e.g. W11's cost-per-flow tooling, W31's
-    pass-rate aggregator) drive it directly.
+    The future ``GET /ai/audit/{flow_id}`` route is a thin
+    auth-gated wrapper around this. Until then, callers (e.g.
+    cost-per-flow tooling, pass-rate aggregator) drive it directly.
     """
 
     def _query(session: Session) -> list[AiAuditEvent]:
@@ -194,8 +193,8 @@ def _truncate_args(args: dict[str, Any]) -> str:
 
     A truncated payload is replaced by a small JSON object that records the
     original size and a clipped preview, rather than emitting an invalid
-    fragment. Downstream consumers (audit-log UI, W31 metrics) can detect
-    truncation by the ``__truncated__`` key.
+    fragment. Downstream consumers (audit-log UI, metrics) can
+    detect truncation by the ``__truncated__`` key.
     """
     try:
         blob = json.dumps(args, default=str, ensure_ascii=False)

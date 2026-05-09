@@ -17,7 +17,6 @@ from flowfile_core.ai.tools.registry import build_staged_fill_tool_spec
 
 from ._internal import (
     _AGENT_STAGED_OP_TO_SURFACE,
-    _STAGED_STATE_MACHINE_SURFACES,
     _collect_live_node_ids,
     logger,
 )

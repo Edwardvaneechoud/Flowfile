@@ -1,6 +1,7 @@
-// Axios wrappers for the W12 BYOK endpoints (/ai/providers, /ai/providers/{name},
-// /ai/providers/{name}/test). Mirrors the DatabaseView/api.ts pattern: TS-side
-// camelCase, snake_case mappers at the boundary.
+// Axios wrappers for the BYOK endpoints (/ai/providers,
+// /ai/providers/{name}, /ai/providers/{name}/test). Mirrors the
+// DatabaseView/api.ts pattern: TS-side camelCase, snake_case mappers
+// at the boundary.
 
 import axios from "../../services/axios.config";
 import type {
@@ -13,7 +14,7 @@ import type {
 import { AI_DISABLED_DETAIL } from "./aiProviderTypes";
 
 const API_BASE_URL = "/ai/providers";
-// W18 — admin feature-flag endpoint lives outside the gated /ai/* router so
+// Admin feature-flag endpoint lives outside the gated /ai/* router so
 // admins can flip the AI gate from the UI without first satisfying it.
 const ADMIN_FEATURE_FLAG_URL = "/system/feature_flags/ai";
 
@@ -86,9 +87,10 @@ const toPyInput = (input: AiProviderCredentialInput): PyAiProviderCredentialInpu
   clear_models: input.clearModels,
 });
 
-// Thrown by every fetcher when the backend reports the AI subsystem is off
-// (503 with W17's DISABLED_DETAIL). Lets the view render a dedicated empty-state
-// without sniffing axios error shapes everywhere.
+// Thrown by every fetcher when the backend reports the AI subsystem
+// is off (503 with the disabled-detail marker). Lets the view render
+// a dedicated empty-state without sniffing axios error shapes
+// everywhere.
 export class AiDisabledError extends Error {
   constructor(message: string = AI_DISABLED_DETAIL) {
     super(message);
@@ -155,9 +157,10 @@ export const testAiProvider = async (provider: string): Promise<AiProviderTestRe
   }
 };
 
-// W18 — admin endpoint for flipping FEATURE_FLAG_AI on the running process.
-// Returns the new state on success. Backend reuses get_current_admin_user, so
-// non-admin callers see a 403 ("Admin privileges required").
+// Admin endpoint for flipping FEATURE_FLAG_AI on the running
+// process. Returns the new state on success. Backend reuses
+// get_current_admin_user, so non-admin callers see a 403 ("Admin
+// privileges required").
 export const setAiFeatureFlag = async (enabled: boolean): Promise<AiFeatureFlagState> => {
   try {
     const response = await axios.post<AiFeatureFlagState>(ADMIN_FEATURE_FLAG_URL, { enabled });

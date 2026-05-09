@@ -1,14 +1,13 @@
-"""Prompt-context construction — owned by W22 + W24.
+"""Prompt-context construction.
 
-Serialises the current subgraph, schemas, and (opt-in per **D009**)
-sample rows into a token-budgeted system / user :class:`Message` pair.
-``mentions`` parses ``@node`` / ``@schema`` / ``@flow`` / ``@selection``
-references; ``budget`` enforces caps so we never blow the context
-window. Per **D008** the system prompt is layered (``prompts/base.md``
+Serialises the current subgraph, schemas, and (opt-in) sample rows
+into a token-budgeted system / user :class:`Message` pair.
+``mentions`` parses ``@node`` / ``@schema`` / ``@flow`` /
+``@selection`` references; ``budget`` enforces caps so we never blow
+the context window. The system prompt is layered (``prompts/base.md``
 + ``prompts/{level}.md``).
 
-Public surface — single import for downstream workstreams (W20, W21,
-W23, W30, W40, W50, W51):
+Public surface — single import for downstream callers:
 """
 
 from flowfile_core.ai.context.budget import (
@@ -49,7 +48,7 @@ __all__ = [
     "snapshot_node",
     "assemble_system_prompt",
     "render_user_message",
-    # Mention parsing (W24 owns the frontend autocomplete)
+    # Mention parsing (the frontend autocomplete uses these)
     "parse_mentions",
     "resolve_mentions",
     # Budgeting helpers

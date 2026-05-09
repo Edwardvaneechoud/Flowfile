@@ -1,4 +1,4 @@
-"""W11 — Provider abstraction tests.
+"""Provider abstraction tests.
 
 Cases:
 
@@ -7,7 +7,7 @@ Cases:
 * ``test_factory_returns_correct_class`` — ``provider_factory(name)`` returns
   the matching adapter for each name in ``PROVIDERS``.
 * ``test_factory_unknown_provider_raises`` — bad name → ``UnknownProviderError``.
-* ``test_factory_resolves_surface_to_model`` — D010 surface→model mapping for
+* ``test_factory_resolves_surface_to_model`` — surface→model mapping for
   each provider.
 * ``test_explicit_model_overrides_surface`` — explicit ``model=`` wins over surface.
 * ``test_factory_applies_litellm_prefix`` — model normalisation prepends prefix.
@@ -139,14 +139,14 @@ def test_list_supported_providers() -> None:
     assert sorted(names) == sorted(PROVIDER_NAMES)
 
 
-# -------- D010 surface → model resolution --------
+# -------- surface → model resolution --------
 
 
 @pytest.mark.parametrize(
     ("name", "surface", "model_substr"),
     [
         ("anthropic", "cmd_k", "haiku"),
-        # W71 v1.10 — legacy ``"agent"`` surface removed; the staged
+        # — legacy ``"agent"`` surface removed; the staged
         # surface routes to haiku for anthropic, agent_complex stays on
         # opus.
         ("anthropic", "agent_staged", "haiku"),
@@ -558,7 +558,7 @@ async def test_stream_yields_streamchunks_in_order() -> None:
     assert finish_reasons == ["tool_calls"]
 
 
-# -------- W59: prompt logging + provider-call counter --------
+# --------: prompt logging + provider-call counter --------
 
 
 @pytest.fixture
@@ -611,7 +611,7 @@ def _reset_provider_counter():  # type: ignore[no-untyped-def]
 async def test_chat_writes_prompt_log_when_enabled(
     _isolated_log_dir, _logging_on, _reset_provider_counter
 ) -> None:
-    """W59 acceptance #1: chat call writes one JSONL line with full payload."""
+    """acceptance #1: chat call writes one JSONL line with full payload."""
     p = provider_factory("anthropic", model="claude-haiku-4-5", api_key="sk-test")
     fake_response = _make_chat_response(content="hello world")
     with patch("litellm.acompletion", new=AsyncMock(return_value=fake_response)):
@@ -649,7 +649,7 @@ async def test_chat_writes_prompt_log_when_enabled(
 async def test_chat_no_log_when_disabled(
     _isolated_log_dir, _logging_off, _reset_provider_counter
 ) -> None:
-    """W59 acceptance #2: with the flag off, no file is written."""
+    """acceptance #2: with the flag off, no file is written."""
     p = provider_factory("anthropic")
     fake_response = _make_chat_response(content="hi")
     with patch("litellm.acompletion", new=AsyncMock(return_value=fake_response)):
@@ -662,7 +662,7 @@ async def test_chat_no_log_when_disabled(
 async def test_stream_writes_one_log_entry_on_end(
     _isolated_log_dir, _logging_on, _reset_provider_counter
 ) -> None:
-    """W59 acceptance #3: streaming path emits ONE entry on stream-end with
+    """acceptance #3: streaming path emits ONE entry on stream-end with
     aggregated text + tool calls. Per-chunk lines are not emitted."""
 
     async def fake_stream() -> Any:
@@ -738,7 +738,7 @@ async def test_chat_log_records_error(
 async def test_provider_counter_increments_regardless_of_log_flag(
     _logging_off, _reset_provider_counter
 ) -> None:
-    """W59 acceptance #7: counter increments even when prompt log is off."""
+    """acceptance #7: counter increments even when prompt log is off."""
     from flowfile_core.ai.metrics import get_provider_call_counts
 
     p = provider_factory("anthropic")

@@ -1,4 +1,4 @@
-"""W42 — :mod:`flowfile_core.ai.replay_buffer` tests.
+""":mod:`flowfile_core.ai.replay_buffer` tests.
 
 Cases (~10):
 

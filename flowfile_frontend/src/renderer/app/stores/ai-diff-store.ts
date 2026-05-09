@@ -1,6 +1,6 @@
-// W35 — Pinia store owning the *currently staged* GraphDiff.
+// Pinia store owning the *currently staged* GraphDiff.
 //
-// Backed by W41's three routes via `aiDiffClient.ts`:
+// Backed by three routes via `aiDiffClient.ts`:
 //   - stage()    → POST /ai/diff/stage           returns { diff_id, op_count }
 //   - accept()   → POST /ai/diff/{id}/accept     returns AcceptDiffResponse
 //   - reject()   → POST /ai/diff/{id}/reject     returns RejectDiffResponse
@@ -10,10 +10,10 @@
 //     replace whatever was there; the inflight request (if any) is aborted.
 //   - On accept-success the store clears `currentDiff` and writes
 //     `lastApplyResult` so consumers can render a brief confirmation.
-//   - On accept-409 (D006 drift) the diff stays staged so the user can
+//   - On accept-409 (drift) the diff stays staged so the user can
 //     reconcile the underlying graph and retry. `error.kind === "drift"`
 //     carries the missing node ids the backend reported.
-//   - On accept-422 with `error: "diff_inconsistent"` (W70) the diff also
+//   - On accept-422 with `error: "diff_inconsistent"` the diff also
 //     stays staged so the user can Reject and ask the agent to retry.
 //     `error.kind === "inconsistent"` carries the offending endpoint(s).
 //   - On reject-success the store clears `currentDiff`.
@@ -134,15 +134,16 @@ export const useAiDiffStore = defineStore("aiDiff", () => {
     }
   };
 
-  // 2026-05-07 — push a synthetic ``role="user"`` message into the chat trail
-  // when the user clicks Accept / Reject on a staged diff. Without this, the
-  // chat history goes silent on the user's decision — the diff disappears
-  // and the next message just shows the agent's followup without any record
-  // of what the user did. The reject note in particular is load-bearing
-  // context the user wants preserved (W49 already feeds it back to the
-  // planner; the chat trail should mirror what the planner sees). Lazy
-  // store-resolution so non-Pinia contexts (tests, isolated imports) don't
-  // blow up — same defensive pattern reject() uses for ``useAiAgentStore``.
+  // Push a synthetic ``role="user"`` message into the chat trail when
+  // the user clicks Accept / Reject on a staged diff. Without this, the
+  // chat history goes silent on the user's decision — the diff
+  // disappears and the next message just shows the agent's followup
+  // without any record of what the user did. The reject note in
+  // particular is load-bearing context the user wants preserved (the
+  // planner already gets it; the chat trail should mirror what the
+  // planner sees). Lazy store-resolution so non-Pinia contexts (tests,
+  // isolated imports) don't blow up — same defensive pattern reject()
+  // uses for ``useAiAgentStore``.
   const _pushDecisionMessage = (content: string): void => {
     try {
       const aiStore = useAiStore();
@@ -281,7 +282,7 @@ export const useAiDiffStore = defineStore("aiDiff", () => {
       // Drop the persisted ``lastResult.diff_payload`` so a refresh after
       // a successful accept doesn't re-hydrate the (already-applied) diff.
       _clearAgentDiffPayload();
-      // The backend mutated the live FlowGraph (W41 `apply_diff`). Signal
+      // The backend mutated the live FlowGraph via `apply_diff`. Signal
       // the canvas to re-fetch so the new nodes/connections render —
       // without this the user accepts a diff and sees no visible change
       // until they manually reload the page.
@@ -296,8 +297,9 @@ export const useAiDiffStore = defineStore("aiDiff", () => {
     } catch (err) {
       const handled = _handleError(err);
       // On 409 drift the diff stays staged. On any other error we also
-      // keep the diff so the user can retry without losing context — the
-      // backend already rolled back the graph (per W41's apply contract).
+      // keep the diff so the user can retry without losing context —
+      // the backend already rolled back the graph (per the apply
+      // contract).
       // Exception: a 404 means the backend has lost the diff entirely
       // (typically: ``flowfile_core`` was restarted) — keeping it staged
       // would just guarantee another 404 on the next click. Clear it and
@@ -312,19 +314,19 @@ export const useAiDiffStore = defineStore("aiDiff", () => {
   };
 
   const reject = async (note?: string | null): Promise<void> => {
-    // W49 — ``reject(note?)`` accepts an optional user-supplied rejection
-    // note. When the rejected diff belongs to a still-alive completed agent
-    // session, this method:
+    // ``reject(note?)`` accepts an optional user-supplied rejection
+    // note. When the rejected diff belongs to a still-alive completed
+    // agent session, this method:
     //
-    // 1. Calls the backend reject (W41) to mark the diff itself rejected.
-    // 2. Hands off to ``aiAgentStore.resumeAfterReject(sid, note)`` so the
-    //    agent re-enters the same session with a synthetic rejection turn,
-    //    rather than the user having to start a new session and lose the
-    //    conversation context.
+    // 1. Calls the backend reject route to mark the diff rejected.
+    // 2. Hands off to ``aiAgentStore.resumeAfterReject(sid, note)`` so
+    //    the agent re-enters the same session with a synthetic
+    //    rejection turn, rather than the user having to start a new
+    //    session and lose the conversation context.
     //
-    // Falls back to the legacy "just clear locally" path when no agent
+    // Falls back to the "just clear locally" path when no agent
     // session is active or the session is not in a followup-resumable
-    // status (e.g. diff came from a W33 cmd-K palette flow).
+    // status (e.g. diff came from a Cmd+K palette flow).
     const diff = currentDiff.value;
     if (diff === null) return;
     const controller = _newController();
@@ -335,11 +337,12 @@ export const useAiDiffStore = defineStore("aiDiff", () => {
       const rejectedDiffId = diff.diff_id;
       currentDiff.value = null;
       lastApplyResult.value = null;
-      // Mirror the reject decision in the chat trail. The note is load-
-      // bearing: it's the same string W49 forwards to the planner as the
-      // synthetic followup user-turn, so showing it in the trail keeps
-      // the chat and the agent's input view in sync. Empty note → bare
-      // ``[Rejected]`` so the user still sees the decision happened.
+      // Mirror the reject decision in the chat trail. The note is
+      // load-bearing: it's the same string forwarded to the planner as
+      // the synthetic followup user-turn, so showing it in the trail
+      // keeps the chat and the agent's input view in sync. Empty note
+      // → bare ``[Rejected]`` so the user still sees the decision
+      // happened.
       const trimmedNote = (note ?? "").trim();
       _pushDecisionMessage(trimmedNote.length > 0 ? `[Rejected] ${trimmedNote}` : "[Rejected]");
 

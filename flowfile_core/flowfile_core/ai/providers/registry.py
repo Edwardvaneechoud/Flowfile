@@ -1,13 +1,15 @@
 """Provider factory and supported-provider registry.
 
-Owned by W11. ``provider_factory(name, *, model, surface, api_key, api_base)``
-returns an instantiated ``Provider`` ready for ``chat()`` / ``stream()`` calls.
-The BYOK key-loading layer lives in :mod:`flowfile_core.ai.byok` (W12) — call
-``flowfile_core.ai.byok.get_configured_provider(db, user_id, provider, ...)``
-when you need a provider configured against a user's encrypted credentials.
+``provider_factory(name, *, model, surface, api_key, api_base)``
+returns an instantiated ``Provider`` ready for ``chat()`` /
+``stream()`` calls. The BYOK key-loading layer lives in
+:mod:`flowfile_core.ai.byok` — call
+``flowfile_core.ai.byok.get_configured_provider(db, user_id,
+provider, ...)`` when you need a provider configured against a
+user's encrypted credentials.
 
-Surface→model resolution follows D010 placeholders: explicit ``model=`` wins,
-otherwise ``surface_models[surface]`` if recognised, otherwise the provider's
+Surface→model resolution: explicit ``model=`` wins, otherwise
+``surface_models[surface]`` if recognised, otherwise the provider's
 ``default_model``. The litellm vendor prefix is applied automatically.
 """
 

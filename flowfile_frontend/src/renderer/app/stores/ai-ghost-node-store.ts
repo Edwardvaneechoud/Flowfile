@@ -1,21 +1,23 @@
-// Pinia store for the W32 edge ghost-node surface.
+// Pinia store for the edge ghost-node surface.
 //
-// Distinct from the W34 autocomplete store because the lifecycle is different:
-// edge-hover ghost suggestions surface a small popover that the user clicks to
-// materialise, with cancel-on-leave semantics. The autocomplete store cancels
-// per-keystroke; this one cancels per-hover. Sharing one AbortController would
-// mean a hover-flick cancels an active formula suggestion fetch.
+// Distinct from the autocomplete store because the lifecycle is
+// different: edge-hover ghost suggestions surface a small popover that
+// the user clicks to materialise, with cancel-on-leave semantics. The
+// autocomplete store cancels per-keystroke; this one cancels
+// per-hover. Sharing one AbortController would mean a hover-flick
+// cancels an active formula suggestion fetch.
 //
-// `materialize()` performs the three-step graph-mutation dance the AI's
-// validated suggestion implies:
+// `materialize()` performs the three-step graph-mutation dance the
+// AI's validated suggestion implies:
 //   1. POST editor/add_node/?flow_id&node_id&node_type&pos_x&pos_y
 //   2. POST update_settings?node_type with the validated settings dict
 //   3. POST editor/connect_node/ with the upstream→ghost connection
 //
-// All three already exist as production endpoints — W32's role is to lean on
-// them rather than introducing a new "atomic apply" path. The W41 GraphDiff
-// staging mechanism owns multi-suggestion atomic apply; W32 ships single-
-// suggestion materialisation with the existing per-step undo semantics.
+// All three already exist as production endpoints — this store leans
+// on them rather than introducing a new "atomic apply" path. The
+// GraphDiff staging mechanism owns multi-suggestion atomic apply;
+// ghost nodes ship single-suggestion materialisation with the existing
+// per-step undo semantics.
 
 import axios from "axios";
 import { defineStore } from "pinia";
@@ -132,8 +134,9 @@ export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
    *   2. ``update_settings`` — apply the validated settings the LLM produced.
    *   3. ``editor/connect_node/`` — wire upstream → ghost.
    *
-   * Atomicity is per-step (existing UNDO covers each). W41 owns multi-
-   * step atomic apply via GraphDiff; this is intentionally the simpler path.
+   * Atomicity is per-step (existing UNDO covers each). The GraphDiff
+   * surface owns multi-step atomic apply; this is intentionally the
+   * simpler path.
    */
   const materialize = async (
     suggestion: NextNodeSuggestion,

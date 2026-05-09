@@ -13,7 +13,6 @@ from typing import Any
 
 from ._internal import _ADD_PREFIX, _classify_op_kind  # noqa: F401  (re-export for tests)
 
-
 # Capture a single short rationale (~280 chars) and trim trailing
 # whitespace. Rationale longer than this is almost always the model
 # writing a paragraph — clipping keeps the chat scannable.

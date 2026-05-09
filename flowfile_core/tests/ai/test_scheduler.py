@@ -1,4 +1,4 @@
-"""W14 — rate-limit scheduler tests.
+"""rate-limit scheduler tests.
 
 Cases:
 
@@ -57,7 +57,7 @@ from flowfile_core.ai.scheduler import (
 
 @dataclass
 class FakeProvider:
-    """Structurally satisfies the W11 ``Provider`` Protocol."""
+    """Structurally satisfies the ``Provider`` Protocol."""
 
     name: str = "anthropic"
     model: str = "claude-sonnet-4-6"

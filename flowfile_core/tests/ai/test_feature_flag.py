@@ -1,4 +1,4 @@
-"""W17 — ``FEATURE_FLAG_AI`` gating.
+"""``FEATURE_FLAG_AI`` gating.
 
 Cases:
 
@@ -15,7 +15,7 @@ Cases:
 * ``test_health_returns_200_when_flag_on`` — counterpart with the flag on.
 * ``test_byok_route_inherits_gate_when_flag_off`` — confirms FastAPI's
   ``include_router`` propagates the parent's constructor ``dependencies``
-  to the W12 BYOK sub-router (so the gate is global, not per-leaf).
+  to the BYOK sub-router (so the gate is global, not per-leaf).
 * ``test_disabled_detail_constant_stable`` — frontend matches on the
   detail string; this guards the contract.
 * ``test_env_var_parsing`` — process-start env-var → MutableBool resolution
@@ -200,7 +200,7 @@ def test_authenticated_user_sees_503_when_flag_off(flag_off: None) -> None:
 
     Bypasses ``get_current_active_user`` via ``app.dependency_overrides`` so
     the auth dep returns successfully; the only remaining gate is the AI
-    feature flag, so we should see exactly the W17 503 path.
+    feature flag, so we should see exactly the 503 path.
     """
     from flowfile_core.auth.jwt import get_current_active_user
     from flowfile_core.auth.models import User as PydanticUser

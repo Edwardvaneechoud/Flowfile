@@ -1,8 +1,9 @@
-"""Ollama adapter — local / fully-offline path (plan §11.3 demo).
+"""Ollama adapter — local / fully-offline path.
 
-Owned by W11. No BYOK; talks to the user's local Ollama server (default
-``http://localhost:11434``). Tool-use works on Llama 3.1+; older models fall
-back to JSON-mode + Pydantic-repair (W31's responsibility).
+No BYOK; talks to the user's local Ollama server (default
+``http://localhost:11434``). Tool-use works on Llama 3.1+; older
+models fall back to JSON-mode + Pydantic-repair handled at the
+executor layer.
 """
 
 from typing import ClassVar

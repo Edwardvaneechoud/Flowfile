@@ -1,11 +1,11 @@
-"""Schema introspection tools — owned by W30.
+"""Schema introspection tools.
 
-Read-only surface so the LLM can ground references in the actual schema
-before proposing edits. Reuses ``NodeData.main_output.table_schema`` from
-``GET /node?get_data=…`` (``routes.py:978``).
+Read-only surface so the LLM can ground references in the actual
+schema before proposing edits. Reuses
+``NodeData.main_output.table_schema`` from ``GET /node?get_data=…``.
 
-W30 only declares the specs. W31 will implement the executor that resolves
-each call against the live ``FlowGraph`` state. MCP-shaped names per D004:
+This module declares the specs; the executor resolves each call
+against the live ``FlowGraph`` state. MCP-shaped names:
 ``flowfile.schema.<op>``.
 """
 
@@ -63,7 +63,7 @@ SCHEMA_OPS_TOOLS: Final[list[ToolSpec]] = [
             "Return up to n_rows sample rows from a node's primary output, plus its schema. "
             "Use sparingly — sample rows can be expensive and may contain user PII. "
             "Mirrors GET /node?get_data=true. Sample rows are gated by the per-flow "
-            "samples_mode setting (D009); when off, returns schema only."
+            "samples_mode setting; when off, returns schema only."
         ),
         long_description=(
             "Read the schema *and* sample rows from a live node. Use when the "
@@ -73,8 +73,8 @@ SCHEMA_OPS_TOOLS: Final[list[ToolSpec]] = [
             "lookup — 'read_node_schema' is cheaper and the columns are usually "
             "what you need. Don't use on staged nodes (see 'read_node_schema' "
             "guidance). Sample rows may be redacted to '<<redacted>>' or omitted "
-            "entirely depending on the flow's samples_mode (D009); never assume "
-            "a particular value is present."
+            "entirely depending on the flow's samples_mode; never "
+            "assume a particular value is present."
         ),
         parameters=_schema(
             properties={

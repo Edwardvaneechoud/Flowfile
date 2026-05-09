@@ -1,23 +1,23 @@
-// Browser-side chat persistence for the AI drawer (W27 → W43).
+// Browser-side chat persistence for the AI drawer.
 //
-// Pure helpers — no Vue/Pinia deps — so they're easy to unit-test without
-// jsdom. W43 changes the surface in two ways relative to W27's original cut:
+// Pure helpers — no Vue/Pinia deps — so they're easy to unit-test
+// without jsdom. Two surface details worth knowing:
 //
-//   1. Storage default flips from `sessionStorage` to `localStorage` so chat
-//      survives Electron app restart / browser close. Quota is still ~5 MB,
-//      plenty for chat history bounded by `MAX_PERSISTED_MESSAGES`.
+//   1. Storage default is `localStorage` so chat survives Electron
+//      app restart / browser close. Quota is still ~5 MB, plenty for
+//      chat history bounded by `MAX_PERSISTED_MESSAGES`.
 //   2. Persistence keys are flow-scoped: `flowfile.ai.chat.v1.{flow_id}`
-//      for a real flow id, `flowfile.ai.chat.v1.unscoped` for entry paths
-//      that open the chat without a flow context. The store's flow_id
-//      watcher uses these helpers to swap the persisted bucket when the
-//      user switches flows so the trail stays bound to the conversation
-//      it belongs to. Bare `PERSISTENCE_KEY` is still exported as the
-//      versioned prefix so a future schema bump can orphan a whole
-//      generation of entries by writing under a new prefix.
+//      for a real flow id, `flowfile.ai.chat.v1.unscoped` for entry
+//      paths that open the chat without a flow context. The store's
+//      flow_id watcher uses these helpers to swap the persisted bucket
+//      when the user switches flows so the trail stays bound to the
+//      conversation it belongs to. Bare `PERSISTENCE_KEY` is exported
+//      as the versioned prefix so a future schema bump can orphan a
+//      whole generation of entries by writing under a new prefix.
 //
-// Storage-injection seam (`StorageLike`) preserved verbatim from W27 so the
-// vitest suite stays node-only and the same call sites can target an
-// in-memory mock for per-test isolation.
+// `StorageLike` is the injection seam so the vitest suite stays
+// node-only and the same call sites can target an in-memory mock for
+// per-test isolation.
 
 import type { ChatMessage } from "./ai-store";
 
@@ -37,26 +37,25 @@ export interface PersistedAiState {
   messages: ChatMessage[];
   selectedProvider: string | null;
   selectedModel: string | null;
-  /** **DEPRECATED** (2026-05-09) — replaced by the `mode` enum in the
-   * runtime store. Persisted value is read on hydration ONLY for the
-   * one-shot migration shim in `ai-store.ts` (legacy `false` → seed
+  /** **DEPRECATED** — replaced by the `mode` enum in the runtime
+   * store. Persisted value is read on hydration ONLY for the one-shot
+   * migration shim in `ai-store.ts` (legacy `false` → seed
    * sessionStorage `flowfile.ai.mode = "chat"`; legacy `true` / null /
    * missing → seed `"auto"`). Not written by `persistAiState` anymore;
    * after the next save cycle the field disappears from localStorage. */
   autoPromote?: boolean | null;
-  /** W58 round 7 — session-scoped "Continue as agent" acceptance flag,
-   * set when the user clicks the promotion banner's primary button to
-   * lock subsequent sends into agent mode without re-classification.
-   * Optional / nullable for the same backward-compat reason as
-   * ``autoPromote`` — pre-W58-round-7 entries don't carry the field. */
+  /** Session-scoped "Continue as agent" acceptance flag, set when the
+   * user clicks the promotion banner's primary button to lock
+   * subsequent sends into agent mode without re-classification.
+   * Optional / nullable for backward-compat with older entries. */
   agentModeAccepted?: boolean | null;
-  /** W71 v1.9 — user-selected agent surface ("agent" / "agent_complex" /
-   * "agent_staged" / "agent_live"). Optional / nullable so pre-v1.9 entries
-   * fall through to the store's default (``"agent_live"``). */
+  /** User-selected agent surface ("agent" / "agent_complex" /
+   * "agent_staged" / "agent_live"). Optional / nullable so older
+   * entries fall through to the store's default (``"agent_live"``). */
   selectedAgentSurface?: PersistedAgentSurface | null;
-  /** W71 v2.12 — opt-in verify-completion gate. Persisted so the
-   * preference survives reloads and flow switches. Optional /
-   * nullable for backward-compat with pre-v2.12 entries. */
+  /** Opt-in verify-completion gate. Persisted so the preference
+   * survives reloads and flow switches. Optional / nullable for
+   * backward-compat with older entries. */
   verifyPlanCompletion?: boolean | null;
 }
 

@@ -1,4 +1,4 @@
-"""W71 — agent_staged multi-stage state machine tests.
+"""agent_staged multi-stage state machine tests.
 
 Each stage exposes exactly one tool to the function-calling API:
 
@@ -98,10 +98,10 @@ def _make_session(flow: FlowGraph, *, user_id: int = 1) -> sessions.AgentSession
         snapshot=snapshot,
         max_steps=16,
     )
-    # W71 v2.4 — session default is now ``stage="plan"`` for the
+    # — session default is now ``stage="plan"`` for the
     # multi-stage state machine, but most tests script from
     # ``classify`` onward. Skip the plan stage by default so existing
-    # tests don't need to prepend an emit_plan step. v2.4-specific
+    # tests don't need to prepend an emit_plan step.-specific
     # tests opt back into ``stage="plan"`` explicitly.
     sess.stage = "classify"
     return sess
@@ -188,7 +188,7 @@ def _reset_stores() -> Iterator[None]:
 
 
 # --------------------------------------------------------------------------- #
-# Stage 0 — classify_intent                                                    #
+# Stage 0 — classify_intent #
 # --------------------------------------------------------------------------- #
 
 
@@ -303,7 +303,7 @@ def test_stage_classify_routes_non_add_to_single_stage_op(
 
 
 # --------------------------------------------------------------------------- #
-# Stage 1 — pick_node_type                                                     #
+# Stage 1 — pick_node_type #
 # --------------------------------------------------------------------------- #
 
 
@@ -354,7 +354,7 @@ def test_stage_pick_type_advances_to_pick_upstream() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Stage 2 — pick_upstream                                                      #
+# Stage 2 — pick_upstream #
 # --------------------------------------------------------------------------- #
 
 
@@ -422,7 +422,7 @@ def test_stage_pick_upstream_advances_to_fill_settings() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Stage 3 — fill_settings (stripped tool spec)                                 #
+# Stage 3 — fill_settings (stripped tool spec) #
 # --------------------------------------------------------------------------- #
 
 
@@ -445,7 +445,7 @@ def test_build_staged_fill_tool_spec_unknown_node_type() -> None:
 
 
 def test_build_staged_fill_tool_spec_uses_inner_for_group_by() -> None:
-    """W71 v1.2 — single-input node types expose the inner-input class
+    """single-input node types expose the inner-input class
     directly, so the LLM sees ``agg_cols`` at top level without the
     ``groupby_input`` envelope or NodeBase metadata noise."""
     spec = build_staged_fill_tool_spec("group_by")
@@ -468,7 +468,7 @@ def test_build_staged_fill_tool_spec_uses_inner_for_group_by() -> None:
 
 
 def test_build_staged_fill_tool_spec_falls_back_to_flat_for_join() -> None:
-    """W71 v1.2 — multi-field node types (join has join_input plus
+    """multi-field node types (join has join_input plus
     auto_keep_left/right and friends) cannot be flattened to a single
     inner class, so the spec stays at the wrapper level with planner-
     injected fields and NodeBase noise stripped. The real type-specific
@@ -511,7 +511,7 @@ def test_build_staged_fill_tool_spec_falls_back_to_flat_for_join() -> None:
 def test_pick_upstream_coerces_common_llama_misshapes(
     raw_input: Any, expected: list[int]
 ) -> None:
-    """W71 v1.3 — llama-3.3-70b emits ``upstream_node_ids`` as scalars,
+    """llama-3.3-70b emits ``upstream_node_ids`` as scalars,
     JSON-encoded strings, or CSV strings depending on the prompt. Each
     of these now gets recovered into ``list[int]`` rather than rejected,
     saving the retry budget for genuine semantic mistakes (wrong id
@@ -550,7 +550,7 @@ def test_pick_upstream_coerces_common_llama_misshapes(
 
 
 def test_fill_settings_user_message_drops_full_subgraph() -> None:
-    """W71 v1.5 — at the fill_settings stage the planner replaces the
+    """at the fill_settings stage the planner replaces the
     user message with a focused mini-prompt that contains only the
     user's goal and the picked upstream's column schema. The 4.5k-char
     full subgraph that rides into stage 1 / stage 2 is dropped — it
@@ -605,16 +605,16 @@ def test_fill_settings_user_message_drops_full_subgraph() -> None:
 
 
 def test_text_json_tool_call_recovery_at_fill_settings() -> None:
-    """W71 v1.6 — llama-3.3-70b occasionally emits the function call as
+    """llama-3.3-70b occasionally emits the function call as
     text content rather than via the function-calling API at stage 3.
     The recovery path parses the call out of content, synthesizes a
     real ``ToolCall``, and the dispatch proceeds normally — saving the
     user from a silent termination with no diff to accept.
 
-    Reproduces the 2026-05-08 PM dogfood symptom: at fill_settings the
+    Reproduces an earlier dogfood symptom: at fill_settings the
     LLM emits *"Sorting by the number of customers per city
     flowfile.graph.add_sort({...})"* with no real tool_calls, and the
-    chat trail shows no *"Staged sort"* line. After v1.6, the call is
+    chat trail shows no *"Staged sort"* line. After, the call is
     recovered and stages cleanly."""
     flow = _make_flow()
     sess = _make_session(flow)
@@ -624,7 +624,7 @@ def test_text_json_tool_call_recovery_at_fill_settings() -> None:
     sess.picked_upstream_ids = [1]
 
     # The LLM emits NO tool_calls; instead the call invocation rides on
-    # the assistant's prose content. v1.6 picks it up.
+    # the assistant's prose content. picks it up.
     text_content = (
         "Sorting by the number of customers per city\n"
         'flowfile.graph.add_sort({"sort_input": [{"column": "amount", "how": "desc"}]})'
@@ -655,7 +655,7 @@ def test_text_json_tool_call_recovery_at_fill_settings() -> None:
 
 
 def test_text_json_recovery_handles_json_object_shape_at_classify() -> None:
-    """W71 v1.8 — llama-3.3-8b emits the function call as a JSON object
+    """llama-3.3-8b emits the function call as a JSON object
     in its content (the OpenAI envelope: ``{"name": ..., "parameters":
     ...}``) even at the simplest classify stage. Recovery now applies
     at all agent_staged stages and parses the JSON-object shape so the
@@ -684,7 +684,7 @@ def test_text_json_recovery_handles_json_object_shape_at_classify() -> None:
 
 
 def test_text_json_recovery_handles_arguments_alias() -> None:
-    """W71 v1.8 — some models prefer ``"arguments"`` (OpenAI's older key
+    """some models prefer ``"arguments"`` (OpenAI's older key
     name) over ``"parameters"``. Recovery accepts both."""
     flow = _make_flow()
     sess = _make_session(flow)
@@ -706,7 +706,7 @@ def test_text_json_recovery_handles_arguments_alias() -> None:
 
 
 def test_text_json_recovery_declines_when_name_not_in_expected_set() -> None:
-    """W71 v1.8 — the name must be in the expected catalog. If a model
+    """the name must be in the expected catalog. If a model
     emits ``add_group_by`` while the catalog only exposes
     ``classify_intent`` (i.e. wrong stage), recovery declines rather
     than misfiring."""
@@ -735,7 +735,7 @@ def test_text_json_recovery_declines_when_name_not_in_expected_set() -> None:
 
 
 def test_silent_termination_routes_to_retry_at_fill_settings() -> None:
-    """W71 v1.7 — at fill_settings the LLM emits prose with no
+    """at fill_settings the LLM emits prose with no
     tool_call AND no parseable text-JSON shape (the llama-70b
     'altimoreFiltering...' token-corruption case). Instead of the
     legacy 'Agent finished — nothing to stage' termination, the loop
@@ -786,7 +786,7 @@ def test_silent_termination_routes_to_retry_at_fill_settings() -> None:
 
 
 def test_silent_termination_max_retries_exhausted_fails() -> None:
-    """W71 v1.7 — three consecutive empty-tool-call rounds at stage 3
+    """three consecutive empty-tool-call rounds at stage 3
     exhaust the retry budget and fail the run with a clear error."""
     flow = _make_flow()
     sess = _make_session(flow)
@@ -822,7 +822,7 @@ def test_silent_termination_max_retries_exhausted_fails() -> None:
 
 
 def test_classify_silent_termination_still_terminates() -> None:
-    """W71 v1.7 — preserve the existing termination semantics at the
+    """preserve the existing termination semantics at the
     classify stage. The LLM emitting prose-only at classify is a
     valid 'I'm done responding' signal (e.g. op_kind='other' was
     intended). It must NOT loop into retry hell."""
@@ -844,7 +844,7 @@ def test_classify_silent_termination_still_terminates() -> None:
 
 
 def test_text_json_tool_call_recovery_skipped_at_classify() -> None:
-    """W71 v1.6 — recovery does NOT fire at the classify stage. After a
+    """recovery does NOT fire at the classify stage. After a
     successful add, the LLM is reset to classify and sometimes emits a
     "summary" of past calls in its content. Recovering those would
     re-execute already-staged ops. The classify-stage summary should
@@ -879,7 +879,7 @@ def test_text_json_tool_call_recovery_skipped_at_classify() -> None:
 
 
 def test_universal_json_string_unwrap_handles_misencoded_add_args() -> None:
-    """W71 v1.4 — the executor's universal unwrap pass recovers
+    """the executor's universal unwrap pass recovers
     ``add_*`` calls that arrive with structured fields encoded as JSON
     strings. Without the unwrap, llama-3.3-70b's typical mistake of
     passing ``groupby_input: "{\\"agg_cols\\": [...]}"`` rejects with a
@@ -915,10 +915,10 @@ def test_universal_json_string_unwrap_handles_misencoded_add_args() -> None:
                         id="t-fill-jsonstr",
                         name="flowfile.graph.add_group_by",
                         # The LLM emits the inner-input wrapper field as
-                        # a JSON-encoded string — a shape v1.2's planner
+                        # a JSON-encoded string — a shape's planner
                         # wrapping would accept (since the wrap happens
                         # before Pydantic), but Pydantic would have
-                        # rejected the string. v1.4's universal unwrap
+                        # rejected the string.'s universal unwrap
                         # parses it back to the native object first.
                         arguments={"groupby_input": json_encoded_inner},
                     )
@@ -943,7 +943,7 @@ def test_universal_json_string_unwrap_handles_misencoded_add_args() -> None:
 
 
 def test_fill_settings_dispatch_wraps_inner_args_for_group_by() -> None:
-    """W71 v1.2 — when the LLM emits inner-shape args for a single-input
+    """when the LLM emits inner-shape args for a single-input
     node type, the planner wraps them under the wrapper field name
     before the executor's settings validation runs. End-to-end smoke:
     feed a scripted ``add_group_by({agg_cols: [...]})`` call and assert
@@ -1000,7 +1000,7 @@ def test_fill_settings_dispatch_wraps_inner_args_for_group_by() -> None:
 
 
 def test_fill_settings_formula_bare_string_coerces_to_function_input() -> None:
-    """W71 v1.13B — when the LLM emits the formula tool with only the
+    """when the LLM emits the formula tool with only the
     bare expression string at the wrapper key (the most common
     confusion: outer ``function`` parameter holds a FunctionInput
     object, but the LLM puts the inner ``function`` STRING value
@@ -1054,7 +1054,7 @@ def test_fill_settings_formula_bare_string_coerces_to_function_input() -> None:
 
 
 def test_fill_settings_formula_refusal_text_disambiguates_function_field() -> None:
-    """W71 v1.13B — when the auto-coerce can't apply (e.g. the LLM
+    """when the auto-coerce can't apply (e.g. the LLM
     sent something other than a single-key bare-string shape), the
     refusal text must NOT use the misread-prone *"not as a JSON-
     encoded string"* phrasing. Instead it should name the OUTER
@@ -1151,7 +1151,7 @@ def test_stage_fill_settings_injects_session_upstream_into_insertion_context() -
 
 
 # --------------------------------------------------------------------------- #
-# Multi-node turn                                                              #
+# Multi-node turn #
 # --------------------------------------------------------------------------- #
 
 
@@ -1280,7 +1280,7 @@ def test_multi_node_turn_serializes_through_two_classify_cycles() -> None:
 
 
 def test_plan_stage_runs_before_classify_and_advances() -> None:
-    """W71 v2.4 — agent_staged sessions now start at ``stage="plan"``.
+    """agent_staged sessions now start at ``stage="plan"``.
     The LLM emits a brief markdown plan via
     ``flowfile.meta.emit_plan``; the planner records the plan,
     advances stage to ``classify``, then the normal cycle runs.
@@ -1290,7 +1290,7 @@ def test_plan_stage_runs_before_classify_and_advances() -> None:
 
     flow = _make_flow()
     sess = _make_session(flow)
-    # v2.4 tests opt back into the default-of-record so we exercise
+    # tests opt back into the default-of-record so we exercise
     # the full state machine including the plan stage. ``_make_session``
     # otherwise overrides to ``"classify"`` for back-compat.
     sess.stage = "plan"
@@ -1355,7 +1355,7 @@ def test_plan_stage_runs_before_classify_and_advances() -> None:
 
 
 def test_emit_plan_tool_spec_has_plan_and_rationale_fields() -> None:
-    """W71 v2.4 — the emit_plan ToolSpec exposes ``plan`` and
+    """the emit_plan ToolSpec exposes ``plan`` and
     ``rationale`` as required string fields. Regression-protects
     the contract the planner dispatch + chat-trail renderer rely on.
     """
@@ -1373,7 +1373,7 @@ def test_emit_plan_tool_spec_has_plan_and_rationale_fields() -> None:
 
 
 def test_pick_upstream_user_message_includes_staged_session_block() -> None:
-    """W71 v1.12A — at the second cycle's pick_upstream stage, the user
+    """at the second cycle's pick_upstream stage, the user
     message must surface the staged-this-session node's id, type, and
     predicted columns. Without this, the LLM picks an upstream id from
     the enum blind (it knows id 2 is in the enum but has no idea which
@@ -1496,7 +1496,7 @@ def test_pick_upstream_user_message_includes_staged_session_block() -> None:
 
 
 def test_pick_upstream_user_message_unchanged_when_no_staged_results() -> None:
-    """W71 v1.12A — first-cycle pick_upstream (no prior staged adds)
+    """first-cycle pick_upstream (no prior staged adds)
     must NOT carry a *"## Staged this session"* block. The block only
     appears when there's something staged in the same session to show.
     """
@@ -1551,7 +1551,7 @@ def test_pick_upstream_user_message_unchanged_when_no_staged_results() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# AgentSession.reset_stage_state                                               #
+# AgentSession.reset_stage_state #
 # --------------------------------------------------------------------------- #
 
 
@@ -1574,7 +1574,7 @@ def test_reset_stage_state_clears_picked_fields() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W71 v2.0 — agent_live REPL surface                                           #
+# — agent_live REPL surface #
 # --------------------------------------------------------------------------- #
 
 
@@ -1589,9 +1589,9 @@ def _make_live_session(flow: FlowGraph, *, user_id: int = 1) -> sessions.AgentSe
         snapshot=snapshot,
         max_steps=16,
     )
-    # W71 v2.4 — same skip-plan-by-default posture as
-    # ``_make_session`` so v2.0 agent_live tests don't have to
-    # prepend an emit_plan step. v2.4 plan tests reset
+    # — same skip-plan-by-default posture as
+    # ``_make_session`` so agent_live tests don't have to
+    # prepend an emit_plan step. plan tests reset
     # ``sess.stage = "plan"`` explicitly.
     sess.stage = "classify"
     return sess
@@ -1636,7 +1636,7 @@ def _filter_cycle(*, prefix: str, node_type: str, upstream: int) -> list[_Step]:
 
 
 def test_agent_live_applies_each_step_to_live_graph() -> None:
-    """W71 v2.0 — agent_live applies every staged add LIVE; each
+    """agent_live applies every staged add LIVE; each
     new node lands in ``flow.nodes`` immediately, not in
     ``staged_results``. The session's ``applied_results`` carries
     one record per successfully-applied node and ``staged_results``
@@ -1682,7 +1682,7 @@ def test_agent_live_applies_each_step_to_live_graph() -> None:
 
 
 def test_agent_live_undoes_failed_step_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
-    """W71 v2.0 — when the post-apply observation fails (runtime
+    """when the post-apply observation fails (runtime
     error from the actual polars run), the just-added node is
     deleted from the live graph (``flow.nodes`` returns to the
     last successful state), the error is fed back to the LLM as
@@ -1763,7 +1763,7 @@ def test_agent_live_undoes_failed_step_and_retries(monkeypatch: pytest.MonkeyPat
 
 
 def test_agent_live_observation_includes_schema_in_tool_reply() -> None:
-    """W71 v2.0 — on a successful apply, the post-apply tool reply
+    """on a successful apply, the post-apply tool reply
     embeds the output schema so the LLM can reason about what
     columns the new node produced. (Sample rows are best-effort
     and may be empty in Development mode; schema is the
@@ -1807,7 +1807,7 @@ def test_agent_live_observation_includes_schema_in_tool_reply() -> None:
 
 
 def test_agent_live_does_not_use_staged_results() -> None:
-    """W71 v2.0 — agent_live multi-add runs leave
+    """agent_live multi-add runs leave
     ``staged_results`` empty and populate ``applied_results``
     instead. Confirms the surface flips the entire post-apply
     bookkeeping path."""
@@ -1863,12 +1863,12 @@ def test_agent_live_does_not_use_staged_results() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W71 v2.12 — opt-in verify-completion gate                                    #
+# — opt-in verify-completion gate #
 # --------------------------------------------------------------------------- #
 
 
 def test_verify_completion_stage_loops_back_to_classify() -> None:
-    """W71 v2.12 — opt-in verify gate. After classify picks
+    """opt-in verify gate. After classify picks
     ``op_kind="other"``, the planner advances to ``verify_completion``.
     If the LLM returns ``is_complete=False``, the stage resets to
     ``classify`` so the next round can pick the missing op_kind.
@@ -1927,7 +1927,7 @@ def test_verify_completion_stage_loops_back_to_classify() -> None:
 
 
 def test_verify_completion_stage_terminates_when_complete() -> None:
-    """W71 v2.12 — when the verify-completion LLM returns
+    """when the verify-completion LLM returns
     ``is_complete=True``, the planner routes back to ``classify`` (the
     natural empty-tool-call termination path) and the loop terminates
     cleanly.
@@ -1982,7 +1982,7 @@ def test_verify_completion_stage_terminates_when_complete() -> None:
 
 
 def test_verify_completion_skipped_when_flag_off() -> None:
-    """W71 v2.12 — default behavior: with
+    """default behavior: with
     ``verify_plan_completion=False`` (the field default),
     ``op_kind="other"`` terminates the loop directly without entering
     the verify_completion stage. The new gate is fully opt-in.
@@ -2027,14 +2027,14 @@ def test_verify_completion_skipped_when_flag_off() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W71 v2.14 — refuse unrequested wires from freshly-staged source nodes        #
-# into pre-existing live nodes (planner audit_meta builder + executor          #
-# backstop end-to-end)                                                         #
+# — refuse unrequested wires from freshly-staged source nodes #
+# into pre-existing live nodes (planner audit_meta builder + executor #
+# backstop end-to-end) #
 # --------------------------------------------------------------------------- #
 
 
 def test_connect_from_staged_source_to_live_is_refused_end_to_end() -> None:
-    """W71 v2.14 — when a prior round of this session staged a source-
+    """when a prior round of this session staged a source-
     only node (e.g. ``add_manual_input``) AND the planner classifies
     ``connect`` then emits ``flowfile.graph.connect`` wiring that fresh
     source into a pre-existing live node, the executor refuses with
@@ -2143,7 +2143,7 @@ def test_connect_from_staged_source_to_live_is_refused_end_to_end() -> None:
 
 
 def test_connect_from_staged_non_source_to_live_is_allowed_end_to_end() -> None:
-    """W71 v2.14 — symmetric counter-test: only SOURCE-typed staged
+    """symmetric counter-test: only SOURCE-typed staged
     upstreams trip the refusal. A staged ``add_filter`` (non-source)
     wired into a live node passes through cleanly. Pins that the
     audit_meta builder's ``classify_node_type`` filter correctly

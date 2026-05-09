@@ -1,10 +1,10 @@
-"""HTTP routes for BYOK provider credentials (W12).
+"""HTTP routes for BYOK provider credentials.
 
-Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. All endpoints
-require an authenticated user via ``Depends(get_current_active_user)``.
-W17 will add a feature-flag dependency on top of the parent ``ai_router``;
-that's intentionally not enforced here so each workstream's routes stay
-independently testable.
+Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. All
+endpoints require an authenticated user via
+``Depends(get_current_active_user)``. The feature-flag dependency
+sits on the parent ``ai_router``; it's intentionally not enforced
+per-route here so each route module stays independently testable.
 """
 
 from __future__ import annotations

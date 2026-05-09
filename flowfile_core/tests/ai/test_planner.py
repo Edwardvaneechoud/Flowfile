@@ -1,4 +1,4 @@
-"""W40 — :mod:`flowfile_core.ai.agents.planner` tests.
+""":mod:`flowfile_core.ai.agents.planner` tests.
 
 Cases covered:
 
@@ -53,7 +53,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas
 
 # --------------------------------------------------------------------------- #
-# Test helpers                                                                 #
+# Test helpers #
 # --------------------------------------------------------------------------- #
 
 
@@ -115,7 +115,7 @@ def _filter_args(*, value: str = "EU", node_id: int | None = None) -> dict[str, 
 
 
 def _bad_filter_args_basic_unknown_column() -> dict[str, Any]:
-    """Filter args that the executor will reject via W25 column-ref validation."""
+    """Filter args that the executor will reject via column-ref validation."""
     return {
         "filter_input": {
             "filter_type": "basic",
@@ -220,7 +220,7 @@ async def _drain(gen) -> list[PlannerEvent]:
 
 
 # --------------------------------------------------------------------------- #
-# Fixtures                                                                     #
+# Fixtures #
 # --------------------------------------------------------------------------- #
 
 
@@ -234,7 +234,7 @@ def _reset_stores() -> Iterator[None]:
 
 
 # --------------------------------------------------------------------------- #
-# Lazy-litellm contract + surface lockstep                                     #
+# Lazy-litellm contract + surface lockstep #
 # --------------------------------------------------------------------------- #
 
 
@@ -248,7 +248,7 @@ def test_lazy_litellm_contract() -> None:
 
 
 def test_surface_lockstep() -> None:
-    """W71 v1.10 — legacy ``"agent"`` removed; ``agent_complex`` and
+    """legacy ``"agent"`` removed; ``agent_complex`` and
     ``agent_staged`` are the planner surfaces."""
     assert {"agent_complex", "agent_staged"} <= SURFACE_PRESETS.keys()
     assert SURFACE_TO_LEVEL["agent_complex"] == "planner"
@@ -256,7 +256,7 @@ def test_surface_lockstep() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Pure helpers                                                                 #
+# Pure helpers #
 # --------------------------------------------------------------------------- #
 
 
@@ -324,7 +324,7 @@ def test_resolve_insertion_context_falls_back_to_live_node() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W57 — settings-field hint, selection, pin, ambiguity refusal                  #
+# settings-field hint, selection, pin, ambiguity refusal #
 # --------------------------------------------------------------------------- #
 
 
@@ -384,7 +384,7 @@ def test_insertion_uses_selection_when_no_llm_override() -> None:
 def test_insertion_falls_back_to_last_live_node_when_multiple_present() -> None:
     """Tier 6 — multiple live nodes, no selection, no pin, no LLM override,
     no settings-field hint → fall back to ``live_nodes[-1]``. (Was a
-    refusal-on-ambiguity in W57; reverted 2026-05-07 because the refusal
+    refusal-on-ambiguity in; reverted 2026-05-07 because the refusal
     blocked the agent on simple prompts in multi-node flows.)"""
     flow = _make_flow()
     _add_orders(flow, node_id=2)
@@ -412,8 +412,7 @@ def test_insertion_falls_back_to_last_node_when_single_live_node() -> None:
 def test_insertion_fallback_skips_terminal_explore_data_node() -> None:
     """Tier 6 walks live_nodes in reverse and skips sinks (template.output==0).
 
-    Reproduces the customer_deduplication dogfood failure (2026-05-07
-    afternoon): the template ends in an ``explore_data`` node, the LLM
+    Reproduces the customer_deduplication dogfood failure: the template ends in an ``explore_data`` node, the LLM
     omitted ``upstream_node_ids``, and the resolver's ``flow.nodes[-1]``
     blind fallback attached the staged group_by downstream of the sink.
     The fix walks in reverse and picks the most-recent non-sink — node 3
@@ -478,7 +477,7 @@ def test_in_batch_staged_wins_over_selection() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Loop happy-path                                                              #
+# Loop happy-path #
 # --------------------------------------------------------------------------- #
 
 
@@ -552,8 +551,8 @@ async def test_happy_path_multi_step_chains_upstream() -> None:
 
 @pytest.mark.asyncio
 async def test_w62_chained_agent_stages_have_non_overlapping_coords() -> None:
-    """W62 — chained add_filter → add_select staged by the agent must produce
-    non-overlapping canvas coords. Pre-W62 both landed at (0, 0) because
+    """chained add_filter → add_select staged by the agent must produce
+    non-overlapping canvas coords. previously both landed at (0, 0) because
     ``InsertionContext.pos_x`` / ``pos_y`` defaulted to ``0.0`` and the LLM
     never invents screen coordinates.
     """
@@ -581,7 +580,7 @@ async def test_w62_chained_agent_stages_have_non_overlapping_coords() -> None:
     assert len(diff.additions) == 2
     coord_a = (diff.additions[0].insertion_context.pos_x, diff.additions[0].insertion_context.pos_y)
     coord_b = (diff.additions[1].insertion_context.pos_x, diff.additions[1].insertion_context.pos_y)
-    # Pre-W62 regression: both at (0, 0).
+    # previously regression: both at (0, 0).
     assert coord_a != (0.0, 0.0)
     assert coord_b != (0.0, 0.0)
     # Chained: each new node lays out further to the right than its upstream.
@@ -593,14 +592,14 @@ async def test_w62_chained_agent_stages_have_non_overlapping_coords() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Surface routing                                                              #
+# Surface routing #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
 async def test_surface_agent_complex_uses_full_catalog_from_step_one() -> None:
-    """W71 v1.10 — legacy two-stage ``surface="agent"`` was removed
-    (the failure mode that motivated W71). ``agent_complex`` keeps its
+    """legacy two-stage ``surface="agent"`` was removed
+    (the failure mode that motivated). ``agent_complex`` keeps its
     single-shot full-catalog behavior for big-model power users; this
     test pins the catalog shape."""
     flow = _make_flow()
@@ -626,7 +625,7 @@ async def test_surface_agent_complex_uses_full_catalog_from_step_one() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Retry on rejection                                                           #
+# Retry on rejection #
 # --------------------------------------------------------------------------- #
 
 
@@ -691,7 +690,7 @@ async def test_three_consecutive_rejections_fail() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Drift                                                                        #
+# Drift #
 # --------------------------------------------------------------------------- #
 
 
@@ -725,7 +724,7 @@ async def test_drift_mid_stream_pauses_session() -> None:
 
 @pytest.mark.asyncio
 async def test_drift_missing_external_deletion() -> None:
-    """W45 — user deleting a node mid-run still fires drift via missing_node_ids."""
+    """user deleting a node mid-run still fires drift via missing_node_ids."""
     flow = _make_flow()
     sess = _make_session(flow, surface="agent_complex")
 
@@ -750,11 +749,11 @@ async def test_drift_missing_external_deletion() -> None:
 
 @pytest.mark.asyncio
 async def test_three_consecutive_stages_does_not_self_drift() -> None:
-    """W45 Q1 acceptance #1 — agent stages 3 nodes back-to-back without drift.
+    """Q1 acceptance #1 — agent stages 3 nodes back-to-back without drift.
 
-    Pre-W45 the agent self-drifted because ``_resolve_upstream_schemas``
+    previously the agent self-drifted because ``_resolve_upstream_schemas``
     warmed live ``predicted_schema`` as a side-effect, and the (then) hash-
-    based ``schema_changed`` bucket flagged that as drift. W45 dropped the
+    based ``schema_changed`` bucket flagged that as drift. dropped the
     hash buckets and tracks the agent's own staged ids — the agent's own
     additions are excluded from the new ``external_added_node_ids`` bucket
     so subsequent iterations see no drift.
@@ -794,7 +793,7 @@ async def test_three_consecutive_stages_does_not_self_drift() -> None:
 
 @pytest.mark.asyncio
 async def test_planner_records_staged_node_ids_for_add_calls() -> None:
-    """W45 Q1 — every successful add_<node_type> stage appends to staged_node_ids."""
+    """Q1 — every successful add_<node_type> stage appends to staged_node_ids."""
     flow = _make_flow()
     sess = _make_session(flow, surface="agent_complex")
 
@@ -813,7 +812,7 @@ async def test_planner_records_staged_node_ids_for_add_calls() -> None:
 
 @pytest.mark.asyncio
 async def test_external_drift_still_detected_after_one_stage() -> None:
-    """W45 Q1 acceptance #3 — external mutation between iterations still pauses.
+    """Q1 acceptance #3 — external mutation between iterations still pauses.
 
     The provider's first ``chat`` call simulates the user adding node 99 to
     the canvas while the LLM is "thinking" (after iteration 1's drift check
@@ -842,7 +841,7 @@ async def test_external_drift_still_detected_after_one_stage() -> None:
                 # Explicit ``upstream_node_ids`` so the test doesn't depend on
                 # the resolver's live-graph fallback (which would attach to
                 # node 99 — the externally-added one — and confuse the test
-                # intent). The W57 ambiguity-refusal that this comment used to
+                # intent). The ambiguity-refusal that this comment used to
                 # work around was reverted 2026-05-07; the explicit override
                 # stays for test stability.
                 args = _filter_args()
@@ -881,7 +880,7 @@ async def test_external_drift_still_detected_after_one_stage() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Abort                                                                        #
+# Abort #
 # --------------------------------------------------------------------------- #
 
 
@@ -900,7 +899,7 @@ async def test_abort_during_run_emits_abort_event() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Misc edge cases                                                              #
+# Misc edge cases #
 # --------------------------------------------------------------------------- #
 
 
@@ -997,7 +996,7 @@ async def test_complete_event_carries_diff_payload() -> None:
 
 @pytest.mark.asyncio
 async def test_cannot_run_failed_session() -> None:
-    """W49 — ``completed`` is now a followup-resumable entry state, but
+    """``completed`` is now a followup-resumable entry state, but
     ``failed`` / ``aborted`` (and other non-resumable states) still error."""
     flow = _make_flow()
     sess = _make_session(flow, surface="agent_complex")
@@ -1031,7 +1030,7 @@ async def test_resume_from_paused_drift_resnapshots() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W38 — Step narration, op_kind classification, meta-op suppression           #
+# Step narration, op_kind classification, meta-op suppression #
 # --------------------------------------------------------------------------- #
 
 
@@ -1194,11 +1193,11 @@ async def test_w38_rationale_falls_back_to_none_when_no_preamble() -> None:
     assert "[region]=='EU'" in payload["arg_summary"]
 
 
-# W71 v1.10 — ``test_w38_meta_pick_category_carries_op_kind_meta_no_rationale``
+# — ``test_w38_meta_pick_category_carries_op_kind_meta_no_rationale``
 # was deleted. It tested the legacy two-stage ``flowfile.meta.pick_category``
 # meta-routing dance, which is gone. The op_kind="meta" rationale-suppression
 # contract still applies and is now exercised by ``test_planner_staged.py``
-# against the W71 staged meta tools (classify_intent / pick_node_type /
+# against the staged meta tools (classify_intent / pick_node_type /
 # pick_upstream).
 
 
@@ -1265,13 +1264,13 @@ async def test_w38_rejected_event_carries_op_kind_for_ui_styling() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W54 — self-loop prevention + resume staged_results hygiene                   #
+# self-loop prevention + resume staged_results hygiene #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
 async def test_allocate_id_collides_with_resolved_upstream_is_refused() -> None:
-    """W54 AC1 — proposed ``node_id`` ∈ resolved upstream → ``self_loop_prevented``.
+    """AC1 — proposed ``node_id`` ∈ resolved upstream → ``self_loop_prevented``.
 
     Reproduces the user's transcript root cause via the LLM-collision path:
     LLM emits ``add_filter(node_id=3, upstream_node_ids=[3])``. The planner-
@@ -1341,7 +1340,7 @@ async def test_allocate_id_collides_with_resolved_upstream_is_refused() -> None:
 
 @pytest.mark.asyncio
 async def test_resume_drops_stale_staged_results_referencing_dead_upstream() -> None:
-    """W54 AC3 — pre-pause stale upstream reference is dropped on resume; next add chains cleanly."""
+    """AC3 — pre-pause stale upstream reference is dropped on resume; next add chains cleanly."""
     flow = _make_flow()  # contains node 1 only
     sess = _make_session(flow, surface="agent_complex")
     # Simulate: pre-pause the agent staged node 7 chained off node 5; user
@@ -1403,7 +1402,7 @@ async def test_resume_drops_stale_staged_results_referencing_dead_upstream() -> 
 
 @pytest.mark.asyncio
 async def test_resume_drops_stale_staged_results_with_now_live_id() -> None:
-    """W54 AC4 — pre-pause staged ``node_id`` is now live → entry dropped, audit row written."""
+    """AC4 — pre-pause staged ``node_id`` is now live → entry dropped, audit row written."""
     flow = _make_flow()  # node 1
     # User manually added a node that got id 3 during the pause.
     _add_orders(flow, node_id=3)
@@ -1455,7 +1454,7 @@ async def test_resume_drops_stale_staged_results_with_now_live_id() -> None:
 
 @pytest.mark.asyncio
 async def test_audit_row_for_add_includes_node_id_instrumentation() -> None:
-    """W54 AC5 — happy-path ``add_*`` audit row carries ``__planner_meta__`` instrumentation."""
+    """AC5 — happy-path ``add_*`` audit row carries ``__planner_meta__`` instrumentation."""
     flow = _make_flow()
     sess = _make_session(flow, surface="agent_complex")
     provider = _ScriptedProvider(
@@ -1485,12 +1484,12 @@ async def test_audit_row_for_add_includes_node_id_instrumentation() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# W56 — planner sees the per-node-type catalog block in its system prompt      #
+# planner sees the per-node-type catalog block in its system prompt #
 # --------------------------------------------------------------------------- #
 
 
 def test_w56_planner_system_prompt_includes_node_catalog() -> None:
-    """W56 — the planner system prompt for the agent surface includes the
+    """the planner system prompt for the agent surface includes the
     catalog header plus a representative slice of node-type docs.
 
     This doesn't test the *content* of the docs (that's test_tool_registry's
@@ -1500,7 +1499,7 @@ def test_w56_planner_system_prompt_includes_node_catalog() -> None:
     """
     from flowfile_core.ai.context.builder import assemble_system_prompt
 
-    # W71 v1.10 — legacy ``"agent"`` surface removed; assert the catalog
+    # — legacy ``"agent"`` surface removed; assert the catalog
     # is wired into ``agent_complex`` (the only full-catalog planner
     # surface left).
     prompt = assemble_system_prompt("agent_complex")
@@ -1518,19 +1517,19 @@ def test_w56_planner_system_prompt_includes_node_catalog() -> None:
 
     # Pointer line from prompts/planner.md must precede the catalog so the
     # model knows the section is coming.
-    pointer_idx = prompt.find("Tool catalog (W56)")
+    pointer_idx = prompt.find("Tool catalog")
     catalog_idx = prompt.find("## Tool catalog\n")
     assert pointer_idx >= 0, "pointer line from planner.md missing"
     assert catalog_idx > pointer_idx, "catalog block must follow the pointer line"
 
 
 # --------------------------------------------------------------------------- #
-# W70 — planner prompt warns against the redundant-connect pattern             #
+# planner prompt warns against the redundant-connect pattern #
 # --------------------------------------------------------------------------- #
 
 
 def test_w70_planner_prompt_warns_against_redundant_connect() -> None:
-    """W70 — the planner system prompt for the agent surface includes
+    """the planner system prompt for the agent surface includes
     the connection-discipline section that tells the model not to emit
     a follow-up ``connect`` call after ``add_*`` (the executor already
     auto-wires) and never to invent a ``to_node_id`` integer.
@@ -1541,23 +1540,23 @@ def test_w70_planner_prompt_warns_against_redundant_connect() -> None:
     """
     from flowfile_core.ai.context.builder import assemble_system_prompt
 
-    # W71 v1.10 — legacy ``"agent"`` surface removed; the W70 paragraph
+    # — legacy ``"agent"`` surface removed; the paragraph
     # ships with the ``agent_complex`` surface and the
     # ``single_stage_op`` stage of ``agent_staged`` (both surfaces use
     # the legacy ``planner.md`` suffix).
     prompt = assemble_system_prompt("agent_complex")
-    assert "## Connection discipline (W70)" in prompt, "W70 connection-discipline header missing"
+    assert "## Connection discipline" in prompt, "W70 connection-discipline header missing"
     assert "Do NOT emit a follow-up" in prompt, "W70 redundant-connect refusal phrase missing"
     assert "never invent a fresh integer" in prompt, "W70 invent-id refusal phrase missing"
 
     prompt_staged_single_op = assemble_system_prompt(
         "agent_staged", stage="single_stage_op"
     )
-    assert "## Connection discipline (W70)" in prompt_staged_single_op
+    assert "## Connection discipline" in prompt_staged_single_op
 
 
 # --------------------------------------------------------------------------- #
-# W49 — Post-completion followup re-entry                                      #
+# Post-completion followup re-entry #
 # --------------------------------------------------------------------------- #
 
 
@@ -1746,7 +1745,7 @@ async def test_w49_followup_re_entry_from_completed_resnapshots_and_resets() -> 
 
 @pytest.mark.asyncio
 async def test_w49_followup_re_snapshots_before_drift_check() -> None:
-    """D006 — the followup-resume preamble must re-snapshot the graph so a
+    """the followup-resume preamble must re-snapshot the graph so a
     subsequent ``detect_drift`` compares against the *current* state, not
     the snapshot the original ``/start`` took.
 
@@ -1855,7 +1854,7 @@ async def test_w49_followup_synthetic_rejection_appears_in_conversation() -> Non
 
 
 # --------------------------------------------------------------------------- #
-# W47 — modification dispatch                                                  #
+# modification dispatch #
 # --------------------------------------------------------------------------- #
 
 
@@ -1889,7 +1888,7 @@ def _make_flow_with_filter(flow_id: int = 1) -> FlowGraph:
 
 @pytest.mark.asyncio
 async def test_planner_stages_modification_with_existing_node_target() -> None:
-    """W47 — planner dispatches a single ``update_node_settings`` call,
+    """planner dispatches a single ``update_node_settings`` call,
     stages the modification, and the bundled diff has 1 modification, 0
     additions. ``staged_node_ids`` is unchanged because modifications
     target *existing* node ids (W45 drift-detection invariant).
@@ -1934,7 +1933,7 @@ async def test_planner_stages_modification_with_existing_node_target() -> None:
     assert staged[0].payload["name"] == "flowfile.graph.update_node_settings"
     assert staged[0].payload["node_id"] == 2
 
-    # W45 drift-detection invariant — modifications target existing ids,
+    # drift-detection invariant — modifications target existing ids,
     # so the planner must NOT append to staged_node_ids.
     assert sess.staged_node_ids == []
 
@@ -1956,8 +1955,8 @@ async def test_planner_stages_modification_with_existing_node_target() -> None:
 
 @pytest.mark.asyncio
 async def test_planner_modification_does_not_pollute_staged_node_ids_when_chained() -> None:
-    """W47 — back-to-back modifications on the same flow keep
-    ``staged_node_ids`` empty. Defends the W45 drift invariant against
+    """back-to-back modifications on the same flow keep
+    ``staged_node_ids`` empty. Defends the drift invariant against
     accidental drift from modification-heavy sessions.
     """
     from flowfile_core.schemas import transform_schema
@@ -2038,7 +2037,7 @@ async def test_planner_modification_does_not_pollute_staged_node_ids_when_chaine
 
 
 # --------------------------------------------------------------------------- #
-# 2026-05-07 — staged settings echo in tool reply                               #
+# staged settings echo in tool reply #
 # --------------------------------------------------------------------------- #
 
 
@@ -2071,7 +2070,7 @@ def test_summarise_echoes_staged_settings_for_add() -> None:
 
 
 def test_summarise_echoes_settings_for_update_node_settings() -> None:
-    """The same echo applies to W47 modification payloads (settings under
+    """The same echo applies to modification payloads (settings under
     ``new_settings`` rather than ``settings``)."""
     result = ToolExecutionResult(
         status="staged",

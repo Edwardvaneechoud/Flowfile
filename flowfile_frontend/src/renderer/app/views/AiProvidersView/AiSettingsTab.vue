@@ -3,15 +3,16 @@
     <div class="mb-3">
       <h2 class="page-title">AI Providers</h2>
       <p class="description-text">
-        Bring your own keys for the LLM providers Flowfile's AI features use. Local Ollama needs no key.
+        Bring your own keys for the LLM providers Flowfile's AI features use. Local Ollama needs no
+        key.
       </p>
     </div>
 
-    <!-- Disabled-state: matches W17's 503 contract.
-         W18 replaces the env-var hint with an in-app admin button so non-technical
-         users don't need to touch .env. The hint about FEATURE_FLAG_AI in .env stays
-         (admin-only, below the button) because process-memory toggles don't survive
-         a restart. -->
+    <!-- Disabled-state: matches the AI subsystem's 503 contract.
+         The in-app admin button means non-technical users don't need
+         to touch .env. The hint about FEATURE_FLAG_AI in .env stays
+         (admin-only, below the button) because process-memory toggles
+         don't survive a restart. -->
     <div v-if="isDisabled" class="card mb-3">
       <div class="card-content">
         <div class="info-box">
@@ -47,10 +48,8 @@
       </div>
     </div>
 
-    <!-- 2026-05-09 — the W58 autoPromote toggle that lived here was
-         removed when the chat drawer's mode dropdown unified Chat /
-         Auto-agent / Agent into a single control. The drawer is now
-         the only entry point for the send-mode preference; this tab
+    <!-- The chat drawer's mode dropdown is the single entry point for
+         the send-mode preference (Chat / Auto-agent / Agent). This tab
          keeps the provider list + admin controls. -->
 
     <div v-if="!isDisabled" class="card mb-3">
@@ -304,10 +303,10 @@ const formApiKey = ref("");
 const formClearApiKey = ref(false);
 const formDefaultModel = ref("");
 const formApiBase = ref("");
-// W29 — curated models list, mirrors AiProviderCredential.models. The editor
-// always works with an array; submit collapses [] to clearModels=true so the
-// backend round-trips to NULL and reads stay null-vs-non-null (no [] in the
-// wild).
+// Curated models list, mirrors AiProviderCredential.models. The
+// editor always works with an array; submit collapses [] to
+// clearModels=true so the backend round-trips to NULL and reads stay
+// null-vs-non-null (no [] in the wild).
 const formModels = ref<string[]>([]);
 const formNewModel = ref("");
 const showApiKey = ref(false);
@@ -492,8 +491,9 @@ const handleTest = async (provider: AiProvider) => {
 };
 
 const handleEnableFlag = async () => {
-  // W18 — admin-only path. Backend rejects with 403 for non-admin, 401 for
-  // unauth — the UI gates on isAdmin first so we never make those calls.
+  // Admin-only path. Backend rejects with 403 for non-admin, 401 for
+  // unauth — the UI gates on isAdmin first so we never make those
+  // calls.
   isEnablingFlag.value = true;
   try {
     const state = await setAiFeatureFlag(true);
@@ -739,7 +739,7 @@ onMounted(loadProviders);
   gap: var(--spacing-2);
 }
 
-/* W58 — chat → agent auto-promotion toggle row. */
+/* Chat → agent auto-promotion toggle row. */
 .behavior-row {
   display: flex;
   align-items: flex-start;

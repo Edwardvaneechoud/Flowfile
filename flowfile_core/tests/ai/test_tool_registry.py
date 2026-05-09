@@ -1,11 +1,11 @@
-"""W30 — Tool catalog generation tests.
+"""Tool catalog generation tests.
 
 Cases:
 
 * ``test_full_catalog_min_size`` — full catalog enumerates every entry in
   ``NODE_TYPE_TO_SETTINGS_CLASS`` plus the four ops surfaces.
 * ``test_node_tool_names_follow_mcp_convention`` — every node-type tool name
-  matches ``flowfile.graph.add_<node_type>`` (D004).
+  matches ``flowfile.graph.add_<node_type>``.
 * ``test_ops_tool_names_follow_mcp_convention`` — graph / schema / codegen /
   meta tool names match ``flowfile.<domain>.<op>``.
 * ``test_node_tool_parameters_are_valid_json_schema_2020_12`` — every emitted
@@ -99,13 +99,13 @@ def test_full_catalog_returns_tool_specs() -> None:
 
 
 def test_w47_update_node_settings_present_in_catalog() -> None:
-    """W47 — ``flowfile.graph.update_node_settings`` is back in the catalog
-    with a real implementation. Inverts the W46 absence assertion: W46
-    pulled the tool because the executor refused it; W47 lifts the refusal
+    """``flowfile.graph.update_node_settings`` is back in the catalog
+    with a real implementation. Inverts the absence assertion:
+    pulled the tool because the executor refused it; lifts the refusal
     and ships ``_handle_update_node_settings`` plus the modifications
     bucket on :class:`GraphDiff`.
 
-    ``run_node`` / ``propose_subgraph`` stay out — W46 dropped them
+    ``run_node`` / ``propose_subgraph`` stay out — dropped them
     permanently (autonomous run-node is unsafe; propose_subgraph is
     redundant with the planner's per-step staging).
     """
@@ -117,7 +117,7 @@ def test_w47_update_node_settings_present_in_catalog() -> None:
 
     # The universal-ops derivation auto-includes ``update_node_settings``
     # in every surface preset alongside add_node / connect / delete_node /
-    # delete_connection. (W71 v1.10 — CATEGORY_PRESETS removed alongside
+    # delete_connection. (W71 — CATEGORY_PRESETS removed alongside
     # the legacy two-stage agent surface; only SURFACE_PRESETS remains.)
     from flowfile_core.ai.tools.registry import (
         SURFACE_PRESETS,
@@ -137,7 +137,7 @@ def test_w47_update_node_settings_present_in_catalog() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Naming convention (D004)
+# Naming convention
 # ---------------------------------------------------------------------------
 
 
@@ -172,7 +172,7 @@ def test_mcp_tool_name_helper() -> None:
 
 
 # ---------------------------------------------------------------------------
-# JSON Schema dialect (D004)
+# JSON Schema dialect
 # ---------------------------------------------------------------------------
 
 
@@ -208,7 +208,7 @@ def test_ops_tool_parameters_are_valid_json_schema() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Surface / category presets (D002)
+# Surface / category presets
 # ---------------------------------------------------------------------------
 
 
@@ -223,7 +223,7 @@ def test_surface_presets_resolve_to_known_tools() -> None:
         if surface in ("agent_complex", "agent_staged"):
             # ``agent_complex`` is full-catalog (preset is intentionally
             # empty so ``build_tool_catalog`` short-circuits to the full
-            # list). ``agent_staged`` is the wrapper key for the W71
+            # list). ``agent_staged`` is the wrapper key for the
             # state machine; the actual tool catalogs live under the
             # per-stage ``staged_*`` keys.
             continue
@@ -232,7 +232,7 @@ def test_surface_presets_resolve_to_known_tools() -> None:
 
 
 def test_cmd_k_surface_is_narrow() -> None:
-    """Cmd+K surface must stay small to meet the sub-1s TTFB target (D002)."""
+    """Cmd+K surface must stay small to meet the sub-1s TTFB target."""
     tools = build_tool_catalog(surface="cmd_k")
     assert 0 < len(tools) <= 8, f"cmd_k preset over budget: {len(tools)} tools"
 
@@ -245,9 +245,9 @@ def test_explain_surface_is_read_only() -> None:
 
 
 def test_agent_complex_surface_is_full_minus_writers() -> None:
-    """W71 v2.1 — ``agent_complex`` returns the full catalog minus the
+    """``agent_complex`` returns the full catalog minus the
     writer-shaped node tools (output / database_writer /
-    cloud_storage_writer / catalog_writer). Pre-v2.1 it was strictly
+    cloud_storage_writer / catalog_writer). previously it was strictly
     ``== full``; the writer-block policy intentionally trims those
     four tools so the LLM never sees them.
     """
@@ -267,7 +267,7 @@ def test_agent_complex_surface_is_full_minus_writers() -> None:
 
 
 def test_unknown_surface_raises() -> None:
-    """W71 v1.10 — error message simplified after CATEGORY_PRESETS
+    """error message simplified after CATEGORY_PRESETS
     removal; the matcher just checks the surface-unknown phrase."""
     with pytest.raises(KeyError, match="Unknown surface"):
         build_tool_catalog(surface="nonsense")
@@ -355,7 +355,7 @@ def test_every_node_type_in_catalog_has_corresponding_settings_class() -> None:
 
 
 # ---------------------------------------------------------------------------
-# W56 — long_description coverage (per-node-type narrative docs)
+# long_description coverage (per-node-type narrative docs)
 # ---------------------------------------------------------------------------
 
 
@@ -365,7 +365,7 @@ _W56_LONG_DESCRIPTION_MIN_CHARS = 80
 
 
 def test_w56_every_node_type_has_long_description() -> None:
-    """W56 AC1 + AC7 — every NODE_TYPE_TO_SETTINGS_CLASS entry surfaces narrative docs.
+    """AC1 + AC7 — every NODE_TYPE_TO_SETTINGS_CLASS entry surfaces narrative docs.
 
     Without this guard, a future node type can land without docs and the
     agent surface silently degrades back to JSON-Schema-only grounding.
@@ -389,7 +389,7 @@ def test_w56_every_node_type_has_long_description() -> None:
 
 
 def test_w56_ops_tools_have_long_descriptions() -> None:
-    """W56 — graph / schema / codegen / meta op tools also carry narrative docs."""
+    """graph / schema / codegen / meta op tools also carry narrative docs."""
     too_short: list[tuple[str, int]] = []
     for tool in (*GRAPH_OPS_TOOLS, *SCHEMA_OPS_TOOLS, *CODEGEN_OPS_TOOLS, *META_OPS_TOOLS):
         text = (tool.long_description or "").strip()
@@ -399,7 +399,7 @@ def test_w56_ops_tools_have_long_descriptions() -> None:
 
 
 def test_w56_long_description_does_not_duplicate_short_description() -> None:
-    """W56 — long_description should be substantively different from description.
+    """long_description should be substantively different from description.
 
     Catches the lazy mistake of `long_description=description` (no narrative
     grounding added). Asserts at least 50% character growth on average,
@@ -421,7 +421,7 @@ def test_w56_long_description_does_not_duplicate_short_description() -> None:
 
 
 # ---------------------------------------------------------------------------
-# W56 v2 — user_instructions field (chat / advisory surfaces)
+# v2 — user_instructions field (chat / advisory surfaces)
 # ---------------------------------------------------------------------------
 
 
@@ -431,7 +431,7 @@ _W56_USER_INSTRUCTIONS_MIN_CHARS = 200  # higher than long_description floor —
 
 
 def test_w56v2_every_node_type_has_user_instructions() -> None:
-    """W56 v2 — every NODE_TYPE_TO_SETTINGS_CLASS entry has chat-facing prose.
+    """v2 — every NODE_TYPE_TO_SETTINGS_CLASS entry has chat-facing prose.
 
     Without this, the chat surface (uses surface="explain") loses its
     Flowfile vocabulary for that node type and starts hallucinating
@@ -456,7 +456,7 @@ def test_w56v2_every_node_type_has_user_instructions() -> None:
 
 
 def test_w56v2_user_instructions_cite_canonical_palette_labels() -> None:
-    """W56 v2 — every node-type tool's user_instructions begins with the
+    """v2 — every node-type tool's user_instructions begins with the
     canonical palette label from ``flowfile_core.configs.node_store.nodes``.
 
     Catches drift if the palette label is renamed in ``nodes.py`` but the
@@ -484,7 +484,7 @@ def test_w56v2_user_instructions_cite_canonical_palette_labels() -> None:
 
 
 def test_w56v2_ops_tools_skip_user_instructions_by_default() -> None:
-    """W56 v2 — graph / schema / codegen / meta tools have empty
+    """v2 — graph / schema / codegen / meta tools have empty
     user_instructions because the user can't reach them through the canvas.
 
     Surfacing them in the chat-facing reference would only confuse the
@@ -497,7 +497,7 @@ def test_w56v2_ops_tools_skip_user_instructions_by_default() -> None:
 
 
 def test_w56v2_palette_labels_match_node_store() -> None:
-    """W56 v2 — every documented node_type has a palette entry in nodes.py.
+    """v2 — every documented node_type has a palette entry in nodes.py.
 
     Cross-checks the user_instructions dict against the canonical palette
     config so a renamed (or removed) palette entry breaks the test rather
@@ -536,12 +536,12 @@ def test_w56v2_palette_labels_match_node_store() -> None:
 
 
 # ---------------------------------------------------------------------------
-# W56 v2 — agent_payload_example field (Pydantic-shape drift guard)
+# v2 — agent_payload_example field (Pydantic-shape drift guard)
 # ---------------------------------------------------------------------------
 
 
 def test_w56v2_agent_payload_examples_validate() -> None:
-    """W56 v2 — every agent_payload_example must round-trip through the
+    """v2 — every agent_payload_example must round-trip through the
     real Pydantic settings class.
 
     Catches drift: if NodeGroupBy.groupby_input.agg_cols is renamed in
@@ -572,7 +572,7 @@ def test_w56v2_agent_payload_examples_validate() -> None:
 
 
 def test_w56v2_agent_payload_examples_only_for_divergent_nodes() -> None:
-    """W56 v2 — examples are only authored for the seven node types whose
+    """v2 — examples are only authored for the seven node types whose
     Pydantic shape diverges from the natural LLM guess.
 
     Adding examples for simple nodes (filter / sort / etc.) burns tokens
@@ -590,17 +590,17 @@ def test_w56v2_agent_payload_examples_only_for_divergent_nodes() -> None:
         "select",
         "unpivot",
         "text_to_rows",
-        # W67 follow-up — RawData.data layout is non-obvious (columnar; LLM
+        # follow-up — RawData.data layout is non-obvious (columnar; LLM
         # defaults to row-oriented and silently corrupts alignment because
         # both validate as list[list]). Worked example disambiguates.
         "manual_input",
-        # W71 v1.12C — ``FunctionInput.function`` is a Flowfile expression
+        # — ``FunctionInput.function`` is a Flowfile expression
         # string (SQL-style ``[column]`` references), NOT raw Polars. LLMs
         # consistently emit ``pl.col('x') + pl.col('y')`` into this field
         # because the schema only constrains it as ``str``. Worked example
         # locks in the ``[column]`` shape.
         "formula",
-        # W71 v2.2 — explore_data needs NO settings; example is the
+        # — explore_data needs NO settings; example is the
         # empty-shape ``{}`` envelope so the LLM emits an empty inner
         # at fill_settings instead of fabricating GraphicWalkerInput
         # values it has no signal for.
@@ -617,13 +617,13 @@ def test_w56v2_agent_payload_examples_only_for_divergent_nodes() -> None:
 
 
 def test_w56v2_agent_payload_examples_surface_on_agent_only() -> None:
-    """W56 v2 — examples appear ONLY on agent_complex catalog.
+    """v2 — examples appear ONLY on agent_complex catalog.
 
     Read-only / advisory surfaces (explain / lineage / docgen) get
     user_instructions, not agent payloads. cmd_k / ghost_node get the
     agent-shaped catalog but their preset filters out group_by / pivot /
     fuzzy_match / etc. (they only carry a narrow set of common transforms).
-    (W71 v1.10 — legacy ``"agent"`` surface removed; ``agent_complex``
+    (W71 — legacy ``"agent"`` surface removed; ``agent_complex``
     is the only full-catalog surface left.)
     """
     from flowfile_core.ai.context.builder import assemble_system_prompt
@@ -648,12 +648,12 @@ def test_w56v2_agent_payload_examples_surface_on_agent_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# W56 v2 — frontend sidebar label cross-check
+# v2 — frontend sidebar label cross-check
 # ---------------------------------------------------------------------------
 
 
 def test_w56v2_sidebar_labels_match_frontend() -> None:
-    """W56 v2 — every NODE_GROUP_TO_SIDEBAR_LABEL value appears verbatim
+    """v2 — every NODE_GROUP_TO_SIDEBAR_LABEL value appears verbatim
     in the frontend's NodeList.vue.
 
     Brittle by design: a frontend rename must propagate to the catalog,
@@ -685,7 +685,7 @@ def test_w56v2_sidebar_labels_match_frontend() -> None:
 
 
 # ---------------------------------------------------------------------------
-# W67 — nested-Pydantic shape pass-through (inline $ref)
+# nested-Pydantic shape pass-through (inline $ref)
 # ---------------------------------------------------------------------------
 
 
@@ -707,7 +707,7 @@ def _walk_for_refs_and_defs(node: object, path: str = "") -> list[tuple[str, str
 
 
 def test_w67_nested_pydantic_field_inlined_at_property_site() -> None:
-    """W67 Defect 1 — ``add_manual_input``'s ``raw_data_format`` field renders
+    """Defect 1 — ``add_manual_input``'s ``raw_data_format`` field renders
     as an inline object schema (``type: 'object'`` with ``properties``), not
     a ``$ref`` cross-reference. Live transcript 2026-05-06 surfaced the LLM
     JSON-string-encoding the value because it didn't follow ``$ref``; the
@@ -738,7 +738,7 @@ def test_w67_nested_pydantic_field_inlined_at_property_site() -> None:
 
 @pytest.mark.parametrize("node_type", sorted(NODE_TYPE_TO_SETTINGS_CLASS))
 def test_w67_no_ref_or_defs_remains_in_node_tool_parameters(node_type: str) -> None:
-    """W67 Defect 1 — every node-type ToolSpec inlines ``$ref``/``$defs``.
+    """Defect 1 — every node-type ToolSpec inlines ``$ref``/``$defs``.
 
     Parametrised across :data:`NODE_TYPE_TO_SETTINGS_CLASS` so a future node
     type with an unhandled ref pattern (e.g. self-referential or external
@@ -756,7 +756,7 @@ def test_w67_no_ref_or_defs_remains_in_node_tool_parameters(node_type: str) -> N
 
 
 def test_w67_audit_known_nested_pydantic_fields_render_as_object() -> None:
-    """W67 Defect 1 audit — a positive contract that the catalog renders
+    """Defect 1 audit — a positive contract that the catalog renders
     each known nested-Pydantic field as an object (or array-of-object) schema.
 
     Hand-picked allow-list of fields whose annotation is a ``BaseModel``

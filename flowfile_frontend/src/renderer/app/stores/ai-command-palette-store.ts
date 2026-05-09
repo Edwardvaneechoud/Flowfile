@@ -1,12 +1,12 @@
-// W33 — Pinia store for the Cmd+K command palette.
+// Pinia store for the Cmd+K command palette.
 //
 // Owns the lifecycle of one palette session: open/close, the typed prompt,
-// in-flight request, and post-success handoff to the W35 diff store. The
+// in-flight request, and post-success handoff to the diff store. The
 // store does NOT own the staged GraphDiff itself; that belongs to
-// `useAiDiffStore` (W35) so the existing accept/reject UI mounts
-// transparently. After a successful submit we call
-// `aiDiffStore.setCurrentDiff(diff)` and close the palette — the user sees
-// the diff in W35's `AiDiffPanel` inside the existing AI drawer.
+// `useAiDiffStore` so the existing accept/reject UI mounts transparently.
+// After a successful submit we call `aiDiffStore.setCurrentDiff(diff)` and
+// close the palette — the user sees the diff in `AiDiffPanel` inside the
+// existing AI drawer.
 //
 // Cancellation is per-submit: each `submit()` call gets a fresh
 // AbortController that supersedes any in-flight one. A user pressing Esc
@@ -71,7 +71,7 @@ export const useAiCommandPaletteStore = defineStore("aiCommandPalette", () => {
   };
 
   const close = (): void => {
-    // W66 — close preserves the prior response (`error` / `refused` /
+    // Close preserves the prior response (`error` / `refused` /
     // `rationale` / `degradedReason`) so an accidental dismiss doesn't
     // erase what the user was reading. State is cleared at the start of
     // a new submission via `clearResult()`, or by an explicit caller.
@@ -99,8 +99,8 @@ export const useAiCommandPaletteStore = defineStore("aiCommandPalette", () => {
 
   const submit = async (options: SubmitOptions): Promise<void> => {
     cancel();
-    // W66 — wipe any prior response before validating the new prompt so
-    // a stale rationale from a previous run can't leak into the next
+    // Wipe any prior response before validating the new prompt so a
+    // stale rationale from a previous run can't leak into the next
     // submit's failure UI. Validation errors set `error` after this
     // clear, so the user still sees the new error.
     clearResult();
@@ -172,16 +172,17 @@ export const useAiCommandPaletteStore = defineStore("aiCommandPalette", () => {
       return;
     }
 
-    // Success path: hand the staged diff to W35 and close the palette.
+    // Success path: hand the staged diff to the diff store and close
+    // the palette.
     const diffStore = useAiDiffStore();
     diffStore.setCurrentDiff(response.diff);
 
-    // Open the AI drawer so the user sees the W35 panel with the new diff.
+    // Open the AI drawer so the user sees the diff panel.
     const editorStore = useEditorStore();
     editorStore.openAiDrawer?.();
 
-    // W66 — drop the rationale + refused list now that the diff has
-    // been handed off; the W35 panel renders both from the diff itself.
+    // Drop the rationale + refused list now that the diff has been
+    // handed off; the diff panel renders both from the diff itself.
     clearResult();
     close();
   };
