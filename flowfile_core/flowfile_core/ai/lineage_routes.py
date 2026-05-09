@@ -1,32 +1,34 @@
-"""HTTP route for the "Lineage Q&A across runs" surface (W51).
+"""HTTP route for the "Lineage Q&A across runs" surface.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
-``Depends(get_current_active_user)``; W17's feature-flag gate covers this
-through the parent ``ai_router``.
+``Depends(get_current_active_user)``; the feature-flag gate covers
+this through the parent ``ai_router``.
 
-Like W23's ``run_failure_routes`` and W50's ``docgen_routes``, this surface
-is read-only by construction — ``tools=None`` is passed to the provider's
-``stream()`` so no ``tool_call_delta`` is ever emitted. The route streams
-an Assist-level natural-language answer to the user's lineage question.
+Like ``run_failure_routes`` and ``docgen_routes``, this surface is
+read-only by construction — ``tools=None`` is passed to the
+provider's ``stream()`` so no ``tool_call_delta`` is ever emitted.
+The route streams an Assist-level natural-language answer to the
+user's lineage question.
 
 The single endpoint takes ``{flow_id, question, ...}``, looks up the
-``FlowGraph`` via the existing ``flow_file_handler`` singleton, optionally
-narrows the pinned set to a focus node, builds a schema-grounded
-:class:`PromptContext` via W22's
+``FlowGraph`` via the existing ``flow_file_handler`` singleton,
+optionally narrows the pinned set to a focus node, builds a
+schema-grounded :class:`PromptContext` via
 :func:`flowfile_core.ai.context.render_prompt_context` (surface
 ``"lineage"``), reads the flow's run history from the catalog
-(``FlowRunService.list_runs`` + ``get_run_detail``) — falling back to
-``flow.latest_run_info`` when the flow has no ``source_registration_id``
-— and appends a structured ``## Run history`` block (per-run summary
-table + per-node aggregates) plus a ``## Question`` block to ``ctx.user``.
-The composed ``[system, user]`` message pair is streamed through W13's
-SSE primitives exactly so the wire format matches ``/ai/chat/stream`` and
+(``FlowRunService.list_runs`` + ``get_run_detail``) — falling back
+to ``flow.latest_run_info`` when the flow has no
+``source_registration_id`` — and appends a structured ``## Run
+history`` block (per-run summary table + per-node aggregates) plus a
+``## Question`` block to ``ctx.user``. The composed ``[system,
+user]`` message pair is streamed through the SSE primitives exactly
+so the wire format matches ``/ai/chat/stream`` and
 ``/ai/explain_run_failure``.
 
 Provider resolution flows through
-:func:`flowfile_core.ai.byok.get_configured_provider` (W12) so BYOK rows +
-env-var fallback + surface-keyed model defaults are honoured identically
-to the chat route.
+:func:`flowfile_core.ai.byok.get_configured_provider` so BYOK rows
++ env-var fallback + surface-keyed model defaults are honoured
+identically to the chat route.
 """
 
 from __future__ import annotations
@@ -70,17 +72,17 @@ _HISTORY_LIMIT_MAX = 50
 class LineageQuestionRequest(BaseModel):
     """Body for ``POST /ai/lineage_question``.
 
-    ``focus_node_id`` is optional — when provided, W22's BFS pins that
-    single node id and walks upstream; when omitted, every node id in the
-    flow is pinned (whole-flow lineage).
+    ``focus_node_id`` is optional — when provided, the prompt
+    builder's BFS pins that single node id and walks upstream; when
+    omitted, every node id in the flow is pinned (whole-flow lineage).
 
-    ``history_limit`` controls how many recent runs the route pulls from
-    the catalog. Defaults to 10, capped at 50 to keep the prompt block
-    bounded against multi-thousand-run flows.
+    ``history_limit`` controls how many recent runs the route pulls
+    from the catalog. Defaults to 10, capped at 50 to keep the prompt
+    block bounded against multi-thousand-run flows.
 
-    ``samples_mode`` defaults to D009's ``"off"``. The frontend in v0
-    doesn't expose a UI toggle; W25 + a future per-flow safety config
-    workstream will surface it.
+    ``samples_mode`` defaults to ``"off"``. The frontend doesn't
+    expose a UI toggle today; a per-flow safety config workstream
+    will surface it.
     """
 
     flow_id: int
@@ -153,7 +155,7 @@ def _ensure_known_provider(name: str) -> None:
 
 
 def _resolve_flow_name(flow: Any, flow_id: int) -> str:
-    """Return the flow display name. Mirrors W50's resolution.
+    """Return the flow display name.
 
     Falls back to ``f"flow-{flow_id}"`` when ``flow_settings.name`` is
     missing or empty (e.g. an unsaved flow).
@@ -510,7 +512,7 @@ def _compose_lineage_user_message(
 ) -> str:
     """Build the user-message body the LLM sees.
 
-    Re-uses W22's deterministic ``ctx.user`` (subgraph + schemas +
+    Re-uses the deterministic ``ctx.user`` (subgraph + schemas +
     settings) verbatim so its prompt-cache hash stays stable, then
     appends the ``## Run history`` block and a ``## Question`` block
     carrying the user's literal question + answer-shape rules.
@@ -532,11 +534,12 @@ def _compose_lineage_user_message(
 
 
 def _resolve_pinned_node_ids(flow: Any, focus_node_id: int | None, flow_id: int) -> list[int]:
-    """Decide which nodes to pin into W22's subgraph extraction.
+    """Decide which nodes to pin into the subgraph extraction.
 
     * ``focus_node_id is None`` → every node (whole-flow lineage).
-    * ``focus_node_id is set`` → that single node id; W22's BFS walks
-      upstream from it to bound the rendered context.
+    * ``focus_node_id is set`` → that single node id; the prompt
+      builder's BFS walks upstream from it to bound the rendered
+      context.
     """
 
     if focus_node_id is None:

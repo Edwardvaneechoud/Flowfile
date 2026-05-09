@@ -51,8 +51,16 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   (e: "accept"): void;
-  (e: "reject"): void;
+  (e: "reject", note: string | null): void;
 }>();
+
+// Inline reject-confirmation state. Lives here (not in AiDiffPanel) so the
+// textarea + Cancel/Confirm reject swap into the sticky footer where the
+// Reject button just was — keeping the affordance in the user's eyeline
+// instead of pushing it down toward the composer where it visually
+// collided with the composer's top border.
+const rejectionMode = ref(false);
+const rejectionNote = ref("");
 
 const expandedSettings = ref<Set<number>>(new Set());
 
@@ -203,7 +211,20 @@ const handleAccept = (): void => {
 
 const handleReject = (): void => {
   if (props.disabled) return;
-  emit("reject");
+  rejectionMode.value = true;
+};
+
+const cancelReject = (): void => {
+  rejectionMode.value = false;
+  rejectionNote.value = "";
+};
+
+const confirmReject = (): void => {
+  if (props.disabled) return;
+  const note = rejectionNote.value.trim();
+  rejectionMode.value = false;
+  rejectionNote.value = "";
+  emit("reject", note.length > 0 ? note : null);
 };
 </script>
 
@@ -397,22 +418,53 @@ const handleReject = (): void => {
     </details>
 
     <footer class="ai-diff-preview__footer">
-      <button
-        type="button"
-        class="ai-diff-preview__btn ai-diff-preview__btn--secondary"
-        :disabled="disabled"
-        @click="handleReject"
-      >
-        Reject
-      </button>
-      <button
-        type="button"
-        class="ai-diff-preview__btn ai-diff-preview__btn--primary"
-        :disabled="disabled"
-        @click="handleAccept"
-      >
-        Accept
-      </button>
+      <template v-if="!rejectionMode">
+        <button
+          type="button"
+          class="ai-diff-preview__btn ai-diff-preview__btn--secondary"
+          :disabled="disabled"
+          @click="handleReject"
+        >
+          Reject
+        </button>
+        <button
+          type="button"
+          class="ai-diff-preview__btn ai-diff-preview__btn--primary"
+          :disabled="disabled"
+          @click="handleAccept"
+        >
+          Accept
+        </button>
+      </template>
+      <div v-else class="ai-diff-preview__reject-confirm">
+        <label class="ai-diff-preview__reject-label" for="ai-diff-preview-reject-note">
+          Tell the agent why you're rejecting (optional) — empty is fine.
+        </label>
+        <textarea
+          id="ai-diff-preview-reject-note"
+          v-model="rejectionNote"
+          class="ai-diff-preview__reject-input"
+          rows="2"
+          placeholder="e.g. use the read node directly, not after the filter"
+        ></textarea>
+        <div class="ai-diff-preview__reject-actions">
+          <button
+            type="button"
+            class="ai-diff-preview__btn ai-diff-preview__btn--secondary"
+            @click="cancelReject"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="ai-diff-preview__btn ai-diff-preview__btn--danger"
+            :disabled="disabled"
+            @click="confirmReject"
+          >
+            Confirm reject
+          </button>
+        </div>
+      </div>
     </footer>
   </div>
 </template>
@@ -893,5 +945,49 @@ const handleReject = (): void => {
 
 .ai-diff-preview__btn--secondary:hover:enabled {
   background-color: var(--color-background-hover, #ececec);
+}
+
+.ai-diff-preview__btn--danger {
+  background-color: var(--color-danger, #d73a49);
+  color: var(--color-text-inverse, #ffffff);
+  border-color: var(--color-danger, #d73a49);
+}
+
+.ai-diff-preview__btn--danger:hover:enabled {
+  background-color: var(--color-danger-hover, #b92534);
+}
+
+/* Inline reject-confirm slot — replaces the Reject/Accept row in the
+   sticky footer. Stacks the label, textarea, and action buttons in a
+   compact column so it fits the same footer footprint without forcing
+   the panel to grow. */
+.ai-diff-preview__reject-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.ai-diff-preview__reject-label {
+  font-size: 11px;
+  color: var(--color-text-secondary, #586069);
+}
+
+.ai-diff-preview__reject-input {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-primary, #e1e4e8);
+  background-color: var(--color-background-primary, #ffffff);
+  color: var(--color-text-primary, #24292e);
+}
+
+.ai-diff-preview__reject-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
 }
 </style>

@@ -1,27 +1,29 @@
-"""HTTP route for the read-only chat surface (W20).
+"""HTTP route for the read-only chat surface.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
-``Depends(get_current_active_user)``; W17's feature-flag gate covers this
-through the parent ``ai_router``.
+``Depends(get_current_active_user)``; the feature-flag gate covers
+this through the parent ``ai_router``.
 
 This route is intentionally read-only — no tools are passed to the
-provider's ``stream()``, no tool-call branch ever fires. Tool execution
-lands in W31 / W40 against the same provider seam.
+provider's ``stream()``, no tool-call branch ever fires. Tool
+execution lands in the executor / planner against the same provider
+seam.
 
-Provider resolution flows through :func:`flowfile_core.ai.byok.get_configured_provider`
-so BYOK rows + env-var fallback + surface-keyed model defaults are honoured
-identically to the BYOK test ping in W12.
+Provider resolution flows through
+:func:`flowfile_core.ai.byok.get_configured_provider` so BYOK rows +
+env-var fallback + surface-keyed model defaults are honoured
+identically to the BYOK test ping.
 
-W26 wires :func:`flowfile_core.ai.context.assemble_system_prompt` in: every
-request prepends a server-issued ``system`` message built from
-``body.surface`` (defaulting to ``"explain"`` → the ``assist`` level per
-W22's ``SURFACE_TO_LEVEL``) so the LLM is always grounded in Flowfile's
-contract before it sees the client's first turn. Client-supplied ``system``
-messages remain accepted and follow the server prompt in order.
+Every request prepends a server-issued ``system`` message built from
+``body.surface`` (defaulting to ``"explain"`` → the ``assist`` level
+per ``SURFACE_TO_LEVEL``) via
+:func:`flowfile_core.ai.context.assemble_system_prompt` so the LLM is
+always grounded in Flowfile's contract before it sees the client's
+first turn. Client-supplied ``system`` messages remain accepted and
+follow the server prompt in order.
 
-The SSE wire format mirrors W13 exactly — ``event: chunk`` deltas,
-``event: done`` finish, keepalive comments every 15s. W42 will add
-``Last-Event-ID`` resumption — that won't change today's contract.
+The SSE wire format: ``event: chunk`` deltas, ``event: done`` finish,
+keepalive comments every 15s.
 """
 
 from __future__ import annotations
@@ -57,21 +59,20 @@ router = APIRouter()
 
 _ALLOWED_ROLES: tuple[str, ...] = ("system", "user", "assistant")
 
-# Vanilla chat has no inherent "surface" of its own — it's the general-purpose
-# drawer. Default to ``"explain"`` so we land on W22's ``assist``-level suffix
-# (concise, read-only, no graph-mutation talk), which matches what the chat
-# drawer can actually do today.
+# Vanilla chat has no inherent "surface" of its own — it's the
+# general-purpose drawer. Default to ``"explain"`` so we land on the
+# ``assist``-level suffix (concise, read-only, no graph-mutation
+# talk), which matches what the chat drawer can actually do today.
 _DEFAULT_SURFACE: str = "explain"
 
 
 class ChatMessageInput(BaseModel):
     """A single message in the chat request payload.
 
-    The ``tool`` role is intentionally excluded at this surface — W20 is
-    read-only by construction, so the only roles a client can send are
-    ``system`` (reserved for future W22 layered-prompt injection at the
-    route layer, but accepted from the client today) and ``user`` /
-    ``assistant`` for the back-and-forth.
+    The ``tool`` role is intentionally excluded at this surface — chat
+    is read-only by construction, so the only roles a client can send
+    are ``system`` (also accepted from the client today) and ``user``
+    / ``assistant`` for the back-and-forth.
     """
 
     role: Literal["system", "user", "assistant"]
@@ -86,17 +87,18 @@ class ChatStreamRequest(BaseModel):
     surface: str | None = None
     messages: list[ChatMessageInput] = Field(min_length=1)
     max_tokens: int | None = Field(default=None, gt=0)
-    # W28 — when ``flow_id`` is set, the route resolves the live ``FlowGraph``
-    # via :mod:`flowfile_core.flow_file_handler` and pipes it through W22's
-    # :func:`render_prompt_context` so the model sees the actual subgraph +
-    # schemas instead of just the W26 identity prompt. ``selected_node_ids``
-    # narrows the pinned set. ``mentions`` carries W24's parse output (e.g.
-    # ``["@flow", "@node:filter_3"]``) when the client passes them; when
-    # nothing is pinned and no mentions are given, we auto-expand to
-    # ``"@flow"`` so the model can still answer "what is this flow about?".
-    # When ``flow_id`` is omitted, behaviour matches W26 (identity-only) —
-    # keeps the contract backwards-compatible for any caller that doesn't
-    # have a flow context to share.
+    # When ``flow_id`` is set, the route resolves the live
+    # ``FlowGraph`` via :mod:`flowfile_core.flow_file_handler` and
+    # pipes it through :func:`render_prompt_context` so the model sees
+    # the actual subgraph + schemas instead of an identity-only prompt.
+    # ``selected_node_ids`` narrows the pinned set. ``mentions``
+    # carries the parsed mention strings (e.g. ``["@flow",
+    # "@node:filter_3"]``) when the client passes them; when nothing is
+    # pinned and no mentions are given, we auto-expand to ``"@flow"``
+    # so the model can still answer "what is this flow about?". When
+    # ``flow_id`` is omitted, behaviour falls back to identity-only —
+    # keeps the contract backwards-compatible for any caller that
+    # doesn't have a flow context to share.
     flow_id: int | None = None
     selected_node_ids: list[int] | None = None
     mentions: list[str] | None = None
@@ -113,9 +115,9 @@ def _ensure_known_provider(name: str) -> None:
 def _to_provider_messages(payload: list[ChatMessageInput]) -> list[Message]:
     """Map the API payload onto the provider-layer ``Message`` shape.
 
-    The route doesn't accept ``tool_calls`` or ``tool_call_id`` from the
-    client — those only flow back from the provider in non-streaming
-    responses, and W20 is read-only anyway.
+    The route doesn't accept ``tool_calls`` or ``tool_call_id`` from
+    the client — those only flow back from the provider in
+    non-streaming responses, and chat is read-only anyway.
     """
     return [Message(role=msg.role, content=msg.content) for msg in payload]
 
@@ -123,11 +125,11 @@ def _to_provider_messages(payload: list[ChatMessageInput]) -> list[Message]:
 def _resolve_prompt_surface(requested: str | None) -> str:
     """Pick the surface used for system-prompt assembly.
 
-    A request may set ``surface`` to anything for model selection (W12 /
-    D010), but only known surfaces participate in the W22 layered prompt.
-    Unknown or missing values silently fall back to :data:`_DEFAULT_SURFACE`
-    rather than 422 — the chat drawer is general-purpose and we'd rather
-    ground every call than reject one.
+    A request may set ``surface`` to anything for model selection, but
+    only known surfaces participate in the layered prompt. Unknown or
+    missing values silently fall back to :data:`_DEFAULT_SURFACE`
+    rather than 422 — the chat drawer is general-purpose and we'd
+    rather ground every call than reject one.
     """
     if requested and requested in SURFACE_TO_LEVEL:
         return requested
@@ -179,21 +181,20 @@ async def chat_stream(
 
     prompt_surface = _resolve_prompt_surface(body.surface)
 
-    # W28 — when the client sends a ``flow_id``, build a context-rich prompt
-    # via W22's pipeline (subgraph snapshot + per-node schemas + optional
-    # samples). Otherwise fall back to the W26 identity-only prompt so the
-    # contract stays backwards-compatible for callers without a flow.
+    # When the client sends a ``flow_id``, build a context-rich prompt
+    # (subgraph snapshot + per-node schemas + optional samples).
+    # Otherwise fall back to the identity-only prompt so the contract
+    # stays backwards-compatible for callers without a flow.
     if body.flow_id is not None:
         flow = flow_file_handler.get_flow(body.flow_id)
         if flow is None:
             raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
-        # If the client passed parsed mentions (W24), forward them as a
-        # single space-joined string — W22's ``render_prompt_context`` parses
-        # raw text via ``_coerce_mentions``. When neither mentions nor a
-        # selection are given, default to ``@flow`` so the chat is still
-        # context-grounded by default (the smoke-test gap that motivated
-        # W28). Explicit selections + explicit mentions both win over the
-        # auto-expand default.
+        # If the client passed parsed mentions, forward them as a
+        # single space-joined string — ``render_prompt_context`` parses
+        # raw text via ``_coerce_mentions``. When neither mentions nor
+        # a selection are given, default to ``@flow`` so the chat is
+        # still context-grounded by default. Explicit selections +
+        # explicit mentions both win over the auto-expand default.
         mention_text: str
         if body.mentions:
             mention_text = " ".join(body.mentions)

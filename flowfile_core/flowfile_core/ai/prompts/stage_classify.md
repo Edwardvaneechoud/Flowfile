@@ -100,6 +100,8 @@ is not actually applied. After the ``add``, classify ``connect``
 + ``disconnect`` for each downstream node that should consume
 from the new insertion.
 
+**Common mistake — classifying ``connect`` from a freshly-added staged source node into a pre-existing live node** (W71 v2.14): if your prior round just staged a new source-only node (``manual_input``, ``read``, ``database_reader``, ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``, ``google_analytics_reader``, ``external_source``), do NOT classify ``op_kind="connect"`` to wire that new id into a live node *unless the user explicitly named both endpoints*. The chat may suggest "connect this to your explore node" — that's the chat assistant's suggestion, NOT user intent. Re-read the user's actual message; if they didn't name the wiring, classify ``op_kind="other"`` and end the turn. The host backstops this with ``refusal: unrequested_wire_to_live`` if you reach single_stage_op anyway.
+
 **Common mistake — re-adding a node that's already staged**:
 if a node of the same type appears in your tool history this
 session (e.g. you successfully called ``add_cross_join`` a few

@@ -1,9 +1,9 @@
-"""Meta-op tool surface — owned by W30.
+"""Meta-op tool surface.
 
-W71 ``agent_staged`` exposes three meta tools — one per state-machine
-stage — each producing exactly one tool call so small open-weights
-models comply with the function-calling API rather than emitting
-text-JSON in content:
+The ``agent_staged`` surface exposes three meta tools — one per
+state-machine stage — each producing exactly one tool call so small
+open-weights models comply with the function-calling API rather than
+emitting text-JSON in content:
 
 * ``classify_intent`` — stage 0; LLM picks an op kind.
 * ``pick_node_type`` — stage 1 (add path); LLM picks the node type.
@@ -11,16 +11,11 @@ text-JSON in content:
   from a per-turn enum union of live + session-staged ids.
 
 Stage 3 (``fill_settings``) does NOT live in this module — it's a
-per-turn variant of the existing ``flowfile.graph.add_<type>`` tool with
-planner-injected fields stripped, built by ``registry.build_staged_fill_tool_spec``.
+per-turn variant of the existing ``flowfile.graph.add_<type>`` tool
+with planner-injected fields stripped, built by
+``registry.build_staged_fill_tool_spec``.
 
-W71 v1.10 — the legacy ``flowfile.meta.pick_category`` (and its
-``CATEGORY_NAMES`` enum) was removed alongside the two-stage
-``surface=agent`` flow it powered. Small open-weights models silently
-fell back to text-JSON-in-content on it; ``classify_intent`` /
-``pick_node_type`` are the staged replacements.
-
-MCP-shaped names per D004: ``flowfile.meta.<op>``.
+MCP-shaped names: ``flowfile.meta.<op>``.
 """
 
 from __future__ import annotations
@@ -34,10 +29,10 @@ from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
 JSON_SCHEMA_DIALECT: Final[str] = "https://json-schema.org/draft/2020-12/schema"
 
 
-# W71 — op kinds chosen by the stage-0 ``classify_intent`` tool. Mirrors
-# the values in ``flowfile_core.ai.sessions.PlannerOpKind`` (kept here as a
-# tuple so it can be inlined into the JSON Schema enum without a pydantic
-# round-trip).
+# Op kinds chosen by the stage-0 ``classify_intent`` tool. Mirrors the
+# values in ``flowfile_core.ai.sessions.PlannerOpKind`` (kept here as
+# a tuple so it can be inlined into the JSON Schema enum without a
+# pydantic round-trip).
 OP_KIND_NAMES: Final[tuple[str, ...]] = (
     "add",
     "modify",
@@ -55,29 +50,27 @@ PICK_NODE_TYPE_TOOL_NAME: Final[str] = "flowfile.meta.pick_node_type"
 PICK_UPSTREAM_TOOL_NAME: Final[str] = "flowfile.meta.pick_upstream"
 
 
-# W71 v1.14B — node types that take TWO upstream inputs (a primary
+# Node types that take TWO upstream inputs (a primary
 # ``upstream_node_ids`` list AND a separate ``right_input_node_id``).
 # Pick_upstream upgrades ``right_input_node_id`` to *required* when the
 # picked type is in this set so cross-join / join / fuzzy-match never
-# stage with only one wire connected (2026-05-08 dogfood: agent
-# attached cross_join to node 2 alone, missing input-1).
+# stage with only one wire connected.
 JOIN_SHAPED_NODE_TYPES: Final[frozenset[str]] = frozenset(
     {"join", "cross_join", "fuzzy_match"}
 )
 
 
 def _pick_node_type_disambiguation_text() -> str:
-    """W71 v1.14A.1 — render the do/don't list of palette-label vs
-    node_type confusions for inlining into the ``pick_node_type``
-    tool's description AND its ``node_type`` parameter description.
+    """Render the do/don't list of palette-label vs node_type
+    confusions for inlining into the ``pick_node_type`` tool's
+    description AND its ``node_type`` parameter description.
 
-    The same data v1.12B already surfaces in the catalog
-    disambiguation block, but at the *spec* level: the
-    function-calling decoder attends to tool spec text far more
-    than to system-prompt prose buried 30k tokens deep. This catches
-    the bypass case (LLM emits ``pick_node_type`` directly at the
-    classify stage, where the catalog disambiguation isn't
-    rendered).
+    The same data also surfaces in the catalog disambiguation block,
+    but at the *spec* level: the function-calling decoder attends to
+    tool spec text far more than to system-prompt prose buried 30k
+    tokens deep. This catches the bypass case (LLM emits
+    ``pick_node_type`` directly at the classify stage, where the
+    catalog disambiguation isn't rendered).
 
     Caches at module load so repeated session starts are cheap.
     Returns ``""`` when the helpers can't be loaded (defensive — the
@@ -115,7 +108,7 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
     ToolSpec(
         name=EMIT_PLAN_TOOL_NAME,
         description=(
-            "W71 v2.4 stage-0' plan emitter for agent_staged / agent_live. "
+            "Stage-0' plan emitter for agent_staged / agent_live. "
             "Before any classify→pick_type→pick_upstream→fill_settings cycle, "
             "the LLM articulates a brief multi-step plan for the user's "
             "request. The plan is shown in the chat trail; then the agent "
@@ -175,7 +168,7 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
     ToolSpec(
         name=CLASSIFY_INTENT_TOOL_NAME,
         description=(
-            "W71 stage-0 intent classifier for the agent_staged surface. "
+            "Stage-0 intent classifier for the agent_staged surface. "
             "Given the user's request and the conversation history, pick the single "
             "op_kind that best describes what the user wants to do next. The host "
             "uses your choice to route to the next stage."
@@ -224,7 +217,7 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
     ToolSpec(
         name=VERIFY_COMPLETION_TOOL_NAME,
         description=(
-            "W71 v2.12 verify-completion gate. classify just picked "
+            "Verify-completion gate. classify just picked "
             "op_kind='other' (intending to terminate). Confirm whether "
             "the user's full plan has been implemented. "
             "is_complete=true → loop terminates. "
@@ -285,16 +278,17 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
             "required": ["is_complete", "rationale"],
         },
     ),
-    # W71 — static placeholder for ``pick_upstream``. The planner builds a
-    # per-turn dynamic spec via :func:`build_pick_upstream_spec` with the
-    # live + agent-staged enum populated; this static entry exists so
-    # ``SURFACE_PRESETS["staged_pick_upstream"]`` resolves to a non-empty
-    # tool list when callers go through ``build_tool_catalog`` (defensive
-    # for tests / introspection — never reached on the planner hot path).
+    # Static placeholder for ``pick_upstream``. The planner builds a
+    # per-turn dynamic spec via :func:`build_pick_upstream_spec` with
+    # the live + agent-staged enum populated; this static entry exists
+    # so ``SURFACE_PRESETS["staged_pick_upstream"]`` resolves to a
+    # non-empty tool list when callers go through ``build_tool_catalog``
+    # (defensive for tests / introspection — never reached on the
+    # planner hot path).
     ToolSpec(
         name=PICK_UPSTREAM_TOOL_NAME,
         description=(
-            "W71 stage-2 upstream picker for the agent_staged surface (add path). "
+            "Stage-2 upstream picker for the agent_staged surface (add path). "
             "Pick the node id(s) the new node should attach to."
         ),
         long_description=(
@@ -326,7 +320,7 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
     ToolSpec(
         name=PICK_NODE_TYPE_TOOL_NAME,
         description=(
-            "W71 stage-1 node-type picker for the agent_staged surface (add path). "
+            "Stage-1 node-type picker for the agent_staged surface (add path). "
             "Given the user's request and the per-node guidance in the system prompt's "
             "tool catalog, pick the single node_type to add. "
             "IMPORTANT: ``node_type`` is the registered snake_case identifier (e.g. "
@@ -350,7 +344,7 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
             "properties": {
                 "node_type": {
                     "type": "string",
-                    # W71 v2.1 — drop writer-shaped node types (output,
+                    # Drop writer-shaped node types (output,
                     # database_writer, cloud_storage_writer,
                     # catalog_writer) so the AI agent surfaces can
                     # never stage one. Writers go to external
@@ -392,27 +386,26 @@ def build_pick_upstream_spec(
     *,
     picked_node_type: str | None = None,
 ) -> ToolSpec:
-    """W71 — build the stage-2 upstream picker with a fresh enum.
+    """Build the stage-2 upstream picker with a fresh enum.
 
     The enum is the union of currently-live node ids and any nodes the
     agent has already staged this session (multi-node turns chain
     *filter → sort* by attaching the second add to the first's
-    not-yet-applied node id). Build per-turn — the static spec would go
+    not-yet-applied node id). Build per-turn — a static spec would go
     stale between LLM rounds.
 
-    W71 v1.14B — when ``picked_node_type`` is in
-    :data:`JOIN_SHAPED_NODE_TYPES` the spec marks
-    ``right_input_node_id`` as required (drops the ``null`` option,
-    adds the field to ``required[]``). Otherwise — including when
-    ``picked_node_type`` is unknown — the field stays optional with a
-    nullable type. Catches the cross_join / join / fuzzy_match
+    When ``picked_node_type`` is in :data:`JOIN_SHAPED_NODE_TYPES` the
+    spec marks ``right_input_node_id`` as required (drops the ``null``
+    option, adds the field to ``required[]``). Otherwise — including
+    when ``picked_node_type`` is unknown — the field stays optional
+    with a nullable type. Catches the cross_join / join / fuzzy_match
     failure mode where the LLM stages with only ``upstream_node_ids``
     populated and leaves the right input dangling.
 
-    Returns an empty-enum spec when no upstreams exist (truly cold flow);
-    callers handle this case as a refusal — the only valid downstream
-    action on a cold flow is adding a source node, which doesn't need an
-    upstream.
+    Returns an empty-enum spec when no upstreams exist (truly cold
+    flow); callers handle this case as a refusal — the only valid
+    downstream action on a cold flow is adding a source node, which
+    doesn't need an upstream.
     """
     seen: set[int] = set()
     ordered: list[int] = []
@@ -438,22 +431,21 @@ def build_pick_upstream_spec(
     }
 
     if is_join_shaped:
-        # W71 v1.15A — for join-shaped node types the spec uses TWO
-        # SCALAR fields (``left_input_node_id`` + ``right_input_node_id``),
-        # both required, mirroring the UI's L/R port labels and the
-        # user mental model. The asymmetric ``upstream_node_ids`` (list)
-        # + ``right_input_node_id`` (scalar) shape that pre-v1.15
-        # spec exposed forced the LLM to learn two unrelated field
-        # shapes for what it intuitively models as two equivalent
-        # inputs. Symmetric scalar pair removes that asymmetry.
-        # Translation back to the legacy ``upstream_node_ids`` /
-        # ``right_input_node_id`` representation happens in
-        # ``executor._handle_meta`` so downstream consumers (planner
-        # session state, _handle_add_node) are unchanged.
+        # For join-shaped node types the spec uses TWO SCALAR fields
+        # (``left_input_node_id`` + ``right_input_node_id``), both
+        # required, mirroring the UI's L/R port labels and the user
+        # mental model. An asymmetric ``upstream_node_ids`` (list) +
+        # ``right_input_node_id`` (scalar) shape would force the LLM
+        # to learn two unrelated field shapes for what it intuitively
+        # models as two equivalent inputs. Symmetric scalar pair
+        # removes that asymmetry. Translation back to the canonical
+        # ``upstream_node_ids`` / ``right_input_node_id`` representation
+        # happens in ``executor._handle_meta`` so downstream consumers
+        # (planner session state, _handle_add_node) are unchanged.
         return ToolSpec(
             name=PICK_UPSTREAM_TOOL_NAME,
             description=(
-                f"W71 stage-2 upstream picker for ``{picked_node_type}`` "
+                f"Stage-2 upstream picker for ``{picked_node_type}`` "
                 "(join-shaped: two distinct inputs — LEFT and RIGHT). "
                 "Both inputs are REQUIRED. The picker exposes the union "
                 "of live + agent-staged node ids as the enum."
@@ -511,7 +503,7 @@ def build_pick_upstream_spec(
     return ToolSpec(
         name=PICK_UPSTREAM_TOOL_NAME,
         description=(
-            "W71 stage-2 upstream picker for the agent_staged surface (add path). "
+            "Stage-2 upstream picker for the agent_staged surface (add path). "
             "Pick the node id(s) from the live graph that the new node should "
             "attach to."
         ),

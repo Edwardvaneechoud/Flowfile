@@ -23,20 +23,15 @@ OFFLOAD_TO_WORKER: MutableBool = MutableBool(os.environ.get("FLOWFILE_OFFLOAD_TO
 
 # AI subsystem master switch — gates the entire `/ai/*` router (W17).
 #
-# DEV DEFAULT: hardcoded True so the AI tab is always on during build-out.
-# Plan §10 specifies off-by-default for Phase 0 release.
-#
-# To flip for going-live: comment out the `"true"` literal below, uncomment
-# the env-var line, and set `FEATURE_FLAG_AI=false` in the production env.
-# Accepts truthy strings case-insensitively (`true|1|yes|on`); anything else
-# is False.
+# Defaults to ON. Set `FEATURE_FLAG_AI=false` in the env to opt out.
+# Accepts truthy strings case-insensitively (`true|1|yes|on`); anything
+# else is False.
 #
 # Mutable so the W18 admin endpoint and test fixtures can flip it via
 # `settings.FEATURE_FLAG_AI.set(...)` without re-importing — `is_ai_enabled()`
 # reads the live value on every call.
 FEATURE_FLAG_AI: MutableBool = MutableBool(
-    # os.environ.get("FEATURE_FLAG_AI", "0").strip().lower() in ("true", "1", "yes", "on")
-    "true"
+    os.environ.get("FEATURE_FLAG_AI", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
 # AI prompt logging — dev / debugging hatch (W59).

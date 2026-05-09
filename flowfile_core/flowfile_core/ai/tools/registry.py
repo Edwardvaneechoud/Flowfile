@@ -1,32 +1,26 @@
-"""Tool catalog generation — owned by W30.
+"""Tool catalog generation.
 
-Per plan §4.1, every entry in ``NODE_TYPE_TO_SETTINGS_CLASS`` is exposed as
-an MCP-shaped (D004) tool whose ``parameters`` is the Pydantic settings
-class's ``model_json_schema()`` (JSON Schema 2020-12). The catalog is
+Every entry in ``NODE_TYPE_TO_SETTINGS_CLASS`` is exposed as an
+MCP-shaped tool whose ``parameters`` is the Pydantic settings class's
+``model_json_schema()`` (JSON Schema 2020-12). The catalog is
 augmented with the four ops surfaces declared in this package
 (``graph_ops`` / ``schema_ops`` / ``codegen_ops`` / ``meta_ops``).
 
-Surfacing strategy (D002):
+Surfacing strategy:
 
 * **Per-surface presets** for narrow surfaces (``cmd_k``, ``ghost_node``,
-  ``explain``, ``docgen``) — hand-picked subsets that keep token cost low
-  and meet the sub-1s TTFB target on Cmd+K.
-* **Multi-stage agent (W71)** — ``agent_staged`` exposes one tool per
-  round via the ``staged_*`` presets; ``agent_complex`` exposes the full
+  ``explain``, ``docgen``) — hand-picked subsets that keep token cost
+  low and meet the sub-1s TTFB target on Cmd+K.
+* **Multi-stage agent** — ``agent_staged`` exposes one tool per round
+  via the ``staged_*`` presets; ``agent_complex`` exposes the full
   catalog in a single call.
 
-User-defined nodes registered via the ``CUSTOM_NODE_STORE`` are picked up
-by ``_iter_node_types()`` and surfaced under their own ``flowfile.graph.add_<type>``
-name automatically.
+User-defined nodes registered via the ``CUSTOM_NODE_STORE`` are picked
+up by ``_iter_node_types()`` and surfaced under their own
+``flowfile.graph.add_<type>`` name automatically.
 
-W30 generates the catalog. W31's executor consumes ``ToolSpec.name`` →
-node-type / op resolution and dispatches accordingly.
-
-W71 v1.10 — the legacy two-stage ``surface=agent`` flow (``pick_category``
-+ ``CATEGORY_PRESETS``) was removed because small open-weights models
-silently fall back to text-JSON-in-content on it; ``agent_staged``
-replaces it with a one-tool-per-round state machine that those models
-actually comply with.
+The executor consumes ``ToolSpec.name`` → node-type / op resolution
+and dispatches accordingly.
 """
 
 from __future__ import annotations
@@ -85,7 +79,7 @@ SurfaceLiteral = Literal[
     "intent_classifier",
 ]
 
-# Regex that every emitted tool name must match (D004).
+# Regex that every emitted tool name must match.
 _MCP_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^flowfile\.(graph|schema|codegen|meta)\.[a-z_][a-z0-9_]*$")
 
 
@@ -93,8 +87,8 @@ def mcp_tool_name(domain: str, op: str) -> str:
     """Return the canonical MCP-shaped tool name for ``(domain, op)``.
 
     Example: ``mcp_tool_name("graph", "add_filter")`` →
-    ``"flowfile.graph.add_filter"``. Use this everywhere the catalog is
-    constructed so the naming convention from D004 stays in one place.
+    ``"flowfile.graph.add_filter"``. Use this everywhere the catalog
+    is constructed so the naming convention stays in one place.
     """
     name = f"{MCP_TOOL_NAMESPACE}.{domain}.{op}"
     if not _MCP_NAME_RE.match(name):
@@ -116,8 +110,8 @@ def _inline_ref_schema(schema: dict[str, Any]) -> dict[str, Any]:
     shape spelled out at every property site.
 
     Pydantic v2's ``model_json_schema()`` defaults to emitting nested
-    ``BaseModel`` fields as cross-references. Per W67 — agents in the live
-    transcript fail to follow ``$ref`` and JSON-string-encode structured
+    ``BaseModel`` fields as cross-references. Agents observed in
+    practice fail to follow ``$ref`` and JSON-string-encode structured
     payloads instead. Inlining removes the cognitive hop.
 
     Each branch of the walk tracks how many ``$ref`` resolutions have happened
@@ -159,11 +153,12 @@ def _inline_ref_schema(schema: dict[str, Any]) -> dict[str, Any]:
 def _node_settings_to_tool_spec(node_type: str, settings_cls: type) -> ToolSpec:
     """Project a node settings Pydantic class into a ``ToolSpec``.
 
-    Pydantic v2's ``model_json_schema()`` already emits a JSON-Schema-2020-12
-    compatible document with ``$defs``/``properties``/``required``. We inject
-    the explicit ``$schema`` dialect URI per D004 so MCP consumers see the
-    declared dialect, and we inline ``$defs`` references at the field site
-    (W67) so nested-Pydantic shapes are visible without follow-up resolution.
+    Pydantic v2's ``model_json_schema()`` already emits a
+    JSON-Schema-2020-12 compatible document with
+    ``$defs``/``properties``/``required``. We inject the explicit
+    ``$schema`` dialect URI so MCP consumers see the declared dialect,
+    and we inline ``$defs`` references at the field site so
+    nested-Pydantic shapes are visible without follow-up resolution.
     """
     schema = _inline_ref_schema(dict(settings_cls.model_json_schema()))
     # Pydantic doesn't emit $schema by default; declare the 2020-12 dialect
@@ -184,20 +179,21 @@ def _node_settings_to_tool_spec(node_type: str, settings_cls: type) -> ToolSpec:
     )
 
 
-# W71 — fields the planner injects into ``add_<node_type>`` tool args from
-# session state, before Pydantic validation runs. The stripped tool spec
-# used at the ``fill_settings`` stage of ``agent_staged`` removes these from
-# the LLM-facing JSON Schema so the LLM only sees the actual settings shape
-# (``groupby_input``, ``filter_input``, etc.). The executor's existing
-# ``_handle_add_node`` path is unchanged — it still validates the same way
-# once the planner has populated the missing fields.
+# Fields the planner injects into ``add_<node_type>`` tool args from
+# session state, before Pydantic validation runs. The stripped tool
+# spec used at the ``fill_settings`` stage of ``agent_staged`` removes
+# these from the LLM-facing JSON Schema so the LLM only sees the
+# actual settings shape (``groupby_input``, ``filter_input``, etc.).
+# The executor's existing ``_handle_add_node`` path is unchanged — it
+# still validates the same way once the planner has populated the
+# missing fields.
 #
-# v1.2 expanded set: the original (flow_id/node_id/depending_on_id/
-# depending_on_ids) plus all the rest of NodeBase's metadata. The dogfood
-# 2026-05-08 surfaced llama-3.3-70b filling ``output_field_config`` /
-# ``description`` / etc. with garbage strings; stripping these means the
-# LLM never sees the noise. Pydantic uses the defaults for these fields
-# at validation time.
+# Includes the original (flow_id/node_id/depending_on_id/
+# depending_on_ids) plus all the rest of NodeBase's metadata.
+# llama-3.3-70b has been observed filling ``output_field_config`` /
+# ``description`` / etc. with garbage strings; stripping these means
+# the LLM never sees the noise. Pydantic uses the defaults for these
+# fields at validation time.
 #
 # * ``flow_id`` / ``node_id`` — required on ``NodeBase``; planner sets via
 #   ``planner._allocate_node_id`` and ``session.flow_id``.
@@ -250,8 +246,8 @@ def _unwrap_optional_annotation(annotation: Any) -> Any:
 
 
 def _resolve_inner_input_field(settings_cls: type) -> tuple[str, type] | None:
-    """W71 v1.2 — return ``(field_name, inner_class)`` for single-input
-    settings types, else ``None`` for multi-field / empty types.
+    """Return ``(field_name, inner_class)`` for single-input settings
+    types, else ``None`` for multi-field / empty types.
 
     Auto-detect: filter out :data:`_PLANNER_INJECTED_SETTINGS_FIELDS` from
     the model's fields. If exactly one type-specific field remains AND its
@@ -285,14 +281,14 @@ def _resolve_inner_input_field(settings_cls: type) -> tuple[str, type] | None:
 
 
 def _node_settings_to_tool_spec_stripped(node_type: str, settings_cls: type) -> ToolSpec:
-    """Stage-3 variant of :func:`_node_settings_to_tool_spec` (W71).
+    """Stage-3 variant of :func:`_node_settings_to_tool_spec`.
 
     Identical to the standard projection except that planner-injected
     fields are removed from both ``properties`` and ``required`` (see
-    :data:`_PLANNER_INJECTED_SETTINGS_FIELDS`). The LLM at ``fill_settings``
-    only sees the type-specific settings shape; the planner threads the
-    stripped fields in from the session's ``picked_*`` state before
-    validation.
+    :data:`_PLANNER_INJECTED_SETTINGS_FIELDS`). The LLM at
+    ``fill_settings`` only sees the type-specific settings shape; the
+    planner threads the stripped fields in from the session's
+    ``picked_*`` state before validation.
 
     Re-uses the standard projection (descriptions, long_description, the
     payload example) so the fill-settings prompt sees the same per-type
@@ -322,7 +318,7 @@ def _node_settings_to_tool_spec_stripped(node_type: str, settings_cls: type) -> 
 def _node_settings_to_inner_tool_spec(
     node_type: str, settings_cls: type, inner_field_name: str, inner_cls: type
 ) -> ToolSpec:
-    """W71 v1.2 — stage-3 inner-shape variant.
+    """Stage-3 inner-shape variant.
 
     Returns a tool spec whose parameters schema is the *inner* class
     (e.g. ``GroupByInput``) rather than the wrapper (``NodeGroupBy``).
@@ -350,7 +346,7 @@ def _node_settings_to_inner_tool_spec(
 
 
 def get_staged_fill_inner_field_name(node_type: str) -> str | None:
-    """W71 v1.2 — return the wrapper field name when stage 3 uses the inner-input
+    """Return the wrapper field name when stage 3 uses the inner-input
     tool spec, else ``None``.
 
     The planner consults this at fill-settings dispatch: when non-``None``,
@@ -368,18 +364,18 @@ def get_staged_fill_inner_field_name(node_type: str) -> str | None:
 
 
 def build_staged_fill_tool_spec(node_type: str) -> ToolSpec | None:
-    """W71 — return the single stage-3 tool spec for the picked node type.
+    """Return the single stage-3 tool spec for the picked node type.
 
     Looked up per-turn by the planner (``agent_staged`` surface, stage
-    ``fill_settings``) using ``session.picked_node_type``. Returns ``None``
-    when the node type is unknown so the planner can refuse cleanly rather
-    than dispatching against a missing settings class.
+    ``fill_settings``) using ``session.picked_node_type``. Returns
+    ``None`` when the node type is unknown so the planner can refuse
+    cleanly rather than dispatching against a missing settings class.
 
-    v1.2: prefers the inner-shape variant when the settings class has a
-    single type-specific field whose type is a ``BaseModel`` subclass —
-    e.g. ``group_by`` exposes ``GroupByInput`` directly so the LLM sees
-    ``agg_cols`` at the top level instead of the ``NodeGroupBy`` envelope.
-    Multi-field types fall back to the flat-stripped variant.
+    Prefers the inner-shape variant when the settings class has a
+    single type-specific field whose type is a ``BaseModel`` subclass
+    — e.g. ``group_by`` exposes ``GroupByInput`` directly so the LLM
+    sees ``agg_cols`` at the top level instead of the ``NodeGroupBy``
+    envelope. Multi-field types fall back to the flat-stripped variant.
     """
     settings_cls = get_settings_class_for_node_type(node_type)
     if settings_cls is None:
@@ -417,9 +413,9 @@ def _compose_user_instructions(node_type: str) -> str:
 def _iter_node_types() -> list[str]:
     """Return every node-type registered, including UDFs from the custom store.
 
-    The custom-node store is imported lazily so this module stays importable
-    in isolation (mirrors W11/W12/W13's lazy-litellm contract — no eager
-    side-effect imports).
+    The custom-node store is imported lazily so this module stays
+    importable in isolation (mirrors the lazy-litellm contract — no
+    eager side-effect imports).
     """
     seen: set[str] = set()
     types: list[str] = []
@@ -463,7 +459,7 @@ def _node_tool_name(node_type: str) -> str:
     return mcp_tool_name("graph", f"add_{node_type}")
 
 
-# Per-surface presets (D002 (C)). Frozensets so callers can't mutate them.
+# Per-surface presets. Frozensets so callers can't mutate them.
 SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
     "cmd_k": frozenset(
         {
@@ -499,20 +495,21 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
             "flowfile.schema.read_node_preview",
         }
     ),
-    # W71 v1.10 — legacy ``"agent"`` preset removed. ``agent_complex``
-    # exposes the full catalog in a single call — used when context
-    # budgets and provider quality both allow it (e.g. Opus on a paid
-    # tier). The executor decides which surface to pick at runtime.
+    # ``agent_complex`` exposes the full catalog in a single call —
+    # used when context budgets and provider quality both allow it
+    # (e.g. Opus on a paid tier). The executor decides which surface
+    # to pick at runtime.
     "agent_complex": frozenset(),  # populated below after _build_node_type_tools
-    # W71 — ``agent_staged`` is the wrapper surface that ``AgentSession.surface``
-    # carries. The planner never queries this preset directly: it dispatches
-    # on ``session.stage`` to one of the per-stage entries below. The empty
-    # frozenset is a placeholder that satisfies ``_check_preset_coverage``.
+    # ``agent_staged`` is the wrapper surface that
+    # ``AgentSession.surface`` carries. The planner never queries this
+    # preset directly: it dispatches on ``session.stage`` to one of
+    # the per-stage entries below. The empty frozenset is a
+    # placeholder that satisfies ``_check_preset_coverage``.
     "agent_staged": frozenset(),
-    # W71 v2.4 — pre-classify "plan" stage. The LLM emits a brief
-    # numbered plan before the classify→pick→fill cycle starts;
-    # one tool advertised so the LLM is forced through the
-    # function-calling API like every other staged stage.
+    # Pre-classify "plan" stage. The LLM emits a brief numbered plan
+    # before the classify→pick→fill cycle starts; one tool advertised
+    # so the LLM is forced through the function-calling API like every
+    # other staged stage.
     "staged_plan": frozenset({EMIT_PLAN_TOOL_NAME}),
     "staged_classify": frozenset({CLASSIFY_INTENT_TOOL_NAME}),
     "staged_pick_type": frozenset({PICK_NODE_TYPE_TOOL_NAME}),
@@ -526,12 +523,11 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
     "staged_delete": frozenset({"flowfile.graph.delete_node"}),
     "staged_connect": frozenset({"flowfile.graph.connect"}),
     "staged_disconnect": frozenset({"flowfile.graph.delete_connection"}),
-    # W71 v2.12 — opt-in verify-completion gate. Reached only when
-    # classify picks op_kind="other" AND
-    # session.verify_plan_completion=true. One tool exposed: the LLM
-    # certifies whether the plan is complete (is_complete=true →
-    # terminate) or signals more work is needed (is_complete=false
-    # → loop back to classify).
+    # Opt-in verify-completion gate. Reached only when classify picks
+    # op_kind="other" AND session.verify_plan_completion=true. One
+    # tool exposed: the LLM certifies whether the plan is complete
+    # (is_complete=true → terminate) or signals more work is needed
+    # (is_complete=false → loop back to classify).
     "staged_verify_completion": frozenset({VERIFY_COMPLETION_TOOL_NAME}),
     "docgen": frozenset(
         {
@@ -539,17 +535,18 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
             "flowfile.schema.read_node_preview",
         }
     ),
-    # Settings autocomplete (W34) is text-only — the LLM emits formula
-    # expressions / join-key pairs as JSON, never invoking tools. The empty
-    # frozenset is intentional: ``build_tool_catalog(surface="settings_autocomplete")``
-    # returns ``[]`` so callers can short-circuit cleanly.
+    # Settings autocomplete is text-only — the LLM emits formula
+    # expressions / join-key pairs as JSON, never invoking tools. The
+    # empty frozenset is intentional:
+    # ``build_tool_catalog(surface="settings_autocomplete")`` returns
+    # ``[]`` so callers can short-circuit cleanly.
     "settings_autocomplete": frozenset(),
-    # Lineage Q&A (W51) is a read-only Assist surface — same posture as
-    # ``docgen`` and ``explain``. The route passes ``tools=None`` to the
-    # provider; the empty frozenset keeps the surface lockstep happy
-    # without surfacing tools the LLM would never call.
+    # Lineage Q&A is a read-only Assist surface — same posture as
+    # ``docgen`` and ``explain``. The route passes ``tools=None`` to
+    # the provider; the empty frozenset keeps the surface lockstep
+    # happy without surfacing tools the LLM would never call.
     "lineage": frozenset(),
-    # W58 intent classifier — single-shot judgement; the route passes
+    # Intent classifier — single-shot judgement; the route passes
     # ``tools=None`` and reads strict JSON. No tool catalog needed.
     "intent_classifier": frozenset(),
 }
@@ -569,11 +566,11 @@ def _full_catalog() -> list[ToolSpec]:
 _AGENT_SURFACES_THAT_BLOCK_WRITERS: frozenset[str] = frozenset(
     {"agent_complex", "agent_staged", "agent_live"}
 )
-"""W71 v2.1 — agent surfaces never see add_<writer> tools in their
-catalog. Writers go to external destinations (files, DBs, cloud) and
-the user always adds them manually. ``surface=None`` (the full
-catalog used by tests / introspection) keeps everything; only the
-agent surfaces are filtered."""
+"""Agent surfaces never see add_<writer> tools in their catalog.
+Writers go to external destinations (files, DBs, cloud) and the user
+always adds them manually. ``surface=None`` (the full catalog used by
+tests / introspection) keeps everything; only the agent surfaces are
+filtered."""
 
 
 def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
@@ -584,14 +581,13 @@ def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
     :data:`SURFACE_PRESETS` lookup. ``"agent_complex"`` is the
     single-shot full-catalog convenience alias.
 
-    W71 v2.1 — for agent-shaped surfaces (``agent_complex`` /
-    ``agent_staged`` / ``agent_live``) the
-    :data:`AGENT_BLOCKED_NODE_TYPES` writer set is filtered out of the
-    returned catalog so the LLM never sees an ``add_output`` /
-    ``add_database_writer`` / etc. tool entry. Defense-in-depth pairs
-    with the executor refusal in ``_handle_add_node``: even if the
-    LLM hallucinates the call, the executor refuses with a
-    ``writer_blocked`` reason.
+    For agent-shaped surfaces (``agent_complex`` / ``agent_staged`` /
+    ``agent_live``) the :data:`AGENT_BLOCKED_NODE_TYPES` writer set is
+    filtered out of the returned catalog so the LLM never sees an
+    ``add_output`` / ``add_database_writer`` / etc. tool entry.
+    Defense-in-depth pairs with the executor refusal in
+    ``_handle_add_node``: even if the LLM hallucinates the call, the
+    executor refuses with a ``writer_blocked`` reason.
 
     Raises ``KeyError`` for unknown surface names so callers get a hard
     failure rather than a silently empty catalog.
@@ -609,9 +605,10 @@ def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
     if surface is None:
         return catalog
     if surface == "agent_complex":
-        # ``agent_complex`` is documented as the full catalog; resolve it
-        # explicitly so callers don't have to know about the SURFACE_PRESETS
-        # quirk. Writers are filtered out per v2.1.
+        # ``agent_complex`` is documented as the full catalog; resolve
+        # it explicitly so callers don't have to know about the
+        # SURFACE_PRESETS quirk. Writers are always filtered out for
+        # agent surfaces.
         return _strip_writers(catalog)
     if surface in SURFACE_PRESETS:
         names = SURFACE_PRESETS[surface]

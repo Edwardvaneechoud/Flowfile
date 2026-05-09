@@ -507,6 +507,16 @@ const stopResize = () => {
   }
 };
 
+// Pixel threshold a mousedown must travel before we treat the gesture as a
+// drag. Without this, a header dblclick (two mousedowns + tiny cursor
+// jitter) would fire onMove with deltas of 1–2 px, drift the panel, and
+// then snapshot the drifted position into prev{Top,Left} on
+// `setFullScreen(true)` — so dblclick → fullscreen → dblclick restored
+// the panel slightly lower each cycle. Matches the standard OS drag
+// threshold so deliberate drags still feel responsive.
+const DRAG_THRESHOLD_PX = 4;
+let dragActivated = false;
+
 const startMove = (e: MouseEvent) => {
   registerClick();
   if (!props.allowFreeMove) return;
@@ -518,22 +528,29 @@ const startMove = (e: MouseEvent) => {
     return;
 
   isDragging.value = true;
+  dragActivated = false;
   startX.value = e.clientX;
   startY.value = e.clientY;
   startLeft.value = itemState.value.left;
   startTop.value = itemState.value.top;
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", stopMove);
-  itemState.value.stickynessPosition = "free";
+  // stickynessPosition is flipped to "free" only once the threshold trips
+  // (inside onMove) — a dblclick gesture must not silently un-stick a
+  // sticky-positioned panel.
 };
 
 const onMove = (e: MouseEvent) => {
-  if (isDragging.value) {
-    const deltaX = e.clientX - startX.value;
-    const deltaY = e.clientY - startY.value;
-    itemState.value.left = startLeft.value + deltaX;
-    itemState.value.top = startTop.value + deltaY;
+  if (!isDragging.value) return;
+  const deltaX = e.clientX - startX.value;
+  const deltaY = e.clientY - startY.value;
+  if (!dragActivated) {
+    if (Math.abs(deltaX) < DRAG_THRESHOLD_PX && Math.abs(deltaY) < DRAG_THRESHOLD_PX) return;
+    dragActivated = true;
+    itemState.value.stickynessPosition = "free";
   }
+  itemState.value.left = startLeft.value + deltaX;
+  itemState.value.top = startTop.value + deltaY;
 };
 
 const stopMove = () => {
@@ -542,10 +559,16 @@ const stopMove = () => {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", stopMove);
 
-    savePositionAndSize();
-    // Make the final position durable immediately — debounced writes would
-    // be lost if the user closes the tab within 250 ms of releasing the drag.
-    itemStore.flushItemState(props.id);
+    // No-op if the gesture stayed under the drag threshold — nothing
+    // changed, so there's nothing to persist (and persisting a drifted
+    // mid-dblclick position is exactly the bug this guards against).
+    if (dragActivated) {
+      savePositionAndSize();
+      // Make the final position durable immediately — debounced writes would
+      // be lost if the user closes the tab within 250 ms of releasing the drag.
+      itemStore.flushItemState(props.id);
+    }
+    dragActivated = false;
   }
 };
 

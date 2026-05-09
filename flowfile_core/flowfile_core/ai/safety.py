@@ -1,30 +1,29 @@
 """PII scrubbing, sample-row policy, secret redaction, refusal helpers.
 
-Owned by W25 (this file's body) and W15 (the audit re-exports at the bottom).
-
 The single import surface for the AI subsystem's safety layer:
 
-* **Sample-row pipeline (D009 / §9.1).** Three modes — ``off`` (default for every
-  new flow), ``regex`` (emails / phones / Luhn-validated cards masked at zero
-  added latency), ``presidio`` (ML-backed; lazy-imported, opt-in dependency).
-  Callers materialise rows however they like; this module is the choke point
-  before they leave the box.
+* **Sample-row pipeline.** Three modes — ``off`` (default for every
+  new flow), ``regex`` (emails / phones / Luhn-validated cards masked
+  at zero added latency), ``presidio`` (ML-backed; lazy-imported,
+  opt-in dependency). Callers materialise rows however they like;
+  this module is the choke point before they leave the box.
 
-* **Secret redaction (§9.1 close).** ``redact_secrets`` walks an arbitrary
-  nested settings payload — works on raw dicts post-``model_dump`` and on live
-  ``pydantic.SecretStr`` instances — replacing secret-bearing values with
-  ``<<secret:redacted>>`` and ``SecretRef``-shape fields with
-  ``<<secret:{name}>>`` placeholders so the LLM can refer to a credential by
-  name without ever seeing its value.
+* **Secret redaction.** ``redact_secrets`` walks an arbitrary nested
+  settings payload — works on raw dicts post-``model_dump`` and on
+  live ``pydantic.SecretStr`` instances — replacing secret-bearing
+  values with ``<<secret:redacted>>`` and ``SecretRef``-shape fields
+  with ``<<secret:{name}>>`` placeholders so the LLM can refer to a
+  credential by name without ever seeing its value.
 
-* **Refusal helpers (§9.6).** ``validate_column_references`` and
-  ``detect_network_egress`` give downstream tool-execution paths (W31) a single
-  vocabulary for refusing tool calls referencing unknown columns or for
-  flagging ``python_script`` / ``polars_code`` payloads that try to phone home.
+* **Refusal helpers.** ``validate_column_references`` and
+  ``detect_network_egress`` give downstream tool-execution paths a
+  single vocabulary for refusing tool calls referencing unknown
+  columns or for flagging ``python_script`` / ``polars_code`` payloads
+  that try to phone home.
 
-* **Audit re-exports (W15).** The audit log surface stays importable here so
-  callers have one place to import from for everything privacy / safety
-  related; W15 documented this contract first and we honour it additively.
+* **Audit re-exports.** The audit log surface stays importable here
+  so callers have one place to import from for everything privacy /
+  safety related.
 
 Design notes:
 
@@ -71,20 +70,19 @@ from flowfile_core.ai.audit import (
 )
 
 # ---------------------------------------------------------------------------
-# Sample-row policy (D009)
+# Sample-row policy
 # ---------------------------------------------------------------------------
 
 SampleMode = Literal["off", "regex", "presidio"]
 
 #: Default sample mode for every new flow.
 #:
-#: Plan §9.1 / D009: ``"off"`` (schema only — no row data leaves the box).
-#: Set per-flow via :class:`FlowSafetyConfig.sample_mode`. W65 flipped
-#: this from the original ``"regex"`` dev-default after the
-#: customer-churn-knn template hung on chat preamble: with samples on,
-#: ``_attach_samples`` calls ``node._predicted_data_getter()`` which
-#: routes ML / ``random_split`` data ops through the worker
-#: synchronously from inside the FastAPI request handler.
+#: ``"off"`` (schema only — no row data leaves the box). Set per-flow
+#: via :class:`FlowSafetyConfig.sample_mode`. The default is ``"off"``
+#: because with samples on, ``_attach_samples`` calls
+#: ``node._predicted_data_getter()`` which can route ML /
+#: ``random_split`` data ops through the worker synchronously from
+#: inside the FastAPI request handler.
 DEFAULT_SAMPLE_MODE: SampleMode = "off"
 
 #: Default sample-row count when the user opts into ``regex`` or ``presidio``.
@@ -97,14 +95,14 @@ MAX_SAMPLE_ROW_COUNT: int = 100
 
 
 class FlowSafetyConfig(BaseModel):
-    """Per-flow privacy / safety knobs (§9.5 project-level consent shape).
+    """Per-flow privacy / safety knobs.
 
-    Persistence is owned by W22 (sidecar next to ``ai_sessions/{flow_id}/``)
-    and the consent-dialog UI is Phase 1 frontend work; W25 only defines the
+    Persistence lives next to ``ai_sessions/{flow_id}/`` and the
+    consent-dialog UI is frontend work; this class only defines the
     wire shape and the transforms that consume it. ``consented_at`` /
-    ``consented_by_user_id`` / ``provider_acknowledged`` capture the §9.5
-    "one-time consent" decision so callers can prove the consent dialog was
-    shown for a given flow before sample rows ever leave.
+    ``consented_by_user_id`` / ``provider_acknowledged`` capture the
+    "one-time consent" decision so callers can prove the consent
+    dialog was shown for a given flow before sample rows ever leave.
     """
 
     model_config = ConfigDict(frozen=False, extra="forbid")
@@ -257,9 +255,10 @@ def prepare_samples(
 ) -> list[dict[str, Any]]:
     """Apply the per-flow sample policy: row-count limit + selected scrubber.
 
-    Returns ``[]`` whenever ``config.sample_mode == 'off'`` regardless of input
-    — the D009 default. Callers (W22 context builder) can short-circuit before
-    materialising rows when samples won't ship anyway.
+    Returns ``[]`` whenever ``config.sample_mode == 'off'`` regardless
+    of input — the default. Callers (the prompt context builder) can
+    short-circuit before materialising rows when samples won't ship
+    anyway.
 
     Raises :class:`PresidioNotAvailableError` when ``mode='presidio'`` and the
     optional dependency isn't installed; never imports Presidio in the
@@ -431,13 +430,14 @@ RefusalReason = Literal[
     "settings_validation",
     "upstream_is_sink",
     "join_wire_invalid",
+    "unrequested_wire_to_live",
     "writer_blocked",
     "polars_code_import_forbidden",
     "polars_code_validation",
 ]
 
 
-# W71 v2.1 — node types the AI agent surfaces (``agent_staged`` /
+# Node types the AI agent surfaces (``agent_staged`` /
 # ``agent_complex`` / ``agent_live``) are NOT allowed to stage. These
 # all WRITE TO EXTERNAL DESTINATIONS — files, databases, cloud
 # buckets, the catalog. The user always adds these manually so a
@@ -464,8 +464,9 @@ def validate_column_references(
 ) -> list[str]:
     """Return refs not present in ``available_columns``, deduped, order-preserving.
 
-    Backs §9.6's "Refuse tool calls referencing unknown columns" gate. The
-    decision to *refuse* vs. *warn* is W31's; this function only reports.
+    Backs the "Refuse tool calls referencing unknown columns" gate.
+    The decision to *refuse* vs. *warn* belongs to the executor; this
+    function only reports.
     """
     available = set(available_columns)
     missing: list[str] = []
@@ -517,10 +518,11 @@ _EGRESS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 def detect_network_egress(code: str) -> list[str]:
     """Return labels of network-egress patterns matched in ``code``.
 
-    Detection is **syntactic, not behavioural** — a string literal like
-    ``"requests.get"`` in an unrelated comment will match. That's the right
-    trade-off for §9.6: false positives are recoverable (the user can opt in
-    via "Network in AI code"); false negatives risk silent exfiltration.
+    Detection is **syntactic, not behavioural** — a string literal
+    like ``"requests.get"`` in an unrelated comment will match. That's
+    the right trade-off: false positives are recoverable (the user
+    can opt in via "Network in AI code"); false negatives risk silent
+    exfiltration.
     """
     if not code:
         return []
@@ -540,7 +542,7 @@ def detect_network_egress(code: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 __all__ = [
-    # Sample-row pipeline (D009)
+    # Sample-row pipeline
     "DEFAULT_SAMPLE_MODE",
     "DEFAULT_SAMPLE_ROW_COUNT",
     "MAX_SAMPLE_ROW_COUNT",
@@ -559,13 +561,13 @@ __all__ = [
     "SECRET_PLACEHOLDER_TEMPLATE",
     "SECRET_REDACTED",
     "redact_secrets",
-    # §9.6 refusal helpers
+    # Refusal helpers
     "RefusalReason",
     "detect_network_egress",
     "validate_column_references",
-    # W71 v2.1 — agent writer-block policy
+    # Agent writer-block policy
     "AGENT_BLOCKED_NODE_TYPES",
-    # W15 audit re-exports — kept stable since W15 (do not remove without a contract bump)
+    # Audit re-exports — kept stable; do not remove without a contract bump
     "MAX_ARGS_BYTES",
     "AuditEvent",
     "DiffAction",

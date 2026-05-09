@@ -471,7 +471,16 @@ def _handle_graph(
         )
 
     if op == "connect":
-        return _handle_connect(tool_name, tool_args, redacted_args, flow, session_id, user_id, mode)
+        return _handle_connect(
+            tool_name,
+            tool_args,
+            redacted_args,
+            flow,
+            session_id,
+            user_id,
+            mode,
+            audit_meta=audit_meta,
+        )
     if op == "delete_node":
         return _handle_delete_node(tool_name, tool_args, redacted_args, flow, session_id, user_id, mode)
     if op == "delete_connection":
@@ -1521,6 +1530,8 @@ def _handle_connect(
     session_id: str,
     user_id: int,
     mode: ExecutionMode,
+    *,
+    audit_meta: dict[str, Any] | None = None,
 ) -> ToolExecutionResult:
     """Wire a connection between two existing nodes."""
     try:
@@ -1570,6 +1581,48 @@ def _handle_connect(
                 f"different (got both = {from_id}). A node cannot connect "
                 "to itself; that would create a cycle. Pick a different "
                 "downstream node id for ``to_node_id``."
+            ),
+        )
+
+    # W71 v2.14 — refuse LLM-emitted ``connect`` that wires a
+    # source-only node staged in this session into a pre-existing live
+    # node. The user did not explicitly ask for that wire — narrations
+    # like *"so the user can see the new data alongside …"* are
+    # rationalisations, not user intent (see 2026-05-09 dogfood:
+    # planner staged ``add_manual_input`` (id 11) AND ``connect 11→4``
+    # where node 4 was a pre-existing ``explore_data``; the wire was
+    # never requested and would silently re-route node 4's input).
+    # Refusal is per-session and source-only-scoped: legitimate
+    # transform-chained wires (e.g. add_filter then connect) and live→
+    # live wires are unaffected. Once the user accepts the diff the
+    # staged id transitions to live (``revalidate_staged_results_against_live``)
+    # and this guard naturally stops firing.
+    staged_source_ids_meta = (audit_meta or {}).get("staged_source_node_ids_at_stage") or []
+    staged_source_ids = {sid for sid in staged_source_ids_meta if isinstance(sid, int)}
+    staged_ids_meta = (audit_meta or {}).get("staged_node_ids_at_stage") or []
+    staged_ids = {sid for sid in staged_ids_meta if isinstance(sid, int)}
+    if staged_source_ids and from_id in staged_source_ids and to_id not in staged_ids:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason="unrequested_wire_to_live",
+            refusal_detail=(
+                f"connect: refusing to wire freshly-staged source node "
+                f"{from_id} into pre-existing live node {to_id}. The user "
+                f"did not explicitly ask for this connection — narrations "
+                f"like \"so the user can see the new data alongside …\" "
+                f"are rationalisations, not user intent. Source-only "
+                f"types (manual_input, read, database_reader, "
+                f"cloud_storage_reader, catalog_reader, kafka_source, "
+                f"google_analytics_reader, external_source) are stand-"
+                f"alone by default. If the user explicitly asked for "
+                f"this wiring (e.g. \"connect the new node to node "
+                f"{to_id}\"), restate that intent in your next assistant "
+                f"message and re-emit; otherwise leave the new node "
+                f"stand-alone and end the turn."
             ),
         )
 

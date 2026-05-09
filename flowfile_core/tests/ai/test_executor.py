@@ -1829,6 +1829,161 @@ def test_add_node_passes_when_upstream_is_non_sink(call_kwargs: dict[str, Any]) 
 
 
 # --------------------------------------------------------------------------- #
+# W71 v2.14 — refuse unrequested wires from freshly-staged source nodes        #
+# into pre-existing live nodes                                                 #
+# --------------------------------------------------------------------------- #
+
+
+def test_connect_refuses_unrequested_wire_from_staged_source_to_live(
+    call_kwargs: dict[str, Any],
+) -> None:
+    """W71 v2.14 — when the planner has staged a source node (e.g.
+    ``add_manual_input``) earlier in this session AND the LLM emits
+    ``flowfile.graph.connect`` wiring that fresh source into a
+    PRE-EXISTING live node, the host refuses with
+    ``refusal_reason="unrequested_wire_to_live"``. The user did not
+    explicitly ask for the wire — the agent's narration about
+    "showing the new data alongside …" is rationalisation, not user
+    intent. See 2026-05-09 dogfood: planner staged ``add_manual_input``
+    (city/state lookup, id 11) AND ``connect 11→4`` where node 4 was
+    a live ``explore_data``; the wire was never requested and would
+    silently re-route node 4's input.
+    """
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 5, "to_node_id": 2},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        audit_meta={
+            "live_node_ids_at_stage": [1, 2],
+            "staged_node_ids_at_stage": [5],
+            "staged_source_node_ids_at_stage": [5],
+        },
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "unrequested_wire_to_live"
+    detail = result.refusal_detail or ""
+    assert "5" in detail and "2" in detail
+    assert "stand-alone" in detail
+    assert "Source-only" in detail
+
+
+def test_connect_allows_staged_to_staged_in_same_session(
+    call_kwargs: dict[str, Any],
+) -> None:
+    """W71 v2.14 — wiring two nodes both staged in this session is
+    allowed (e.g. chained transforms, or a freshly-added source feeding
+    a freshly-added consumer). Pins that the asymmetric refusal does
+    NOT block legitimate same-session chains.
+    """
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 5, "to_node_id": 6},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        audit_meta={
+            "live_node_ids_at_stage": [1, 2],
+            "staged_node_ids_at_stage": [5, 6],
+            "staged_source_node_ids_at_stage": [5],
+        },
+        **call_kwargs,
+    )
+    assert result.status == "staged", result.refusal_detail
+    assert result.refusal_reason is None
+
+
+def test_connect_allows_live_to_live_without_audit_meta(
+    call_kwargs: dict[str, Any],
+) -> None:
+    """W71 v2.14 — wiring two pre-existing live nodes is allowed and
+    the new refusal does NOT fire when ``audit_meta`` is absent (the
+    cmd_k / inline_action / docgen surfaces don't pass it). This pins
+    the paranoia clause that empty ``staged_source_node_ids_at_stage``
+    short-circuits the refusal entirely.
+    """
+    flow = _flow_with_orders_and_filter()
+    # Add a third live node so we have a meaningful live → live wire.
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=1,
+            node_id=3,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                filter_type="advanced", advanced_filter="[region]=='US'"
+            ),
+        )
+    )
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 3},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "staged", result.refusal_detail
+    assert result.refusal_reason is None
+
+
+def test_connect_allows_live_to_staged_source(call_kwargs: dict[str, Any]) -> None:
+    """W71 v2.14 — wiring a pre-existing live upstream into a freshly-
+    staged source node id is allowed. Pins the asymmetry of the rule:
+    the refusal triggers only when ``from_id`` is a same-session-staged
+    SOURCE node going INTO a live downstream — not the reverse.
+    """
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 5},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        audit_meta={
+            "live_node_ids_at_stage": [1, 2],
+            "staged_node_ids_at_stage": [5],
+            "staged_source_node_ids_at_stage": [5],
+        },
+        **call_kwargs,
+    )
+    assert result.status == "staged", result.refusal_detail
+    assert result.refusal_reason is None
+
+
+def test_connect_allows_staged_non_source_to_live(call_kwargs: dict[str, Any]) -> None:
+    """W71 v2.14 — only staged SOURCE nodes are guarded. A staged
+    non-source (e.g. ``add_filter``) wired into a pre-existing live
+    node is NOT refused — the rule is scoped specifically to source-
+    only types per the user's narrowing of the scope.
+    """
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 5, "to_node_id": 2},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        audit_meta={
+            "live_node_ids_at_stage": [1, 2],
+            "staged_node_ids_at_stage": [5],
+            "staged_source_node_ids_at_stage": [],  # 5 was a transform, NOT a source
+        },
+        **call_kwargs,
+    )
+    assert result.status == "staged", result.refusal_detail
+    assert result.refusal_reason is None
+
+
+# --------------------------------------------------------------------------- #
 # 2026-05-07 — node_id coercion in non-Pydantic handlers                        #
 # --------------------------------------------------------------------------- #
 

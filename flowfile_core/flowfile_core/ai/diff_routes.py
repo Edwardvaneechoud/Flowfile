@@ -1,31 +1,31 @@
-"""HTTP routes for ``GraphDiff`` staging — W41.
+"""HTTP routes for ``GraphDiff`` staging.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
-``Depends(get_current_active_user)``; W17's feature-flag gate covers all
-three endpoints through the parent ``ai_router``.
+``Depends(get_current_active_user)``; the feature-flag gate covers
+all three endpoints through the parent ``ai_router``.
 
 Three endpoints:
 
-* ``POST /ai/diff/stage`` — register a :class:`flowfile_core.ai.diff.GraphDiff`
-  composed from a list of W31 staged tool results. Returns the
-  server-generated ``diff_id``. This endpoint exists so W41 can be
-  exercised end-to-end without W40's planner; the planner will use the same
-  shape internally once it lands.
-* ``POST /ai/diff/{diff_id}/accept`` — D006 drift check, atomic apply via
-  :func:`flowfile_core.ai.diff.apply_diff`, and one-transaction flip of
-  every collected ``audit_id`` to ``"accepted"`` via W15's
+* ``POST /ai/diff/stage`` — register a
+  :class:`flowfile_core.ai.diff.GraphDiff` composed from a list of
+  staged tool results. Returns the server-generated ``diff_id``.
+* ``POST /ai/diff/{diff_id}/accept`` — drift check, atomic apply via
+  :func:`flowfile_core.ai.diff.apply_diff`, and one-transaction flip
+  of every collected ``audit_id`` to ``"accepted"`` via
   :func:`flowfile_core.ai.audit.update_diff_action`.
-* ``POST /ai/diff/{diff_id}/reject`` — flip every collected ``audit_id`` to
-  ``"rejected"``, pop from the store, no graph mutation.
+* ``POST /ai/diff/{diff_id}/reject`` — flip every collected
+  ``audit_id`` to ``"rejected"``, pop from the store, no graph
+  mutation.
 
-Error mapping mirrors W12 / W20 / W23 / W34:
+Error mapping:
 
 * ``404`` — unknown ``diff_id``; flow not found.
-* ``409`` — drift detected before mutation (D006 — diff stays in store).
-* ``422`` — Pydantic validation; cross-flow id mismatch; W70 inconsistency
-  (staged connection references a node id that's neither live nor in
-  the diff's additions; diff stays in store); mid-batch raise (graph is
-  rolled back; diff stays in store so user can fix-and-retry).
+* ``409`` — drift detected before mutation (diff stays in store).
+* ``422`` — Pydantic validation; cross-flow id mismatch; staged-diff
+  inconsistency (staged connection references a node id that's
+  neither live nor in the diff's additions; diff stays in store);
+  mid-batch raise (graph is rolled back; diff stays in store so user
+  can fix-and-retry).
 * ``503`` — ``FEATURE_FLAG_AI`` off (inherited router-level).
 """
 
@@ -61,9 +61,10 @@ _DELETE_CONNECTION_NAME = "flowfile.graph.delete_connection"
 class StagedToolResult(BaseModel):
     """One staged tool call from a prior ``execute_tool_call(mode="stage")``.
 
-    Mirrors the subset of :class:`ToolExecutionResult` the staging route
-    actually needs: tool name (for dispatch), audit id (for accept/reject
-    flip), and the per-op ``staged_node_payload`` shape W31 emits.
+    Mirrors the subset of :class:`ToolExecutionResult` the staging
+    route actually needs: tool name (for dispatch), audit id (for
+    accept/reject flip), and the per-op ``staged_node_payload`` shape
+    the executor emits.
     """
 
     tool_name: str = Field(min_length=1)
@@ -135,12 +136,13 @@ def _resolve_flow(flow_id: int):
 def _bin_staged_results(staged: list[StagedToolResult]) -> diff.GraphDiff:
     """Bin staged results into the four :class:`GraphDiff` buckets.
 
-    Thin route-layer adapter around :func:`flowfile_core.ai.diff.bundle_staged_results`:
-    converts the ``StagedToolResult`` route models into the public
+    Thin route-layer adapter around
+    :func:`flowfile_core.ai.diff.bundle_staged_results`: converts the
+    ``StagedToolResult`` route models into the public
     :class:`flowfile_core.ai.diff.StagedToolEntry` shape and maps any
-    ``ValueError`` from the bundler to ``HTTPException(422)``. The bundler
-    itself is shared with W40's planner (which builds diffs without going
-    through the HTTP route).
+    ``ValueError`` from the bundler to ``HTTPException(422)``. The
+    bundler itself is shared with the planner (which builds diffs
+    without going through the HTTP route).
     """
     entries = [
         diff.StagedToolEntry(
@@ -160,9 +162,9 @@ def _flip_audit_actions(audit_ids: list[int], action: audit.DiffAction) -> list[
     """Update ``diff_action`` on every audit row under one DB transaction.
 
     Returns the subset of ``audit_ids`` that resolved to a real row;
-    stale ids (DB reset between staging and accept) are skipped silently
-    rather than failing the request — matches the W15 contract at
-    ``audit.py:130``.
+    stale ids (DB reset between staging and accept) are skipped
+    silently rather than failing the request — matches the audit
+    contract.
     """
     if not audit_ids:
         return []
@@ -186,11 +188,12 @@ async def stage_diff(
     body: StageDiffRequest,
     current_user=Depends(get_current_active_user),  # noqa: ARG001 — auth gate only
 ) -> StageDiffResponse:
-    """Register a :class:`GraphDiff` from a list of W31 staged tool results.
+    """Register a :class:`GraphDiff` from a list of staged tool results.
 
-    The staged results come from prior ``execute_tool_call(mode="stage")``
-    calls — typically driven by W40's planner, but this endpoint is
-    callable directly so the diff machinery is testable without W40.
+    The staged results come from prior
+    ``execute_tool_call(mode="stage")`` calls — typically driven by the
+    planner, but this endpoint is callable directly so the diff
+    machinery is testable in isolation.
 
     Errors:
 
@@ -234,15 +237,15 @@ async def accept_diff(
 
     * ``404`` — unknown ``diff_id``; or stored ``flow_id`` no longer
       resolves via ``flow_file_handler``.
-    * ``409`` — D006 drift (one or more referenced node ids missing).
-      Diff stays in the store so the user can fix the underlying graph and
+    * ``409`` — drift (one or more referenced node ids missing). Diff
+      stays in the store so the user can fix the underlying graph and
       retry.
     * ``422`` — body ``flow_id`` doesn't match the stored diff's
-      ``flow_id``; W70 inconsistency (a staged connection references a
-      node id that's neither live nor in this diff's additions; diff
-      stays in store so the user can Reject and ask the agent to retry);
-      or mid-batch raise during apply (graph is rolled back; diff stays
-      in store).
+      ``flow_id``; staged-diff inconsistency (a staged connection
+      references a node id that's neither live nor in this diff's
+      additions; diff stays in store so the user can Reject and ask
+      the agent to retry); or mid-batch raise during apply (graph is
+      rolled back; diff stays in store).
     * ``503`` — ``FEATURE_FLAG_AI`` off.
     """
     graph_diff = diff.get_diff(diff_id)
@@ -314,9 +317,9 @@ async def reject_diff(
     """Discard ``diff_id`` and flip every audit row to ``"rejected"``.
 
     No graph mutation happens — the diff was never applied. The audit
-    trail records the user's verdict so W11's pass-rate aggregator and
+    trail records the user's verdict so the pass-rate aggregator and
     cost-per-flow tooling can subtract rejected proposals from the
-    "accepted diffs" denominator (§5.5 free-quota semantics).
+    "accepted diffs" denominator.
 
     Errors:
 

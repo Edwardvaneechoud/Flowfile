@@ -1,46 +1,45 @@
-"""Settings autocomplete logic — owned by W34.
+"""Settings autocomplete logic.
 
 Two pure-async functions feed the formula and join-keys autocomplete
 endpoints:
 
 * :func:`suggest_formula_completions` — schema-aware completions for a
   ``formula`` settings expression. The LLM emits a JSON document; we
-  extract literal column refs from each suggestion and drop those that
-  reference columns not in the upstream's predicted schema. Suggestions
-  with constructs the regex can't reason about (`pl.col(variable)`) are
-  marked ``verified=False`` so the frontend renders an "unverified" badge
-  rather than silently filtering them.
+  extract literal column refs from each suggestion and drop those
+  that reference columns not in the upstream's predicted schema.
+  Suggestions with constructs the regex can't reason about
+  (`pl.col(variable)`) are marked ``verified=False`` so the frontend
+  renders an "unverified" badge rather than silently filtering them.
 
-* :func:`suggest_join_keys` — proposes ``(left_col, right_col)`` pairs for
-  a join settings panel given the two upstream column lists. Pairs that
-  cite a column not in the corresponding upstream are dropped
-  unconditionally — both schemas are knowable when joins are configured,
-  so there's no "unverified" middle ground.
+* :func:`suggest_join_keys` — proposes ``(left_col, right_col)`` pairs
+  for a join settings panel given the two upstream column lists. Pairs
+  that cite a column not in the corresponding upstream are dropped
+  unconditionally — both schemas are knowable when joins are
+  configured, so there's no "unverified" middle ground.
 
 Both functions:
 
-* Use the W14 :class:`RateLimitScheduler` for RPM tracking but with
-  ``RetryPolicy(max_retries=0)`` semantics (no retries — autocomplete is
-  fail-fast on a 3-second hard timeout).
-* Pass ``response_format={"type":"json_object"}`` to the W11
-  ``LiteLLMProvider.chat`` so the model is guided into JSON-mode where
-  the provider supports it.
+* Use the :class:`RateLimitScheduler` for RPM tracking but with no
+  retries — autocomplete is fail-fast on a 3-second hard timeout.
+* Pass ``response_format={"type":"json_object"}`` to the provider so
+  the model is guided into JSON-mode where the provider supports it.
 * Degrade gracefully when an upstream node has no
-  ``predicted_schema`` (D011: cold flow → ``degraded=True`` rather than
+  ``predicted_schema`` (cold flow → ``degraded=True`` rather than
   auto-fetching, which would blow the latency budget).
-* Emit one :func:`metrics.record_autocomplete_call` event per call (NOT
-  per keystroke).
+* Emit one :func:`metrics.record_autocomplete_call` event per call
+  (NOT per keystroke).
 
-The lazy-litellm contract from W11 / W12 / W13 is preserved — this module
-must not import ``litellm`` at module load time. Provider calls are made
-through the ``Provider`` Protocol seam.
+The lazy-litellm contract is preserved — this module must not import
+``litellm`` at module load time. Provider calls are made through the
+``Provider`` Protocol seam.
 
-The settings autocomplete surface (``settings_autocomplete``) is part of
-W30's ``SurfaceLiteral`` and W22's ``SURFACE_TO_LEVEL`` (mapped to the
-``copilot`` level). The strict-JSON instruction lives inline in this
-module's per-call system prompts rather than in a fourth ``prompts/<level>.md``
-file, since the JSON shape is autocomplete-specific and the level vocabulary
-stays anchored to the three D008 depth levels.
+The settings autocomplete surface (``settings_autocomplete``) is part
+of the ``SurfaceLiteral`` and ``SURFACE_TO_LEVEL`` mapping (mapped to
+the ``copilot`` level). The strict-JSON instruction lives inline in
+this module's per-call system prompts rather than in a fourth
+``prompts/<level>.md`` file since the JSON shape is
+autocomplete-specific and the level vocabulary stays anchored to the
+three depth levels.
 """
 
 from __future__ import annotations
@@ -69,12 +68,14 @@ logger = logging.getLogger(__name__)
 
 
 SURFACE: str = "settings_autocomplete"
-"""The single ``SurfaceLiteral`` value W34 emits — kept as a constant so call
-sites and test assertions stay in lock-step."""
+"""The single ``SurfaceLiteral`` value the autocomplete path emits —
+kept as a constant so call sites and test assertions stay in
+lock-step."""
 
 DEFAULT_TIMEOUT_SECONDS: float = 3.0
-"""Hard timeout per call. Bypasses the W14 retry budget — autocomplete is
-fail-fast by design (frontend falls back to static suggestions on timeout)."""
+"""Hard timeout per call. Bypasses the retry budget — autocomplete is
+fail-fast by design (frontend falls back to static suggestions on
+timeout)."""
 
 MAX_FORMULA_SUGGESTIONS: int = 5
 MAX_JOIN_KEY_PAIRS: int = 5
@@ -215,9 +216,10 @@ def _extract_column_refs(text: str) -> tuple[set[str], bool]:
 def _column_names_for_node(node: FlowNode) -> list[str] | None:
     """Return the predicted upstream column names, or ``None`` if unknown.
 
-    W22's ``snapshot_node`` does the same dance for prompt rendering; we
-    inline the schema-only path here because we don't need W22's full
-    snapshot machinery (no settings, no edges, no samples) for autocomplete.
+    The prompt builder's ``snapshot_node`` does the same dance for
+    prompt rendering; we inline the schema-only path here because we
+    don't need that full snapshot machinery (no settings, no edges,
+    no samples) for autocomplete.
     """
     schema: list[FlowfileColumn] | None = node.node_schema.predicted_schema
     if not schema:
@@ -367,10 +369,10 @@ async def _call_provider_for_json(
     """Invoke ``provider.chat`` with JSON-mode and a hard timeout.
 
     Returns ``(content, error_reason)``. ``content`` is the LLM's raw
-    response string when successful; ``error_reason`` is non-None when the
-    call timed out or the provider raised. Retry/backoff is intentionally
-    bypassed — the W14 scheduler is consulted only for RPM tracking via
-    ``acquire``.
+    response string when successful; ``error_reason`` is non-None
+    when the call timed out or the provider raised. Retry/backoff is
+    intentionally bypassed — the scheduler is consulted only for RPM
+    tracking via ``acquire``.
     """
     sched = scheduler or default_scheduler()
 
@@ -582,10 +584,10 @@ async def suggest_join_keys(
 ) -> JoinKeySuggestionsResponse:
     """Propose ``(left_col, right_col)`` pairs for a join settings panel.
 
-    Schema grounding is strict: pairs whose ``left_col`` ∉ left schema or
-    ``right_col`` ∉ right schema are dropped — both schemas are knowable
-    when joins are configured (D011 doesn't apply here in the unverified
-    sense; it applies as a "degraded if either side missing" policy).
+    Schema grounding is strict: pairs whose ``left_col`` ∉ left
+    schema or ``right_col`` ∉ right schema are dropped — both schemas
+    are knowable when joins are configured. Cold flows fall through
+    the "degraded if either side missing" policy.
     """
     started = time.monotonic()
     left_node = graph.get_node(left_node_id)

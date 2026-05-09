@@ -729,7 +729,7 @@ def _build_formula_function_reference_block() -> str:
 
 
 def _build_single_node_block(node_type: str, full_catalog: list[Any]) -> str:
-    """W71 — render one node's narrative + payload example for stage 3.
+    """Render one node's narrative + payload example for stage 3.
 
     Used by ``agent_staged`` at stage ``fill_settings``: the LLM has
     already picked the node type at stage 1, so the system prompt only
@@ -738,13 +738,13 @@ def _build_single_node_block(node_type: str, full_catalog: list[Any]) -> str:
     case, including the fenced ``Example payload`` block when one
     exists in ``NODE_AGENT_PAYLOAD_EXAMPLES``.
 
-    v1.2 — when the stage-3 tool exposes the inner-input shape (e.g.
-    ``GroupByInput`` for ``group_by``), the rendered example is trimmed
-    to the inner shape too. Without this trim the LLM would see the
-    full envelope (``{"flow_id": 1, "node_id": 99, "groupby_input":
-    {"agg_cols": [...]}}``) but a tool spec that expects only
-    ``{"agg_cols": [...]}`` — confusing for any model and especially
-    for smaller ones.
+    When the stage-3 tool exposes the inner-input shape (e.g.
+    ``GroupByInput`` for ``group_by``), the rendered example is
+    trimmed to the inner shape too. Without this trim the LLM would
+    see the full envelope (``{"flow_id": 1, "node_id": 99,
+    "groupby_input": {"agg_cols": [...]}}``) but a tool spec that
+    expects only ``{"agg_cols": [...]}`` — confusing for any model and
+    especially for smaller ones.
 
     Returns ``""`` when no matching tool is found in the catalog
     (defensive: stage 1 enforces a registered node type via the
@@ -774,21 +774,21 @@ def _build_single_node_block(node_type: str, full_catalog: list[Any]) -> str:
         lines.append("```")
         lines.append("")
 
-    # W71 v1.12C — when the picked type is ``formula``, append the
-    # canonical Flowfile-expression function list. Gated to this exact
-    # case so the catalog at pick_type / agent_complex never carries
-    # the (potentially long) function-name dump on every round.
+    # When the picked type is ``formula``, append the canonical
+    # Flowfile-expression function list. Gated to this exact case so
+    # the catalog at pick_type / agent_complex never carries the
+    # (potentially long) function-name dump on every round.
     if node_type == "formula":
         lines.append(_build_formula_function_reference_block())
 
     # sql_query has two issues that need pre-warning the LLM about
     # at the moment of staging: (a) upstream tables are registered
-    # positionally as ``input_1``/``input_2``/... (the chat LLM
-    # previously hallucinated ``join_<node_id>`` table names — see
-    # the 2026-05-09 transcript), and (b) Development mode trips
-    # ``UnpredictableSchema`` because the node has no
-    # ``schema_callback``. polars_code has its own predictor path
-    # that works fine, so it's NOT included in this gate.
+    # positionally as ``input_1``/``input_2``/... (the chat LLM has
+    # been observed to hallucinate ``join_<node_id>`` table names),
+    # and (b) Development mode trips ``UnpredictableSchema`` because
+    # the node has no ``schema_callback``. polars_code has its own
+    # predictor path that works fine, so it's NOT included in this
+    # gate.
     if node_type == "sql_query":
         lines.append(_build_sql_query_caveat_block())
 
@@ -796,7 +796,7 @@ def _build_single_node_block(node_type: str, full_catalog: list[Any]) -> str:
 
 
 def _trim_example_to_inner_shape(example_json: str, inner_field: str) -> str:
-    """W71 v1.2 — strip the wrapper envelope from a payload example.
+    """Strip the wrapper envelope from a payload example.
 
     ``NODE_AGENT_PAYLOAD_EXAMPLES`` carries the full validated payload
     (``{"flow_id": 1, "node_id": 99, "<inner_field>": {...}}``). The
@@ -853,12 +853,13 @@ def _render_tool_catalog(tools: list[Any]) -> str:
         "",
     ]
     for tool in documented:
-        # W71 v1.14A.2 — for ``flowfile.graph.add_<type>`` entries, render
-        # the snake_case node_type beside the heading so the LLM sees the
+        # For ``flowfile.graph.add_<type>`` entries, render the
+        # snake_case node_type beside the heading so the LLM sees the
         # enum value at every catalog entry, not only in the trailing
         # disambiguation block. Catches the common confusion where the
-        # LLM snake-cases the palette label (*"Sort data"* → ``sort_data``)
-        # — the heading now reads ``add_sort  (node_type: `sort`)``.
+        # LLM snake-cases the palette label (*"Sort data"* →
+        # ``sort_data``) — the heading reads
+        # ``add_sort  (node_type: `sort`)``.
         if tool.name.startswith(_NODE_TYPE_TOOL_PREFIX):
             node_type = tool.name.removeprefix(_NODE_TYPE_TOOL_PREFIX)
             lines.append(f"### {tool.name}  (node_type: `{node_type}`)")
@@ -913,8 +914,7 @@ def render_user_message(snapshot: SubgraphSnapshot, *, user_text: str | None = N
 
     The format is markdown-flavoured but stable enough for the prompt
     cache to hash. Pinned nodes are flagged inline; unknown schemas
-    surface a clear marker so the model knows to refuse column refs
-    (see plan §4.3 + D011).
+    surface a clear marker so the model knows to refuse column refs.
     """
 
     lines: list[str] = []
@@ -987,7 +987,7 @@ def _attach_samples(
     samples_mode: SamplesMode,
     sample_rows: int,
 ) -> SubgraphSnapshot:
-    """Attach cached sample rows to each snapshot node, scrubbed per W25.
+    """Attach cached sample rows to each snapshot node, scrubbed for PII.
 
     Reads from :func:`_safe_get_sample_data`, which calls
     :meth:`FlowNode.get_table_example` (the same surface as
@@ -1036,10 +1036,10 @@ def _safe_get_predicted_schema(node: FlowNode) -> list[FlowfileColumn] | None:
     """Read predicted schema without forcing recomputation.
 
     Prefers the cached :attr:`NodeSchemaInformation.predicted_schema`
-    attribute so the cache-only tier (D011 tier 0) stays cheap. The
-    optional D011 tier-1 step lives in
-    :func:`_resolve_predicted_schema_if_predictable` and is gated by the
-    ``resolve_schemas`` kwarg in :func:`snapshot_node`.
+    attribute so the cache-only tier stays cheap. The optional tier-1
+    step lives in :func:`_resolve_predicted_schema_if_predictable` and
+    is gated by the ``resolve_schemas`` kwarg in
+    :func:`snapshot_node`.
     """
 
     node_schema = getattr(node, "node_schema", None)
@@ -1050,25 +1050,25 @@ def _safe_get_predicted_schema(node: FlowNode) -> list[FlowfileColumn] | None:
 
 
 def _resolve_predicted_schema_if_predictable(node: FlowNode) -> list[FlowfileColumn] | None:
-    """Apply **D011** tier-1 resolution for predictable upstreams.
+    """Apply tier-1 schema resolution for predictable upstreams.
 
-    Mirrors the pattern in :func:`flowfile_core.ai.tools.predictor._resolve_upstream_schemas`
-    (predictor.py:251-256). For ``static`` / ``source`` / ``passthrough``
-    node types — i.e. anything for which
+    Mirrors the pattern in
+    :func:`flowfile_core.ai.tools.predictor._resolve_upstream_schemas`.
+    For ``static`` / ``source`` / ``passthrough`` node types — i.e.
+    anything for which
     :func:`flowfile_core.ai.tools.classification.is_predictable_via_mirror`
-    returns ``True`` — we call :meth:`FlowNode.get_predicted_schema(force=True)`,
-    which fires the registered ``schema_callback`` (or the
-    ``_predicted_data_getter`` fallback) without invoking
-    ``LazyFrame.collect`` — D012 stays clean.
+    returns ``True`` — we call
+    :meth:`FlowNode.get_predicted_schema(force=True)`, which fires the
+    registered ``schema_callback`` (or the ``_predicted_data_getter``
+    fallback) without invoking ``LazyFrame.collect``.
 
     Dynamic node types (``polars_code`` / ``python_script`` /
     ``sql_query`` / ``pivot`` / etc.) need kernel dry-run, which stays
-    W31-only per D003 + D012; this helper returns ``None`` for them so
-    the snapshot keeps ``schema_status="unknown"``.
+    out of this surface; this helper returns ``None`` for them so the
+    snapshot keeps ``schema_status="unknown"``.
 
-    Any exception falls back to ``None`` for parity with
-    ``predictor.py:251-253`` so a malformed flow can't crash the prompt
-    build.
+    Any exception falls back to ``None`` so a malformed flow can't
+    crash the prompt build.
     """
 
     if not is_predictable_via_mirror(node.node_type):
@@ -1079,9 +1079,9 @@ def _resolve_predicted_schema_if_predictable(node: FlowNode) -> list[FlowfileCol
         return None
     if not forced:
         return None
-    # Mirror predictor.py:255 — be explicit about the in-place mutation
-    # so same-session repeat reads (next render_prompt_context call)
-    # hit the cache via _safe_get_predicted_schema.
+    # Be explicit about the in-place mutation so same-session repeat
+    # reads (next render_prompt_context call) hit the cache via
+    # _safe_get_predicted_schema.
     node.node_schema.predicted_schema = list(forced)
     return list(forced)
 
@@ -1098,11 +1098,11 @@ def _safe_get_sample_data(node: FlowNode, n: int) -> list[dict[str, Any]] | None
     Returns ``None`` when the node has not been run with its current
     setup (``has_run_with_current_setup=False``) or when the cached
     sample is empty. The chat preamble must never trigger node
-    execution — pre-W65 this function called
-    ``node._predicted_data_getter()`` which ran the node's ``_function``
-    on materialized upstream data and could hang on any node whose
-    ``_function`` calls ``.collect()`` (e.g. ``random_split``) or trains
-    a model (``train_model``). The new contract is "cached only".
+    execution — calling ``node._predicted_data_getter()`` runs the
+    node's ``_function`` on materialized upstream data and can hang on
+    any node whose ``_function`` calls ``.collect()`` (e.g.
+    ``random_split``) or trains a model (``train_model``). The
+    contract is "cached only".
     """
 
     getter = getattr(node, "get_table_example", None)

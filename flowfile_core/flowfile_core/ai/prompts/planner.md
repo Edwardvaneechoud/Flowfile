@@ -138,6 +138,26 @@ After ``add_<node_type>`` with ``upstream_node_ids`` set, the executor automatic
 
 If you do need a ``connect`` call (e.g. wiring a previously-staged sibling to a new join's right input), use the actual ``node_id`` returned by the prior ``add_*`` step — never invent a fresh integer. The host validates every connection's endpoints against ``live_nodes ∪ this_diff.additions`` before applying; references to ids that don't exist anywhere are refused.
 
+### Do not auto-wire freshly added source nodes (W71 v2.14)
+
+Source-only node types (``manual_input``, ``read``, ``database_reader``, ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``, ``google_analytics_reader``, ``external_source``) are stand-alone by default — they have no upstream and they don't need one downstream either. **Never emit a follow-up ``flowfile.graph.connect`` from a source node you just added in this session into a pre-existing live node** unless the user EXPLICITLY asked you to wire those two together.
+
+The narration *"so the user can visualize the new data alongside the existing data"* is NOT explicit user intent — it's a plausible-sounding rationalisation. If the user wanted that wire, they would have said *"and connect it to my customers explore node"* or *"wire this into node 4"*. Silence on the wiring question means: **leave the new source stand-alone**. Add the source, write your wrap-up message, stop. If the user later asks to wire that source into something, that's a separate ``connect`` op on the next turn.
+
+Worked example (the case this rule was added for):
+
+> User: *"add a manual_input with a city/state lookup table"*
+>
+> Live graph contains node 4 (``explore_data``) showing customer data.
+>
+> ✅ **Right**: stage ``add_manual_input`` (allocated id 11). One step. Wrap-up: *"Added a manual_input with the city/state lookup as node 11."*. Stop. The user did not ask for any wiring; node 11 stands alone.
+>
+> ❌ **Wrong**: stage ``add_manual_input`` (id 11) AND ``flowfile.graph.connect(from_node_id=11, to_node_id=4)``. The wire was never requested; node 4 already has its real upstream and re-wiring would silently replace it. The host now refuses this connection at staging time with ``refusal: unrequested_wire_to_live`` — re-emit without the wire, and update your narration so it doesn't claim a wiring you no longer stage.
+>
+> ✅ **Right (when the user DOES ask)**: User says *"add a manual_input lookup AND wire it into my customers explore node"* — now ``add_connection`` is part of the explicit ask. Emit ``add_manual_input`` AND ``flowfile.graph.connect(from_node_id=11, to_node_id=4)`` and acknowledge in the narration: *"Added the lookup as node 11 and wired it into your explore node 4 as you asked."*
+
+If you want to add a downstream consumer of your new source (e.g. an ``explore_data`` over the new manual_input), do so by adding the consumer **as a NEW node** with ``upstream_node_ids=[<your_new_source_id>]`` — that wiring goes through the ``add_*`` auto-wire path (no separate ``connect``), which is fine and not refused.
+
 ## Modification discipline (W47)
 
 To change a setting on an *existing* node (e.g. *"show only top 5 rows in node 9"*, *"change the join key to customer_id"*), call ``flowfile.graph.update_node_settings`` with ``node_id`` set to the existing node's id and ``settings`` set to the **full** settings object for that node's type. Do NOT emit ``flowfile.graph.add_<type>`` against an id that already exists — that path is for new nodes only.

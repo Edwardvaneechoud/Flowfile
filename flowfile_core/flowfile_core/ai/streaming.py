@@ -1,19 +1,21 @@
 """SSE primitives for AI endpoints — keepalive, resumption tokens, checkpoint hook.
 
-Owned by W13. Consumes the W11 ``Provider.stream()`` contract
-(``AsyncIterator[StreamChunk]``) and serialises chunks into the SSE wire
-format with three §5.4 hardenings:
+Consumes the ``Provider.stream()`` contract
+(``AsyncIterator[StreamChunk]``) and serialises chunks into the SSE
+wire format with three hardenings:
 
-* **Keepalive comments** every ``KEEPALIVE_INTERVAL_SECONDS`` (15s default) so
-  upstream proxies don't idle-time-out a slow generation.
-* **Resumption tokens** at every tool-call boundary — each ``tool_call`` event
-  carries an ``id:`` line, which EventSource clients echo back as
-  ``Last-Event-ID`` on reconnect. ``resumable_sse_stream`` does the
-  cursor-skip; the actual replay buffer is W42's job.
-* **Server-side checkpoint hook** (``on_checkpoint``) called once per complete
-  tool call so W42's session sidecar can persist state for crash-recovery.
+* **Keepalive comments** every ``KEEPALIVE_INTERVAL_SECONDS`` (15s
+  default) so upstream proxies don't idle-time-out a slow generation.
+* **Resumption tokens** at every tool-call boundary — each
+  ``tool_call`` event carries an ``id:`` line, which EventSource
+  clients echo back as ``Last-Event-ID`` on reconnect.
+  ``resumable_sse_stream`` does the cursor-skip; the actual replay
+  buffer lives in :mod:`flowfile_core.ai.replay_buffer`.
+* **Server-side checkpoint hook** (``on_checkpoint``) called once per
+  complete tool call so the session sidecar can persist state for
+  crash-recovery.
 
-Public surface (re-imported by future ``/ai/chat/stream`` route, W22+):
+Public surface:
 
 * :class:`SSEEvent` — frozen slots dataclass with a ``format()`` method.
 * :func:`format_sse_chunk` / :func:`format_sse_tool_call` /
@@ -22,7 +24,7 @@ Public surface (re-imported by future ``/ai/chat/stream`` route, W22+):
 * :func:`sse_stream` — the core async generator (StreamChunk → wire string).
 * :func:`resumable_sse_stream` — thin skip-cursor wrapper around ``sse_stream``.
 * :func:`make_streaming_response` — ``StreamingResponse`` with the
-  ``text/event-stream`` headers from ``routes/logs.py``.
+  ``text/event-stream`` headers.
 
 The litellm import stays out of this module by construction (tests verify).
 """
@@ -49,7 +51,7 @@ logger = logging.getLogger(__name__)
 KEEPALIVE_INTERVAL_SECONDS: float = 15.0
 """Seconds between keepalive comments emitted to defeat proxy idle-timeouts.
 
-Plan §5.4 calls for 15s. Configurable per call via ``sse_stream(...,
+15s default. Configurable per call via ``sse_stream(...,
 keepalive_interval=...)`` so tests can run in <1s.
 """
 
@@ -89,9 +91,8 @@ def format_sse_chunk(chunk: StreamChunk) -> str:
 def format_sse_tool_call(tool_call: ToolCall) -> str:
     """Serialise a complete ``ToolCall`` as an ``event: tool_call`` event.
 
-    The ``id:`` line carries ``tool_call.id`` so the EventSource client can
-    echo it back as ``Last-Event-ID`` on reconnect — that's the resumption
-    token from §5.4.
+    The ``id:`` line carries ``tool_call.id`` so the EventSource
+    client can echo it back as ``Last-Event-ID`` on reconnect.
     """
     payload = json.dumps(
         {
@@ -137,8 +138,9 @@ async def sse_stream(
     raw awaitable would destroy the generator's state and we'd never see
     the chunk that was about to arrive.
 
-    On a complete tool-call boundary (``StreamChunk.tool_call_delta``), invokes
-    ``on_checkpoint(tool_call)`` if provided — this is the W42 seam for
+    On a complete tool-call boundary
+    (``StreamChunk.tool_call_delta``), invokes
+    ``on_checkpoint(tool_call)`` if provided — this is the seam for
     sidecar session persistence.
 
     On exception, emits an ``event: error`` payload so the client sees the
@@ -214,10 +216,11 @@ async def resumable_sse_stream(
     *also* dropped (the client already has it), and everything after is
     forwarded.
 
-    If the cursor never matches (provider regenerates a different plan, or
-    the stream ends first), emits an ``event: error`` and stops — the client
-    should restart fresh. This is the cheapest correct behaviour at the W13
-    layer; W42's disk-buffer is what enables true replay.
+    If the cursor never matches (provider regenerates a different
+    plan, or the stream ends first), emits an ``event: error`` and
+    stops — the client should restart fresh. This is the cheapest
+    correct behaviour at the streaming layer; the disk replay buffer
+    is what enables true replay.
 
     With ``last_event_id=None`` the wrapper is identical to :func:`sse_stream`.
     """

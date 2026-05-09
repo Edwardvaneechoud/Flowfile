@@ -1,31 +1,30 @@
-"""HTTP route for the inline ``✨`` menu surface (W21).
+"""HTTP route for the inline ``✨`` menu surface.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
-``Depends(get_current_active_user)``; W17's feature-flag gate covers this
-through the parent ``ai_router``.
+``Depends(get_current_active_user)``; the feature-flag gate covers
+this through the parent ``ai_router``.
 
-Like W20's ``chat_routes``, W23's ``run_failure_routes``, and W50's
-``docgen_routes``, this surface is read-only by construction —
-``tools=None`` is passed to the provider's ``stream()`` so no
-``tool_call_delta`` is ever emitted. Phase 1 (Assist) ships text only;
-W31 / W41 / W35 own the tool-driven apply path. The "Regenerate code"
-action emits a *suggested* snippet to the chat drawer; the user copy-
-pastes it manually until that landing happens.
+Like ``chat_routes``, ``run_failure_routes``, and ``docgen_routes``,
+this surface is read-only by construction — ``tools=None`` is passed
+to the provider's ``stream()`` so no ``tool_call_delta`` is ever
+emitted. The Assist surface ships text only; the executor / diff /
+inline-diff modules own the tool-driven apply path. The "Regenerate
+code" action emits a *suggested* snippet to the chat drawer; the user
+copy-pastes it manually.
 
-The single endpoint takes ``{flow_id, node_id, action, ...}``, looks up
-the ``FlowGraph`` via ``flow_file_handler``, builds a schema-grounded
-:class:`PromptContext` via W22's
+The single endpoint takes ``{flow_id, node_id, action, ...}``, looks
+up the ``FlowGraph`` via ``flow_file_handler``, builds a
+schema-grounded :class:`PromptContext` via
 :func:`flowfile_core.ai.context.render_prompt_context` (surface
-``"explain"`` — fits D010's Sonnet-4.6 budget for "Inline ✨ Explain"),
-then appends a structured ``## Action: {action}`` block with an action-
-specific instruction. The composed ``[system, user]`` message pair is
-streamed through W13's SSE primitives so the wire format matches the
-sibling routes.
+``"explain"``), then appends a structured ``## Action: {action}``
+block with an action-specific instruction. The composed ``[system,
+user]`` message pair is streamed through the SSE primitives so the
+wire format matches the sibling routes.
 
 Provider resolution flows through
-:func:`flowfile_core.ai.byok.get_configured_provider` (W12) so BYOK rows
-+ env-var fallback + surface-keyed model defaults are honoured the same
-way the chat / run-failure / docgen routes do.
+:func:`flowfile_core.ai.byok.get_configured_provider` so BYOK rows +
+env-var fallback + surface-keyed model defaults are honoured the
+same way the chat / run-failure / docgen routes do.
 """
 
 from __future__ import annotations
@@ -79,9 +78,9 @@ class InlineActionRequest(BaseModel):
     ``action`` is a ``Literal`` so Pydantic rejects unknown action names
     at the boundary — keeps the executor's dispatch table tight.
 
-    ``samples_mode`` defaults to D009's ``"off"``. The frontend in v0
-    doesn't expose a UI toggle; W25 + a future per-flow safety config
-    workstream will surface it.
+    ``samples_mode`` defaults to ``"off"``. The frontend doesn't
+    expose a UI toggle today; a per-flow safety config workstream
+    will surface it.
     """
 
     flow_id: int
@@ -120,12 +119,12 @@ def _ensure_action_compatible(action: InlineActionType, node_type: str) -> None:
 
 
 def _action_instruction(action: InlineActionType) -> str:
-    """Per-action instruction block appended to the W22 ``ctx.user``.
+    """Per-action instruction block appended to ``ctx.user``.
 
     Each block is a single paragraph + a "do not propose graph
-    mutations" reminder. Kept short on purpose so the W22 deterministic
-    body stays the bulk of the user message and the prompt cache can
-    still hit on the shared subgraph snapshot.
+    mutations" reminder. Kept short on purpose so the deterministic
+    context body stays the bulk of the user message and the prompt
+    cache can still hit on the shared subgraph snapshot.
     """
 
     if action == "explain":
@@ -176,10 +175,10 @@ def _compose_action_user_message(
 ) -> str:
     """Build the user-message body the LLM sees.
 
-    Re-uses W22's deterministic ``ctx.user`` (subgraph + schemas +
+    Re-uses the deterministic ``ctx.user`` (subgraph + schemas +
     settings) verbatim so its prompt-cache hash stays stable, then
-    appends a single ``## Action: {action}`` block carrying the action-
-    specific instruction.
+    appends a single ``## Action: {action}`` block carrying the
+    action-specific instruction.
     """
 
     instruction = _action_instruction(action)

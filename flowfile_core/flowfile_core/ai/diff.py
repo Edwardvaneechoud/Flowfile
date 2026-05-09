@@ -1,28 +1,28 @@
-"""``GraphDiff`` staging via ``HistoryManager`` — W41.
+"""``GraphDiff`` staging via ``HistoryManager``.
 
-Composes the per-op ``staged_node_payload`` shapes that W31's executor emits
-under ``mode="stage"`` (see ``executor.py:391-647``) into a single
-:class:`GraphDiff` artefact, and applies / rejects them atomically.
+Composes the per-op ``staged_node_payload`` shapes that the executor
+emits under ``mode="stage"`` into a single :class:`GraphDiff`
+artefact, and applies / rejects them atomically.
 
 Atomicity rests on two existing seams:
 
-1. ``flow.capture_history_snapshot(HistoryActionType.BATCH, ...)`` taken
-   *before* any mutation gives the user a single undo point covering the
-   whole batch.
+1. ``flow.capture_history_snapshot(HistoryActionType.BATCH, ...)``
+   taken *before* any mutation gives the user a single undo point
+   covering the whole batch.
 2. ``flow.flow_settings.track_history = False`` short-circuits the
-   per-method ``with_history_capture`` decorator at ``flow_graph.py:175`` so
-   the ``add_<node_type>`` calls fired during the batch don't push their
-   own snapshots.
+   per-method ``with_history_capture`` decorator in ``flow_graph.py``
+   so the ``add_<node_type>`` calls fired during the batch don't push
+   their own snapshots.
 
-If any op raises mid-batch, ``flow.undo()`` rolls the BATCH snapshot back
-and the diff is left in the :data:`_DIFFS` store for the user to fix-and-
-retry or explicitly reject. D006's drift detection runs *before* the
-snapshot so a drift'd diff doesn't pollute the undo stack.
+If any op raises mid-batch, ``flow.undo()`` rolls the BATCH snapshot
+back and the diff is left in the store for the user to fix-and-retry
+or explicitly reject. Drift detection runs *before* the snapshot so a
+drift'd diff doesn't pollute the undo stack.
 
-The store is process-local. W42 swaps ``_DIFFS`` for a disk-backed
-repository under ``{user_dir}/ai_sessions/{flow_id}/`` without changing the
-``register_diff`` / ``get_diff`` / ``pop_diff`` surface this module
-exposes.
+The store is repository-backed (in-memory in tests, disk-backed under
+``{user_dir}/ai_sessions/{flow_id}/`` in production) without changing
+the ``register_diff`` / ``get_diff`` / ``pop_diff`` surface this
+module exposes.
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ class StagedSettingsUpdate(BaseModel):
     (which removes one). Old settings are captured at stage time so the
     diff-preview UI can render a reliable old-vs-new view, and so a mid-batch
     rollback in :func:`apply_diff` can restore the prior value without
-    re-deriving from disk (W41's BATCH-snapshot rollback covers the live
+    re-deriving from disk (the BATCH-snapshot rollback covers the live
     graph; this field exists for the *diff-preview* truth).
     """
 
@@ -143,10 +143,10 @@ class GraphDiff(BaseModel):
     * deletions land after any new wiring that referenced the
       about-to-be-removed node.
 
-    Modifications target an *existing* node id (or an in-batch addition);
-    they do not create new node ids. W45 drift detection is NOT influenced
-    by modifications — the planner does NOT append to ``staged_node_ids``
-    when a modification is staged.
+    Modifications target an *existing* node id (or an in-batch
+    addition); they do not create new node ids. Drift detection is NOT
+    influenced by modifications — the planner does NOT append to
+    ``staged_node_ids`` when a modification is staged.
     """
 
     diff_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -182,10 +182,10 @@ class ApplyResult(BaseModel):
 class DiffDriftError(Exception):
     """Raised when a staged diff references nodes that no longer exist.
 
-    D006's snapshot+warn-and-pause shape: the user mutated the canvas
-    between staging and accept; the diff cannot apply cleanly. The route
-    layer maps this to ``409 Conflict`` and leaves the diff in the store
-    so the user can fix the underlying graph and retry.
+    Snapshot+warn-and-pause shape: the user mutated the canvas
+    between staging and accept; the diff cannot apply cleanly. The
+    route layer maps this to ``409 Conflict`` and leaves the diff in
+    the store so the user can fix the underlying graph and retry.
     """
 
     def __init__(self, missing_node_ids: list[int]) -> None:
@@ -194,14 +194,15 @@ class DiffDriftError(Exception):
 
 
 class DiffInconsistentError(Exception):
-    """Raised when a staged diff is internally inconsistent (W70).
+    """Raised when a staged diff is internally inconsistent.
 
-    Distinct from :class:`DiffDriftError` — drift is the canvas mutating
-    during the agent's work (D006); inconsistency is the agent's *own*
-    diff being broken (e.g. a staged ``connect`` whose ``to_node_id``
-    isn't in the live graph nor in this diff's additions). The route
-    layer maps this to ``422 Unprocessable Entity`` and leaves the diff
-    in the store so the user can Reject and ask the agent to retry.
+    Distinct from :class:`DiffDriftError` — drift is the canvas
+    mutating during the agent's work; inconsistency is the agent's
+    *own* diff being broken (e.g. a staged ``connect`` whose
+    ``to_node_id`` isn't in the live graph nor in this diff's
+    additions). The route layer maps this to
+    ``422 Unprocessable Entity`` and leaves the diff in the store so
+    the user can Reject and ask the agent to retry.
 
     ``missing_endpoints`` carries ``(node_id, role)`` tuples where role
     is ``"from"`` (output side) or ``"to"`` (input side) — the offending
@@ -214,15 +215,15 @@ class DiffInconsistentError(Exception):
 
 
 # --------------------------------------------------------------------------- #
-# DiffStore — repository-backed (W42). Public surface unchanged.               #
+# DiffStore — repository-backed. Public surface stable across backends         #
 # --------------------------------------------------------------------------- #
 
 
 def _build_default_repo() -> DiffRepository:
-    """Default to the on-disk sidecar repo (W42), colocated with sessions.
+    """Default to the on-disk sidecar repo, colocated with sessions.
 
-    See ``shared.storage_config.FlowfileStorage.ai_sessions_directory`` for
-    the path resolution. Tests swap to in-memory via
+    See ``shared.storage_config.FlowfileStorage.ai_sessions_directory``
+    for the path resolution. Tests swap to in-memory via
     :func:`clear_for_tests`.
     """
     return DiskDiffRepository(root=storage.ai_sessions_directory)
@@ -292,12 +293,13 @@ _UPDATE_SETTINGS_NAME = "flowfile.graph.update_node_settings"
 class StagedToolEntry(BaseModel):
     """One staged tool call from a prior ``execute_tool_call(mode="stage")``.
 
-    The shape :func:`bundle_staged_results` accepts. Mirrors the subset of
-    :class:`flowfile_core.ai.tools.executor.ToolExecutionResult` the diff
-    bundler needs: tool name (for dispatch), audit id (for accept/reject
-    flip), and the per-op ``staged_node_payload`` shape W31 emits. Lives in
-    :mod:`diff` rather than :mod:`diff_routes` so W40's planner can build a
-    ``GraphDiff`` directly without crossing the HTTP boundary.
+    The shape :func:`bundle_staged_results` accepts. Mirrors the subset
+    of :class:`flowfile_core.ai.tools.executor.ToolExecutionResult` the
+    diff bundler needs: tool name (for dispatch), audit id (for
+    accept/reject flip), and the per-op ``staged_node_payload`` shape
+    the executor emits. Lives in :mod:`diff` rather than
+    :mod:`diff_routes` so the planner can build a ``GraphDiff``
+    directly without crossing the HTTP boundary.
     """
 
     tool_name: str = Field(min_length=1)
@@ -306,14 +308,13 @@ class StagedToolEntry(BaseModel):
 
 
 class AppliedNodeRecord(BaseModel):
-    """W71 v2.0 — one node applied LIVE during an ``agent_live``
-    session. Unlike :class:`StagedToolEntry` these describe nodes
-    that are already in ``flow.nodes`` — applied via
-    ``execute_tool_call(mode="apply")`` rather than staged. The
-    record is kept on ``AgentSession.applied_results`` purely for
-    chat-trail rendering, audit, and the auto-undo path
-    (``node_id`` is the value passed to ``flow.delete_node`` on
-    runtime failure).
+    """One node applied LIVE during an ``agent_live`` session. Unlike
+    :class:`StagedToolEntry` these describe nodes that are already in
+    ``flow.nodes`` — applied via ``execute_tool_call(mode="apply")``
+    rather than staged. The record is kept on
+    ``AgentSession.applied_results`` purely for chat-trail rendering,
+    audit, and the auto-undo path (``node_id`` is the value passed to
+    ``flow.delete_node`` on runtime failure).
     """
 
     tool_name: str = Field(min_length=1)
@@ -337,8 +338,8 @@ def bundle_staged_results(staged: list[StagedToolEntry]) -> GraphDiff:
 
     Tool-name prefix is the discriminator. Anything outside the
     ``flowfile.graph.*`` namespace (or unsupported within it) raises
-    ``ValueError`` — the route layer maps that to 422; W40 surfaces it as
-    a planner-loop error.
+    ``ValueError`` — the route layer maps that to 422; the planner
+    surfaces it as a planner-loop error.
 
     The returned :class:`GraphDiff` has ``session_id=""`` and ``flow_id=0``;
     callers fill those in alongside ``rationale`` before calling
@@ -425,15 +426,16 @@ def bundle_staged_results(staged: list[StagedToolEntry]) -> GraphDiff:
         else:
             raise ValueError(f"diff staging only accepts flowfile.graph.* tools; got {tool_name!r}")
 
-    # 2026-05-07 — dedupe modifications and additions by node_id (latest wins).
-    # Live trace 14:21 showed the LLM emitting 4 identical
-    # ``update_node_settings`` calls on the same node within one agent run;
-    # without dedupe the diff preview surfaced *"4 modifications"* with
-    # four identical cards stacked. The W47 contract is full-replace, so
-    # the latest staged call already reflects the cumulative intent — older
-    # calls for the same node are noise that confuse the review surface.
-    # Same logic applies to additions: if the LLM emits multiple ``add_*``
-    # for the same allocated id (rare but observed), keep the last.
+    # Dedupe modifications and additions by node_id (latest wins).
+    # Without dedupe an LLM emitting 4 identical
+    # ``update_node_settings`` calls on the same node would surface
+    # *"4 modifications"* in the diff preview with four identical cards
+    # stacked. The update contract is full-replace, so the latest
+    # staged call already reflects the cumulative intent — older calls
+    # for the same node are noise that confuses the review surface.
+    # Same logic applies to additions: if the LLM emits multiple
+    # ``add_*`` for the same allocated id (rare but observed), keep
+    # the last.
     modifications = _dedupe_by_node_id_keep_last(modifications, lambda m: m.node_id)
     additions = _dedupe_by_node_id_keep_last(
         additions,
@@ -500,7 +502,7 @@ def collect_audit_ids(diff: GraphDiff) -> list[int]:
 
 
 # --------------------------------------------------------------------------- #
-# D006 drift detection                                                         #
+# Drift detection                                                              #
 # --------------------------------------------------------------------------- #
 
 
@@ -509,17 +511,17 @@ def validate_diff_against_flow(flow, diff: GraphDiff) -> None:
 
     Two parallel checks fire here:
 
-    * **Drift (D006):** addition upstreams + deletion targets must resolve
-      on the live graph *now* OR appear earlier in this diff's
+    * **Drift:** addition upstreams + deletion targets must resolve on
+      the live graph *now* OR appear earlier in this diff's
       ``additions`` bucket. If not, raise :class:`DiffDriftError` —
       mapped to ``409 Conflict`` by the route layer; the user mutated
       the canvas between staging and accept.
-    * **Inconsistency (W70):** every staged ``connections_added`` entry's
+    * **Inconsistency:** every staged ``connections_added`` entry's
       ``from`` and ``to`` endpoint ids must resolve on the live graph
-      *now* OR appear in this diff's ``additions`` bucket. If not, raise
-      :class:`DiffInconsistentError` — mapped to ``422 Unprocessable
-      Entity`` by the route layer; the agent's own diff is broken
-      (e.g. an LLM-hallucinated ``to_node_id``).
+      *now* OR appear in this diff's ``additions`` bucket. If not,
+      raise :class:`DiffInconsistentError` — mapped to ``422
+      Unprocessable Entity`` by the route layer; the agent's own diff
+      is broken (e.g. an LLM-hallucinated ``to_node_id``).
 
     A node id counts as available if it either resolves on the live
     graph *now* OR appears earlier in this diff's ``additions`` bucket —
@@ -565,11 +567,12 @@ def validate_diff_against_flow(flow, diff: GraphDiff) -> None:
     if missing:
         raise DiffDriftError(sorted(missing))
 
-    # W70 — inconsistency check. Walks ``connections_added`` only;
-    # ``connections_removed`` references are tolerated by ``delete_connection``'s
-    # own no-op-on-missing semantics, and pre-checking them would conflate
-    # legitimate "user accepted the staged removal of a connection that's
-    # already gone" with the agent emitting a phantom id.
+    # Inconsistency check. Walks ``connections_added`` only;
+    # ``connections_removed`` references are tolerated by
+    # ``delete_connection``'s own no-op-on-missing semantics, and
+    # pre-checking them would conflate legitimate "user accepted the
+    # staged removal of a connection that's already gone" with the
+    # agent emitting a phantom id.
     inconsistent: list[tuple[int, str]] = []
     for c in diff.connections_added:
         connection = c.connection if isinstance(c.connection, dict) else {}

@@ -53,6 +53,7 @@ from flowfile_core.ai import safety, sessions
 from flowfile_core.ai.context.builder import render_prompt_context
 from flowfile_core.ai.providers.base import Message, Provider, ToolCall
 from flowfile_core.ai.scheduler import RateLimitScheduler, default_scheduler
+from flowfile_core.ai.tools.classification import classify_node_type
 from flowfile_core.ai.tools.dry_run import DryRunCache
 from flowfile_core.ai.tools.executor import (
     InsertionContext,
@@ -2270,6 +2271,29 @@ async def _run_planner_loop(
                     "right_input_node_id": insertion_context.right_input_node_id,
                     "live_node_ids_at_stage": sorted(_collect_live_node_ids(flow)),
                     "staged_node_ids_at_stage": list(session.staged_node_ids),
+                }
+            elif tc.name == "flowfile.graph.connect":
+                # W71 v2.14 — pre-filter source-only staged ids so the
+                # executor's ``unrequested_wire_to_live`` backstop can
+                # refuse wires from freshly-staged source nodes into
+                # pre-existing live nodes. The list is snapshot-at-stage
+                # so any later acceptance of the diff (which transitions
+                # ids from staged → live) naturally disables the guard
+                # on subsequent rounds.
+                staged_source_node_ids: list[int] = []
+                for entry in session.staged_results:
+                    if not entry.tool_name.startswith(_ADD_PREFIX):
+                        continue
+                    entry_node_type = entry.tool_name.removeprefix(_ADD_PREFIX)
+                    if classify_node_type(entry_node_type) != "source":
+                        continue
+                    entry_nid = sessions._entry_node_id(entry)
+                    if isinstance(entry_nid, int):
+                        staged_source_node_ids.append(entry_nid)
+                audit_meta = {
+                    "live_node_ids_at_stage": sorted(_collect_live_node_ids(flow)),
+                    "staged_node_ids_at_stage": list(session.staged_node_ids),
+                    "staged_source_node_ids_at_stage": staged_source_node_ids,
                 }
 
             # Universal self-loop invariant guard. Catches all three

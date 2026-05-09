@@ -1,42 +1,43 @@
-"""Edge ghost-node suggestions — owned by W32.
+"""Edge ghost-node suggestions.
 
-Backs ``POST /ai/suggest_next_node`` (plan §3.3 + §6.4). On hover over an
-outgoing edge stub the frontend asks for top-3 schema-grounded next-node
+Backs ``POST /ai/suggest_next_node``. On hover over an outgoing edge
+stub the frontend asks for top-3 schema-grounded next-node
 suggestions; this module produces them.
 
-Design (mirrors W34's ``autocomplete`` posture):
+Design (mirrors the ``autocomplete`` posture):
 
-* The function is pure-async and never raises — every failure mode (cold
-  upstream, timeout, parse error, validation error) becomes a
-  ``degraded=True`` response with a stable ``reason`` string. The frontend
-  hides the popover when ``degraded`` is set.
-* The LLM emits a JSON document. Each candidate is parsed into Pydantic
-  via the matching ``NODE_TYPE_TO_SETTINGS_CLASS`` entry; failures are
-  dropped silently (the LLM occasionally hallucinates settings shapes).
-* Column refs in the candidate's settings are walked via W31's
+* The function is pure-async and never raises — every failure mode
+  (cold upstream, timeout, parse error, validation error) becomes a
+  ``degraded=True`` response with a stable ``reason`` string. The
+  frontend hides the popover when ``degraded`` is set.
+* The LLM emits a JSON document. Each candidate is parsed into
+  Pydantic via the matching ``NODE_TYPE_TO_SETTINGS_CLASS`` entry;
+  failures are dropped silently (the LLM occasionally hallucinates
+  settings shapes).
+* Column refs in the candidate's settings are walked via
   ``collect_column_refs`` and validated against the upstream
-  ``predicted_schema`` via W25's ``validate_column_references``. Candidates
+  ``predicted_schema`` via ``validate_column_references``. Candidates
   that miss columns are dropped.
-* Predicted output schema is produced via W31's ``predict_schema_via_mirror``
+* Predicted output schema is produced via ``predict_schema_via_mirror``
   for static / source / passthrough nodes. Dynamic nodes
-  (``polars_code`` / ``python_script`` / ``sql_query``) are NOT in the
-  ``ghost_node`` ``SURFACE_PRESETS`` (per W30's curation) — if the LLM
-  ignores the preset hint and proposes one anyway, it survives only if
-  Pydantic + column-ref validation pass; we don't run a kernel dry-run on
-  the ghost-node hot path (latency budget per D010 is <2s TTFB).
-* D012 — only ``predicted_schema`` cache reads, no ``LazyFrame.collect()``.
-* D011 — when upstream schema is ``None``, ``degraded=True`` (the ghost
-  surface should never block a casual hover; users wanting to populate
-  schema for cold flows can run the upstream first, like W34).
+  (``polars_code`` / ``python_script`` / ``sql_query``) are NOT in
+  the ``ghost_node`` preset — if the LLM ignores the preset hint and
+  proposes one anyway, it survives only if Pydantic + column-ref
+  validation pass; we don't run a kernel dry-run on the ghost-node
+  hot path (latency budget is <2s TTFB).
+* Cache-only schema reads, no ``LazyFrame.collect()``.
+* When upstream schema is ``None``, ``degraded=True`` (the ghost
+  surface should never block a casual hover; users wanting to
+  populate schema for cold flows can run the upstream first).
 
 Wire-layer note: ``node_type`` is the un-namespaced flowfile name
-(``"filter"``), not the MCP-shaped tool name. W30 uses
-``flowfile.graph.add_filter`` for tool catalog purposes; the ghost-node
-endpoint deals in node types directly because the frontend renders these
-suggestions as ghost VueFlow nodes (each ghost has a node type, not a
-tool call).
+(``"filter"``), not the MCP-shaped tool name. The catalog uses
+``flowfile.graph.add_filter`` for tool catalog purposes; the
+ghost-node endpoint deals in node types directly because the frontend
+renders these suggestions as ghost VueFlow nodes (each ghost has a
+node type, not a tool call).
 
-The W11 lazy-litellm contract is preserved — this module must not import
+The lazy-litellm contract is preserved — this module must not import
 ``litellm`` at load time.
 """
 
@@ -74,13 +75,13 @@ logger = logging.getLogger(__name__)
 
 
 SURFACE: str = "ghost_node"
-"""The W30 ``SurfaceLiteral`` value W32 emits — kept as a constant so call
-sites and test assertions stay in lock-step."""
+"""The ``SurfaceLiteral`` value the ghost-node surface emits — kept as
+a constant so call sites and test assertions stay in lock-step."""
 
 DEFAULT_TIMEOUT_SECONDS: float = 3.5
-"""Hard timeout per call. Picked under D010 (TTFB <2s, total <4s for the
-ghost surface) — leaves ~500 ms of headroom for the route/scheduler/serdes
-overhead before the user perceives the hover as stale."""
+"""Hard timeout per call. TTFB <2s, total <4s — leaves ~500 ms of
+headroom for the route/scheduler/serdes overhead before the user
+perceives the hover as stale."""
 
 MAX_SUGGESTIONS: int = 3
 """§3.3 spec: top-3 by upstream-schema fit."""
@@ -165,9 +166,9 @@ class _LLMOutput(BaseModel):
 def _allowed_node_types() -> frozenset[str]:
     """The un-namespaced node types the LLM is allowed to suggest.
 
-    Derived from W30's ``SURFACE_PRESETS["ghost_node"]`` — each entry is an
-    MCP-shaped tool name like ``flowfile.graph.add_filter``; we strip the
-    ``flowfile.graph.add_`` prefix to get the flowfile node type.
+    Derived from ``SURFACE_PRESETS["ghost_node"]`` — each entry is an
+    MCP-shaped tool name like ``flowfile.graph.add_filter``; we strip
+    the ``flowfile.graph.add_`` prefix to get the flowfile node type.
 
     ``read_node_schema`` is in the preset for the LLM's introspection use
     but isn't a node type, so we filter to ``flowfile.graph.add_*`` only.
@@ -194,8 +195,8 @@ _ALLOWED_NODE_TYPES: frozenset[str] = _allowed_node_types()
 def _column_names_for_node(node: FlowNode | None) -> list[str] | None:
     """Return predicted column names, or ``None`` if unknown / missing.
 
-    Mirrors W34 — schema-only path, no force-recompute (D012). Cold upstreams
-    propagate as ``None`` to the caller's degraded branch.
+    Schema-only path, no force-recompute. Cold upstreams propagate as
+    ``None`` to the caller's degraded branch.
     """
     if node is None:
         return None
@@ -268,9 +269,9 @@ def _build_messages(
     if intent:
         user_lines.append(f"User intent: {intent}")
     user_lines.append(f"Return at most {max_suggestions} suggestions.")
-    # ``.replace`` not ``.format`` — the JSON shape examples in the prompt
-    # use literal ``{`` / ``}``, which would be interpreted as format
-    # placeholders. Same posture as W34's autocomplete.
+    # ``.replace`` not ``.format`` — the JSON shape examples in the
+    # prompt use literal ``{`` / ``}``, which would be interpreted as
+    # format placeholders. Same posture as the autocomplete path.
     allowed = ", ".join(sorted(_ALLOWED_NODE_TYPES))
     system = _SYSTEM_PROMPT.replace("{{ALLOWED_TYPES}}", allowed).replace("{{MAX_SUGGESTIONS}}", str(max_suggestions))
     return [
@@ -294,9 +295,9 @@ async def _call_provider_for_json(
 ) -> tuple[str | None, str | None]:
     """Invoke ``provider.chat`` with JSON-mode and a hard timeout.
 
-    Returns ``(content, error_reason)`` — same contract W34 follows. Retry/
-    backoff is intentionally bypassed; the W14 scheduler is consulted only
-    for RPM tracking via ``acquire``.
+    Returns ``(content, error_reason)`` — same contract the
+    autocomplete path follows. Retry/backoff is intentionally bypassed;
+    the scheduler is consulted only for RPM tracking via ``acquire``.
     """
     sched = scheduler or default_scheduler()
 
@@ -321,7 +322,7 @@ async def _call_provider_for_json(
 
 
 def _parse_json_payload(content: str | None) -> tuple[Any, str | None]:
-    """Strict JSON parse with a Markdown-fence fallback (matches W34)."""
+    """Strict JSON parse with a Markdown-fence fallback."""
     if content is None or not content.strip():
         return None, "empty_response"
     try:
