@@ -47,6 +47,7 @@ from flowfile_core.ai.tools.predictor import (
 )
 from flowfile_core.ai.tools.meta_ops import OP_KIND_NAMES
 from flowfile_core.ai.tools.registry import _inline_ref_schema
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS, get_settings_class_for_node_type
 
@@ -64,6 +65,74 @@ _CODE_BEARING: Final[dict[str, tuple[str, ...]]] = {
     "python_script": ("python_script_input", "code"),
     "sql_query": ("sql_query_input", "sql_code"),
 }
+
+# W71 v2.13 — refusal text for polars_code bodies that include ``import``
+# statements. Only rendered to the LLM when the LLM has already made the
+# mistake; the standing prompt has no mention of the imports rule, so we
+# don't burn context on every polars_code-related round.
+#
+# Rationale: ``polars_code_parser._validate_code`` rejects ALL
+# ``ast.Import`` / ``ast.ImportFrom`` nodes. Today
+# ``flow.add_polars_code`` swallows the ValueError into
+# ``node.results.errors`` — the LLM never sees it and the failure
+# surfaces only at run time. The pre-flight in ``_handle_add_node`` /
+# ``_handle_update_node_settings`` short-circuits with this refusal so
+# the LLM gets one round to fix the body using the pre-bound names.
+_POLARS_CODE_IMPORT_REFUSAL: Final[str] = (
+    "polars_code rejected: imports are forbidden in this sandbox. "
+    "``pl`` is already available — drop ``import polars as pl`` "
+    "(and any ``from polars import ...``) and resubmit."
+)
+
+
+def _validate_polars_code_body_or_reject(
+    *,
+    node_type: str,
+    code: str,
+    tool_name: str,
+    redacted_args: dict[str, Any],
+    session_id: str,
+    user_id: int,
+    flow_id: int,
+) -> "ToolExecutionResult | None":
+    """W71 v2.13 — pre-flight polars_code sandbox validation.
+
+    Catches forbidden imports (and any other sandbox violation
+    ``polars_code_parser`` raises) BEFORE ``flow.add_polars_code``
+    swallows the ValueError into ``node.results.errors``. Without
+    this the LLM never sees the rejection and the failure surfaces
+    only at run-time.
+
+    Returns ``None`` when the body is clean (or when ``node_type``
+    isn't ``polars_code``); returns a ``ToolExecutionResult`` with
+    ``status="rejected"`` otherwise.
+    """
+    if node_type != "polars_code":
+        return None
+    try:
+        polars_code_parser.validate_code(code)
+    except ValueError as exc:
+        err_text = str(exc)
+        if "Import" in err_text:
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow_id,
+                refusal_reason="polars_code_import_forbidden",
+                refusal_detail=_POLARS_CODE_IMPORT_REFUSAL,
+            )
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow_id,
+            refusal_reason="polars_code_validation",
+            refusal_detail=f"polars_code rejected: {err_text}",
+        )
+    return None
 
 
 #: Layout offsets used by :func:`_resolve_insertion_position` (W62) when
@@ -241,18 +310,21 @@ def execute_tool_call(
     in-batch staged-but-unapplied upstreams (which by definition aren't in
     ``flow.nodes`` yet).
     """
-    # W71 v1.4 — universal lenient JSON-string unwrap. Smaller open-weights
-    # models (llama-3.3-70b, in particular) routinely pass structured
-    # tool args as JSON-encoded strings rather than native objects /
-    # arrays / ints. ``upstream_node_ids: "[3]"``, ``groupby_input:
-    # "{\"agg_cols\": ...}"``, ``node_id: "5"`` — Pydantic strict mode
-    # rejects each of these and burns retry budget on a recoverable
+    # W71 v1.5 — universal lenient JSON-string unwrap for CONTAINERS.
+    # Smaller open-weights models (llama-3.3-70b, in particular)
+    # routinely pass structured tool args as JSON-encoded strings rather
+    # than native objects / arrays. ``upstream_node_ids: "[3]"``,
+    # ``groupby_input: "{\"agg_cols\": ...}"`` — Pydantic cannot
+    # reverse-coerce these and burns retry budget on a recoverable
     # type-wrap mistake. Apply the unwrap pass at the top of dispatch so
     # every handler (add_*, update_node_settings, the meta ops, schema
-    # ops) gets the same forgiveness uniformly. See
-    # :func:`_unwrap_json_string_values` for the heuristic + safety
-    # guards (free-form code bodies / Polars expressions are never
-    # mangled because they don't start with ``[`` / ``{`` / a digit).
+    # ops) gets the same forgiveness uniformly.
+    #
+    # Scalar str→int / str→float coercion (``node_id: "5"``) is left to
+    # Pydantic's lax-mode model validation — see
+    # :func:`_unwrap_json_string_values` for the rationale (eager scalar
+    # unwrapping corrupted str-typed fields with numeric content like
+    # ``BasicFilter.value``).
     if tool_args:
         tool_args = _unwrap_json_string_values(tool_args)
     redacted_args = safety.redact_secrets(tool_args) if tool_args else {}
@@ -1009,6 +1081,19 @@ def _handle_add_node(
                 refusal_detail=f"blocked: {', '.join(egress_labels)}",
             )
 
+        # --- Refusal stage 2.5: polars_code sandbox validation (W71 v2.13) ---
+        polars_rejection = _validate_polars_code_body_or_reject(
+            node_type=node_type,
+            code=code,
+            tool_name=tool_name,
+            redacted_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+        )
+        if polars_rejection is not None:
+            return polars_rejection
+
     # --- Resolve upstream schemas (D011 tiers 0-1, warn on tier 2) ---
     upstream_ids = list(insertion_context.upstream_node_ids)
     if insertion_context.right_input_node_id is not None and insertion_context.right_input_node_id not in upstream_ids:
@@ -1701,6 +1786,19 @@ def _handle_update_node_settings(
                 refusal_detail=f"blocked: {', '.join(egress_labels)}",
             )
 
+        # --- Refusal stage 2.5: polars_code sandbox validation (W71 v2.13) ---
+        polars_rejection = _validate_polars_code_body_or_reject(
+            node_type=node_type,
+            code=code,
+            tool_name=tool_name,
+            redacted_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+        )
+        if polars_rejection is not None:
+            return polars_rejection
+
     # --- Resolve upstream schemas from the live node's existing wiring ---
     # Modifications never rewire the topology — the LLM must use connect /
     # delete_connection for that — so we read upstream ids off the live
@@ -1998,37 +2096,43 @@ def _handle_codegen(
 
 
 def _unwrap_json_string_values(value: Any) -> Any:
-    """W71 v1.4 — recursively unwrap JSON-encoded string values in tool
-    args.
+    """W71 v1.5 — recursively unwrap JSON-encoded string CONTAINERS in
+    tool args.
 
     Smaller open-weights models routinely emit structured tool args as
-    JSON-encoded strings rather than native objects / arrays / ints.
-    Three failure modes seen in dogfood:
+    JSON-encoded strings rather than native objects / arrays. Two
+    failure modes seen in dogfood that this still handles:
 
     * ``upstream_node_ids: "[3, 4]"`` (the field is array<int>; model
       emits a string).
     * ``groupby_input: "{\\"agg_cols\\": [...]}"`` (an object field
       delivered as a JSON-string).
-    * ``node_id: "5"`` (an int field delivered as a digit-string).
 
-    Pydantic strict mode rejects each of these and the planner spends
-    its retry budget re-asking the model to fix shape, which it usually
-    does only after several attempts (or never). Pre-unwrapping at the
-    executor seam means the rest of the pipeline (Pydantic validation,
-    custom handlers) sees the native types it expects.
+    Pydantic cannot reverse-coerce a JSON-string into a dict / list at
+    validation time, so the planner used to spend its retry budget
+    re-asking the model to fix shape. Pre-unwrapping at the executor
+    seam means the rest of the pipeline (Pydantic validation, custom
+    handlers) sees the native types it expects.
 
-    The heuristic is conservative: only attempt to JSON-parse strings
-    that **start with ``{``, ``[``, a digit, or ``-``**. This protects
-    free-form code bodies (``polars_code``, ``python_script``,
-    ``sql_query``), Polars expressions ("``pl.col('x') > 5``"), and
-    SQL queries ("``SELECT …``") from being parsed accidentally —
-    none of those start with a JSON-shape character.
+    The heuristic is intentionally narrow: only attempt to JSON-parse
+    strings that **start with ``{`` or ``[``**. This protects free-form
+    code bodies (``polars_code``, ``python_script``, ``sql_query``),
+    Polars expressions ("``pl.col('x') > 5``"), SQL queries ("``SELECT
+    …``"), AND — critically — string-typed fields with numeric content
+    (``BasicFilter.value = "1"``, column names like ``"123"``) from
+    being parsed accidentally.
 
-    A parsed value replaces the original string ONLY when it parses to
-    a ``dict``, ``list``, or ``int``. Floats / bools / null parse-results
-    leave the original string in place so Pydantic can decide; this
-    avoids rewriting a literal ``"true"`` (where the model truly meant
-    the string) into ``True``.
+    Bare scalar parse-results — int, float, bool, null — are NOT
+    returned. The earlier W71 v1.4 implementation eagerly unwrapped
+    digit-prefixed strings into ints, which corrupted str-typed fields
+    on the 2026-05-09 dogfood failure: the LLM correctly emitted
+    ``BasicFilter.value = "1"``, this function turned it into ``1``,
+    Pydantic rejected the int for a str field, and the rejection blamed
+    the LLM ("got int") for the wrong shape. Pydantic v2 lax mode
+    handles ``str → int`` coercion at the model layer when a field
+    actually wants an int (verified by
+    ``test_connect_string_node_ids_get_example_nudge``), so leaving
+    scalars as strings is both safe and correct.
 
     Walks dicts and lists recursively so partially-encoded payloads
     (e.g. ``{"join_input": {"join_mapping": "[{...}]"}}``) get fully
@@ -2043,26 +2147,22 @@ def _unwrap_json_string_values(value: Any) -> Any:
         if not stripped:
             return value
         first = stripped[0]
-        # Free-form strings (code, SQL, prose, identifiers) never start
-        # with a JSON-shape character, so this guard makes the unwrap
-        # pass safe to apply universally without a per-tool allowlist.
-        if first not in "{[" and not first.isdigit() and first != "-":
+        # Only unwrap strings that look like JSON containers ({} or []).
+        # Bare scalar strings (digits, quoted strings, "true", code
+        # bodies, identifiers) pass through unchanged so Pydantic's
+        # lax-mode coercion at the model layer can decide what to do.
+        if first not in "{[":
             return value
         try:
             parsed = json.loads(stripped)
         except (TypeError, ValueError):
             return value
-        # Recurse so nested JSON-strings inside the parsed value also
-        # get unwrapped. Booleans are passed through; floats/null land
-        # back at the original string.
+        # Recurse so nested JSON-strings inside the parsed container
+        # also get unwrapped.
         if isinstance(parsed, dict):
             return _unwrap_json_string_values(parsed)
         if isinstance(parsed, list):
             return _unwrap_json_string_values(parsed)
-        if isinstance(parsed, bool):
-            return value
-        if isinstance(parsed, int):
-            return parsed
         return value
     return value
 

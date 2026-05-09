@@ -20,7 +20,9 @@
             title="AI actions for this node"
             aria-label="AI actions for this node"
           >
-            <el-icon class="ai-inline-actions-trigger__icon"><MagicStick /></el-icon>
+            <span class="material-icons ai-inline-actions-trigger__icon" aria-hidden="true"
+              >auto_awesome</span
+            >
           </button>
         </template>
         <AiInlineActions
@@ -265,7 +267,7 @@ import { computed, ref, watch, reactive } from "vue";
 import type { NodeBase, OutputFieldConfig } from "./nodeInput";
 import { useNodeStore } from "../../../stores/node-store";
 import { useFlowStore } from "../../../stores/flow-store";
-import { InfoFilled, DCaret, Delete, MagicStick } from "@element-plus/icons-vue";
+import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
 import AiInlineActions from "../../../features/ai/AiInlineActions.vue";
 
 const nodeStore = useNodeStore();

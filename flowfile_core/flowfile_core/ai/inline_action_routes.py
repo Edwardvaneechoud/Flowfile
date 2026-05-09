@@ -55,10 +55,8 @@ router = APIRouter()
 SamplesMode = Literal["off", "regex"]
 InlineActionType = Literal[
     "explain",
-    "optimise",
-    "document",
+    "add_description",
     "regenerate_code",
-    "suggest_filters",
 ]
 
 # Node types whose primary configuration is a code snippet — only these
@@ -106,9 +104,8 @@ def _ensure_known_provider(name: str) -> None:
 def _ensure_action_compatible(action: InlineActionType, node_type: str) -> None:
     """Block ``regenerate_code`` on non-code-bearing nodes.
 
-    The other actions accept any node type — Explain / Optimise /
-    Document / Suggest filters all make sense for a filter, a join, a
-    source reader, etc.
+    The other actions (``explain`` and ``add_description``) accept any
+    node type — both make sense for a filter, a join, a source reader, etc.
     """
 
     if action == "regenerate_code" and node_type not in _CODE_BEARING_NODE_TYPES:
@@ -137,20 +134,24 @@ def _action_instruction(action: InlineActionType) -> str:
             "Reference the actual column names and settings from the snapshot above. "
             "Keep it concise — one or two paragraphs."
         )
-    if action == "optimise":
+    if action == "add_description":
         return (
-            "Suggest concrete optimisations for this node — performance, readability, "
-            "or correctness. Reference actual column names and settings from the snapshot above. "
-            "Each suggestion should be specific enough that a developer can act on it; "
-            "if the node is already in good shape, say so explicitly."
-        )
-    if action == "document":
-        return (
-            "Write a short, user-facing description for this node suitable for the "
-            "node's `description` field. One to three sentences explaining what the "
-            "node does and why someone reading the flow should care. Reference real "
-            "column names and settings from the snapshot above. Output the description "
-            "text only — no headings, no fences, no preamble."
+            "Write a single sentence for this node's `description` field. "
+            "Use imperative voice (verb-first), reference the key column "
+            "names and settings from the snapshot above, and aim for 5–15 "
+            "words. Do not start with \"This node\", do not explain why "
+            "the node exists, do not add commentary or surrounding quotes.\n\n"
+            "Good examples:\n"
+            "- Filter orders to status='shipped' and region='EU'.\n"
+            "- Join customers with orders on customer_id.\n"
+            "- Aggregate revenue by month and product_category.\n"
+            "- Read sales.csv from the data lake.\n\n"
+            "Bad (do not produce):\n"
+            "- This node filters the dataset to focus on shipped EU orders, "
+            "which helps analysts… (too long, explains why)\n"
+            "- A filter operation. (too vague — name the columns and condition)\n\n"
+            "Output the description sentence only — no headings, no fences, "
+            "no preamble, no surrounding quotes."
         )
     if action == "regenerate_code":
         return (
@@ -160,15 +161,6 @@ def _action_instruction(action: InlineActionType) -> str:
             "fenced code block matching the node's language; one short paragraph above "
             "the block can describe the change. The user will copy-paste the snippet "
             "into the editor manually — do not propose graph mutations."
-        )
-    if action == "suggest_filters":
-        return (
-            "Suggest 3 to 5 useful filter conditions for the upstream data. Reference "
-            "actual column names and types from the snapshot above. For each suggestion, "
-            "give: a one-line description of what it removes/keeps, and the corresponding "
-            'Polars expression in a fenced code block (e.g. `pl.col("X") > 0`). Do not '
-            "propose graph mutations; the user will paste the chosen expression into the "
-            "filter node's settings manually."
         )
     # Unreachable — Pydantic rejects unknown literals at the boundary.
     raise HTTPException(status_code=422, detail=f"Unknown action {action!r}")

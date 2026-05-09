@@ -871,6 +871,46 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     const settings = await FlowApi.getFlowSettings(flowStore.flowId);
     const name = settings?.name?.trim() || undefined;
     await aiStore.generateDocumentation(flowStore.flowId, name);
+  } else if (actionId === "add-descriptions-all") {
+    // Bulk variant of the per-node ✨ "Add description" action. Confirms
+    // first since each node is a separate LLM call (cost + time scale
+    // linearly with N), then streams them sequentially through the quiet
+    // ai-store path that writes straight to node.setting_input.description
+    // without flooding the chat drawer.
+    if (flowStore.flowId === null) return;
+    const allNodes = instance.getNodes.value;
+    if (allNodes.length === 0) {
+      ElMessage.info("No nodes on the canvas.");
+      return;
+    }
+    try {
+      await ElMessageBox.confirm(
+        `Generate AI descriptions for all ${allNodes.length} node${allNodes.length === 1 ? "" : "s"}? Existing descriptions will be replaced.`,
+        "Add description to all nodes",
+        {
+          confirmButtonText: "Generate",
+          cancelButtonText: "Cancel",
+          type: "warning",
+        },
+      );
+    } catch {
+      return;
+    }
+    const nodeIds = allNodes.map((n) => Number(n.id)).filter((id) => Number.isFinite(id));
+    ElMessage.info(
+      `Generating descriptions for ${nodeIds.length} node${nodeIds.length === 1 ? "" : "s"}…`,
+    );
+    const { succeeded, failed, aborted } = await aiStore.runBulkAddDescriptions(
+      flowStore.flowId,
+      nodeIds,
+    );
+    if (aborted) {
+      ElMessage.warning(`Aborted. Updated ${succeeded} of ${nodeIds.length}.`);
+    } else if (failed === 0) {
+      ElMessage.success(`Updated ${succeeded} description${succeeded === 1 ? "" : "s"}.`);
+    } else {
+      ElMessage.warning(`Updated ${succeeded} of ${nodeIds.length} (${failed} failed).`);
+    }
   } else if (actionId === "ask-lineage") {
     // W51 — whole-flow lineage Q&A.
     if (flowStore.flowId === null) return;

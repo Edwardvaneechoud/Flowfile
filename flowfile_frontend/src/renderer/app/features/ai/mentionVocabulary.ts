@@ -215,6 +215,27 @@ export function buildRefCandidates(
   return [...prefixHits, ...substringHits, ...idHits];
 }
 
+// Regex that captures every well-formed `@…` token in a string. Mirrors
+// the four kinds the W22 backend parser understands; the negative-word
+// lookbehind matches `detectActiveTrigger`'s boundary rule so
+// `email@selection.com` doesn't pick up a false hit.
+const MENTION_PATTERN_RE =
+  /(?<!\w)@(?:flow|selection|(?:node|schema):(?:"[^"]*"|'[^']*'|[\w\-.]+))/g;
+
+/**
+ * Extract every well-formed `@…` token from `text`.
+ *
+ *   • bare:  `@flow`, `@selection`
+ *   • ref:   `@node:<ref>`, `@schema:<ref>` (quoted or unquoted)
+ *
+ * Used by the chat send path to forward the user's intent to the backend
+ * as the `mentions` field of `ChatStreamRequest` — without this, the
+ * backend can't tell `@selection` apart from a plain `@flow` send.
+ */
+export function parseMentions(text: string): string[] {
+  return text.match(MENTION_PATTERN_RE) ?? [];
+}
+
 /**
  * Render the literal text that should replace the trigger span when
  * the user picks `candidate`. Names containing whitespace are

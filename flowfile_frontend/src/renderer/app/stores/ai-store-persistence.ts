@@ -51,8 +51,8 @@ export interface PersistedAiState {
    * ``autoPromote`` — pre-W58-round-7 entries don't carry the field. */
   agentModeAccepted?: boolean | null;
   /** W71 v1.9 — user-selected agent surface ("agent" / "agent_complex" /
-   * "agent_staged"). Optional / nullable so pre-v1.9 entries fall
-   * through to the store's default (``"agent_staged"``). */
+   * "agent_staged" / "agent_live"). Optional / nullable so pre-v1.9 entries
+   * fall through to the store's default (``"agent_live"``). */
   selectedAgentSurface?: PersistedAgentSurface | null;
   /** W71 v2.12 — opt-in verify-completion gate. Persisted so the
    * preference survives reloads and flow switches. Optional /

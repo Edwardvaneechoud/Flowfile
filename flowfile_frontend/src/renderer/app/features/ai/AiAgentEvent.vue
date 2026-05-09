@@ -258,9 +258,7 @@ const isPlanStage = computed<boolean>(() => {
   return meta === "plan";
 });
 
-const planRationale = computed<string>(() =>
-  _str(props.event.payload ?? {}, "rationale"),
-);
+const planRationale = computed<string>(() => _str(props.event.payload ?? {}, "rationale"));
 
 const planHtml = computed<string>(() => {
   if (!isPlanStage.value) return "";

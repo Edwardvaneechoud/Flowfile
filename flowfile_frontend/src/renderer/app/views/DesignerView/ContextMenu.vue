@@ -50,6 +50,11 @@ const getMenuActions = () => {
       icon: "📝",
     });
     baseActions.push({
+      id: "add-descriptions-all",
+      label: "Add description to all nodes",
+      icon: "✨",
+    });
+    baseActions.push({
       id: "ask-lineage",
       label: "Ask about lineage…",
       icon: "🔎",

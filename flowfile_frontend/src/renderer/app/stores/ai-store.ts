@@ -28,6 +28,7 @@ import {
   type InlineActionType,
   type RouteHistoryEntry,
 } from "../api/ai.api";
+import { parseMentions } from "../features/ai/mentionVocabulary";
 import type { AiProvider } from "../views/AiProvidersView/aiProviderTypes";
 import { useAiAgentStore } from "./ai-agent-store";
 import {
@@ -37,6 +38,7 @@ import {
 } from "./ai-store-persistence";
 import { useEditorStore } from "./editor-store";
 import { useFlowStore } from "./flow-store";
+import { useNodeStore } from "./node-store";
 
 export type ChatRole = "user" | "assistant";
 
@@ -145,15 +147,13 @@ export const useAiStore = defineStore("ai", () => {
   const selectedProvider = ref<string | null>(null);
   const selectedModel = ref<string | null>(null);
 
-  // W71 v1.9 — user-selectable agent surface. Defaults to ``agent_staged``
-  // (v1's locked decision) but exposed in the UI as a third picker
-  // alongside provider / model so users can opt into the legacy
-  // two-stage ``agent`` or single-shot ``agent_complex`` surfaces
-  // without editing code. The store-side getter / setter mirrors the
-  // model picker pattern; the UI control lives in
-  // ``AiAssistant.vue:header``. Persisted alongside the other AI
-  // selections via ``ai-store-persistence``.
-  const selectedAgentSurface = ref<"agent_complex" | "agent_staged" | "agent_live">("agent_staged");
+  // W71 v1.9 — user-selectable agent surface. Defaults to ``agent_live``
+  // so the REPL-style canvas-mutating surface is what new sessions
+  // get; users can switch to ``agent_staged`` (multi-stage planner) or
+  // ``agent_complex`` (single-shot full catalog) via the settings
+  // popover. Persisted alongside the other AI selections via
+  // ``ai-store-persistence``.
+  const selectedAgentSurface = ref<"agent_complex" | "agent_staged" | "agent_live">("agent_live");
 
   // W71 v2.12 — opt-in verify-completion gate. When true, after
   // classify picks ``op_kind="other"`` the agent runs one extra
@@ -365,7 +365,7 @@ export const useAiStore = defineStore("ai", () => {
       // W71 v1.9 — selectedAgentSurface is a per-flow session
       // preference (matches autoPromote semantics). Fall back to the
       // store's default when the flow has no persisted value.
-      selectedAgentSurface.value = loaded.selectedAgentSurface ?? "agent_staged";
+      selectedAgentSurface.value = loaded.selectedAgentSurface ?? "agent_live";
       // W71 v2.12 — verifyPlanCompletion is per-flow alongside the
       // surface picker. Falls back to off (default) when the
       // incoming flow has no persisted value.
@@ -532,6 +532,26 @@ export const useAiStore = defineStore("ai", () => {
     const flowStore = useFlowStore();
     const activeFlowId = flowStore.flowId ?? null;
 
+    // W24 — forward the user's `@`-mentions and the canvas selection so
+    // the backend's `render_prompt_context` pins the right subgraph
+    // instead of silently defaulting to `@flow`. Mirrors the agent
+    // path's `_readCanvasSelection` (ai-agent-store.ts:58-68).
+    let lastUserText = "";
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      if (messages.value[i].role === "user") {
+        lastUserText = messages.value[i].content;
+        break;
+      }
+    }
+    const parsedMentions = parseMentions(lastUserText);
+
+    const vfInstance = flowStore.vueFlowInstance;
+    const selectedRefs = vfInstance?.getSelectedNodes?.value ?? [];
+    type SelNode = { id: string; data?: { id?: number | string } };
+    const selectedNodeIds = (selectedRefs as SelNode[])
+      .map((n) => Number(n.data?.id ?? n.id))
+      .filter((id) => Number.isFinite(id));
+
     activeAbort = new AbortController();
     let sawErrorEvent = false;
     try {
@@ -541,6 +561,8 @@ export const useAiStore = defineStore("ai", () => {
           model: selectedModel.value,
           messages: wireMessages,
           flow_id: activeFlowId,
+          selected_node_ids: selectedNodeIds.length > 0 ? selectedNodeIds : null,
+          mentions: parsedMentions.length > 0 ? parsedMentions : null,
         },
         {
           onChunk: (delta) => {
@@ -652,7 +674,7 @@ export const useAiStore = defineStore("ai", () => {
       flow_id: flowId,
       prompt: enrichedPrompt,
       // W71 v1.9 — auto-promote-from-chat (W58) honors the user's
-      // selected agent surface (defaults to ``agent_staged``). The
+      // selected agent surface (defaults to ``agent_live``). The
       // direct agent-mode toggle in ``AiAssistant.vue`` reads the same
       // ref so both dispatch paths stay consistent.
       surface: selectedAgentSurface.value,
@@ -1111,6 +1133,17 @@ export const useAiStore = defineStore("ai", () => {
           onDone: () => {
             reactivePlaceholder.pending = false;
             streamingState.value = "idle";
+            if (action === "add_description") {
+              const generated = reactivePlaceholder.content.trim();
+              if (generated) {
+                useNodeStore()
+                  .setNodeDescription(nodeId, generated)
+                  .catch(() => {
+                    // node-store already logs; the streamed text remains
+                    // visible in the chat so the user can copy-paste as a fallback.
+                  });
+              }
+            }
           },
           onError: (message) => {
             sawErrorEvent = true;
@@ -1145,6 +1178,101 @@ export const useAiStore = defineStore("ai", () => {
     } finally {
       activeAbort = null;
     }
+  };
+
+  const runBulkAddDescriptions = async (
+    flowId: number,
+    nodeIds: readonly number[],
+  ): Promise<{ succeeded: number; failed: number; aborted: boolean }> => {
+    // Canvas right-click "Add description to all nodes" entry point.
+    // Quiet bulk variant of runInlineAction: streams the add_description
+    // action sequentially per node WITHOUT pushing synthetic user/assistant
+    // pairs into the chat drawer (would flood it with N message pairs for
+    // N nodes). Each completed stream is written to the node's description
+    // field via nodeStore.setNodeDescription, the same path the per-node
+    // ✨ menu uses.
+    let succeeded = 0;
+    let failed = 0;
+    let aborted = false;
+
+    if (selectedProvider.value === null) {
+      streamError.value = "Pick a provider first.";
+      streamingState.value = "error";
+      return { succeeded, failed: nodeIds.length, aborted: false };
+    }
+
+    const nodeStoreRef = useNodeStore();
+
+    for (const nodeId of nodeIds) {
+      if (streamingState.value === "streaming") {
+        // Defensive: another stream slipped in. Bail rather than trample.
+        break;
+      }
+
+      let buffer = "";
+      let stopped = false;
+      let iterationAborted = false;
+
+      activeAbort = new AbortController();
+      streamingState.value = "streaming";
+      streamError.value = null;
+
+      try {
+        await streamInlineAction(
+          {
+            flow_id: flowId,
+            node_id: nodeId,
+            action: "add_description",
+            provider: selectedProvider.value,
+            model: selectedModel.value,
+          },
+          {
+            onChunk: (delta) => {
+              buffer += delta;
+            },
+            onDone: () => {},
+            onError: () => {
+              stopped = true;
+            },
+          },
+          activeAbort.signal,
+        );
+      } catch (err) {
+        stopped = true;
+        if (err instanceof DOMException && err.name === "AbortError") {
+          iterationAborted = true;
+        }
+      } finally {
+        activeAbort = null;
+        streamingState.value = "idle";
+      }
+
+      if (stopped) {
+        failed += 1;
+        if (iterationAborted) {
+          // User explicitly aborted via abortStream(); honour it across
+          // the remaining queued nodes rather than silently grinding on.
+          aborted = true;
+          break;
+        }
+        continue;
+      }
+
+      const generated = buffer.trim();
+      if (!generated) {
+        failed += 1;
+        continue;
+      }
+
+      try {
+        await nodeStoreRef.setNodeDescription(nodeId, generated);
+        succeeded += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+
+    return { succeeded, failed, aborted };
   };
 
   const askLineageQuestion = async (
@@ -1290,6 +1418,7 @@ export const useAiStore = defineStore("ai", () => {
     explainRunFailure,
     generateDocumentation,
     runInlineAction,
+    runBulkAddDescriptions,
     askLineageQuestion,
     setMode,
     dismissPromotionBanner,
@@ -1314,13 +1443,9 @@ const inlineActionUserPrompt = (action: InlineActionType, headline: string): str
   switch (action) {
     case "explain":
       return `Explain ${headline}.`;
-    case "optimise":
-      return `Suggest optimisations for ${headline}.`;
-    case "document":
-      return `Write a description for ${headline}.`;
+    case "add_description":
+      return `Add description to ${headline}.`;
     case "regenerate_code":
       return `Regenerate the code in ${headline}.`;
-    case "suggest_filters":
-      return `Suggest filters for ${headline}.`;
   }
 };

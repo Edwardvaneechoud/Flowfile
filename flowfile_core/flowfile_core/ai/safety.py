@@ -432,6 +432,8 @@ RefusalReason = Literal[
     "upstream_is_sink",
     "join_wire_invalid",
     "writer_blocked",
+    "polars_code_import_forbidden",
+    "polars_code_validation",
 ]
 
 

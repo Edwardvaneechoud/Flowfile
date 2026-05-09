@@ -1,16 +1,19 @@
 <script setup lang="ts">
 // AI Inline Actions menu (W21). Rendered inside an <el-popover> from
 // genericNodeSettings.vue's header. Each menu item triggers a single-shot
-// streaming AI call (Explain / Optimise / Document / Regenerate code /
-// Suggest filters) and pipes the response into the W20 chat drawer.
+// streaming AI call (Explain / Add description / Regenerate code) and
+// pipes the response into the W20 chat drawer.
 //
-// Read-only by construction — the backend passes ``tools=None`` to the
-// provider's ``stream()`` so no graph mutation can happen here. The
-// "Regenerate code" item emits a code snippet to the drawer for the user
-// to copy-paste manually; direct application is W31 / W41 / W35 territory.
+// Read-only by construction at the streaming layer — the backend passes
+// ``tools=None`` to the provider's ``stream()`` so no graph mutation can
+// happen via the LLM. The "Regenerate code" item emits a code snippet to
+// the drawer for the user to copy-paste manually. The "Add description"
+// item additionally writes the streamed text into ``node.setting_input
+// .description`` after ``onDone`` fires, via the existing
+// ``nodeStore.setNodeDescription()`` Pinia action — direct LLM-tool
+// application of arbitrary settings is still W31 / W41 / W35 territory.
 
 import { computed } from "vue";
-import { MagicStick } from "@element-plus/icons-vue";
 
 import { useAiStore } from "../../stores/ai-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -55,25 +58,15 @@ const ACTIONS: readonly ActionItem[] = [
     description: "Plain-language description of what this node does.",
   },
   {
-    action: "optimise",
-    label: "Optimise",
-    description: "Concrete suggestions for performance / clarity.",
-  },
-  {
-    action: "document",
-    label: "Document",
-    description: "Write a short description for the node's `description` field.",
+    action: "add_description",
+    label: "Add description",
+    description: "Generate a description and write it to the node's description field.",
   },
   {
     action: "regenerate_code",
     label: "Regenerate code",
     description: "Rewrite the code snippet, preserving the schema.",
     requiresNodeType: CODE_BEARING_NODE_TYPES,
-  },
-  {
-    action: "suggest_filters",
-    label: "Suggest filters",
-    description: "Useful filter conditions over the upstream columns.",
   },
 ];
 
@@ -122,9 +115,9 @@ const handlePick = async (action: InlineActionType): Promise<void> => {
 <template>
   <div class="ai-inline-actions" role="menu">
     <div class="ai-inline-actions__header">
-      <el-icon class="ai-inline-actions__header-icon">
-        <MagicStick />
-      </el-icon>
+      <span class="material-icons ai-inline-actions__header-icon" aria-hidden="true">
+        auto_awesome
+      </span>
       <span class="ai-inline-actions__header-label">AI actions</span>
     </div>
 

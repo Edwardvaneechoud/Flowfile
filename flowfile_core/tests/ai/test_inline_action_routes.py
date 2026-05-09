@@ -9,9 +9,8 @@ Cases:
   ``provider.stream()`` to assert the W22 system prompt + the
   ``## Action: explain`` block + ``tools=None`` all reach the LLM.
 * ``test_inline_action_per_action_user_message_distinct`` — parametrised
-  per action (``explain`` / ``optimise`` / ``document`` /
-  ``suggest_filters``); each carries a distinct instruction phrase
-  verbatim in the user message.
+  per action (``explain`` / ``add_description``); each carries a
+  distinct instruction phrase verbatim in the user message.
 * ``test_regenerate_code_requires_code_bearing_node`` — ``regenerate_code``
   on a filter node returns 422 with "code-bearing" in the detail.
 * ``test_regenerate_code_on_polars_code_node_returns_200`` — same
@@ -296,11 +295,9 @@ def test_inline_action_emits_provider_chunks(
     "action, expected_phrase",
     [
         ("explain", "Explain in plain language"),
-        ("optimise", "Suggest concrete optimisations"),
-        ("document", "Write a short, user-facing description"),
-        ("suggest_filters", "Suggest 3 to 5 useful filter conditions"),
+        ("add_description", "Write a single sentence"),
     ],
-    ids=["explain", "optimise", "document", "suggest_filters"],
+    ids=["explain", "add_description"],
 )
 def test_inline_action_per_action_user_message_distinct(
     authed_client: TestClient,
@@ -591,7 +588,7 @@ def test_inline_action_samples_mode_forwarded(
 
 @pytest.mark.parametrize(
     "action",
-    ["explain", "optimise", "document", "suggest_filters"],
+    ["explain", "add_description"],
 )
 def test_inline_action_tools_none_invariant(
     authed_client: TestClient,

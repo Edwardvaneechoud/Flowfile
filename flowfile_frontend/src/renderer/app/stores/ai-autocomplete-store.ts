@@ -21,6 +21,7 @@ import {
   JoinKeyAutocompleteRequest,
   JoinKeySuggestionsResponse,
 } from "../api/ai.api";
+import { useAiStore } from "./ai-store";
 
 const isAbortError = (err: unknown): boolean => {
   if (err instanceof DOMException && err.name === "AbortError") return true;
@@ -57,12 +58,32 @@ export const useAiAutocompleteStore = defineStore("aiAutocomplete", () => {
     return c;
   };
 
+  // Inject the user's chat provider / model when the caller didn't
+  // pin one. Without this, a body with no ``provider`` field falls
+  // through to the route's default and 409s if that default isn't
+  // the user's configured provider — a real failure on 2026-05-09
+  // when the route still defaulted to ``"google"`` for users running
+  // on Anthropic / OpenAI / OpenRouter. The caller's explicit value
+  // (``aiCompletions.ts`` passes one via ``opts.getProvider``) wins;
+  // this only fills the gap when the body omits the field
+  // (``Join.vue`` does).
+  const _withDefaults = <T extends { provider?: string; model?: string | null }>(
+    body: T,
+  ): T => {
+    const aiStore = useAiStore();
+    return {
+      ...body,
+      provider: body.provider ?? aiStore.selectedProvider ?? undefined,
+      model: body.model ?? aiStore.selectedModel ?? undefined,
+    };
+  };
+
   const getFormulaSuggestions = async (
     body: FormulaAutocompleteRequest,
   ): Promise<FormulaSuggestionsResponse | null> => {
     const controller = _replaceController();
     try {
-      const result = await fetchFormulaSuggestions(body, controller.signal);
+      const result = await fetchFormulaSuggestions(_withDefaults(body), controller.signal);
       lastError.value = null;
       aiDisabled.value = false;
       return result;
@@ -87,7 +108,7 @@ export const useAiAutocompleteStore = defineStore("aiAutocomplete", () => {
   ): Promise<JoinKeySuggestionsResponse | null> => {
     const controller = _replaceController();
     try {
-      const result = await fetchJoinKeySuggestions(body, controller.signal);
+      const result = await fetchJoinKeySuggestions(_withDefaults(body), controller.signal);
       lastError.value = null;
       aiDisabled.value = false;
       return result;

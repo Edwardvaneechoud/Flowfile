@@ -34,6 +34,12 @@ const router = useRouter();
 const settingsOpen = ref(false);
 const settingsAnchorRef = ref<HTMLElement | null>(null);
 
+// Info popover — shows AI use cases / tips. Mutually exclusive with
+// the settings popover (opening one closes the other). Same dismiss
+// rules: outside-click + Esc.
+const infoOpen = ref(false);
+const infoAnchorRef = ref<HTMLElement | null>(null);
+
 const composerText = ref("");
 const composerTextarea = ref<HTMLTextAreaElement | null>(null);
 const messageContainerRef = ref<HTMLElement | null>(null);
@@ -151,6 +157,30 @@ watch(
   () => scrollToBottom(),
 );
 
+// Agent-side scroll triggers. Agent events stream into agentStore.events
+// (separate from aiStore.messages), so the watchers above never fire
+// during an agent run. Track count + status here, plus a deep watch for
+// streaming payload updates within an event (e.g., a thinking event's
+// text accumulating tokens).
+watch(
+  () => agentStore.events.length,
+  () => scrollToBottom(),
+);
+
+watch(
+  () => agentStore.events,
+  () => scrollToBottom(),
+  { deep: true },
+);
+
+// Status flips drive the thinking placeholder bubble (visible while
+// running). Both its appearance and disappearance change scrollHeight,
+// so re-anchor to bottom on either edge.
+watch(
+  () => isAgentRunning.value,
+  () => scrollToBottom(),
+);
+
 onMounted(async () => {
   try {
     await aiStore.loadProviders();
@@ -177,11 +207,10 @@ const handleAgentSurfaceChange = (event: Event): void => {
   // ``.value`` is type-safe.
   const target = event.target as HTMLInputElement;
   const value = target.value;
-  // W71 v1.10 — legacy "agent" surface removed; agent_staged
-  // (default) and agent_complex (single-shot full catalog) are
-  // the original options.
-  // W71 v2.0 — agent_live is the third option: REPL-style with
-  // real-time execution after each step.
+  // Three surfaces are user-selectable:
+  //   - agent_live (default) — REPL-style; applies each step live.
+  //   - agent_staged — multi-stage planner; reviews steps before staging.
+  //   - agent_complex — single-shot full catalog.
   if (value === "agent_complex" || value === "agent_staged" || value === "agent_live") {
     aiStore.setSelectedAgentSurface(value);
   }
@@ -338,24 +367,38 @@ const modeTooltip = computed<string>(() => {
 
 const toggleSettings = (): void => {
   settingsOpen.value = !settingsOpen.value;
+  if (settingsOpen.value) infoOpen.value = false;
 };
 
-// Outside-click + Esc dismiss for the settings popover. The handler
-// gates on `settingsOpen` so we're not paying for a document listener
-// when it's not needed; mounted/unmounted to clean up properly.
+const toggleInfo = (): void => {
+  infoOpen.value = !infoOpen.value;
+  if (infoOpen.value) settingsOpen.value = false;
+};
+
+// Outside-click + Esc dismiss for both popovers. Each branch checks
+// containment against its own anchor wrapper so a click on the gear
+// button doesn't immediately close the settings popover it just opened.
 const handleDocumentClick = (event: MouseEvent): void => {
-  if (!settingsOpen.value) return;
   const target = event.target as Node | null;
   if (target === null) return;
-  const wrapper = settingsAnchorRef.value;
-  if (wrapper && wrapper.contains(target)) return;
-  settingsOpen.value = false;
+  if (settingsOpen.value) {
+    const wrapper = settingsAnchorRef.value;
+    if (!wrapper || !wrapper.contains(target)) {
+      settingsOpen.value = false;
+    }
+  }
+  if (infoOpen.value) {
+    const wrapper = infoAnchorRef.value;
+    if (!wrapper || !wrapper.contains(target)) {
+      infoOpen.value = false;
+    }
+  }
 };
 
 const handleDocumentKeydown = (event: KeyboardEvent): void => {
-  if (settingsOpen.value && event.key === "Escape") {
-    settingsOpen.value = false;
-  }
+  if (event.key !== "Escape") return;
+  if (settingsOpen.value) settingsOpen.value = false;
+  if (infoOpen.value) infoOpen.value = false;
 };
 
 const handleAgentResumeDiscard = async (): Promise<void> => {
@@ -588,11 +631,102 @@ const timelineItems = computed<TimelineItem[]>(() => {
   }
   return grouped;
 });
+
+// Show the standalone thinking placeholder only when the agent is
+// running AND the most recent timeline item is not yet an agent_run —
+// i.e. the user just sent the prompt but no events have arrived. Once
+// the first event lands, AiAgentRun gets `is-running` and renders the
+// dots inside its own card, so we hide this one to avoid two indicators.
+const showStandaloneThinking = computed<boolean>(() => {
+  if (!isAgentRunning.value) return false;
+  const items = timelineItems.value;
+  const last = items[items.length - 1];
+  return !last || last.kind !== "agent_run";
+});
 </script>
 
 <template>
   <div class="ai-assistant">
     <header class="ai-assistant__header">
+      <!-- Info popover — surfaces use-case examples and keyboard tips.
+           Anchored to the circle-info button on the left of the
+           toolbar; mutually exclusive with the settings popover. -->
+      <div ref="infoAnchorRef" class="ai-assistant__info-wrapper">
+        <button
+          v-if="!isDisabledByFlag"
+          type="button"
+          class="ai-assistant__info-btn"
+          :class="{ 'is-open': infoOpen }"
+          aria-haspopup="dialog"
+          :aria-expanded="infoOpen"
+          aria-label="About the AI assistant"
+          title="About the AI assistant"
+          @click.stop="toggleInfo"
+        >
+          <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+        </button>
+        <div
+          v-if="infoOpen"
+          class="ai-assistant__info-popover"
+          role="dialog"
+          aria-label="AI assistant use cases"
+        >
+          <div class="ai-assistant__info-section">
+            <h4 class="ai-assistant__info-heading">About</h4>
+            <p class="ai-assistant__info-paragraph">
+              Chat about your data and canvas, or describe a change and the assistant proposes graph
+              edits for you to review.
+            </p>
+          </div>
+          <div class="ai-assistant__info-section">
+            <h4 class="ai-assistant__info-heading">Modes</h4>
+            <ul class="ai-assistant__info-list">
+              <li><strong>Chat</strong> — Q&amp;A only; never modifies the canvas.</li>
+              <li>
+                <strong>Auto-agent</strong> (default) — chats; auto-promotes to the agent when you
+                describe a build.
+              </li>
+              <li>
+                <strong>Agent</strong> — every send runs the agent and proposes graph changes.
+              </li>
+            </ul>
+            <p class="ai-assistant__info-note">
+              Agent variant (Staged / Single-shot / Live) is in <strong>Settings</strong>.
+            </p>
+          </div>
+          <div class="ai-assistant__info-section">
+            <h4 class="ai-assistant__info-heading">Mention with @</h4>
+            <ul class="ai-assistant__info-list">
+              <li><code>@flow</code> — the whole graph</li>
+              <li><code>@name</code> or <code>@id</code> — a specific node</li>
+            </ul>
+          </div>
+          <div class="ai-assistant__info-section">
+            <h4 class="ai-assistant__info-heading">Try asking</h4>
+            <ul class="ai-assistant__info-list">
+              <li>"Group by city, count unique customers"</li>
+              <li>"Filter to the last 30 days"</li>
+              <li>"What columns have nulls?"</li>
+              <li>"Why is this filter dropping all rows?"</li>
+              <li>"Explain what this formula does"</li>
+            </ul>
+          </div>
+          <div class="ai-assistant__info-section">
+            <h4 class="ai-assistant__info-heading">Tips</h4>
+            <ul class="ai-assistant__info-list">
+              <li><kbd>↑</kbd> in the composer recalls your last prompt.</li>
+              <li>
+                Chat history is per-flow and persists across reloads. Switching flows is automatic —
+                no need to clear.
+              </li>
+              <li>
+                <strong>Clear</strong> wipes this flow's history. Use it when switching tasks so
+                earlier context doesn't bleed into the next question.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
       <!-- 2026-05-09 — provider / model / agent-variant pickers moved
            into a popover behind this gear button so the header stays
            compact in steady state. The popover anchors to the wrapper
@@ -675,10 +809,10 @@ const timelineItems = computed<TimelineItem[]>(() => {
                 @change="handleAgentSurfaceChange"
               />
               <span class="ai-assistant__settings-radio-body">
-                <span class="ai-assistant__settings-radio-name">Staged (default)</span>
+                <span class="ai-assistant__settings-radio-name">Staged</span>
                 <span class="ai-assistant__settings-radio-desc">
                   Multi-stage planner. Reviews each step before staging. Reliable on small / local
-                  models. Recommended.
+                  models.
                 </span>
               </span>
             </label>
@@ -712,7 +846,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
                 <span class="ai-assistant__settings-radio-name">Live (REPL)</span>
                 <span class="ai-assistant__settings-radio-desc">
                   Applies each step live to the canvas, runs the affected subgraph, retries on
-                  failure. Experimental — every step commits immediately, no staged diff.
+                  failure. Every step commits immediately, no staged diff.
                 </span>
               </span>
             </label>
@@ -732,9 +866,9 @@ const timelineItems = computed<TimelineItem[]>(() => {
               <span class="ai-assistant__settings-radio-body">
                 <span class="ai-assistant__settings-radio-name">Verify plan completion</span>
                 <span class="ai-assistant__settings-radio-desc">
-                  After the agent finishes, double-check that every plan step was applied. Adds
-                  one LLM round per agent run. Useful when multi-step plans (e.g. add a node
-                  mid-flow plus the rewires) sometimes terminate after step 1.
+                  After the agent finishes, double-check that every plan step was applied. Adds one
+                  LLM round per agent run. Useful when multi-step plans (e.g. add a node mid-flow
+                  plus the rewires) sometimes terminate after step 1.
                 </span>
               </span>
             </label>
@@ -811,16 +945,6 @@ const timelineItems = computed<TimelineItem[]>(() => {
             Keep this as chat instead
           </button>
         </div>
-      </div>
-      <div
-        v-if="agentStore.status === 'awaiting_user_input'"
-        class="ai-assistant__awaiting-banner"
-        role="status"
-      >
-        <span class="ai-assistant__awaiting-icon">💬</span>
-        <span class="ai-assistant__awaiting-text">
-          Agent is waiting for your reply — type below and Send to continue the same session.
-        </span>
       </div>
       <!-- W71 v2.3 — post-agent_live layout-reorganize prompt.
            agent_live commits each step to the canvas live; on a
@@ -965,14 +1089,18 @@ const timelineItems = computed<TimelineItem[]>(() => {
         </div>
         <template v-for="(item, idx) in timelineItems" :key="`${item.kind}-${item.at}-${idx}`">
           <AiMessage v-if="item.kind === 'message'" :message="item.data" />
-          <AiAgentRun v-else :events="item.events" />
+          <AiAgentRun
+            v-else
+            :events="item.events"
+            :is-running="isAgentRunning && idx === timelineItems.length - 1"
+          />
         </template>
-        <!-- Agent thinking placeholder — shown whenever the agent is
-             running. Sits at the end of the timeline so it stays
-             visible as events stream in above it; disappears when
-             the run completes. The chat (assistant) thinking state
-             is handled inline by AiMessage. -->
-        <div v-if="isAgentRunning" class="ai-assistant__thinking">
+        <!-- Standalone thinking bubble — shown only while the agent is
+             running AND no agent_run card has appeared yet (i.e. before
+             the first event arrives). Once events stream in, the
+             dots move *inside* the active run's card so the user
+             doesn't see two separate "the agent is busy" indicators. -->
+        <div v-if="showStandaloneThinking" class="ai-assistant__thinking">
           <AiAvatar size="md" />
           <span class="ai-assistant__thinking-role">Agent</span>
           <AiThinkingDots label="Agent is thinking" />
@@ -1408,6 +1536,129 @@ const timelineItems = computed<TimelineItem[]>(() => {
   color: var(--color-text-inverse, #ffffff);
 }
 
+/* Info popover (circle-info button → use cases + tips). The whole
+   toolbar cluster is right-aligned, so anchoring `right: 0` makes the
+   popover extend leftward into the drawer body instead of off the
+   right edge. Same posture as the settings popover. */
+.ai-assistant__info-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.ai-assistant__info-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background-color: transparent;
+  color: var(--color-text-tertiary, #a0aec0);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition:
+    background-color var(--transition-fast, 120ms ease),
+    color var(--transition-fast, 120ms ease),
+    border-color var(--transition-fast, 120ms ease);
+}
+
+.ai-assistant__info-btn:hover {
+  background-color: var(--color-background-secondary, #f8f9fa);
+  border-color: var(--color-border-primary, #e2e8f0);
+  color: var(--color-text-primary, #1a1a2e);
+}
+
+.ai-assistant__info-btn.is-open {
+  border-color: var(--color-accent-purple, #667eea);
+  color: var(--color-accent-purple, #667eea);
+  background-color: var(--color-background-primary, #ffffff);
+}
+
+.ai-assistant__info-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 360px;
+  max-width: 420px;
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-primary, #e1e4e8);
+  background-color: var(--color-background-primary, #ffffff);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.12));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-assistant__info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-assistant__info-heading {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-tertiary, #6b7280);
+}
+
+.ai-assistant__info-paragraph {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-primary, #24292e);
+  line-height: 1.5;
+}
+
+.ai-assistant__info-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary, #a0aec0);
+  line-height: 1.4;
+  font-style: italic;
+}
+
+.ai-assistant__info-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-assistant__info-list li {
+  font-size: 12px;
+  color: var(--color-text-secondary, #4a5568);
+  line-height: 1.5;
+}
+
+.ai-assistant__info-list code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background-color: var(--color-background-tertiary, #f1f3f5);
+  color: var(--color-text-primary, #24292e);
+}
+
+.ai-assistant__info-list kbd {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-primary, #e2e8f0);
+  background-color: var(--color-background-primary, #ffffff);
+  color: var(--color-text-primary, #24292e);
+  box-shadow: 0 1px 0 var(--color-border-primary, #e2e8f0);
+}
+
 /* 2026-05-09 — settings popover (gear button → provider / model /
    agent-variant). Anchors to the wrapper in the header so it floats
    below the gear without affecting layout flow. */
@@ -1583,27 +1834,6 @@ const timelineItems = computed<TimelineItem[]>(() => {
 /* W40 — agent-mode toggle removed 2026-05-09 (replaced by the unified
    mode dropdown in the composer). Drift banner + event list classes
    remain below. */
-
-.ai-assistant__awaiting-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  margin: 0 0 8px 0;
-  background-color: var(--color-info-soft, #e3f2fd);
-  border: 1px solid var(--color-info, #2196f3);
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--color-info-text, #0d47a1);
-}
-
-.ai-assistant__awaiting-icon {
-  font-size: 14px;
-}
-
-.ai-assistant__awaiting-text {
-  flex: 1;
-}
 
 /* W71 v1.1 — surface chip. Always renders during an active agent run
    so operators can verify which agent variant is in use. Default

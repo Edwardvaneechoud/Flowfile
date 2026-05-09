@@ -312,6 +312,55 @@ def test_network_egress_refusal(call_kwargs: dict[str, Any], stub_kernel: list[d
     assert flow.get_node(20) is None
 
 
+def test_polars_code_with_import_refuses_with_guidance(
+    call_kwargs: dict[str, Any], stub_kernel: list[dict[str, Any]]
+) -> None:
+    """W71 v2.13 — polars_code bodies that include ``import polars as pl``
+    (or any other ``import``) are rejected with a refusal that names the
+    pre-bound symbols (``pl``, ``col``, ``lit``, dtypes). Without this
+    rejection the agent never sees the parser error: ``flow.add_polars_code``
+    swallows ``polars_code_parser.validate_code``'s ValueError into
+    ``node.results.errors`` and the failure surfaces only at run time.
+
+    Per the user's "only when the AI makes a mistake" constraint, the
+    standing prompt has no mention of the imports rule — the guidance is
+    delivered via this refusal text on the round that emitted the import.
+    """
+    flow = _flow_with_orders()
+    bad_code = (
+        "import polars as pl\n"
+        "output_df = input_df.with_columns(pl.col('amount') * 2)"
+    )
+    settings = input_schema.NodePolarsCode(
+        flow_id=1,
+        node_id=20,
+        depending_on_ids=[1],
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code=bad_code),
+    )
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_polars_code",
+        tool_args=settings.model_dump(mode="json"),
+        insertion_context=InsertionContext(upstream_node_ids=[1]),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "polars_code_import_forbidden"
+    detail = result.refusal_detail or ""
+    detail_lower = detail.lower()
+    # Refusal must say imports aren't allowed AND tell the LLM `pl` is
+    # already there — without those the LLM doesn't know how to fix it.
+    assert "import" in detail_lower
+    assert "already" in detail_lower or "available" in detail_lower
+    assert "``pl``" in detail or "`pl`" in detail
+    # Pre-flight short-circuits BEFORE the dry-run kernel runs — no
+    # kernel call should have fired.
+    assert len(stub_kernel) == 0, "import-rejected code must not reach the kernel"
+    # And the node must NOT have been added to the flow.
+    assert flow.get_node(20) is None
+
+
 # --------------------------------------------------------------------------- #
 # 6. Audit redacts secret refs                                                 #
 # --------------------------------------------------------------------------- #
@@ -1830,3 +1879,81 @@ def test_cross_join_succeeds_with_one_left_and_one_right(call_kwargs: dict[str, 
         join_node.node_inputs.right_input is not None
         and join_node.node_inputs.right_input.node_id == 2
     )
+
+
+# --------------------------------------------------------------------------- #
+# W71 v1.5 — _unwrap_json_string_values: scalar preservation                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_unwrap_preserves_digit_string_for_str_fields() -> None:
+    """W71 v1.5 — `_unwrap_json_string_values` no longer collapses bare
+    numeric strings into ints. Motivated by 2026-05-09 dogfood:
+    `BasicFilter.value` (a `str` field) was being corrupted from "1"
+    into 1, causing Pydantic to reject the LLM's correct payload with
+    a misleading "got int" error. Pydantic v2 lax mode handles
+    `str → int` coercion natively for int-typed fields, so the unwrap
+    stays useful for containers but no longer fights with str-typed
+    fields that happen to hold numeric content.
+    """
+    from flowfile_core.ai.tools.executor import _unwrap_json_string_values
+
+    # Bare scalar digit strings preserved verbatim — the bug fix.
+    assert _unwrap_json_string_values("1") == "1"
+    assert _unwrap_json_string_values("-5") == "-5"
+    assert _unwrap_json_string_values("3.14") == "3.14"
+    assert _unwrap_json_string_values("0") == "0"
+
+    # Container unwrap still works — the cases this heuristic exists for.
+    assert _unwrap_json_string_values("[3, 4]") == [3, 4]
+    assert _unwrap_json_string_values('{"a": 1}') == {"a": 1}
+
+    # Recursive: numeric string nested inside a real dict stays a string.
+    nested = {"filter_input": {"basic_filter": {"value": "1"}}}
+    assert _unwrap_json_string_values(nested) == nested
+
+    # Free-form strings that happen to start with a digit (e.g. column
+    # names like "2024_q1") aren't parsed — json.loads rejects them
+    # cleanly, so they pass through untouched.
+    assert _unwrap_json_string_values("2024_q1") == "2024_q1"
+
+    # Booleans and code bodies still pass through (existing guarantees).
+    assert _unwrap_json_string_values("true") == "true"
+    assert _unwrap_json_string_values("pl.col('x') > 5") == "pl.col('x') > 5"
+
+
+def test_add_filter_basic_numeric_value_accepts_string(call_kwargs: dict[str, Any]) -> None:
+    """W71 v1.5 — `basic_filter.value="1"` survives the executor's unwrap
+    pass and reaches `BasicFilter` validation as a string. Regression
+    test for the 2026-05-09 dogfood: the agent's `email_count > 1`
+    filter was rejected with "got int" because the unwrap heuristic
+    converted the LLM's correct `"1"` string into `int(1)`.
+
+    Uses `customer_id` (Integer) from the orders fixture — the LLM's
+    intent is `customer_id > 1` with the value passed as a string,
+    which is exactly the schema's `BasicFilter.value: str` contract.
+    """
+    flow = _flow_with_orders()
+    tool_args = {
+        "flow_id": flow.flow_id,
+        "node_id": 2,
+        "depending_on_id": 1,
+        "filter_input": {
+            "mode": "basic",
+            "basic_filter": {
+                "field": "customer_id",
+                "operator": "greater_than",
+                "value": "1",
+            },
+        },
+    }
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_filter",
+        tool_args=tool_args,
+        insertion_context=InsertionContext(upstream_node_ids=[1]),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status != "rejected", result.refusal_detail
+    assert "got int" not in (result.refusal_detail or "")

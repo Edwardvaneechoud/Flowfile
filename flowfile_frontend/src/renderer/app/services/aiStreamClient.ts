@@ -158,12 +158,7 @@ export interface GenerateDocumentationRequest {
   max_tokens?: number | null;
 }
 
-export type InlineActionType =
-  | "explain"
-  | "optimise"
-  | "document"
-  | "regenerate_code"
-  | "suggest_filters";
+export type InlineActionType = "explain" | "add_description" | "regenerate_code";
 
 export interface InlineActionRequest {
   flow_id: number;

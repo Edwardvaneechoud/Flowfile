@@ -112,7 +112,16 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "column-level transforms — use 'formula' to derive a new value, or 'select' "
         "to drop columns. Don't use to remove duplicates — use 'unique'. Modes: "
         '"basic" (column op value) and "advanced" (a Polars expression string). '
-        'Example: {"filter_input": {"mode": "advanced", '
+        "Basic-mode operator vocabulary is snake_case (equals, not_equals, "
+        "greater_than, greater_than_or_equals, less_than, less_than_or_equals, "
+        "contains, not_contains, starts_with, ends_with, is_null, is_not_null, "
+        "in, not_in, between) — do NOT use the symbol form (>, <, ==). "
+        "Basic-mode `value` is ALWAYS a JSON string, even for numeric comparisons: "
+        'write "1" not 1, "0.5" not 0.5. Polars handles the str→numeric coercion '
+        "downstream when the column dtype is numeric. "
+        'Basic-mode example: {"filter_input": {"mode": "basic", "basic_filter": '
+        '{"field": "email_count", "operator": "greater_than", "value": "1"}}}. '
+        'Advanced-mode example: {"filter_input": {"mode": "advanced", '
         "\"advanced_filter\": \"pl.col('status') == 'active'\"}}. "
         "Often the first step after 'read' / 'manual_input'."
     ),
@@ -267,16 +276,22 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "Don't use to issue arbitrary Python — use 'python_script' for that. "
         "Don't use for SQL-shaped joins/aggregations — 'sql_query' is clearer. "
         "1-row dry-run (D003) discovers the prospective output schema. "
-        "Often paired with 'flowfile.codegen.generate_polars_code' to author the body."
+        "Often paired with 'flowfile.codegen.generate_polars_code' to author the body. "
+        "``pl`` is already available — do NOT write ``import polars as pl``; "
+        "imports are rejected by the sandbox."
     ),
     "sql_query": (
-        "Run a SQL SELECT against upstream inputs via Polars' embedded SQL engine. "
-        "Use when the user already thinks in SQL or for multi-input queries that "
-        "are clearer expressed as JOINs in SQL than as a chain of 'join' nodes. "
-        "Each upstream input is exposed as a named table. Don't use for write "
+        "Run a SQL SELECT against upstream inputs via Polars' embedded SQL "
+        "engine. Use when the user already thinks in SQL or for multi-input "
+        "queries that are clearer expressed as JOINs in SQL than as a chain "
+        "of 'join' nodes. **Upstream inputs are registered POSITIONALLY as "
+        "``input_1``, ``input_2``, ... — the table name is NEVER the upstream "
+        "node's id, type, or display name. Always write ``FROM input_1`` "
+        "(single upstream) or ``FROM input_1 a JOIN input_2 b ON ...`` "
+        "(multiple upstreams, in connect order).** Don't use for write "
         "operations — Polars SQL is read-only. Don't use for window/CTE-heavy "
-        "queries that aren't supported by Polars SQL; fall back to 'polars_code'. "
-        "1-row dry-run (D003) discovers the output schema. Often paired with "
+        "queries that aren't supported by Polars SQL; fall back to "
+        "'polars_code'. Often paired with "
         "'flowfile.codegen.generate_sql_query' to author the SELECT."
     ),
     "join": (
@@ -659,7 +674,8 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
     "polars_code": (
         "Settings panel: a code editor for the Polars expression body. "
         "The upstream input is available as `input_df`; the script must "
-        "assign to `output_df`. Worked example: 'compute a 30-day rolling "
+        "assign to `output_df`. `pl` is already available — do NOT write "
+        "`import polars as pl`. Worked example: 'compute a 30-day rolling "
         "average per region' → drag 'Polars code' from Transformations, "
         "write `output_df = input_df.with_columns(pl.col('amount').mean()."
         "over('region').alias('avg_30d'))`. Pitfall: the script is not "
@@ -668,14 +684,19 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
     ),
     "sql_query": (
         "Settings panel: a SQL editor under a 'SQL Query' heading. "
-        "Upstream nodes are exposed as named tables (the input names "
-        "come from the connected nodes). Worked example: 'three-way "
-        "join I'd rather write as SQL' → drag 'SQL Query' from "
-        "Transformations, write `SELECT o.*, c.name FROM orders o JOIN "
-        "customers c USING (customer_id) WHERE o.amount > 100`. "
-        "Pitfall: this is Polars' embedded SQL — it's read-only and not "
-        "every PostgreSQL feature works. CTE / window queries that "
-        "fail here usually work in 'Polars code'."
+        "**Upstream inputs are registered POSITIONALLY as ``input_1``, "
+        "``input_2``, ... — the table name is NOT the upstream node's "
+        "id, type, or display name. With one upstream connected, write "
+        "``FROM input_1``; with two, ``FROM input_1`` and "
+        "``JOIN input_2`` (positional, in connect order).** Worked "
+        "example: 'two-way join I'd rather write as SQL' → drag 'SQL "
+        "Query' from Transformations, connect the orders node first "
+        "and the customers node second, then write "
+        "``SELECT o.*, c.name FROM input_1 o JOIN input_2 c USING "
+        "(customer_id) WHERE o.amount > 100``. Pitfall: this is "
+        "Polars' embedded SQL — it's read-only and not every "
+        "PostgreSQL feature works. CTE / window queries that fail "
+        "here usually work in 'Polars code'."
     ),
     "join": (
         "**KEY-BASED join — REQUIRES equality keys (`join_mapping`)**. "

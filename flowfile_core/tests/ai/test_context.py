@@ -1371,6 +1371,54 @@ def test_formula_long_description_leads_with_row_wise_constraint() -> None:
         )
 
 
+def test_filter_long_description_teaches_string_typed_value() -> None:
+    """2026-05-09 — the filter agent docstring must spell out that
+    ``basic_filter.value`` is a JSON string (even for numeric
+    comparisons) and that ``operator`` names are snake_case, not
+    symbols. Both points were missing and led to the "got int"
+    rejection loop on ``email_count > 1``: the LLM emitted ``"value":
+    "1"`` correctly, but the executor's unwrap heuristic was eagerly
+    parsing digit-strings into ints. Even with the unwrap fix in place,
+    the prompt-side nudge prevents the FIRST attempt (which previously
+    sent a raw int) from being wrong.
+    """
+    from flowfile_core.ai.tools.node_docs import NODE_LONG_DESCRIPTIONS
+
+    desc = NODE_LONG_DESCRIPTIONS["filter"]
+
+    # Operator vocabulary nudge — explicit snake_case + negative
+    # example. ``BasicFilter.operator`` accepts ``FilterOperator | str``
+    # so the symbol form passes type-check, but ``from_symbol`` is a
+    # separate conversion path; smaller models drift toward symbols
+    # (the failing chat reply suggested "Operator: >").
+    assert "greater_than" in desc, (
+        "filter long_description must list snake_case operator names "
+        "so the agent doesn't drift to '>' / '<' / '==' shapes."
+    )
+    assert "do NOT" in desc, (
+        "filter long_description must include an explicit negative "
+        "example warning against symbol-form operators."
+    )
+
+    # String-typing imperative — JSON Schema's ``"type": "string"`` is
+    # not enough on its own; smaller models attend prose more reliably.
+    assert "ALWAYS a JSON string" in desc, (
+        "filter long_description must explicitly say `value` is a "
+        "JSON string, even for numeric comparisons."
+    )
+
+    # Basic-mode worked example present (the existing entry only had
+    # an advanced-mode example, which left basic-mode shape implicit).
+    assert '"mode": "basic"' in desc, (
+        "filter long_description must include a basic-mode worked "
+        "example, not only the advanced-mode one."
+    )
+    assert '"value": "1"' in desc, (
+        "filter long_description's basic-mode example must show the "
+        "numeric-as-string shape (`\"value\": \"1\"`)."
+    )
+
+
 def test_pick_type_prompt_includes_tool_selection_rules() -> None:
     """W71 v1.13A — the agent_staged ``pick_type`` system prompt
     carries the explicit do/don't list naming the four commonly-
@@ -1747,6 +1795,42 @@ def test_formula_fill_settings_prompt_includes_function_reference() -> None:
     )
 
 
+def test_polars_code_doc_says_pl_is_already_available() -> None:
+    """W71 v2.13B — short standing-prompt nudge on the polars_code docs:
+    ``pl`` is already in scope, so the LLM should NOT prefix the body
+    with ``import polars as pl``. Pairs with the
+    ``polars_code_import_forbidden`` refusal in executor.py — the
+    refusal catches misses on retry; this nudge prevents most misses
+    upfront. Both the agent-facing long_description and the chat-mode
+    user_instruction carry the rule.
+    """
+    from flowfile_core.ai.tools.node_docs import (
+        NODE_LONG_DESCRIPTIONS,
+        NODE_USER_INSTRUCTIONS,
+    )
+
+    for body, label in (
+        (NODE_LONG_DESCRIPTIONS["polars_code"], "long_description"),
+        (NODE_USER_INSTRUCTIONS["polars_code"], "user_instruction"),
+    ):
+        body_lower = body.lower()
+        # Cite ``pl`` directly so the LLM has a concrete name to map
+        # the rule to.
+        assert "pl" in body, (
+            f"polars_code {label} should reference `pl`; got: {body!r}"
+        )
+        # Tell the LLM `pl` is already there.
+        assert "already available" in body_lower or "already imported" in body_lower, (
+            f"polars_code {label} should say `pl` is already available; got: {body!r}"
+        )
+        # And explicitly forbid the import line so the LLM matches the
+        # surface form it would otherwise emit.
+        assert "import polars as pl" in body, (
+            f"polars_code {label} should explicitly mention "
+            f"``import polars as pl``; got: {body!r}"
+        )
+
+
 def test_verify_completion_stage_prompt_renders() -> None:
     """W71 v2.12 — the verify_completion stage suffix is wired up:
     ``assemble_system_prompt(surface="agent_staged",
@@ -1777,3 +1861,153 @@ def test_verify_completion_stage_prompt_renders() -> None:
         "v2.12: verify_completion prompt content leaked into the classify "
         "stage system prompt"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Honest runtime-failure reporting — direct response to the 2026-05-09        #
+# dogfood where the agent hit ``UnpredictableSchema`` on sql_query,           #
+# hallucinated *"the kernel couldn't be found"* (not in the error text),      #
+# and falsely told the user *"I added a sql_query node"* after the host had   #
+# already auto-undone it. The fix has two pieces: (1) generic guidance in     #
+# stage_fill_settings.md teaching the LLM to read the ``✗`` observation       #
+# block honestly, and (2) a conditional Development-mode caveat for           #
+# sql_query / polars_code that pre-warns the LLM before the failure.          #
+# --------------------------------------------------------------------------- #
+
+
+def test_fill_settings_prompt_includes_runtime_feedback_section() -> None:
+    """Generic guidance loaded at every fill_settings round so the LLM
+    can interpret the ``✗`` observation block honestly on retries.
+    Does NOT depend on picked_node_type — applies to all node types
+    because the failure path is type-agnostic.
+    """
+    text = assemble_system_prompt("agent_live", stage="fill_settings")
+    assert "## Reading runtime feedback" in text, (
+        "fill_settings prompt missing the runtime-feedback section"
+    )
+    # Anchor phrases the LLM keys on when reading the appended observation.
+    assert "✗ Step on node" in text
+    text_lower = text.lower()
+    assert "quote the error message verbatim" in text_lower, (
+        "missing the verbatim-quoting imperative — without this the LLM "
+        "paraphrases or invents causes"
+    )
+    assert "rolled back" in text_lower, (
+        "missing the auto-undo acknowledgment language"
+    )
+    # The negative example is explicitly there so the LLM sees the exact
+    # hallucination pattern it must avoid (transcript 2026-05-09).
+    assert "kernel couldn't be found" in text_lower, (
+        "missing the negative example — the worked-example contrast is "
+        "what trains the LLM not to fabricate plausible causes"
+    )
+
+
+def test_fill_settings_renders_sql_query_caveat_when_picked() -> None:
+    """The sql_query caveat block is gated like the formula function
+    reference: it renders ONLY at fill_settings + when the picked
+    node type is sql_query. Carries two pieces the LLM needs at the
+    moment of staging — (a) upstream table-name convention
+    (``input_1``/``input_2``/..., NEVER node-id-based) so the agent
+    doesn't write ``FROM join_5`` and hit ``relation '...' was not
+    found``, and (b) the Development-mode auto-undo warning.
+    """
+    text = assemble_system_prompt(
+        "agent_live", stage="fill_settings", picked_node_type="sql_query"
+    )
+    assert "## sql_query-specific guidance" in text, (
+        "sql_query fill_settings prompt missing the sql_query-specific "
+        "guidance section"
+    )
+
+    # Table-name convention — the actual reason the 2026-05-09 retry
+    # failed with ``relation 'join_5' was not found``.
+    assert "input_1" in text, (
+        "missing the ``input_1`` table-name reminder — without this "
+        "the LLM keeps hallucinating ``join_<node_id>`` table names"
+    )
+    assert "input_2" in text, "missing the multi-input ``input_2`` example"
+    # Anti-pattern call-out: explicitly name the failure mode so the
+    # LLM doesn't repeat the join_5 hallucination.
+    assert "join_5" in text or "join_<node_id>" in text, (
+        "the caveat must name the wrong-table-name anti-pattern "
+        "explicitly (otherwise the LLM repeats the chat-mode "
+        "hallucination)"
+    )
+
+    # Development-mode auto-undo guidance.
+    assert "UnpredictableSchema" in text
+    assert "Performance" in text, (
+        "missing the Performance-mode remediation — without it the "
+        "LLM can't tell the user what to do"
+    )
+    text_lower = text.lower()
+    assert "auto-undo" in text_lower or "auto undo" in text_lower
+
+
+def test_pick_type_does_NOT_render_sql_query_caveat() -> None:
+    """Guardrail — the caveat must NOT appear in the pick_type stage
+    output. The gate is at ``_build_single_node_block`` (fill_settings
+    only); a regression would re-bloat every pick_type round with
+    sql_query-specific guidance that isn't actionable until the type
+    is actually picked.
+    """
+    text = assemble_system_prompt("agent_live", stage="pick_type")
+    assert "## sql_query-specific guidance" not in text, (
+        "sql_query caveat leaked into pick_type catalog — this defeats "
+        "the conditional-rendering gate"
+    )
+
+
+def test_fill_settings_other_types_do_NOT_render_sql_query_caveat() -> None:
+    """Guardrail — other types' fill_settings rounds must not see the
+    caveat. Only sql_query triggers it; polars_code (which works
+    fine in Development mode — it has its own predictor path) is
+    explicitly excluded.
+    """
+    for nt in ("group_by", "filter", "join", "select", "formula", "polars_code"):
+        text = assemble_system_prompt(
+            "agent_live", stage="fill_settings", picked_node_type=nt
+        )
+        assert "## sql_query-specific guidance" not in text, (
+            f"sql_query caveat leaked into fill_settings for {nt!r}"
+        )
+
+
+def test_sql_query_long_description_names_input_1_table_convention() -> None:
+    """The agent's pick_type catalog has to surface the
+    ``input_1``/``input_2`` table-name convention or the LLM has no
+    way to write correct SQL. Direct response to the 2026-05-09
+    dogfood where the agent wrote ``FROM join_5`` and got ``relation
+    'join_5' was not found``.
+    """
+    from flowfile_core.ai.tools.node_docs import NODE_LONG_DESCRIPTIONS
+
+    desc = NODE_LONG_DESCRIPTIONS["sql_query"]
+    assert "input_1" in desc
+    assert "input_2" in desc
+    desc_lower = desc.lower()
+    assert "positional" in desc_lower, (
+        "the description must call out the positional naming so the "
+        "LLM doesn't infer node-id-based names from upstream context"
+    )
+
+
+def test_sql_query_user_instruction_uses_input_1_in_example() -> None:
+    """The chat-mode prose (``NODE_USER_INSTRUCTIONS``) that the auto-
+    promote path embeds as agent context must show ``FROM input_1``
+    in its worked example, not ``FROM orders``/``FROM customers``.
+    The previous text was the source of the chat LLM's ``join_5``
+    hallucination."""
+    from flowfile_core.ai.tools.node_docs import NODE_USER_INSTRUCTIONS
+
+    instruction = NODE_USER_INSTRUCTIONS["sql_query"]
+    assert "input_1" in instruction, (
+        "chat-mode worked example doesn't use ``input_1`` — chat will "
+        "keep hallucinating table names from node display names"
+    )
+    assert "input_2" in instruction
+    # The old broken example used ``FROM orders`` / ``FROM customers``
+    # as table names. Make sure those don't reappear.
+    assert "FROM orders" not in instruction
+    assert "FROM customers" not in instruction

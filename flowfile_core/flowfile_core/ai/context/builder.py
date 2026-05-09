@@ -622,6 +622,81 @@ def _formula_function_names() -> tuple[str, ...]:
     return tuple(sorted({str(n) for n in names if isinstance(n, str) and n}))
 
 
+def _build_sql_query_caveat_block() -> str:
+    """Conditional sql_query-specific guidance. Renders ONLY at stage
+    ``fill_settings`` when ``picked_node_type == "sql_query"`` (gated
+    by the caller in ``_build_single_node_block``). Other node types
+    (including ``polars_code``, which has its own predictor path that
+    works fine) don't see this block. Pick_type / agent_complex
+    full-catalog rounds also don't render it — keeping the caveat
+    scoped to the one prompt where the LLM is about to stage a
+    sql_query, exactly when the guidance is actionable.
+
+    Two pieces, both motivated by the 2026-05-09 dogfood:
+
+    * **Table-name convention.** Upstream inputs are registered
+      positionally as ``input_1``, ``input_2``, ... by
+      :func:`flowfile_core.flowfile.flow_data_engine.flow_data_engine.execute_sql_query`
+      (line 2742: ``ctx.register(f"input_{i + 1}", ...)``). The chat
+      LLM previously hallucinated ``join_<node_id>``-shaped table
+      names from the prior worked example; the agent inherited the
+      hallucination and produced ``FROM join_5`` SQL that hit
+      ``relation 'join_5' was not found`` at runtime.
+    * **Development-mode auto-undo.** ``add_sql_query`` does not
+      register a ``schema_callback`` (see
+      ``flow_graph.py`` ``add_sql_query``), so
+      ``_observe_development``'s ``get_predicted_schema(force=True)``
+      returns ``None`` and the host fails the observation with
+      ``UnpredictableSchema``, auto-undoing the just-added node.
+      Without this pre-warning the LLM hits the failure, hallucinates
+      a cause (transcript 2026-05-09: *"the kernel couldn't be
+      found"* — not in the error text), claims false success (*"I
+      added a sql_query node"* — but the node was deleted), or
+      burns its retry budget on identical re-attempts.
+    """
+    return (
+        "## sql_query-specific guidance\n"
+        "\n"
+        "**Upstream table names — positional, NEVER node-id-based.** "
+        "When you stage this node, the host registers each upstream "
+        "input as ``input_1``, ``input_2``, ... (in connect order). "
+        "Always write ``FROM input_1`` (single upstream) or "
+        "``FROM input_1 a JOIN input_2 b ON ...`` (multiple "
+        "upstreams). Do **NOT** invent table names from the upstream "
+        "node's id, type, or display name (e.g. ``FROM join_5`` is "
+        "wrong — it will fail at runtime with ``relation 'join_5' "
+        "was not found``). This is true regardless of what the chat "
+        "trail above may have suggested.\n"
+        "\n"
+        "**Development-mode caveat.** Polars' embedded SQL engine "
+        "cannot introspect a SELECT's column list without running "
+        "it, and the sql_query node currently has no "
+        "``schema_callback`` to work around that, so "
+        "``get_predicted_schema`` returns ``None`` for this node "
+        "type. On ``surface=agent_live`` runs in **Development "
+        "mode**, the host's post-apply observation will fail with "
+        "``UnpredictableSchema`` and **auto-undo your just-added "
+        "node** — the canvas reverts to the prior state and you only "
+        "see the failure on the next round's tool reply.\n"
+        "\n"
+        "Before staging this node, check the user message for the "
+        "flow's execution mode (the host surfaces it). If the flow "
+        "is in Development mode, **do not stage** — instead, write a "
+        "short assistant message refusing the operation and ask the "
+        "user to switch the top-right mode toggle to **Performance** "
+        "(the schema is predictable once the query actually runs). "
+        "If the flow is already in Performance mode, proceed "
+        "normally and use ``input_1`` / ``input_2`` / ... as the "
+        "table names.\n"
+        "\n"
+        "If you've already attempted the add and the previous tool "
+        "reply contains ``UnpredictableSchema``: do **not** retry "
+        "the same payload — the failure mode is intrinsic to the "
+        "run mode, not the settings. Quote the error verbatim and "
+        "surface the Performance-mode fix."
+    )
+
+
 def _build_formula_function_reference_block() -> str:
     """W71 v1.12C — append a compact alphabetical list of available
     Flowfile-expression functions. Renders ONLY at stage-3
@@ -710,6 +785,17 @@ def _build_single_node_block(node_type: str, full_catalog: list[Any]) -> str:
     # the (potentially long) function-name dump on every round.
     if node_type == "formula":
         lines.append(_build_formula_function_reference_block())
+
+    # sql_query has two issues that need pre-warning the LLM about
+    # at the moment of staging: (a) upstream tables are registered
+    # positionally as ``input_1``/``input_2``/... (the chat LLM
+    # previously hallucinated ``join_<node_id>`` table names — see
+    # the 2026-05-09 transcript), and (b) Development mode trips
+    # ``UnpredictableSchema`` because the node has no
+    # ``schema_callback``. polars_code has its own predictor path
+    # that works fine, so it's NOT included in this gate.
+    if node_type == "sql_query":
+        lines.append(_build_sql_query_caveat_block())
 
     return "\n".join(lines).rstrip()
 

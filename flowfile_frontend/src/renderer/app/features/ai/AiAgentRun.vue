@@ -15,8 +15,12 @@ import { computed } from "vue";
 import type { AgentEvent } from "../../stores/ai-agent-store";
 import AiAgentEvent from "./AiAgentEvent.vue";
 import AiAvatar from "./AiAvatar.vue";
+import AiThinkingDots from "./AiThinkingDots.vue";
 
-const props = defineProps<{ events: AgentEvent[] }>();
+// `isRunning` lets the parent flag the *active* run so the thinking dots
+// render inside the card (at the end of the body) instead of as a
+// separate placeholder bubble below the card.
+const props = defineProps<{ events: AgentEvent[]; isRunning?: boolean }>();
 
 // Display HH:MM derived from the run's first event timestamp. Locale-
 // aware via Intl.DateTimeFormat — ``hour: "numeric"`` + ``minute: "2-digit"``
@@ -75,6 +79,9 @@ const startedAtTooltip = computed<string>(() => {
         :key="`${event.kind}-${idx}-${event.at}`"
         :event="event"
       />
+      <div v-if="props.isRunning" class="ai-agent-run__thinking">
+        <AiThinkingDots label="Agent is thinking" />
+      </div>
     </div>
   </details>
 </template>
@@ -192,5 +199,13 @@ const startedAtTooltip = computed<string>(() => {
   flex-direction: column;
   gap: 4px;
   margin-top: 8px;
+}
+
+/* Inline thinking dots at the bottom of the active run's body. Sits
+   slightly inset from the event-list so it reads as a footer of the
+   card rather than another event row. */
+.ai-agent-run__thinking {
+  padding: 6px 12px 2px;
+  margin-top: 2px;
 }
 </style>

@@ -50,9 +50,6 @@ from flowfile_core.database.connection import get_db
 router = APIRouter()
 
 
-_DEFAULT_PROVIDER = "google"
-
-
 class FormulaAutocompleteRequest(BaseModel):
     """Body for ``POST /ai/autocomplete/formula``."""
 
@@ -60,7 +57,12 @@ class FormulaAutocompleteRequest(BaseModel):
     node_id: int | str
     partial_text: str = Field(default="", max_length=2_000)
     intent: str | None = Field(default=None, max_length=500)
-    provider: str = Field(default=_DEFAULT_PROVIDER, min_length=1)
+    provider: str | None = Field(default=None, min_length=1)
+    """When omitted, :func:`_resolve_provider` walks ``PROVIDERS`` in
+    registration order and picks the first one configured for the
+    user. The historical hardcoded default ``"google"`` was bitrot —
+    the typical user runs on Anthropic / OpenAI / OpenRouter / Groq,
+    so requests that didn't override ``provider`` 409'd."""
     model: str | None = None
     max_suggestions: int = Field(
         default=MAX_FORMULA_SUGGESTIONS,
@@ -81,7 +83,10 @@ class JoinKeyAutocompleteRequest(BaseModel):
     left_node_id: int | str
     right_node_id: int | str
     how: str = Field(default="inner", min_length=1, max_length=32)
-    provider: str = Field(default=_DEFAULT_PROVIDER, min_length=1)
+    provider: str | None = Field(default=None, min_length=1)
+    """See :class:`FormulaAutocompleteRequest.provider`. Falls back
+    to the user's first configured provider in
+    :func:`_resolve_provider` when omitted."""
     model: str | None = None
     max_pairs: int = Field(
         default=MAX_JOIN_KEY_PAIRS,
@@ -95,7 +100,11 @@ class JoinKeyAutocompleteRequest(BaseModel):
     )
 
 
-def _ensure_known_provider(name: str) -> None:
+def _ensure_known_provider(name: str | None) -> None:
+    # ``name=None`` signals "no explicit pin" — the walk-and-pick
+    # fallback in :func:`_resolve_provider` handles selection.
+    if name is None:
+        return
     if name not in PROVIDERS:
         raise HTTPException(
             status_code=404,
@@ -113,10 +122,37 @@ def _resolve_flow(flow_id: int):
 def _resolve_provider(
     db: Session,
     user_id: int,
-    name: str,
+    name: str | None,
     *,
     model: str | None,
 ):
+    # Walk-and-pick fallback when the caller doesn't pin a provider —
+    # try each provider in ``PROVIDERS`` registration order; return
+    # the first one that resolves without raising
+    # ``ProviderNotConfiguredError``. Replaces the historical
+    # hardcoded ``"google"`` default that 409'd for users running on
+    # any other configured provider.
+    if name is None:
+        for candidate in PROVIDERS:
+            try:
+                return get_configured_provider(
+                    db,
+                    user_id,
+                    candidate,
+                    surface=SURFACE,
+                    model=model,
+                )
+            except (ProviderNotConfiguredError, UnknownProviderError):
+                continue
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No AI provider configured. Save an API key for any "
+                "supported provider via POST /ai/providers/{name} or "
+                "set the appropriate env var. Supported: "
+                f"{list_supported_providers()}"
+            ),
+        )
     try:
         return get_configured_provider(
             db,
