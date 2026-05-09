@@ -209,11 +209,19 @@ const handleReject = (): void => {
 
 <template>
   <div class="ai-diff-preview">
-    <header class="ai-diff-preview__header">
-      <div class="ai-diff-preview__header-line">
+    <!-- Native <details> wrapper makes the diff body (rationale +
+         change cards) collapsible. Default open so a freshly-staged
+         diff renders fully expanded; user collapses manually. The
+         error block and Accept/Reject footer live OUTSIDE <details>
+         so they stay actionable even when the body is folded —
+         critical for drift errors and fast Accept paths. -->
+    <details class="ai-diff-preview__details" open>
+      <summary class="ai-diff-preview__header">
         <span class="ai-diff-preview__title">AI proposed changes</span>
         <span class="ai-diff-preview__summary">{{ summaryLine }} ({{ opCount(diff) }} ops)</span>
-      </div>
+        <span class="ai-diff-preview__toggle-hint" aria-hidden="true" />
+      </summary>
+
       <!-- W66 — rationale is markdown-formatted on the wire; render as
            sanitised HTML so bold / code / lists / links land properly.
            `renderedRationale` runs through marked + a DOMPurify-or-no-op
@@ -225,164 +233,168 @@ const handleReject = (): void => {
         v-html="renderedRationale"
       ></div>
       <!-- eslint-enable vue/no-v-html -->
-    </header>
 
-    <div
-      v-if="error"
-      class="ai-diff-preview__error"
-      :class="`ai-diff-preview__error--${error.kind}`"
-    >
-      <p class="ai-diff-preview__error-line">{{ error.message }}</p>
-      <p
-        v-if="error.kind === 'drift' && error.missingNodeIds.length > 0"
-        class="ai-diff-preview__error-hint"
+      <div
+        v-if="error"
+        class="ai-diff-preview__error"
+        :class="`ai-diff-preview__error--${error.kind}`"
       >
-        Missing node ids:
-        <code v-for="id in error.missingNodeIds" :key="id" class="ai-diff-preview__node-id">
-          #{{ id }}
-        </code>
-      </p>
-      <p
-        v-else-if="error.kind === 'inconsistent' && error.missingEndpoints.length > 0"
-        class="ai-diff-preview__error-hint"
-      >
-        Missing endpoint id(s):
-        <code
-          v-for="ep in error.missingEndpoints"
-          :key="`${ep.nodeId}-${ep.role}`"
-          class="ai-diff-preview__node-id"
-        >
-          #{{ ep.nodeId }} ({{ ep.role }})
-        </code>
-      </p>
-    </div>
-
-    <section v-if="diff.additions.length > 0" class="ai-diff-preview__section">
-      <h4 class="ai-diff-preview__section-title">Additions</h4>
-      <article
-        v-for="(add, idx) in diff.additions"
-        :key="`add-${idx}`"
-        class="ai-diff-preview__card ai-diff-preview__card--add"
-      >
-        <header class="ai-diff-preview__card-header">
-          <span class="ai-diff-preview__chip">{{ add.node_type }}</span>
-          <span class="ai-diff-preview__upstream">{{ additionUpstreamLabel(add) }}</span>
-        </header>
+        <p class="ai-diff-preview__error-line">{{ error.message }}</p>
         <p
-          v-if="add.predicted_output_schema && add.predicted_output_schema.length > 0"
-          class="ai-diff-preview__schema"
+          v-if="error.kind === 'drift' && error.missingNodeIds.length > 0"
+          class="ai-diff-preview__error-hint"
         >
-          <span class="ai-diff-preview__schema-label">Predicted output:</span>
-          <span
-            v-for="col in add.predicted_output_schema"
-            :key="col.name"
-            class="ai-diff-preview__schema-col"
+          Missing node ids:
+          <code v-for="id in error.missingNodeIds" :key="id" class="ai-diff-preview__node-id">
+            #{{ id }}
+          </code>
+        </p>
+        <p
+          v-else-if="error.kind === 'inconsistent' && error.missingEndpoints.length > 0"
+          class="ai-diff-preview__error-hint"
+        >
+          Missing endpoint id(s):
+          <code
+            v-for="ep in error.missingEndpoints"
+            :key="`${ep.nodeId}-${ep.role}`"
+            class="ai-diff-preview__node-id"
           >
-            {{ formatSchemaColumn(col) }}
-          </span>
+            #{{ ep.nodeId }} ({{ ep.role }})
+          </code>
         </p>
-        <p v-else class="ai-diff-preview__schema ai-diff-preview__schema--unknown">
-          Predicted output schema unavailable
-        </p>
-        <button type="button" class="ai-diff-preview__settings-toggle" @click="toggleSettings(idx)">
-          {{ expandedSettings.has(idx) ? "Hide settings" : "Show settings" }}
-        </button>
-        <pre v-if="expandedSettings.has(idx)" class="ai-diff-preview__settings">{{
-          formatSettings(add.settings)
-        }}</pre>
-      </article>
-    </section>
+      </div>
 
-    <section v-if="diff.modifications.length > 0" class="ai-diff-preview__section">
-      <h4 class="ai-diff-preview__section-title">Modifications</h4>
-      <article
-        v-for="(mod, idx) in diff.modifications"
-        :key="`mod-${idx}`"
-        class="ai-diff-preview__card ai-diff-preview__card--modify"
-      >
-        <header class="ai-diff-preview__card-header">
-          <span class="ai-diff-preview__chip">{{ mod.node_type }}</span>
-          <span class="ai-diff-preview__upstream">node #{{ mod.node_id }}</span>
-          <span v-if="changedSettingsKeys(mod).length > 0" class="ai-diff-preview__changed-keys">
-            changed:
-            <code
-              v-for="key in changedSettingsKeys(mod)"
-              :key="key"
-              class="ai-diff-preview__changed-key"
-              >{{ key }}</code
+      <section v-if="diff.additions.length > 0" class="ai-diff-preview__section">
+        <h4 class="ai-diff-preview__section-title">Additions</h4>
+        <article
+          v-for="(add, idx) in diff.additions"
+          :key="`add-${idx}`"
+          class="ai-diff-preview__card ai-diff-preview__card--add"
+        >
+          <header class="ai-diff-preview__card-header">
+            <span class="ai-diff-preview__chip">{{ add.node_type }}</span>
+            <span class="ai-diff-preview__upstream">{{ additionUpstreamLabel(add) }}</span>
+          </header>
+          <p
+            v-if="add.predicted_output_schema && add.predicted_output_schema.length > 0"
+            class="ai-diff-preview__schema"
+          >
+            <span class="ai-diff-preview__schema-label">Predicted output:</span>
+            <span
+              v-for="col in add.predicted_output_schema"
+              :key="col.name"
+              class="ai-diff-preview__schema-col"
             >
-          </span>
-        </header>
-        <p
-          v-if="mod.predicted_output_schema && mod.predicted_output_schema.length > 0"
-          class="ai-diff-preview__schema"
-        >
-          <span class="ai-diff-preview__schema-label">Predicted output:</span>
-          <span
-            v-for="col in mod.predicted_output_schema"
-            :key="col.name"
-            class="ai-diff-preview__schema-col"
+              {{ formatSchemaColumn(col) }}
+            </span>
+          </p>
+          <p v-else class="ai-diff-preview__schema ai-diff-preview__schema--unknown">
+            Predicted output schema unavailable
+          </p>
+          <button
+            type="button"
+            class="ai-diff-preview__settings-toggle"
+            @click="toggleSettings(idx)"
           >
-            {{ formatSchemaColumn(col) }}
-          </span>
-        </p>
-        <button
-          type="button"
-          class="ai-diff-preview__settings-toggle"
-          @click="toggleModification(idx)"
+            {{ expandedSettings.has(idx) ? "Hide settings" : "Show settings" }}
+          </button>
+          <pre v-if="expandedSettings.has(idx)" class="ai-diff-preview__settings">{{
+            formatSettings(add.settings)
+          }}</pre>
+        </article>
+      </section>
+
+      <section v-if="diff.modifications.length > 0" class="ai-diff-preview__section">
+        <h4 class="ai-diff-preview__section-title">Modifications</h4>
+        <article
+          v-for="(mod, idx) in diff.modifications"
+          :key="`mod-${idx}`"
+          class="ai-diff-preview__card ai-diff-preview__card--modify"
         >
-          {{ expandedModifications.has(idx) ? "Hide diff" : "Show diff" }}
-        </button>
-        <div v-if="expandedModifications.has(idx)" class="ai-diff-preview__mod-diff">
-          <div class="ai-diff-preview__mod-side">
-            <span class="ai-diff-preview__mod-label">Before</span>
-            <pre class="ai-diff-preview__settings ai-diff-preview__settings--old">{{
-              formatSettings(mod.old_settings)
-            }}</pre>
+          <header class="ai-diff-preview__card-header">
+            <span class="ai-diff-preview__chip">{{ mod.node_type }}</span>
+            <span class="ai-diff-preview__upstream">node #{{ mod.node_id }}</span>
+            <span v-if="changedSettingsKeys(mod).length > 0" class="ai-diff-preview__changed-keys">
+              changed:
+              <code
+                v-for="key in changedSettingsKeys(mod)"
+                :key="key"
+                class="ai-diff-preview__changed-key"
+                >{{ key }}</code
+              >
+            </span>
+          </header>
+          <p
+            v-if="mod.predicted_output_schema && mod.predicted_output_schema.length > 0"
+            class="ai-diff-preview__schema"
+          >
+            <span class="ai-diff-preview__schema-label">Predicted output:</span>
+            <span
+              v-for="col in mod.predicted_output_schema"
+              :key="col.name"
+              class="ai-diff-preview__schema-col"
+            >
+              {{ formatSchemaColumn(col) }}
+            </span>
+          </p>
+          <button
+            type="button"
+            class="ai-diff-preview__settings-toggle"
+            @click="toggleModification(idx)"
+          >
+            {{ expandedModifications.has(idx) ? "Hide diff" : "Show diff" }}
+          </button>
+          <div v-if="expandedModifications.has(idx)" class="ai-diff-preview__mod-diff">
+            <div class="ai-diff-preview__mod-side">
+              <span class="ai-diff-preview__mod-label">Before</span>
+              <pre class="ai-diff-preview__settings ai-diff-preview__settings--old">{{
+                formatSettings(mod.old_settings)
+              }}</pre>
+            </div>
+            <div class="ai-diff-preview__mod-side">
+              <span class="ai-diff-preview__mod-label">After</span>
+              <pre class="ai-diff-preview__settings ai-diff-preview__settings--new">{{
+                formatSettings(mod.new_settings)
+              }}</pre>
+            </div>
           </div>
-          <div class="ai-diff-preview__mod-side">
-            <span class="ai-diff-preview__mod-label">After</span>
-            <pre class="ai-diff-preview__settings ai-diff-preview__settings--new">{{
-              formatSettings(mod.new_settings)
-            }}</pre>
-          </div>
-        </div>
-      </article>
-    </section>
+        </article>
+      </section>
 
-    <section v-if="diff.connections_added.length > 0" class="ai-diff-preview__section">
-      <h4 class="ai-diff-preview__section-title">New connections</h4>
-      <article
-        v-for="(c, idx) in diff.connections_added"
-        :key="`con-add-${idx}`"
-        class="ai-diff-preview__card ai-diff-preview__card--connection"
-      >
-        <span class="ai-diff-preview__connection-line">{{ renderConnection(c) }}</span>
-      </article>
-    </section>
+      <section v-if="diff.connections_added.length > 0" class="ai-diff-preview__section">
+        <h4 class="ai-diff-preview__section-title">New connections</h4>
+        <article
+          v-for="(c, idx) in diff.connections_added"
+          :key="`con-add-${idx}`"
+          class="ai-diff-preview__card ai-diff-preview__card--connection"
+        >
+          <span class="ai-diff-preview__connection-line">{{ renderConnection(c) }}</span>
+        </article>
+      </section>
 
-    <section v-if="diff.deletions.length > 0" class="ai-diff-preview__section">
-      <h4 class="ai-diff-preview__section-title">Deletions</h4>
-      <article
-        v-for="(d, idx) in diff.deletions"
-        :key="`del-${idx}`"
-        class="ai-diff-preview__card ai-diff-preview__card--delete"
-      >
-        <span class="ai-diff-preview__chip ai-diff-preview__chip--danger">delete node</span>
-        <span class="ai-diff-preview__upstream">{{ formatNodeRef(d.delete_node_id) }}</span>
-      </article>
-    </section>
+      <section v-if="diff.deletions.length > 0" class="ai-diff-preview__section">
+        <h4 class="ai-diff-preview__section-title">Deletions</h4>
+        <article
+          v-for="(d, idx) in diff.deletions"
+          :key="`del-${idx}`"
+          class="ai-diff-preview__card ai-diff-preview__card--delete"
+        >
+          <span class="ai-diff-preview__chip ai-diff-preview__chip--danger">delete node</span>
+          <span class="ai-diff-preview__upstream">{{ formatNodeRef(d.delete_node_id) }}</span>
+        </article>
+      </section>
 
-    <section v-if="diff.connections_removed.length > 0" class="ai-diff-preview__section">
-      <h4 class="ai-diff-preview__section-title">Removed connections</h4>
-      <article
-        v-for="(c, idx) in diff.connections_removed"
-        :key="`con-rem-${idx}`"
-        class="ai-diff-preview__card ai-diff-preview__card--delete"
-      >
-        <span class="ai-diff-preview__connection-line">{{ renderConnection(c) }}</span>
-      </article>
-    </section>
+      <section v-if="diff.connections_removed.length > 0" class="ai-diff-preview__section">
+        <h4 class="ai-diff-preview__section-title">Removed connections</h4>
+        <article
+          v-for="(c, idx) in diff.connections_removed"
+          :key="`con-rem-${idx}`"
+          class="ai-diff-preview__card ai-diff-preview__card--delete"
+        >
+          <span class="ai-diff-preview__connection-line">{{ renderConnection(c) }}</span>
+        </article>
+      </section>
+    </details>
 
     <footer class="ai-diff-preview__footer">
       <button
@@ -423,19 +435,71 @@ const handleReject = (): void => {
   overflow-y: auto;
 }
 
-.ai-diff-preview__header {
+/* `<details>` wrapper for the diff body. Flex-column + gap keeps the
+   rationale / cards / sections spaced consistently whether the body
+   has 1 child or 8. */
+.ai-diff-preview__details {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--color-border-primary, #e1e4e8);
+  gap: 8px;
 }
 
-.ai-diff-preview__header-line {
+/* Summary doubles as the existing header. Same chevron-button +
+   Show/Hide pill idiom as AiAgentRun.vue so collapse affordances
+   are unified across the chat surface. */
+.ai-diff-preview__header {
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  /* Reserve 32 px on the left for the chevron-button pseudo. */
+  padding: 4px 4px 4px 32px;
+  margin: -4px -4px 0;
+  border-radius: 4px;
+  position: relative;
+  transition: background-color var(--transition-fast, 120ms ease);
+}
+
+.ai-diff-preview__header:hover {
+  background-color: var(--color-background-tertiary, rgba(175, 184, 193, 0.15));
+}
+
+.ai-diff-preview__header::-webkit-details-marker {
+  display: none;
+}
+
+.ai-diff-preview__header::before {
+  content: "▸";
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-accent, #6f42c1);
+  background-color: var(--color-background-primary, #ffffff);
+  border: 1px solid var(--color-accent, #6f42c1);
+  border-radius: 4px;
+  transition:
+    background-color var(--transition-fast, 120ms ease),
+    color var(--transition-fast, 120ms ease);
+}
+
+.ai-diff-preview__details[open] > .ai-diff-preview__header::before {
+  content: "▾";
+}
+
+.ai-diff-preview__header:hover::before {
+  background-color: var(--color-accent, #6f42c1);
+  color: #ffffff;
 }
 
 .ai-diff-preview__title {
@@ -447,6 +511,40 @@ const handleReject = (): void => {
 .ai-diff-preview__summary {
   font-size: 11px;
   color: var(--color-text-muted, #6a737d);
+}
+
+/* Right-aligned Show/Hide pill — Show when closed, Hide when open;
+   text flips via CSS-only `[open]` selector, no Vue ref needed.
+   `flex-shrink: 0` so it stays visible in narrow drawer widths. */
+.ai-diff-preview__toggle-hint {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-accent, #6f42c1);
+  padding: 3px 8px;
+  border: 1px solid var(--color-accent, #6f42c1);
+  border-radius: 3px;
+  line-height: 1.2;
+  background-color: var(--color-background-primary, #ffffff);
+  transition:
+    background-color var(--transition-fast, 120ms ease),
+    color var(--transition-fast, 120ms ease);
+}
+
+.ai-diff-preview__header:hover .ai-diff-preview__toggle-hint {
+  background-color: var(--color-accent, #6f42c1);
+  color: #ffffff;
+}
+
+.ai-diff-preview__details > .ai-diff-preview__header > .ai-diff-preview__toggle-hint::before {
+  content: "Show";
+}
+
+.ai-diff-preview__details[open] > .ai-diff-preview__header > .ai-diff-preview__toggle-hint::before {
+  content: "Hide";
 }
 
 .ai-diff-preview__rationale {

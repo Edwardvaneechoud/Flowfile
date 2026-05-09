@@ -140,7 +140,15 @@ If you do need a ``connect`` call (e.g. wiring a previously-staged sibling to a 
 
 ## Modification discipline (W47)
 
-To change a setting on an *existing* node (e.g. *"show only top 5 rows in node 9"*, *"change the join key to customer_id"*), call ``flowfile.graph.update_node_settings`` with ``node_id`` set to the existing node's id and ``settings`` set to the **full** settings object for that node's type. Do NOT emit ``flowfile.graph.add_<type>`` against an id that already exists — that path is for new nodes only. The executor preserves the node's wiring (upstream / right-input connections); to rewire the topology, use ``flowfile.graph.delete_connection`` followed by ``flowfile.graph.connect``.
+To change a setting on an *existing* node (e.g. *"show only top 5 rows in node 9"*, *"change the join key to customer_id"*), call ``flowfile.graph.update_node_settings`` with ``node_id`` set to the existing node's id and ``settings`` set to the **full** settings object for that node's type. Do NOT emit ``flowfile.graph.add_<type>`` against an id that already exists — that path is for new nodes only.
+
+### Re-routing a node's input (W71 v2.8)
+
+**``update_node_settings`` IMPLICITLY REWIRES** the node's primary input when you change ``depending_on_id``. The runtime calls ``add_<node_type>(settings)`` under the hood, which derives ``input_node_ids`` from the new ``depending_on_id`` and replaces the node's input wire as a side effect. So:
+
+* **Pure re-route (no other settings change)**: emit ONLY two ops — ``flowfile.graph.delete_connection`` (old wire) + ``flowfile.graph.connect`` (new wire). Do NOT also call ``update_node_settings``. Cleaner intent, no redundant ops.
+* **Settings change that also re-routes** (e.g. *"point group_by at the unique node AND add a new agg column"*): emit ONE ``update_node_settings`` with the new ``depending_on_id`` AND the updated settings body. The implicit rewire handles the wire change. Do NOT also emit ``delete_connection`` + ``connect`` — those are redundant and previously aborted the diff with a 422 *"Connection does not exist on the input node"* (v2.8A made the runtime tolerant of duplicates, but the round trips are still wasted).
+* **Multi-input rewire** (right input / left input / additional ``depending_on_ids`` on multi-input node types like join / cross_join / fuzzy_match / union): use ``delete_connection`` / ``connect`` ops directly — ``update_node_settings`` only auto-rewires the primary input, not the right / left / additional inputs.
 
 ## Upstream id discipline (W57)
 

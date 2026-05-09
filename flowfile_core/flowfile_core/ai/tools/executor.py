@@ -1162,6 +1162,45 @@ _CONNECTION_FIELD_REWRITES: Final[tuple[tuple[str, str], ...]] = (
 )
 
 
+_CONNECTION_ID_ARROW_RE: Final = re.compile(
+    r"^\s*(\d+)\s*(?:->|→|:)\s*(\d+)\s*$"
+)
+
+
+def _coerce_connection_id_to_flat(tool_args: dict[str, Any]) -> dict[str, Any]:
+    """W71 v2.8C — accept the LLM's natural ``connection_id`` shape.
+
+    Audit log 2026-05-09 showed the LLM emitting
+    ``{"connection_id": "1→2"}`` for a delete_connection call,
+    which got rejected with *"missing required field:
+    from_node_id"* — burning a retry round before the LLM
+    re-emitted the structured ``{from_node_id, to_node_id}``
+    shape. Same posture as v1.4's universal JSON-string unwrap:
+    accept the LLM's natural emission rather than forcing the
+    function-calling API to teach it the strict shape via
+    refusal-loop attrition.
+
+    Recognises three arrow-style separators commonly seen in LLM
+    outputs (``->``, ``→``, and ``:``) so we don't have to enumerate
+    every possible whitespace / Unicode variant. Returns
+    ``tool_args`` unchanged when ``connection_id`` is absent or
+    can't be parsed — defensive for the strict-shape path.
+    """
+    raw = tool_args.get("connection_id")
+    if raw is None:
+        return tool_args
+    if not isinstance(raw, str):
+        return tool_args
+    m = _CONNECTION_ID_ARROW_RE.match(raw)
+    if m is None:
+        return tool_args
+    rebuilt = dict(tool_args)
+    rebuilt.pop("connection_id", None)
+    rebuilt.setdefault("from_node_id", int(m.group(1)))
+    rebuilt.setdefault("to_node_id", int(m.group(2)))
+    return rebuilt
+
+
 def _build_node_connection_from_flat(tool_args: dict[str, Any]) -> input_schema.NodeConnection:
     """Construct a ``NodeConnection`` from the flat shape advertised by the connect ToolSpec.
 
@@ -1173,7 +1212,14 @@ def _build_node_connection_from_flat(tool_args: dict[str, Any]) -> input_schema.
 
     We avoid ``create_from_simple_input`` because it silently downgrades unrecognised
     input_type values to ``"input-0"`` (input_schema.py: ``create_from_simple_input``).
+
+    W71 v2.8C — runs ``_coerce_connection_id_to_flat`` first so an
+    LLM emitting ``{"connection_id": "5→6"}`` (audit log
+    2026-05-09) is rewritten to the structured shape before
+    validation, instead of burning a retry round on the
+    "missing required field" refusal.
     """
+    tool_args = _coerce_connection_id_to_flat(tool_args)
     try:
         from_node_id = tool_args["from_node_id"]
         to_node_id = tool_args["to_node_id"]

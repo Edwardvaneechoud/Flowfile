@@ -340,8 +340,17 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
         _appendEvent("tool_call_staged", entry as unknown as Record<string, unknown>),
       onToolCallWarned: (entry: AgentToolCallStaged) =>
         _appendEvent("tool_call_warned", entry as unknown as Record<string, unknown>),
-      onToolCallRejected: (refusal: AgentToolCallRejected) =>
-        _appendEvent("tool_call_rejected", refusal as unknown as Record<string, unknown>),
+      onToolCallRejected: (refusal: AgentToolCallRejected) => {
+        _appendEvent("tool_call_rejected", refusal as unknown as Record<string, unknown>);
+        // W71 v2.9A — agent_live's auto-undo path emits
+        // ``tool_call_rejected`` (not ``tool_call_applied``) when
+        // the post-apply observation fails: the node was added
+        // then deleted server-side. Re-sync the canvas so the
+        // user's view matches the now-deleted-back-out state.
+        if (currentSurface.value === "agent_live") {
+          useFlowStore().requestReload();
+        }
+      },
       onToolCallApplied: (entry: AgentToolCallApplied) => {
         // W71 v2.0 — agent_live committed a node to the live graph.
         // Record the event for the chat trail AND ask the canvas
@@ -412,6 +421,16 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
         if (currentSurface.value === "agent_live" && liveAppliedCount.value > 0) {
           liveLayoutPromptVisible.value = true;
         }
+        // W71 v2.9A — defensive end-of-run canvas refresh for
+        // agent_live. Per-step ``tool_call_applied`` events
+        // already trigger a reload, but if any of them was
+        // missed (auto-undo path emitting tool_call_rejected,
+        // transient frontend race, etc.) the canvas can drift
+        // from the server's authoritative state. One reload at
+        // run-end re-syncs.
+        if (currentSurface.value === "agent_live") {
+          useFlowStore().requestReload();
+        }
       },
       onComplete: (result) => {
         // Q2 W45 — propagate session_id from the wire on completion too.
@@ -428,6 +447,15 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
         // can opt into the existing "Reset layout graph" routine.
         if (currentSurface.value === "agent_live" && liveAppliedCount.value > 0) {
           liveLayoutPromptVisible.value = true;
+        }
+        // W71 v2.9A — defensive end-of-run canvas refresh for
+        // agent_live. Same rationale as in ``onAwaitingUserInput``:
+        // if any per-step ``tool_call_applied`` was missed (auto-
+        // undo path, transient race, etc.) the canvas would drift
+        // from the server's authoritative state. One reload at
+        // run-end re-syncs.
+        if (currentSurface.value === "agent_live") {
+          useFlowStore().requestReload();
         }
         // Push the bundled GraphDiffPayload to the W35 diff store so the
         // existing AiDiffPanel renders accept/reject for the user.

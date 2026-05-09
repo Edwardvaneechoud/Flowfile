@@ -500,6 +500,96 @@ def test_delete_connection_accepts_flat_shape(call_kwargs: dict[str, Any]) -> No
     assert flow.get_node(2).node_inputs.main_inputs == []
 
 
+def test_delete_connection_idempotent_when_already_removed(call_kwargs: dict[str, Any]) -> None:
+    """W71 v2.8A — calling delete_connection on a connection that's
+    already gone returns silently instead of raising 422. This makes
+    the AI diff applier tolerant of redundant ops produced by
+    update_node_settings's implicit rewire (audit log 2026-05-09).
+    """
+    flow = _flow_with_orders_and_filter()
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    assert [n.node_id for n in flow.get_node(2).node_inputs.main_inputs] == [1]
+
+    # First delete — succeeds, removes the wire.
+    result1 = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.delete_connection",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 2},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result1.status == "applied"
+    assert flow.get_node(2).node_inputs.main_inputs == []
+
+    # Second delete on the SAME wire — silent no-op (was 422 pre-v2.8).
+    result2 = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.delete_connection",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 2},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result2.status == "applied", (
+        "v2.8A: deleting an already-absent connection must be a silent no-op, "
+        f"not a refusal; got status={result2.status} detail={result2.refusal_detail}"
+    )
+    # Still empty — second delete didn't perturb anything.
+    assert flow.get_node(2).node_inputs.main_inputs == []
+
+
+def test_add_connection_idempotent_when_already_present(call_kwargs: dict[str, Any]) -> None:
+    """W71 v2.8A — calling connect for a wire that already exists
+    returns silently. Diff-apply path can land redundant
+    connections_added ops after update_node_settings has already
+    rewired via add_node_step.
+    """
+    flow = _flow_with_orders_and_filter()
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    assert [n.node_id for n in flow.get_node(2).node_inputs.main_inputs] == [1]
+
+    # Re-issue the same connect via the executor.
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 2},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "applied", result.refusal_detail
+    # Wire is still there — exactly once, not duplicated.
+    assert [n.node_id for n in flow.get_node(2).node_inputs.main_inputs] == [1]
+
+
+def test_delete_connection_accepts_arrow_id_shape(call_kwargs: dict[str, Any]) -> None:
+    """W71 v2.8C — accept the LLM's natural ``connection_id`` shape
+    (``"5→6"`` / ``"5->6"`` / ``"5:6"``) so a misbehaving emission
+    doesn't burn a refusal-loop round before the structured shape
+    arrives. Audit log 2026-05-09 showed the LLM emitting
+    ``{"connection_id": "1→2"}`` first, then retrying with
+    ``{"from_node_id": 1, "to_node_id": 2}`` after rejection.
+    """
+    flow = _flow_with_orders_and_filter()
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.delete_connection",
+        # The LLM-natural shape — pre-v2.8C this was rejected.
+        tool_args={"flow_id": flow.flow_id, "connection_id": "1→2"},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "applied", (
+        f"v2.8C: connection_id arrow shape must coerce to from/to_node_id; "
+        f"got status={result.status} detail={result.refusal_detail}"
+    )
+    assert flow.get_node(2).node_inputs.main_inputs == []
+
+
 # --------------------------------------------------------------------------- #
 # 7-9. D011 tiered handling                                                    #
 # --------------------------------------------------------------------------- #
