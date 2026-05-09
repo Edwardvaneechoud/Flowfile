@@ -1,7 +1,7 @@
-// Diff staging client for the AI subsystem (W41).
+// Diff staging client for the AI subsystem.
 //
 // Three thin POST + JSON wrappers over `/ai/diff/*`. No streaming, no
-// reactivity, no Pinia store touches — W35 owns the UI integration. Shares
+// reactivity, no Pinia store touches — owns the UI integration. Shares
 // the bearer-token + base-URL pattern with `aiStreamClient.ts`.
 //
 // Wire shapes mirror `flowfile_core/ai/diff_routes.py`:

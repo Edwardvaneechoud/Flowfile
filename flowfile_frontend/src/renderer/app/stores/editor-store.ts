@@ -34,7 +34,7 @@ export const useEditorStore = defineStore("editor", {
     showFlowResult: false,
     tableVisible: false,
 
-    // AI assistant drawer (W20). Independent panel pattern (D005) — coexists
+    // AI assistant drawer. Independent panel pattern — coexists
     // with node settings; intentionally NOT routed through activeDrawerComponent.
     isAiOpen: false,
 
@@ -174,7 +174,7 @@ export const useEditorStore = defineStore("editor", {
       this.graphVersion += 1;
     },
 
-    // ========== AI Assistant Drawer (W20) ==========
+    // ========== AI Assistant Drawer ==========
     openAiDrawer() {
       this.isAiOpen = true;
     },

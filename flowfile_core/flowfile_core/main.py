@@ -141,7 +141,7 @@ app.include_router(user_defined_components_router, prefix="/user_defined_compone
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
 app.include_router(ai_router, prefix="/ai", tags=["ai"])
-# W18 — AI feature-flag admin endpoint. Mounted on /system (NOT /ai) so admins
+# AI feature-flag admin endpoint. Mounted on /system (NOT /ai) so admins
 # can flip the AI gate from the UI without first satisfying the gate they're
 # trying to flip.
 app.include_router(ai_admin_router, prefix="/system", tags=["system"])

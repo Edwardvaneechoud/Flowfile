@@ -148,7 +148,7 @@ provide("hoveredEdgeId", hoveredEdgeId);
 provide("cancelEdgeLeave", cancelEdgeLeave);
 provide("scheduleEdgeLeave", scheduleEdgeLeave);
 
-// W32 — schema-grounded next-node suggestions on edge hover. The composable
+// — schema-grounded next-node suggestions on edge hover. The composable
 // owns its own debounce + AbortController so a hover-flick doesn't fire N
 // requests; clear is wired into handleCanvasClick below so a click anywhere
 // off the popover dismisses it.
@@ -829,7 +829,7 @@ const handleCanvasPaste = async (x: number, y: number) => {
 };
 
 const promptLineageQuestion = async (focusLabel: string): Promise<string | null> => {
-  // W51 — use Element Plus's imperative prompt (already in use elsewhere
+  // — use Element Plus's imperative prompt (already in use elsewhere
   // in the codebase, e.g. CatalogView) instead of a new dialog component.
   // Returns the trimmed question on confirm, or ``null`` on cancel.
   try {
@@ -864,7 +864,7 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
   } else if (actionId === "paste-node") {
     handleCanvasPaste(position.x, position.y);
   } else if (actionId === "generate-documentation") {
-    // W50 — pull the canonical flow name server-side so the doc title
+    // — pull the canonical flow name server-side so the doc title
     // matches what the user sees in the title bar. Falsy → undefined so
     // the store falls back to ``flow ${flowId}``.
     if (flowStore.flowId === null) return;
@@ -912,13 +912,13 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
       ElMessage.warning(`Updated ${succeeded} of ${nodeIds.length} (${failed} failed).`);
     }
   } else if (actionId === "ask-lineage") {
-    // W51 — whole-flow lineage Q&A.
+    // — whole-flow lineage Q&A.
     if (flowStore.flowId === null) return;
     const question = await promptLineageQuestion("this flow");
     if (!question) return;
     await aiStore.askLineageQuestion(flowStore.flowId, question);
   } else if (actionId === "ask-lineage-node") {
-    // W51 — focused lineage Q&A on a single node id.
+    // — focused lineage Q&A on a single node id.
     if (flowStore.flowId === null) return;
     const focusNodeId = Number(targetId);
     if (!Number.isFinite(focusNodeId)) return;
@@ -1001,12 +1001,12 @@ const handleKeyDown = (event: KeyboardEvent) => {
     event.preventDefault();
     emit("open");
   } else if (eventKeyClicked && key === "k" && !isInputElement && !isInCodeMirror) {
-    // W33 — Cmd+K / Ctrl+K toggles the AI assistant drawer. Originally
-    // wired to the AI command palette; rewired per polish.md 2026-05-06
-    // to the drawer because the palette UX confused users. Palette
-    // component, store, and route are kept intact — reversible by
-    // restoring `commandPalette.toggle()` here. Skipped when typing in
-    // any input or CodeMirror so plain k presses pass through.
+    // Cmd+K / Ctrl+K toggles the AI assistant drawer. Originally
+    // wired to the AI command palette; rewired to the drawer because
+    // the palette UX confused users. Palette component, store, and
+    // route are kept intact — reversible by restoring
+    // `commandPalette.toggle()` here. Skipped when typing in any
+    // input or CodeMirror so plain k presses pass through.
     if (flowStore.flowId && flowStore.flowId > 0) {
       event.preventDefault();
       editorStore.toggleAiDrawer();
@@ -1150,8 +1150,8 @@ onMounted(async () => {
 
   // External-mutation signal — the backend mutated the live flow without
   // going through the in-canvas mutation paths. Triggered today by
-  // `useAiDiffStore.accept()` after the W41 apply_diff lands; future
-  // workstreams that mutate the server graph (e.g. W47's
+  // `useAiDiffStore.accept()` after the apply_diff lands; future
+  // workstreams that mutate the server graph (e.g.'s
   // `update_node_settings` end-to-end) call `flowStore.requestReload()`
   // and Canvas reloads. The closure-scoped `loadToken` in `loadFlow`
   // already cancels stale runs if multiple bumps land in quick succession.
@@ -1164,7 +1164,7 @@ onMounted(async () => {
     },
   );
 
-  // W71 v2.3 — Layout-reset signal. Bumped by
+  // — Layout-reset signal. Bumped by
   // ``flowStore.requestLayoutReset()`` from the post-agent_live
   // banner's [Reorganize] button. Re-runs the same code path the
   // manual "Reset layout graph" toolbar button triggers.

@@ -27,7 +27,7 @@ import { createAiCompletionSource } from "./aiCompletions";
 interface Props {
   editorString: string;
   columns?: string[];
-  // Optional flow + node identity for the W34 AI completion source. When
+  // Optional flow + node identity for the AI completion source. When
   // either is missing, the AI source short-circuits and only the static
   // `polarsCompletions` runs — used by the standalone editor preview where
   // there's no flow context.
@@ -238,7 +238,7 @@ const highlightPlugin = ViewPlugin.fromClass(
   },
 );
 
-// W34: AI source runs in parallel with the static `polarsCompletions`.
+//: AI source runs in parallel with the static `polarsCompletions`.
 // The factory short-circuits when flowId / nodeId are missing, so there's
 // no penalty for embeddings that don't supply them.
 const aiCompletions: CompletionSource = createAiCompletionSource({

@@ -581,8 +581,8 @@ class AiProviderCredential(Base):
     api_base = Column(String, nullable=True)
     default_model = Column(String, nullable=True)
     # JSON-encoded list[str] of models the user has curated for this credential
-    # (W29). Decoded at the schema layer in flowfile_core.ai.credentials. Null
-    # or an empty list both mean "no curated list — fall through to the W12
+    #. Decoded at the schema layer in flowfile_core.ai.credentials. Null
+    # or an empty list both mean "no curated list — fall through to the
     # resolution order".
     models = Column(Text, nullable=True)
     last_tested_at = Column(DateTime, nullable=True)

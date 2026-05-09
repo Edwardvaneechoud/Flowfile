@@ -1,4 +1,4 @@
-// W34 — CodeMirror autocomplete source backed by the AI settings-autocomplete
+// — CodeMirror autocomplete source backed by the AI settings-autocomplete
 // endpoint.
 //
 // Returns a `CompletionSource` factory that the existing FunctionEditor wires

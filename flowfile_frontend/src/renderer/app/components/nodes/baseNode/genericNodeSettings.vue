@@ -1,6 +1,6 @@
 <template>
   <div class="settings-wrapper">
-    <!-- W21 — Inline ✨ menu. Always visible (across all three tabs) for
+    <!-- — Inline ✨ menu. Always visible (across all three tabs) for
          discoverability. Popover content is the AiInlineActions component;
          the trigger sits in the top-right of the wrapper so it doesn't
          displace the el-tabs nav bar. -->
@@ -273,7 +273,7 @@ import AiInlineActions from "../../../features/ai/AiInlineActions.vue";
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
 
-// W21 — Inline ✨ popover state. The popover content lives in
+// — Inline ✨ popover state. The popover content lives in
 // AiInlineActions.vue and looks up node_type from the live VueFlow graph.
 const aiPopoverVisible = ref(false);
 
@@ -297,7 +297,7 @@ let validationTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const defaultReference = computed(() => `df_${props.modelValue?.node_id ?? ""}`);
 
-// W21 — coerce the flow id to a number for the AI route (the NodeBase
+// — coerce the flow id to a number for the AI route (the NodeBase
 // type allows ``string | number`` but the inline_action route's Pydantic
 // shape is strict). Falls back to flowStore.flowId when the prop hasn't
 // been initialised yet.
@@ -306,7 +306,7 @@ const aiFlowIdNumber = computed<number>(() => {
   return typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
 });
 
-// W21 — human label for the synthetic chat user message ("Explain `name`.").
+// — human label for the synthetic chat user message ("Explain `name`.").
 // Resolves from VueFlow's stored label when present so the chat shows the
 // node name the user sees on the canvas, not just the numeric id.
 const aiNodeName = computed<string | undefined>(() => {

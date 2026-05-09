@@ -96,8 +96,8 @@ const runInformation = computed(() => nodeStore.currentRunResult);
 const selectedNode = ref<Element | null>(null);
 
 const onFixWithAi = (node: RunNode) => {
-  // W23 — open the AI drawer and stream a server-built explanation +
-  // suggested fix. The backend assembles the W22 schema-grounded prompt
+  // — open the AI drawer and stream a server-built explanation +
+  // suggested fix. The backend assembles the schema-grounded prompt
   // from ``flow_id`` + ``node_id`` so we don't have to ship the upstream
   // schema across the wire ourselves.
   void aiStore.explainRunFailure(

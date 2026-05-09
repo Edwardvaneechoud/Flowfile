@@ -2945,7 +2945,7 @@ class FlowGraph:
         self._node_ids.append(node_id)
         # Give the node a callable that returns the current flow parameters so
         # that lazy schema prediction (_predicted_data_getter) can substitute
-        # ${...} refs.  Using a callable (rather than a copy of the dict) means
+        # ${...} refs. Using a callable (rather than a copy of the dict) means
         # the node always reads the LATEST parameters, whether they were set via
         # the flow_settings.setter or mutated directly on flow_settings.parameters.
         _graph = self
@@ -3389,7 +3389,7 @@ class FlowGraph:
                         _decrypt_fn,
                     )
             # The worker DataFrame may have fewer columns than the inferred
-            # schema (e.g. empty topic or starting at "latest").  Align to
+            # schema (e.g. empty topic or starting at "latest"). Align to
             # the schema_callback result so downstream nodes see stable columns.
             expected_columns = schema_callback()
             fl = fl.align_to_schema(expected_columns)
@@ -4170,7 +4170,7 @@ class FlowGraph:
 
         # Temporarily substitute parameters into node settings (in-place so closures see the values)
         restorations = []
-        # Save the node's hash before substitution.  executor.execute() calls node.reset()
+        # Save the node's hash before substitution. executor.execute() calls node.reset()
         # while setting_input is mutated, which recomputes _hash from the resolved path.
         # After restore_parameters the path returns to the original ${...} form but _hash
         # still holds the resolved-path hash → needs_reset() returns True on the next
@@ -4591,7 +4591,7 @@ class FlowGraph:
             if suffix == ".flowfile":
                 raise DeprecationWarning(
                     "The .flowfile format is deprecated. Please use .yaml or .json formats.\n\n"
-                    "Or stay on v0.4.1 if you still need .flowfile support.\n\n"
+                    "Or stay on.1 if you still need .flowfile support.\n\n"
                 )
             elif suffix in (".yaml", ".yml"):
                 flowfile_data = self.get_flowfile_data()
@@ -4830,9 +4830,7 @@ def _would_create_cycle(from_node: "FlowNode", to_node: "FlowNode") -> bool:
 
 
 def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection) -> None:
-    """Adds a connection between two nodes in the flow graph.
-
-    W71 v2.8A — IDEMPOTENT. When the requested wire already exists
+    """Adds a connection between two nodes in the flow graph. — IDEMPOTENT. When the requested wire already exists
     on ``to_node`` (same input slot from the same source node), this
     is a silent no-op rather than a state-mutating overwrite. Lets
     the AI diff applier tolerate redundant ``connections_added`` ops
@@ -4858,7 +4856,7 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
             if not n
         ]
         raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
-    # W71 v2.8A — idempotency check. If the wire already exists at
+    # — idempotency check. If the wire already exists at
     # the same input slot from the same source, return silently.
     # ``validate_if_input_connection_exists`` is the same predicate
     # ``delete_connection`` uses, so the two paths agree on what
@@ -4891,9 +4889,7 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
 
 
 def delete_connection(graph, node_connection: input_schema.NodeConnection):
-    """Deletes a connection between two nodes in the flow graph.
-
-    W71 v2.8A — IDEMPOTENT. When the connection is already absent
+    """Deletes a connection between two nodes in the flow graph. — IDEMPOTENT. When the connection is already absent
     (e.g. ``update_node_settings`` already rewired the input via
     ``add_node_step``'s implicit ``input_node_ids`` derivation, OR
     a duplicate ``connections_removed`` op arrived after a prior
@@ -4914,7 +4910,7 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
     # already removed) surfaces as an AttributeError → 500, which also drops
     # CORS headers and shows up as a CORS error in the browser.
     if from_node is None or to_node is None:
-        # v2.8A — both nodes missing means the call is unrecoverably
+        # both nodes missing means the call is unrecoverably
         # malformed (the user / agent referenced a node that doesn't
         # exist). Keep raising for that case so it surfaces. But if
         # only the connection is gone (both nodes still present),
@@ -4925,10 +4921,10 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
         connection_name=node_connection.input_connection.get_node_input_connection_type(),
     )
     if not connection_valid:
-        # W71 v2.8A — silent no-op: the connection is already in the
-        # desired state (gone). Log so the prompt log captures the
-        # pattern; if dogfood shows the LLM emitting these
-        # gratuitously we tighten the modify-path prompt (v2.8B).
+        # Silent no-op: the connection is already in the desired
+        # state (gone). Log so the prompt log captures the pattern;
+        # if we see the LLM emitting these gratuitously we tighten
+        # the modify-path prompt.
         logger.info(
             "delete_connection: wire %s -> %s (%s) already absent; idempotent no-op",
             from_node.node_id,

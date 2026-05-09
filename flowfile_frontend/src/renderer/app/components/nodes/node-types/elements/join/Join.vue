@@ -186,7 +186,7 @@ const handleChange = (newValue: string, index: number, side: string) => {
   }
 };
 
-// W34 — ask the AI for likely (left_col, right_col) pairs based on the
+// — ask the AI for likely (left_col, right_col) pairs based on the
 // upstream column overlap. Empty rows in `join_mapping` are populated;
 // rows the user has already filled are NEVER overwritten.
 const suggestJoinKeys = async () => {
@@ -271,7 +271,7 @@ defineExpose({
   min-width: 70px;
 }
 
-/* W34 — Suggest keys button row */
+/* — Suggest keys button row */
 .suggest-keys-row {
   display: flex;
   align-items: center;

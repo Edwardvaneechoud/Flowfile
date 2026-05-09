@@ -38,13 +38,13 @@ export const useFlowStore = defineStore("flow", {
       // the canvas (e.g. `Canvas.vue`'s `loadFlow`) watch this and re-fetch
       // the graph on bump. Used when the backend mutates the flow without
       // going through the in-canvas mutation paths — for instance when
-      // `useAiDiffStore.accept()` applies a server-staged diff (W46/W41).
+      // `useAiDiffStore.accept()` applies a server-staged diff.
       // `graphVersion` is a different signal: it bumps on EVERY mutation
       // (incl. canvas-local ones) and drives dirty-state UI; watching it
       // for re-fetch would loop. `pendingReloadCounter` is "external
       // mutation happened; please re-fetch" only.
       pendingReloadCounter: 0,
-      // W71 v2.3 — Monotonic counter bumped by `requestLayoutReset()`.
+      // — Monotonic counter bumped by `requestLayoutReset()`.
       // `Canvas.vue` watches this and runs the same routine the
       // "Reset layout graph" button triggers (applyStandardLayout +
       // viewport reset + fitView). Used by the post-agent_live
@@ -126,7 +126,7 @@ export const useFlowStore = defineStore("flow", {
       this.pendingReloadCounter += 1;
     },
 
-    // W71 v2.3 — Signal "please re-run the standard auto-layout".
+    // — Signal "please re-run the standard auto-layout".
     // Canvas.vue watches `pendingLayoutResetCounter` and runs the same
     // routine the "Reset layout graph" button triggers
     // (`handleResetLayoutGraph`: applyStandardLayout + viewport reset
