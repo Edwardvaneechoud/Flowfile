@@ -427,6 +427,7 @@ RefusalReason = Literal[
     "network_egress",
     "missing_diff",
     "self_loop_prevented",
+    "self_loop_connection",
     "settings_validation",
     "upstream_is_sink",
     "join_wire_invalid",

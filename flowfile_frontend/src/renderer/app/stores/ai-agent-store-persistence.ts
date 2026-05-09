@@ -92,6 +92,14 @@ const VALID_EVENT_KINDS: ReadonlySet<AgentEvent["kind"]> = new Set([
   "retry",
   "abort",
   "complete",
+  "awaiting_user_input",
+  // W71 v2.4 — ``stage_advanced`` is the kind used for the plan
+  // bubble (op_kind_meta="plan") AND every classify→pick→fill
+  // transition. Missing from the persistence allow-list pre-v2.10
+  // meant the entire plan + stage trail was DROPPED on every page
+  // refresh — only tool_call_* events survived. Adding it here
+  // restores the chat-trail continuity across reloads.
+  "stage_advanced",
   "info",
 ]);
 

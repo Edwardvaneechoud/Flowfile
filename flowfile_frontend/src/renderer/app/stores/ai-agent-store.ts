@@ -242,6 +242,50 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
   watch(lastResult, queuePersist, { deep: true, flush: "sync" });
   watch(error, queuePersist, { flush: "sync" });
 
+  // W71 v2.10D — bulletproof end-of-run canvas refresh for
+  // agent_live. The per-handler refreshes (v2.9A onComplete /
+  // onAwaitingUserInput / onToolCallRejected; v2.10A extension
+  // for onError / onAbort) cover the explicit terminal events.
+  // But the SSE stream can also close silently (network blip,
+  // server cut, or any path where ``streamAgentSession`` resolves
+  // / rejects without firing a terminal event handler) and the
+  // start() catch / finally block would flip status without ever
+  // touching ``requestReload``. Watching ``status`` directly
+  // catches every transition from ``running`` to ANY terminal
+  // state — covers the silent path uniformly. Single source of
+  // truth, every per-handler refresh becomes belt-and-suspenders.
+  //
+  // W71 v2.10C (extended) — the same status-transition is the
+  // canonical "agent run just finished" signal across the entire
+  // codebase. Use it to flip
+  // ``aiStore.lastInteractionKind`` to ``"agent"`` so the next
+  // ``_dispatchPromotedAgent`` call correctly triggers the plan
+  // stage (no fresh chat reasoning since the agent ran). Avoids
+  // a circular ai-store ↔ ai-agent-store dependency by deferring
+  // the import until the watcher fires.
+  watch(status, (newStatus, oldStatus) => {
+    if (oldStatus !== "running") return;
+    if (newStatus === "running") return;
+    if (currentSurface.value === "agent_live") {
+      useFlowStore().requestReload();
+    }
+    // Use a deferred import so the ai-store doesn't get pulled
+    // into ai-agent-store's module graph (Pinia stores can
+    // resolve each other lazily but TS module-cycle detection
+    // chokes on the static form). ``lastInteractionKind`` is
+    // exposed as a writable ref on the ai-store for exactly
+    // this cross-store flip — see v2.10C in ai-store.ts.
+    import("./ai-store").then(({ useAiStore }) => {
+      try {
+        useAiStore().lastInteractionKind = "agent";
+      } catch {
+        /* store unavailable in test contexts */
+      }
+    }).catch(() => {
+      /* dynamic-import resolution failed; non-fatal */
+    });
+  });
+
   // W71 v2.6 — per-flow swap. When the user opens a different flow,
   // freeze the outgoing flow's agent state under its own key, then
   // load the incoming flow's state (or fresh-empty defaults if no
@@ -336,10 +380,34 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
       onThinking: (text) => _appendEvent("thinking", { text }),
       onToolCallProposed: (tc: AgentToolCallProposed) =>
         _appendEvent("tool_call_proposed", tc as unknown as Record<string, unknown>),
-      onToolCallStaged: (entry: AgentToolCallStaged) =>
-        _appendEvent("tool_call_staged", entry as unknown as Record<string, unknown>),
-      onToolCallWarned: (entry: AgentToolCallStaged) =>
-        _appendEvent("tool_call_warned", entry as unknown as Record<string, unknown>),
+      onToolCallStaged: (entry: AgentToolCallStaged) => {
+        _appendEvent("tool_call_staged", entry as unknown as Record<string, unknown>);
+        // W71 v2.9C — in ``agent_live`` ALL ops dispatch with
+        // mode=apply, but only ``add_*`` ops go through the v2.0
+        // observation path that emits ``tool_call_applied``. The
+        // other live mutations (``connect`` / ``delete_connection``
+        // / ``update_node_settings`` / ``delete_node``) fall through
+        // to the staged-results path that emits ``tool_call_staged``
+        // — the event name is misleading for agent_live since the
+        // server already mutated the live graph. Refresh the canvas
+        // here too so wire changes / settings updates / deletes
+        // become visible immediately. Other surfaces (agent_staged
+        // / agent_complex) genuinely STAGE — for them the canvas
+        // changes only after the user accepts the diff, so this
+        // condition gates correctly.
+        if (currentSurface.value === "agent_live") {
+          useFlowStore().requestReload();
+        }
+      },
+      onToolCallWarned: (entry: AgentToolCallStaged) => {
+        _appendEvent("tool_call_warned", entry as unknown as Record<string, unknown>);
+        // Same rationale as ``onToolCallStaged`` above — ``warned``
+        // means the apply succeeded with non-fatal warnings, so
+        // the live graph IS mutated and the canvas needs refresh.
+        if (currentSurface.value === "agent_live") {
+          useFlowStore().requestReload();
+        }
+      },
       onToolCallRejected: (refusal: AgentToolCallRejected) => {
         _appendEvent("tool_call_rejected", refusal as unknown as Record<string, unknown>);
         // W71 v2.9A — agent_live's auto-undo path emits
@@ -403,6 +471,12 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
         if (sessionId) currentSessionId.value = sessionId;
         status.value = "aborted";
         _appendEvent("abort", { session_id: sessionId });
+        // W71 v2.9A (extended) — agent_live ends on abort too.
+        // Refresh canvas so it reflects whatever applied before the
+        // abort.
+        if (currentSurface.value === "agent_live") {
+          useFlowStore().requestReload();
+        }
       },
       onAwaitingUserInput: (result: AgentAwaitingUserInputResult) => {
         // W49 — model ended on a clarifying question with no staged ops.
@@ -529,6 +603,15 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
       onError: (message) => {
         error.value = message;
         if (status.value === "running") status.value = "failed";
+        // W71 v2.9A (extended) — agent_live error path. The
+        // planner emits ``error`` on max_retries exhaustion and
+        // other terminal failures; per-step ``tool_call_applied``
+        // events may have already mutated the live graph before
+        // the error fired. Refresh so the canvas reflects the
+        // server's actual state at termination.
+        if (currentSurface.value === "agent_live") {
+          useFlowStore().requestReload();
+        }
       },
     };
   };

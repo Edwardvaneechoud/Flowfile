@@ -1240,6 +1240,27 @@ def test_pick_type_prompt_warns_against_palette_labels() -> None:
     assert "select_data" in text and "``select``" in text
 
 
+def test_classify_stage_includes_multi_step_discipline_section() -> None:
+    """W71 v2.9B — the classify-stage prompt has a *"Multi-step
+    discipline"* section that tells the LLM not to terminate with
+    plan steps remaining. Specifically calls out the *"insert a
+    node mid-flow without rewiring"* failure mode that bit the
+    2026-05-09 dogfood (agent added unique but stopped before
+    reconnecting downstream nodes).
+    """
+    text = assemble_system_prompt("agent_staged", stage="classify")
+    assert "## Multi-step discipline" in text, (
+        "v2.9B: classify prompt missing the multi-step discipline section"
+    )
+    text_lower = text.lower()
+    # The "don't pick `other` until all steps done" rule.
+    assert 'op_kind="other"' in text or "op_kind=\"other\"" in text
+    assert "all steps" in text_lower or "until they're all" in text_lower
+    # The mid-flow rewire warning explicitly.
+    assert "rewir" in text_lower
+    assert "dangling" in text_lower or "dangl" in text_lower
+
+
 def test_classify_stage_now_includes_palette_disambiguation() -> None:
     """W71 v1.14A.3 — supersedes the v1.12B *"only at pick_type"*
     posture. Some models (qwen3-vl-32b on 2026-05-08) bypass

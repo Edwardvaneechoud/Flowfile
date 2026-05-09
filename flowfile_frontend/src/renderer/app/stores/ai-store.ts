@@ -109,6 +109,22 @@ export const useAiStore = defineStore("ai", () => {
   const streamError = ref<string | null>(null);
   let activeAbort: AbortController | null = null;
 
+  // W71 v2.10C — track the IMMEDIATELY previous interaction kind so
+  // ``_dispatchPromotedAgent`` can decide whether to skip the v2.4
+  // plan stage. The pre-v2.10C check (``messages.value.some(m =>
+  // m.role === "assistant")``) was too coarse — old chat replies
+  // remained in history after subsequent agent runs and the
+  // skip-plan path fired even when the agent had been the most
+  // recent activity. The user expected: previous action was a
+  // chat reply → skip plan (chat already produced reasoning);
+  // previous action was an agent run → run plan (no fresh chat
+  // reasoning since). This ref captures that ordering directly.
+  // Set to ``"chat"`` when the streaming chat reply finishes; set
+  // to ``"agent"`` when the agent run completes (via the
+  // status-watcher in ``ai-agent-store.ts``); ``null`` only at
+  // session start before either has fired.
+  const lastInteractionKind = ref<"chat" | "agent" | null>(null);
+
   // ----- W58 chat → agent auto-promotion -----
   // ``autoPromote`` is a sticky session preference: defaults to true, persisted
   // alongside the chat history. Users flip it off via the AI Settings tab or
@@ -445,6 +461,15 @@ export const useAiStore = defineStore("ai", () => {
           onDone: () => {
             reactivePlaceholder.pending = false;
             streamingState.value = "idle";
+            // W71 v2.10C — chat reply finished. Mark this as the
+            // most-recent interaction so the next
+            // ``_dispatchPromotedAgent`` call can skip the v2.4
+            // plan stage (the chat reply IS the plan-equivalent).
+            // The status-watcher in ai-agent-store flips this back
+            // to ``"agent"`` whenever an agent run completes —
+            // which is what makes the per-turn ordering work
+            // correctly across mixed chat/agent sessions.
+            lastInteractionKind.value = "chat";
           },
           onError: (message) => {
             sawErrorEvent = true;
@@ -515,6 +540,25 @@ export const useAiStore = defineStore("ai", () => {
     const enrichedPrompt = _buildPromotedAgentPrompt(text);
     promotionBanner.value = { reason, message: text };
 
+    // W71 v2.10C (refined) — skip the plan stage ONLY when the
+    // IMMEDIATELY-PREVIOUS interaction was a chat reply (i.e.
+    // there's fresh chat-mode reasoning the agent can lean on).
+    // The earlier coarse check (``messages.value.some(m => m.role
+    // === "assistant")``) misfired in the common pattern: chat
+    // → "yes implement" → agent runs → user types follow-up. The
+    // old chat reply is still in messages, so the coarse check
+    // returned true and skip_plan fired even though the most
+    // recent activity was the AGENT run (which leaves no chat
+    // reasoning in its wake). User-reported 2026-05-09: agent
+    // jumped straight to modify ops on a follow-up without
+    // re-planning, even though the previous turn was an agent run.
+    //
+    // ``lastInteractionKind`` is the per-turn signal:
+    //   - ``"chat"``  → chat assistant reply just landed (skip plan)
+    //   - ``"agent"`` → agent run just completed (run plan)
+    //   - ``null``    → first message of session (run plan)
+    const skipPlan = lastInteractionKind.value === "chat";
+
     const agentStore = useAiAgentStore();
     await agentStore.start({
       flow_id: flowId,
@@ -526,15 +570,7 @@ export const useAiStore = defineStore("ai", () => {
       surface: selectedAgentSurface.value,
       provider: selectedProvider.value ?? "anthropic",
       model: selectedModel.value ?? null,
-      // W71 v2.7 — skip the v2.4 plan stage on auto-promoted runs.
-      // The chat-mode response that preceded this promotion already
-      // produced a plan-shaped narrative (steps, suggested nodes, the
-      // user said "yes"); re-emitting a structured plan via
-      // ``flowfile.meta.emit_plan`` would burn one round and
-      // duplicate the chat-mode output the user just confirmed.
-      // Direct agent runs (typed with the agent toggle on) keep the
-      // plan stage so the agent thinks globally before staging.
-      skip_plan: true,
+      skip_plan: skipPlan,
     });
   };
 
@@ -1150,6 +1186,9 @@ export const useAiStore = defineStore("ai", () => {
     setSelectedModel,
     selectedAgentSurface,
     setSelectedAgentSurface,
+    // W71 v2.10C — exposed so ai-agent-store's status watcher can
+    // flip it to "agent" when a run terminates.
+    lastInteractionKind,
     abortStream,
     sendMessage,
     explainRunFailure,

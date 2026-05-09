@@ -1309,6 +1309,34 @@ def _handle_connect(
             refusal_detail=f"connection validation failed: {exc}",
         )
 
+    # W71 v2.10A — same-id ``connect`` is a self-loop the runtime
+    # cycle check at ``flow_graph.add_connection`` would catch
+    # later, but only at apply-time (after the diff bundle ships
+    # and rolls back). Reject at staging so the LLM gets immediate
+    # feedback on the same round and re-emits with valid distinct
+    # ids. Mirrors v1.16's join-shaped self-loop posture. Audit
+    # log 2026-05-09 showed the LLM emit ``connect 7→7`` as the
+    # third op of a re-route batch; without this guard the entire
+    # 6-op diff aborted with *"422: Connecting node 7 -> 7 would
+    # create a cycle"* and the user had to re-prompt from scratch.
+    from_id = connection.output_connection.node_id
+    to_id = connection.input_connection.node_id
+    if from_id == to_id:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason="self_loop_connection",
+            refusal_detail=(
+                f"connect: ``from_node_id`` and ``to_node_id`` must be "
+                f"different (got both = {from_id}). A node cannot connect "
+                "to itself; that would create a cycle. Pick a different "
+                "downstream node id for ``to_node_id``."
+            ),
+        )
+
     # 2026-05-07 — refuse explicit ``connect`` calls whose upstream side is a
     # sink. ``output_connection.node_id`` is the FROM (upstream) side; if it
     # has no output port, the connection is a static error.

@@ -67,6 +67,39 @@ If the user asked for multiple things in one message (*"filter to last
 returns to this stage after each node is staged so you can classify
 the next intent on the next round.
 
+## Multi-step discipline (W71 v2.9B)
+
+If your initial plan or the conversation history above outlined
+multiple steps, **you are NOT done after the first add / modify
+/ connect**. The host returns control to this classify stage
+after every successful op. Reconsider the plan on every round:
+
+* **If MORE steps remain** (e.g. you added a node but haven't
+  rewired the downstream yet, or your plan listed N steps and
+  you've completed fewer than N), pick the next ``op_kind`` for
+  the remaining work — ``add`` for new nodes, ``modify`` for
+  settings changes, ``connect`` / ``disconnect`` for rewires.
+* **Only pick ``op_kind="other"`` when ALL steps in the plan
+  are complete** — OR when the user's request is purely a
+  question / explanation that doesn't need canvas changes.
+* If a chat conversation is embedded above this prompt as
+  context (auto-promote-from-chat path) and that conversation
+  outlined a numbered plan, that plan is your **authoritative
+  checklist**. Mentally track which steps you've done and keep
+  going until they're all applied.
+
+**Common mistake — inserting a node mid-flow without rewiring**:
+if your plan inserts a node BETWEEN existing nodes (e.g. add a
+``unique`` node between ``read`` and ``group_by``), you MUST
+also emit ``connect`` (new wire from the inserted node to each
+downstream consumer) AND ``delete_connection`` (old wire from
+the prior upstream to each downstream consumer). Without those,
+the inserted node is dangling and the downstream nodes still
+consume from the prior upstream — the plan's data-flow change
+is not actually applied. After the ``add``, classify ``connect``
++ ``disconnect`` for each downstream node that should consume
+from the new insertion.
+
 Discipline:
 
 * Pick exactly one op_kind. Do not stage anything in this turn — the

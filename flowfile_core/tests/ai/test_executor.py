@@ -1447,6 +1447,35 @@ def test_add_node_refuses_when_upstream_is_sink(call_kwargs: dict[str, Any]) -> 
     assert "[1]" in detail
 
 
+def test_connect_refuses_self_loop(call_kwargs: dict[str, Any]) -> None:
+    """W71 v2.10A — calling ``flowfile.graph.connect`` with the same
+    id for ``from_node_id`` and ``to_node_id`` is rejected at
+    staging time with ``refusal_reason="self_loop_connection"``.
+    Catches the cycle the runtime check at flow_graph.py:4853 would
+    otherwise only catch at apply-time, after the diff has bundled
+    and the user has clicked Accept (see audit log 2026-05-09:
+    LLM emitted ``connect 7→7`` as the third op of a re-route batch
+    and the entire 6-op diff aborted with a 422).
+    """
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 2, "to_node_id": 2},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "self_loop_connection"
+    detail = result.refusal_detail or ""
+    assert "must be different" in detail
+    assert "2" in detail
+    # No connection got staged — the input list of node 2 is unchanged.
+    assert flow.get_node(2) is not None
+
+
 def test_connect_refuses_when_upstream_is_sink(call_kwargs: dict[str, Any]) -> None:
     """An explicit ``flowfile.graph.connect`` call whose ``from`` (upstream)
     side is a sink is refused. Catches the case where the LLM's wiring
