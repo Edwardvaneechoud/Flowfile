@@ -1,16 +1,14 @@
-"""Graph-op tool surface — owned by W30.
+"""Graph-op tool surface.
 
-Hand-written ``ToolSpec`` list for the graph-mutation operations the LLM
-calls *outside* of the per-node-type ``flowfile.graph.add_<type>`` family
-(those are auto-generated from ``NODE_TYPE_TO_SETTINGS_CLASS`` in
-``registry.py``). MCP-shaped naming per D004: ``flowfile.graph.<op>``.
+Hand-written ``ToolSpec`` list for the graph-mutation operations the
+LLM calls *outside* of the per-node-type ``flowfile.graph.add_<type>``
+family (those are auto-generated from ``NODE_TYPE_TO_SETTINGS_CLASS``
+in ``registry.py``). MCP-shaped naming: ``flowfile.graph.<op>``.
 
-W30 only declares these specs. W31 will implement the executor that maps
-each call into the corresponding ``FlowGraph`` method or ``POST /editor/...``
-route. Schemas mirror the existing route bodies so the executor can reuse
+This module declares the specs; the executor maps each call into the
+corresponding ``FlowGraph`` method or ``POST /editor/...`` route.
+Schemas mirror the existing route bodies so the executor can reuse
 them without translation.
-
-Plan §4.2 enumerates the surface; this module is the source of truth.
 """
 
 from __future__ import annotations
@@ -34,18 +32,17 @@ def _schema(properties: dict, required: list[str]) -> dict:
 
 
 GRAPH_OPS_TOOLS: Final[list[ToolSpec]] = [
-    # 2026-05-07 — ``flowfile.graph.add_node`` removed. The tool advertised
-    # itself as "Almost never the right tool" yet still appeared in the
-    # catalog, which made it a hallucination magnet: live dogfood showed the
-    # LLM emitting ``add_node`` with ``node_type="node"``, which the executor
-    # can only refuse with ``unknown node type: 'node'`` because the dispatcher
-    # has no separate promise-handler — every ``add_*`` call routes through
-    # ``_handle_add_node`` and demands a real node type. The typed per-type
-    # tools (``add_filter`` / ``add_join`` / ``add_group_by`` / etc., all
-    # auto-generated in ``registry.py``) cover the legitimate use cases
-    # without the placeholder confusion. ``_apply_add_node`` and
-    # ``_handle_add_node`` are kept (internal Python plumbing); only the
-    # agent-facing ``ToolSpec`` is gone.
+    # ``flowfile.graph.add_node`` is intentionally absent. The generic
+    # tool was a hallucination magnet — the LLM would emit ``add_node``
+    # with ``node_type="node"``, which the executor can only refuse
+    # with ``unknown node type: 'node'`` because the dispatcher has no
+    # separate promise-handler — every ``add_*`` call routes through
+    # ``_handle_add_node`` and demands a real node type. The typed
+    # per-type tools (``add_filter`` / ``add_join`` / ``add_group_by``
+    # / etc., all auto-generated in ``registry.py``) cover the
+    # legitimate use cases without the placeholder confusion.
+    # ``_apply_add_node`` and ``_handle_add_node`` are kept (internal
+    # Python plumbing); only the agent-facing ``ToolSpec`` is gone.
     ToolSpec(
         name="flowfile.graph.connect",
         description=(
@@ -175,15 +172,15 @@ GRAPH_OPS_TOOLS: Final[list[ToolSpec]] = [
             required=["flow_id", "from_node_id", "to_node_id"],
         ),
     ),
-    # ``flowfile.graph.run_node`` removed from the catalog in W46 (2026-05-05).
-    # Triggering full node execution autonomously from an LLM is unsafe — could
-    # materialise large datasets, run user code, hit external systems. Stays
-    # user-driven; not re-added.
+    # ``flowfile.graph.run_node`` is intentionally absent. Triggering
+    # full node execution autonomously from an LLM is unsafe — could
+    # materialise large datasets, run user code, hit external systems.
+    # Stays user-driven.
     #
-    # ``flowfile.graph.propose_subgraph`` removed from the catalog in W46
-    # (2026-05-05). Redundant with W40's planner loop — multi-node staging
-    # happens naturally via repeated add_/connect_ calls bundled into a
-    # ``GraphDiff`` at completion via ``bundle_staged_results``. Not re-added.
+    # ``flowfile.graph.propose_subgraph`` is intentionally absent.
+    # Redundant with the planner loop — multi-node staging happens
+    # naturally via repeated add_/connect_ calls bundled into a
+    # ``GraphDiff`` at completion via ``bundle_staged_results``.
 ]
 
 

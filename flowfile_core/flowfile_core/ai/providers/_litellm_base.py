@@ -1,13 +1,14 @@
 """Shared litellm-backed ``LiteLLMProvider`` concrete class.
 
-Owned by W11. Per plan §6.2: ``litellm`` is the default backing library so
-all six vendors (Anthropic / OpenAI / Google / Groq / OpenRouter / Ollama)
-share one async dispatch path. Per-vendor subclasses only carry config —
-``name``, ``default_model``, capability flags, optional ``api_base`` for
-self-hosted, and the D010 surface→model map.
+``litellm`` is the default backing library so all six vendors
+(Anthropic / OpenAI / Google / Groq / OpenRouter / Ollama) share one
+async dispatch path. Per-vendor subclasses only carry config —
+``name``, ``default_model``, capability flags, optional ``api_base``
+for self-hosted, and the surface→model map.
 
-The litellm import is **lazy** (inside ``chat`` / ``stream``) so importing
-``flowfile_core.ai.providers`` stays cheap. Tests monkeypatch ``litellm.acompletion``.
+The litellm import is **lazy** (inside ``chat`` / ``stream``) so
+importing ``flowfile_core.ai.providers`` stays cheap. Tests
+monkeypatch ``litellm.acompletion``.
 """
 
 from __future__ import annotations
@@ -28,6 +29,24 @@ from flowfile_core.ai.providers.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _lazy_litellm() -> Any:
+    """Lazy-import ``litellm`` and silence its verbose info banner.
+
+    litellm prints ``Provider List: https://docs.litellm.ai/docs/providers``
+    (and similar info banners) to stdout on every error and on some
+    success paths, polluting server logs. Setting
+    ``litellm.suppress_debug_info = True`` after import is the supported
+    way to silence them. The attribute write is idempotent — applying it
+    on every call is a single dict-store, far cheaper than guarding with
+    a flag, and keeps the lazy-import contract intact (the module stays
+    out of the import graph until first ``chat`` / ``stream`` call).
+    """
+    import litellm
+
+    litellm.suppress_debug_info = True
+    return litellm
 
 
 class LiteLLMKwargs(TypedDict, total=False):
@@ -51,11 +70,12 @@ class LiteLLMKwargs(TypedDict, total=False):
 class LiteLLMProvider:
     """Concrete provider using litellm for the actual LLM dispatch.
 
-    Subclasses set ``name``, ``default_model``, ``model_prefix`` (litellm's
-    vendor route, e.g. ``"anthropic/"``), capability flags, and the D010
-    ``surface_models`` map. They typically don't override ``chat()`` /
-    ``stream()`` — the Pydantic ↔ litellm shape translation is identical
-    across vendors thanks to litellm's standardisation.
+    Subclasses set ``name``, ``default_model``, ``model_prefix``
+    (litellm's vendor route, e.g. ``"anthropic/"``), capability
+    flags, and the ``surface_models`` map. They typically don't
+    override ``chat()`` / ``stream()`` — the Pydantic ↔ litellm
+    shape translation is identical across vendors thanks to litellm's
+    standardisation.
     """
 
     name: ClassVar[str] = "_litellm_base"
@@ -130,7 +150,7 @@ class LiteLLMProvider:
         session_id: str | None = None,
         user_id: int | None = None,
     ) -> ChatResponse:
-        import litellm  # lazy: keeps module import cheap
+        litellm = _lazy_litellm()
 
         kwargs = self._build_kwargs(
             messages,
@@ -181,7 +201,7 @@ class LiteLLMProvider:
         session_id: str | None = None,
         user_id: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
-        import litellm
+        litellm = _lazy_litellm()
 
         kwargs = self._build_kwargs(messages, tools, max_tokens, stream=True)
         started_at = time.perf_counter()
@@ -401,7 +421,7 @@ def _parse_arguments(raw: str | dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Telemetry + prompt-log hooks (W59)
+# Telemetry + prompt-log hooks
 # ---------------------------------------------------------------------------
 #
 # Imports below are kept inside the helper functions for the same reason as
@@ -417,7 +437,7 @@ def _record_call_telemetry(
     model: str,
     error: str | None,
 ) -> None:
-    """Bump the W15 ``flowfile_ai_provider_call_total`` counter.
+    """Bump the ``flowfile_ai_provider_call_total`` counter.
 
     Independent of ``FLOWFILE_AI_LOG_PROMPTS`` — the counter is cheap and
     always-on so dashboards see traffic regardless of whether prompt
@@ -450,7 +470,7 @@ def _record_chat_log(
     latency_ms: int,
     error: str | None,
 ) -> None:
-    """Append one prompt-log entry for a non-streaming chat call (W59)."""
+    """Append one prompt-log entry for a non-streaming chat call."""
     try:
         from flowfile_core.ai.prompt_log import (
             build_entry_from_chat,
@@ -494,7 +514,7 @@ def _record_stream_log(
     latency_ms: int,
     error: str | None,
 ) -> None:
-    """Append one prompt-log entry for a streaming call (W59).
+    """Append one prompt-log entry for a streaming call.
 
     Aggregates the per-chunk deltas the streaming wrapper accumulates;
     one line per LLM call, not per chunk.

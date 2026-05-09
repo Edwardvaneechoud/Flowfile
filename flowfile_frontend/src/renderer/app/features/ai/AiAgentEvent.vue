@@ -1,21 +1,22 @@
 <script setup lang="ts">
-// Single-event renderer for the W40 planner agent event stream.
+// Single-event renderer for the planner agent event stream.
 //
 // Most event kinds are mechanical summaries — "Picking category…",
-// "Staged filter (node 2)", "Rejected X: <detail>" — and render as plain
-// text. The exception is `thinking`, which carries the LLM's free-form
-// natural-language prose (markdown). Render that through the same
-// sanitised marked + DOMPurify pipeline that AiMessage.vue uses for
-// regular assistant chat.
+// "Staged filter (node 2)", "Rejected X: <detail>" — and render as
+// plain text. The exception is `thinking`, which carries the LLM's
+// free-form natural-language prose (markdown). Render that through
+// the same sanitised marked + DOMPurify pipeline that AiMessage.vue
+// uses for regular assistant chat.
 //
-// W38 — for ``tool_call_*`` events the renderer prefers the model's
-// ``rationale`` (the assistant's plain-English preamble) as the primary
-// headline, with the raw tool name + arg JSON tucked into a collapsible
-// ``<details>`` block. When the model didn't emit a preamble we fall back
-// to the server-generated ``arg_summary``. Events whose ``op_kind`` is
-// ``"meta"`` (D002 internal routing — pick_category and "category
-// narrowed" info notes) are hidden entirely so the user-visible chat
-// trail only shows real graph mutations and schema reads.
+// For ``tool_call_*`` events the renderer prefers the model's
+// ``rationale`` (the assistant's plain-English preamble) as the
+// primary headline, with the raw tool name + arg JSON tucked into a
+// collapsible ``<details>`` block. When the model didn't emit a
+// preamble we fall back to the server-generated ``arg_summary``.
+// Events whose ``op_kind`` is ``"meta"`` (LLM-internal routing —
+// pick_category and "category narrowed" info notes) are hidden
+// entirely so the user-visible chat trail only shows real graph
+// mutations and schema reads.
 
 import { computed, ref } from "vue";
 
@@ -25,7 +26,7 @@ import { sanitiseMarkdown } from "./markdown";
 
 const props = defineProps<{ event: AgentEvent }>();
 
-// W40 — agent event payload accessors. Templates can't use TS type
+// Agent event payload accessors. Templates can't use TS type
 // assertions, so unwrap with helpers that return safe defaults.
 const _str = (payload: Record<string, unknown>, key: string): string => {
   const v = payload?.[key];
@@ -38,8 +39,8 @@ const _num = (payload: Record<string, unknown>, key: string): number | null => {
 
 // Strip the dotted MCP prefix so summaries read "filter" not
 // "flowfile.graph.add_filter", and "pick_upstream" not
-// "flowfile.meta.pick_upstream" (W71 v1.3 — meta-op rejections are now
-// surfaced in the chat trail).
+// "flowfile.meta.pick_upstream" — meta-op rejections are surfaced in
+// the chat trail.
 const _shortToolName = (name: string): string => {
   if (name.startsWith("flowfile.graph.add_")) return name.slice("flowfile.graph.add_".length);
   if (name.startsWith("flowfile.meta.")) return name.slice("flowfile.meta.".length);
@@ -49,7 +50,7 @@ const _shortToolName = (name: string): string => {
   return name;
 };
 
-// W38 — payload-level accessors for the rationale-primary rendering.
+// Payload-level accessors for the rationale-primary rendering.
 const rationale = computed<string>(() => _str(props.event.payload ?? {}, "rationale"));
 const argSummary = computed<string>(() => _str(props.event.payload ?? {}, "arg_summary"));
 
@@ -68,23 +69,24 @@ const isToolStep = computed<boolean>(() => {
   );
 });
 
-// W38 — hide D002 internal routing + housekeeping info events from the
-// user-facing chat trail. Shared helper keeps this in lockstep with the
-// timeline-grouping filter in AiAssistant.vue (so meta-only agent runs
-// don't produce empty bubbles either).
+// Hide LLM-internal routing + housekeeping info events from the
+// user-facing chat trail. Shared helper keeps this in lockstep with
+// the timeline-grouping filter in AiAssistant.vue (so meta-only
+// agent runs don't produce empty bubbles either).
 const isHidden = computed<boolean>(() => isAgentEventHidden(props.event.kind, props.event.payload));
 
-// W38 — rationale-primary headline for tool_call_* events.
+// Rationale-primary headline for tool_call_* events.
 //
-// The planner attaches the same `rationale` (the model's natural-language
-// preamble) to every tool_call_* event in a round — proposed AND the
-// follow-up staged/warned/rejected. Rendering the rationale on all of them
-// duplicates the same prose in the chat trail (W53 symptom: a proposed +
-// rejected pair shows the same paragraph twice). Anchor rationale to the
-// `proposed` event only — that's where the model "speaks" — and let the
-// outcome events render their kind-specific status line (`Staged X`,
-// `Rejected X: <reason>`). Falls back to `arg_summary` (server-generated
-// from settings) when the model skipped the preamble, then to a generic
+// The planner attaches the same `rationale` (the model's
+// natural-language preamble) to every tool_call_* event in a round —
+// proposed AND the follow-up staged/warned/rejected. Rendering the
+// rationale on all of them duplicates the same prose in the chat
+// trail (so a proposed + rejected pair shows the same paragraph
+// twice). Anchor rationale to the `proposed` event only — that's
+// where the model "speaks" — and let the outcome events render
+// their kind-specific status line (`Staged X`, `Rejected X:
+// <reason>`). Falls back to `arg_summary` (server-generated from
+// settings) when the model skipped the preamble, then to a generic
 // short-tool-name label when neither is populated.
 const toolStepHeadline = computed<string>(() => {
   const name = _shortToolName(_str(props.event.payload ?? {}, "name"));
@@ -100,9 +102,9 @@ const toolStepHeadline = computed<string>(() => {
     const detail = _str(props.event.payload ?? {}, "detail");
     return detail ? `Rejected ${name}: ${detail}` : `Rejected ${name}`;
   }
-  // W71 v2.0 — agent_live applies live to the canvas; distinct
-  // wording from staged so the user reads "Applied X" and knows
-  // the canvas just mutated.
+  // agent_live applies live to the canvas; distinct wording from
+  // staged so the user reads "Applied X" and knows the canvas just
+  // mutated.
   if (props.event.kind === "tool_call_applied") {
     return name ? `Applied ${name}` : "Applied a step";
   }
@@ -142,8 +144,9 @@ const toolStepArgsJson = computed<string>(() => {
   }
 });
 
-// W38 rejected events keep the refusal detail visible inside the expanded
-// panel — useful when debugging why the model's call didn't validate.
+// Rejected events keep the refusal detail visible inside the
+// expanded panel — useful when debugging why the model's call
+// didn't validate.
 const toolStepRejectionDetail = computed<string>(() => {
   if (props.event.kind !== "tool_call_rejected") return "";
   const detail = _str(props.event.payload ?? {}, "detail");
@@ -159,12 +162,12 @@ const showRejectionDetail = computed(() => toolStepRejectionDetail.value.length 
 // the same component instance.
 const detailsOpen = ref(false);
 
-// W71 v1.2 — humanised stage-transition labels. The planner's
-// agent_staged surface emits one ``stage_advanced`` event per state-
-// machine transition (see ``planner._log_stage_transition``); without
-// rendering them the chat trail goes silent between rounds. We pick the
-// most-informative payload field per transition and fall back to a
-// generic "stage: X → Y" label for transitions we don't enumerate.
+// Humanised stage-transition labels. The planner's agent_staged
+// surface emits one ``stage_advanced`` event per state-machine
+// transition (see ``planner._log_stage_transition``); without
+// rendering them the chat trail goes silent between rounds. We pick
+// the most-informative payload field per transition and fall back to
+// a generic "stage: X → Y" label for transitions we don't enumerate.
 const _renderStageAdvanced = (p: Record<string, unknown>): string => {
   const to = _str(p, "to");
   const from = _str(p, "from");
@@ -195,10 +198,10 @@ const _renderStageAdvanced = (p: Record<string, unknown>): string => {
   }
   if (to === "single_stage_op" && opKind) return `Routing to ${opKind} operation.`;
 
-  // W71 v1.6 — ``op_kind === "other"`` keeps stage at classify. Skip
-  // rendering the meta-routing line entirely in that case so the
-  // chat trail doesn't show a misleading *"Stage: classify → classify"*
-  // for every chat-style follow-up. The LLM's actual reply rides as a
+  // ``op_kind === "other"`` keeps stage at classify. Skip rendering
+  // the meta-routing line entirely in that case so the chat trail
+  // doesn't show a misleading *"Stage: classify → classify"* for
+  // every chat-style follow-up. The LLM's actual reply rides as a
   // separate ``thinking`` event.
   if (opKind === "other" && from === "classify" && to === "classify") {
     return "";
@@ -246,7 +249,7 @@ const summary = computed<string>(() => {
 
 const isThinking = computed(() => props.event.kind === "thinking");
 
-// W71 v2.4 — the plan stage emits a ``stage_advanced`` event with
+// The plan stage emits a ``stage_advanced`` event with
 // ``op_kind_meta="plan"`` carrying the LLM's structured markdown
 // plan in ``payload.plan``. Render it as a prominent bubble (same
 // shape as ``thinking`` events) so the user sees what the agent
@@ -279,7 +282,7 @@ const thinkingHtml = computed<string>(() => {
 
 <template>
   <div v-if="!isHidden" :class="`ai-agent-event ai-agent-event--${event.kind}`">
-    <!-- W38 — rationale-primary tool_step rendering. -->
+    <!-- Rationale-primary tool_step rendering. -->
     <template v-if="isToolStep">
       <div class="ai-agent-event__rationale">{{ toolStepHeadline }}</div>
       <details
@@ -296,10 +299,10 @@ const thinkingHtml = computed<string>(() => {
         </p>
       </details>
     </template>
-    <!-- W71 v2.4 — plan stage: render the structured markdown plan
-         + the one-line rationale prominently so the user sees the
-         agent's intent before any nodes get staged. eslint-disable:
-         v-html is sanitised. -->
+    <!-- Plan stage: render the structured markdown plan + the
+         one-line rationale prominently so the user sees the agent's
+         intent before any nodes get staged. eslint-disable: v-html
+         is sanitised. -->
     <template v-else-if="isPlanStage">
       <div class="ai-agent-event__plan-header">
         <span class="ai-agent-event__plan-label">Plan</span>
@@ -350,7 +353,8 @@ const thinkingHtml = computed<string>(() => {
 .ai-agent-event--tool_call_staged,
 .ai-agent-event--tool_call_warned,
 .ai-agent-event--tool_call_applied {
-  /* W38 — rationale rendering needs more breathing room than mechanical summaries. */
+  /* Rationale rendering needs more breathing room than mechanical
+     summaries. */
   padding: 8px 12px;
   font-size: 12px;
   color: var(--color-text-primary, #24292e);
@@ -365,9 +369,9 @@ const thinkingHtml = computed<string>(() => {
   border-left-color: var(--color-warning, #d4a72c);
 }
 
-/* W71 v2.0 — agent_live applies show with the same accent colour
-   as the live-mode surface chip so the canvas-mutation visual
-   language is consistent. */
+/* agent_live applies show with the same accent colour as the
+   live-mode surface chip so the canvas-mutation visual language is
+   consistent. */
 .ai-agent-event--tool_call_applied {
   border-left-color: var(--color-accent, #7c3aed);
 }
@@ -384,10 +388,10 @@ const thinkingHtml = computed<string>(() => {
   border-left-color: var(--color-success, #1a7f37);
 }
 
-/* W71 v1.2 — stage_advanced events render as faint trail markers between
-   the more salient tool_call_* events. Smaller font, lighter color, no
-   secondary background so they read as "the agent is moving through its
-   pipeline" without competing with the staged-node summaries. */
+/* stage_advanced events render as faint trail markers between the
+   more salient tool_call_* events. Smaller font, lighter color, no
+   secondary background so they read as "the agent is moving through
+   its pipeline" without competing with the staged-node summaries. */
 .ai-agent-event--stage_advanced {
   font-size: 11px;
   color: var(--color-text-muted, #6a737d);
@@ -397,9 +401,9 @@ const thinkingHtml = computed<string>(() => {
   font-style: italic;
 }
 
-/* W71 v2.4 — plan stage_advanced event renders prominently (not as a
-   muted trail line). The plan is the agent's intent statement and is
-   the load-bearing thing the user reads before any nodes get staged.
+/* Plan stage_advanced event renders prominently (not as a muted
+   trail line). The plan is the agent's intent statement and is the
+   load-bearing thing the user reads before any nodes get staged.
    Override the muted base style with a thinking-style bubble. */
 .ai-agent-event--stage_advanced:has(.ai-agent-event__plan-header) {
   font-size: 12px;
@@ -462,7 +466,7 @@ const thinkingHtml = computed<string>(() => {
   word-break: break-word;
 }
 
-/* W38 — rationale-primary tool_step rendering. */
+/* Rationale-primary tool_step rendering. */
 
 .ai-agent-event__rationale {
   font-weight: 500;

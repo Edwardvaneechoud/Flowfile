@@ -1,14 +1,13 @@
-"""Codegen tool surface — owned by W30.
+"""Codegen tool surface.
 
-Tools for generating ``polars_code`` / ``python_script`` / ``sql_query``
-node bodies. The reverse path (graph → Python) reuses the existing
-``get_generated_flowframe_code()`` (``routes.py:746``,
-``code_generator.py:2368``) and is **not** owned here — that is a UI surface.
+Tools for generating ``polars_code`` / ``python_script`` /
+``sql_query`` node bodies. The reverse path (graph → Python) reuses
+the existing ``get_generated_flowframe_code()`` and is **not** owned
+here — that's a UI surface.
 
-W30 only declares the specs. W31 implements the executor; per D003 the
-executor runs a 1-row dry-run via ``kernel_runtime`` so the prospective
-output schema is known before the GraphDiff stages. MCP-shaped names per
-D004: ``flowfile.codegen.<op>``.
+This module declares the specs; the executor runs a 1-row dry-run via
+``kernel_runtime`` so the prospective output schema is known before
+the GraphDiff stages. MCP-shaped names: ``flowfile.codegen.<op>``.
 """
 
 from __future__ import annotations
@@ -63,7 +62,7 @@ CODEGEN_OPS_TOOLS: Final[list[ToolSpec]] = [
         description=(
             "Generate the body of a polars_code node. Returns a node-settings payload "
             "ready to stage via flowfile.graph.add_polars_code. The executor runs the "
-            "generated code on a single sample row before staging (D003) so downstream "
+            "generated code on a single sample row before staging (via 1-row dry-run) so downstream "
             "tool calls know the prospective output schema."
         ),
         long_description=(
@@ -91,7 +90,7 @@ CODEGEN_OPS_TOOLS: Final[list[ToolSpec]] = [
             "Generate the body of a python_script node. The generated script runs in the "
             "isolated kernel_runtime sandbox (Docker). Returns a node-settings payload ready "
             "to stage via flowfile.graph.add_python_script. The executor's 1-row dry-run "
-            "(D003) verifies the script does not crash and produces a parsable output schema."
+            "(via 1-row dry-run) verifies the script does not crash and produces a parsable output schema."
         ),
         long_description=(
             "Author a full Python function body for an isolated sandbox. Use only "
@@ -102,7 +101,7 @@ CODEGEN_OPS_TOOLS: Final[list[ToolSpec]] = [
             "sandbox blocks network egress by default — set 'needs_network=true' "
             "only when the script genuinely needs to fetch external data, and "
             "tell the user clearly so they can review before approving. The "
-            "1-row dry-run (D003) discovers the prospective output schema; "
+            "1-row dry-run (via 1-row dry-run) discovers the prospective output schema; "
             "supply 'expected_columns' to catch mismatches early."
         ),
         parameters=_schema(
@@ -128,7 +127,7 @@ CODEGEN_OPS_TOOLS: Final[list[ToolSpec]] = [
             "Generate the body of a sql_query node. The generated SQL runs against Polars' "
             "embedded SQL engine over the upstream node outputs. Returns a node-settings "
             "payload ready to stage via flowfile.graph.add_sql_query. Dry-run on one row "
-            "verifies the SELECT parses and produces a known schema (D003)."
+            "verifies the SELECT parses and produces a known schema (via 1-row dry-run)."
         ),
         long_description=(
             "Author a SELECT statement against upstream nodes via Polars' embedded "

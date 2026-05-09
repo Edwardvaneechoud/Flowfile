@@ -1,6 +1,6 @@
 # Provider Setup (BYOK)
 
-Flowfile does not ship a hosted LLM. To use the [AI Assistant](index.md), you bring your own provider key — one of Anthropic, OpenAI, Google, Groq, OpenRouter, or a local Ollama server. Keys are encrypted at rest with the Flowfile master key (`FLOWFILE_MASTER_KEY` / `master_key.txt`) using Fernet, the same scheme that protects your other Flowfile secrets.
+The [AI Assistant](index.md) runs against any major LLM provider — pick the one that fits your budget, latency needs, or compliance posture. Today that's Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. You bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. For air-gapped work, Ollama lets the entire AI layer run on your laptop with no traffic leaving your machine.
 
 ---
 
@@ -30,6 +30,9 @@ The recommended path is the in-app settings panel:
 
 <!-- TODO screenshot: AI Providers list view (Settings → AI Providers) showing all six providers with their status chips (Configured / Env fallback / Unconfigured). -->
 ![AI Providers list with status chips](../assets/images/ai/byok_provider_list.png)
+
+!!! note "📸 Screenshot pending — `byok_provider_detail.png`"
+    Detail / Configure form for a single provider (e.g. Anthropic) — API key field (masked), API base field, default model dropdown, optional curated models list, and the Save / Test / Delete buttons.
 
 To remove a key, click **Delete**. The credential row and the underlying encrypted secret are removed atomically.
 

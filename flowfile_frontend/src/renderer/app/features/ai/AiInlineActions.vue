@@ -1,17 +1,18 @@
 <script setup lang="ts">
-// AI Inline Actions menu (W21). Rendered inside an <el-popover> from
-// genericNodeSettings.vue's header. Each menu item triggers a single-shot
-// streaming AI call (Explain / Add description / Regenerate code) and
-// pipes the response into the W20 chat drawer.
+// AI Inline Actions menu. Rendered inside an <el-popover> from
+// genericNodeSettings.vue's header. Each menu item triggers a
+// single-shot streaming AI call (Explain / Add description /
+// Regenerate code) and pipes the response into the chat drawer.
 //
-// Read-only by construction at the streaming layer — the backend passes
-// ``tools=None`` to the provider's ``stream()`` so no graph mutation can
-// happen via the LLM. The "Regenerate code" item emits a code snippet to
-// the drawer for the user to copy-paste manually. The "Add description"
-// item additionally writes the streamed text into ``node.setting_input
-// .description`` after ``onDone`` fires, via the existing
-// ``nodeStore.setNodeDescription()`` Pinia action — direct LLM-tool
-// application of arbitrary settings is still W31 / W41 / W35 territory.
+// Read-only by construction at the streaming layer — the backend
+// passes ``tools=None`` to the provider's ``stream()`` so no graph
+// mutation can happen via the LLM. The "Regenerate code" item emits
+// a code snippet to the drawer for the user to copy-paste manually.
+// The "Add description" item additionally writes the streamed text
+// into ``node.setting_input.description`` after ``onDone`` fires,
+// via the existing ``nodeStore.setNodeDescription()`` Pinia action —
+// direct LLM-tool application of arbitrary settings happens via the
+// executor / diff path, not this surface.
 
 import { computed } from "vue";
 

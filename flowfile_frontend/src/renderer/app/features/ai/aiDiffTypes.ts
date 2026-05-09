@@ -1,16 +1,15 @@
-// W35 — TS mirrors of the W41 `GraphDiff` Pydantic shapes.
+// TS mirrors of the `GraphDiff` Pydantic shapes.
 //
 // The wire layer (`aiDiffClient.ts`) deliberately keeps payloads as
-// `Record<string, unknown>` so the W41 client stays generic. The diff
-// renderer needs typed access to `staged_node_payload` fields, so we
-// project each W31 staged shape into a TS interface here.
+// `Record<string, unknown>` so the diff client stays generic. The
+// diff renderer needs typed access to `staged_node_payload` fields,
+// so we project each staged shape into a TS interface here.
 //
-// Field names stay snake_case to match the wire contract — there is no
-// adapter between the W41 stage response and the renderer, so the
+// Field names stay snake_case to match the wire contract — there is
+// no adapter between the stage response and the renderer, so the
 // trade-off is "snake_case in templates" vs "duplicate the same dict
-// twice with two name conventions". Snake_case wins; W34/W18 normalise
-// at the boundary because they bridge two long-lived surfaces, but the
-// diff payloads here are short-lived and read by exactly one component.
+// twice with two name conventions". Snake_case wins; the diff
+// payloads here are short-lived and read by exactly one component.
 
 import type {
   AcceptDiffResponse,
@@ -41,13 +40,13 @@ export interface StagedAddition {
 
 /**
  * Mirror of the Pydantic `NodeConnection` shape produced by
- * `connection.model_dump()` in W31's executor (see
- * `flowfile_core/.../ai/tools/executor.py:649,797`). Field names are
- * `input_connection` / `output_connection` (NO `_class` suffix) — those
- * are the inner `NodeInputConnection` / `NodeOutputConnection` objects,
- * each carrying `{node_id, connection_class}`. `connection_class` is the
- * canonical `output-N` / `input-N` form (e.g. `output-0`, `input-1`),
- * never the `main` / `right` / `left` translation aliases.
+ * `connection.model_dump()` in the executor. Field names are
+ * `input_connection` / `output_connection` (NO `_class` suffix) —
+ * those are the inner `NodeInputConnection` / `NodeOutputConnection`
+ * objects, each carrying `{node_id, connection_class}`.
+ * `connection_class` is the canonical `output-N` / `input-N` form
+ * (e.g. `output-0`, `input-1`), never the `main` / `right` / `left`
+ * translation aliases.
  */
 export interface StagedConnectionShape {
   input_connection?: { node_id?: number; connection_class?: string };
@@ -65,11 +64,11 @@ export interface StagedDeletion {
 }
 
 /**
- * W47 — TS mirror of the Pydantic `StagedSettingsUpdate`. Modifications
- * target an *existing* node id (or an in-batch addition); they do not
- * create new ids. Old + new settings are captured at stage time so the
- * diff-preview UI can render an old-vs-new view, and so a Reject reverts
- * to the value the user was looking at when reviewing.
+ * TS mirror of the Pydantic `StagedSettingsUpdate`. Modifications
+ * target an *existing* node id (or an in-batch addition); they do
+ * not create new ids. Old + new settings are captured at stage time
+ * so the diff-preview UI can render an old-vs-new view, and so a
+ * Reject reverts to the value the user was looking at when reviewing.
  */
 export interface ModificationItem {
   node_id: number;
@@ -81,10 +80,10 @@ export interface ModificationItem {
 }
 
 /**
- * The renderer's view of a staged `GraphDiff`. Matches the W41/W47
- * buckets in their apply order. Synthesised client-side from the
- * `StageDiffRequest` body the user just posted, since the backend
- * exposes no `GET /ai/diff/{id}` endpoint.
+ * The renderer's view of a staged `GraphDiff`. Matches the bucket
+ * order applied by the diff-apply layer. Synthesised client-side
+ * from the `StageDiffRequest` body the user just posted, since the
+ * backend exposes no `GET /ai/diff/{id}` endpoint.
  */
 export interface GraphDiffPayload {
   diff_id: string;
@@ -106,12 +105,12 @@ export interface DriftDetail {
 }
 
 /**
- * W70 — staged diff is internally inconsistent (e.g. a `connect` op
+ * Staged diff is internally inconsistent (e.g. a `connect` op
  * references a `to_node_id` that's neither live nor in this diff's
  * additions). Backend wire shape is `{error: "diff_inconsistent",
- * missing_endpoints: [[id, "from"|"to"], ...], diff_id}` returned with
- * status 422. Distinct from drift: drift = the canvas mutated while
- * the agent was staging (D006); inconsistency = the agent's own diff
+ * missing_endpoints: [[id, "from"|"to"], ...], diff_id}` returned
+ * with status 422. Distinct from drift: drift = the canvas mutated
+ * while the agent was staging; inconsistency = the agent's own diff
  * is broken. Same posture as drift on the store side: `currentDiff`
  * stays set so the user can Reject and ask the agent to retry.
  */
@@ -147,9 +146,9 @@ export type DiffStoreError = DriftDetail | InconsistentDetail | NotFoundDetail |
 
 /**
  * Build a renderer-shaped diff from the inputs that produced a
- * `stageDiff` request. The W41 backend returns only `{diff_id, op_count}`
- * so the client reconstructs the payload from the request body it
- * already has. `_bin_staged_results` mirrors W41's
+ * `stageDiff` request. The backend returns only `{diff_id,
+ * op_count}` so the client reconstructs the payload from the request
+ * body it already has. `_bin_staged_results` mirrors
  * `diff_routes.py::_bin_staged_results` for parity.
  */
 export const synthesiseDiffFromStageRequest = (
@@ -244,9 +243,9 @@ export const opCount = (diff: GraphDiffPayload): number =>
  * noise. Non-default handles (e.g. a join's `input-1` right-side input) stay
  * visible because they actually disambiguate.
  *
- * Field names match `NodeConnection.model_dump()` exactly — see W31's executor
- * (`flowfile_core/.../ai/tools/executor.py:649,797`) and W41's `bundle_staged_results`
- * (`flowfile_core/.../ai/diff.py:260,279`).
+ * Field names match `NodeConnection.model_dump()` exactly — see the
+ * executor and `bundle_staged_results` in
+ * `flowfile_core/.../ai/diff.py`.
  */
 const DEFAULT_OUTPUT_HANDLE = "output-0";
 const DEFAULT_INPUT_HANDLE = "input-0";

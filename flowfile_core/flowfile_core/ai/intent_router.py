@@ -1,33 +1,34 @@
-"""Chat → Agent auto-promotion classifier (W58).
+"""Chat → Agent auto-promotion classifier.
 
-Owned by W58. Sits in front of the chat surface: when the user types a
-build / modify request in the chat drawer (e.g. *"add a group_by node
-grouping by status"* or a follow-up *"can you implement?"* after the chat
-explained how) without flipping the W40 Agent toggle, the
-:func:`classify_intent` helper detects build intent and the route layer
-promotes the dispatch to ``/ai/agent/start`` instead of ``/ai/chat/stream``.
-Read-only chat is the safe fallback whenever the classifier is uncertain.
+Sits in front of the chat surface: when the user types a build /
+modify request in the chat drawer (e.g. *"add a group_by node
+grouping by status"* or a follow-up *"can you implement?"* after the
+chat explained how) without flipping the Agent toggle, the
+:func:`classify_intent` helper detects build intent and the route
+layer promotes the dispatch to ``/ai/agent/start`` instead of
+``/ai/chat/stream``. Read-only chat is the safe fallback whenever
+the classifier is uncertain.
 
-Strategy: **one LLM call, with conversation history**. We deliberately do
-not maintain a regex / verb-list / noun-list ladder — that approach was
-brittle (the chat *"how do I X"* → *"can you implement?"* pattern reveals
-how much classification depends on prior turns, which a regex can't see)
-and the cost of a small / fast model (Haiku-class via the
-``intent_classifier`` surface bucket) is well under a second. The
-LLM is asked for strict JSON; the prompt explicitly tells it to weight
-the conversation context.
+Strategy: **one LLM call, with conversation history**. We
+deliberately do not maintain a regex / verb-list / noun-list ladder
+— that approach is brittle (the chat *"how do I X"* → *"can you
+implement?"* pattern reveals how much classification depends on
+prior turns, which a regex can't see) and the cost of a small / fast
+model (Haiku-class via the ``intent_classifier`` surface bucket) is
+well under a second. The LLM is asked for strict JSON; the prompt
+explicitly tells it to weight the conversation context.
 
-Conservative failure modes — :func:`classify_intent` never raises. Any
-provider error / timeout / parse failure surfaces as
-``IntentClassification(kind="chat", confidence=0.0, reason=…)`` so the
-chat-drawer dispatch keeps working when the classifier is unavailable.
-The route layer maps ``kind="ambiguous"`` (regardless of confidence) and
-low-confidence ``build`` to a chat verdict for the same reason —
-auto-promoting on uncertainty breaks user trust.
+Conservative failure modes — :func:`classify_intent` never raises.
+Any provider error / timeout / parse failure surfaces as
+``IntentClassification(kind="chat", confidence=0.0, reason=…)`` so
+the chat-drawer dispatch keeps working when the classifier is
+unavailable. The route layer maps ``kind="ambiguous"`` (regardless
+of confidence) and low-confidence ``build`` to a chat verdict for
+the same reason — auto-promoting on uncertainty breaks user trust.
 
-Lazy-litellm contract preserved (per W11 / W12 / W13): this module does
-**not** import ``litellm`` at load time. Provider calls flow through the
-W11 :class:`~flowfile_core.ai.providers.base.Provider` Protocol seam.
+Lazy-litellm contract preserved: this module does **not** import
+``litellm`` at load time. Provider calls flow through the
+:class:`~flowfile_core.ai.providers.base.Provider` Protocol seam.
 """
 
 from __future__ import annotations
@@ -46,17 +47,18 @@ logger = logging.getLogger(__name__)
 
 
 SURFACE: str = "intent_classifier"
-"""W14 / D010 surface bucket. The classifier routes to a Haiku-class model
-on every provider that maps this surface (see ``provider.surface_models``).
-Owns its own surface key (rather than borrowing ``settings_autocomplete``)
-so audit-log filtering and future per-surface model tuning don't conflate
-W34's autocomplete tier with the chat-auto-promotion classifier."""
+"""Surface bucket. The classifier routes to a Haiku-class model on
+every provider that maps this surface (see
+``provider.surface_models``). Owns its own surface key (rather than
+borrowing ``settings_autocomplete``) so audit-log filtering and
+future per-surface model tuning don't conflate the autocomplete tier
+with the chat-auto-promotion classifier."""
 
 
 DEFAULT_TIMEOUT_SECONDS: float = 5.0
-"""Hard timeout per :meth:`Provider.chat` call. Per the W58 spec — the
-fallback on timeout is ``kind="chat"`` so a slow classifier degrades to
-"send the message as chat" rather than blocking the user's send."""
+"""Hard timeout per :meth:`Provider.chat` call. The fallback on
+timeout is ``kind="chat"`` so a slow classifier degrades to "send
+the message as chat" rather than blocking the user's send."""
 
 
 DEFAULT_MAX_TOKENS: int = 96
@@ -330,8 +332,7 @@ def verdict_for(classification: IntentClassification) -> RouteVerdict:
 
     Only ``kind="build"`` with ``confidence >= PROMOTION_CONFIDENCE_THRESHOLD``
     promotes to agent. Everything else (``chat``, ``ambiguous``, or
-    low-confidence ``build``) stays as chat — the safe default per the
-    W58 spec.
+    low-confidence ``build``) stays as chat — the safe default.
     """
     if classification.kind == "build" and classification.confidence >= PROMOTION_CONFIDENCE_THRESHOLD:
         return "agent"
@@ -343,8 +344,8 @@ def message_preview(message: str, *, max_chars: int = 200) -> str:
 
     The audit row keeps a *preview* of the user's message — never the
     whole thing — so chat content never lands in the audit table at full
-    fidelity. Mirrors W15's :data:`MAX_ARGS_BYTES` posture for the same
-    reason.
+    fidelity. Mirrors the audit module's :data:`MAX_ARGS_BYTES`
+    posture for the same reason.
     """
     norm = message.strip()
     if len(norm) <= max_chars:

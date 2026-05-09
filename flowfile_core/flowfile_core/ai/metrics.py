@@ -1,31 +1,32 @@
 """Counters and cost-per-flow telemetry for the AI subsystem.
 
-Owned by W11 (cost-per-flow numbers feed back into D010's latency / model
-selection) and W15 (audit-log surface).
-
-Reads from ``ai_audit_events`` (W15) to compute the §13 success metrics:
+Reads from ``ai_audit_events`` to compute the success metrics:
 
 * tokens in / out per provider per surface;
 * tool-call success / failure counts;
 * tool-call validation pass rate (``≥95%`` target).
 
-Time-to-first-byte and total round-trip aren't recorded yet — W11/W14 add
-those once the rate-limit scheduler is in place. Until then this module
-exposes only the metrics that the audit log can answer today.
+Time-to-first-byte and total round-trip aren't recorded yet —
+they'll be added once the rate-limit scheduler captures them. Until
+then this module exposes only the metrics that the audit log can
+answer today.
 
-W34 adds :func:`record_autocomplete_call` — a lightweight non-DB telemetry
-helper for per-call settings-autocomplete observation. The audit-DB write
-path is too noisy for keystroke-frequency events; this helper emits a
-structured ``INFO`` log line instead, ready for downstream collection.
+:func:`record_autocomplete_call` is a lightweight non-DB telemetry
+helper for per-call settings-autocomplete observation. The audit-DB
+write path is too noisy for keystroke-frequency events; this helper
+emits a structured ``INFO`` log line instead, ready for downstream
+collection.
 
-W59 adds :func:`record_provider_call` + :func:`get_provider_call_counts` — an
-in-process counter labelled by ``(provider, surface, model, status)``. Bumped
-on every ``LiteLLMProvider.chat`` / ``.stream`` call regardless of whether
-prompt-logging is enabled (the JSONL log is opt-in; basic call traffic
-counters are always-on so dashboards don't go dark when logging is off).
-The implementation is a plain ``collections.Counter`` — no Prometheus client
-dep gets pulled in for v0; a future workstream can swap it for the proper
-metric backend without changing the call signature.
+:func:`record_provider_call` + :func:`get_provider_call_counts` —
+an in-process counter labelled by
+``(provider, surface, model, status)``. Bumped on every
+``LiteLLMProvider.chat`` / ``.stream`` call regardless of whether
+prompt-logging is enabled (the JSONL log is opt-in; basic call
+traffic counters are always-on so dashboards don't go dark when
+logging is off). The implementation is a plain
+``collections.Counter`` — no Prometheus client dep gets pulled in;
+a future workstream can swap it for the proper metric backend
+without changing the call signature.
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ def aggregate_pass_rate(
     flow_id: int | None = None,
     db: Session | None = None,
 ) -> dict[str, float | int]:
-    """Tool-call validation pass rate for §13's ≥95% target.
+    """Tool-call validation pass rate (target ≥95%).
 
     Returns a dict with ``total``, ``success``, ``error``, ``rejected``,
     ``pass_rate`` (success/total). When ``total == 0`` the pass rate is
@@ -91,7 +92,7 @@ def aggregate_tokens(
     flow_id: int | None = None,
     db: Session | None = None,
 ) -> dict[str, int]:
-    """Token totals for the cost-per-flow §13 metric.
+    """Token totals for the cost-per-flow metric.
 
     Returns ``prompt_tokens``, ``completion_tokens``, ``total_tokens``
     summed across the relevant audit events.
@@ -113,14 +114,15 @@ def record_autocomplete_call(
     suggestion_count: int = 0,
     degraded_reason: str | None = None,
 ) -> None:
-    """Emit one telemetry line per autocomplete request (W34).
+    """Emit one telemetry line per autocomplete request.
 
-    Deliberately bypasses the audit DB — autocomplete fires on keystrokes and
-    a per-keystroke insert would balloon the table. The structured ``INFO``
-    line under the ``flowfile_core.ai.metrics`` logger is enough for a
-    downstream log scraper / dashboard to slice by surface, provider, and
-    degraded reason. Acceptance-side accounting (which suggestion the user
-    actually picked) is W41's responsibility — that goes in the audit DB.
+    Deliberately bypasses the audit DB — autocomplete fires on
+    keystrokes and a per-keystroke insert would balloon the table.
+    The structured ``INFO`` line under the
+    ``flowfile_core.ai.metrics`` logger is enough for a downstream
+    log scraper / dashboard to slice by surface, provider, and
+    degraded reason. Acceptance-side accounting (which suggestion the
+    user actually picked) belongs to the diff-acceptance audit row.
     """
     logger.info(
         "ai_autocomplete surface=%s provider=%s latency_ms=%d suggestions=%d degraded=%s",
@@ -141,10 +143,10 @@ def record_provider_call(
 ) -> None:
     """Increment the ``flowfile_ai_provider_call_total`` counter.
 
-    Called from the W11 ``LiteLLMProvider`` wrap on every ``chat`` /
-    ``stream`` call, success or error. ``surface`` may be ``None`` for
-    callers that haven't been threaded through yet — coerced to ``"unknown"``
-    so the counter key stays a 4-tuple.
+    Called from the ``LiteLLMProvider`` wrap on every ``chat`` /
+    ``stream`` call, success or error. ``surface`` may be ``None``
+    for callers that haven't been threaded through yet — coerced to
+    ``"unknown"`` so the counter key stays a 4-tuple.
     """
     key = (provider, surface or "unknown", model, status)
     with _PROVIDER_CALL_LOCK:

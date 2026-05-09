@@ -1,9 +1,9 @@
-"""Token-budgeted context selection — owned by W22.
+"""Token-budgeted context selection.
 
-When a flow's full subgraph + schemas exceed the per-surface budget, this
-module decides which nodes / schemas / samples to drop. Budgets are
-sourced from D010's per-surface placeholder targets and will be tightened
-once W11 publishes real cost-per-flow numbers.
+When a flow's full subgraph + schemas exceed the per-surface budget,
+this module decides which nodes / schemas / samples to drop. Budgets
+start as placeholder targets and will tighten once real cost-per-flow
+numbers are available.
 
 Design notes
 ------------
@@ -52,33 +52,32 @@ _SURFACE_BUDGETS: dict[str, SurfaceBudget] = {
     "cmd_k": (4_000, 1_500),
     "ghost_node": (4_000, 1_500),
     "explain": (16_000, 4_000),
-    # W71 v1.10 — legacy ``"agent"`` surface removed. ``agent_staged``
-    # uses the same per-call budget shape as legacy agent at most
-    # stages; pick_type round can need more headroom for the catalog
-    # block (~33 KB chars / ~8 K tokens), still well under the
-    # ``agent_complex`` ceiling.
+    # ``agent_staged``: pick_type round can need more headroom for the
+    # catalog block (~33 KB chars / ~8 K tokens), still well under
+    # the ``agent_complex`` ceiling.
     "agent_staged": (48_000, 4_000),
     "agent_complex": (96_000, 4_000),
-    # W71 v2.0 — agent_live: same per-call shape as agent_staged
-    # (the state machine is identical through stage 4); the only
-    # difference is the post-apply observation block that replaces
-    # the staged-bundle bookkeeping. Observation blocks are small
-    # (schema list + handful of sample rows ≈ 1-2 KB chars), so
-    # the existing budget covers them with no headroom hit.
+    # agent_live: same per-call shape as agent_staged (the state
+    # machine is identical through stage 4); the only difference is
+    # the post-apply observation block that replaces the staged-bundle
+    # bookkeeping. Observation blocks are small (schema list +
+    # handful of sample rows ≈ 1-2 KB chars), so the existing budget
+    # covers them with no headroom hit.
     "agent_live": (48_000, 4_000),
     "docgen": (32_000, 8_000),
-    # W34 settings autocomplete: tiny prompt (schema column list + partial text)
-    # and tiny response (≤5 short suggestions). Smaller than cmd_k to preserve
-    # the sub-1s TTFB target on every keystroke.
+    # Settings autocomplete: tiny prompt (schema column list + partial
+    # text) and tiny response (≤5 short suggestions). Smaller than
+    # cmd_k to preserve the sub-1s TTFB target on every keystroke.
     "settings_autocomplete": (2_000, 1_000),
-    # W51 lineage Q&A: input mirrors ``agent`` because the run-history block
-    # can be sizeable (10+ runs × per-node aggregates). Output stays modest
-    # because lineage answers are summary-shaped, not generative.
+    # Lineage Q&A: input mirrors ``agent`` because the run-history
+    # block can be sizeable (10+ runs × per-node aggregates). Output
+    # stays modest because lineage answers are summary-shaped, not
+    # generative.
     "lineage": (32_000, 4_000),
-    # W58 intent classifier: tiny prompt (system + last 4 turns × ≤1 K chars
-    # + current message) and a strict-JSON response capped at 96 tokens.
-    # Smaller than ``settings_autocomplete`` because there's no schema
-    # column dump in the prompt.
+    # Intent classifier: tiny prompt (system + last 4 turns × ≤1 K
+    # chars + current message) and a strict-JSON response capped at
+    # 96 tokens. Smaller than ``settings_autocomplete`` because
+    # there's no schema column dump in the prompt.
     "intent_classifier": (2_000, 200),
 }
 
@@ -123,8 +122,7 @@ def surface_budget(surface: str) -> SurfaceBudget:
 
     Falls back to the ``agent_staged`` budget for unknown surfaces —
     the broad default lets callers keep working when adding a new
-    surface without immediately editing this table. (W71 v1.10 — was
-    ``"agent"`` before the legacy two-stage surface was removed.)
+    surface without immediately editing this table.
     """
 
     return _SURFACE_BUDGETS.get(surface, _SURFACE_BUDGETS["agent_staged"])

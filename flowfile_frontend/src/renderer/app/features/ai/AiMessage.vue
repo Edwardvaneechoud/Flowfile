@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Single message renderer for the W20 chat surface.
+// Single message renderer for the chat surface.
 //
 // Assistant messages render as sanitised markdown (marked + DOMPurify) so
 // headings, lists, code blocks, and tables format correctly during streaming.

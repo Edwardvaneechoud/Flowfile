@@ -1,4 +1,4 @@
-"""Per-node-type narrative documentation — owned by W56.
+"""Per-node-type narrative documentation.
 
 Two parallel dicts, one per audience:
 
@@ -264,8 +264,8 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "complex multi-step transform. Don't use for things 'formula' / "
         "'polars_code' / 'sql_query' can express; those are typed and faster. "
         "Don't use for I/O — the sandbox blocks network unless explicitly "
-        "approved. The output schema must be re-discovered by a 1-row dry-run "
-        "(D003). Often paired with the codegen tool "
+        "approved. The output schema must be re-discovered by a 1-row "
+        "dry-run. Often paired with the codegen tool "
         "'flowfile.codegen.generate_python_script' to author the script body."
     ),
     "polars_code": (
@@ -275,7 +275,7 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "overkill. The body must end with a returnable LazyFrame / DataFrame. "
         "Don't use to issue arbitrary Python — use 'python_script' for that. "
         "Don't use for SQL-shaped joins/aggregations — 'sql_query' is clearer. "
-        "1-row dry-run (D003) discovers the prospective output schema. "
+        "1-row dry-run discovers the prospective output schema. "
         "Often paired with 'flowfile.codegen.generate_polars_code' to author the body. "
         "``pl`` is already available — do NOT write ``import polars as pl``; "
         "imports are rejected by the sandbox."
@@ -467,8 +467,8 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "An empty placeholder node — a node id that exists but has no settings "
         "yet. Created internally by editor flows that reserve an id before "
         "attaching settings. The agent has no tool to create one (the generic "
-        "'flowfile.graph.add_node' was removed 2026-05-07 because it confused "
-        "the model into emitting `node_type=\"node\"`); use the typed "
+        "'flowfile.graph.add_node' was removed because it confused the model "
+        "into emitting `node_type=\"node\"`); use the typed "
         "'flowfile.graph.add_<type>' tools instead."
     ),
     "user_defined": (
@@ -949,7 +949,7 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
 
 
 # --------------------------------------------------------------------------- #
-# Agent payload examples (W56 v2 follow-up)                                    #
+# Agent payload examples                                                       #
 # --------------------------------------------------------------------------- #
 #
 # Only for node types whose Pydantic settings shape diverges from what an LLM
@@ -979,12 +979,12 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
 # because the JSON Schema alone is unambiguous. Adding one would burn tokens
 # without improving accuracy.
 NODE_AGENT_PAYLOAD_EXAMPLES: Final[dict[str, str]] = {
-    # W71 v2.2 — explore_data takes NO settings; the planner injects
-    # flow_id / node_id / upstream and the LLM emits an empty inner
-    # object. Listed so ``_trim_example_to_inner_shape`` produces a
-    # bare ``{}`` at fill_settings, signalling unambiguously that
-    # nothing needs filling. The LLM is encouraged to announce it
-    # was added rather than fabricate config.
+    # explore_data takes NO settings; the planner injects flow_id /
+    # node_id / upstream and the LLM emits an empty inner object.
+    # Listed so ``_trim_example_to_inner_shape`` produces a bare ``{}``
+    # at fill_settings, signalling unambiguously that nothing needs
+    # filling. The LLM is encouraged to announce it was added rather
+    # than fabricate config.
     "explore_data": (
         "{\n"
         '  "flow_id": 1,\n'
@@ -1078,11 +1078,12 @@ NODE_AGENT_PAYLOAD_EXAMPLES: Final[dict[str, str]] = {
         "  }\n"
         "}"
     ),
-    # W71 v1.12C — formula uses Flowfile expression language (SQL-style
-    # ``[column_name]`` references), NOT raw Polars. The Pydantic shape
-    # is small (one ``function`` field with a name + the expression
-    # string) but the SYNTAX is the divergence the LLM trips on. The
-    # full canonical function list is appended at stage-3 fill_settings
+    # formula uses Flowfile expression language (SQL-style
+    # ``[column_name]`` references), NOT raw Polars. The Pydantic
+    # shape is small (one ``function`` field with a name + the
+    # expression string) but the SYNTAX is the divergence the LLM
+    # trips on. The full canonical function list is appended at
+    # stage-3 fill_settings
     # via ``_build_single_node_block`` ONLY when ``picked_node_type ==
     # "formula"`` so the catalog stays cheap.
     "formula": (
@@ -1095,10 +1096,11 @@ NODE_AGENT_PAYLOAD_EXAMPLES: Final[dict[str, str]] = {
         "  }\n"
         "}"
     ),
-    # W67 follow-up: RawData.data is COLUMNAR — data[i] is the values for
-    # columns[i]. The LLM defaults to row-oriented and silently corrupts
-    # alignment because both layouts validate as list[list]. Two rows of
-    # {name, age}: data=[["Alice","Bob"],[30,25]] not [["Alice",30],["Bob",25]].
+    # RawData.data is COLUMNAR — data[i] is the values for columns[i].
+    # The LLM defaults to row-oriented and silently corrupts alignment
+    # because both layouts validate as list[list]. Two rows of
+    # {name, age}: data=[["Alice","Bob"],[30,25]] not
+    # [["Alice",30],["Bob",25]].
     "manual_input": (
         "{\n"
         '  "flow_id": 1,\n'

@@ -1,14 +1,14 @@
-"""HTTP route for chat → agent auto-promotion (W58).
+"""HTTP route for chat → agent auto-promotion.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
-``Depends(get_current_active_user)``; W17's feature-flag gate covers
+``Depends(get_current_active_user)``; the feature-flag gate covers
 this through the parent ``ai_router``.
 
 The frontend's chat ``sendMessage`` calls ``POST /ai/route`` *before*
-dispatching to ``/ai/chat/stream`` whenever the manual W40 Agent toggle
-is off and the per-store ``autoPromote`` flag is on. The verdict in
-the response (``"chat"`` or ``"agent"``) tells the frontend which
-backend surface to dispatch to.
+dispatching to ``/ai/chat/stream`` whenever the manual Agent toggle
+is off and auto-promote is on. The verdict in the response
+(``"chat"`` or ``"agent"``) tells the frontend which backend surface
+to dispatch to.
 
 Provider resolution flows through
 :func:`flowfile_core.ai.byok.get_configured_provider` so BYOK rows +
@@ -71,15 +71,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# Tool-name marker for the W15 audit row. ``internal.*`` mirrors the
-# planner's ``internal.staged_drop_on_resume`` convention — it's not a
-# user-callable tool, just a typed audit row.
+# Tool-name marker for the audit row. ``internal.*`` mirrors the
+# planner's ``internal.staged_drop_on_resume`` convention — it's
+# not a user-callable tool, just a typed audit row.
 _AUDIT_TOOL_NAME = "internal.intent_classification"
 
-# Synthetic session_id prefix for the audit row. Each classify call mints
-# a fresh id (the chat surface doesn't have a long-lived session yet —
-# W42 / W43 will introduce one). Using ``intent_router/`` as a static
-# prefix keeps audit-log queries filterable by tool_name *or* prefix.
+# Synthetic session_id prefix for the audit row. Each classify call
+# mints a fresh id (the chat surface doesn't have a long-lived
+# session yet). Using ``intent_router/`` as a static prefix keeps
+# audit-log queries filterable by tool_name *or* prefix.
 _AUDIT_SESSION_PREFIX = "intent_router"
 
 
@@ -186,10 +186,10 @@ async def route_message(
 ) -> RouteResponse:
     """Classify a chat-drawer message and return the dispatch verdict.
 
-    The frontend hits this **before** ``/ai/chat/stream`` whenever the
-    manual W40 Agent toggle is off and the per-store ``autoPromote``
-    setting is on. On ``verdict="agent"`` the frontend retargets the
-    dispatch to ``/ai/agent/start`` (and shows a promotion banner with
+    The frontend hits this **before** ``/ai/chat/stream`` whenever
+    the manual Agent toggle is off and auto-promote is on. On
+    ``verdict="agent"`` the frontend retargets the dispatch to
+    ``/ai/agent/start`` (and shows a promotion banner with
     ``reason`` + an undo affordance).
     """
 

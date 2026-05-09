@@ -1,41 +1,47 @@
-"""Schema prediction + D011 upstream-tier handler — W31.
+"""Schema prediction + upstream-tier handler.
 
-W31 needs a pure ``predict_schema(node_type, settings, upstream_schemas)`` that
-does NOT exist in production code today: 21+ ``schema_callback`` closures live
-inside ``add_*`` methods on :class:`FlowGraph`, bound to the node being created.
-Lifting them into pure functions would duplicate non-trivial logic (join column
-merge, group_by key+agg projection, fuzzy_match similarity injection, etc.) and
-rot as production logic mutates.
+The executor needs a pure
+``predict_schema(node_type, settings, upstream_schemas)`` that does
+NOT exist in production code today: 21+ ``schema_callback`` closures
+live inside ``add_*`` methods on :class:`FlowGraph`, bound to the
+node being created. Lifting them into pure functions would duplicate
+non-trivial logic (join column merge, group_by key+agg projection,
+fuzzy_match similarity injection, etc.) and rot as production logic
+mutates.
 
-**Strategy: ephemeral mirror-graph.** Build a throwaway :class:`FlowGraph` with
-``track_history=False``, install promise-stub upstream nodes whose
-``predicted_schema`` is pre-populated, dispatch ``getattr(mirror, f"add_{node_type}")(settings)``,
-wire input connections, then read ``predicted_schema`` off the new node. Throws
-the mirror away after. Reuses 100% of production callback logic with zero
-reimplementation drift.
+**Strategy: ephemeral mirror-graph.** Build a throwaway
+:class:`FlowGraph` with ``track_history=False``, install promise-stub
+upstream nodes whose ``predicted_schema`` is pre-populated, dispatch
+``getattr(mirror, f"add_{node_type}")(settings)``, wire input
+connections, then read ``predicted_schema`` off the new node. Throws
+the mirror away after. Reuses 100% of production callback logic with
+zero reimplementation drift.
 
 Caveats handled:
 
 * ``track_history=False`` on the mirror — avoids spurious snapshots.
-* Pre-install upstream promises with ``predicted_schema`` populated — several
-  callbacks (``add_python_script``, ``add_join``, ``add_group_by``) read
-  ``node.node_inputs.main_inputs[0].schema``; without the upstream promise +
-  populated schema the callback gets an empty schema and returns nonsense.
-* ``add_node_step`` does NOT auto-wire input connections; the wiring goes through
-  the module-level :func:`add_connection` helper. Mirror builds connections
-  explicitly per ``InsertionContext``.
-* Settings are deep-copied before mutating ``flow_id``/``node_id`` on the mirror
-  so the caller's settings object is not side-effected.
+* Pre-install upstream promises with ``predicted_schema`` populated
+  — several callbacks (``add_python_script``, ``add_join``,
+  ``add_group_by``) read ``node.node_inputs.main_inputs[0].schema``;
+  without the upstream promise + populated schema the callback gets
+  an empty schema and returns nonsense.
+* ``add_node_step`` does NOT auto-wire input connections; the wiring
+  goes through the module-level :func:`add_connection` helper.
+  Mirror builds connections explicitly per ``InsertionContext``.
+* Settings are deep-copied before mutating ``flow_id``/``node_id`` on
+  the mirror so the caller's settings object is not side-effected.
 
 Module also owns:
 
-* :func:`_resolve_upstream_schemas` — D011 tiered handler. Tier 0 cached → Tier
-  1 cheap predict via static + ``schema_callback`` → Tier 2 cheap source preview
-  via :mod:`classification` → Tier 3 warn-and-stage.
-* :func:`collect_column_refs` — per-node-type walker that pulls column-name
-  references out of settings for the column-validation refusal path. Conservative
-  by design — returns ``[]`` for node types whose refs aren't trivially extractable
-  (the egress + dry-run paths catch the rest).
+* :func:`_resolve_upstream_schemas` — tiered handler. Tier 0 cached →
+  Tier 1 cheap predict via static + ``schema_callback`` → Tier 2
+  cheap source preview via :mod:`classification` → Tier 3
+  warn-and-stage.
+* :func:`collect_column_refs` — per-node-type walker that pulls
+  column-name references out of settings for the column-validation
+  refusal path. Conservative by design — returns ``[]`` for node
+  types whose refs aren't trivially extractable (the egress + dry-run
+  paths catch the rest).
 """
 
 from __future__ import annotations
@@ -95,9 +101,10 @@ def _build_mirror_graph(upstream_schemas: dict[int, list[FlowfileColumn]]):
     that read ``node.node_inputs.main_inputs[0].schema`` see the right columns.
     Uses ``track_history=False`` so the mirror doesn't push spurious snapshots.
     """
-    # Local imports — keep top-level lazy so ``import flowfile_core.ai.tools``
-    # doesn't pull the full FlowGraph machinery for callers that only want the
-    # catalog. Mirrors the W11 / W12 / W13 / W30 lazy contract.
+    # Local imports — keep top-level lazy so
+    # ``import flowfile_core.ai.tools`` doesn't pull the full
+    # FlowGraph machinery for callers that only want the catalog.
+    # Mirrors the lazy-import contract used elsewhere in this package.
     from flowfile_core.flowfile.flow_graph import FlowGraph
 
     _ensure_promise_template_registered()
@@ -200,51 +207,53 @@ def _resolve_upstream_schemas(
     *,
     staged_schemas: dict[int, list[FlowfileColumn]] | None = None,
 ) -> tuple[dict[int, list[FlowfileColumn]], list[str]]:
-    """Apply D011's tiered handling for upstream nodes whose schema may be ``None``.
+    """Tiered handling for upstream nodes whose schema may be ``None``.
 
-    Per the project rule "the collect of polars data only takes place in the
-    worker — use nodes already", W31 does NOT do its own ``pl.scan_*`` calls
-    here. Instead it delegates to the production ``schema_callback`` registered
-    by each ``add_<node_type>`` method, which is already worker-aware where
-    needed (e.g. ``add_read`` calls ``FlowDataEngine.create_from_path`` which
-    routes through the worker for the non-trivial cases). Source readers
-    without a registered callback (``cloud_storage_reader``, ``kafka_source``)
-    fall to tier 3 — auto-fetch for those would require adding worker-backed
-    callbacks at the node layer (out of W31 scope).
+    Per the project rule "the collect of polars data only takes place
+    in the worker — use nodes already", this does NOT do its own
+    ``pl.scan_*`` calls here. Instead it delegates to the production
+    ``schema_callback`` registered by each ``add_<node_type>``
+    method, which is already worker-aware where needed (e.g.
+    ``add_read`` calls ``FlowDataEngine.create_from_path`` which
+    routes through the worker for the non-trivial cases). Source
+    readers without a registered callback (``cloud_storage_reader``,
+    ``kafka_source``) fall to tier 3 — auto-fetch for those would
+    require adding worker-backed callbacks at the node layer.
 
     Tiers (in order):
 
-    * **Tier 0a** (W71 v1.11) — uid is in ``staged_schemas`` (a session's
-      already-staged-but-not-yet-applied add_* node). Use the predicted
-      output schema captured when that node was staged. This is the
-      load-bearing path for chained add_* calls in a single agent turn:
-      without it, ``predictor`` warned *"upstream node N not found in
-      flow"* for each chain step, the LLM read the warning as a failure
-      signal, and tried to "fix" it by re-staging with new ids — a
-      14-node runaway loop on Qwen 32B / agent_complex (2026-05-08
-      dogfood).
+    * **Tier 0a** — uid is in ``staged_schemas`` (a session's
+      already-staged-but-not-yet-applied add_* node). Use the
+      predicted output schema captured when that node was staged.
+      This is the load-bearing path for chained add_* calls in a
+      single agent turn: without it, the predictor warns *"upstream
+      node N not found in flow"* for each chain step, the LLM reads
+      the warning as a failure signal, and tries to "fix" it by
+      re-staging with new ids — a runaway loop on smaller models.
     * **Tier 0** — ``node.predicted_schema`` already populated. Use it.
-    * **Tier 1** — node has a ``schema_callback`` and forcing returns a
-      non-empty schema. Covers both static upstreams (filter/select/join/...)
-      and source upstreams whose ``add_<source>()`` registered a callback
-      (manual_input / read / google_analytics_reader / database_reader /
-      external_source-with-fields). Schema is populated in place so downstream
-      tool calls in the same session see it.
-    * **Tier 2** — anything else. Append a warning; the executor will still run
-      and return ``status="warned"``.
+    * **Tier 1** — node has a ``schema_callback`` and forcing returns
+      a non-empty schema. Covers both static upstreams
+      (filter/select/join/...) and source upstreams whose
+      ``add_<source>()`` registered a callback (manual_input / read /
+      google_analytics_reader / database_reader /
+      external_source-with-fields). Schema is populated in place so
+      downstream tool calls in the same session see it.
+    * **Tier 2** — anything else. Append a warning; the executor will
+      still run and return ``status="warned"``.
 
-    Returns ``(resolved_schemas, warnings)`` where ``resolved_schemas`` only
-    contains entries that successfully resolved (tiers 0a–1). Tier 2 entries
-    are surfaced solely as warnings — callers can choose to refuse the tool
-    call or proceed with deferred validation.
+    Returns ``(resolved_schemas, warnings)`` where
+    ``resolved_schemas`` only contains entries that successfully
+    resolved (tiers 0a–1). Tier 2 entries are surfaced solely as
+    warnings — callers can choose to refuse the tool call or proceed
+    with deferred validation.
     """
     resolved: dict[int, list[FlowfileColumn]] = {}
     warnings: list[str] = []
 
     for uid in upstream_node_ids:
-        # Tier 0a (W71 v1.11): staged-but-not-yet-applied upstream from
-        # the current session. Use the cached predicted output schema
-        # the planner threaded in via ``staged_schemas``. Skip the
+        # Tier 0a: staged-but-not-yet-applied upstream from the
+        # current session. Use the cached predicted output schema the
+        # planner threaded in via ``staged_schemas``. Skip the
         # live-graph lookup AND the warning entirely.
         if staged_schemas is not None and uid in staged_schemas:
             resolved[uid] = list(staged_schemas[uid])

@@ -1,28 +1,31 @@
-"""HTTP route for the "Generate documentation" surface (W50).
+"""HTTP route for the "Generate documentation" surface.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
-``Depends(get_current_active_user)``; W17's feature-flag gate covers this
-through the parent ``ai_router``.
+``Depends(get_current_active_user)``; the feature-flag gate covers
+this through the parent ``ai_router``.
 
-Like W20's ``chat_routes`` and W23's ``run_failure_routes``, this surface is
-read-only by construction — ``tools=None`` is passed to the provider's
-``stream()`` so no ``tool_call_delta`` is ever emitted. The route streams an
-Assist-level markdown document describing every node in the flow.
+Like ``chat_routes`` and ``run_failure_routes``, this surface is
+read-only by construction — ``tools=None`` is passed to the
+provider's ``stream()`` so no ``tool_call_delta`` is ever emitted.
+The route streams an Assist-level markdown document describing
+every node in the flow.
 
-The single endpoint takes ``{flow_id, ...}``, looks up the ``FlowGraph`` via
-the existing ``flow_file_handler`` singleton, pins **all** ``flow.nodes``
-ids into W22's :func:`flowfile_core.ai.context.render_prompt_context`
-(surface ``"docgen"``), then appends a structured ``## Documentation
-request`` block to ``ctx.user`` carrying the flow-name title hint, the
-markdown shape contract, and a "do not propose graph mutations — read-only
-assist" instruction. The composed ``[system, user]`` message pair is
-streamed through W13's SSE primitives exactly so the wire format matches
-``/ai/chat/stream`` and ``/ai/explain_run_failure``.
+The single endpoint takes ``{flow_id, ...}``, looks up the
+``FlowGraph`` via the existing ``flow_file_handler`` singleton,
+pins **all** ``flow.nodes`` ids into
+:func:`flowfile_core.ai.context.render_prompt_context` (surface
+``"docgen"``), then appends a structured ``## Documentation
+request`` block to ``ctx.user`` carrying the flow-name title hint,
+the markdown shape contract, and a "do not propose graph mutations
+— read-only assist" instruction. The composed ``[system, user]``
+message pair is streamed through the SSE primitives exactly so the
+wire format matches ``/ai/chat/stream`` and
+``/ai/explain_run_failure``.
 
 Provider resolution flows through
-:func:`flowfile_core.ai.byok.get_configured_provider` (W12) so BYOK rows +
-env-var fallback + surface-keyed model defaults are honoured identically
-to the chat route.
+:func:`flowfile_core.ai.byok.get_configured_provider` so BYOK rows +
+env-var fallback + surface-keyed model defaults are honoured
+identically to the chat route.
 """
 
 from __future__ import annotations
@@ -55,9 +58,9 @@ SamplesMode = Literal["off", "regex"]
 class GenerateDocumentationRequest(BaseModel):
     """Body for ``POST /ai/generate_documentation``.
 
-    ``samples_mode`` defaults to D009's ``"off"``. The frontend in v0
-    doesn't expose a UI toggle; W25 + a future per-flow safety config
-    workstream will surface it.
+    ``samples_mode`` defaults to ``"off"``. The frontend doesn't
+    expose a UI toggle today; a per-flow safety config workstream
+    will surface it.
     """
 
     flow_id: int
@@ -91,7 +94,7 @@ def _resolve_flow_name(flow, flow_id: int) -> str:
 def _compose_documentation_user_message(*, rendered_user: str, flow_name: str) -> str:
     """Build the user-message body the LLM sees.
 
-    Re-uses W22's deterministic ``ctx.user`` (subgraph + schemas +
+    Re-uses the deterministic ``ctx.user`` (subgraph + schemas +
     settings) verbatim so its prompt-cache hash stays stable, then
     appends a structured ``## Documentation request`` block with the
     flow-name hint and the markdown shape contract.

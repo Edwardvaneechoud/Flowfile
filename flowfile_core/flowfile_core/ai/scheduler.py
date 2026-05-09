@@ -1,33 +1,35 @@
-"""Rate-limit-aware scheduler for provider calls (W14).
+"""Rate-limit-aware scheduler for provider calls.
 
-Sits between the W11 ``Provider`` Protocol and any caller that wants to
+Sits between the ``Provider`` Protocol and any caller that wants to
 issue chat / stream requests. Provides:
 
-* per-provider sliding-window RPM / RPD enforcement (operator-tunable via
-  ``FLOWFILE_AI_<PROVIDER>_RPM`` / ``RPD`` env vars; unset → no enforcement);
-* ``Retry-After`` honor on 429 regardless of configured limits — the next
-  ``acquire`` blocks until the hint expires;
-* exponential-backoff retry on transient errors per plan §5.1
-  (``2s, 4s, 8s, 16s`` max 4 retries, ±25 % jitter; server ``Retry-After``
-  always wins when longer than the local backoff);
-* a ``RateLimitHint`` callback the caller can pipe into the W13 SSE stream
-  for the "rate-limited, retrying in Ns" toast plan §7.4 promises.
+* per-provider sliding-window RPM / RPD enforcement (operator-tunable
+  via ``FLOWFILE_AI_<PROVIDER>_RPM`` / ``RPD`` env vars; unset → no
+  enforcement);
+* ``Retry-After`` honor on 429 regardless of configured limits — the
+  next ``acquire`` blocks until the hint expires;
+* exponential-backoff retry on transient errors (``2s, 4s, 8s, 16s``
+  max 4 retries, ±25 % jitter; server ``Retry-After`` always wins
+  when longer than the local backoff);
+* a ``RateLimitHint`` callback the caller can pipe into the SSE
+  stream for the "rate-limited, retrying in Ns" toast.
 
-The litellm import is lazy. Tests verify ``flowfile_core.ai.scheduler``
-import does not pull ``litellm`` into ``sys.modules``.
+The litellm import is lazy. Tests verify
+``flowfile_core.ai.scheduler`` import does not pull ``litellm`` into
+``sys.modules``.
 
 Boundary discipline:
 
-* No SSE encoding here — surface ``RateLimitHint`` only; W22 / W40 compose
-  the SSE event when assembling the chat / agent pipelines.
-* No audit writes — W31's executor records audit events on success;
-  retries are deliberately invisible to the user-facing quota counter
-  (plan §5.5 "failure is free").
+* No SSE encoding here — surface ``RateLimitHint`` only; the chat /
+  agent pipelines compose the SSE event.
+* No audit writes — the executor records audit events on success;
+  retries are deliberately invisible to the user-facing quota
+  counter ("failure is free").
 * ``byok.get_configured_provider`` is **not** auto-wrapped — opt-in
   primitive. Callers compose ``with_provider_retry(provider, ...)``.
 * No persistence across restarts; in-memory deques only.
-* Per-provider granularity (not per-(provider, model)) — D010's surface→
-  model fanout is a Phase-0 known limitation.
+* Per-provider granularity (not per-(provider, model)) — surface →
+  model fanout is a known limitation.
 """
 
 from __future__ import annotations
@@ -153,8 +155,7 @@ def _retryable_exception_types() -> tuple[type[BaseException], ...]:
     """Resolve the litellm exception classes we treat as retryable.
 
     Lazy on first call. ``flowfile_core.ai.scheduler`` must not import
-    ``litellm`` at module level — keeps the lazy contract verified by W11 /
-    W12 / W13 intact.
+    ``litellm`` at module level — keeps the lazy contract intact.
     """
     global _RETRYABLE_TYPES
     if _RETRYABLE_TYPES is not None:
@@ -490,9 +491,9 @@ async def stream_with_provider_retry(
 ) -> AsyncIterator[StreamChunk]:
     """Stream variant of :func:`with_provider_retry`.
 
-    Retries the call only until the first chunk is yielded. After that any
-    error from the upstream generator propagates — mid-stream resumption is
-    W42's responsibility.
+    Retries the call only until the first chunk is yielded. After
+    that any error from the upstream generator propagates — mid-stream
+    resumption belongs to the replay-buffer / session layer.
     """
     sched = scheduler or default_scheduler()
     retryable = _retryable_exception_types()

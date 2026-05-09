@@ -1,6 +1,8 @@
 # AI Assistant
 
-Flowfile ships an AI layer that sits on top of the visual editor. It can answer questions about a flow, propose multi-step edits, autocomplete formulas, suggest the next node, explain a failed run, and more — all grounded in the actual node graph and predicted schemas of the flow you're working on.
+Flowfile's AI Assistant helps you build and reason about pipelines in plain language. Describe a multi-step transformation and the agent builds it. Drop into a flow you didn't write and ask what each node does. Get formula suggestions that already know your columns. Turn a failed run into a one-paragraph diagnosis.
+
+Every suggestion is grounded in the live node graph — so the model references the columns and node types you actually have, not what it imagines.
 
 <!-- TODO screenshot: AI drawer open on a flow with a few nodes, showing the Send dropdown (Chat / Auto / Agent) and an in-progress assistant message. Aim for a wide shot that includes the canvas + drawer side-by-side. -->
 ![AI drawer overview, with the Send-mode dropdown visible](../assets/images/ai/drawer_overview.png)
@@ -16,36 +18,22 @@ There is no hosted Flowfile model — you bring your own provider key (Anthropic
 
 ---
 
-## Enabling AI
-
-The AI subsystem is **on by default**. Configure at least one provider (see [Provider Setup](providers.md)) and the AI drawer, the ✨ menus on nodes, and the Cmd+K palette are all available immediately.
-
-To turn AI off — for an air-gapped deployment, a regulated environment, or just to keep the UI quiet — set:
-
-```bash
-FEATURE_FLAG_AI=false
-```
-
-in the env before starting `flowfile_core`. Every `/ai/*` endpoint then returns `503 Service Unavailable` with a machine-readable detail string and the UI cleanly hides AI affordances. Admins can also toggle the flag at runtime via `POST /system/feature_flags/ai` without restarting the process.
-
----
-
 ## Feature catalog
 
 ### Chat (read-only Q&A)
 
-Open the AI drawer and ask questions about the flow in plain English: *"What does node 5 do?"*, *"Why is the join producing duplicates?"*, *"Walk me through this pipeline."* The model sees the node graph, settings, predicted schemas, and (optionally) a few sample rows from the upstream of the node you're focused on. It does **not** make graph edits in chat mode.
+Use Chat to make sense of a flow without touching it. Useful when you've inherited a pipeline, are onboarding a teammate, or want a sanity check before changing something. Ask in plain English: *"What does node 5 do?"*, *"Why is the join producing duplicates?"*, *"Walk me through this pipeline."* The model sees the node graph, settings, and predicted schemas of the flow you're focused on, and answers grounded in those — not in generic guesses. Chat never edits the graph.
 
 You can pin attention by:
 
 - Selecting one or more nodes on the canvas before sending a message — they become the focus.
-- Using mentions in the message: `@flow` for the whole flow, `@node:42` for a specific node id. An autocomplete helps you pick valid mentions.
+- Adding `@flow` to the message to pin the whole graph (this is the default when nothing else is pinned).
 
 Each chat call streams tokens to the drawer over Server-Sent Events, with periodic keepalive frames so long thinking doesn't look like a hang.
 
 ### Agent (multi-step builder)
 
-Switch the drawer toggle from *Chat* to *Agent* and you get a multi-turn flow builder. Type a multi-step instruction (*"Read sales.csv, filter to Q4, join with customers on customer_id, aggregate revenue by month"*) and the agent walks the plan, proposing one tool call at a time.
+Describe an end-to-end pipeline in one sentence and the Agent builds it for you — reading the file, joining the lookup table, aggregating, all in the right order. Switch the drawer toggle from *Chat* to *Agent*, type something like *"Read sales.csv, filter to Q4, join with customers on customer_id, aggregate revenue by month"*, and the agent walks the plan, proposing one tool call at a time.
 
 The drawer's **Agent variant** picker (in settings) selects the execution mode:
 
@@ -55,6 +43,8 @@ The drawer's **Agent variant** picker (in settings) selects the execution mode:
 
 There's also an opt-in **Verify plan completion** checkbox: after the agent decides it's done, it runs one extra LLM round to walk its plan as a checklist. Helps catch the case where a multi-step plan terminates after step 1.
 
+![Agent variant picker and Verify-plan-completion checkbox](../assets/images/ai/agent_variants_settings.png)
+
 In every variant, the agent panel shows fine-grained progress — *"Step 1/4: classifying intent"*, *"Step 3/4: picking upstream"*, etc. After completion you can send a follow-up message to keep iterating. Internal mechanics are documented for developers in the [AI Integration Architecture](../for-developers/ai-architecture.md#the-planner-state-machine) guide.
 
 ### Auto routing (chat ↔ agent)
@@ -63,39 +53,43 @@ If the chat-drawer mode toggle is set to *Auto* (the default), each message is f
 
 You can always pin to *Chat* or *Agent* explicitly if you want to bypass routing.
 
+![Send-mode dropdown — Chat / Auto-agent / Agent](../assets/images/ai/send_mode_dropdown.png)
+
 ### Cmd+K command palette
 
-Hit **⌘K** (or **Ctrl+K**) anywhere in the editor. A palette pops up; type a single natural-language instruction (*"add a sort node by date desc"*) and the AI stages a `GraphDiff` for review. The palette is best for one-shot edits where you don't want a multi-turn conversation. Powered by the same staging/diff/accept machinery as the agent.
+For quick edits that don't need a conversation. Hit **⌘K** (or **Ctrl+K**) anywhere in the editor, type a single natural-language instruction (*"add a sort node by date desc"*), and the AI stages a `GraphDiff` for review. Faster than dragging through the node library when you already know what you want. Powered by the same staging/diff/accept machinery as the agent.
 
 ### Inline ✨ actions on a node
 
-Open the ✨ popover from a node's header and pick:
+For single-node fixes that don't need a full chat. Open the ✨ popover from a node's header and pick:
 
-- **Explain** — streams a plain-language description of what this node does in the context of the flow. Read-only.
-- **Add description** — streams a one-sentence imperative description and **writes it directly to the node's `description` field** once the stream finishes. Skips the diff/accept step because the change is scoped to a single field. Hit Undo on the canvas to revert if you don't like the result.
-- **Regenerate code** — only available on code-bearing nodes (`polars_code`, `python_script`, `sql_query`). Streams a rewritten snippet to the drawer for you to **copy-paste** into the editor manually. Your existing code is never overwritten automatically.
+- **Explain** — streams a plain-language description of what this node does in the context of the flow. Helpful when you're inheriting someone else's pipeline. Read-only.
+- **Add description** — generates a one-sentence imperative description and **writes it directly to the node's `description` field** once the stream finishes. Useful for documenting a flow as you go without breaking your build flow. Hit Undo to revert if you don't like the result.
+- **Regenerate code** — only available on code-bearing nodes (`polars_code`, `python_script`, `sql_query`). Rewrites the snippet for clarity and streams it to the drawer for you to **copy-paste** in. Your existing code is never overwritten automatically.
 
 All three are read-only at the LLM layer (no tool-calling), so the model can never propose unrelated graph mutations through this surface.
 
+![Inline ✨ actions popover — Explain / Add description (and Regenerate code on code-bearing nodes)](../assets/images/ai/inline_actions_menu.png)
+
 ### Formula and join-key autocomplete
 
-While editing a *Formula* or *Join* node's settings, an AI completion is requested in the background. For formulas it suggests likely Polars expressions grounded in the upstream schema; for joins it pairs columns by name and type. Suggestions are non-streaming JSON and bounded by a short timeout — if the LLM is slow or the response looks degraded (timeout, parse error, hallucinated columns), the panel falls back to static completions and marks the result as `degraded` so you know it isn't the AI's pick.
+Skip the trip to the Polars docs. While you edit a *Formula* or *Join* node's settings, an AI completion runs in the background — formula suggestions reference the actual upstream schema, and join-key suggestions pair up columns by name and type. Bounded by a short timeout so the panel stays responsive; if the LLM is slow or returns something that looks off (timeout, parse error, hallucinated columns), the panel falls back to static completions and marks the result as `degraded` so you know it isn't the AI's pick.
 
 ### Ghost-node suggestions
 
-Hover over an empty edge stub coming off a node and you get instant suggestions for what to add next (*"likely candidates: filter, join, aggregate"*). The suggestion call is tuned for sub-second responses — Anthropic's Haiku is the canonical default.
+Stuck on what comes next? Hover over an empty edge stub off a node and you get instant suggestions for the next likely operation (*"filter, join, aggregate"*). Tuned for sub-second responses — Anthropic's Haiku is the canonical default.
 
 ### Lineage Q&A
 
-In the lineage panel, ask questions over recent run history: *"Why did node 5 fail in the last 3 runs?"*, *"Which nodes have been getting slower?"*. The model is given the last N runs' metadata (start/end times, success/failure, per-node runtimes and errors) plus the live flow schema. You can scope the question to a specific node or ask about the whole flow. Answers stream in.
+For debugging intermittent failures or performance regressions across runs without scrolling through the run report by hand. In the lineage panel, ask: *"Why did node 5 fail in the last 3 runs?"*, *"Which nodes have been getting slower?"*. The model is given the last N runs' metadata (start/end times, success/failure, per-node runtimes and errors) plus the live flow schema. Scope the question to a specific node or ask about the whole flow. Answers stream in.
 
 ### "Fix With AI" on a failed run
 
-When a node fails at runtime, the run report shows a **Fix With AI** button. Clicking it streams a diagnosis: what went wrong, what the input schema looked like, what the error message implies, and a suggested fix. The fix is offered as text — no graph mutations happen automatically. (For automated fixes, switch to the Agent and tell it what the report said.)
+The fastest path from a red run to a working pipeline. When a node fails, the run report shows a **Fix With AI** button. Clicking it streams a diagnosis — what went wrong, what the input schema looked like, what the error message implies, and a suggested fix. The fix is offered as text so you stay in control; for automated fixes, switch to the Agent and tell it what the report said.
 
 ### Generate Documentation
 
-Run **Generate Documentation** on a flow and the AI streams a markdown document describing every node — what it does, its input/output schemas, and key settings. Paste the result into a wiki, a README, or a runbook.
+Hand off a flow to a teammate — or future-you — without writing a runbook from scratch. **Generate Documentation** streams a markdown spec for every node: what it does, its input/output schemas, and key settings. Drop the result into a wiki, a README, or a runbook.
 
 ---
 
@@ -127,7 +121,7 @@ Each AI surface sends a context-aware slice of your flow to the model. The slice
 
 ### Never sent — by construction
 
-- **Raw data**. Sample rows are gated behind `samples_mode`, which is hardcoded to `"off"` in chat and inline actions, and not surfaced in the UI for the agent surface in v0 of the drawer. So in practice no row values are sent.
+- **Raw data**. The model sees node settings and predicted column types — never the row values behind them.
 - **Database / cloud-storage contents**. The model sees only the schemas Flowfile has predicted; it never sees the bytes behind a CSV reader, an S3 object, or a database table.
 - **Your provider API key**. Stored Fernet-encrypted in the Flowfile DB; the key is decrypted only inside the request to the provider, never echoed back to the prompt.
 - **Other users' flows or sessions**. Each AI session is scoped to the requesting user and a single `flow_id`.
@@ -135,25 +129,11 @@ Each AI surface sends a context-aware slice of your flow to the model. The slice
 ### What you control in the drawer
 
 - **Focus / pinning**. Select one or more nodes on the canvas before sending a chat message and they become the focus — only that subgraph (BFS upstream) is rendered into the prompt instead of the whole flow.
-- **Mentions in the message body**. The chat input has autocomplete for:
-    - `@flow` — pin the whole graph (what chat falls back to when nothing else is pinned).
-    - `@selection` — pin whatever you currently have selected on the canvas.
-    - `@node:<id-or-name>` — pin a specific node (and its upstream).
-    - `@schema:<id-or-name>` — pin a node and emphasise its schema in the rendered context.
+- **Mention in the message body**. Add `@flow` anywhere in the message to pin the whole graph; this is also the default when nothing else is pinned.
 - **Send mode** (drawer dropdown): *Chat* (read-only Q&A), *Agent* (multi-step builder), or *Auto* (a fast classifier picks per message — see [Auto routing](#auto-routing-chat-agent)).
 - **Agent variant** (drawer settings): *Live (REPL)*, *Staged*, or *Single-shot full*. See [Agent](#agent-multi-step-builder).
 - **Verify plan completion** (drawer settings checkbox): adds one extra LLM round at the end of an agent run for self-check.
 - **Provider and model** (drawer settings): pick which provider to call and optionally a specific model. Per-flow preference, persisted across sessions.
-
-### What you don't control from the drawer (operator-side knobs)
-
-These exist but are configured at the host process via env vars or the BYOK panel, not the chat drawer:
-
-- **Sample rows** (`samples_mode`). The API supports it but the v0 drawer doesn't expose a toggle, so it stays `"off"`. A future safety-config workstream will surface a per-flow opt-in.
-- **Per-provider rate limits** — `FLOWFILE_AI_<PROVIDER>_RPM` / `RPD`.
-- **Prompt logging** — `FLOWFILE_AI_LOG_PROMPTS=true` writes a daily JSONL of every LLM call under `~/.flowfile/ai_prompts/`. Useful for debugging *"why did the model do X?"*. Add `FLOWFILE_AI_LOG_PROMPTS_SCRUB=true` to scrub user/tool message bodies (system + assistant content stay verbatim — that's what you debug). Both default off.
-
-The model itself is hosted by whichever provider you've configured. Anthropic, OpenAI, Google, and Groq are SaaS APIs; OpenRouter is a unified façade over many providers; **Ollama** runs entirely on your machine for offline inference.
 
 ---
 

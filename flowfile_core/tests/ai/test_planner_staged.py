@@ -2024,3 +2024,199 @@ def test_verify_completion_skipped_when_flag_off() -> None:
     # Stage stays at classify (existing op_kind="other" termination path).
     assert sess.stage == "classify"
     assert sess.verify_round_consumed is False
+
+
+# --------------------------------------------------------------------------- #
+# W71 v2.14 — refuse unrequested wires from freshly-staged source nodes        #
+# into pre-existing live nodes (planner audit_meta builder + executor          #
+# backstop end-to-end)                                                         #
+# --------------------------------------------------------------------------- #
+
+
+def test_connect_from_staged_source_to_live_is_refused_end_to_end() -> None:
+    """W71 v2.14 — when a prior round of this session staged a source-
+    only node (e.g. ``add_manual_input``) AND the planner classifies
+    ``connect`` then emits ``flowfile.graph.connect`` wiring that fresh
+    source into a pre-existing live node, the executor refuses with
+    ``refusal_reason="unrequested_wire_to_live"`` and the planner emits
+    a ``tool_call_rejected`` event for that call.
+
+    Verifies the audit_meta plumbing in ``agents/planner.py``: the
+    ``flowfile.graph.connect`` branch of the audit_meta builder must
+    populate ``staged_source_node_ids_at_stage`` with ids derived from
+    walking ``session.staged_results`` and filtering by
+    ``classify_node_type(node_type) == "source"``. Without that
+    pre-filter, the executor backstop has no way to tell which staged
+    ids are sources.
+    """
+    from flowfile_core.ai.diff import StagedToolEntry
+
+    flow = _make_flow()
+    sess = _make_session(flow)
+
+    # Simulate a prior round having staged a manual_input (id 7).
+    # The audit_meta builder for the connect call will walk
+    # session.staged_results, identify id 7 as source-typed via
+    # classify_node_type("manual_input") == "source", and put it in
+    # staged_source_node_ids_at_stage. The executor backstop will
+    # then refuse the wire from 7 (staged source) to 1 (live).
+    sess.staged_results.append(
+        StagedToolEntry(
+            tool_name="flowfile.graph.add_manual_input",
+            staged_node_payload={
+                "settings": {
+                    "flow_id": flow.flow_id,
+                    "node_id": 7,
+                    "raw_data_format": {
+                        "columns": [
+                            {"name": "city", "data_type": "String"},
+                            {"name": "state", "data_type": "String"},
+                        ],
+                        "data": [["Houston", "TX"]],
+                    },
+                }
+            },
+        )
+    )
+    sess.staged_node_ids = [7]
+
+    provider = _ScriptedProvider(
+        [
+            # Round 1 — classify("connect")
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-classify-1",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "connect", "rationale": "wire the new lookup"},
+                    )
+                ]
+            ),
+            # Round 2 — emit the unrequested wire from staged source 7 to live 1
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-connect-1",
+                        name="flowfile.graph.connect",
+                        arguments={
+                            "flow_id": flow.flow_id,
+                            "from_node_id": 7,
+                            "to_node_id": 1,
+                        },
+                    )
+                ],
+                content="Wiring the new lookup into the orders node.",
+                finish_reason="tool_calls",
+            ),
+            # Round 3 — terminate
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+
+    rejections = [
+        e for e in events
+        if e.event == "tool_call_rejected" and e.payload.get("id") == "t-connect-1"
+    ]
+    assert rejections, (
+        f"expected a tool_call_rejected event for t-connect-1; "
+        f"got events {[(e.event, e.payload.get('id')) for e in events]}"
+    )
+    payload = rejections[0].payload
+    assert payload["reason"] == "unrequested_wire_to_live"
+    detail = payload.get("detail") or ""
+    assert "7" in detail and "1" in detail
+    assert "stand-alone" in detail
+    assert "Source-only" in detail
+
+    # Refusal must NOT stage the wire — staged_node_ids unchanged.
+    assert sess.staged_node_ids == [7]
+    # No tool_call_staged event for the rejected call.
+    staged_for_t_connect = [
+        e for e in events
+        if e.event == "tool_call_staged" and e.payload.get("id") == "t-connect-1"
+    ]
+    assert staged_for_t_connect == [], "rejected connect must not stage"
+
+
+def test_connect_from_staged_non_source_to_live_is_allowed_end_to_end() -> None:
+    """W71 v2.14 — symmetric counter-test: only SOURCE-typed staged
+    upstreams trip the refusal. A staged ``add_filter`` (non-source)
+    wired into a live node passes through cleanly. Pins that the
+    audit_meta builder's ``classify_node_type`` filter correctly
+    excludes non-source types.
+    """
+    from flowfile_core.ai.diff import StagedToolEntry
+
+    flow = _make_flow()
+    sess = _make_session(flow)
+
+    # Simulate a prior round having staged a filter (id 7) — a
+    # transform, not a source. The audit_meta builder should NOT put
+    # 7 in staged_source_node_ids_at_stage.
+    sess.staged_results.append(
+        StagedToolEntry(
+            tool_name="flowfile.graph.add_filter",
+            staged_node_payload={
+                "settings": {
+                    "flow_id": flow.flow_id,
+                    "node_id": 7,
+                    "depending_on_id": 1,
+                    "filter_input": {
+                        "filter_type": "advanced",
+                        "advanced_filter": "[region]=='EU'",
+                    },
+                }
+            },
+        )
+    )
+    sess.staged_node_ids = [7]
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-classify-1",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "connect", "rationale": "wire it up"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-connect-1",
+                        name="flowfile.graph.connect",
+                        arguments={
+                            "flow_id": flow.flow_id,
+                            "from_node_id": 7,
+                            "to_node_id": 1,
+                        },
+                    )
+                ],
+                content="Wiring filter to orders.",
+                finish_reason="tool_calls",
+            ),
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+
+    # No unrequested_wire_to_live rejection for the connect call —
+    # the staged upstream is a transform, not a source.
+    unrequested_rejections = [
+        e for e in events
+        if e.event == "tool_call_rejected"
+        and e.payload.get("reason") == "unrequested_wire_to_live"
+    ]
+    assert unrequested_rejections == [], (
+        f"non-source staged upstream must NOT trip the refusal; "
+        f"got rejections {[r.payload for r in unrequested_rejections]}"
+    )

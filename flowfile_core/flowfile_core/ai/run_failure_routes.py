@@ -1,27 +1,28 @@
-"""HTTP route for the "Fix with AI" run-failure surface (W23).
+"""HTTP route for the "Fix with AI" run-failure surface.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
-``Depends(get_current_active_user)``; W17's feature-flag gate covers this
-through the parent ``ai_router``.
+``Depends(get_current_active_user)``; the feature-flag gate covers
+this through the parent ``ai_router``.
 
-Like W20's ``chat_routes``, this surface is read-only by construction —
+Like ``chat_routes``, this surface is read-only by construction —
 ``tools=None`` is passed to the provider's ``stream()`` so no
-``tool_call_delta`` is ever emitted. Phase 1 (Assist) ships text only;
-W31 / W41 own the tool-driven apply path.
+``tool_call_delta`` is ever emitted. The Assist surface ships text
+only; the executor / diff layer owns the tool-driven apply path.
 
 The single endpoint takes ``{flow_id, node_id, ...}``, looks up the
-``FlowGraph`` via the existing ``flow_file_handler`` singleton, builds a
-schema-grounded :class:`PromptContext` via W22's
+``FlowGraph`` via the existing ``flow_file_handler`` singleton,
+builds a schema-grounded :class:`PromptContext` via
 :func:`flowfile_core.ai.context.render_prompt_context` (surface
-``"explain"``), then appends a structured ``## Failure`` block carrying the
-error string + a "diagnose and suggest a fix" instruction. The composed
-``[system, user]`` message pair is streamed through W13's SSE primitives
-exactly so the wire format matches ``/ai/chat/stream``.
+``"explain"``), then appends a structured ``## Failure`` block
+carrying the error string + a "diagnose and suggest a fix"
+instruction. The composed ``[system, user]`` message pair is
+streamed through the SSE primitives exactly so the wire format
+matches ``/ai/chat/stream``.
 
 Provider resolution flows through
-:func:`flowfile_core.ai.byok.get_configured_provider` (W12) so BYOK rows +
-env-var fallback + surface-keyed model defaults are honoured identically
-to the chat route.
+:func:`flowfile_core.ai.byok.get_configured_provider` so BYOK rows +
+env-var fallback + surface-keyed model defaults are honoured
+identically to the chat route.
 """
 
 from __future__ import annotations
@@ -60,9 +61,9 @@ class ExplainRunFailureRequest(BaseModel):
     edited the node since the last run (the cached error stays useful as
     a hint for the AI even though the settings have moved on).
 
-    ``samples_mode`` defaults to D009's ``"off"``. The frontend in v0
-    doesn't expose a UI toggle; W25 + a future per-flow safety config
-    workstream will surface it.
+    ``samples_mode`` defaults to ``"off"``. The frontend doesn't
+    expose a UI toggle today; a per-flow safety config workstream
+    will surface it.
     """
 
     flow_id: int
@@ -110,7 +111,7 @@ def _resolve_error_message(flow, node_id: int, override: str | None) -> str:
 def _compose_failure_user_message(*, rendered_user: str, node_label: str, node_id: int, error_text: str) -> str:
     """Build the user-message body the LLM sees.
 
-    Re-uses W22's deterministic ``ctx.user`` (subgraph + schemas +
+    Re-uses the deterministic ``ctx.user`` (subgraph + schemas +
     settings) verbatim so its prompt-cache hash stays stable, then
     appends a single ``## Failure`` block with the error string and a
     read-only Assist instruction.

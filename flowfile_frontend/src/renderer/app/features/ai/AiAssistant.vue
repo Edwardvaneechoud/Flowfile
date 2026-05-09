@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// AI Assistant chat drawer (W20). Read-only — no tool calls, no graph
-// mutation. Mounted as an independent <draggable-item> from Canvas.vue
-// (D005), so it coexists with the node-settings drawer.
+// AI Assistant chat drawer. Read-only — no tool calls, no graph
+// mutation. Mounted as an independent <draggable-item> from
+// Canvas.vue, so it coexists with the node-settings drawer.
 //
-// Scope of this component: provider/model picker, message list, composer,
-// abort. Anything more (context pinning, @-mentions, diff preview) lands
-// in W22 / W24 / W31+ and extends the store rather than this view.
+// Scope of this component: provider/model picker, message list,
+// composer, abort. Anything more (context pinning, @-mentions, diff
+// preview) lives in the store and other modules; this view stays
+// composer-only.
 
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -27,10 +28,10 @@ const flowStore = useFlowStore();
 const agentStore = useAiAgentStore();
 const router = useRouter();
 
-// 2026-05-09 — settings popover anchored to the gear button in the
-// header. Holds provider / model / agent-variant pickers plus inline
-// explanations of what each variant does. Closed by default; opens on
-// gear click, closes on outside click or Esc.
+// Settings popover anchored to the gear button in the header. Holds
+// provider / model / agent-variant pickers plus inline explanations
+// of what each variant does. Closed by default; opens on gear click,
+// closes on outside click or Esc.
 const settingsOpen = ref(false);
 const settingsAnchorRef = ref<HTMLElement | null>(null);
 
@@ -45,11 +46,11 @@ const composerTextarea = ref<HTMLTextAreaElement | null>(null);
 const messageContainerRef = ref<HTMLElement | null>(null);
 const isDisabledByFlag = ref(false);
 
-// W24 — `@`-mention autocomplete. Source the candidate node list from
-// the live VueFlow graph (the chat drawer is mounted from Canvas.vue
-// per D005, so `vueFlowInstance` is populated whenever the drawer is
-// open). When the instance isn't ready yet, surface only the bare
-// kinds (`@flow`, `@selection`).
+// `@`-mention autocomplete. Source the candidate node list from the
+// live VueFlow graph (the chat drawer is mounted from Canvas.vue, so
+// `vueFlowInstance` is populated whenever the drawer is open). When
+// the instance isn't ready yet, surface only the bare kinds
+// (`@flow`, `@selection`).
 const mention = useMentionAutocomplete(composerTextarea, composerText, () => {
   const instance = flowStore.vueFlowInstance;
   if (!instance) return [];
@@ -67,10 +68,10 @@ const placeholder = computed(() =>
     : "Configure a provider in Settings → AI Providers to start chatting.",
 );
 
-// W29 — model picker source. Prefer the credential's curated `models` list
-// (multiple free models behind one OpenRouter / Groq key); fall back to the
-// singleton `defaultModel`; finally the class-level default. Picker only
-// renders when there are multiple options.
+// Model picker source. Prefer the credential's curated `models` list
+// (multiple free models behind one OpenRouter / Groq key); fall back
+// to the singleton `defaultModel`; finally the class-level default.
+// Picker only renders when there are multiple options.
 const selectedProviderMeta = computed(() => {
   const name = aiStore.selectedProvider;
   if (!name) return null;
@@ -92,11 +93,11 @@ const isAgentRunning = computed(
   () => agentStore.status === "running" || agentStore.status === "paused_drift",
 );
 
-// W71 — agent_staged stage badge labels. The state machine has 4 stages
+// Agent_staged stage badge labels. The state machine has 4 stages
 // for an "add" intent (classify → pick_type → pick_upstream →
 // fill_settings) and 2 stages for a non-add intent (classify →
-// single_stage_op). The numerator counts up through stages so the user
-// sees concrete progress; the denominator reflects the path:
+// single_stage_op). The numerator counts up through stages so the
+// user sees concrete progress; the denominator reflects the path:
 // 4 if op_kind is "add" (or unknown), 2 otherwise.
 const STAGE_ORDER_ADD: Record<string, number> = {
   classify: 1,
@@ -201,10 +202,9 @@ onBeforeUnmount(() => {
 });
 
 const handleAgentSurfaceChange = (event: Event): void => {
-  // 2026-05-09 — handler now bound to radio inputs in the settings
-  // popover; cast accepts either HTMLInputElement (radios) or
-  // HTMLSelectElement (legacy callers, if any) so the read of
-  // ``.value`` is type-safe.
+  // Handler bound to radio inputs in the settings popover; cast
+  // accepts either HTMLInputElement (radios) or HTMLSelectElement
+  // (legacy callers, if any) so the read of ``.value`` is type-safe.
   const target = event.target as HTMLInputElement;
   const value = target.value;
   // Three surfaces are user-selectable:
@@ -217,8 +217,8 @@ const handleAgentSurfaceChange = (event: Event): void => {
 };
 
 const handleVerifyPlanCompletionChange = (event: Event): void => {
-  // W71 v2.12 — opt-in verify-completion gate. Toggled via a
-  // checkbox in the agent settings popover; the value flows into
+  // Opt-in verify-completion gate. Toggled via a checkbox in the
+  // agent settings popover; the value flows into
   // ``AgentStartRequest.verify_plan_completion`` on every dispatch
   // (both the manual Agent toggle in this component and the
   // auto-promote-from-chat path in ai-store.ts).
@@ -249,10 +249,11 @@ const handleSend = async (): Promise<void> => {
       aiStore.streamError = "Open a flow before starting the agent.";
       return;
     }
-    // Capture the user's typed prompt in the visible chat trail. The wire-
-    // level prompt is built server-side via W22's render_prompt_context;
-    // this synthetic message is purely cosmetic so the user sees what they
-    // asked alongside the streamed agent events.
+    // Capture the user's typed prompt in the visible chat trail. The
+    // wire-level prompt is built server-side via
+    // ``render_prompt_context``; this synthetic message is purely
+    // cosmetic so the user sees what they asked alongside the
+    // streamed agent events.
     aiStore.messages.push({
       id: Date.now(),
       createdAt: Date.now(),
@@ -260,12 +261,12 @@ const handleSend = async (): Promise<void> => {
       content: `[Agent] ${text}`,
     });
 
-    // W49 — when the active session is followup-resumable (``completed``
-    // or ``awaiting_user_input``), route the user's typed message through
-    // the followup endpoint rather than allocating a fresh session via
-    // ``start()``. This keeps the conversation history and avoids the
-    // ``── new agent run ──`` boundary insertion the chat trail uses to
-    // mark genuine new sessions.
+    // When the active session is followup-resumable (``completed`` or
+    // ``awaiting_user_input``), route the user's typed message
+    // through the followup endpoint rather than allocating a fresh
+    // session via ``start()``. This keeps the conversation history
+    // and avoids the ``── new agent run ──`` boundary insertion the
+    // chat trail uses to mark genuine new sessions.
     const sid = agentStore.currentSessionId;
     if (
       sid !== null &&
@@ -275,38 +276,34 @@ const handleSend = async (): Promise<void> => {
       return;
     }
 
-    // 2026-05-07 — fold prior chat history into the agent prompt the same
-    // way W58 auto-promotion does. Live trace 14:34: user toggled the
-    // manual Agent checkbox after a chat assistant had laid out a plan,
-    // typed *"Implement the plan"*, and the agent replied *"I'm not sure
-    // which specific plan you'd like me to implement"* — the bare ``text``
-    // we used to forward carried no transcript, so the agent saw a
-    // context-less message. ``buildAgentPromptWithHistory`` returns
-    // ``text`` verbatim when no prior chat exists (no harm on the
-    // first-message-of-session case).
+    // Fold prior chat history into the agent prompt the same way the
+    // auto-promotion path does. Without this, toggling the manual
+    // Agent checkbox after a chat assistant has laid out a plan and
+    // typing *"Implement the plan"* would forward a context-less
+    // message and the agent would reply *"I'm not sure which specific
+    // plan you'd like me to implement"*. ``buildAgentPromptWithHistory``
+    // returns ``text`` verbatim when no prior chat exists (no harm on
+    // the first-message-of-session case).
     const promptWithHistory = aiStore.buildAgentPromptWithHistory(text);
 
-    // Forward the model the user picked verbatim. If the W29 picker has a
-    // value, that's the user's choice and the backend honours it. If it's
-    // null (no picker rendered, no manual selection), the backend's
-    // surface-aware routing picks a tool-capable model from
+    // Forward the model the user picked verbatim. If the picker has
+    // a value, that's the user's choice and the backend honours it.
+    // If it's null (no picker rendered, no manual selection), the
+    // backend's surface-aware routing picks a tool-capable model from
     // ``Provider.surface_models[surface]``.
     await agentStore.start({
       flow_id: flowStore.flowId,
       prompt: promptWithHistory,
-      // W71 v1.9 — surface is now user-selectable via the header
-      // dropdown. Default is ``agent_staged`` (the multi-stage state
-      // machine that's reliable on small open-weights models).
-      // Legacy ``agent`` (two-stage) and ``agent_complex`` (single-shot
-      // full catalog) remain available as opt-ins for users who
-      // explicitly want them.
+      // Surface is user-selectable via the settings popover. Default
+      // is ``agent_live`` (REPL-style; applies each step live).
+      // ``agent_staged`` (multi-stage planner with batched diff) and
+      // ``agent_complex`` (single-shot full catalog) are opt-ins.
       surface: aiStore.selectedAgentSurface,
       provider: aiStore.selectedProvider ?? "anthropic",
       model: aiStore.selectedModel ?? null,
-      // W71 v2.12 — opt-in verify-completion gate. Default off;
-      // toggled via the agent settings panel checkbox so a
-      // multi-step plan that ends after step 1 (the 2026-05-09
-      // unique-cascade dogfood) gets one auto-correction round.
+      // Opt-in verify-completion gate. Default off; toggled via the
+      // agent settings panel checkbox so a multi-step plan that ends
+      // prematurely gets one auto-correction round.
       verify_plan_completion: aiStore.verifyPlanCompletion,
     });
     return;
@@ -329,25 +326,25 @@ const handleAgentResumeContinue = async (): Promise<void> => {
   await agentStore.resumeContinue(sid);
 };
 
-// W58 — banner "Keep this as chat instead" affordance: aborts the in-flight
-// agent run, flips ``autoPromote`` off for the session, and re-dispatches
-// the saved message as a regular chat. The store wraps all of that.
+// Banner "Keep this as chat instead" affordance: aborts the
+// in-flight agent run, flips the session mode to chat, and
+// re-dispatches the saved message as a regular chat. The store
+// wraps all of that.
 const handleUndoPromotion = async (): Promise<void> => {
   await aiStore.undoPromotion();
 };
 
-// W58 round 7 — banner "Continue as agent" affordance: keeps the current
-// run going AND short-circuits classification on subsequent sends so every
-// future message dispatches straight to the agent. The store handles the
-// session-flag flip; we just clear the banner via the store.
+// Banner "Continue as agent" affordance: keeps the current run going
+// AND short-circuits classification on subsequent sends so every
+// future message dispatches straight to the agent. The store handles
+// the session-flag flip; we just clear the banner via the store.
 const handleAcceptPromotion = (): void => {
   aiStore.acceptPromotion();
 };
 
-// 2026-05-09 — unified mode dropdown next to Send. Replaces the old
-// `agentMode` per-send checkbox + `autoPromote` toggle. Persisted via
-// the store's sessionStorage `mode` key so refresh keeps the user's
-// choice within the same tab.
+// Unified mode dropdown next to Send. Persisted via the store's
+// sessionStorage `mode` key so refresh keeps the user's choice
+// within the same tab.
 const handleModeChange = (event: Event): void => {
   const target = event.target as HTMLSelectElement;
   aiStore.setMode(target.value as AiMode);
@@ -526,7 +523,7 @@ const isMacPlatform =
 const modKeyLabel = isMacPlatform ? "⌘" : "Ctrl";
 
 const handleComposerKeydown = (event: KeyboardEvent): void => {
-  // W24 — let the mention autocomplete intercept Up/Down/Enter/Tab/Escape
+  // Let the mention autocomplete intercept Up/Down/Enter/Tab/Escape
   // before the composer's own Enter-to-send guard fires.
   if (mention.onKeyDown(event)) return;
 
@@ -590,9 +587,10 @@ const handleMentionHover = (index: number): void => {
   mention.setActiveIndex(index);
 };
 
-// W45 Q3 — render the drift banner's per-id rows with typed labels:
-// "Filter node 6 was deleted" / "Manual-input node 3 was added externally".
-// Falls back to "Node {id}" when the snapshot didn't capture a type.
+// Render the drift banner's per-id rows with typed labels:
+// "Filter node 6 was deleted" / "Manual-input node 3 was added
+// externally". Falls back to "Node {id}" when the snapshot didn't
+// capture a type.
 const _formatNodeType = (nodeType: string): string => {
   if (!nodeType) return "Node";
   const pretty = nodeType.replace(/_/g, "-");
@@ -633,10 +631,10 @@ const timelineItems = computed<TimelineItem[]>(() => {
     raw.push({ kind: "message", at: msg.createdAt, data: msg });
   }
   for (const evt of agentStore.events) {
-    // W38 — filter D002 meta routing + housekeeping info events out of the
-    // chat trail before grouping, so a streaming run that produces nothing
-    // but pick_category + "category narrowed" doesn't render as an empty
-    // agent bubble between user/assistant messages.
+    // Filter meta routing + housekeeping info events out of the chat
+    // trail before grouping, so a streaming run that produces nothing
+    // but pick_category + "category narrowed" doesn't render as an
+    // empty agent bubble between user/assistant messages.
     if (isAgentEventHidden(evt.kind, evt.payload)) continue;
     raw.push({ kind: "event", at: evt.at, data: evt });
   }
@@ -758,10 +756,10 @@ const showStandaloneThinking = computed<boolean>(() => {
           </div>
         </div>
       </div>
-      <!-- 2026-05-09 — provider / model / agent-variant pickers moved
-           into a popover behind this gear button so the header stays
-           compact in steady state. The popover anchors to the wrapper
-           below and dismisses on outside click + Esc. -->
+      <!-- Provider / model / agent-variant pickers live in a popover
+           behind this gear button so the header stays compact in
+           steady state. The popover anchors to the wrapper below and
+           dismisses on outside click + Esc. -->
       <div ref="settingsAnchorRef" class="ai-assistant__settings-wrapper">
         <button
           v-if="!isDisabledByFlag"
@@ -881,11 +879,17 @@ const showStandaloneThinking = computed<boolean>(() => {
                 </span>
               </span>
             </label>
-            <!-- W71 v2.12 — opt-in verify-completion gate.
-                 After classify picks op_kind="other" (intending to
-                 terminate), the agent runs one extra LLM round to
-                 walk the plan as a checklist. Catches the case
-                 where a multi-step plan terminates after step 1. -->
+            <!-- Divider so the verify-completion gate doesn't read as a
+                 fourth Agent variant. Agent variant chooses *how* the
+                 agent runs; verify completion is an orthogonal post-run
+                 check that applies regardless of variant. -->
+            <hr class="ai-assistant__settings-divider" aria-hidden="true" />
+            <span class="ai-assistant__settings-label">Verification</span>
+            <!-- Opt-in verify-completion gate. After classify picks
+                 op_kind="other" (intending to terminate), the agent
+                 runs one extra LLM round to walk the plan as a
+                 checklist. Catches the case where a multi-step plan
+                 terminates after step 1. -->
             <label class="ai-assistant__settings-radio">
               <input
                 type="checkbox"
@@ -951,13 +955,13 @@ const showStandaloneThinking = computed<boolean>(() => {
 
     <div v-else class="ai-assistant__chat">
       <AiDiffPanel />
-      <!-- W71 v1.2 — W58 promotion banner intentionally hidden. The
+      <!-- Promotion banner intentionally hidden. The
            auto-promote-from-chat dispatch (ai-store.ts
            ``_dispatchPromotedAgent``) and the underlying
            ``promotionBanner`` / ``acceptPromotion`` /
            ``undoPromotion`` store plumbing are kept intact so the
-           banner can be restored cheaply when the UX is wanted again.
-           For now the chat → agent_staged hand-off is silent. -->
+           banner can be restored cheaply when the UX is wanted
+           again. For now the chat → agent_staged hand-off is silent. -->
       <div v-if="false && aiStore.promotionBanner !== null" class="ai-assistant__promo-banner">
         <p class="ai-assistant__promo-text">
           <span class="ai-assistant__promo-icon">✨</span>
@@ -977,15 +981,15 @@ const showStandaloneThinking = computed<boolean>(() => {
           </button>
         </div>
       </div>
-      <!-- W71 v2.3 — post-agent_live layout-reorganize prompt.
-           agent_live commits each step to the canvas live; on a
-           multi-step run the new nodes can land in less-than-
-           tidy positions, so the banner offers a one-click route
-           to the existing "Reset layout graph" routine. Only
-           renders when the just-finished run was agent_live AND
-           at least one node was applied. Lives ABOVE the messages
-           container (not inside it) so the auto-scroll-to-bottom
-           in ``.ai-assistant__messages`` doesn't push it off-screen. -->
+      <!-- Post-agent_live layout-reorganize prompt. agent_live
+           commits each step to the canvas live; on a multi-step run
+           the new nodes can land in less-than-tidy positions, so the
+           banner offers a one-click route to the existing "Reset
+           layout graph" routine. Only renders when the just-finished
+           run was agent_live AND at least one node was applied.
+           Lives ABOVE the messages container (not inside it) so the
+           auto-scroll-to-bottom in ``.ai-assistant__messages``
+           doesn't push it off-screen. -->
       <div
         v-if="agentStore.liveLayoutPromptVisible"
         class="ai-assistant__layout-prompt"
@@ -1007,13 +1011,10 @@ const showStandaloneThinking = computed<boolean>(() => {
           </button>
         </div>
       </div>
-      <!-- W71 v1.1 — always-on surface chip. Renders for every active
-           agent run regardless of surface so the operator can verify at
-           a glance which agent (legacy two-stage / agent_complex /
-           agent_staged) is actually executing. The dogfood incident on
-           2026-05-07 was hidden because the auto-promote-from-chat path
-           was silently routing to legacy ``agent`` while everything
-           else looked normal. -->
+      <!-- Always-on surface chip. Renders for every active agent run
+           regardless of surface so the operator can verify at a
+           glance which agent (agent_complex / agent_staged /
+           agent_live) is actually executing. -->
       <div
         v-if="agentStore.status === 'running' && agentStore.currentSurface"
         class="ai-assistant__surface-chip"
@@ -1030,11 +1031,10 @@ const showStandaloneThinking = computed<boolean>(() => {
           {{ agentStore.currentSurface }}
         </span>
       </div>
-      <!-- W71 — agent_staged stage badge. Renders for both
-           staged and live surfaces (they share the same 4-stage
-           state machine through fill_settings); legacy ``agent``
-           and ``agent_complex`` show nothing — the badge has no
-           meaning there. -->
+      <!-- Agent_staged stage badge. Renders for both staged and live
+           surfaces (they share the same 4-stage state machine through
+           fill_settings); ``agent_complex`` shows nothing — the
+           badge has no meaning there. -->
       <div
         v-if="
           agentStore.status === 'running' &&
@@ -1375,10 +1375,10 @@ const showStandaloneThinking = computed<boolean>(() => {
   margin-right: 2px;
 }
 
-/* W71 v2.3 — agent_live post-run layout-reorganize prompt. Sticks
-   to the top of the chat trail so the user sees it the moment the
-   run completes; auto-clears on the next session start (handled in
-   the store) or on dismiss / accept. */
+/* agent_live post-run layout-reorganize prompt. Sticks to the top of
+   the chat trail so the user sees it the moment the run completes;
+   auto-clears on the next session start (handled in the store) or
+   on dismiss / accept. */
 .ai-assistant__layout-prompt {
   display: flex;
   align-items: center;
@@ -1690,9 +1690,9 @@ const showStandaloneThinking = computed<boolean>(() => {
   box-shadow: 0 1px 0 var(--color-border-primary, #e2e8f0);
 }
 
-/* 2026-05-09 — settings popover (gear button → provider / model /
-   agent-variant). Anchors to the wrapper in the header so it floats
-   below the gear without affecting layout flow. */
+/* Settings popover (gear button → provider / model / agent-variant).
+   Anchors to the wrapper in the header so it floats below the gear
+   without affecting layout flow. */
 .ai-assistant__settings-wrapper {
   position: relative;
   flex-shrink: 0;
@@ -1825,6 +1825,12 @@ const showStandaloneThinking = computed<boolean>(() => {
   line-height: 1.4;
 }
 
+.ai-assistant__settings-divider {
+  border: 0;
+  border-top: 1px solid var(--color-border-primary, #e2e8f0);
+  margin: 4px 0 2px;
+}
+
 /* Footer link to the full AI Providers admin page in Connections.
    Looks like a quiet link, not a button — discoverable but not
    competing with the inline controls above. */
@@ -1862,16 +1868,12 @@ const showStandaloneThinking = computed<boolean>(() => {
   line-height: 1;
 }
 
-/* W40 — agent-mode toggle removed 2026-05-09 (replaced by the unified
-   mode dropdown in the composer). Drift banner + event list classes
-   remain below. */
+/* Drift banner + event list classes follow below. */
 
-/* W71 v1.1 — surface chip. Always renders during an active agent run
-   so operators can verify which agent variant is in use. Default
-   accent posture matches the stage badge; legacy surfaces get a muted
-   warning tint so a stray ``surface=agent`` or ``surface=agent_complex``
-   stands out visually (the dogfood failure mode was the auto-promote
-   path silently using legacy on llama-70b). */
+/* Surface chip. Always renders during an active agent run so
+   operators can verify which agent variant is in use. Default accent
+   posture matches the stage badge; ``agent_complex`` gets a muted
+   warning tint so a stray full-catalog dispatch stands out visually. */
 .ai-assistant__surface-chip {
   display: inline-flex;
   align-items: center;
@@ -1894,10 +1896,10 @@ const showStandaloneThinking = computed<boolean>(() => {
   color: var(--color-warning, #cc7700);
 }
 
-/* W71 v2.0 — live surface chip: distinct accent so the user
-   immediately sees the agent is mutating the canvas live (not
-   bundling for review). Mid-saturation amethyst — not a warning
-   colour, but visually different from the default staged chip. */
+/* Live surface chip: distinct accent so the user immediately sees
+   the agent is mutating the canvas live (not bundling for review).
+   Mid-saturation amethyst — not a warning colour, but visually
+   different from the default staged chip. */
 .ai-assistant__surface-chip--live {
   background-color: var(--color-accent-soft, rgba(124, 58, 237, 0.1));
   border-color: var(--color-accent, #7c3aed);
@@ -1916,10 +1918,11 @@ const showStandaloneThinking = computed<boolean>(() => {
   font-weight: 600;
 }
 
-/* W71 — staged-agent stage badge. Compact pill that lives between the
+/* Staged-agent stage badge. Compact pill that lives between the
    awaiting banner and the drift banner; only renders when the active
-   run is on the agent_staged surface. Visual posture matches the rest
-   of the agent surface (accent border, soft secondary background). */
+   run is on the agent_staged surface. Visual posture matches the
+   rest of the agent surface (accent border, soft secondary
+   background). */
 .ai-assistant__stage-badge {
   display: inline-flex;
   align-items: center;
@@ -1986,8 +1989,8 @@ const showStandaloneThinking = computed<boolean>(() => {
    moved into the `AiAgentEvent` component's scoped block — the timeline
    now renders each item as its own component, not a `<li>` in a `<ul>`. */
 
-/* W58 — chat → agent auto-promotion banner. Sits above the messages and
-   below the diff panel; visually distinct from the W40 drift banner so
+/* Chat → agent auto-promotion banner. Sits above the messages and
+   below the diff panel; visually distinct from the drift banner so
    the two don't read as the same alert pattern. */
 .ai-assistant__promo-banner {
   display: flex;

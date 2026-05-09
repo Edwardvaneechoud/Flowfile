@@ -1,18 +1,16 @@
 """FastAPI router for ``/ai/*`` endpoints.
 
-W10 (this skeleton) registers a single ``GET /ai/health`` placeholder so the
-router exists and can be mounted on ``main.py``. Real endpoints land per
-workstream — chat stream (W13), suggest_next_node (W31/W32), agent start /
-resume / abort (W40/W42), diff accept / reject (W41), provider list / test
-(W12 — shipped via :mod:`flowfile_core.ai.byok_routes`).
+Aggregates every per-surface sub-router (chat, autocomplete, agent,
+diff, BYOK credentials, etc.) under a single mount point.
 
-W17 wires :func:`flowfile_core.ai.feature_flag.require_ai_enabled` as a
-router-level dependency, so every endpoint on ``ai_router`` (including the
-nested ``byok_router``) returns ``503 Service Unavailable`` whenever
-``FEATURE_FLAG_AI`` is off. FastAPI's ``include_router`` re-registers child
-routes through the parent's ``add_api_route``, which prepends the parent's
-constructor ``dependencies`` — so the gate covers W12's BYOK routes today
-and any future sub-router automatically.
+:func:`flowfile_core.ai.feature_flag.require_ai_enabled` is wired as
+a router-level dependency, so every endpoint on ``ai_router``
+(including the nested ``byok_router``) returns
+``503 Service Unavailable`` whenever ``FEATURE_FLAG_AI`` is off.
+FastAPI's ``include_router`` re-registers child routes through the
+parent's ``add_api_route``, which prepends the parent's constructor
+``dependencies`` — so the gate covers BYOK routes and any future
+sub-router automatically.
 """
 
 from fastapi import APIRouter, Depends
@@ -51,8 +49,7 @@ async def ai_health() -> dict[str, str]:
     """Liveness probe for the AI subsystem.
 
     Mounted at ``/ai/health`` via the ``prefix="/ai"`` on
-    ``app.include_router``. Returns ``{"status": "skeleton"}`` while only W10
-    has shipped; subsequent workstreams should not change this contract.
+    ``app.include_router``. Returns ``{"status": "skeleton"}``.
 
     Returns ``503`` (with ``detail`` from
     :data:`flowfile_core.ai.feature_flag.DISABLED_DETAIL`) when

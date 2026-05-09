@@ -1,12 +1,13 @@
-"""``Provider`` Protocol and supporting MCP-shaped (D004) message / tool types.
+"""``Provider`` Protocol and supporting MCP-shaped message / tool types.
 
-Owned by W11. Per plan §6.2 — every per-vendor adapter conforms to this
-Protocol so retry / scheduler (W14), audit / metrics (W15), and SSE encoding
-(W13) can wrap a single seam without provider-specific branches.
+Every per-vendor adapter conforms to this Protocol so retry /
+scheduler, audit / metrics, and SSE encoding can wrap a single seam
+without provider-specific branches.
 
-The dotted ``ToolSpec.name`` (e.g. ``flowfile.graph.add_filter``) is the MCP
-naming convention from D004. ``ToolSpec.parameters`` is JSON-Schema-2020-12
-and is passed through to litellm's standard ``tools[].function`` shape.
+The dotted ``ToolSpec.name`` (e.g. ``flowfile.graph.add_filter``) is
+the MCP naming convention. ``ToolSpec.parameters`` is
+JSON-Schema-2020-12 and is passed through to litellm's standard
+``tools[].function`` shape.
 """
 
 from collections.abc import AsyncIterator
@@ -47,11 +48,11 @@ class ToolSpec(BaseModel):
     * ``description`` — short, JSON-Schema-shaped summary forwarded to
       the provider's tools API (kept terse — every byte counts on the
       per-call wire).
-    * ``long_description`` — agent-shaped narrative ("when to call this
-      tool"). W56 appends it to tool-calling surfaces so the model
+    * ``long_description`` — agent-shaped narrative ("when to call
+      this tool"). Appended to tool-calling surfaces so the model
       disambiguates between tools.
-    * ``user_instructions`` — user-shaped narrative ("how does the user
-      do this in the UI"). W56 appends it to read-only / advisory
+    * ``user_instructions`` — user-shaped narrative ("how does the
+      user do this in the UI"). Appended to read-only / advisory
       surfaces (chat / explain / lineage / docgen) so the model cites
       real palette labels and settings field names instead of
       hallucinating UI elements. Empty for non-node-type tools (graph
@@ -110,22 +111,23 @@ class StreamChunk(BaseModel):
 class Provider(Protocol):
     """Common interface for LLM backends.
 
-    Implementations live in ``providers/{name}.py`` and share the litellm
-    backing via ``providers/_litellm_base.py``. The seam is intentionally
-    thin so W14 (rate-limit scheduler) and W15 (audit log) can wrap the
-    Provider without provider-specific awareness.
+    Implementations live in ``providers/{name}.py`` and share the
+    litellm backing via ``providers/_litellm_base.py``. The seam is
+    intentionally thin so the rate-limit scheduler and audit log can
+    wrap the Provider without provider-specific awareness.
     """
 
     name: str
     model: str
     supports_tools: bool
     supports_streaming: bool
-    # TODO(W11): Unresolved attribute reference 'default_model' for class 'Provider'.
-    # LiteLLMProvider subclasses expose `default_model: ClassVar[str]` but the
-    # Protocol doesn't declare it, so static analysers warn at call sites like
-    # `p.default_model`. Resolution: either add `default_model: str` to the
-    # Protocol surface, or migrate call sites to `.model` (the resolved model
-    # after surface routing per D010).
+    # TODO: Unresolved attribute reference 'default_model' for class
+    # 'Provider'. LiteLLMProvider subclasses expose
+    # `default_model: ClassVar[str]` but the Protocol doesn't declare
+    # it, so static analysers warn at call sites like `p.default_model`.
+    # Resolution: either add `default_model: str` to the Protocol
+    # surface, or migrate call sites to `.model` (the resolved model
+    # after surface routing).
 
     async def chat(
         self,

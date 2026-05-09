@@ -1,40 +1,44 @@
 """Per-call LLM prompt log — the dev-mode "what did the model actually see?" hatch.
 
-Owned by W59. Sits under :func:`is_logging_enabled` so production stays silent
-by default; dev / debug runs flip ``FLOWFILE_AI_LOG_PROMPTS=true`` in the env
-and get a daily-rotated JSONL file with one line per LLM round-trip.
+Sits under :func:`is_logging_enabled` so production stays silent by
+default; dev / debug runs flip ``FLOWFILE_AI_LOG_PROMPTS=true`` in
+the env and get a daily-rotated JSONL file with one line per LLM
+round-trip.
 
 Design notes:
 
-* **One file per day, one line per call.** ``{base}/ai_prompts/YYYY-MM-DD.jsonl``
-  where ``{base}`` is the same dir that owns ``master_key.txt`` / ``temp/`` /
-  ``system_logs/`` (``shared.storage_config.storage.base_directory``). The spec
-  says ``FLOWFILE_USER_DATA_DIR`` but in local mode that resolves to
-  ``Path.home()`` and writing transcripts to a user's HOME would be intrusive
-  — ``base_directory`` is the precedent (`system_logs_directory = base /
-  "system_logs"`) and is the right granularity here.
-* **Single seam.** All six per-vendor providers share the W11
-  ``LiteLLMProvider`` base, so wrapping ``chat`` / ``stream`` there is enough.
-  The wrapper builds a :class:`PromptLogEntry` and calls :func:`log_prompt`.
-* **Streaming aggregation.** One line per LLM call (not per chunk). The
-  wrapper accumulates content + tool-call deltas as the iterator yields and
-  emits the entry at stream-end. If the stream errors mid-flight the entry
-  still lands (with whatever was accumulated) and ``error`` is set.
-* **Truncation.** Individual entries past 256 KiB get the older user/assistant
-  message bodies replaced with ``[...truncated, len=N chars]`` markers,
-  preserving the system prompt + most-recent ``KEEP_RECENT_TURNS`` messages.
-  Keeps each line parseable by ``jq`` regardless of agent-loop depth.
-* **Optional PII scrub.** ``FLOWFILE_AI_LOG_PROMPTS_SCRUB=true`` runs user /
-  tool message bodies through W25's regex scrubber before writing. System and
-  assistant content are left untouched — those are the things you actually
-  need to debug. Off by default; the whole point of the log is to see what
-  the model saw.
-* **Failure isolation.** A logging error never crashes the LLM call. The
-  wrapper swallows + warns on file-IO / serialisation failures.
+* **One file per day, one line per call.**
+  ``{base}/ai_prompts/YYYY-MM-DD.jsonl`` where ``{base}`` is the
+  same dir that owns ``master_key.txt`` / ``temp/`` / ``system_logs/``
+  (``shared.storage_config.storage.base_directory``).
+  ``FLOWFILE_USER_DATA_DIR`` resolves to ``Path.home()`` in local
+  mode and writing transcripts to a user's HOME would be intrusive
+  — ``base_directory`` is the precedent and the right granularity.
+* **Single seam.** All six per-vendor providers share the
+  ``LiteLLMProvider`` base, so wrapping ``chat`` / ``stream`` there
+  is enough. The wrapper builds a :class:`PromptLogEntry` and calls
+  :func:`log_prompt`.
+* **Streaming aggregation.** One line per LLM call (not per chunk).
+  The wrapper accumulates content + tool-call deltas as the iterator
+  yields and emits the entry at stream-end. If the stream errors
+  mid-flight the entry still lands (with whatever was accumulated)
+  and ``error`` is set.
+* **Truncation.** Individual entries past 256 KiB get the older
+  user/assistant message bodies replaced with
+  ``[...truncated, len=N chars]`` markers, preserving the system
+  prompt + most-recent ``KEEP_RECENT_TURNS`` messages. Keeps each
+  line parseable by ``jq`` regardless of agent-loop depth.
+* **Optional PII scrub.** ``FLOWFILE_AI_LOG_PROMPTS_SCRUB=true``
+  runs user / tool message bodies through the safety regex scrubber
+  before writing. System and assistant content are left untouched —
+  those are the things you actually need to debug. Off by default;
+  the whole point of the log is to see what the model saw.
+* **Failure isolation.** A logging error never crashes the LLM call.
+  The wrapper swallows + warns on file-IO / serialisation failures.
 
-Lazy-litellm contract (W11/W12/W13/W14/W25 invariant): this module imports
-nothing from ``litellm`` at module level. The ``safety`` import is regex-only
-and pulls neither litellm nor presidio.
+Lazy-litellm contract: this module imports nothing from ``litellm``
+at module level. The ``safety`` import is regex-only and pulls
+neither litellm nor presidio.
 """
 
 from __future__ import annotations
@@ -114,9 +118,9 @@ class PromptLogEntry:
 def is_logging_enabled() -> bool:
     """Live read of ``FLOWFILE_AI_LOG_PROMPTS``.
 
-    Reads via ``getattr`` against the settings module so test fixtures and
-    the W18-style admin path can flip the underlying ``MutableBool`` without
-    re-importing this module. Mirrors W17's ``feature_flag.is_ai_enabled``.
+    Reads via ``getattr`` against the settings module so test fixtures
+    and the admin path can flip the underlying ``MutableBool`` without
+    re-importing this module. Mirrors ``feature_flag.is_ai_enabled``.
     """
     from flowfile_core.configs import settings as _settings
 
@@ -194,9 +198,9 @@ def build_entry_from_stream(
 ) -> PromptLogEntry:
     """Build an entry for a streaming :meth:`Provider.stream` call.
 
-    Streaming responses don't carry a ``Usage`` object inline today; tokens
-    will be backfilled by W14 / W15's metric layer once that lands. ``usage``
-    stays ``None`` here.
+    Streaming responses don't carry a ``Usage`` object inline today;
+    tokens will be backfilled by the metric layer once that lands.
+    ``usage`` stays ``None`` here.
     """
     serialised_messages = [_message_to_dict(m) for m in messages]
     serialised_tools = [_tool_to_dict(t) for t in tools] if tools else None
@@ -307,8 +311,8 @@ def _log_dir() -> Path:
     """Resolve the prompt-log directory at call time.
 
     Computed lazily so test fixtures that swap ``storage.base_directory``
-    (or ``FLOWFILE_STORAGE_DIR``) take effect. Mirrors W12 / W14's lazy
-    settings reads.
+    (or ``FLOWFILE_STORAGE_DIR``) take effect. Mirrors the lazy
+    settings reads used elsewhere in this package.
     """
     from shared.storage_config import storage
 
@@ -392,11 +396,12 @@ def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _scrub_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Apply W25's regex scrubber to user / tool content only.
+    """Apply the safety regex scrubber to user / tool content only.
 
-    System and assistant content are explicitly left untouched — those are
-    the things you need to read verbatim when debugging a model behaviour.
-    Lazy-imports W25 so callers that never enable scrub stay light.
+    System and assistant content are explicitly left untouched —
+    those are the things you need to read verbatim when debugging a
+    model behaviour. Lazy-imports the safety module so callers that
+    never enable scrub stay light.
     """
     from flowfile_core.ai.safety import scrub_value_regex
 

@@ -271,15 +271,16 @@ def format_sse_planner_event(
     session_id: str,
     step_count: int,
 ) -> str:
-    """Serialise a W40 ``PlannerEvent`` as an SSE wire string.
+    """Serialise a ``PlannerEvent`` as an SSE wire string.
 
     The ``id:`` line carries ``f"{session_id}.{step_count}"`` so an
-    EventSource client can echo it back via ``Last-Event-ID`` when W42's
-    replay buffer lands. ``event:`` matches the Python ``PlannerEvent.event``
-    Literal — ``tool_call_proposed`` / ``tool_call_staged`` /
+    EventSource client can echo it back via ``Last-Event-ID``.
+    ``event:`` matches the Python ``PlannerEvent.event`` Literal —
+    ``tool_call_proposed`` / ``tool_call_staged`` /
     ``tool_call_warned`` / ``tool_call_rejected`` / ``thinking`` /
-    ``drift_detected`` / ``paused`` / ``retry`` / ``abort`` / ``complete`` /
-    ``error`` / ``info``. ``data:`` is JSON of the payload dict.
+    ``drift_detected`` / ``paused`` / ``retry`` / ``abort`` /
+    ``complete`` / ``error`` / ``info``. ``data:`` is JSON of the
+    payload dict.
     """
     data = json.dumps(payload)
     return SSEEvent(event=event_name, data=data, id=f"{session_id}.{step_count}").format()
@@ -295,29 +296,31 @@ async def planner_events_sse(
     flow_id: int | None = None,
     replay_after_event_id: str | None = None,
 ) -> AsyncIterator[str]:
-    """Translate a W40 ``PlannerEvent`` iterator into SSE wire strings.
+    """Translate a ``PlannerEvent`` iterator into SSE wire strings.
 
     Mirrors :func:`sse_stream`'s race-against-keepalive pattern so the
-    connection stays alive across slow LLM calls. ``step_count_getter``
-    is a closure over the live :class:`AgentSession` — each event picks up
-    the *current* step counter so resume cursors are step-aligned, not
-    wall-clock.
+    connection stays alive across slow LLM calls.
+    ``step_count_getter`` is a closure over the live
+    :class:`AgentSession` — each event picks up the *current* step
+    counter so resume cursors are step-aligned, not wall-clock.
 
-    W42 plumbing:
+    Replay-buffer plumbing:
 
-    * ``replay_buffer`` / ``flow_id`` enable the post-emit append: every
-      live frame is captured into the per-(flow_id, session_id) ring so a
-      future ``Last-Event-ID`` reconnect can replay it. Best-effort —
-      buffer write failures never crash the stream.
+    * ``replay_buffer`` / ``flow_id`` enable the post-emit append:
+      every live frame is captured into the
+      per-(flow_id, session_id) ring so a future ``Last-Event-ID``
+      reconnect can replay it. Best-effort — buffer write failures
+      never crash the stream.
     * ``replay_after_event_id`` flushes buffered frames newer than the
-      cursor *before* live streaming resumes. Used by the resume route
-      when the client supplies ``Last-Event-ID`` on reconnect.
+      cursor *before* live streaming resumes. Used by the resume
+      route when the client supplies ``Last-Event-ID`` on reconnect.
 
-    Like :func:`sse_stream`, errors mid-stream become an ``event: error``
-    frame; cancellations propagate. The pending ``__anext__()`` is shielded
-    so a keepalive timeout doesn't tear the underlying generator.
+    Like :func:`sse_stream`, errors mid-stream become an
+    ``event: error`` frame; cancellations propagate. The pending
+    ``__anext__()`` is shielded so a keepalive timeout doesn't tear
+    the underlying generator.
     """
-    # W42 — flush buffered frames past the cursor before live streaming.
+    # Flush buffered frames past the cursor before live streaming.
     if replay_buffer is not None and flow_id is not None and replay_after_event_id is not None:
         try:
             for _eid, payload in replay_buffer.read_after(

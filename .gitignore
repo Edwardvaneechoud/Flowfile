@@ -89,6 +89,9 @@ test-embed
 # Local review artefacts
 /diff.txt
 
+# Local editor / one-off backup files (e.g. *.local-backup-YYYYMMDD-HHMMSS)
+*.local-backup-*
+
 # Stray runtime artefacts
 error-linux
 .claude/scheduled_tasks.lock

@@ -1,16 +1,16 @@
 <script setup lang="ts">
-// W35 — Inline-diff renderer.
+// Inline-diff renderer.
 //
-// Pure presentation: takes a `GraphDiffPayload` (W41 shapes) and emits
-// `accept` / `reject`. No store coupling — `AiDiffPanel.vue` wires
-// these to the `useAiDiffStore` actions. Per-op cards render in W41's
-// apply order so the visual order matches what `apply_diff` will do
-// when the user clicks Accept.
+// Pure presentation: takes a `GraphDiffPayload` and emits `accept` /
+// `reject`. No store coupling — `AiDiffPanel.vue` wires these to
+// the `useAiDiffStore` actions. Per-op cards render in the
+// `apply_diff` apply order so the visual order matches what
+// happens when the user clicks Accept.
 //
-// Destructive ops (deletions) are red-bordered per plan §9.2; the
-// drift error block at the top mirrors D006's "snapshot+warn-and-pause"
-// shape — when the backend reports `error: "diff_drift"` the diff
-// stays staged and the user sees which node ids vanished.
+// Destructive ops (deletions) are red-bordered; the drift error
+// block at the top mirrors the "snapshot+warn-and-pause" shape —
+// when the backend reports `error: "diff_drift"` the diff stays
+// staged and the user sees which node ids vanished.
 
 import { computed, ref } from "vue";
 
@@ -74,9 +74,10 @@ const toggleSettings = (index: number): void => {
   expandedSettings.value = new Set(expandedSettings.value);
 };
 
-// W47 — modifications carry old + new settings; collapse them by default
-// because settings dicts can be large. Track expansion separately from
-// addition-settings so the two visual hierarchies don't share state.
+// Modifications carry old + new settings; collapse them by default
+// because settings dicts can be large. Track expansion separately
+// from addition-settings so the two visual hierarchies don't share
+// state.
 const expandedModifications = ref<Set<number>>(new Set());
 
 const toggleModification = (index: number): void => {
@@ -146,10 +147,10 @@ const nodeTypeById = computed<Map<number, string>>(() => {
     for (const upId of add.insertion_context.upstream_node_ids) seedExisting(upId);
     seedExisting(add.insertion_context.right_input_node_id);
   }
-  // W47 — modifications carry their own node_type on the wire (since they
-  // target an existing node whose type is preserved); seed the map so the
-  // section header can render `<node_type> #<id>` even if the live store
-  // hasn't loaded yet.
+  // Modifications carry their own node_type on the wire (since they
+  // target an existing node whose type is preserved); seed the map
+  // so the section header can render `<node_type> #<id>` even if the
+  // live store hasn't loaded yet.
   for (const mod of props.diff.modifications) {
     if (!map.has(mod.node_id)) {
       map.set(mod.node_id, mod.node_type);
@@ -182,10 +183,11 @@ const formatSettings = (settings: Record<string, unknown>): string => {
   }
 };
 
-// W47 — collect the keys whose values differ between old and new settings.
-// Used to surface a quick "what changed" line in the modification card
-// header before the user expands the full JSON-diff. Only top-level keys
-// are walked — nested deltas show up in the expanded JSON view.
+// Collect the keys whose values differ between old and new settings.
+// Used to surface a quick "what changed" line in the modification
+// card header before the user expands the full JSON-diff. Only
+// top-level keys are walked — nested deltas show up in the expanded
+// JSON view.
 const changedSettingsKeys = (mod: ModificationItem): string[] => {
   const oldKeys = Object.keys(mod.old_settings ?? {});
   const newKeys = Object.keys(mod.new_settings ?? {});
@@ -243,10 +245,11 @@ const confirmReject = (): void => {
         <span class="ai-diff-preview__toggle-hint" aria-hidden="true" />
       </summary>
 
-      <!-- W66 — rationale is markdown-formatted on the wire; render as
-           sanitised HTML so bold / code / lists / links land properly.
-           `renderedRationale` runs through marked + a DOMPurify-or-no-op
-           pass with an explicit allow-list, see `markdown.ts`. -->
+      <!-- Rationale is markdown-formatted on the wire; render as
+           sanitised HTML so bold / code / lists / links land
+           properly. `renderedRationale` runs through marked + a
+           DOMPurify-or-no-op pass with an explicit allow-list, see
+           `markdown.ts`. -->
       <!-- eslint-disable vue/no-v-html -->
       <div
         v-if="diff.rationale"
@@ -683,9 +686,9 @@ const confirmReject = (): void => {
   border: 1px solid var(--color-warning, #b07b00);
 }
 
-/* W70 — inconsistency is the agent's own diff being broken (not a user
-   canvas drift), so it gets the danger palette to mirror the severity
-   distinction; the drift case stays amber/warning. */
+/* Inconsistency is the agent's own diff being broken (not a user
+   canvas drift), so it gets the danger palette to mirror the
+   severity distinction; the drift case stays amber/warning. */
 .ai-diff-preview__error--inconsistent {
   background-color: var(--color-danger-light, #ffe5e5);
   color: var(--color-danger, #c53030);
@@ -752,8 +755,8 @@ const confirmReject = (): void => {
   border-left-color: var(--color-info, #0366d6);
 }
 
-/* W47 — modification cards use a warning-amber accent so they're
-   visually distinct from green additions and red deletions. */
+/* Modification cards use a warning-amber accent so they're visually
+   distinct from green additions and red deletions. */
 .ai-diff-preview__card--modify {
   border-left-color: var(--color-warning, #b07b00);
 }

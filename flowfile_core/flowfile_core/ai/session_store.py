@@ -1,30 +1,30 @@
-"""W42 — :class:`AgentSession` persistence behind a repository ABC.
+""":class:`AgentSession` persistence behind a repository ABC.
 
 Two implementations:
 
-* :class:`InMemorySessionRepository` — preserves W40's process-local dict
-  shape; default for tests.
+* :class:`InMemorySessionRepository` — process-local dict shape;
+  default for tests.
 * :class:`DiskSessionRepository` — sidecar JSON files under
-  ``{root}/{flow_id}/{session_id}.json`` (D007 + plan §5.6) with atomic
-  ``tmp + os.replace`` writes, per-session ``filelock.FileLock`` contention,
-  in-process write-through LRU (default 32 entries), and a FIFO archive at
-  ``{root}/{flow_id}/archive/`` capped at 50 per flow.
+  ``{root}/{flow_id}/{session_id}.json`` with atomic
+  ``tmp + os.replace`` writes, per-session ``filelock.FileLock``
+  contention, in-process write-through LRU (default 32 entries), and
+  a FIFO archive at ``{root}/{flow_id}/archive/`` capped at 50 per
+  flow.
 
-Both implementations share the same :class:`SessionRepository` Protocol so
-``sessions.py``'s public surface (``register_session`` / ``get_session`` /
-``pop_session`` / ``clear_for_tests`` / ``list_sessions_for_user``) is
-backend-agnostic.
+Both implementations share the same :class:`SessionRepository`
+Protocol so ``sessions.py``'s public surface (``register_session`` /
+``get_session`` / ``pop_session`` / ``clear_for_tests`` /
+``list_sessions_for_user``) is backend-agnostic.
 
-Schema versioning rides at the on-disk JSON layer (top-level ``"_schema":
-"ai_session.v1"``) rather than on the Pydantic model — keeps
-:class:`flowfile_core.ai.sessions.AgentSession` free of an alias dance and
-makes a future v2 a pure repository concern. Unknown schema → ``None`` from
-:meth:`DiskSessionRepository.get` with one WARN log; never raises.
+Schema versioning rides at the on-disk JSON layer (top-level
+``"_schema": "ai_session.v1"``) rather than on the Pydantic model —
+keeps :class:`flowfile_core.ai.sessions.AgentSession` free of an
+alias dance and makes a future v2 a pure repository concern. Unknown
+schema → ``None`` from :meth:`DiskSessionRepository.get` with one
+WARN log; never raises.
 
-The W11 lazy-litellm contract is preserved: this module imports nothing from
-``litellm``; the only third-party dep is ``filelock`` (already in
-``pyproject.toml`` after W42 added it as a direct dependency — was a
-transitive of litellm before).
+The lazy-litellm contract is preserved: this module imports nothing
+from ``litellm``; the only third-party dep is ``filelock``.
 """
 
 from __future__ import annotations
@@ -49,14 +49,14 @@ logger = logging.getLogger(__name__)
 
 
 SCHEMA_VERSION: str = "ai_session.v1"
-"""Top-level on-disk schema tag. Bumped only by an explicit migration
-workstream — W42 ships v1; v2 is out of scope."""
+"""Top-level on-disk schema tag. Bumped only by an explicit
+migration workstream."""
 
 DEFAULT_LRU_SIZE: int = 32
 """How many recently-touched sessions the disk repo keeps in memory."""
 
 DEFAULT_ARCHIVE_CAP: int = 50
-"""FIFO cap on archived (closed) sessions per flow_id (plan §5.6)."""
+"""FIFO cap on archived (closed) sessions per flow_id."""
 
 _LOCK_TIMEOUT_SECONDS: float = 2.0
 
@@ -87,7 +87,7 @@ class SessionRepository(Protocol):
         """Snapshot of every active session belonging to ``user_id``."""
 
     def list_archived(self, *, user_id: int, flow_id: int) -> list[AgentSession]:
-        """W43 hook — archived sessions filtered by ``(user_id, flow_id)``.
+        """Hook — archived sessions filtered by ``(user_id, flow_id)``.
         In-memory implementation returns ``[]`` (no archive)."""
 
     def clear(self) -> None:
@@ -100,7 +100,7 @@ class SessionRepository(Protocol):
 
 
 class InMemorySessionRepository:
-    """Process-local dict-backed repo. Mirrors W40's original shape."""
+    """Process-local dict-backed repo."""
 
     def __init__(self) -> None:
         self._items: dict[str, AgentSession] = {}
@@ -448,7 +448,7 @@ class DiskSessionRepository:
 
 
 # --------------------------------------------------------------------------- #
-# Buffered iterator helper (W42 internal)                                      #
+# Buffered iterator helper                                                     #
 # --------------------------------------------------------------------------- #
 
 

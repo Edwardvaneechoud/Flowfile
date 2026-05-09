@@ -1,4 +1,4 @@
-// W38 — server-side rationale fallback rendering on the client.
+// Server-side rationale fallback rendering on the client.
 //
 // The planner emits ``arg_summary`` on every ``tool_call_*`` payload that
 // already covers the same shapes; this module mirrors the backend's logic
@@ -218,21 +218,23 @@ export const summarizeToolArgs = (
 };
 
 /**
- * W38 — predicate for the chat-trail filter: true when an event should be
+ * Predicate for the chat-trail filter: true when an event should be
  * suppressed from the user-visible timeline.
  *
- * - ``op_kind === "meta"`` SUCCESSFUL events are D002 internal routing
+ * - ``op_kind === "meta"`` SUCCESSFUL events are LLM-internal routing
  *   (``flowfile.meta.pick_category`` ✓, ``classify_intent`` ✓,
- *   ``pick_node_type`` ✓, ``pick_upstream`` ✓) and never appear in the
- *   user's chat — the host renders the resulting state via
- *   ``stage_advanced`` events (W71) or by narrowing the catalog.
- * - ``op_kind === "meta"`` REJECTED events (W71 v1.3) are the user's only
- *   debugging signal when the LLM mis-fills a meta tool — e.g. llama-70b
- *   emitting ``upstream_node_ids`` as a string. We MUST show them so the
- *   refusal_detail surfaces in the chat trail; otherwise the user sees
- *   only "Retrying step (attempt 1 of 3)" with no clue why.
+ *   ``pick_node_type`` ✓, ``pick_upstream`` ✓) and never appear in
+ *   the user's chat — the host renders the resulting state via
+ *   ``stage_advanced`` events or by narrowing the catalog.
+ * - ``op_kind === "meta"`` REJECTED events are the user's only
+ *   debugging signal when the LLM mis-fills a meta tool — e.g.
+ *   llama-70b emitting ``upstream_node_ids`` as a string. We MUST
+ *   show them so the refusal_detail surfaces in the chat trail;
+ *   otherwise the user sees only "Retrying step (attempt 1 of 3)"
+ *   with no clue why.
  * - ``info`` events without a message are server housekeeping
- *   (e.g. resume re-snapshots) — UI doesn't need to surface them either.
+ *   (e.g. resume re-snapshots) — UI doesn't need to surface them
+ *   either.
  */
 export const isAgentEventHidden = (
   kind: string,

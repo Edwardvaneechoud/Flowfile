@@ -21,36 +21,17 @@ SINGLE_FILE_MODE: MutableBool = MutableBool(os.environ.get("FLOWFILE_SINGLE_FILE
 # Offload to worker flag, this determines if the worker should handle processing tasks.
 OFFLOAD_TO_WORKER: MutableBool = MutableBool(os.environ.get("FLOWFILE_OFFLOAD_TO_WORKER", "1") == "1")
 
-# AI subsystem master switch — gates the entire `/ai/*` router (W17).
-#
-# Defaults to ON. Set `FEATURE_FLAG_AI=false` in the env to opt out.
-# Accepts truthy strings case-insensitively (`true|1|yes|on`); anything
-# else is False.
-#
-# Mutable so the W18 admin endpoint and test fixtures can flip it via
-# `settings.FEATURE_FLAG_AI.set(...)` without re-importing — `is_ai_enabled()`
-# reads the live value on every call.
+# Master switch gating the entire `/ai/*` router; mutable so the admin endpoint can flip it live.
 FEATURE_FLAG_AI: MutableBool = MutableBool(
     os.environ.get("FEATURE_FLAG_AI", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
-# AI prompt logging — dev / debugging hatch (W59).
-#
-# When True, every `LiteLLMProvider.chat` / `.stream` call writes a single
-# JSONL line to `{FLOWFILE_STORAGE_DIR}/ai_prompts/{YYYY-MM-DD}.jsonl`
-# capturing the full system prompt, message history, tool catalog, and
-# response. Off by default — production runs stay silent. Same parsing
-# pattern as `FEATURE_FLAG_AI`; `MutableBool` so the W18-style admin path
-# (or test fixtures) can flip without re-import.
+# When True, every LLM call appends a JSONL line to `{FLOWFILE_STORAGE_DIR}/ai_prompts/{YYYY-MM-DD}.jsonl` for debugging.
 FLOWFILE_AI_LOG_PROMPTS: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_AI_LOG_PROMPTS", "0").strip().lower() in ("true", "1", "yes", "on")
 )
 
-# Optional: scrub user / tool messages through the W25 PII regex pipeline
-# before writing to the log. Off by default (the whole point of the log is
-# to see what the model saw). Opt in when you'd rather keep customer-shaped
-# fixtures readable in transcripts that get checked in / shared. System
-# prompts and assistant responses are never scrubbed.
+# Optional PII scrub for user / tool messages in the prompt log; system prompts and assistant responses stay verbatim.
 FLOWFILE_AI_LOG_PROMPTS_SCRUB: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_AI_LOG_PROMPTS_SCRUB", "0").strip().lower() in ("true", "1", "yes", "on")
 )

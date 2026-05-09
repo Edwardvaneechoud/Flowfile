@@ -1,12 +1,12 @@
 """Tool catalog + executor.
 
-W30 generates the catalog from ``NODE_TYPE_TO_SETTINGS_CLASS`` (use
-``get_settings_class_for_node_type()`` so user-defined nodes come for free).
-W31 implements the executor with prospective schema validation, the D011
-upstream-tier handler, and the D003 1-row kernel dry-run for code-bearing
-nodes. Public re-exports below are the single import surface for downstream
-workstreams (W32 ghost nodes, W33 Cmd+K palette, W35 inline-diff approval,
-W40 multi-turn planner, W41 GraphDiff staging).
+The catalog is generated from ``NODE_TYPE_TO_SETTINGS_CLASS`` (use
+``get_settings_class_for_node_type()`` so user-defined nodes come
+for free). The executor handles prospective schema validation, the
+upstream-tier handler, and the 1-row kernel dry-run for code-bearing
+nodes. Public re-exports below are the single import surface for
+downstream callers (ghost nodes, Cmd+K palette, inline-diff
+approval, multi-turn planner, GraphDiff staging).
 """
 
 from flowfile_core.ai.tools.classification import (
@@ -39,13 +39,13 @@ __all__ = [
     # main entry points
     "build_tool_catalog",
     "execute_tool_call",
-    # executor types (W31)
+    # executor types
     "ToolExecutionResult",
     "InsertionContext",
     "ExecutionMode",
     "ResultStatus",
     "DryRunCache",
-    # classification (W31)
+    # classification
     "NodeClass",
     "classify_node_type",
     "is_predictable_via_mirror",

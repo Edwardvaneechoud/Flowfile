@@ -1,6 +1,6 @@
-// W24 — `@`-mention vocabulary helpers for the chat composer.
+// `@`-mention vocabulary helpers for the chat composer.
 //
-// Mirrors the four mention kinds the W22 backend parser
+// Mirrors the four mention kinds the backend parser
 // (`flowfile_core/flowfile_core/ai/context/mentions.py`) understands:
 //   @flow            — bare; the whole graph
 //   @selection       — bare; the canvas selection
@@ -57,8 +57,9 @@ const KIND_NAMES: MentionKind[] = ["flow", "selection", "node", "schema"];
  * Detect whether the caret is inside an `@…` token.
  *
  * The trigger anchor (`@`) only fires when preceded by start-of-string
- * or a non-word character — same posture as the W22 backend regex's
- * `(?<!\w)` lookbehind, so `email@node:foo` does NOT trigger autocomplete.
+ * or a non-word character — same posture as the backend regex's
+ * `(?<!\w)` lookbehind, so `email@node:foo` does NOT trigger
+ * autocomplete.
  *
  * Whitespace terminates the trigger unless the caret is sitting inside
  * an unclosed quoted ref (`@node:"my fi…`) so the user can still type
@@ -111,7 +112,7 @@ export function detectActiveTrigger(text: string, caret: number): ActiveTrigger 
   const rawRef = after.slice(colonIdx + 1);
 
   if (!isKnownKind(kindRaw)) return null;
-  // Bare kinds with a `:` payload are invalid (W22 skips them too).
+  // Bare kinds with a `:` payload are invalid (the backend skips them too).
   if (!REF_KINDS.has(kindRaw)) return null;
 
   // Validate the rawRef. Three legal shapes:
@@ -215,10 +216,10 @@ export function buildRefCandidates(
   return [...prefixHits, ...substringHits, ...idHits];
 }
 
-// Regex that captures every well-formed `@…` token in a string. Mirrors
-// the four kinds the W22 backend parser understands; the negative-word
-// lookbehind matches `detectActiveTrigger`'s boundary rule so
-// `email@selection.com` doesn't pick up a false hit.
+// Regex that captures every well-formed `@…` token in a string.
+// Mirrors the four kinds the backend parser understands; the
+// negative-word lookbehind matches `detectActiveTrigger`'s boundary
+// rule so `email@selection.com` doesn't pick up a false hit.
 const MENTION_PATTERN_RE =
   /(?<!\w)@(?:flow|selection|(?:node|schema):(?:"[^"]*"|'[^']*'|[\w\-.]+))/g;
 
@@ -239,7 +240,7 @@ export function parseMentions(text: string): string[] {
 /**
  * Render the literal text that should replace the trigger span when
  * the user picks `candidate`. Names containing whitespace are
- * quote-wrapped — matches W22's quoted-ref support.
+ * quote-wrapped — matches the backend's quoted-ref support.
  */
 export function formatMentionInsert(candidate: MentionCandidate): string {
   if (BARE_KINDS.has(candidate.kind)) {

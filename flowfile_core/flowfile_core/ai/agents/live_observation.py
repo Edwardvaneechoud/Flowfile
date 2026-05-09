@@ -1,4 +1,4 @@
-"""W71 v2.0 — post-apply observation for ``surface=agent_live``.
+"""Post-apply observation for ``surface=agent_live``.
 
 After every successful ``execute_tool_call(mode="apply")`` round, the
 agent_live planner needs to surface what the new node ACTUALLY did
@@ -7,10 +7,8 @@ flow's execution mode:
 
 * **Performance mode** — call :py:meth:`FlowNode.get_resulting_data`
   on the just-added node. This runs the actual polars pipeline up
-  to that node (cheap for typical small-data dogfood; the user
-  signed off on the cost in v2.0 design — *"those are very cheap to
-  execute in general"*). Returns the real output schema + a small
-  sample of rows.
+  to that node (cheap for typical small-data flows). Returns the
+  real output schema + a small sample of rows.
 
 * **Development mode** — call :py:meth:`FlowNode.get_predicted_schema`
   with ``force=True`` to refresh the prediction without actually
@@ -141,10 +139,10 @@ async def observe_after_apply(flow: Any, node_id: int) -> ObservationResult:
         # missing settings field.
         pass
 
-    # W71 v2.5 — ``explore_data`` is the user-facing data inspector;
-    # the chat trail's *"You can view the data in the explore_data
-    # panel to inspect the results"* announcement is meaningless if
-    # the panel is empty. Force the Performance-mode path (real
+    # ``explore_data`` is the user-facing data inspector; the chat
+    # trail's *"You can view the data in the explore_data panel to
+    # inspect the results"* announcement is meaningless if the panel
+    # is empty. Force the Performance-mode path (real
     # ``trigger_fetch_node``) for this node type regardless of the
     # flow's configured execution_mode so the panel always has data
     # by the time the LLM advertises it.
@@ -323,9 +321,9 @@ def _dev_mode_sample_rows(node: Any) -> list[dict[str, Any]]:
     node types don't expose a cheap "predicted sample" so we return
     an empty list; the LLM still sees the schema."""
     # Hook for future enhancement: some upstream nodes carry a
-    # predicted-sample frame on their schema_callback. For v2.0 we
-    # skip — schema-only observation is enough for the LLM to
-    # decide what to do next without an actual collect.
+    # predicted-sample frame on their schema_callback. We currently
+    # skip — schema-only observation is enough for the LLM to decide
+    # what to do next without an actual collect.
     del node
     return []
 
