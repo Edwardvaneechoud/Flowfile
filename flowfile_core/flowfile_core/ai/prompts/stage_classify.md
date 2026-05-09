@@ -100,6 +100,26 @@ is not actually applied. After the ``add``, classify ``connect``
 + ``disconnect`` for each downstream node that should consume
 from the new insertion.
 
+**Common mistake — re-adding a node that's already staged**:
+if a node of the same type appears in your tool history this
+session (e.g. you successfully called ``add_cross_join`` a few
+rounds ago), do **NOT** call ``add_<same_type>`` again. The
+first call is already in the diff. To CHANGE its settings,
+pick ``op_kind="modify"`` and reference the staged node by id;
+the next stage routes to ``update_node_settings``. If the
+user's request is satisfied by the existing staged node and
+needs no further change, pick ``op_kind="other"`` and explain
+in your rationale.
+
+Worked example (cross_join cascade): your prior round staged
+``add_cross_join`` (node id 6) with ``upstream_node_ids=[5]``
+and ``right_input_node_id=4``. On the next round, predictor
+warnings or refusals may reference node 5 — that does NOT
+mean the cross_join is missing. Your earlier ``add_*`` calls
+are in the staged diff; re-staging duplicates them. If the
+user needs a different join key, classify
+``op_kind="modify"`` on node 6.
+
 Discipline:
 
 * Pick exactly one op_kind. Do not stage anything in this turn — the

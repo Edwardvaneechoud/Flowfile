@@ -119,6 +119,18 @@ class AgentStartRequest(BaseModel):
     a fresh plan would cost an extra round and duplicate the
     chat-mode output. Direct agent runs (user typed with the
     agent toggle on) leave this False so the plan stage fires."""
+    verify_plan_completion: bool = False
+    """W71 v2.12 — opt-in: when True, after classify picks
+    ``op_kind="other"`` (intending to terminate), the planner
+    runs ONE extra round at ``stage="verify_completion"``. The
+    LLM sees a single tool ``flowfile.meta.verify_completion``,
+    walks the chat-mode plan as an authoritative checklist, and
+    either terminates the loop (``is_complete=true``) or sends
+    control back to ``classify`` for another op
+    (``is_complete=false``). Default off because of the extra
+    LLM round per run; users opt in via a frontend toggle when
+    they've seen the agent terminate prematurely on multi-step
+    plans (e.g. add a node mid-flow but skip the rewires)."""
 
 
 class AgentResumeRequest(BaseModel):
@@ -355,6 +367,11 @@ async def agent_start(
     # redundant when a chat-mode plan already preceded the agent run.
     if body.skip_plan:
         session_kwargs["stage"] = "classify"
+    # W71 v2.12 — opt-in verify-completion mode. Default off; users opt
+    # in via the frontend toggle when they've seen the agent terminate
+    # prematurely on multi-step plans.
+    if body.verify_plan_completion:
+        session_kwargs["verify_plan_completion"] = True
     session = sessions.AgentSession(**session_kwargs)
     sessions.register_session(session)
 

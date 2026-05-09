@@ -46,6 +46,7 @@ from flowfile_core.ai.tools.meta_ops import (
     META_OPS_TOOLS,
     PICK_NODE_TYPE_TOOL_NAME,
     PICK_UPSTREAM_TOOL_NAME,
+    VERIFY_COMPLETION_TOOL_NAME,
 )
 from flowfile_core.ai.tools.node_docs import (
     NODE_AGENT_PAYLOAD_EXAMPLES,
@@ -77,6 +78,7 @@ SurfaceLiteral = Literal[
     "staged_delete",
     "staged_connect",
     "staged_disconnect",
+    "staged_verify_completion",
     "docgen",
     "settings_autocomplete",
     "lineage",
@@ -524,6 +526,13 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
     "staged_delete": frozenset({"flowfile.graph.delete_node"}),
     "staged_connect": frozenset({"flowfile.graph.connect"}),
     "staged_disconnect": frozenset({"flowfile.graph.delete_connection"}),
+    # W71 v2.12 — opt-in verify-completion gate. Reached only when
+    # classify picks op_kind="other" AND
+    # session.verify_plan_completion=true. One tool exposed: the LLM
+    # certifies whether the plan is complete (is_complete=true →
+    # terminate) or signals more work is needed (is_complete=false
+    # → loop back to classify).
+    "staged_verify_completion": frozenset({VERIFY_COMPLETION_TOOL_NAME}),
     "docgen": frozenset(
         {
             "flowfile.schema.read_node_schema",

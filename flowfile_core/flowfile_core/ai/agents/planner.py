@@ -71,6 +71,7 @@ from flowfile_core.ai.tools.meta_ops import (
     EMIT_PLAN_TOOL_NAME,
     PICK_NODE_TYPE_TOOL_NAME,
     PICK_UPSTREAM_TOOL_NAME,
+    VERIFY_COMPLETION_TOOL_NAME,
     build_pick_upstream_spec,
 )
 from flowfile_core.ai.tools.registry import (
@@ -269,6 +270,7 @@ def _derive_formula_output_column_name(user_prompt: str) -> str:
 _EMIT_PLAN_NAME = EMIT_PLAN_TOOL_NAME
 _CLASSIFY_INTENT_NAME = CLASSIFY_INTENT_TOOL_NAME
 _PICK_NODE_TYPE_NAME = PICK_NODE_TYPE_TOOL_NAME
+_VERIFY_COMPLETION_NAME = VERIFY_COMPLETION_TOOL_NAME
 
 # W71 v1.6 / v1.8 — recovery is now applied at all agent_staged stages
 # (the "exactly one match" + "name must be in expected_tool_names"
@@ -280,7 +282,7 @@ _PICK_NODE_TYPE_NAME = PICK_NODE_TYPE_TOOL_NAME
 # ``tool_calls`` is still a valid termination signal: the LLM
 # decided op_kind="other" (silently) or the user got their answer.
 _MANDATORY_TOOL_CALL_STAGES: frozenset[str] = frozenset(
-    {"pick_type", "pick_upstream", "fill_settings", "single_stage_op"}
+    {"pick_type", "pick_upstream", "fill_settings", "single_stage_op", "verify_completion"}
 )
 _PICK_UPSTREAM_NAME = PICK_UPSTREAM_TOOL_NAME
 
@@ -1172,6 +1174,11 @@ def _resolve_current_surface(session: sessions.AgentSession) -> str:
         # per-turn ``build_staged_fill_tool_spec`` call before
         # dispatch.
         return "staged_pick_upstream"
+    # W71 v2.12 — opt-in verify-completion gate. Reached only when
+    # classify picked op_kind="other" AND session.verify_plan_completion
+    # AND not already consumed this loop.
+    if session.stage == "verify_completion":
+        return "staged_verify_completion"
     return "staged_classify"
 
 
@@ -2651,13 +2658,27 @@ async def _run_planner_loop(
                         session.stage = "pick_type"
                     elif op_kind in ("modify", "delete", "connect", "disconnect"):
                         session.stage = "single_stage_op"
-                    # ``other`` leaves stage at ``classify`` — the loop will
-                    # call the LLM again, which sees the rationale already
-                    # in history and will most likely emit no tool call,
-                    # ending the loop with the rationale as the final
-                    # assistant message (W49 question detection still
-                    # routes to ``awaiting_user_input`` if it ends in a
-                    # question).
+                    elif (
+                        op_kind == "other"
+                        and session.verify_plan_completion
+                        and not session.verify_round_consumed
+                    ):
+                        # W71 v2.12 — opt-in verify-completion gate.
+                        # One extra LLM round at ``verify_completion``
+                        # confirms the plan is done before the loop
+                        # terminates. The one-shot
+                        # ``verify_round_consumed`` guard (set in the
+                        # verify-result handler below) prevents
+                        # ping-pong if a follow-up classify also picks
+                        # ``op_kind="other"``.
+                        session.stage = "verify_completion"
+                    # ``other`` (no verify gate / already consumed) leaves
+                    # stage at ``classify`` — the loop will call the LLM
+                    # again, which sees the rationale already in history
+                    # and will most likely emit no tool call, ending the
+                    # loop with the rationale as the final assistant
+                    # message (W49 question detection still routes to
+                    # ``awaiting_user_input`` if it ends in a question).
                 _log_stage_transition(
                     session,
                     from_stage=prev_stage,
@@ -2671,6 +2692,56 @@ async def _run_planner_loop(
                         "from": prev_stage,
                         "to": session.stage,
                         "op_kind": op_kind,
+                        "rationale": rationale,
+                        "session_id": session.session_id,
+                        "op_kind_meta": "meta",
+                    },
+                )
+                any_succeeded_this_round = True
+                continue
+
+            if (
+                session.surface in _STAGED_STATE_MACHINE_SURFACES
+                and tc.name == _VERIFY_COMPLETION_NAME
+                and isinstance(result.extra, dict)
+            ):
+                # W71 v2.12 — opt-in verify-completion gate result.
+                is_complete_raw = result.extra.get("is_complete")
+                is_complete = is_complete_raw is True
+                rationale = str(result.extra.get("rationale") or "")
+                prev_stage = session.stage
+                # One-shot guard: mark consumed regardless of the LLM's
+                # answer so a stubborn ``is_complete=false`` followed by
+                # another classify→other can't ping-pong back into
+                # verify. The cap is per-session, not per-stage.
+                session.verify_round_consumed = True
+                if is_complete:
+                    # Plan is done. Route stage back to ``classify``;
+                    # the LLM sees the verify rationale + the prior
+                    # classify rationale in history and emits no tool
+                    # call on the next round, breaking the loop via
+                    # the standard non-mandatory-stage termination
+                    # path. Same posture as the no-verify
+                    # ``op_kind="other"`` path above.
+                    session.stage = "classify"
+                else:
+                    # is_complete=False (or non-true). Reset to a
+                    # fresh classify cycle so the LLM picks the next
+                    # op_kind for the remaining work; the rationale
+                    # in history names the missing step(s).
+                    sessions.reset_stage_state(session)
+                _log_stage_transition(
+                    session,
+                    from_stage=prev_stage,
+                    to_stage=session.stage,
+                    tool_name=tc.name,
+                )
+                yield PlannerEvent(
+                    event="stage_advanced",
+                    payload={
+                        "from": prev_stage,
+                        "to": session.stage,
+                        "is_complete": is_complete,
                         "rationale": rationale,
                         "session_id": session.session_id,
                         "op_kind_meta": "meta",

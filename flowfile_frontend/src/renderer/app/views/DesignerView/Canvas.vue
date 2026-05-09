@@ -1290,7 +1290,7 @@ defineExpose({
         :on-minize="editorStore.closeAiDrawer"
         :allow-full-screen="true"
       >
-        <AiAssistant @close="editorStore.closeAiDrawer()" />
+        <AiAssistant />
       </draggable-item>
       <AiCommandPalette />
       <layoutControls @reset-layout-graph="handleResetLayoutGraph" />

@@ -130,7 +130,7 @@ const _withProvider = (): ReturnType<typeof useAiStore> => {
   return store;
 };
 
-describe("useAiStore - sendMessage with autoPromote", () => {
+describe("useAiStore - sendMessage with mode", () => {
   it("promotes to agent when verdict='agent'", async () => {
     mockSymbols.routeMessage.mockResolvedValue({
       verdict: "agent",
@@ -142,7 +142,7 @@ describe("useAiStore - sendMessage with autoPromote", () => {
     mockSymbols.agentStoreStart.mockResolvedValue(undefined);
 
     const store = _withProvider();
-    expect(store.autoPromote).toBe(true);
+    expect(store.mode).toBe("auto");
     await store.sendMessage("add a group_by node grouping by status");
 
     expect(mockSymbols.routeMessage).toHaveBeenCalledTimes(1);
@@ -314,12 +314,12 @@ describe("useAiStore - sendMessage with autoPromote", () => {
     expect(store.messages).toHaveLength(2);
   });
 
-  it("skips /ai/route entirely when autoPromote is false", async () => {
+  it("skips /ai/route entirely when mode is chat", async () => {
     mockSymbols.streamChat.mockImplementation(async (_body, handlers) => {
       handlers.onDone?.("stop");
     });
     const store = _withProvider();
-    store.setAutoPromote(false);
+    store.setMode("chat");
     await store.sendMessage("add a sort node");
 
     expect(mockSymbols.routeMessage).not.toHaveBeenCalled();
@@ -388,7 +388,7 @@ describe("useAiStore - sendMessage with autoPromote", () => {
 });
 
 describe("useAiStore - undoPromotion", () => {
-  it("aborts the agent, flips autoPromote off, and re-dispatches as chat", async () => {
+  it("aborts the agent, flips mode to chat, and re-dispatches as chat", async () => {
     mockSymbols.routeMessage.mockResolvedValue({
       verdict: "agent",
       kind: "build",
@@ -405,7 +405,7 @@ describe("useAiStore - undoPromotion", () => {
     const store = _withProvider();
     await store.sendMessage("add a sort node");
     expect(store.promotionBanner).not.toBeNull();
-    expect(store.autoPromote).toBe(true);
+    expect(store.mode).toBe("auto");
     expect(mockSymbols.agentStoreStart).toHaveBeenCalledTimes(1);
     // Pre-undo: chat stream should not have been opened.
     expect(mockSymbols.streamChat).not.toHaveBeenCalled();
@@ -413,7 +413,7 @@ describe("useAiStore - undoPromotion", () => {
     await store.undoPromotion();
 
     expect(mockSymbols.agentStoreAbort).toHaveBeenCalledTimes(1);
-    expect(store.autoPromote).toBe(false);
+    expect(store.mode).toBe("chat");
     expect(store.promotionBanner).toBeNull();
     // After undo: a chat stream is opened; the saved user message stays
     // exactly once in `messages` (no second push).
@@ -458,7 +458,7 @@ describe("useAiStore - undoPromotion", () => {
     await store.undoPromotion();
 
     expect(store.agentModeAccepted).toBe(false);
-    expect(store.autoPromote).toBe(false);
+    expect(store.mode).toBe("chat");
   });
 });
 
@@ -526,8 +526,13 @@ describe("useAiStore - acceptPromotion (round 7)", () => {
   });
 });
 
-describe("useAiStore - autoPromote default + persistence", () => {
-  it("hydrates autoPromote=false from sessionStorage when persisted", () => {
+describe("useAiStore - mode default + autoPromote migration shim", () => {
+  // 2026-05-09 — `mode` lives in sessionStorage now; the test environment
+  // has no `window`, so `_readPersistedMode` returns null and the
+  // migration shim ALWAYS drives the seed in these tests. Asserts that:
+  //   - legacy `autoPromote: false` from localStorage seeds mode="chat"
+  //   - legacy `autoPromote: true` / null / missing seeds mode="auto"
+  it("seeds mode='chat' when legacy autoPromote=false is in localStorage", () => {
     mockSymbols.loadPersistedAiState.mockImplementation(() => ({
       messages: [],
       selectedProvider: null,
@@ -535,10 +540,10 @@ describe("useAiStore - autoPromote default + persistence", () => {
       autoPromote: false,
     }));
     const store = useAiStore();
-    expect(store.autoPromote).toBe(false);
+    expect(store.mode).toBe("chat");
   });
 
-  it("defaults to true when persistence has no autoPromote field", () => {
+  it("seeds mode='auto' when no legacy autoPromote field is present", () => {
     mockSymbols.loadPersistedAiState.mockImplementation(() => ({
       messages: [],
       selectedProvider: null,
@@ -546,6 +551,17 @@ describe("useAiStore - autoPromote default + persistence", () => {
       autoPromote: null,
     }));
     const store = useAiStore();
-    expect(store.autoPromote).toBe(true);
+    expect(store.mode).toBe("auto");
+  });
+
+  it("seeds mode='auto' when legacy autoPromote=true is in localStorage", () => {
+    mockSymbols.loadPersistedAiState.mockImplementation(() => ({
+      messages: [],
+      selectedProvider: null,
+      selectedModel: null,
+      autoPromote: true,
+    }));
+    const store = useAiStore();
+    expect(store.mode).toBe("auto");
   });
 });

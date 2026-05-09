@@ -341,10 +341,10 @@ const thinkingHtml = computed<string>(() => {
 .ai-agent-event--thinking {
   /* Promote thinking events visually — they carry the LLM's actual prose,
      not just step metadata. Match assistant chat bubble styling. */
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text-primary, #24292e);
-  background-color: var(--color-background-secondary, #f6f8fa);
-  border-left-color: var(--color-accent, #6f42c1);
+  background-color: var(--color-background-secondary, #f8f9fa);
+  border-left-color: var(--color-accent-purple, #667eea);
   padding: 8px 12px;
 }
 
@@ -354,9 +354,9 @@ const thinkingHtml = computed<string>(() => {
 .ai-agent-event--tool_call_applied {
   /* W38 — rationale rendering needs more breathing room than mechanical summaries. */
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text-primary, #24292e);
-  background-color: var(--color-background-secondary, #f6f8fa);
+  background-color: var(--color-background-secondary, #f8f9fa);
 }
 
 .ai-agent-event--tool_call_staged {
@@ -404,43 +404,57 @@ const thinkingHtml = computed<string>(() => {
    the load-bearing thing the user reads before any nodes get staged.
    Override the muted base style with a thinking-style bubble. */
 .ai-agent-event--stage_advanced:has(.ai-agent-event__plan-header) {
-  font-size: 13px;
+  font-size: 12px;
   font-style: normal;
   color: var(--color-text-primary, #24292e);
-  background-color: var(--color-background-secondary, #f6f8fa);
-  border-left: 2px solid var(--color-accent, #6f42c1);
+  background-color: var(--color-background-secondary, #f8f9fa);
+  border-left: 2px solid var(--color-accent-purple, #667eea);
   padding: 8px 12px;
 }
 
 .ai-agent-event__plan-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   margin-bottom: 6px;
+  flex-wrap: wrap;
 }
 
+/* Modern pill: rounded-full with a subtle purple gradient — the same
+   signature gradient used on the AI avatar and Send button. */
 .ai-agent-event__plan-label {
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    135deg,
+    var(--color-gradient-purple-start, #667eea) 0%,
+    var(--color-gradient-purple-end, #764ba2) 100%
+  );
+  color: #ffffff;
+  font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  color: var(--color-accent, #6f42c1);
+  line-height: 1.4;
 }
 
 .ai-agent-event__plan-rationale {
-  font-size: 12px;
-  color: var(--color-text-muted, #6a737d);
+  font-size: 11px;
+  color: var(--color-text-tertiary, #6a737d);
   font-style: italic;
+  line-height: 1.4;
 }
 
 .ai-agent-event__plan-body {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text-primary, #24292e);
 }
 
 .ai-agent-event--tool_call_rejected {
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-warning, #b08800);
   border-left-color: var(--color-warning, #b08800);
 }
@@ -496,7 +510,7 @@ const thinkingHtml = computed<string>(() => {
   margin: 6px 0 0;
   padding: 6px 8px;
   border-radius: 4px;
-  background-color: var(--color-background-tertiary, rgba(175, 184, 193, 0.15));
+  background-color: var(--color-background-tertiary, #f1f3f5);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.4;
@@ -520,7 +534,7 @@ const thinkingHtml = computed<string>(() => {
 
 .ai-agent-event__markdown {
   white-space: normal;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -531,29 +545,42 @@ const thinkingHtml = computed<string>(() => {
   margin-bottom: 0;
 }
 
+/* Section headings inside agent plans (Current state / Proposed
+   changes / Edge cases) — small uppercase labels with a subtle bottom
+   rule, replacing the heavy bold serif look. h1/h2 retain larger
+   sizes for the rare case the LLM emits a top-level heading. */
 .ai-agent-event__markdown :deep(h1),
 .ai-agent-event__markdown :deep(h2),
 .ai-agent-event__markdown :deep(h3),
 .ai-agent-event__markdown :deep(h4),
 .ai-agent-event__markdown :deep(h5),
 .ai-agent-event__markdown :deep(h6) {
-  margin: 12px 0 6px;
   font-weight: 600;
   line-height: 1.25;
 }
 .ai-agent-event__markdown :deep(h1) {
-  font-size: 16px;
+  font-size: 15px;
+  margin: 12px 0 6px;
 }
 .ai-agent-event__markdown :deep(h2) {
-  font-size: 15px;
-}
-.ai-agent-event__markdown :deep(h3) {
   font-size: 14px;
+  margin: 12px 0 6px;
 }
+.ai-agent-event__markdown :deep(h3),
 .ai-agent-event__markdown :deep(h4),
 .ai-agent-event__markdown :deep(h5),
 .ai-agent-event__markdown :deep(h6) {
-  font-size: 13px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-secondary, #4a5568);
+  margin: 14px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border-primary, #e2e8f0);
+}
+.ai-agent-event__markdown :deep(h3:first-child),
+.ai-agent-event__markdown :deep(h4:first-child) {
+  margin-top: 4px;
 }
 
 .ai-agent-event__markdown :deep(ul),
@@ -562,18 +589,19 @@ const thinkingHtml = computed<string>(() => {
   padding-left: 20px;
 }
 .ai-agent-event__markdown :deep(li) {
-  margin: 2px 0;
+  margin: 4px 0;
 }
 .ai-agent-event__markdown :deep(li > p) {
-  margin: 0;
+  margin: 0 0 2px;
 }
 
 .ai-agent-event__markdown :deep(code) {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background-color: rgba(175, 184, 193, 0.2);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background-color: var(--color-background-tertiary, #f1f3f5);
+  color: var(--color-text-primary, #24292e);
 }
 
 .ai-agent-event__markdown :deep(pre) {

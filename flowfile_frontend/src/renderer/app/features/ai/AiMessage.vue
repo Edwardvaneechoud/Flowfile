@@ -12,13 +12,22 @@
 import { computed } from "vue";
 
 import type { ChatMessage } from "../../stores/ai-store";
+import AiAvatar from "./AiAvatar.vue";
+import AiThinkingDots from "./AiThinkingDots.vue";
 import { sanitiseMarkdown } from "./markdown";
 
 const props = defineProps<{ message: ChatMessage }>();
 
 const isAssistant = computed(() => props.message.role === "assistant");
 const isUser = computed(() => props.message.role === "user");
-const showCaret = computed(() => props.message.pending && isAssistant.value);
+// Streaming caret only renders once content has started arriving; the
+// pre-content "thinking" state shows the dots animation instead.
+const showCaret = computed(
+  () => props.message.pending && isAssistant.value && !!props.message.content,
+);
+const showThinking = computed(
+  () => props.message.pending && isAssistant.value && !props.message.content,
+);
 const showEmptyHint = computed(
   () => isAssistant.value && !props.message.content && !props.message.pending,
 );
@@ -61,8 +70,12 @@ const timeTooltip = computed<string>(() => {
 
 <template>
   <div class="ai-message" :class="{ 'is-user': isUser, 'is-assistant': isAssistant }">
-    <div class="ai-message__header">
-      <span class="ai-message__role">{{ isUser ? "You" : "Assistant" }}</span>
+    <!-- Assistant header: gradient avatar + sentence-case "AI" label + timestamp.
+         Hidden for user messages — right-alignment + soft purple already signals identity. -->
+    <div v-if="isAssistant" class="ai-message__header">
+      <AiAvatar size="md" />
+      <span class="ai-message__role">AI</span>
+      <span v-if="timeLabel" class="ai-message__sep" aria-hidden="true">·</span>
       <span v-if="timeLabel" class="ai-message__time" :title="timeTooltip">
         {{ timeLabel }}
       </span>
@@ -77,58 +90,99 @@ const timeTooltip = computed<string>(() => {
       />
       <!-- User: plain text. white-space: pre-wrap preserves newlines. -->
       <span v-else-if="message.content" class="ai-message__text">{{ message.content }}</span>
+      <AiThinkingDots v-if="showThinking" label="Thinking" />
       <span v-if="showEmptyHint" class="ai-message__hint">[no response]</span>
       <span v-if="showCaret" class="ai-message__caret" aria-hidden="true">▍</span>
       <div v-if="message.error" class="ai-message__error">{{ message.error }}</div>
+    </div>
+    <!-- User footer: tiny inline timestamp, right-aligned inside the bubble. -->
+    <div v-if="isUser && timeLabel" class="ai-message__user-time" :title="timeTooltip">
+      {{ timeLabel }}
     </div>
   </div>
 </template>
 
 <style scoped>
 .ai-message {
-  padding: 8px 12px;
-  border-radius: 8px;
-  margin-bottom: 8px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  background-color: var(--color-background-secondary, #f6f8fa);
-  border: 1px solid var(--color-border-primary, #e1e4e8);
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
+/* User: right-aligned bubble, max 85% width, soft purple, asymmetric
+   corners (sharper bottom-right toward "you"), no border. The right
+   alignment + tint signals identity, so the role label is dropped. */
 .ai-message.is-user {
+  align-self: flex-end;
+  max-width: 85%;
+  margin-left: auto;
+  padding: 8px 12px;
+  border-radius: 10px 10px 4px 10px;
   background-color: var(--color-focus-ring-purple-light, #ece7ff);
-  align-self: stretch;
+  gap: 2px;
 }
 
+/* Assistant: full-width refined card. White surface, subtle border,
+   gentle elevation, 10px radius. Roomier padding because the body
+   often contains rich markdown (lists, code, tables). */
 .ai-message.is-assistant {
-  background-color: var(--color-background-secondary, #f6f8fa);
+  align-self: stretch;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background-color: var(--color-background-primary, #ffffff);
+  border: 1px solid var(--color-border-primary, #e1e4e8);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .ai-message__header {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
 }
 
+/* Sentence-case "AI" — modern apps have moved away from
+   uppercase-shouting role labels. */
 .ai-message__role {
   font-size: 11px;
   font-weight: 600;
-  text-transform: uppercase;
-  color: var(--color-text-muted, #6a737d);
-  letter-spacing: 0.4px;
+  color: var(--color-text-secondary, #4a5568);
+  line-height: 1;
+}
+
+.ai-message__sep {
+  color: var(--color-text-tertiary, #a0aec0);
+  font-size: 11px;
+  line-height: 1;
 }
 
 .ai-message__time {
-  font-size: 11px;
-  color: var(--color-text-muted, #6a737d);
+  font-size: 10px;
+  color: var(--color-text-tertiary, #a0aec0);
   cursor: default;
+  line-height: 1;
+}
+
+.ai-message__user-time {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #a0aec0);
+  text-align: right;
+  cursor: default;
+  line-height: 1;
+}
+
+.ai-message.is-user .ai-message__body {
+  font-size: 13px;
+  color: var(--color-text-primary, #24292e);
+}
+
+.ai-message.is-assistant .ai-message__body {
+  font-size: 12px;
+  color: var(--color-text-primary, #24292e);
 }
 
 .ai-message__body {
-  font-size: 13px;
   line-height: 1.5;
-  color: var(--color-text-primary, #24292e);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -210,10 +264,11 @@ const timeTooltip = computed<string>(() => {
 
 .ai-message__markdown :deep(code) {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background-color: rgba(175, 184, 193, 0.2);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background-color: var(--color-background-tertiary, #f1f3f5);
+  color: var(--color-text-primary, #24292e);
 }
 
 .ai-message__markdown :deep(pre) {

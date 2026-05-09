@@ -104,6 +104,7 @@ PlannerStage = Literal[
     "pick_upstream",
     "fill_settings",
     "single_stage_op",
+    "verify_completion",
 ]
 """W71 — current state in the ``agent_staged`` multi-stage state machine.
 
@@ -282,6 +283,19 @@ class AgentSession(BaseModel):
     stage 2 (join-shaped node types only). Injected into the
     ``InsertionContext.right_input_node_id`` at stage 3. Cleared by
     :func:`reset_stage_state`."""
+    verify_plan_completion: bool = False
+    """W71 v2.12 — opt-in: when True, ``op_kind="other"`` at classify
+    advances to ``stage="verify_completion"`` for one extra LLM round
+    before terminating. Wired in from ``AgentStartRequest``. Default
+    off (no extra LLM round per agent run)."""
+    verify_round_consumed: bool = False
+    """W71 v2.12 — one-shot guard for the verify-completion gate. Set
+    True after the LLM returns from ``flowfile.meta.verify_completion``.
+    If the LLM said ``is_complete=false`` and a subsequent classify
+    round still ends with ``op_kind="other"``, the loop terminates
+    without re-entering verify (capped at one verify round per loop
+    so a stubborn ``is_complete=false`` can't ping-pong). Not reset
+    by ``reset_stage_state`` — the cap is per-session, not per-stage."""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

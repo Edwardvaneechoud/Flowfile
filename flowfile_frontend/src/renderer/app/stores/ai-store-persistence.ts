@@ -37,11 +37,12 @@ export interface PersistedAiState {
   messages: ChatMessage[];
   selectedProvider: string | null;
   selectedModel: string | null;
-  /** W58 — chat → agent auto-promotion preference. ``null`` (or omitted)
-   * means "no persisted value, use the store's default" so an existing
-   * v1 entry predating W58 doesn't get its absent field treated as
-   * ``false``. Optional so callers from the W27 era don't need to pass
-   * an explicit ``null``. */
+  /** **DEPRECATED** (2026-05-09) — replaced by the `mode` enum in the
+   * runtime store. Persisted value is read on hydration ONLY for the
+   * one-shot migration shim in `ai-store.ts` (legacy `false` → seed
+   * sessionStorage `flowfile.ai.mode = "chat"`; legacy `true` / null /
+   * missing → seed `"auto"`). Not written by `persistAiState` anymore;
+   * after the next save cycle the field disappears from localStorage. */
   autoPromote?: boolean | null;
   /** W58 round 7 — session-scoped "Continue as agent" acceptance flag,
    * set when the user clicks the promotion banner's primary button to
@@ -53,25 +54,29 @@ export interface PersistedAiState {
    * "agent_staged"). Optional / nullable so pre-v1.9 entries fall
    * through to the store's default (``"agent_staged"``). */
   selectedAgentSurface?: PersistedAgentSurface | null;
+  /** W71 v2.12 — opt-in verify-completion gate. Persisted so the
+   * preference survives reloads and flow switches. Optional /
+   * nullable for backward-compat with pre-v2.12 entries. */
+  verifyPlanCompletion?: boolean | null;
 }
 
 const EMPTY_STATE: PersistedAiState = {
   messages: [],
   selectedProvider: null,
   selectedModel: null,
-  autoPromote: null,
   agentModeAccepted: null,
   selectedAgentSurface: null,
+  verifyPlanCompletion: null,
 };
 
 const _AGENT_SURFACE_VALUES: ReadonlyArray<PersistedAgentSurface> = [
   "agent_complex",
   "agent_staged",
+  "agent_live",
 ];
 
 const isAgentSurface = (value: unknown): value is PersistedAgentSurface =>
-  typeof value === "string" &&
-  (_AGENT_SURFACE_VALUES as ReadonlyArray<string>).includes(value);
+  typeof value === "string" && (_AGENT_SURFACE_VALUES as ReadonlyArray<string>).includes(value);
 
 interface StorageLike {
   getItem(key: string): string | null;
@@ -167,6 +172,10 @@ export const loadPersistedAiState = (
     selectedAgentSurface: isAgentSurface(payload.selectedAgentSurface)
       ? payload.selectedAgentSurface
       : null,
+    verifyPlanCompletion:
+      typeof payload.verifyPlanCompletion === "boolean"
+        ? payload.verifyPlanCompletion
+        : null,
   };
 };
 
@@ -180,13 +189,15 @@ export const persistAiState = (
 
   // Cap before serialization so the JSON payload itself is bounded. Keeps
   // the most recent N messages — chat history is most useful at the tail.
+  // Note: `autoPromote` is DEPRECATED — not written here anymore. Legacy
+  // entries that still carry it on disk drop the field on the next save.
   const trimmed: PersistedAiState = {
     messages: state.messages.slice(-MAX_PERSISTED_MESSAGES),
     selectedProvider: state.selectedProvider,
     selectedModel: state.selectedModel,
-    autoPromote: state.autoPromote ?? null,
     agentModeAccepted: state.agentModeAccepted ?? null,
     selectedAgentSurface: state.selectedAgentSurface ?? null,
+    verifyPlanCompletion: state.verifyPlanCompletion ?? null,
   };
 
   let payload: string;

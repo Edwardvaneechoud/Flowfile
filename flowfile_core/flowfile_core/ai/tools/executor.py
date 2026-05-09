@@ -926,7 +926,11 @@ def _handle_add_node(
                 f"{node_type} exposes ``left_input_node_id`` + ``right_input_node_id``, "
                 "both required scalars). The LEFT input goes in "
                 "``upstream_node_ids[0]``; do NOT put both ids in "
-                "``upstream_node_ids`` — they go in separate fields."
+                "``upstream_node_ids`` — they go in separate fields. "
+                "``left_input_node_id`` and ``right_input_node_id`` are "
+                "ENVELOPE-LEVEL scalars: keys at the SAME level as the "
+                f"``{node_type}_input`` settings object (a sibling, NOT a "
+                "key inside it)."
             )
         elif len(upstream_ids_for_check) != 1:
             violation = (
@@ -934,13 +938,21 @@ def _handle_add_node(
                 f"(``upstream_node_ids`` must have one element); got "
                 f"{upstream_ids_for_check!r}. The right input goes in "
                 "``right_input_node_id`` (separate scalar field), not as a second "
-                "entry in ``upstream_node_ids``."
+                "entry in ``upstream_node_ids``. "
+                "``left_input_node_id`` and ``right_input_node_id`` are "
+                "ENVELOPE-LEVEL scalars: keys at the SAME level as the "
+                f"``{node_type}_input`` settings object (a sibling, NOT a "
+                "key inside it)."
             )
         elif upstream_ids_for_check[0] == right_id_for_check:
             violation = (
                 f"join-shaped node `{node_type}` cannot use the same id "
                 f"({right_id_for_check}) for both LEFT and RIGHT inputs — a node "
-                "cannot join to itself. Pick two different upstream ids."
+                "cannot join to itself. Pick two different upstream ids. "
+                "``left_input_node_id`` and ``right_input_node_id`` are "
+                "ENVELOPE-LEVEL scalars: keys at the SAME level as the "
+                f"``{node_type}_input`` settings object (a sibling, NOT a "
+                "key inside it)."
             )
         if violation is not None:
             return _reject_and_audit(
@@ -2212,6 +2224,43 @@ def _handle_meta(
             audit_id=audit_row.id if audit_row is not None else None,
             executed_args=redacted_args,
             extra={"op_kind": op_kind, "rationale": str(rationale or "")},
+        )
+
+    if op == "verify_completion":
+        # W71 v2.12 — opt-in verify-completion gate. The LLM certifies
+        # whether every step of the user's plan has a corresponding
+        # successful tool call. is_complete=True → loop terminates;
+        # False → planner restarts at classify for the missing steps.
+        is_complete = tool_args.get("is_complete")
+        rationale = tool_args.get("rationale", "")
+        if not isinstance(is_complete, bool):
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow_id,
+                refusal_reason=None,
+                refusal_detail=(
+                    f"verify_completion: is_complete must be a boolean "
+                    f"(true/false); got {type(is_complete).__name__} "
+                    f"{is_complete!r}."
+                ),
+            )
+        audit_row = _record_event(
+            session_id=session_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            flow_id=flow_id,
+            tool_args=redacted_args,
+            result_status="success",
+        )
+        return ToolExecutionResult(
+            status="applied",
+            tool_name=tool_name,
+            audit_id=audit_row.id if audit_row is not None else None,
+            executed_args=redacted_args,
+            extra={"is_complete": is_complete, "rationale": str(rationale or "")},
         )
 
     if op == "pick_node_type":

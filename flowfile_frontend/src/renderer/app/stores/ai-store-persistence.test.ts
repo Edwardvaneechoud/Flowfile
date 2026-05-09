@@ -476,6 +476,46 @@ describe("quota + corruption (W43)", () => {
   });
 });
 
+describe("selectedAgentSurface round-trip (2026-05-09)", () => {
+  // Regression: `_AGENT_SURFACE_VALUES` was missing `"agent_live"` so a
+  // user who picked "Live (REPL)" in settings had their choice written
+  // to localStorage fine, but the load validator rejected the unknown
+  // literal and silently fell back to default `"agent_staged"`. The
+  // user's selection survived neither refresh nor restart.
+  it.each(["agent_complex", "agent_staged", "agent_live"] as const)(
+    "round-trips %s",
+    (surface) => {
+      const storage = makeStorage();
+      persistAiState(
+        {
+          messages: [],
+          selectedProvider: null,
+          selectedModel: null,
+          selectedAgentSurface: surface,
+        },
+        storage,
+      );
+      const loaded = loadPersistedAiState(storage);
+      expect(loaded.selectedAgentSurface).toBe(surface);
+    },
+  );
+
+  it("rejects an unknown surface value as null (defensive — bad data on disk)", () => {
+    const storage = makeStorage();
+    storage.setItem(
+      UNSCOPED_KEY,
+      JSON.stringify({
+        messages: [],
+        selectedProvider: null,
+        selectedModel: null,
+        selectedAgentSurface: "agent_unknown_variant",
+      }),
+    );
+    const loaded = loadPersistedAiState(storage);
+    expect(loaded.selectedAgentSurface).toBeNull();
+  });
+});
+
 describe("clearPersistedAiState (W43)", () => {
   it("clears only the targeted flow's key", () => {
     const storage = makeStorage();

@@ -7,29 +7,32 @@
 // abort. Anything more (context pinning, @-mentions, diff preview) lands
 // in W22 / W24 / W31+ and extends the store rather than this view.
 
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { useAiAgentStore, type AgentEvent } from "../../stores/ai-agent-store";
-import { useAiStore, type ChatMessage } from "../../stores/ai-store";
+import { useAiStore, type AiMode, type ChatMessage } from "../../stores/ai-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { AiDisabledError } from "../../views/AiProvidersView/api";
 import AiAgentRun from "./AiAgentRun.vue";
+import AiAvatar from "./AiAvatar.vue";
 import AiDiffPanel from "./AiDiffPanel.vue";
 import AiMessage from "./AiMessage.vue";
 import AiMentionAutocomplete from "./AiMentionAutocomplete.vue";
+import AiThinkingDots from "./AiThinkingDots.vue";
 import { isAgentEventHidden } from "./argSummary";
 import { useMentionAutocomplete } from "./useMentionAutocomplete";
-
-const emit = defineEmits<{ close: [] }>();
 
 const aiStore = useAiStore();
 const flowStore = useFlowStore();
 const agentStore = useAiAgentStore();
+const router = useRouter();
 
-// W40 — agent-mode toggle. When true, the composer's Send dispatches the
-// multi-turn planner instead of single-shot chat. Defaults off so the read-
-// only chat surface stays the path of least surprise; experienced users opt
-// in for the "build me a flow that…" workflow.
-const agentMode = ref(false);
+// 2026-05-09 — settings popover anchored to the gear button in the
+// header. Holds provider / model / agent-variant pickers plus inline
+// explanations of what each variant does. Closed by default; opens on
+// gear click, closes on outside click or Esc.
+const settingsOpen = ref(false);
+const settingsAnchorRef = ref<HTMLElement | null>(null);
 
 const composerText = ref("");
 const composerTextarea = ref<HTMLTextAreaElement | null>(null);
@@ -156,23 +159,42 @@ onMounted(async () => {
       isDisabledByFlag.value = true;
     }
   }
+  // Outside-click + Esc dismiss for the settings popover. The handlers
+  // early-out when ``settingsOpen`` is false so they're cheap when idle.
+  document.addEventListener("click", handleDocumentClick);
+  document.addEventListener("keydown", handleDocumentKeydown);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("click", handleDocumentClick);
+  document.removeEventListener("keydown", handleDocumentKeydown);
 });
 
 const handleAgentSurfaceChange = (event: Event): void => {
-  const target = event.target as HTMLSelectElement;
+  // 2026-05-09 — handler now bound to radio inputs in the settings
+  // popover; cast accepts either HTMLInputElement (radios) or
+  // HTMLSelectElement (legacy callers, if any) so the read of
+  // ``.value`` is type-safe.
+  const target = event.target as HTMLInputElement;
   const value = target.value;
   // W71 v1.10 — legacy "agent" surface removed; agent_staged
   // (default) and agent_complex (single-shot full catalog) are
   // the original options.
   // W71 v2.0 — agent_live is the third option: REPL-style with
   // real-time execution after each step.
-  if (
-    value === "agent_complex" ||
-    value === "agent_staged" ||
-    value === "agent_live"
-  ) {
+  if (value === "agent_complex" || value === "agent_staged" || value === "agent_live") {
     aiStore.setSelectedAgentSurface(value);
   }
+};
+
+const handleVerifyPlanCompletionChange = (event: Event): void => {
+  // W71 v2.12 — opt-in verify-completion gate. Toggled via a
+  // checkbox in the agent settings popover; the value flows into
+  // ``AgentStartRequest.verify_plan_completion`` on every dispatch
+  // (both the manual Agent toggle in this component and the
+  // auto-promote-from-chat path in ai-store.ts).
+  const target = event.target as HTMLInputElement;
+  aiStore.setVerifyPlanCompletion(target.checked);
 };
 
 const handleProviderChange = (event: Event): void => {
@@ -189,8 +211,9 @@ const handleSend = async (): Promise<void> => {
   if (!canSend.value) return;
   const text = composerText.value;
   composerText.value = "";
+  exitRecallMode();
 
-  if (agentMode.value) {
+  if (aiStore.mode === "agent") {
     if (flowStore.flowId === null) {
       // Hard-edge case: agent mode without a flow loaded — surface the gap as
       // a chat-side error rather than silently no-op'ing.
@@ -251,6 +274,11 @@ const handleSend = async (): Promise<void> => {
       surface: aiStore.selectedAgentSurface,
       provider: aiStore.selectedProvider ?? "anthropic",
       model: aiStore.selectedModel ?? null,
+      // W71 v2.12 — opt-in verify-completion gate. Default off;
+      // toggled via the agent settings panel checkbox so a
+      // multi-step plan that ends after step 1 (the 2026-05-09
+      // unique-cascade dogfood) gets one auto-correction round.
+      verify_plan_completion: aiStore.verifyPlanCompletion,
     });
     return;
   }
@@ -287,23 +315,48 @@ const handleAcceptPromotion = (): void => {
   aiStore.acceptPromotion();
 };
 
-// W58 — drawer-side autoPromote toggle (the AI Settings tab carries a
-// secondary entry point; the drawer is where the behavior is most
-// discoverable since it's right next to where the user is typing). The
-// toggle is grayed out while the manual Agent toggle is on or a stream
-// is in flight — those states make autoPromote a no-op.
-const handleAutoPromoteChange = (event: Event): void => {
-  const target = event.target as HTMLInputElement;
-  aiStore.setAutoPromote(target.checked);
+// 2026-05-09 — unified mode dropdown next to Send. Replaces the old
+// `agentMode` per-send checkbox + `autoPromote` toggle. Persisted via
+// the store's sessionStorage `mode` key so refresh keeps the user's
+// choice within the same tab.
+const handleModeChange = (event: Event): void => {
+  const target = event.target as HTMLSelectElement;
+  aiStore.setMode(target.value as AiMode);
 };
 
-const autoPromoteTitle = computed<string>(() =>
-  agentMode.value
-    ? "Manual Agent toggle is on — auto-promotion is overridden until you turn it off."
-    : aiStore.autoPromote
-      ? "Auto-detect build requests and switch to Agent mode for this send. Read-only questions stay in chat."
-      : "Off — every message stays in chat unless you flip the manual Agent toggle.",
-);
+const modeTooltip = computed<string>(() => {
+  switch (aiStore.mode) {
+    case "chat":
+      return "Chat mode — every message stays in chat. The AI answers but never proposes graph changes.";
+    case "agent":
+      return "Agent mode — every Send runs the agent and proposes a GraphDiff for review.";
+    case "auto":
+    default:
+      return "Auto-agent — chat by default; the classifier auto-promotes to agent when a build intent is detected.";
+  }
+});
+
+const toggleSettings = (): void => {
+  settingsOpen.value = !settingsOpen.value;
+};
+
+// Outside-click + Esc dismiss for the settings popover. The handler
+// gates on `settingsOpen` so we're not paying for a document listener
+// when it's not needed; mounted/unmounted to clean up properly.
+const handleDocumentClick = (event: MouseEvent): void => {
+  if (!settingsOpen.value) return;
+  const target = event.target as Node | null;
+  if (target === null) return;
+  const wrapper = settingsAnchorRef.value;
+  if (wrapper && wrapper.contains(target)) return;
+  settingsOpen.value = false;
+};
+
+const handleDocumentKeydown = (event: KeyboardEvent): void => {
+  if (settingsOpen.value && event.key === "Escape") {
+    settingsOpen.value = false;
+  }
+};
 
 const handleAgentResumeDiscard = async (): Promise<void> => {
   const sid = agentStore.currentSessionId;
@@ -319,10 +372,117 @@ const handleClear = (): void => {
   agentStore.clear();
 };
 
+// Empty-state suggestion chips. Click fills the composer (no auto-send)
+// so the user can edit / confirm before dispatching.
+const suggestionChips: ReadonlyArray<string> = [
+  "Show columns with nulls in the current dataset",
+  "Group by city and count unique customers",
+  "Join two CSVs on email and dedupe",
+];
+
+const handleSuggestionPick = (text: string): void => {
+  composerText.value = text;
+  void nextTick(() => {
+    composerTextarea.value?.focus();
+  });
+};
+
+// Navigate to the AI Providers tab in Connections so users can add /
+// edit credentials. Closes the popover first to avoid a flash of the
+// open menu during the route transition.
+const handleManageProviders = (): void => {
+  settingsOpen.value = false;
+  void router.push({ name: "connections", query: { tab: "ai" } });
+};
+
+// Terminal-style ↑/↓ prompt-history recall. Reads from the persisted
+// chat (already capped at 200 messages per flow in localStorage); no
+// new persistence layer. Recall mode is entered when the composer is
+// empty and the user presses ↑; any real keystroke exits it.
+const recallIndex = ref<number | null>(null);
+const recallAnchor = ref<string>("");
+
+const userPromptHistory = computed<string[]>(() => {
+  const out: string[] = [];
+  for (let i = aiStore.messages.length - 1; i >= 0; i--) {
+    const m = aiStore.messages[i];
+    if (m.role !== "user") continue;
+    // Strip [Agent] / [Lineage] prefixes — handleSend re-adds the
+    // appropriate one based on the current mode.
+    out.push(m.content.replace(/^\[(Agent|Lineage)\]\s*/, ""));
+  }
+  return out;
+});
+
+const hasHistory = computed(() => userPromptHistory.value.length > 0);
+
+const moveCursorToEnd = (): void => {
+  void nextTick(() => {
+    const el = composerTextarea.value;
+    if (!el) return;
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+  });
+};
+
+const exitRecallMode = (): void => {
+  recallIndex.value = null;
+  recallAnchor.value = "";
+};
+
+// direction: +1 = older, -1 = newer. Returns true if the keystroke was
+// handled (caller should preventDefault).
+const tryRecall = (direction: 1 | -1): boolean => {
+  const history = userPromptHistory.value;
+  if (history.length === 0) return false;
+
+  if (recallIndex.value === null) {
+    // Entering recall mode — only when going back (↑) and composer is empty.
+    if (direction !== 1 || composerText.value !== "") return false;
+    recallAnchor.value = composerText.value;
+    recallIndex.value = 0;
+    composerText.value = history[0];
+    moveCursorToEnd();
+    return true;
+  }
+
+  const next = recallIndex.value + direction;
+  if (next < 0) {
+    // ↓ past the most recent — exit recall mode, restore anchor.
+    recallIndex.value = null;
+    composerText.value = recallAnchor.value;
+    moveCursorToEnd();
+    return true;
+  }
+  if (next >= history.length) {
+    // ↑ past the oldest — stay put, but consume the keystroke.
+    return true;
+  }
+  recallIndex.value = next;
+  composerText.value = history[next];
+  moveCursorToEnd();
+  return true;
+};
+
 const handleComposerKeydown = (event: KeyboardEvent): void => {
   // W24 — let the mention autocomplete intercept Up/Down/Enter/Tab/Escape
   // before the composer's own Enter-to-send guard fires.
   if (mention.onKeyDown(event)) return;
+
+  // ↑/↓ — terminal-style prompt history. Skip when modifier keys are held
+  // so OS / text-selection shortcuts (Shift+↑, Cmd+↑, Alt+↑) still work.
+  if (event.key === "ArrowUp" && !event.shiftKey && !event.altKey && !event.metaKey) {
+    if (tryRecall(1)) {
+      event.preventDefault();
+      return;
+    }
+  }
+  if (event.key === "ArrowDown" && !event.shiftKey && !event.altKey && !event.metaKey) {
+    if (tryRecall(-1)) {
+      event.preventDefault();
+      return;
+    }
+  }
 
   // Enter sends, Shift+Enter inserts a newline. Mirrors most chat UIs.
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -333,7 +493,20 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
 
 const handleComposerInput = (): void => {
   mention.onInput();
+  // Real user input exits recall mode. Programmatic updates from
+  // tryRecall() don't fire input events, so this only flips on actual
+  // typing/editing.
+  if (recallIndex.value !== null) {
+    exitRecallMode();
+  }
 };
+
+const kbdHint = computed<string>(() => {
+  if (aiStore.isStreaming || isAgentRunning.value) return "";
+  if (composerText.value.length > 0) return "↵ to send · ⇧↵ for newline";
+  if (hasHistory.value) return "↑ to recall · ↵ to send";
+  return "";
+});
 
 const handleMentionPick = (candidate: Parameters<typeof mention.pick>[0]): void => {
   mention.pick(candidate);
@@ -420,88 +593,177 @@ const timelineItems = computed<TimelineItem[]>(() => {
 <template>
   <div class="ai-assistant">
     <header class="ai-assistant__header">
-      <select
-        v-if="aiStore.providers.length > 0 && !isDisabledByFlag"
-        class="ai-assistant__select"
-        :value="aiStore.selectedProvider ?? ''"
-        :disabled="aiStore.isStreaming || isAgentRunning"
-        @change="handleProviderChange"
-      >
-        <option value="" disabled>Pick a provider</option>
-        <option
-          v-for="provider in aiStore.providers"
-          :key="provider.provider"
-          :value="provider.provider"
-          :disabled="provider.status === 'unconfigured'"
+      <!-- 2026-05-09 — provider / model / agent-variant pickers moved
+           into a popover behind this gear button so the header stays
+           compact in steady state. The popover anchors to the wrapper
+           below and dismisses on outside click + Esc. -->
+      <div ref="settingsAnchorRef" class="ai-assistant__settings-wrapper">
+        <button
+          v-if="!isDisabledByFlag"
+          type="button"
+          class="ai-assistant__settings-btn"
+          :class="{ 'is-open': settingsOpen }"
+          :disabled="aiStore.isStreaming || isAgentRunning"
+          aria-haspopup="dialog"
+          :aria-expanded="settingsOpen"
+          aria-label="AI settings"
+          title="AI settings"
+          @click.stop="toggleSettings"
         >
-          {{ provider.provider }}
-          <template v-if="provider.status === 'env_fallback'"> (env)</template>
-          <template v-else-if="provider.status === 'unconfigured'"> (not configured)</template>
-        </option>
-      </select>
-      <select
-        v-if="showModelPicker && !isDisabledByFlag"
-        class="ai-assistant__select ai-assistant__select--model"
-        :value="aiStore.selectedModel ?? ''"
-        :disabled="aiStore.isStreaming || isAgentRunning"
-        :title="aiStore.selectedModel ?? 'Pick a model'"
-        @change="handleModelChange"
-      >
-        <option v-for="model in availableModels" :key="model" :value="model">
-          {{ model }}
-        </option>
-      </select>
-      <!-- W71 v1.10 — agent surface picker. Two options now that the
-           legacy ``agent`` (two-stage ``pick_category``) is removed —
-           it was the failure mode that triggered W71 and stopped
-           working on small open-weights models. ``agent_staged`` is
-           the multi-stage state machine (default; reliable on llama
-           etc.); ``agent_complex`` is the single-shot full catalog
-           for big-model power users. -->
-      <select
-        v-if="!isDisabledByFlag"
-        class="ai-assistant__select ai-assistant__select--surface"
-        :value="aiStore.selectedAgentSurface"
-        :disabled="aiStore.isStreaming || isAgentRunning"
-        title="Choose which agent variant runs when you trigger an agent task."
-        @change="handleAgentSurfaceChange"
-      >
-        <option value="agent_staged">staged (default)</option>
-        <option value="agent_complex">single-shot full</option>
-        <option value="agent_live">live (REPL — runs each step)</option>
-      </select>
-      <label
-        v-if="!isDisabledByFlag"
-        class="ai-assistant__agent-toggle"
-        :title="
-          agentMode
-            ? 'Agent mode is on — Send opens a multi-turn planner that stages a GraphDiff for review.'
-            : 'Agent mode is off — Send starts a read-only chat.'
-        "
-      >
-        <input
-          v-model="agentMode"
-          type="checkbox"
-          :disabled="isAgentRunning || aiStore.isStreaming"
-        />
-        Agent
-      </label>
+          <span class="material-icons" aria-hidden="true">settings</span>
+        </button>
+        <div
+          v-if="settingsOpen"
+          class="ai-assistant__settings-popover"
+          role="dialog"
+          aria-label="AI settings"
+        >
+          <div v-if="aiStore.providers.length > 0" class="ai-assistant__settings-section">
+            <label class="ai-assistant__settings-label" for="ai-settings-provider">
+              Provider
+            </label>
+            <select
+              id="ai-settings-provider"
+              class="ai-assistant__select"
+              :value="aiStore.selectedProvider ?? ''"
+              :disabled="aiStore.isStreaming || isAgentRunning"
+              @change="handleProviderChange"
+            >
+              <option value="" disabled>Pick a provider</option>
+              <option
+                v-for="provider in aiStore.providers"
+                :key="provider.provider"
+                :value="provider.provider"
+                :disabled="provider.status === 'unconfigured'"
+              >
+                {{ provider.provider }}
+                <template v-if="provider.status === 'env_fallback'"> (env)</template>
+                <template v-else-if="provider.status === 'unconfigured'">
+                  (not configured)
+                </template>
+              </option>
+            </select>
+          </div>
+          <div v-if="showModelPicker" class="ai-assistant__settings-section">
+            <label class="ai-assistant__settings-label" for="ai-settings-model">Model</label>
+            <select
+              id="ai-settings-model"
+              class="ai-assistant__select"
+              :value="aiStore.selectedModel ?? ''"
+              :disabled="aiStore.isStreaming || isAgentRunning"
+              :title="aiStore.selectedModel ?? 'Pick a model'"
+              @change="handleModelChange"
+            >
+              <option v-for="model in availableModels" :key="model" :value="model">
+                {{ model }}
+              </option>
+            </select>
+          </div>
+          <div class="ai-assistant__settings-section">
+            <span class="ai-assistant__settings-label">Agent variant</span>
+            <p class="ai-assistant__settings-hint">
+              How the agent plans and executes changes. Used when Send dispatches an agent run
+              (Auto-agent or Agent mode).
+            </p>
+            <label class="ai-assistant__settings-radio">
+              <input
+                type="radio"
+                name="ai-agent-surface"
+                value="agent_staged"
+                :checked="aiStore.selectedAgentSurface === 'agent_staged'"
+                :disabled="aiStore.isStreaming || isAgentRunning"
+                @change="handleAgentSurfaceChange"
+              />
+              <span class="ai-assistant__settings-radio-body">
+                <span class="ai-assistant__settings-radio-name">Staged (default)</span>
+                <span class="ai-assistant__settings-radio-desc">
+                  Multi-stage planner. Reviews each step before staging. Reliable on small / local
+                  models. Recommended.
+                </span>
+              </span>
+            </label>
+            <label class="ai-assistant__settings-radio">
+              <input
+                type="radio"
+                name="ai-agent-surface"
+                value="agent_complex"
+                :checked="aiStore.selectedAgentSurface === 'agent_complex'"
+                :disabled="aiStore.isStreaming || isAgentRunning"
+                @change="handleAgentSurfaceChange"
+              />
+              <span class="ai-assistant__settings-radio-body">
+                <span class="ai-assistant__settings-radio-name">Single-shot full</span>
+                <span class="ai-assistant__settings-radio-desc">
+                  Exposes the entire tool catalog at once. Best for large models that handle complex
+                  prompts well.
+                </span>
+              </span>
+            </label>
+            <label class="ai-assistant__settings-radio">
+              <input
+                type="radio"
+                name="ai-agent-surface"
+                value="agent_live"
+                :checked="aiStore.selectedAgentSurface === 'agent_live'"
+                :disabled="aiStore.isStreaming || isAgentRunning"
+                @change="handleAgentSurfaceChange"
+              />
+              <span class="ai-assistant__settings-radio-body">
+                <span class="ai-assistant__settings-radio-name">Live (REPL)</span>
+                <span class="ai-assistant__settings-radio-desc">
+                  Applies each step live to the canvas, runs the affected subgraph, retries on
+                  failure. Experimental — every step commits immediately, no staged diff.
+                </span>
+              </span>
+            </label>
+            <!-- W71 v2.12 — opt-in verify-completion gate.
+                 After classify picks op_kind="other" (intending to
+                 terminate), the agent runs one extra LLM round to
+                 walk the plan as a checklist. Catches the case
+                 where a multi-step plan terminates after step 1. -->
+            <label class="ai-assistant__settings-radio">
+              <input
+                type="checkbox"
+                name="ai-agent-verify-plan"
+                :checked="aiStore.verifyPlanCompletion"
+                :disabled="aiStore.isStreaming || isAgentRunning"
+                @change="handleVerifyPlanCompletionChange"
+              />
+              <span class="ai-assistant__settings-radio-body">
+                <span class="ai-assistant__settings-radio-name">Verify plan completion</span>
+                <span class="ai-assistant__settings-radio-desc">
+                  After the agent finishes, double-check that every plan step was applied. Adds
+                  one LLM round per agent run. Useful when multi-step plans (e.g. add a node
+                  mid-flow plus the rewires) sometimes terminate after step 1.
+                </span>
+              </span>
+            </label>
+          </div>
+          <!-- Footer link: navigates to Connections → AI Providers
+               where users add API keys, configure model overrides,
+               and test credentials. -->
+          <div class="ai-assistant__settings-footer">
+            <button
+              type="button"
+              class="ai-assistant__settings-link"
+              @click="handleManageProviders"
+            >
+              Manage providers in Connections
+              <span class="material-icons" aria-hidden="true">arrow_forward</span>
+            </button>
+          </div>
+        </div>
+      </div>
       <button
         v-if="aiStore.messages.length > 0 || agentStore.events.length > 0"
         type="button"
         class="ai-assistant__clear"
         :disabled="aiStore.isStreaming || isAgentRunning"
+        aria-label="Clear conversation"
+        title="Clear conversation"
         @click="handleClear"
       >
-        Clear
-      </button>
-      <button
-        type="button"
-        class="ai-assistant__close"
-        aria-label="Close AI assistant"
-        @click="emit('close')"
-      >
-        ×
+        <span class="material-icons" aria-hidden="true">delete_outline</span>
       </button>
     </header>
 
@@ -574,9 +836,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
         class="ai-assistant__layout-prompt"
         role="status"
       >
-        <span class="ai-assistant__layout-prompt-text">
-          Reorganize the canvas layout?
-        </span>
+        <span class="ai-assistant__layout-prompt-text"> Reorganize the canvas layout? </span>
         <div class="ai-assistant__layout-prompt-actions">
           <button
             class="ai-assistant__layout-prompt-btn ai-assistant__layout-prompt-btn--accept"
@@ -604,10 +864,8 @@ const timelineItems = computed<TimelineItem[]>(() => {
         class="ai-assistant__surface-chip"
         :class="{
           'ai-assistant__surface-chip--legacy':
-            agentStore.currentSurface === 'agent' ||
-            agentStore.currentSurface === 'agent_complex',
-          'ai-assistant__surface-chip--live':
-            agentStore.currentSurface === 'agent_live',
+            agentStore.currentSurface === 'agent' || agentStore.currentSurface === 'agent_complex',
+          'ai-assistant__surface-chip--live': agentStore.currentSurface === 'agent_live',
         }"
         role="status"
         aria-label="Active agent surface"
@@ -634,10 +892,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
       >
         <span class="ai-assistant__stage-step">{{ stageStepLabel }}</span>
         <span class="ai-assistant__stage-name">{{ stageReadableLabel }}</span>
-        <span
-          v-if="agentStore.pickedNodeType"
-          class="ai-assistant__stage-detail"
-        >
+        <span v-if="agentStore.pickedNodeType" class="ai-assistant__stage-detail">
           ({{ agentStore.pickedNodeType }})
         </span>
         <span
@@ -682,15 +937,46 @@ const timelineItems = computed<TimelineItem[]>(() => {
           v-if="aiStore.messages.length === 0 && timelineItems.length === 0"
           class="ai-assistant__empty"
         >
-          <p v-if="agentMode">
-            Agent mode is on. Type a goal — e.g. "filter to last 30 days, then sort by region".
+          <AiAvatar size="lg" />
+          <h3 class="ai-assistant__empty-heading">What can I help you with?</h3>
+          <p class="ai-assistant__empty-subtitle">
+            <template v-if="aiStore.mode === 'agent'">
+              Agent mode — describe a goal and I'll propose the steps for review.
+            </template>
+            <template v-else-if="aiStore.mode === 'chat'">
+              Chat mode — I'll answer but won't change the graph.
+            </template>
+            <template v-else>
+              Ask about your data or describe a transformation. I'll auto-promote to agent when you
+              describe a build.
+            </template>
           </p>
-          <p v-else>Ask a question, or turn on Agent mode to make changes.</p>
+          <div class="ai-assistant__suggestions">
+            <button
+              v-for="chip in suggestionChips"
+              :key="chip"
+              type="button"
+              class="ai-assistant__suggestion-chip"
+              @click="handleSuggestionPick(chip)"
+            >
+              {{ chip }}
+            </button>
+          </div>
         </div>
         <template v-for="(item, idx) in timelineItems" :key="`${item.kind}-${item.at}-${idx}`">
           <AiMessage v-if="item.kind === 'message'" :message="item.data" />
           <AiAgentRun v-else :events="item.events" />
         </template>
+        <!-- Agent thinking placeholder — shown whenever the agent is
+             running. Sits at the end of the timeline so it stays
+             visible as events stream in above it; disappears when
+             the run completes. The chat (assistant) thinking state
+             is handled inline by AiMessage. -->
+        <div v-if="isAgentRunning" class="ai-assistant__thinking">
+          <AiAvatar size="md" />
+          <span class="ai-assistant__thinking-role">Agent</span>
+          <AiThinkingDots label="Agent is thinking" />
+        </div>
       </div>
     </div>
 
@@ -722,15 +1008,20 @@ const timelineItems = computed<TimelineItem[]>(() => {
         />
       </div>
       <div class="ai-assistant__actions">
-        <label class="ai-assistant__autopromote-toggle" :title="autoPromoteTitle">
-          <input
-            type="checkbox"
-            :checked="aiStore.autoPromote"
-            :disabled="agentMode || isAgentRunning || aiStore.isStreaming"
-            @change="handleAutoPromoteChange"
-          />
-          Auto-agent
-        </label>
+        <select
+          class="ai-assistant__mode-select"
+          :value="aiStore.mode"
+          :disabled="isAgentRunning || aiStore.isStreaming"
+          :title="modeTooltip"
+          @change="handleModeChange"
+        >
+          <option value="chat">Chat</option>
+          <option value="auto">Auto-agent</option>
+          <option value="agent">Agent</option>
+        </select>
+        <span v-if="kbdHint" class="ai-assistant__kbd-hint" aria-hidden="true">
+          {{ kbdHint }}
+        </span>
         <button
           v-if="aiStore.isStreaming || isAgentRunning"
           type="button"
@@ -764,22 +1055,25 @@ const timelineItems = computed<TimelineItem[]>(() => {
   background-color: var(--color-background-primary, #ffffff);
 }
 
+/* Toolbar — the parent DraggableItem already provides the title/minimize
+   bar, so this row is purely a settings + clear toolbar. Right-aligned
+   icons that fade in on hover keep the chrome quiet. */
 .ai-assistant__header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--color-border-primary, #e1e4e8);
+  justify-content: flex-end;
+  gap: 4px;
+  padding-bottom: 4px;
   min-width: 0;
 }
 
 .ai-assistant__select {
   flex: 1 1 0;
   min-width: 0;
-  padding: 6px 8px;
-  border-radius: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
   border: 1px solid var(--color-border-primary, #e1e4e8);
-  font-size: 12px;
+  font-size: 11px;
   background-color: var(--color-background-primary, #ffffff);
   color: var(--color-text-primary, #24292e);
 }
@@ -789,21 +1083,9 @@ const timelineItems = computed<TimelineItem[]>(() => {
   cursor: not-allowed;
 }
 
+/* Icon-only toolbar buttons (Clear, Settings). Transparent until hover
+   so the chrome doesn't compete with chat content. */
 .ai-assistant__clear {
-  flex-shrink: 0;
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-primary, #e1e4e8);
-  background-color: var(--color-background-secondary, #f6f8fa);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.ai-assistant__clear:hover:enabled {
-  background-color: var(--color-background-hover, #ececec);
-}
-
-.ai-assistant__close {
   display: flex;
   flex-shrink: 0;
   align-items: center;
@@ -812,17 +1094,30 @@ const timelineItems = computed<TimelineItem[]>(() => {
   height: 26px;
   padding: 0;
   border-radius: 6px;
-  border: 1px solid var(--color-border-primary, #e1e4e8);
-  background-color: var(--color-background-secondary, #f6f8fa);
-  font-size: 18px;
-  line-height: 1;
-  color: var(--color-text-secondary, #6b7280);
+  border: 1px solid transparent;
+  background-color: transparent;
+  color: var(--color-text-tertiary, #a0aec0);
   cursor: pointer;
+  transition:
+    background-color var(--transition-fast, 120ms ease),
+    border-color var(--transition-fast, 120ms ease),
+    color var(--transition-fast, 120ms ease);
 }
 
-.ai-assistant__close:hover {
-  background-color: var(--color-background-hover, #ececec);
-  color: var(--color-text-primary, #24292e);
+.ai-assistant__clear:hover:enabled {
+  background-color: var(--color-background-secondary, #f8f9fa);
+  border-color: var(--color-border-primary, #e2e8f0);
+  color: var(--color-text-primary, #1a1a2e);
+}
+
+.ai-assistant__clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-assistant__clear .material-icons {
+  font-size: 16px;
+  line-height: 1;
 }
 
 .ai-assistant__chat {
@@ -842,10 +1137,83 @@ const timelineItems = computed<TimelineItem[]>(() => {
 }
 
 .ai-assistant__empty {
-  padding: 20px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
-  color: var(--color-text-muted, #6a737d);
-  font-size: 13px;
+  padding: 32px 8px 16px;
+  gap: 10px;
+}
+
+.ai-assistant__empty-heading {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary, #1a1a2e);
+  line-height: 1.3;
+}
+
+.ai-assistant__empty-subtitle {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--color-text-tertiary, #718096);
+  line-height: 1.5;
+  max-width: 320px;
+}
+
+.ai-assistant__suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 360px;
+  margin-top: 4px;
+}
+
+.ai-assistant__suggestion-chip {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-primary, #e2e8f0);
+  background-color: var(--color-background-primary, #ffffff);
+  font-size: 12px;
+  color: var(--color-text-secondary, #4a5568);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast, 120ms ease),
+    border-color var(--transition-fast, 120ms ease),
+    color var(--transition-fast, 120ms ease);
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+.ai-assistant__suggestion-chip:hover {
+  border-color: var(--color-accent-purple, #667eea);
+  background-color: var(--color-background-hover, #f0f7ff);
+  color: var(--color-text-primary, #1a1a2e);
+}
+
+/* Agent thinking placeholder — minimal bubble at the end of the
+   message list. Matches the agent-card surface but doesn't carry the
+   full padding / shadow weight, so it reads as "transient state". */
+.ai-assistant__thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-top: 4px;
+  border-radius: 10px;
+  background-color: var(--color-background-primary, #ffffff);
+  border: 1px solid var(--color-border-primary, #e1e4e8);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.ai-assistant__thinking-role {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #4a5568);
+  line-height: 1;
+  margin-right: 2px;
 }
 
 /* W71 v2.3 — agent_live post-run layout-reorganize prompt. Sticks
@@ -939,14 +1307,24 @@ const timelineItems = computed<TimelineItem[]>(() => {
   resize: vertical;
   min-height: 60px;
   width: 100%;
-  padding: 8px;
-  border-radius: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
   border: 1px solid var(--color-border-primary, #e1e4e8);
   font-family: inherit;
   font-size: 13px;
   background-color: var(--color-background-primary, #ffffff);
   color: var(--color-text-primary, #24292e);
   box-sizing: border-box;
+  transition:
+    border-color var(--transition-fast, 120ms ease),
+    box-shadow var(--transition-fast, 120ms ease);
+}
+
+/* Single soft purple ring on focus — the only colour cue, no animation. */
+.ai-assistant__textarea:focus {
+  outline: none;
+  border-color: var(--color-accent-purple, #667eea);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.12);
 }
 
 .ai-assistant__textarea:disabled {
@@ -961,29 +1339,36 @@ const timelineItems = computed<TimelineItem[]>(() => {
   gap: 8px;
 }
 
-/* W58 — drawer-side auto-promotion toggle. Sits left of Send so the user
-   can see whether auto-promotion is armed without leaving the drawer. */
-.ai-assistant__autopromote-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.ai-assistant__mode-select {
+  flex-shrink: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-primary, #e1e4e8);
+  background-color: var(--color-background-primary, #ffffff);
+  color: var(--color-text-primary, #24292e);
   font-size: 11px;
-  color: var(--color-text-secondary, #586069);
+  font-weight: 500;
   cursor: pointer;
+  min-width: 100px;
+}
+
+.ai-assistant__mode-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Conditional teaching cue — only shown when there's text to send.
+   Sits between the mode dropdown and Send so it reads as "press this
+   to do that". */
+.ai-assistant__kbd-hint {
+  flex: 1 1 auto;
+  text-align: right;
+  font-size: 10px;
+  color: var(--color-text-tertiary, #a0aec0);
   user-select: none;
-}
-
-.ai-assistant__autopromote-toggle input[type="checkbox"] {
-  cursor: pointer;
-}
-
-.ai-assistant__autopromote-toggle:has(input:disabled) {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.ai-assistant__autopromote-toggle:has(input:disabled) input[type="checkbox"] {
-  cursor: not-allowed;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ai-assistant__btn {
@@ -993,15 +1378,24 @@ const timelineItems = computed<TimelineItem[]>(() => {
   font-weight: 500;
   cursor: pointer;
   border: 1px solid transparent;
+  transition:
+    background var(--transition-fast, 120ms ease),
+    box-shadow var(--transition-fast, 120ms ease),
+    filter var(--transition-fast, 120ms ease);
 }
 
 .ai-assistant__btn--primary {
   background: linear-gradient(
     135deg,
-    var(--color-gradient-purple-start, #6f42c1) 0%,
-    var(--color-gradient-purple-end, #5933a8) 100%
+    var(--color-gradient-purple-start, #667eea) 0%,
+    var(--color-gradient-purple-end, #764ba2) 100%
   );
   color: var(--color-text-inverse, #ffffff);
+}
+
+.ai-assistant__btn--primary:hover:enabled {
+  filter: brightness(0.95);
+  box-shadow: 0 1px 3px rgba(102, 126, 234, 0.3);
 }
 
 .ai-assistant__btn--primary:disabled {
@@ -1014,22 +1408,181 @@ const timelineItems = computed<TimelineItem[]>(() => {
   color: var(--color-text-inverse, #ffffff);
 }
 
-/* W40 — agent-mode toggle + drift banner + event list */
-
-.ai-assistant__agent-toggle {
-  display: inline-flex;
+/* 2026-05-09 — settings popover (gear button → provider / model /
+   agent-variant). Anchors to the wrapper in the header so it floats
+   below the gear without affecting layout flow. */
+.ai-assistant__settings-wrapper {
+  position: relative;
   flex-shrink: 0;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--color-text-secondary, #586069);
-  cursor: pointer;
-  user-select: none;
 }
 
-.ai-assistant__agent-toggle input[type="checkbox"] {
+.ai-assistant__settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background-color: transparent;
+  color: var(--color-text-tertiary, #a0aec0);
   cursor: pointer;
+  transition:
+    background-color var(--transition-fast, 120ms ease),
+    color var(--transition-fast, 120ms ease),
+    border-color var(--transition-fast, 120ms ease);
 }
+
+.ai-assistant__settings-btn:hover:enabled {
+  background-color: var(--color-background-secondary, #f8f9fa);
+  border-color: var(--color-border-primary, #e2e8f0);
+  color: var(--color-text-primary, #1a1a2e);
+}
+
+.ai-assistant__settings-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-assistant__settings-btn.is-open {
+  border-color: var(--color-accent-purple, #667eea);
+  color: var(--color-accent-purple, #667eea);
+  background-color: var(--color-background-primary, #ffffff);
+}
+
+.ai-assistant__settings-btn .material-icons {
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* Right-aligned popover anchored to the gear so it doesn't drift off
+   the drawer's right edge in narrow widths. ~290px gives the radio
+   descriptions room to breathe at small sizes. */
+.ai-assistant__settings-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 280px;
+  max-width: 300px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-primary, #e1e4e8);
+  background-color: var(--color-background-primary, #ffffff);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.12));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-assistant__settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-assistant__settings-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-tertiary, #6b7280);
+}
+
+.ai-assistant__settings-hint {
+  margin: 0 0 2px;
+  font-size: 11px;
+  color: var(--color-text-tertiary, #6b7280);
+  line-height: 1.4;
+}
+
+.ai-assistant__settings-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color var(--transition-fast, 120ms ease);
+  color: var(--color-text-primary, #24292e);
+}
+
+.ai-assistant__settings-radio:hover {
+  background-color: var(--color-background-secondary, #f8f9fa);
+}
+
+.ai-assistant__settings-radio input[type="radio"] {
+  flex-shrink: 0;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.ai-assistant__settings-radio:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-assistant__settings-radio-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ai-assistant__settings-radio-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary, #24292e);
+  line-height: 1.3;
+}
+
+.ai-assistant__settings-radio-desc {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #6b7280);
+  line-height: 1.4;
+}
+
+/* Footer link to the full AI Providers admin page in Connections.
+   Looks like a quiet link, not a button — discoverable but not
+   competing with the inline controls above. */
+.ai-assistant__settings-footer {
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+  margin-top: 2px;
+  border-top: 1px solid var(--color-border-primary, #e2e8f0);
+}
+
+.ai-assistant__settings-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 6px 4px;
+  border: none;
+  background: transparent;
+  color: var(--color-accent-purple, #667eea);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: color var(--transition-fast, 120ms ease);
+}
+
+.ai-assistant__settings-link:hover {
+  color: var(--color-accent-purple-hover, #4f5fcc);
+}
+
+.ai-assistant__settings-link .material-icons {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* W40 — agent-mode toggle removed 2026-05-09 (replaced by the unified
+   mode dropdown in the composer). Drift banner + event list classes
+   remain below. */
 
 .ai-assistant__awaiting-banner {
   display: flex;
@@ -1098,8 +1651,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
 }
 
 .ai-assistant__surface-chip-name {
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-weight: 600;
 }
 

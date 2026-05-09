@@ -50,6 +50,7 @@ OP_KIND_NAMES: Final[tuple[str, ...]] = (
 
 EMIT_PLAN_TOOL_NAME: Final[str] = "flowfile.meta.emit_plan"
 CLASSIFY_INTENT_TOOL_NAME: Final[str] = "flowfile.meta.classify_intent"
+VERIFY_COMPLETION_TOOL_NAME: Final[str] = "flowfile.meta.verify_completion"
 PICK_NODE_TYPE_TOOL_NAME: Final[str] = "flowfile.meta.pick_node_type"
 PICK_UPSTREAM_TOOL_NAME: Final[str] = "flowfile.meta.pick_upstream"
 
@@ -218,6 +219,70 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
                 },
             },
             "required": ["op_kind", "rationale"],
+        },
+    ),
+    ToolSpec(
+        name=VERIFY_COMPLETION_TOOL_NAME,
+        description=(
+            "W71 v2.12 verify-completion gate. classify just picked "
+            "op_kind='other' (intending to terminate). Confirm whether "
+            "the user's full plan has been implemented. "
+            "is_complete=true → loop terminates. "
+            "is_complete=false → loop returns to classify; you'll get "
+            "one more round to pick op_kind=add / modify / connect / "
+            "disconnect for the remaining work."
+        ),
+        long_description=(
+            "Optional verify-completion stage of the agent_staged state "
+            "machine. Reached only when classify picked op_kind='other' "
+            "AND the session has verify_plan_completion=True. Walk the "
+            "plan from the conversation history (chat-mode reply if "
+            "auto-promote-from-chat, emit_plan output if the plan stage "
+            "ran, or the user's own numbered list); for each step, "
+            "confirm a corresponding successful tool call exists in "
+            "your tool history this session. If every step is covered, "
+            "set is_complete=true and the loop terminates. If even one "
+            "step is missing, set is_complete=false; the next round "
+            "restarts at classify so you can pick op_kind=add / modify "
+            "/ connect / disconnect for the remaining work.\n\n"
+            "Inserted-node-mid-flow plans (e.g. 'add unique between "
+            "read and {group_by, record_count}') need EXTRA care: each "
+            "downstream consumer needs both a connect AND a "
+            "delete_connection, so the expected op count is 1 + 2N "
+            "(one add + one connect + one delete_connection per "
+            "downstream), not just 1.\n\n"
+            "This verify round runs at most ONCE per loop. If you say "
+            "is_complete=false and the next classify round still ends "
+            "with op_kind='other', the loop terminates without "
+            "re-entering verify."
+        ),
+        parameters={
+            "$schema": JSON_SCHEMA_DIALECT,
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "is_complete": {
+                    "type": "boolean",
+                    "description": (
+                        "True iff every step in the user's plan has a "
+                        "corresponding successful tool call in your "
+                        "tool history this session. Pick "
+                        "conservatively: if even one plan step is "
+                        "unaccounted for, return False."
+                    ),
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": (
+                        "One short sentence. If is_complete=true, "
+                        "name the steps that were applied. If "
+                        "is_complete=false, name the missing step(s) "
+                        "so the next classify round picks the right "
+                        "op_kind for the remaining work."
+                    ),
+                },
+            },
+            "required": ["is_complete", "rationale"],
         },
     ),
     # W71 — static placeholder for ``pick_upstream``. The planner builds a
@@ -510,5 +575,6 @@ __all__ = [
     "OP_KIND_NAMES",
     "PICK_NODE_TYPE_TOOL_NAME",
     "PICK_UPSTREAM_TOOL_NAME",
+    "VERIFY_COMPLETION_TOOL_NAME",
     "build_pick_upstream_spec",
 ]

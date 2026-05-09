@@ -252,7 +252,14 @@ def _resolve_upstream_schemas(
 
         node = flow.get_node(uid)
         if node is None:
-            warnings.append(f"upstream node {uid} not found in flow {flow.flow_id}")
+            warnings.append(
+                f"upstream node {uid} not found in flow {flow.flow_id}. "
+                f"If you already staged a node with id {uid} in this session, "
+                "this warning is informational — your staged ops are still "
+                "valid. Do NOT re-add a node to 'fix' this warning; if a "
+                "settings change is needed, classify ``modify`` on the next "
+                "round."
+            )
             continue
 
         # Tier 0: cached predicted_schema.

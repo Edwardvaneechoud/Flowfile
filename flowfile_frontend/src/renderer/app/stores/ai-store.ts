@@ -57,6 +57,60 @@ export interface ChatMessage {
 
 export type StreamingState = "idle" | "streaming" | "error";
 
+/** 2026-05-09 — unified send-mode enum that replaced the dual
+ * ``autoPromote`` (sticky session preference) + ``agentMode``
+ * (per-send checkbox in the drawer header) controls. The drawer
+ * surfaces this as a single dropdown next to Send.
+ *   - ``"chat"`` — read-only chat. Send dispatches the chat path; the
+ *     classifier never auto-promotes regardless of intent.
+ *   - ``"auto"`` (default) — Send dispatches chat by default; the
+ *     classifier auto-promotes to agent when an editing intent is
+ *     detected. Today's W58 ``autoPromote: true`` behaviour.
+ *   - ``"agent"`` — Send always dispatches the agent path with the
+ *     configured surface. Today's W40 explicit-agent behaviour, but
+ *     sticky across sends instead of per-send. */
+export type AiMode = "chat" | "auto" | "agent";
+
+const _AI_MODES: ReadonlyArray<AiMode> = ["chat", "auto", "agent"];
+
+/** Per-tab sessionStorage key for the user's send-mode preference.
+ * Survives page refresh; resets fresh on tab close (matches the user's
+ * 2026-05-09 ask). Mirrors ``flow-store.ts``'s sessionStorage idiom. */
+const MODE_STORAGE_KEY = "flowfile.ai.mode";
+
+const _readPersistedMode = (): AiMode | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(MODE_STORAGE_KEY);
+    if (raw !== null && (_AI_MODES as ReadonlyArray<string>).includes(raw)) {
+      return raw as AiMode;
+    }
+  } catch {
+    // sessionStorage disabled / private mode — fall through to default.
+  }
+  return null;
+};
+
+const _writePersistedMode = (value: AiMode): void => {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(MODE_STORAGE_KEY, value);
+  } catch {
+    // Ignore — quota exceeded / storage disabled. The mode still works
+    // in-memory; the user just loses refresh-survival.
+  }
+};
+
+/** Resolve the initial mode at store-init time. Priority: sessionStorage
+ * (fresh per tab), then legacy ``autoPromote`` migration shim from
+ * localStorage (true / null → "auto", false → "chat"), then default. */
+const _seedMode = (legacyAutoPromote: boolean | null | undefined): AiMode => {
+  const persisted = _readPersistedMode();
+  if (persisted !== null) return persisted;
+  if (legacyAutoPromote === false) return "chat";
+  return "auto";
+};
+
 let _messageCounter = 0;
 const nextMessageId = (): number => {
   _messageCounter += 1;
@@ -101,6 +155,14 @@ export const useAiStore = defineStore("ai", () => {
   // selections via ``ai-store-persistence``.
   const selectedAgentSurface = ref<"agent_complex" | "agent_staged" | "agent_live">("agent_staged");
 
+  // W71 v2.12 — opt-in verify-completion gate. When true, after
+  // classify picks ``op_kind="other"`` the agent runs one extra
+  // LLM round at ``stage="verify_completion"`` to walk the plan as
+  // a checklist before the loop terminates. Default off (extra
+  // round per run); the user opts in via the agent settings panel
+  // checkbox. Persisted per-flow alongside ``selectedAgentSurface``.
+  const verifyPlanCompletion = ref<boolean>(false);
+
   // ----- messages -----
   const messages = ref<ChatMessage[]>([]);
 
@@ -125,20 +187,25 @@ export const useAiStore = defineStore("ai", () => {
   // session start before either has fired.
   const lastInteractionKind = ref<"chat" | "agent" | null>(null);
 
-  // ----- W58 chat → agent auto-promotion -----
-  // ``autoPromote`` is a sticky session preference: defaults to true, persisted
-  // alongside the chat history. Users flip it off via the AI Settings tab or
-  // implicitly via the promotion-banner "undo" affordance. ``promotionBanner``
-  // is purely transient — present only while a just-promoted agent run is in
-  // flight (or until the user dismisses it via Stop / Clear).
+  // ----- 2026-05-09 — unified send-mode -----
+  // ``mode`` is the single source of truth for "what does Send do?" and
+  // replaces the dual W40 ``agentMode`` (per-send checkbox) + W58
+  // ``autoPromote`` (sticky session preference). See ``AiMode`` for
+  // semantics. Persisted to sessionStorage (per-tab, survives refresh,
+  // resets on tab close). Migrated from any legacy ``autoPromote``
+  // value found in the localStorage chat blob on first hydrate.
   //
-  // Round 7: ``agentModeAccepted`` is the post-promotion accept flag. When
-  // the user clicks the banner's "Continue as agent" button, this flips to
-  // ``true`` and short-circuits classification on subsequent sends — every
-  // future message goes straight to the agent. Persisted via sessionStorage
-  // so a tab refresh keeps the user's choice. Cleared by ``undoPromotion``
-  // (which means "back to chat") and ``clearMessages``.
-  const autoPromote = ref<boolean>(true);
+  // ``agentModeAccepted`` is the post-promotion accept flag preserved
+  // from the W58-round-7 design: when the (currently hidden) promotion
+  // banner's "Continue as agent" button is clicked, this flips to
+  // ``true`` and short-circuits classification on subsequent sends so
+  // every future message goes straight to the agent. Cleared by
+  // ``undoPromotion`` and ``clearMessages``.
+  // Initialised to the default; the actual seed runs in the hydration
+  // block below once ``_hydrated`` is available. Declaring it here
+  // (rather than after `_hydrated`) so it stays grouped with the other
+  // top-level state refs.
+  const mode = ref<AiMode>("auto");
   const agentModeAccepted = ref<boolean>(false);
   const promotionBanner = ref<{ reason: string; message: string } | null>(null);
 
@@ -167,17 +234,19 @@ export const useAiStore = defineStore("ai", () => {
   if (_hydrated.selectedModel !== null) {
     selectedModel.value = _hydrated.selectedModel;
   }
-  if (_hydrated.autoPromote !== null && _hydrated.autoPromote !== undefined) {
-    autoPromote.value = _hydrated.autoPromote;
-  }
+  // 2026-05-09 — seed ``mode`` from sessionStorage (per-tab, fresh on
+  // tab close); fall back to the legacy ``autoPromote`` from the
+  // localStorage blob when no sessionStorage value is present
+  // (one-shot migration shim).
+  mode.value = _seedMode(_hydrated.autoPromote);
   if (_hydrated.agentModeAccepted !== null && _hydrated.agentModeAccepted !== undefined) {
     agentModeAccepted.value = _hydrated.agentModeAccepted;
   }
-  if (
-    _hydrated.selectedAgentSurface !== null &&
-    _hydrated.selectedAgentSurface !== undefined
-  ) {
+  if (_hydrated.selectedAgentSurface !== null && _hydrated.selectedAgentSurface !== undefined) {
     selectedAgentSurface.value = _hydrated.selectedAgentSurface;
+  }
+  if (_hydrated.verifyPlanCompletion !== null && _hydrated.verifyPlanCompletion !== undefined) {
+    verifyPlanCompletion.value = _hydrated.verifyPlanCompletion;
   }
 
   // Throttled save. localStorage writes are sync + main-thread; coalescing
@@ -208,9 +277,9 @@ export const useAiStore = defineStore("ai", () => {
             messages: messages.value,
             selectedProvider: selectedProvider.value,
             selectedModel: selectedModel.value,
-            autoPromote: autoPromote.value,
             agentModeAccepted: agentModeAccepted.value,
             selectedAgentSurface: selectedAgentSurface.value,
+            verifyPlanCompletion: verifyPlanCompletion.value,
           },
           undefined,
           _scopedFlowId(flowStore.flowId),
@@ -219,6 +288,12 @@ export const useAiStore = defineStore("ai", () => {
       isStreaming ? PERSIST_THROTTLE_MS : 0,
     );
   };
+
+  // 2026-05-09 — `mode` lives in sessionStorage, not the localStorage
+  // chat blob, so it gets its own writer. ``immediate: true`` writes
+  // the seeded value once at store init so subsequent reads (other
+  // tabs / dev tools) see the live value.
+  watch(mode, (value) => _writePersistedMode(value), { immediate: true });
 
   // `flush: "sync"` so each mutation is evaluated against the current
   // `streamingState` value, not the post-flush value. This matters because
@@ -230,8 +305,8 @@ export const useAiStore = defineStore("ai", () => {
   watch(selectedProvider, queuePersist, { flush: "sync" });
   watch(selectedModel, queuePersist, { flush: "sync" });
   watch(selectedAgentSurface, queuePersist, { flush: "sync" });
+  watch(verifyPlanCompletion, queuePersist, { flush: "sync" });
   watch(streamingState, queuePersist, { flush: "sync" });
-  watch(autoPromote, queuePersist, { flush: "sync" });
   watch(agentModeAccepted, queuePersist, { flush: "sync" });
 
   // W43 — flow switch handler. Persist the *outgoing* flow's chat under its
@@ -263,9 +338,9 @@ export const useAiStore = defineStore("ai", () => {
           messages: messages.value,
           selectedProvider: selectedProvider.value,
           selectedModel: selectedModel.value,
-          autoPromote: autoPromote.value,
           agentModeAccepted: agentModeAccepted.value,
           selectedAgentSurface: selectedAgentSurface.value,
+          verifyPlanCompletion: verifyPlanCompletion.value,
         },
         undefined,
         outgoing,
@@ -282,16 +357,19 @@ export const useAiStore = defineStore("ai", () => {
       if (loaded.selectedModel !== null) {
         selectedModel.value = loaded.selectedModel;
       }
-      // autoPromote / agentModeAccepted DO reset to defaults on a fresh
-      // flow — these are session preferences for the conversation, not
-      // for the user's account. A flow with no prior chat shouldn't
-      // inherit the previous flow's "continue as agent" lock.
-      autoPromote.value = loaded.autoPromote ?? true;
+      // 2026-05-09 — ``mode`` is session-global (sessionStorage), NOT
+      // per-flow, so a flow switch doesn't touch it. Only
+      // ``agentModeAccepted`` resets per-flow ("Continue as agent" is a
+      // conversation-scoped commitment, not a session-scoped one).
       agentModeAccepted.value = loaded.agentModeAccepted ?? false;
       // W71 v1.9 — selectedAgentSurface is a per-flow session
       // preference (matches autoPromote semantics). Fall back to the
       // store's default when the flow has no persisted value.
       selectedAgentSurface.value = loaded.selectedAgentSurface ?? "agent_staged";
+      // W71 v2.12 — verifyPlanCompletion is per-flow alongside the
+      // surface picker. Falls back to off (default) when the
+      // incoming flow has no persisted value.
+      verifyPlanCompletion.value = loaded.verifyPlanCompletion ?? false;
       promotionBanner.value = null;
       streamError.value = null;
 
@@ -380,8 +458,18 @@ export const useAiStore = defineStore("ai", () => {
     selectedModel.value = model;
   };
 
-  const setSelectedAgentSurface = (surface: "agent_complex" | "agent_staged" | "agent_live"): void => {
+  const setSelectedAgentSurface = (
+    surface: "agent_complex" | "agent_staged" | "agent_live",
+  ): void => {
     selectedAgentSurface.value = surface;
+  };
+
+  // W71 v2.12 — opt-in verify-completion mode setter. Mirror of the
+  // surface setter so the AiAssistant.vue checkbox flips the flag
+  // through the same store-action pattern as the other agent
+  // settings.
+  const setVerifyPlanCompletion = (value: boolean): void => {
+    verifyPlanCompletion.value = value;
   };
 
   const abortStream = (): void => {
@@ -571,6 +659,7 @@ export const useAiStore = defineStore("ai", () => {
       provider: selectedProvider.value ?? "anthropic",
       model: selectedModel.value ?? null,
       skip_plan: skipPlan,
+      verify_plan_completion: verifyPlanCompletion.value,
     });
   };
 
@@ -643,12 +732,16 @@ export const useAiStore = defineStore("ai", () => {
     // input vanish during the routing await — feels like a UI glitch.
     //
     // Round 7: the ``agentModeAccepted`` short-circuit takes precedence
-    // over ``autoPromote``. The user clicked "Continue as agent" on a
-    // prior promotion banner, so every subsequent send in this session
-    // skips classification and dispatches as agent directly.
+    // over the user's ``mode`` choice. The user clicked "Continue as
+    // agent" on a prior promotion banner, so every subsequent send in
+    // this session skips classification and dispatches as agent
+    // directly. Otherwise: classification only happens in ``"auto"``
+    // mode — ``"chat"`` skips it (force-chat) and ``"agent"`` bypasses
+    // it (force-agent, handled by AiAssistant.vue's handleSend before
+    // this store action runs).
     const flowStore = useFlowStore();
     const wantsClassification =
-      !agentModeAccepted.value && autoPromote.value && flowStore.flowId !== null;
+      !agentModeAccepted.value && mode.value === "auto" && flowStore.flowId !== null;
     // ``ChatRole`` is already ``"user" | "assistant"`` (no "system" — those
     // come from the server, never the chat trail), so the cast to
     // ``RouteHistoryEntry`` is shape-compatible without a runtime guard.
@@ -703,8 +796,9 @@ export const useAiStore = defineStore("ai", () => {
     await _openChatStream();
   };
 
-  const setAutoPromote = (value: boolean): void => {
-    autoPromote.value = value;
+  const setMode = (value: AiMode): void => {
+    if (!(_AI_MODES as ReadonlyArray<string>).includes(value)) return;
+    mode.value = value;
   };
 
   const dismissPromotionBanner = (): void => {
@@ -713,11 +807,11 @@ export const useAiStore = defineStore("ai", () => {
 
   const undoPromotion = async (): Promise<void> => {
     // W58 — banner "Click here to keep this as chat instead" affordance.
-    // Aborts the in-flight agent run, flips the session-scoped autoPromote
-    // off (so a follow-up Send doesn't re-classify the same way), then
-    // re-dispatches the saved message as a regular chat. The user message
-    // is already in ``messages`` from the original promoted send — we
-    // skip pushing it again to keep the chat trail readable.
+    // Aborts the in-flight agent run, flips the session mode to
+    // ``"chat"`` (so a follow-up Send doesn't re-classify the same way),
+    // then re-dispatches the saved message as a regular chat. The user
+    // message is already in ``messages`` from the original promoted
+    // send — we skip pushing it again to keep the chat trail readable.
     //
     // Round 7: also reset ``agentModeAccepted`` since "back to chat" and
     // "continue as agent" are mutually exclusive — leaving the accept on
@@ -725,7 +819,7 @@ export const useAiStore = defineStore("ai", () => {
     const banner = promotionBanner.value;
     if (banner === null) return;
     promotionBanner.value = null;
-    autoPromote.value = false;
+    mode.value = "chat";
     agentModeAccepted.value = false;
 
     try {
@@ -1168,7 +1262,7 @@ export const useAiStore = defineStore("ai", () => {
     messages,
     streamingState,
     streamError,
-    autoPromote,
+    mode,
     agentModeAccepted,
     promotionBanner,
     // computed
@@ -1186,6 +1280,8 @@ export const useAiStore = defineStore("ai", () => {
     setSelectedModel,
     selectedAgentSurface,
     setSelectedAgentSurface,
+    verifyPlanCompletion,
+    setVerifyPlanCompletion,
     // W71 v2.10C — exposed so ai-agent-store's status watcher can
     // flip it to "agent" when a run terminates.
     lastInteractionKind,
@@ -1195,7 +1291,7 @@ export const useAiStore = defineStore("ai", () => {
     generateDocumentation,
     runInlineAction,
     askLineageQuestion,
-    setAutoPromote,
+    setMode,
     dismissPromotionBanner,
     undoPromotion,
     acceptPromotion,

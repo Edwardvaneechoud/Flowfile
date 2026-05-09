@@ -115,6 +115,7 @@ _STAGE_TO_PROMPT: dict[str, str] = {
     "pick_upstream": "stage_pick_upstream",
     "fill_settings": "stage_fill_settings",
     "single_stage_op": "planner",
+    "verify_completion": "stage_verify_completion",
 }
 """W71 — per-stage suffix file map for the ``agent_staged`` surface.
 

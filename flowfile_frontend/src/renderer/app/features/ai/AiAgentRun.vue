@@ -14,6 +14,7 @@ import { computed } from "vue";
 
 import type { AgentEvent } from "../../stores/ai-agent-store";
 import AiAgentEvent from "./AiAgentEvent.vue";
+import AiAvatar from "./AiAvatar.vue";
 
 const props = defineProps<{ events: AgentEvent[] }>();
 
@@ -53,13 +54,18 @@ const startedAtTooltip = computed<string>(() => {
        extra Vue ref plumbing. -->
   <details class="ai-agent-run" open>
     <summary class="ai-agent-run__header">
+      <span class="ai-agent-run__chevron" aria-hidden="true">
+        <span class="material-icons">expand_more</span>
+      </span>
+      <AiAvatar size="md" />
       <span class="ai-agent-run__role">Agent</span>
+      <span v-if="startedAtLabel" class="ai-agent-run__sep" aria-hidden="true">·</span>
       <span v-if="startedAtLabel" class="ai-agent-run__time" :title="startedAtTooltip">
         {{ startedAtLabel }}
       </span>
-      <!-- Right-aligned text pill flips between Show / Hide via CSS
-           [open] selector so the affordance is always explicit, not
-           just a chevron. aria-hidden because the chevron + native
+      <!-- Right-aligned quiet text link flips between "Show details" /
+           "Hide details" via CSS [open] selector so the affordance is
+           always explicit. aria-hidden because the chevron + native
            <summary> already announce the toggle to screen readers. -->
       <span class="ai-agent-run__toggle-hint" aria-hidden="true" />
     </summary>
@@ -74,130 +80,117 @@ const startedAtTooltip = computed<string>(() => {
 </template>
 
 <style scoped>
+/* Refined card matching the assistant message bubble: white surface,
+   1px border, soft elevation, 10px radius. The previous purple left
+   stripe competed with the inner-event accents, so we drop it. */
 .ai-agent-run {
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
   margin-bottom: 8px;
-  background-color: var(--color-background-secondary, #f6f8fa);
+  background-color: var(--color-background-primary, #ffffff);
   border: 1px solid var(--color-border-primary, #e1e4e8);
-  border-left: 3px solid var(--color-accent, #6f42c1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .ai-agent-run__header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   cursor: pointer;
   user-select: none;
   list-style: none;
-  /* Reserve space for the chunky chevron-button on the left so role /
-     time stay aligned regardless of open/closed state. */
-  padding: 4px 4px 4px 32px;
-  margin: -4px -4px 0;
+  padding: 0;
   border-radius: 4px;
-  position: relative;
   transition: background-color var(--transition-fast, 120ms ease);
 }
 
-/* Hover the whole summary to reinforce that it's an interactive
-   region. */
-.ai-agent-run__header:hover {
-  background-color: var(--color-background-tertiary, rgba(175, 184, 193, 0.15));
-}
-
-/* Hide the default disclosure triangle (Chrome/Safari) — we draw our
-   own chevron via ::before, sized as a 22 px accent-bordered button so
-   the toggle reads as a primary control rather than a subtle hint. */
+/* Hide the default native disclosure triangle — we draw our own
+   subtle inline chevron. */
 .ai-agent-run__header::-webkit-details-marker {
   display: none;
 }
 
-.ai-agent-run__header::before {
-  content: "▸";
-  position: absolute;
-  left: 4px;
-  top: 50%;
-  transform: translateY(-50%);
+/* Bigger, clearly clickable chevron — uses Material Icons expand_more
+   so it visually matches the rest of the toolbar iconography. Rotates
+   on [open]. */
+.ai-agent-run__chevron {
+  display: inline-flex;
   width: 22px;
   height: 22px;
-  display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--color-accent, #6f42c1);
-  background-color: var(--color-background-primary, #ffffff);
-  border: 1px solid var(--color-accent, #6f42c1);
   border-radius: 4px;
+  color: var(--color-text-secondary, #4a5568);
+  background-color: transparent;
+  transform: rotate(-90deg);
   transition:
-    background-color var(--transition-fast, 120ms ease),
-    color var(--transition-fast, 120ms ease);
+    transform var(--transition-fast, 120ms ease),
+    color var(--transition-fast, 120ms ease),
+    background-color var(--transition-fast, 120ms ease);
 }
 
-.ai-agent-run[open] > .ai-agent-run__header::before {
-  content: "▾";
+.ai-agent-run__chevron .material-icons {
+  font-size: 18px;
+  line-height: 1;
 }
 
-/* Filled accent on hover so the chevron-button looks pressable. */
-.ai-agent-run__header:hover::before {
-  background-color: var(--color-accent, #6f42c1);
-  color: #ffffff;
+.ai-agent-run[open] > .ai-agent-run__header > .ai-agent-run__chevron {
+  transform: rotate(0deg);
 }
 
-/* Right-aligned Show/Hide pill — reinforces collapse affordance
-   beyond the chevron alone. CSS ::before flips text with state via
-   the [open] selector on the parent <details>, no Vue ref needed.
-   flex-shrink:0 so it stays visible even in narrow drawer widths. */
+.ai-agent-run__header:hover .ai-agent-run__chevron {
+  color: var(--color-text-primary, #1a1a2e);
+  background-color: var(--color-background-secondary, #f8f9fa);
+}
+
+/* Quiet right-aligned text link, no border / pill. CSS ::before flips
+   the text via the [open] selector on the parent <details>. */
 .ai-agent-run__toggle-hint {
   margin-left: auto;
   flex-shrink: 0;
   font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  color: var(--color-accent, #6f42c1);
-  padding: 3px 8px;
-  border: 1px solid var(--color-accent, #6f42c1);
-  border-radius: 3px;
-  line-height: 1.2;
-  background-color: var(--color-background-primary, #ffffff);
-  transition:
-    background-color var(--transition-fast, 120ms ease),
-    color var(--transition-fast, 120ms ease);
+  color: var(--color-text-tertiary, #a0aec0);
+  line-height: 1;
+  transition: color var(--transition-fast, 120ms ease);
 }
 
 .ai-agent-run__header:hover .ai-agent-run__toggle-hint {
-  background-color: var(--color-accent, #6f42c1);
-  color: #ffffff;
+  color: var(--color-text-secondary, #4a5568);
+  text-decoration: underline;
 }
 
 .ai-agent-run > .ai-agent-run__header > .ai-agent-run__toggle-hint::before {
-  content: "Show";
+  content: "Show details";
 }
 
 .ai-agent-run[open] > .ai-agent-run__header > .ai-agent-run__toggle-hint::before {
-  content: "Hide";
+  content: "Hide details";
 }
 
 .ai-agent-run__role {
   font-size: 11px;
   font-weight: 600;
-  text-transform: uppercase;
-  color: var(--color-accent, #6f42c1);
-  letter-spacing: 0.4px;
+  color: var(--color-text-secondary, #4a5568);
+  line-height: 1;
+}
+
+.ai-agent-run__sep {
+  color: var(--color-text-tertiary, #a0aec0);
+  font-size: 11px;
+  line-height: 1;
 }
 
 .ai-agent-run__time {
-  font-size: 11px;
-  color: var(--color-text-muted, #6a737d);
+  font-size: 10px;
+  color: var(--color-text-tertiary, #a0aec0);
   cursor: default;
+  line-height: 1;
 }
 
 .ai-agent-run__body {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 </style>

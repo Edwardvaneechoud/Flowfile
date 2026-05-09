@@ -38,6 +38,7 @@ from flowfile_core.ai.tools.meta_ops import (
     CLASSIFY_INTENT_TOOL_NAME,
     PICK_NODE_TYPE_TOOL_NAME,
     PICK_UPSTREAM_TOOL_NAME,
+    VERIFY_COMPLETION_TOOL_NAME,
 )
 from flowfile_core.ai.tools.registry import (
     build_staged_fill_tool_spec,
@@ -1859,3 +1860,167 @@ def test_agent_live_does_not_use_staged_results() -> None:
     # Both nodes are live on the canvas.
     live_ids = sorted(n.node_id for n in flow.nodes)
     assert live_ids == [1, 2, 3], live_ids
+
+
+# --------------------------------------------------------------------------- #
+# W71 v2.12 — opt-in verify-completion gate                                    #
+# --------------------------------------------------------------------------- #
+
+
+def test_verify_completion_stage_loops_back_to_classify() -> None:
+    """W71 v2.12 — opt-in verify gate. After classify picks
+    ``op_kind="other"``, the planner advances to ``verify_completion``.
+    If the LLM returns ``is_complete=False``, the stage resets to
+    ``classify`` so the next round can pick the missing op_kind.
+    """
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.verify_plan_completion = True
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-classify-1",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "other", "rationale": "I think I'm done"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-verify-1",
+                        name=VERIFY_COMPLETION_TOOL_NAME,
+                        arguments={
+                            "is_complete": False,
+                            "rationale": "missing connect from new unique to group_by",
+                        },
+                    )
+                ]
+            ),
+            # Round 3: at the new classify stage, exit the test by
+            # emitting nothing. We only need to confirm the stage
+            # transitions; how the LLM picks the next op is exercised
+            # by other tests.
+            _Step(content=None, finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+
+    advances = [e for e in events if e.event == "stage_advanced"]
+    transitions = [(e.payload.get("from"), e.payload.get("to")) for e in advances]
+
+    assert ("classify", "verify_completion") in transitions, (
+        f"missing classify→verify_completion transition; got {transitions}"
+    )
+    assert ("verify_completion", "classify") in transitions, (
+        f"missing verify_completion→classify transition (after is_complete=false); "
+        f"got {transitions}"
+    )
+    # One-shot guard set so a stubborn is_complete=false can't ping-pong.
+    assert sess.verify_round_consumed is True
+
+
+def test_verify_completion_stage_terminates_when_complete() -> None:
+    """W71 v2.12 — when the verify-completion LLM returns
+    ``is_complete=True``, the planner routes back to ``classify`` (the
+    natural empty-tool-call termination path) and the loop terminates
+    cleanly.
+    """
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.verify_plan_completion = True
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-classify-1",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "other", "rationale": "all done"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-verify-1",
+                        name=VERIFY_COMPLETION_TOOL_NAME,
+                        arguments={
+                            "is_complete": True,
+                            "rationale": "all 3 plan steps applied",
+                        },
+                    )
+                ]
+            ),
+            # Round 3: LLM has nothing more; the loop exits naturally
+            # via the non-mandatory empty-tool-call break path.
+            _Step(content="The plan is complete.", finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+
+    advances = [e for e in events if e.event == "stage_advanced"]
+    transitions = [(e.payload.get("from"), e.payload.get("to")) for e in advances]
+
+    assert ("classify", "verify_completion") in transitions
+    assert ("verify_completion", "classify") in transitions
+    assert sess.verify_round_consumed is True
+    # Loop exited cleanly — completed (no staged ops in this scripted
+    # scenario, so the terminal handler routes through the empty-diff
+    # ``complete`` path) or awaiting_user_input.
+    assert sess.status in ("completed", "awaiting_user_input")
+
+
+def test_verify_completion_skipped_when_flag_off() -> None:
+    """W71 v2.12 — default behavior: with
+    ``verify_plan_completion=False`` (the field default),
+    ``op_kind="other"`` terminates the loop directly without entering
+    the verify_completion stage. The new gate is fully opt-in.
+    """
+    flow = _make_flow()
+    sess = _make_session(flow)
+    # Default value — assert it explicitly so a future flip of the
+    # default surfaces in this test rather than as a behavior shift.
+    assert sess.verify_plan_completion is False
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-classify-1",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "other", "rationale": "user is asking a question"},
+                    )
+                ]
+            ),
+            # Round 2: LLM emits no tool call — loop terminates via the
+            # non-mandatory empty-tool-call break path.
+            _Step(content="Here is my answer.", finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+
+    advances = [e for e in events if e.event == "stage_advanced"]
+    transitions = [(e.payload.get("from"), e.payload.get("to")) for e in advances]
+
+    assert ("classify", "verify_completion") not in transitions, (
+        f"verify-completion gate must NOT fire when the flag is off; "
+        f"got transitions {transitions}"
+    )
+    # Stage stays at classify (existing op_kind="other" termination path).
+    assert sess.stage == "classify"
+    assert sess.verify_round_consumed is False

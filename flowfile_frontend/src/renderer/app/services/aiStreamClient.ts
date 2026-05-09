@@ -363,6 +363,16 @@ export interface AgentStartRequest {
    * plan stage fires.
    */
   skip_plan?: boolean;
+  /**
+   * W71 v2.12 — opt-in: when ``true`` the agent runs one extra LLM
+   * round at ``stage="verify_completion"`` after classify picks
+   * ``op_kind="other"`` (intending to terminate). The LLM walks
+   * the plan as a checklist and either certifies completion
+   * (``is_complete=true`` → loop terminates) or sends control back
+   * to ``classify`` for the missing op (``is_complete=false``).
+   * Default off because of the extra LLM round per run.
+   */
+  verify_plan_completion?: boolean;
 }
 
 export interface AgentDriftDetail {

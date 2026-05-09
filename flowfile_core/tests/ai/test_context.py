@@ -1261,6 +1261,25 @@ def test_classify_stage_includes_multi_step_discipline_section() -> None:
     assert "dangling" in text_lower or "dangl" in text_lower
 
 
+def test_classify_stage_includes_re_add_prevention_section() -> None:
+    """W71 v2.11A — classify prompt warns against re-adding a
+    same-type node already staged in the session. Direct response
+    to the 2026-05-09 cross_join cascade dogfood (LLM re-staged
+    cross_join after misreading a predictor warning).
+    """
+    text = assemble_system_prompt("agent_staged", stage="classify")
+    text_lower = text.lower()
+    # Sub-block heading anchors the v2.11A insertion.
+    assert "re-adding a node that's already staged" in text_lower
+    # Cross_join worked example — specific to this dogfood.
+    assert "cross_join cascade" in text_lower
+    assert "add_cross_join" in text_lower
+    # The "modify on the existing node" rule.
+    assert 'op_kind="modify"' in text
+    # Anchor for the predictor-warning-misread paragraph.
+    assert "re-staging duplicates" in text_lower
+
+
 def test_classify_stage_now_includes_palette_disambiguation() -> None:
     """W71 v1.14A.3 — supersedes the v1.12B *"only at pick_type"*
     posture. Some models (qwen3-vl-32b on 2026-05-08) bypass
@@ -1725,4 +1744,36 @@ def test_formula_fill_settings_prompt_includes_function_reference() -> None:
     assert "Formula functions" not in pick_type_prompt, (
         "v1.12C: function reference must not appear in the pick_type catalog "
         "(it would cost tokens on every pick_type round)"
+    )
+
+
+def test_verify_completion_stage_prompt_renders() -> None:
+    """W71 v2.12 — the verify_completion stage suffix is wired up:
+    ``assemble_system_prompt(surface="agent_staged",
+    stage="verify_completion")`` returns the new
+    ``stage_verify_completion.md`` content with the LLM-facing anchor
+    phrases. The prompt must NOT bleed into other staged stages.
+    """
+    text = assemble_system_prompt("agent_staged", stage="verify_completion")
+    text_lower = text.lower()
+    # Heading + tool name.
+    assert "verify plan completion" in text_lower
+    assert "flowfile.meta.verify_completion" in text
+    # Both branches the LLM must pick between.
+    assert "is_complete=true" in text
+    assert "is_complete=false" in text
+    # Inserted-node-mid-flow guidance — direct response to the
+    # 2026-05-09 dogfood that motivated v2.12 (chat-mode plan with
+    # add-then-rewire steps where the agent terminated after step 1).
+    assert "inserted-node-mid-flow" in text_lower or "inserted node mid-flow" in text_lower
+    # The one-shot guard reminder so the LLM knows it can't ping-pong.
+    assert "at most once per loop" in text_lower
+
+    # Bleed-through check — verify_completion content is per-stage and
+    # must not appear at classify (which would defeat the per-stage
+    # tool-catalog separation).
+    classify_prompt = assemble_system_prompt("agent_staged", stage="classify")
+    assert "verify plan completion" not in classify_prompt.lower(), (
+        "v2.12: verify_completion prompt content leaked into the classify "
+        "stage system prompt"
     )
