@@ -3,8 +3,7 @@
     <div class="mb-3">
       <h2 class="page-title">AI Providers</h2>
       <p class="description-text">
-        Bring your own keys for the LLM providers Flowfile's AI features use. Keys are encrypted at
-        rest using the same Fernet pipeline as your other secrets. Local Ollama needs no key.
+        Bring your own keys for the LLM providers Flowfile's AI features use. Local Ollama needs no key.
       </p>
     </div>
 

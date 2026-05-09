@@ -1215,6 +1215,252 @@ def test_w67_settings_validation_refusal_includes_concrete_example(call_kwargs: 
 
 
 # --------------------------------------------------------------------------- #
+# W71 v2.8D — manual_input shape tolerance                                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_normalize_columns_dict_to_list_of_objects() -> None:
+    """Dict mapping name → dtype is the most common LLM mis-emission for
+    ``columns``. Translate to canonical list-of-objects."""
+    out = executor_module._normalize_manual_input_columns(
+        {"category": "String", "score": "Int64"}
+    )
+    assert out == [
+        {"name": "category", "data_type": "String"},
+        {"name": "score", "data_type": "Int64"},
+    ]
+
+
+def test_normalize_columns_list_of_strings_defaults_to_string_dtype() -> None:
+    """Bare list of names — default each ``data_type`` to ``"String"``."""
+    out = executor_module._normalize_manual_input_columns(["category", "explanation"])
+    assert out == [
+        {"name": "category", "data_type": "String"},
+        {"name": "explanation", "data_type": "String"},
+    ]
+
+
+def test_normalize_columns_canonical_passthrough_is_identity() -> None:
+    """List-of-objects must pass through unchanged (identity-preserving so
+    callers can detect "did anything change?" via ``is``)."""
+    canonical = [
+        {"name": "category", "data_type": "String"},
+        {"name": "score", "data_type": "Int64"},
+    ]
+    assert executor_module._normalize_manual_input_columns(canonical) is canonical
+
+
+def test_normalize_data_row_oriented_transposes_when_shape_disambiguates() -> None:
+    """User dogfood payload (2026-05-09): 2 columns × 6 rows in row-oriented
+    shape. ``len(data) != len(columns)`` so we can transpose unambiguously."""
+    columns = [
+        {"name": "category", "data_type": "String"},
+        {"name": "explanation", "data_type": "String"},
+    ]
+    row_oriented = [
+        ["Billing", "Issues related to billing, invoices, or payments"],
+        ["Returns", "Requests for product returns or refunds"],
+        ["General", "General inquiries or non-specific support"],
+        ["Technical", "Technical issues with products or services"],
+        ["Shipping", "Shipping delays, tracking, or delivery problems"],
+        ["Account", "Account management, login, or profile issues"],
+    ]
+    out = executor_module._normalize_manual_input_data(row_oriented, columns)
+    assert len(out) == 2
+    assert out[0] == ["Billing", "Returns", "General", "Technical", "Shipping", "Account"]
+    assert out[1][0] == "Issues related to billing, invoices, or payments"
+    assert len(out[1]) == 6
+
+
+def test_normalize_data_list_of_records_reshapes_columnar() -> None:
+    """Records-style data (`[{col: val, ...}, ...]`) reshapes to columnar
+    using the column names as keys."""
+    columns = [
+        {"name": "code", "data_type": "String"},
+        {"name": "label", "data_type": "String"},
+    ]
+    records = [
+        {"code": "US", "label": "United States"},
+        {"code": "NL", "label": "Netherlands"},
+    ]
+    out = executor_module._normalize_manual_input_data(records, columns)
+    assert out == [["US", "NL"], ["United States", "Netherlands"]]
+
+
+def test_normalize_data_records_with_missing_keys_become_none() -> None:
+    """Robustness: a record missing one of the named columns yields ``None``
+    in the corresponding columnar slot rather than raising."""
+    columns = [{"name": "a"}, {"name": "b"}]
+    records = [{"a": 1}, {"a": 2, "b": 20}]
+    out = executor_module._normalize_manual_input_data(records, columns)
+    assert out == [[1, 2], [None, 20]]
+
+
+def test_normalize_data_canonical_passthrough_is_identity() -> None:
+    """Already-columnar data passes through unchanged."""
+    columns = [{"name": "name"}, {"name": "age"}]
+    canonical = [["Alice", "Bob"], [30, 25]]
+    assert executor_module._normalize_manual_input_data(canonical, columns) is canonical
+
+
+def test_normalize_data_square_shape_left_untouched() -> None:
+    """When ``len(data) == len(columns)`` AND inner length == ``len(columns)``
+    the shape is structurally ambiguous (could be row-oriented or columnar
+    depending on the LLM's intent). Leave it alone — the schema is canonical
+    and the validator will accept either as a valid ``list[list]``."""
+    columns = [{"name": "a"}, {"name": "b"}]
+    square = [[1, 2], [3, 4]]
+    assert executor_module._normalize_manual_input_data(square, columns) is square
+
+
+def test_normalize_manual_input_args_idempotent_on_canonical_payload() -> None:
+    """The canonical example from ``NODE_AGENT_PAYLOAD_EXAMPLES`` must pass
+    through without modification. Identity check on the outer dict catches
+    accidental copy-on-noop."""
+    canonical = {
+        "flow_id": 1,
+        "node_id": 99,
+        "raw_data_format": {
+            "columns": [
+                {"name": "name", "data_type": "String"},
+                {"name": "age", "data_type": "Int64"},
+            ],
+            "data": [["Alice", "Bob"], [30, 25]],
+        },
+    }
+    assert executor_module._normalize_manual_input_args(canonical) is canonical
+
+
+def test_normalize_manual_input_args_string_raw_data_passes_through() -> None:
+    """Non-dict ``raw_data_format`` (already-failed JSON-string unwrap, or
+    LLM emitting some other type) is left for the validator to reject —
+    normalizer only handles structured shapes."""
+    args = {"flow_id": 1, "node_id": 5, "raw_data_format": "not a dict"}
+    assert executor_module._normalize_manual_input_args(args) is args
+
+
+def test_normalize_manual_input_args_combines_columns_and_data_fixes() -> None:
+    """Both shape mistakes at once (dict columns + row-oriented data) get
+    corrected together — common LLM emission pattern."""
+    args = {
+        "flow_id": 1,
+        "node_id": 7,
+        "raw_data_format": {
+            "columns": {"code": "String", "label": "String"},
+            "data": [["US", "United States"], ["NL", "Netherlands"]],
+        },
+    }
+    out = executor_module._normalize_manual_input_args(args)
+    assert out is not args
+    assert out["raw_data_format"]["columns"] == [
+        {"name": "code", "data_type": "String"},
+        {"name": "label", "data_type": "String"},
+    ]
+    # Square 2×2: columns/data are both length 2, data inner length is 2 →
+    # ambiguous, left untouched. (See the docstring for
+    # ``_normalize_manual_input_data``.)
+    assert out["raw_data_format"]["data"] == [["US", "United States"], ["NL", "Netherlands"]]
+    assert args["raw_data_format"]["columns"] == {"code": "String", "label": "String"}
+
+
+def test_executor_accepts_dict_columns_for_manual_input(call_kwargs: dict[str, Any]) -> None:
+    """End-to-end: an ``add_manual_input`` call with ``columns`` as a dict
+    (LLM-natural shape) is normalized before validation and applies cleanly."""
+    flow = FlowGraph(flow_settings=_flow_settings(flow_id=42), name="exec_test_normalize_dict")
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_manual_input",
+        tool_args={
+            "flow_id": 42,
+            "node_id": 1,
+            "pos_x": 0.0,
+            "pos_y": 0.0,
+            "raw_data_format": {
+                "columns": {"category": "String", "score": "Int64"},
+                "data": [["a", "b"], [1, 2]],
+            },
+        },
+        insertion_context=InsertionContext(upstream_node_ids=[]),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "applied", result.refusal_detail
+    settings = flow.get_node(1).setting_input
+    assert [c.name for c in settings.raw_data_format.columns] == ["category", "score"]
+    assert [c.data_type for c in settings.raw_data_format.columns] == ["String", "Int64"]
+
+
+def test_executor_accepts_row_oriented_data_for_manual_input(call_kwargs: dict[str, Any]) -> None:
+    """End-to-end: the exact payload from the 2026-05-09 user message
+    (2 cols × 6 rows in row-oriented shape) was previously rejected by
+    ``settings_validation``; the normalizer transposes it to columnar so
+    Pydantic accepts it."""
+    flow = FlowGraph(flow_settings=_flow_settings(flow_id=43), name="exec_test_normalize_rows")
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_manual_input",
+        tool_args={
+            "flow_id": 43,
+            "node_id": 1,
+            "pos_x": 0.0,
+            "pos_y": 0.0,
+            "raw_data_format": {
+                "columns": [
+                    {"name": "category", "data_type": "String"},
+                    {"name": "explanation", "data_type": "String"},
+                ],
+                "data": [
+                    ["Billing", "Issues related to billing, invoices, or payments"],
+                    ["Returns", "Requests for product returns or refunds"],
+                    ["General", "General inquiries or non-specific support"],
+                    ["Technical", "Technical issues with products or services"],
+                    ["Shipping", "Shipping delays, tracking, or delivery problems"],
+                    ["Account", "Account management, login, or profile issues"],
+                ],
+            },
+        },
+        insertion_context=InsertionContext(upstream_node_ids=[]),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "applied", result.refusal_detail
+    raw = flow.get_node(1).setting_input.raw_data_format
+    assert len(raw.columns) == 2
+    assert len(raw.data) == 2
+    assert raw.data[0][:3] == ["Billing", "Returns", "General"]
+    assert raw.data[1][0] == "Issues related to billing, invoices, or payments"
+
+
+def test_executor_canonical_manual_input_still_validates(call_kwargs: dict[str, Any]) -> None:
+    """Regression — adding the normalizer must not break the canonical
+    columnar path the existing code already relies on."""
+    flow = FlowGraph(flow_settings=_flow_settings(flow_id=44), name="exec_test_normalize_canonical")
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_manual_input",
+        tool_args={
+            "flow_id": 44,
+            "node_id": 1,
+            "pos_x": 0.0,
+            "pos_y": 0.0,
+            "raw_data_format": {
+                "columns": [
+                    {"name": "name", "data_type": "String"},
+                    {"name": "age", "data_type": "Int64"},
+                ],
+                "data": [["Alice", "Bob", "Cat"], [30, 25, 19]],
+            },
+        },
+        insertion_context=InsertionContext(upstream_node_ids=[]),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "applied", result.refusal_detail
+    raw = flow.get_node(1).setting_input.raw_data_format
+    assert raw.data == [["Alice", "Bob", "Cat"], [30, 25, 19]]
+
+
+# --------------------------------------------------------------------------- #
 # W47 — update_node_settings                                                   #
 # --------------------------------------------------------------------------- #
 

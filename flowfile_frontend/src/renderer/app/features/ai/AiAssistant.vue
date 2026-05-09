@@ -507,10 +507,37 @@ const tryRecall = (direction: 1 | -1): boolean => {
   return true;
 };
 
+// Cycle order matches the dropdown: Chat → Auto-agent → Agent → Chat.
+const _MODE_CYCLE: ReadonlyArray<AiMode> = ["chat", "auto", "agent"];
+
+const cycleMode = (): void => {
+  if (aiStore.isStreaming || isAgentRunning.value) return;
+  const idx = _MODE_CYCLE.indexOf(aiStore.mode);
+  const next = _MODE_CYCLE[(idx + 1) % _MODE_CYCLE.length];
+  aiStore.setMode(next);
+};
+
+// Platform-aware modifier label for the keyboard hints. ⌘ on Mac, Ctrl
+// elsewhere. `event.metaKey` covers ⌘ on Mac and the Windows key on
+// other platforms; we also accept `ctrlKey` so the binding works for
+// the user community that habitually reaches for Ctrl regardless.
+const isMacPlatform =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+const modKeyLabel = isMacPlatform ? "⌘" : "Ctrl";
+
 const handleComposerKeydown = (event: KeyboardEvent): void => {
   // W24 — let the mention autocomplete intercept Up/Down/Enter/Tab/Escape
   // before the composer's own Enter-to-send guard fires.
   if (mention.onKeyDown(event)) return;
+
+  // ⌘/Ctrl + Shift + M — cycle AI mode (Chat → Auto-agent → Agent → Chat).
+  // `event.code === "KeyM"` is layout-independent so the binding works on
+  // non-QWERTY keyboards too.
+  if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.code === "KeyM") {
+    event.preventDefault();
+    cycleMode();
+    return;
+  }
 
   // ↑/↓ — terminal-style prompt history. Skip when modifier keys are held
   // so OS / text-selection shortcuts (Shift+↑, Cmd+↑, Alt+↑) still work.
@@ -715,6 +742,10 @@ const showStandaloneThinking = computed<boolean>(() => {
             <h4 class="ai-assistant__info-heading">Tips</h4>
             <ul class="ai-assistant__info-list">
               <li><kbd>↑</kbd> in the composer recalls your last prompt.</li>
+              <li>
+                <kbd>{{ modKeyLabel }}</kbd> + <kbd>⇧</kbd> + <kbd>M</kbd> cycles modes (Chat →
+                Auto-agent → Agent).
+              </li>
               <li>
                 Chat history is per-flow and persists across reloads. Switching flows is automatic —
                 no need to clear.
@@ -1715,9 +1746,9 @@ const showStandaloneThinking = computed<boolean>(() => {
   top: calc(100% + 6px);
   right: 0;
   z-index: 50;
-  min-width: 280px;
-  max-width: 300px;
-  padding: 12px;
+  min-width: 420px;
+  max-width: 460px;
+  padding: 14px;
   border-radius: 8px;
   border: 1px solid var(--color-border-primary, #e1e4e8);
   background-color: var(--color-background-primary, #ffffff);
