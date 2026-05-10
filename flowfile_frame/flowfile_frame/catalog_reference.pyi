@@ -7,7 +7,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas.catalog_schema import CatalogTableOut
 from flowfile_frame.flow_frame import FlowFrame
 
-WriteMode: TypeAlias = Literal['overwrite', 'error', 'append', 'upsert', 'update', 'delete']
+WriteMode: TypeAlias = Literal['overwrite', 'error', 'append', 'upsert', 'update', 'delete', 'virtual']
 
 class CatalogReference:
     name: str

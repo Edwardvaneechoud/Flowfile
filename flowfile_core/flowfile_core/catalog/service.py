@@ -415,6 +415,10 @@ class CatalogService:
         """Ensure the ``General > Local Flows`` namespace exists, creating it if missing."""
         return self._flows.ensure_local_flows_namespace()
 
+    def ensure_python_editor_flows_namespace(self) -> CatalogNamespace | None:
+        """Ensure the ``General > Python Editor`` namespace exists, creating it if missing."""
+        return self._flows.ensure_python_editor_flows_namespace()
+
     def resolve_registration_id(self, flow_path: str) -> int | None:
         """Look up the registration ID for a flow by its file path."""
         return self._flows.resolve_registration_id(flow_path)
