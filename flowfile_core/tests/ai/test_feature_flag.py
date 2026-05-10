@@ -184,16 +184,6 @@ def test_env_var_parsing(monkeypatch: pytest.MonkeyPatch, env_value: str, expect
         core_settings.FEATURE_FLAG_AI.set(True)
 
 
-def test_env_var_default_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Plan §10: ``FEATURE_FLAG_AI=false`` is the Phase 0 ship default."""
-    monkeypatch.delenv("FEATURE_FLAG_AI", raising=False)
-    importlib.reload(core_settings)
-    try:
-        assert bool(core_settings.FEATURE_FLAG_AI) is False
-    finally:
-        core_settings.FEATURE_FLAG_AI.set(True)
-
-
 def test_authenticated_user_sees_503_when_flag_off(flag_off: None) -> None:
     """End-user contract: a user who is logged in (so the auth dep passes)
     receives the AI-disabled 503 — not a generic 401 — when the flag is off.
@@ -227,8 +217,10 @@ def test_authenticated_user_sees_503_when_flag_off(flag_off: None) -> None:
 
 
 def test_no_litellm_pulled_in_by_feature_flag() -> None:
-    """``feature_flag`` must not transitively import litellm — it has no provider
-    work to do, and Phase 0 routes must boot fast even when AI is off."""
+    """``feature_flag`` must not transitively import litellm — it has no
+    provider work to do, and the gate module is on the import path of every
+    ``/ai/*`` route, so eager-importing litellm here would slow boot for
+    every request."""
     import sys
 
     # Wipe any cached imports.

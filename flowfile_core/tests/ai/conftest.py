@@ -1,10 +1,11 @@
-"""Shared fixtures for the AI test suite. introduces a process-wide ``FEATURE_FLAG_AI`` kill switch. In production
-the flag ships off through Phase 0, so unit tests must explicitly opt in to
-exercise the live ``/ai/*`` router. This autouse fixture flips the flag on
-for every test in ``flowfile_core/tests/ai/`` so workstream suites (W10
-skeleton, providers, BYOK, streaming, audit) see the AI
-subsystem as enabled. ``test_feature_flag.py`` opts back out of this default
-when asserting the disabled branch.
+"""Shared fixtures for the AI test suite. ``FEATURE_FLAG_AI`` ships on by
+default, but tests in this directory may flip it off via the ``flag_off``
+fixture or rebuild the settings module with the env var unset. This autouse
+fixture restores the on-state at the start of every test so suites that
+depend on the live ``/ai/*`` router (W10 skeleton, providers, BYOK,
+streaming, audit) see the AI subsystem as enabled regardless of what the
+prior test left behind. ``test_feature_flag.py`` opts back out of this
+default when asserting the disabled branch.
 """
 
 from __future__ import annotations

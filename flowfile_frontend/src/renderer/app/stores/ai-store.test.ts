@@ -1,12 +1,3 @@
-// Unit tests for the chat → agent auto-promotion routing in `ai-store`.
-//
-// The store wraps three external surfaces:
-//   - `services/aiStreamClient` for `streamChat` + `routeMessage`.
-//   - `api/ai.api` for the BYOK provider listing + AiDisabledError.
-//   - `useAiAgentStore` for the agent-side dispatch.
-// All three are mocked at import time so the tests don't reach the
-// network or hit a real Pinia agent store. The same approach as
-// ai-agent-store.test.ts.
 
 import { setActivePinia, createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -54,6 +45,37 @@ const mockSymbols = vi.hoisted(() => {
     persistAiState: vi.fn(),
     clearPersistedAiState: vi.fn(),
   };
+});
+
+vi.mock("../services/axios.config", () => {
+  const axiosStub = {
+    defaults: {},
+    interceptors: {
+      request: { use: vi.fn() },
+      response: { use: vi.fn() },
+    },
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+    patch: vi.fn(),
+  };
+  return { default: axiosStub };
+});
+
+vi.mock("../services/auth.service", () => {
+  const stub = {
+    getToken: vi.fn(async () => null),
+    logout: vi.fn(),
+    isInElectronMode: () => false,
+    setModeFromBackend: vi.fn(),
+    initialize: vi.fn(async () => false),
+    hasValidToken: () => false,
+    requiresLogin: () => false,
+    isAuthenticated: () => false,
+    getCurrentUser: vi.fn(async () => null),
+  };
+  return { default: stub, authService: stub };
 });
 
 vi.mock("../services/aiStreamClient", () => ({

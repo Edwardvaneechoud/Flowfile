@@ -6,8 +6,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  AGENT_PERSISTENCE_KEY,
   MAX_PERSISTED_AGENT_EVENTS,
+  agentPersistenceKey,
   clearPersistedAgentState,
   loadPersistedAgentState,
   persistAgentState,
@@ -107,7 +107,7 @@ describe("ai-agent-store-persistence", () => {
   it("drops malformed events without crashing", () => {
     const storage = new MockStorage();
     storage.setItem(
-      AGENT_PERSISTENCE_KEY,
+      agentPersistenceKey(null),
       JSON.stringify({
         events: [
           { kind: "thinking", payload: { text: "ok" }, at: 1 },
@@ -124,10 +124,10 @@ describe("ai-agent-store-persistence", () => {
 
   it("recovers from corrupt JSON by removing the bad entry", () => {
     const storage = new MockStorage();
-    storage.setItem(AGENT_PERSISTENCE_KEY, "{not json");
+    storage.setItem(agentPersistenceKey(null), "{not json");
     const loaded = loadPersistedAgentState(storage);
     expect(loaded.events).toEqual([]);
-    expect(storage.getItem(AGENT_PERSISTENCE_KEY)).toBeNull();
+    expect(storage.getItem(agentPersistenceKey(null))).toBeNull();
   });
 
   it("caps events at MAX_PERSISTED_AGENT_EVENTS (tail-preserving)", () => {
@@ -155,7 +155,7 @@ describe("ai-agent-store-persistence", () => {
   it("sanitises driftDetail nodeTypes (string keys → numeric)", () => {
     const storage = new MockStorage();
     storage.setItem(
-      AGENT_PERSISTENCE_KEY,
+      agentPersistenceKey(null),
       JSON.stringify({
         driftDetail: {
           missingNodeIds: [3],
@@ -174,8 +174,8 @@ describe("ai-agent-store-persistence", () => {
   it("clearPersistedAgentState wipes the entry", () => {
     const storage = new MockStorage();
     persistAgentState(minimalState({ currentSessionId: "x" }), storage);
-    expect(storage.getItem(AGENT_PERSISTENCE_KEY)).not.toBeNull();
+    expect(storage.getItem(agentPersistenceKey(null))).not.toBeNull();
     clearPersistedAgentState(storage);
-    expect(storage.getItem(AGENT_PERSISTENCE_KEY)).toBeNull();
+    expect(storage.getItem(agentPersistenceKey(null))).toBeNull();
   });
 });
