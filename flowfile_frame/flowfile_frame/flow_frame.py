@@ -90,10 +90,16 @@ def _try_translate_flowfile_formulas(
         try:
             expr = eval(generated, {"__builtins__": {}}, eval_namespace)  # noqa: S307
         except Exception:
-            logger.debug("eval failed for generated code %r (formula %r); falling back", generated, formula, exc_info=True)
+            logger.debug(
+                "eval failed for generated code %r (formula %r); falling back",
+                generated, formula, exc_info=True,
+            )
             return None
         if not isinstance(expr, Expr):
-            logger.debug("Generated code %r produced non-Expr %r (formula %r); falling back", generated, type(expr), formula)
+            logger.debug(
+                "Generated code %r produced non-Expr %r (formula %r); falling back",
+                generated, type(expr), formula,
+            )
             return None
         expressions.append(expr.alias(output_name))
     return expressions
