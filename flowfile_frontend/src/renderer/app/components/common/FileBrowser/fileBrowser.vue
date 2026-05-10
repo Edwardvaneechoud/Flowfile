@@ -91,7 +91,7 @@
               'is-directory': file.is_directory,
             }"
             @click.stop="handleSingleClick(file)"
-            @dblclick="handleDoubleClick(file)"
+            @dblclick.stop="handleDoubleClick(file)"
           >
             <div class="file-item-content">
               <div class="file-icon-wrapper">
