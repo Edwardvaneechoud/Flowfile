@@ -1123,7 +1123,6 @@ export const useAiStore = defineStore("ai", () => {
             onChunk: (delta) => {
               buffer += delta;
             },
-            onDone: () => {},
             onError: () => {
               stopped = true;
             },
