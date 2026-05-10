@@ -1036,3 +1036,37 @@ class TestHandleVirtualTableWrite:
             # Should still be only one virtual table (updated, not duplicated)
             assert len(tables) == 1
             assert tables[0].id == original_id
+
+    def test_virtual_write_auto_registers_python_flow(self, tmp_path):
+        """Virtual write on an unregistered flow should auto-register it under Python Editor."""
+        ns_id = _create_namespace()
+        graph = _create_graph(source_registration_id=None)
+        # Give the flow a writable yaml path so save_flow succeeds during auto-register.
+        graph.flow_settings.path = str(tmp_path / "auto_reg.yaml")
+
+        _add_manual_input(graph, SAMPLE_DATA, node_id=1)
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
+        graph.add_node_promise(promise)
+        writer = input_schema.NodeCatalogWriter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name="auto_registered_vt",
+                namespace_id=ns_id,
+                write_mode="virtual",
+            ),
+            user_id=1,
+        )
+        graph.add_catalog_writer(writer)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+
+        _run_graph(graph)
+
+        assert graph._flow_settings.source_registration_id is not None
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            tables = repo.list_tables(namespace_id=ns_id)
+            assert len(tables) == 1
+            assert tables[0].name == "auto_registered_vt"
+            assert tables[0].table_type == "virtual"

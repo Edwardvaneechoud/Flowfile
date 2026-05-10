@@ -524,8 +524,9 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
     )
 
 
-def from_raw_data(raw_data: input_schema.RawData, *, flow_graph: FlowGraph = None,
-                  description: str = None) -> FlowFrame:
+def from_raw_data(
+    raw_data: input_schema.RawData, *, flow_graph: FlowGraph = None, description: str = None
+) -> FlowFrame:
     """Create a FlowFrame from a RawData object.
 
     Args:
@@ -708,6 +709,7 @@ def scan_parquet_from_cloud_storage(
     connection_name: str | None = None,
     scan_mode: Literal["single_file", "directory", None] = None,
     description: str | None = None,
+    output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
 
@@ -729,6 +731,7 @@ def scan_parquet_from_cloud_storage(
         ),
         user_id=get_current_user_id(),
         description=description,
+        output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(
@@ -745,6 +748,7 @@ def scan_csv_from_cloud_storage(
     delimiter: str = ";",
     has_header: bool | None = True,
     encoding: CsvEncoding | None = "utf8",
+    output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
 
@@ -770,6 +774,7 @@ def scan_csv_from_cloud_storage(
             file_format="csv",
         ),
         user_id=get_current_user_id(),
+        output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(
@@ -778,7 +783,12 @@ def scan_csv_from_cloud_storage(
 
 
 def scan_delta(
-    source: str, *, flow_graph: FlowGraph | None = None, connection_name: str | None = None, version: int = None
+    source: str,
+    *,
+    flow_graph: FlowGraph | None = None,
+    connection_name: str | None = None,
+    version: int = None,
+    output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
     if flow_graph is None:
@@ -791,6 +801,7 @@ def scan_delta(
             resource_path=source, connection_name=connection_name, file_format="delta", delta_version=version
         ),
         user_id=get_current_user_id(),
+        output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(
@@ -804,6 +815,7 @@ def scan_json_from_cloud_storage(
     flow_graph: FlowGraph | None = None,
     connection_name: str | None = None,
     scan_mode: Literal["single_file", "directory", None] = None,
+    output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
 
@@ -823,6 +835,7 @@ def scan_json_from_cloud_storage(
             resource_path=source, scan_mode=scan_mode, connection_name=connection_name, file_format="json"
         ),
         user_id=get_current_user_id(),
+        output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(
