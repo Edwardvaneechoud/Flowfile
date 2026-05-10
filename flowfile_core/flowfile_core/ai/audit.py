@@ -176,7 +176,11 @@ def query_events(
             q = q.filter(AiAuditEvent.session_id == session_id)
         if tool_name is not None:
             q = q.filter(AiAuditEvent.tool_name == tool_name)
-        rows = q.order_by(AiAuditEvent.created_at.desc()).limit(limit).all()
+        rows = (
+            q.order_by(AiAuditEvent.created_at.desc(), AiAuditEvent.id.desc())
+            .limit(limit)
+            .all()
+        )
         # Detach so callers can use the rows after the session closes.
         for row in rows:
             session.expunge(row)

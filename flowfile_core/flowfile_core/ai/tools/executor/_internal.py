@@ -176,6 +176,13 @@ class ToolExecutionResult(BaseModel):
     predicted_output_schema: list[dict[str, Any]] | None = None
     refusal_reason: safety.RefusalReason | None = None
     refusal_detail: str | None = None
+    # Compact 1-2 sentence variant of ``refusal_detail`` for the LLM-facing
+    # tool-message reply. The rich ``refusal_detail`` is kept for audit
+    # rows and human-readable UI surfaces; small models drown in the
+    # 8-line meta-commentary when it gets re-fed on every retry. When
+    # ``None``, the planner falls back to ``refusal_detail`` (existing
+    # behaviour). See ``agents/planner/llm_replies.py``.
+    refusal_detail_short: str | None = None
     warnings: list[str] = Field(default_factory=list)
     audit_id: int | None = None
     executed_args: dict[str, Any] | None = None
@@ -245,6 +252,7 @@ def _reject_and_audit(
     flow_id: int,
     refusal_reason: safety.RefusalReason | None,
     refusal_detail: str,
+    refusal_detail_short: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> ToolExecutionResult:
     audit_row = _record_event(
@@ -261,6 +269,7 @@ def _reject_and_audit(
         tool_name=tool_name,
         refusal_reason=refusal_reason,
         refusal_detail=refusal_detail,
+        refusal_detail_short=refusal_detail_short,
         audit_id=audit_row.id if audit_row is not None else None,
         executed_args=tool_args,
         extra=extra or {},

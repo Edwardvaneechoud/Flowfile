@@ -9,10 +9,12 @@ priorities to the LLM.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from flowfile_core.ai import sessions
 from flowfile_core.ai.providers.base import ToolCall
+from flowfile_core.ai.tools.classification import classify_node_type
 from flowfile_core.ai.tools.executor import InsertionContext
 
 from ._internal import (
@@ -23,6 +25,8 @@ from ._internal import (
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
+
+logger = logging.getLogger(__name__)
 
 
 def _allocate_node_id(flow: FlowGraph, session: sessions.AgentSession) -> int:
@@ -133,11 +137,30 @@ def _resolve_insertion_context(
     7. Empty (truly cold flow — no nodes, OR all live nodes are terminals).
        The executor handles this (sources don't need an upstream;
        most node types refuse).
+
+    Source-only short-circuit: when ``tc.name`` is ``add_<source-only-type>``
+    (manual_input / read / database_reader / cloud_storage_reader /
+    catalog_reader / kafka_source / google_analytics_reader / external_source)
+    the resolver bypasses every tier and returns empty upstream / right_input.
+    Source nodes have no input port; previously Tier 6 happily attached
+    ``add_manual_input`` to the most-recent live node, the executor wired
+    that in ``_apply_add_node``, and the user saw "Attaching to node N" for
+    a node type that can't accept inputs. Stripping is silent because the
+    LLM emitting an upstream for a source is a recoverable wrong shape —
+    per the "normalize at executor seam" rule. The symmetric outbound case
+    (LLM emitting a follow-up ``connect`` from a freshly-staged source) is
+    backstopped by ``unrequested_wire_to_live`` in
+    ``tools/executor/handlers/connections.py``.
     """
     args: dict[str, Any] = tc.arguments or {}
 
     upstream_ids: list[int] = []
     ambiguous_detail: str | None = None
+
+    node_type: str | None = None
+    if tc.name and tc.name.startswith(_ADD_PREFIX):
+        node_type = tc.name.removeprefix(_ADD_PREFIX)
+    is_source_only = bool(node_type) and classify_node_type(node_type) == "source"
 
     # Tier 0 — staged stage 3: session state is canonical. The LLM at
     # ``fill_settings`` doesn't see the upstream fields in its tool
@@ -156,61 +179,77 @@ def _resolve_insertion_context(
                 if isinstance(uid, int):
                     upstream_ids.append(uid)
 
-    # Tier 2 — settings-field dependency hint.
-    if not upstream_ids:
-        settings_dep = _read_settings_dependency_field(args)
-        if settings_dep is not None:
-            upstream_ids = [settings_dep]
+    if is_source_only:
+        # Strip everything: source-only nodes don't take an upstream. Any
+        # value here is either an LLM hallucination (Tier 1) or a stale
+        # session-canonical pick (Tier 0); both should be silently coerced.
+        if upstream_ids:
+            logger.debug(
+                "stripping upstream_node_ids=%s from source-only add %s "
+                "(source nodes have no input port)",
+                upstream_ids,
+                node_type,
+            )
+            upstream_ids = []
+    else:
+        # Tier 2 — settings-field dependency hint.
+        if not upstream_ids:
+            settings_dep = _read_settings_dependency_field(args)
+            if settings_dep is not None:
+                upstream_ids = [settings_dep]
 
-    # Tier 3 — most-recent in-batch staged add_*.
-    if not upstream_ids:
-        for entry in reversed(session.staged_results):
-            if not entry.tool_name.startswith(_ADD_PREFIX):
-                continue
-            payload = entry.staged_node_payload if isinstance(entry.staged_node_payload, dict) else {}
-            settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
-            nid = settings.get("node_id") if isinstance(settings, dict) else None
-            if isinstance(nid, int):
-                upstream_ids = [nid]
-                break
-
-    # Tier 4 — session selection.
-    if not upstream_ids and session.selected_node_ids:
-        upstream_ids = [uid for uid in session.selected_node_ids if isinstance(uid, int)]
-
-    # Tier 5 — session pinned (@-mention).
-    if not upstream_ids and session.pinned_node_ids:
-        upstream_ids = [uid for uid in session.pinned_node_ids if isinstance(uid, int)]
-
-    # Tiers 6-7 — live-graph fallback. Tier 6 walks live nodes in reverse
-    # and falls back to the most-recently-added node whose template advertises
-    # an output port (``NodeTemplate.output > 0``). Sink types (``output=0``
-    # — explore_data, output, database_writer, cloud_storage_writer,
-    # catalog_writer) are skipped: attaching a downstream node to a sink is
-    # always wrong (the sink consumes data, doesn't produce it). Tier 7
-    # is the truly-empty case (cold flow OR all live nodes are sinks).
-    # Selection / pin tiers above still take precedence when set; LLM override
-    # + settings-field hint always win.
-    if not upstream_ids:
-        live_nodes = flow.nodes
-        if live_nodes:
-            for candidate in reversed(live_nodes):
-                template = getattr(candidate, "node_template", None)
-                # ``NodeTemplate.output`` is an int port count. Default to 1
-                # when the template is missing or the attribute isn't set —
-                # treating an unknown node type as non-terminal preserves the
-                # pre-fix behaviour for any node missing a registered template.
-                if template is not None and getattr(template, "output", 1) == 0:
+        # Tier 3 — most-recent in-batch staged add_*.
+        if not upstream_ids:
+            for entry in reversed(session.staged_results):
+                if not entry.tool_name.startswith(_ADD_PREFIX):
                     continue
-                try:
-                    upstream_ids = [int(candidate.node_id)]
+                payload = entry.staged_node_payload if isinstance(entry.staged_node_payload, dict) else {}
+                settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+                nid = settings.get("node_id") if isinstance(settings, dict) else None
+                if isinstance(nid, int):
+                    upstream_ids = [nid]
                     break
-                except (TypeError, ValueError, AttributeError):
-                    continue
-        # else / no non-sink found: Tier 7 — leave upstream_ids empty.
+
+        # Tier 4 — session selection.
+        if not upstream_ids and session.selected_node_ids:
+            upstream_ids = [uid for uid in session.selected_node_ids if isinstance(uid, int)]
+
+        # Tier 5 — session pinned (@-mention).
+        if not upstream_ids and session.pinned_node_ids:
+            upstream_ids = [uid for uid in session.pinned_node_ids if isinstance(uid, int)]
+
+        # Tiers 6-7 — live-graph fallback. Tier 6 walks live nodes in reverse
+        # and falls back to the most-recently-added node whose template advertises
+        # an output port (``NodeTemplate.output > 0``). Sink types (``output=0``
+        # — explore_data, output, database_writer, cloud_storage_writer,
+        # catalog_writer) are skipped: attaching a downstream node to a sink is
+        # always wrong (the sink consumes data, doesn't produce it). Tier 7
+        # is the truly-empty case (cold flow OR all live nodes are sinks).
+        # Selection / pin tiers above still take precedence when set; LLM override
+        # + settings-field hint always win.
+        if not upstream_ids:
+            live_nodes = flow.nodes
+            if live_nodes:
+                for candidate in reversed(live_nodes):
+                    template = getattr(candidate, "node_template", None)
+                    # ``NodeTemplate.output`` is an int port count. Default to 1
+                    # when the template is missing or the attribute isn't set —
+                    # treating an unknown node type as non-terminal preserves the
+                    # pre-fix behaviour for any node missing a registered template.
+                    if template is not None and getattr(template, "output", 1) == 0:
+                        continue
+                    try:
+                        upstream_ids = [int(candidate.node_id)]
+                        break
+                    except (TypeError, ValueError, AttributeError):
+                        continue
+            # else / no non-sink found: Tier 7 — leave upstream_ids empty.
 
     # At fill_settings, right input is also session-canonical.
-    if session.surface in _STAGED_STATE_MACHINE_SURFACES and session.stage == "fill_settings":
+    if is_source_only:
+        # Source-only nodes have no right input either; strip silently.
+        right_input_node_id = None
+    elif session.surface in _STAGED_STATE_MACHINE_SURFACES and session.stage == "fill_settings":
         right_input_node_id = session.picked_right_input_id
     else:
         raw_right = args.get("right_input_node_id")

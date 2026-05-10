@@ -75,8 +75,15 @@ def _summarise_result_for_llm(result: ToolExecutionResult) -> str:
     if result.status == "rejected":
         if result.refusal_reason:
             parts.append(f"refusal: {result.refusal_reason}")
-        if result.refusal_detail:
-            parts.append(f"detail: {result.refusal_detail}")
+        # Prefer the compact LLM-facing variant when present. Smaller
+        # models drown in the verbose human-facing detail (the
+        # ``unrequested_wire_to_live`` block is 8 lines of meta-
+        # commentary), and that wall of text gets re-fed on every
+        # retry. Audit row + frontend still get the rich detail —
+        # only the LLM tool-message reply is compacted here.
+        detail = result.refusal_detail_short or result.refusal_detail
+        if detail:
+            parts.append(f"detail: {detail}")
     if result.warnings:
         parts.append("warnings: " + "; ".join(result.warnings))
     if result.predicted_output_schema:

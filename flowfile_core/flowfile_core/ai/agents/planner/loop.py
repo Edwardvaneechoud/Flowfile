@@ -347,6 +347,12 @@ async def _run_planner_loop(
     sched = scheduler or default_scheduler()
     dry_run_cache = DryRunCache()
     retries_for_step = 0
+    # Tracks whether a tool call was rejected somewhere in the current
+    # step. When True, a subsequent prose-only round means the model is
+    # giving up mid-recovery — we route through the retry budget instead
+    # of letting the loop break silently (the classify-stage break path
+    # at line ~562 was previously masking exhausted retries).
+    step_had_rejection = False
 
     if not session.messages:
         session.messages = _build_initial_messages(flow, session)
@@ -497,7 +503,14 @@ async def _run_planner_loop(
         # said. When tool calls follow, the same text rides on each
         # ``tool_call_*`` event as ``rationale``, so emitting both would
         # render the same sentence twice in the chat trail.
-        if assistant_text and not tool_calls:
+        # Suppress the thinking event when this step has had a prior
+        # rejection: prose-only after a refusal is the model's internal
+        # self-correction ("I see the issue. I need to be more
+        # precise…"), not a user-facing message. The text is still kept
+        # in ``session.last_assistant_text`` (assigned in the provider
+        # call path above), so terminal question detection at loop end
+        # still works if the loop eventually exits on this prose.
+        if assistant_text and not tool_calls and not step_had_rejection:
             yield PlannerEvent(event="thinking", payload={"text": assistant_text})
 
         if not tool_calls:
@@ -509,44 +522,62 @@ async def _run_planner_loop(
             # stage": append a synthetic reminder so the next round
             # explicitly tells the LLM what's expected, and route
             # through the existing ``max_retries_per_step`` budget.
-            # Classify stage stays on the legacy break path — there an
-            # empty ``tool_calls`` is a valid termination signal
-            # (op_kind="other" handled, or LLM has nothing more to add).
-            if (
-                session.surface in _STAGED_STATE_MACHINE_SURFACES
-                and session.stage in _MANDATORY_TOOL_CALL_STAGES
+            # Classify stage with NO prior rejection in this step stays
+            # on the legacy break path — there an empty ``tool_calls``
+            # is a valid termination signal (op_kind="other" handled,
+            # or LLM has nothing more to add). Classify with a prior
+            # rejection means the model gave up mid-recovery; route
+            # through the retry budget instead of breaking silently.
+            if session.surface in _STAGED_STATE_MACHINE_SURFACES and (
+                session.stage in _MANDATORY_TOOL_CALL_STAGES
+                or step_had_rejection
             ):
                 retries_for_step += 1
                 if retries_for_step >= max_retries_per_step:
                     session.status = "failed"
                     session.touch()
+                    if step_had_rejection:
+                        err_message = (
+                            f"agent_staged stage={session.stage}: prose-only "
+                            f"response after a rejection in this step; budget "
+                            f"of {max_retries_per_step} attempts exhausted"
+                        )
+                    else:
+                        err_message = (
+                            f"agent_staged stage={session.stage}: LLM emitted "
+                            f"prose with no tool_call across "
+                            f"{max_retries_per_step} consecutive rounds; check "
+                            "the prompt log for the model's response shape"
+                        )
                     yield PlannerEvent(
                         event="error",
-                        payload={
-                            "message": (
-                                f"agent_staged stage={session.stage}: LLM emitted "
-                                f"prose with no tool_call across "
-                                f"{max_retries_per_step} consecutive rounds; check "
-                                "the prompt log for the model's response shape"
-                            ),
-                        },
+                        payload={"message": err_message},
                     )
                     return
-                expected_tool = next(
-                    iter(t.name for t in tool_catalog), "the available tool"
-                )
-                session.messages.append(
-                    Message(
-                        role="user",
-                        content=(
-                            f"Your previous response was prose only — no function "
-                            f"call. You MUST call ``{expected_tool}`` via the "
-                            f"function-calling API to advance. Do not write the "
-                            f"call as text in your response; emit a real tool "
-                            f"call with the correct arguments."
-                        ),
+                if step_had_rejection:
+                    # Mid-recovery prose: point the model at the rejected
+                    # op and force a binary decision (re-emit corrected,
+                    # OR end the turn cleanly via classify_intent).
+                    reminder = (
+                        "A tool call earlier in this step was rejected and "
+                        "your follow-up was prose-only. Either emit a "
+                        "corrected tool call now, or call "
+                        "``classify_intent`` with ``op_kind=\"other\"`` to "
+                        "end the turn. Do not narrate apologies; just "
+                        "decide and emit."
                     )
-                )
+                else:
+                    expected_tool = next(
+                        iter(t.name for t in tool_catalog), "the available tool"
+                    )
+                    reminder = (
+                        f"Your previous response was prose only — no function "
+                        f"call. You MUST call ``{expected_tool}`` via the "
+                        f"function-calling API to advance. Do not write the "
+                        f"call as text in your response; emit a real tool "
+                        f"call with the correct arguments."
+                    )
+                session.messages.append(Message(role="user", content=reminder))
                 yield PlannerEvent(
                     event="retry",
                     payload={
@@ -557,8 +588,8 @@ async def _run_planner_loop(
                 continue
             # All other stages / surfaces — preserve the existing
             # termination path so legacy ``agent`` / ``agent_complex``
-            # and the ``classify`` stage of ``agent_staged`` keep
-            # their current "LLM is done" semantics.
+            # and the ``classify`` stage of ``agent_staged`` (with no
+            # prior rejection) keep their current "LLM is done" semantics.
             break
 
         any_succeeded_this_round = False
@@ -863,6 +894,7 @@ async def _run_planner_loop(
             session.messages.append(tool_msg)
 
             if result.status == "rejected":
+                step_had_rejection = True
                 yield PlannerEvent(
                     event="tool_call_rejected",
                     payload={
@@ -1159,26 +1191,56 @@ async def _run_planner_loop(
                 node_type = result.extra.get("node_type")
                 rationale = str(result.extra.get("rationale") or "")
                 prev_stage = session.stage
+                skipped_pick_upstream = False
                 if isinstance(node_type, str):
                     session.picked_node_type = node_type
-                    session.stage = "pick_upstream"
+                    # Source-only nodes have no input port — skip the
+                    # pick_upstream LLM call entirely. Without this, the
+                    # pick_upstream stage routinely picks a live node
+                    # (often the one mentioned in chat history), the
+                    # frontend renders "Attaching to node N" for a node
+                    # type that can't accept inputs, and the resolver
+                    # has to silently strip the bogus pick downstream.
+                    # Skipping here makes the chat trail truthful
+                    # ("Filling settings…") and saves an LLM round.
+                    if classify_node_type(node_type) == "source":
+                        session.picked_upstream_ids = []
+                        session.picked_right_input_id = None
+                        session.stage = "fill_settings"
+                        skipped_pick_upstream = True
+                    else:
+                        session.stage = "pick_upstream"
                 _log_stage_transition(
                     session,
                     from_stage=prev_stage,
                     to_stage=session.stage,
                     tool_name=tc.name,
                     node_type=node_type if isinstance(node_type, str) else None,
+                    upstream_node_ids=(
+                        list(session.picked_upstream_ids) if skipped_pick_upstream else None
+                    ),
                 )
+                stage_payload: dict[str, Any] = {
+                    "from": prev_stage,
+                    "to": session.stage,
+                    "picked_node_type": node_type,
+                    "rationale": rationale,
+                    "session_id": session.session_id,
+                    "op_kind_meta": "meta",
+                }
+                if skipped_pick_upstream:
+                    # Carry the empty upstream list explicitly so the
+                    # frontend (AiAgentEvent.vue:194-197) renders
+                    # "Filling settings…" rather than the default
+                    # missing-payload branch happens to also do.
+                    # Defensive — the frontend coalesces missing to []
+                    # already, but being explicit keeps the audit log
+                    # readable.
+                    stage_payload["picked_upstream_ids"] = []
+                    stage_payload["right_input_node_id"] = None
                 yield PlannerEvent(
                     event="stage_advanced",
-                    payload={
-                        "from": prev_stage,
-                        "to": session.stage,
-                        "picked_node_type": node_type,
-                        "rationale": rationale,
-                        "session_id": session.session_id,
-                        "op_kind_meta": "meta",
-                    },
+                    payload=stage_payload,
                 )
                 any_succeeded_this_round = True
                 continue
@@ -1305,6 +1367,7 @@ async def _run_planner_loop(
 
         if any_succeeded_this_round:
             retries_for_step = 0
+            step_had_rejection = False
         else:
             retries_for_step += 1
             if retries_for_step >= max_retries_per_step:

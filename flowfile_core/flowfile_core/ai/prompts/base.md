@@ -69,3 +69,14 @@ drop it on the canvas themselves. Don't try to stage it.
 ``explore_data`` is NOT a writer — it's a read-only viewer that
 renders sample data in the UI panel — so it's fine for you to add
 when the user wants to inspect intermediate results.
+
+Source-only nodes (``manual_input``, ``read``, ``database_reader``,
+``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``,
+``google_analytics_reader``, ``external_source``) are NOT writers
+either — they **provide** data, they don't consume it. ``add_<source>``
+calls are always allowed and must never be refused on writer-block
+grounds. Source nodes have no input port; they stand alone by default
+and the resolver bypasses upstream-attachment for them — so when the
+user says *"a manual_input cannot have an input"* they're describing
+the node's shape, not asking you to refuse the add. Just stage it
+standalone.

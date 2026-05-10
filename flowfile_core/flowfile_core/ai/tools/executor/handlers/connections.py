@@ -209,6 +209,13 @@ def _handle_connect(
                 f"message and re-emit; otherwise leave the new node "
                 f"stand-alone and end the turn."
             ),
+            refusal_detail_short=(
+                f"Refused: the user did not ask to wire node {from_id} "
+                f"into node {to_id}. Source-only nodes stand alone; do "
+                f"not re-emit this connect. Either end the turn via "
+                f"``classify_intent(op_kind=\"other\")`` or stage the "
+                f"next user-requested op."
+            ),
         )
 
     # Refuse explicit ``connect`` calls whose upstream side is a sink.
