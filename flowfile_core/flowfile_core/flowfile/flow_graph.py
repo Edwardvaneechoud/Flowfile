@@ -664,8 +664,10 @@ def _handle_virtual_table_write(
                 user_id=node_catalog_writer.user_id,
             )
         except Exception:
+            import traceback
+
             graph.flow_logger.warning(
-                "Auto-registration for virtual catalog write failed", exc_info=True
+                f"Auto-registration for virtual catalog write failed:\n{traceback.format_exc()}"
             )
             reg_id = None
     if not reg_id:
