@@ -948,8 +948,11 @@ const showStandaloneThinking = computed<boolean>(() => {
     <div v-else-if="!aiStore.hasConfiguredProvider" class="ai-assistant__notice">
       <p>No providers configured yet.</p>
       <p class="ai-assistant__notice-hint">
-        Open <strong>Connections → AI Providers</strong> and add an API key (or run a local Ollama
-        server) to start chatting.
+        Open
+        <button type="button" class="ai-assistant__notice-link" @click="handleManageProviders">
+          Connections → AI Providers
+        </button>
+        and add an API key (or run a local Ollama server) to start chatting.
       </p>
     </div>
 
@@ -1440,6 +1443,23 @@ const showStandaloneThinking = computed<boolean>(() => {
   margin-top: 6px;
   color: var(--color-text-muted, #6a737d);
   font-size: 12px;
+}
+
+.ai-assistant__notice-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-primary, #2563eb);
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.ai-assistant__notice-link:hover,
+.ai-assistant__notice-link:focus-visible {
+  color: var(--color-primary-hover, #1d4ed8);
+  outline: none;
 }
 
 .ai-assistant__error {

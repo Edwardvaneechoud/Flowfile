@@ -96,5 +96,6 @@ test-embed
 error-linux
 .claude/scheduled_tasks.lock
 
-
-.claude
+# Repo-root local Claude state only — leave subtree configs
+# (e.g. plugin/agent dirs nested under packages) tracked.
+/.claude/

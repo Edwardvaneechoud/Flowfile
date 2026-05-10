@@ -28,6 +28,10 @@ Boundary discipline:
 * ``byok.get_configured_provider`` is **not** auto-wrapped — opt-in
   primitive. Callers compose ``with_provider_retry(provider, ...)``.
 * No persistence across restarts; in-memory deques only.
+* State is **per-process**, not shared across workers — under
+  gunicorn -w N (or any multi-worker deploy) the effective aggregate
+  is ≈ N × the configured RPM / RPD. Pin to a single worker or scale
+  the configured limit down by the worker count.
 * Per-provider granularity (not per-(provider, model)) — surface →
   model fanout is a known limitation.
 """

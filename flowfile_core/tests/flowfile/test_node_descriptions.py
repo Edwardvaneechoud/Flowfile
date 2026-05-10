@@ -355,6 +355,7 @@ class TestNodeManualInputDescription:
         assert "name" in desc
 
     def test_manual_input_empty(self):
+        breakpoint()
         node = input_schema.NodeManualInput(**BASE_KWARGS, raw_data_format=None)
         assert node.get_default_description() == ""
 

@@ -281,11 +281,20 @@ const initialSetup = async () => {
     const [nodes, flows] = await Promise.all([fetchNodes(), fetchActiveFlows()]);
 
     nodeOptions.value = nodes;
-    if (flows.length > 0 && (!nodeStore.flow_id || nodeStore.flow_id <= 0)) {
+    const persistedFlowId = nodeStore.flow_id;
+    const persistedIsActive =
+      persistedFlowId > 0 && flows.some((f) => f.flow_id === persistedFlowId);
+
+    if (flows.length === 0) {
+      // Drop any stale persisted ID so `hasOpenFlow` guards don't render
+      // canvas-only controls (right-cluster, undo/redo, Save) over the
+      // "No Active Flows" empty state.
+      if (persistedFlowId > 0) nodeStore.setFlowId(-1);
+    } else if (!persistedIsActive) {
       console.log("Setting initial flow ID to:", flows[0].flow_id);
       nodeStore.setFlowId(flows[0].flow_id);
-    } else if (nodeStore.flow_id && nodeStore.flow_id > 0) {
-      console.log("Using existing flow ID:", nodeStore.flow_id);
+    } else {
+      console.log("Using existing flow ID:", persistedFlowId);
     }
 
     console.log("Initial setup completed");
