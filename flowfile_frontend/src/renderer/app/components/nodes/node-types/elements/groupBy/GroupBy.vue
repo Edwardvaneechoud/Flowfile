@@ -13,8 +13,12 @@
           >
             <li
               :class="{ 'is-selected': selectedColumns.includes(col_schema.name) }"
+              draggable="true"
               @click="handleItemClick(index, col_schema.name, $event)"
               @contextmenu="openContextMenu(index, col_schema.name, $event)"
+              @dragstart="onDragStart(col_schema.name, $event)"
+              @dragover.prevent
+              @drop="onDrop(index)"
             >
               {{ col_schema.name }} ({{ col_schema.data_type }})
             </li>
@@ -43,7 +47,7 @@
 
       <div class="listbox-subtitle">Settings</div>
 
-      <div v-if="dataLoaded" class="table-wrapper">
+      <div v-if="dataLoaded" class="table-wrapper" @dragover.prevent @drop="onDropInTable">
         <table class="styled-table">
           <thead>
             <tr>
@@ -135,10 +139,46 @@ const aggOptions: (AggOption | GroupByOption)[] = [
   "concat",
 ];
 const firstSelectedIndex = ref<number | null>(null);
+const draggedColumnName = ref<string | null>(null);
 
 const groupByInput = ref<GroupByInput>({
   agg_cols: [],
 });
+
+const onDragStart = (columnName: string, event: DragEvent) => {
+  draggedColumnName.value = columnName;
+  event.dataTransfer?.setData("text/plain", columnName);
+};
+
+const onDrop = (index: number) => {
+  if (draggedColumnName.value) {
+    const colSchema = nodeData.value?.main_input?.table_schema;
+    if (colSchema) {
+      const fromIndex = colSchema.findIndex((col) => col.name === draggedColumnName.value);
+      if (fromIndex !== -1 && fromIndex !== index) {
+        const [movedColumn] = colSchema.splice(fromIndex, 1);
+        colSchema.splice(index, 0, movedColumn);
+      }
+    }
+    draggedColumnName.value = null;
+  }
+};
+
+const onDropInTable = () => {
+  if (!draggedColumnName.value) return;
+  const column = draggedColumnName.value;
+  const alreadyGroupedBy = groupByInput.value.agg_cols.some(
+    (row) => row.old_name === column && row.agg === "groupby",
+  );
+  if (!alreadyGroupedBy) {
+    groupByInput.value.agg_cols.push({
+      old_name: column,
+      agg: "groupby",
+      new_name: column,
+    });
+  }
+  draggedColumnName.value = null;
+};
 
 const openRowContextMenu = (event: MouseEvent, index: number) => {
   event.preventDefault();

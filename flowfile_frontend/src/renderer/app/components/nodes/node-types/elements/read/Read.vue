@@ -47,7 +47,12 @@
         </div>
       </div>
 
-      <el-dialog v-model="modalVisibleForOpen" title="Select a file to Read" width="70%">
+      <el-dialog
+        v-model="modalVisibleForOpen"
+        title="Select a file to Read"
+        width="70%"
+        :close-on-click-modal="false"
+      >
         <file-browser
           :allowed-file-types="['csv', 'txt', 'parquet', 'xlsx']"
           mode="open"
