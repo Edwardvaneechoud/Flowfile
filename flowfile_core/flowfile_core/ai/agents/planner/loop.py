@@ -87,6 +87,93 @@ _EMIT_PLAN_NAME = EMIT_PLAN_TOOL_NAME
 _CLASSIFY_INTENT_NAME = CLASSIFY_INTENT_TOOL_NAME
 _PICK_NODE_TYPE_NAME = PICK_NODE_TYPE_TOOL_NAME
 _VERIFY_COMPLETION_NAME = VERIFY_COMPLETION_TOOL_NAME
+
+# Wiring-intent keywords used by the source-only-add backstop. If any of
+# these appears in the user's literal request (case-insensitive), we
+# treat the user as having explicitly named integration and let the LLM's
+# classify pick stand. Otherwise the backstop forces ``op_kind="other"``
+# after a source-only add to prevent the planner from inventing a
+# connect/disconnect chain. Order doesn't matter — this is a substring
+# scan.
+_WIRING_INTENT_KEYWORDS: tuple[str, ...] = (
+    "connect",
+    "wire",
+    "join",
+    "integrate",
+    "link",
+    "attach",
+    "hook",
+    "feed into",
+    "into node",
+    "merge with",
+)
+
+
+def _last_staged_source_add(
+    session: sessions.AgentSession,
+) -> tuple[str, int] | None:
+    """Return ``(node_type, node_id)`` for the most recent staged
+    source-only add, or ``None`` if the last staged op was not a
+    source-only add.
+
+    Used by ``_should_force_other_after_source_add`` — the backstop
+    triggers only when the immediately preceding staged op was a
+    source. Once any non-source op (transformation add, connect,
+    disconnect) has been staged after the source, the user is
+    presumed to be doing multi-step work and the backstop releases.
+    """
+    if not session.staged_results:
+        return None
+    last_entry = session.staged_results[-1]
+    if not last_entry.tool_name.startswith(_ADD_PREFIX):
+        return None
+    last_node_type = last_entry.tool_name.removeprefix(_ADD_PREFIX)
+    if classify_node_type(last_node_type) != "source":
+        return None
+    last_node_id = sessions._entry_node_id(last_entry)
+    if last_node_id is None:
+        return None
+    return last_node_type, last_node_id
+
+
+def _should_force_other_after_source_add(
+    session: sessions.AgentSession,
+    op_kind: str,
+) -> bool:
+    """Backstop for the W71 v2.14 source-only stand-alone rule.
+
+    Returns True iff the planner should override the LLM's
+    ``classify_intent`` pick to ``op_kind="other"``. Triggers when:
+
+    * the LLM picked a wiring/integration op
+      (``connect`` / ``disconnect`` / ``delete``), AND
+    * the most recent staged op was a source-only add (per
+      :func:`_last_staged_source_add`), AND
+    * the user's literal prompt did not name wiring (no keyword from
+      :data:`_WIRING_INTENT_KEYWORDS`).
+
+    Why a code-level backstop on top of the prompt rule: small/cheap
+    coder models (e.g. qwen3-coder-30b) routinely pick
+    ``op_kind="connect"`` after ``add_manual_input`` even with the
+    explicit worked example in ``stage_classify.md`` (W71 v2.14). The
+    "complete the user's task" instinct dominates inverse-instruction
+    rules. Per the user's "normalize at executor seam, not in the
+    prompt" guidance, this guard is the correct layer.
+
+    The wiring-keyword check intentionally errs on the side of standalone:
+    if the user said *"add a manual_input AND join it to my customers"*,
+    the substring ``join`` lifts the backstop and the LLM's choice
+    stands. If the user said *"add a manual_input"* with nothing about
+    wiring, the backstop fires.
+    """
+    if op_kind not in ("connect", "disconnect", "delete"):
+        return False
+    if _last_staged_source_add(session) is None:
+        return False
+    user_text = (session.user_prompt or "").lower()
+    if any(kw in user_text for kw in _WIRING_INTENT_KEYWORDS):
+        return False
+    return True
 _PICK_UPSTREAM_NAME = PICK_UPSTREAM_TOOL_NAME
 
 
@@ -1086,6 +1173,58 @@ async def _run_planner_loop(
                 op_kind = result.extra.get("op_kind")
                 rationale = str(result.extra.get("rationale") or "")
                 prev_stage = session.stage
+                if isinstance(op_kind, str) and _should_force_other_after_source_add(
+                    session, op_kind
+                ):
+                    # Source-only stand-alone backstop. Override the LLM's
+                    # pick to "other" with a clean wrap-up rationale, and
+                    # append a synthetic system note so the model on the
+                    # next (terminal) round doesn't keep claiming the
+                    # connect happened. See ``_should_force_other_after_source_add``
+                    # for trigger conditions.
+                    source_info = _last_staged_source_add(session)
+                    assert source_info is not None  # guaranteed by the predicate
+                    src_node_type, src_node_id = source_info
+                    logger.info(
+                        "session=%s: forced op_kind='other' (LLM picked %s after source-only "
+                        "add %s/%s; user prompt did not name wiring)",
+                        session.session_id[:8],
+                        op_kind,
+                        src_node_type,
+                        src_node_id,
+                    )
+                    op_kind = "other"
+                    rationale = (
+                        f"Added the {src_node_type} as node {src_node_id}. "
+                        f"It stands alone — not wired into your existing flow, "
+                        f"because you didn't ask for that. If you want to "
+                        f"integrate it, just say so on the next turn (e.g. "
+                        f"\"now connect node {src_node_id} to ...\")."
+                    )
+                    # Inject a system note BEFORE the assistant terminator
+                    # round so the model knows the host overrode its pick
+                    # and shouldn't keep narrating about the connect it
+                    # asked for. Without this the model often emits a
+                    # final assistant message that still claims it
+                    # connected the source — a lie that contradicts the
+                    # diff the user is reviewing.
+                    session.messages.append(
+                        Message(
+                            role="user",
+                            content=(
+                                f"NOTE FROM HOST: Your classify pick "
+                                f"(op_kind='{result.extra.get('op_kind')}') was overridden "
+                                f"to op_kind='other' because the user's literal "
+                                f"request did not name wiring for the new "
+                                f"{src_node_type}. The new node is staged "
+                                f"standalone. Do NOT emit any further tool "
+                                f"calls. Write a brief wrap-up message that "
+                                f"acknowledges the {src_node_type} was added "
+                                f"as node {src_node_id} standalone — do NOT "
+                                f"claim any connection was made."
+                            ),
+                        )
+                    )
                 if isinstance(op_kind, str):
                     session.picked_op_kind = op_kind  # type: ignore[assignment]
                     if op_kind == "add":

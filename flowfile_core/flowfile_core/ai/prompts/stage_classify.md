@@ -100,7 +100,28 @@ is not actually applied. After the ``add``, classify ``connect``
 + ``disconnect`` for each downstream node that should consume
 from the new insertion.
 
-**Common mistake — classifying ``connect`` from a freshly-added staged source node into a pre-existing live node** (W71 v2.14): if your prior round just staged a new source-only node (``manual_input``, ``read``, ``database_reader``, ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``, ``google_analytics_reader``, ``external_source``), do NOT classify ``op_kind="connect"`` to wire that new id into a live node *unless the user explicitly named both endpoints*. The chat may suggest "connect this to your explore node" — that's the chat assistant's suggestion, NOT user intent. Re-read the user's actual message; if they didn't name the wiring, classify ``op_kind="other"`` and end the turn. The host backstops this with ``refusal: unrequested_wire_to_live`` if you reach single_stage_op anyway.
+> **Scope of the above rule:** it applies to TRANSFORMATION node
+> insertions only (``filter``, ``sort``, ``unique``, ``group_by``,
+> ``formula``, ``select``, ``join``, etc.). It does NOT apply to
+> source-only adds (``manual_input``, ``read``, ``database_reader``,
+> ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``,
+> ``google_analytics_reader``, ``external_source``). Source nodes
+> stand alone by nature — they have no input port and are not
+> "inserted between" anything. See W71 v2.14 below for the
+> source-specific rule.
+
+**Common mistake — classifying ``connect`` from a freshly-added staged source node into a pre-existing live node** (W71 v2.14): if your prior round just staged a new source-only node (``manual_input``, ``read``, ``database_reader``, ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``, ``google_analytics_reader``, ``external_source``), do NOT classify ``op_kind="connect"`` to wire that new id into a live node *unless the user explicitly named both endpoints*. The chat may suggest "connect this to your explore node" — that's the chat assistant's suggestion, NOT user intent. Re-read the user's actual message; if they didn't name the wiring, classify ``op_kind="other"`` and end the turn. The host backstops this with ``refusal: unrequested_wire_to_live`` if you reach single_stage_op anyway (note: that backstop only fires in ``agent_staged`` mode — in ``agent_live`` you are the only line of defence, so DO NOT generate the wire).
+
+**Same rule applies for ANY follow-up op after staging a source.** Do NOT classify ``connect`` / ``disconnect`` / ``delete_connection`` / ``update_node_settings`` to "integrate" the new source into the existing flow unless the user explicitly named that integration. After a successful source-only add, **the default next classify is ``op_kind="other"``**.
+
+> **Worked example — bare source add:**
+>
+> User: *"add a manual input with city data"*
+> Round 1: ``op_kind="add"`` → stage ``add_manual_input`` → success.
+> Round 2: ``op_kind="other"``. End the turn.
+>
+> ✅ **Right**: 1 op (``add_manual_input``).
+> ❌ **Wrong**: 4 ops (``add_manual_input``, ``connect 5→3``, ``delete_connection 2→3``, ``connect 3→4``) — the user did NOT ask to wire the source into the existing chain.
 
 **Common mistake — re-adding a node that's already staged**:
 if a node of the same type appears in your tool history this
