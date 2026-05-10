@@ -2,7 +2,7 @@
 
 Cases:
 
-* ``test_credentials_table_exists_after_alembic`` — Alembic migration 012
+* ``test_credentials_table_exists_after_alembic`` — Alembic migration 011
   lands the ``ai_provider_credentials`` table on a fresh DB; widens the
   expected column set with ``models``.
 * ``test_alembic_head_is_singular`` — ``alembic heads`` resolves to exactly
@@ -56,9 +56,6 @@ Cases:
   step 3 wins over step 4 when the routed model is curated.
 * ``test_get_configured_provider_models_loses_to_stored_default`` —
   ``default_model`` (step 2) still beats the curated list (steps 3+4).
-* ``test_alembic_013_upgrade_downgrade_round_trip`` — fresh sqlite; upgrade
-  to 013 adds the column, downgrade to 012 drops it; existing 012 rows
-  survive the upgrade.
 """
 
 from __future__ import annotations
@@ -728,69 +725,3 @@ def test_get_configured_provider_models_loses_to_stored_default(
         )
         get_configured_provider(db, local_user_id, "openrouter", surface="cmd_k")
         assert stub.last_kwargs["model"] == "default-stays"
-
-
-def test_alembic_013_upgrade_downgrade_round_trip(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Upgrade fresh DB to 012, insert a row, upgrade to 013, downgrade back.
-
-    Confirms the column add is reversible and that pre-existing 012 rows
-    survive the upgrade. Uses an isolated sqlite file routed through the
-    same ``get_database_url`` seam the alembic ``env.py`` reads, so the
-    URL we set is the one the migrations actually run against.
-    """
-    from alembic import command
-    from alembic.config import Config
-    from sqlalchemy import create_engine, text
-
-    db_file = tmp_path / "alembic_013.sqlite"
-    db_url = f"sqlite:///{db_file}"
-
-    # env.py reads ``shared.storage_config.get_database_url()`` to populate
-    # ``sqlalchemy.url`` regardless of what's in alembic.ini, so we patch the
-    # source rather than the config.
-    import shared.storage_config as storage_config
-
-    monkeypatch.setattr(storage_config, "get_database_url", lambda: db_url)
-
-    cfg = Config("flowfile_core/flowfile_core/alembic.ini")
-    cfg.set_main_option("script_location", "flowfile_core/flowfile_core/alembic")
-
-    # Stamp through 012 first so we can prove pre-existing rows survive.
-    command.upgrade(cfg, "012")
-    engine = create_engine(db_url)
-    fake_user_id = 9_999_999  # SQLite FK enforcement is off by default; safe.
-    with engine.begin() as conn:
-        # Confirm pre-013 schema doesn't have the column.
-        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(ai_provider_credentials)"))}
-        assert "models" not in cols
-
-        conn.execute(
-            text(
-                "INSERT INTO ai_provider_credentials (user_id, provider) VALUES (:uid, :prov)"
-            ),
-            {"uid": fake_user_id, "prov": "openrouter"},
-        )
-
-    # Upgrade to 013 — column appears, original row survives.
-    command.upgrade(cfg, "013")
-    with engine.begin() as conn:
-        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(ai_provider_credentials)"))}
-        assert "models" in cols
-        survived = conn.execute(
-            text(
-                "SELECT provider, models FROM ai_provider_credentials"
-                " WHERE user_id=:uid"
-            ),
-            {"uid": fake_user_id},
-        ).first()
-        assert survived is not None
-        assert survived[0] == "openrouter"
-        assert survived[1] is None  # nullable, never set
-
-    # Downgrade back to 012 — column gone.
-    command.downgrade(cfg, "012")
-    with engine.begin() as conn:
-        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(ai_provider_credentials)"))}
-        assert "models" not in cols
