@@ -59,13 +59,14 @@ async def create_kernel(config: KernelConfig, current_user=Depends(get_current_a
 async def list_flavours():
     """Return the locked package versions baked into each kernel image flavour."""
     from flowfile_core.kernel.flavours import get_flavour_packages
-    from flowfile_core.kernel.manager import _FLAVOUR_IMAGES
+    from flowfile_core.kernel.manager import _flavour_images
 
     packages_by_flavour = get_flavour_packages()
+    images = _flavour_images()
     return [
         FlavourInfo(
             flavour=flavour,
-            image=_FLAVOUR_IMAGES.get(flavour),
+            image=images.get(flavour),
             packages=[FlavourPackage(name=n, version=v) for n, v in pkgs],
         )
         for flavour, pkgs in packages_by_flavour.items()
@@ -83,10 +84,11 @@ async def docker_status():
     except Exception as exc:
         return DockerStatus(available=False, image_available=False, error=str(exc))
 
-    from flowfile_core.kernel.manager import _FLAVOUR_IMAGES
+    from flowfile_core.kernel.manager import _flavour_images
 
+    flavour_images = _flavour_images()
     images: list[KernelImageStatus] = []
-    for flavour, image_tag in _FLAVOUR_IMAGES.items():
+    for flavour, image_tag in flavour_images.items():
         try:
             client.images.get(image_tag)
             available = True

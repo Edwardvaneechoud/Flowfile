@@ -37,23 +37,39 @@ logger = logging.getLogger(__name__)
 _KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.0"
 _KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.0"
 
+
+def _envvar_or_default(name: str, default: str) -> str:
+    """Read an env var, treating unset OR empty/whitespace as 'use default'.
+
+    Compose's ``${VAR:-}`` writes an empty string into the container when the
+    host hasn't set the var; treat that the same as 'unset' so we fall back to
+    the registry default instead of trying to ``docker run ""``.
+    """
+    return (os.environ.get(name) or "").strip() or default
+
+
 # FLOWFILE_KERNEL_IMAGE is the legacy override for the base image (kept for
 # backwards compatibility). FLOWFILE_KERNEL_IMAGE_BASE / _ML let an operator
-# pin each flavour to a specific tag (or their own registry).
-_KERNEL_IMAGE_BASE = os.environ.get(
-    "FLOWFILE_KERNEL_IMAGE_BASE",
-    os.environ.get("FLOWFILE_KERNEL_IMAGE", _KERNEL_IMAGE_BASE_DEFAULT),
-)
-_KERNEL_IMAGE_ML = os.environ.get("FLOWFILE_KERNEL_IMAGE_ML", _KERNEL_IMAGE_ML_DEFAULT)
+# pin each flavour to a specific tag (or their own registry). Reads happen at
+# lookup time, not module-import time, so the env var can be set after Python
+# starts (e.g. by a container entrypoint, or a pytest step env block) without
+# poisoning the rest of the process with the default value.
+def _kernel_image_base() -> str:
+    return _envvar_or_default(
+        "FLOWFILE_KERNEL_IMAGE_BASE",
+        _envvar_or_default("FLOWFILE_KERNEL_IMAGE", _KERNEL_IMAGE_BASE_DEFAULT),
+    )
 
-# Legacy alias: code outside this module (e.g. /docker-status route) imports
-# _KERNEL_IMAGE for the default base image. Keep it pointing at base.
-_KERNEL_IMAGE = _KERNEL_IMAGE_BASE
 
-_FLAVOUR_IMAGES: dict[ImageFlavour, str] = {
-    ImageFlavour.BASE: _KERNEL_IMAGE_BASE,
-    ImageFlavour.ML: _KERNEL_IMAGE_ML,
-}
+def _kernel_image_ml() -> str:
+    return _envvar_or_default("FLOWFILE_KERNEL_IMAGE_ML", _KERNEL_IMAGE_ML_DEFAULT)
+
+
+def _flavour_images() -> dict[ImageFlavour, str]:
+    return {
+        ImageFlavour.BASE: _kernel_image_base(),
+        ImageFlavour.ML: _kernel_image_ml(),
+    }
 
 
 def _resolve_image(flavour: ImageFlavour, custom_image: str | None) -> str:
@@ -64,7 +80,7 @@ def _resolve_image(flavour: ImageFlavour, custom_image: str | None) -> str:
             )
         _validate_custom_image(custom_image)
         return custom_image
-    return _FLAVOUR_IMAGES[flavour]
+    return _flavour_images()[flavour]
 
 
 # Pip package specifier (PEP 508-ish, conservative): rejects anything with

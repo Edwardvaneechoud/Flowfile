@@ -33,6 +33,13 @@ services:
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
+      # Kernel image overrides — empty string means "use the registry default"
+      # (the manager treats unset and empty the same). Set on the host (or in
+      # an .env file) to point core at a locally-built or alternative image,
+      # e.g. FLOWFILE_KERNEL_IMAGE=flowfile-kernel-base:local for CI / dev.
+      - FLOWFILE_KERNEL_IMAGE=${FLOWFILE_KERNEL_IMAGE:-}
+      - FLOWFILE_KERNEL_IMAGE_BASE=${FLOWFILE_KERNEL_IMAGE_BASE:-}
+      - FLOWFILE_KERNEL_IMAGE_ML=${FLOWFILE_KERNEL_IMAGE_ML:-}
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
