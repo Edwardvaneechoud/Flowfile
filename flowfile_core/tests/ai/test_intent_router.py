@@ -238,6 +238,73 @@ async def test_classify_intent_promotes_build_with_history() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Direct-request patterns (no history) — pattern (1) of the build bullet #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_classify_intent_promotes_polite_imperative_without_history() -> None:
+    """A polite-form imperative ('can you …') that names its own action verb
+    + target is a direct request — build regardless of prior context. The
+    'can you' wrapper is courtesy, not a real question."""
+    provider = _FakeProvider(content=_payload("build", 0.9, "direct request: 'can you add' with target 'sort node'"))
+    classification = await classify_intent(
+        "can you add a sort node on the customer column?",
+        provider=provider,
+        scheduler=_scheduler(),
+    )
+    assert classification.kind == "build"
+    assert verdict_for(classification) == "agent"
+
+
+@pytest.mark.asyncio
+async def test_classify_intent_promotes_directive_phrasing_without_history() -> None:
+    """'I want you to <action verb> <target>' is a directive — build with no
+    prior assistant context required."""
+    provider = _FakeProvider(content=_payload("build", 0.9, "directive 'I want you to' with action 'remove' on target 'filter'"))
+    classification = await classify_intent(
+        "I want you to remove the filter",
+        provider=provider,
+        scheduler=_scheduler(),
+    )
+    assert classification.kind == "build"
+    assert verdict_for(classification) == "agent"
+
+
+@pytest.mark.asyncio
+async def test_classify_intent_promotes_bare_imperative_with_target_without_history() -> None:
+    """Bare imperative + action target ('implement a left join …') is a
+    direct request — build with no prior context."""
+    provider = _FakeProvider(content=_payload("build", 0.9, "bare imperative with action verb + target"))
+    classification = await classify_intent(
+        "implement a left join between users and orders",
+        provider=provider,
+        scheduler=_scheduler(),
+    )
+    assert classification.kind == "build"
+    assert verdict_for(classification) == "agent"
+
+
+def test_system_prompt_covers_direct_request_patterns() -> None:
+    """Regression guard: the classifier prompt must keep the worked
+    examples that distinguish direct requests (pattern 1 — promote
+    regardless of history) from bare confirmations (pattern 2 — need
+    prior build-shaped context). The user-visible behavior change in
+    the auto-mode classifier rests on these examples."""
+    prompt = intent_router._LLM_SYSTEM_PROMPT
+    # Pattern (1) framing.
+    assert "DIRECT REQUEST" in prompt
+    assert "BARE CONFIRMATION" in prompt
+    assert "courtesy, not a real question" in prompt
+    # The three direct-request shapes called out in the prompt.
+    assert "can you add a sort node" in prompt
+    assert "I want you to add a filter" in prompt
+    assert "implement a left join" in prompt
+    # The narrowed context-decisive sentence.
+    assert "ONLY for the bare-confirmation case" in prompt
+
+
+# --------------------------------------------------------------------------- #
 # Failure modes #
 # --------------------------------------------------------------------------- #
 
