@@ -1047,6 +1047,13 @@ def test_lazy_concat(df: FlowFrame) -> None:
     assert_frame_equal(out, df.data.collect().vstack(df.data.collect()))
 
 
+def test_concat_repeated_frame() -> None:
+    a = FlowFrame({"x": [1, 2]})
+    b = FlowFrame({"x": [3, 4]}, flow_graph=a.flow_graph)
+    out = fl.concat([a, b, a]).collect()
+    assert out["x"].to_list() == [1, 2, 3, 4, 1, 2]
+
+
 def test_self_join() -> None:
     # 2720
     ldf = FlowFrame(

@@ -2638,7 +2638,23 @@ class FlowFrame:
             node_id_data["c"] = node_id_data["c"] + len(combined_graph.nodes)
 
         new_node_id = generate_node_id()
-        use_native = how == "diagonal_relaxed" and parallel and not rechunk
+
+        # Build a stable, deduplicated view of upstream sources. The graph wires
+        # each (source_node, input_slot) pair at most once (add_connection is
+        # idempotent), so when the same FlowFrame appears in `all_frames` more
+        # than once we must reuse the same input variable rather than fan out
+        # to phantom input_df_N slots that will not be bound at execute-time.
+        unique_node_ids: list[int] = []
+        position_by_node_id: dict[int, int] = {}
+        for f in all_frames:
+            if f.node_id not in position_by_node_id:
+                position_by_node_id[f.node_id] = len(unique_node_ids)
+                unique_node_ids.append(f.node_id)
+        has_duplicate_sources = len(unique_node_ids) < len(all_frames)
+
+        # NodeUnion can't express "include this input twice"; fall back to the
+        # polars-code path (which can, positionally) when duplicates are present.
+        use_native = how == "diagonal_relaxed" and parallel and not rechunk and not has_duplicate_sources
         if use_native:
             # Create union input for the transform schema
             union_input = transform_schema.UnionInput(
@@ -2653,23 +2669,28 @@ class FlowFrame:
                 pos_x=200,
                 pos_y=150,
                 is_setup=True,
-                depending_on_ids=[self.node_id] + [frame.node_id for frame in others],
+                depending_on_ids=list(unique_node_ids),
                 description=description or "Concatenate dataframes",
             )
 
             # Add to graph
             self.flow_graph.add_union(union_settings)
 
-            # Add connections
-            self._add_connection(self.node_id, new_node_id, "main")
-            for other_frame in others:
-                other_frame._add_connection(other_frame.node_id, new_node_id, "main")
+            # Wire each unique upstream source exactly once.
+            seen_sources: set[int] = set()
+            for f in all_frames:
+                if f.node_id in seen_sources:
+                    continue
+                seen_sources.add(f.node_id)
+                f._add_connection(f.node_id, new_node_id, "main")
         else:
-            # Fall back to Polars code for other cases
-            # Create a list of input dataframes for the code
-            input_vars = ["input_df_1"]
-            for i in range(len(others)):
-                input_vars.append(f"input_df_{i+2}")
+            # Match execute_polars_code's binding convention: a single unique
+            # source binds as `input_df` (singular); two or more bind as
+            # `input_df_1`, `input_df_2`, ... in upstream-discovery order.
+            if len(unique_node_ids) == 1:
+                input_vars = ["input_df"] * len(all_frames)
+            else:
+                input_vars = [f"input_df_{position_by_node_id[f.node_id] + 1}" for f in all_frames]
 
             frames_list = f"[{', '.join(input_vars)}]"
             code = f"""
@@ -2682,14 +2703,14 @@ class FlowFrame:
             )
             """
 
-            # Add polars code node with dependencies on all input frames
-            depending_on_ids = [self.node_id] + [frame.node_id for frame in others]
-            self._add_polars_code(new_node_id, code, description, depending_on_ids=depending_on_ids)
-            # Add connections to ensure all frames are available
-            self._add_connection(self.node_id, new_node_id, "main")
-
-            for other_frame in others:
-                other_frame._add_connection(other_frame.node_id, new_node_id, "main")
+            self._add_polars_code(new_node_id, code, description, depending_on_ids=list(unique_node_ids))
+            # Wire each unique upstream source exactly once.
+            seen_sources: set[int] = set()
+            for f in all_frames:
+                if f.node_id in seen_sources:
+                    continue
+                seen_sources.add(f.node_id)
+                f._add_connection(f.node_id, new_node_id, "main")
         # Create and return the new frame
         return FlowFrame(
             data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
