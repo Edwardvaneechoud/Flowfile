@@ -12,7 +12,7 @@ The [AI Assistant](index.md) runs against any major LLM provider — pick the on
 | **OpenAI** | `gpt-4.1-mini` | ✓ | ✓ | `OPENAI_API_KEY` | Mini tier for the cheap surfaces; full `gpt-4.1` for `explain` / `agent_complex` / `docgen`. Strict structured outputs supported via litellm. |
 | **Google (Gemini)** | `gemini-2.5-flash` | ✓ | ✓ | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Generous free tier (~250–1000 req/day, no card). Pro for `agent_complex`. |
 | **Groq** | `qwen/qwen3-coder-30b-a3b-instruct` | ✓ | ✓ | `GROQ_API_KEY` | Very fast inference (~30 RPM free tier); good fit for low-TTFB surfaces (Cmd+K, ghost-node). |
-| **OpenRouter** | `anthropic/claude-sonnet-4.5` | ✓ | ✓ | `OPENROUTER_API_KEY` | Unified façade for 50+ models with a single key. The `agent_staged` default is `meta-llama/llama-3.3-70b-instruct` (free tier). |
+| **OpenRouter** | `qwen/qwen3-coder-30b-a3b-instruct` | ✓ | ✓ | `OPENROUTER_API_KEY` | Unified façade for 50+ models with a single key. The `agent_staged` default is `meta-llama/llama-3.3-70b-instruct` (free tier). |
 | **Ollama** | `llama3.1:8b` | ✓ (model-dependent) | ✓ | *(none — local)* | Self-hosted; talks to your local Ollama server (default `http://localhost:11434`). Tool-use works on Llama 3.1+ and most newer instruct models. |
 
 The "Tools" column means the provider can return structured tool-call arguments — required for the Agent surface, optional for chat-only surfaces. The Agent will refuse to start a session against a model that doesn't support tools.

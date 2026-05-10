@@ -4830,13 +4830,7 @@ def _would_create_cycle(from_node: "FlowNode", to_node: "FlowNode") -> bool:
 
 
 def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection) -> None:
-    """Adds a connection between two nodes in the flow graph. — IDEMPOTENT. When the requested wire already exists
-    on ``to_node`` (same input slot from the same source node), this
-    is a silent no-op rather than a state-mutating overwrite. Lets
-    the AI diff applier tolerate redundant ``connections_added`` ops
-    that arrive after ``update_node_settings`` has already
-    implicitly rewired (via ``add_node_step``'s
-    ``input_node_ids`` derivation from the new ``depending_on_id``).
+    """Adds a connection between two nodes in the flow graph.
 
     Args:
         flow: The FlowGraph instance to modify.
@@ -4856,26 +4850,6 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
             if not n
         ]
         raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
-    # — idempotency check. If the wire already exists at
-    # the same input slot from the same source, return silently.
-    # ``validate_if_input_connection_exists`` is the same predicate
-    # ``delete_connection`` uses, so the two paths agree on what
-    # "the wire is there" means.
-    try:
-        already_present = to_node.node_inputs.validate_if_input_connection_exists(
-            node_input_id=from_node.node_id,
-            connection_name=node_connection.input_connection.get_node_input_connection_type(),
-        )
-    except Exception:
-        already_present = False
-    if already_present:
-        logger.info(
-            "add_connection: wire %s -> %s (%s) already exists; idempotent no-op",
-            from_node.node_id,
-            to_node.node_id,
-            node_connection.input_connection.connection_class,
-        )
-        return
     if _would_create_cycle(from_node, to_node):
         raise HTTPException(
             422,
@@ -4889,16 +4863,7 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
 
 
 def delete_connection(graph, node_connection: input_schema.NodeConnection):
-    """Deletes a connection between two nodes in the flow graph. — IDEMPOTENT. When the connection is already absent
-    (e.g. ``update_node_settings`` already rewired the input via
-    ``add_node_step``'s implicit ``input_node_ids`` derivation, OR
-    a duplicate ``connections_removed`` op arrived after a prior
-    delete in the same diff batch), return silently rather than
-    raising 422. Without this, the AI diff applier in
-    ``ai/diff.py`` rolls back the entire batch on the second call
-    and the user sees ``apply_diff failed: 422: Connection does not
-    exist on the input node`` for an op that — semantically — has
-    already succeeded.
+    """Deletes a connection between two nodes in the flow graph.
 
     Args:
         graph: The FlowGraph instance to modify.
@@ -4910,28 +4875,13 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
     # already removed) surfaces as an AttributeError → 500, which also drops
     # CORS headers and shows up as a CORS error in the browser.
     if from_node is None or to_node is None:
-        # both nodes missing means the call is unrecoverably
-        # malformed (the user / agent referenced a node that doesn't
-        # exist). Keep raising for that case so it surfaces. But if
-        # only the connection is gone (both nodes still present),
-        # treat as idempotent below.
         raise HTTPException(422, "Connection does not exist on the input node")
     connection_valid = to_node.node_inputs.validate_if_input_connection_exists(
         node_input_id=from_node.node_id,
         connection_name=node_connection.input_connection.get_node_input_connection_type(),
     )
     if not connection_valid:
-        # Silent no-op: the connection is already in the desired
-        # state (gone). Log so the prompt log captures the pattern;
-        # if we see the LLM emitting these gratuitously we tighten
-        # the modify-path prompt.
-        logger.info(
-            "delete_connection: wire %s -> %s (%s) already absent; idempotent no-op",
-            from_node.node_id,
-            to_node.node_id,
-            node_connection.input_connection.connection_class,
-        )
-        return
+        raise HTTPException(422, "Connection does not exist on the input node")
     from_node.delete_lead_to_node(node_connection.input_connection.node_id)
     to_node.delete_input_node(
         node_connection.output_connection.node_id,

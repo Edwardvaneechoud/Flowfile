@@ -246,18 +246,35 @@ def _handle_connect(
 
     from flowfile_core.flowfile.flow_graph import add_connection
 
-    try:
-        add_connection(flow, connection)
-    except Exception as exc:
-        return _reject_and_audit(
-            tool_name=tool_name,
-            tool_args=redacted_args,
-            session_id=session_id,
-            user_id=user_id,
-            flow_id=flow.flow_id,
-            refusal_reason=None,
-            refusal_detail=f"connect failed: {exc}",
-        )
+    # LLM-redundant-op tolerance: if the wire is already present (e.g. an
+    # ``update_node_settings`` in the same diff already implicitly rewired
+    # via ``add_node_step``'s ``input_node_ids`` derivation), treat as
+    # applied no-op. Core ``add_connection`` is strict for non-AI callers;
+    # tolerance lives here at the AI seam.
+    from_node = flow.get_node(from_id)
+    to_node = flow.get_node(to_id)
+    already_present = False
+    if from_node is not None and to_node is not None:
+        try:
+            already_present = to_node.node_inputs.validate_if_input_connection_exists(
+                node_input_id=from_node.node_id,
+                connection_name=connection.input_connection.get_node_input_connection_type(),
+            )
+        except Exception:
+            already_present = False
+    if not already_present:
+        try:
+            add_connection(flow, connection)
+        except Exception as exc:
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow.flow_id,
+                refusal_reason=None,
+                refusal_detail=f"connect failed: {exc}",
+            )
 
     audit_row = _record_event(
         session_id=session_id,
@@ -398,10 +415,42 @@ def _handle_delete_connection(
             staged_node_payload={"delete_connection": connection.model_dump()},
         )
 
+    from fastapi import HTTPException
+
     from flowfile_core.flowfile.flow_graph import delete_connection
 
     try:
         delete_connection(flow, connection)
+    except HTTPException as exc:
+        # LLM-redundant-op tolerance: swallow only the "Connection does not
+        # exist" 422 (an ``update_node_settings`` in the same diff already
+        # implicitly rewired, so this delete targets a wire that's already
+        # gone). Other HTTPExceptions and any non-HTTPException propagate
+        # to the rejection path below. Core stays strict for non-AI callers.
+        if exc.status_code == 422 and "Connection does not exist" in str(exc.detail):
+            audit_row = _record_event(
+                session_id=session_id,
+                user_id=user_id,
+                tool_name=tool_name,
+                flow_id=flow.flow_id,
+                tool_args=redacted_args,
+                result_status="success",
+            )
+            return ToolExecutionResult(
+                status="applied",
+                tool_name=tool_name,
+                audit_id=audit_row.id if audit_row is not None else None,
+                executed_args=redacted_args,
+            )
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason=None,
+            refusal_detail=f"delete_connection failed: {exc}",
+        )
     except Exception as exc:
         return _reject_and_audit(
             tool_name=tool_name,

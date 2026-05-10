@@ -791,6 +791,13 @@ class NodeManualInput(NodeBase):
 
     raw_data_format: RawData
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_none_raw_data_format(cls, values):
+        if isinstance(values, dict) and values.get("raw_data_format") is None:
+            return {**values, "raw_data_format": {"columns": [], "data": []}}
+        return values
+
     def get_default_description(self) -> str:
         """Describes the manual input columns."""
         if self.raw_data_format and self.raw_data_format.columns:

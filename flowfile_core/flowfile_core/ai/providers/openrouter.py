@@ -12,7 +12,7 @@ from flowfile_core.ai.providers._litellm_base import LiteLLMProvider
 
 class OpenRouterProvider(LiteLLMProvider):
     name: ClassVar[str] = "openrouter"
-    default_model: ClassVar[str] = "anthropic/claude-sonnet-4.5"
+    default_model: ClassVar[str] = "qwen/qwen3-coder-30b-a3b-instruct"
     model_prefix: ClassVar[str] = "openrouter/"
     supports_tools: ClassVar[bool] = True
     supports_streaming: ClassVar[bool] = True

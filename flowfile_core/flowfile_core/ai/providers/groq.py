@@ -11,12 +11,12 @@ from flowfile_core.ai.providers._litellm_base import LiteLLMProvider
 
 class GroqProvider(LiteLLMProvider):
     name: ClassVar[str] = "groq"
-    default_model: ClassVar[str] = "qwen/qwen3-coder-30b-a3b-instruct"
+    default_model: ClassVar[str] = "qwen/qwen3-32b"
     model_prefix: ClassVar[str] = "groq/"
     supports_tools: ClassVar[bool] = True
     supports_streaming: ClassVar[bool] = True
     surface_models: ClassVar[dict[str, str]] = {
-        "cmd_k": "qwen/qwen3-coder-30b-a3b-instruct",
+        "cmd_k": "qwen/qwen3-32b",
         "ghost_node": "qwen/qwen3-coder-30b-a3b-instruct",
         "explain": "qwen/qwen3-coder-30b-a3b-instruct",
         "agent_complex": "qwen/qwen3-coder-30b-a3b-instruct",

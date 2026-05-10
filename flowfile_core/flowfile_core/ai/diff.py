@@ -632,6 +632,8 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
         # AI modules (executor, audit, providers) deliberately keep out of
         # their import-time graph; this ``diff`` module imports lightly so
         # tests can stub ``flow_graph`` symbols where needed.
+        from fastapi import HTTPException
+
         from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 
         for add in diff.additions:
@@ -651,8 +653,34 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
             _apply_update_node_settings(flow, mod.node_type, settings)
             modified_node_ids.append(int(mod.node_id))
 
+        # LLM-redundant-op tolerance for connection adds/removes lives at this
+        # AI seam — not in core ``add_connection`` / ``delete_connection``,
+        # which stay strict for non-AI callers (frontend, scripts, MCP).
+        # The LLM sometimes emits explicit connect/delete_connection ops in
+        # the same batch as an ``update_node_settings`` whose changed
+        # ``depending_on_id`` already implicitly rewired the primary input;
+        # we swallow only the "already present" / "already absent" cases.
         for c in diff.connections_added:
             connection = input_schema.NodeConnection.model_validate(c.connection)
+            from_node = flow.get_node(connection.output_connection.node_id)
+            to_node = flow.get_node(connection.input_connection.node_id)
+            already_present = False
+            if from_node is not None and to_node is not None:
+                try:
+                    already_present = to_node.node_inputs.validate_if_input_connection_exists(
+                        node_input_id=from_node.node_id,
+                        connection_name=connection.input_connection.get_node_input_connection_type(),
+                    )
+                except Exception:
+                    already_present = False
+            if already_present:
+                logger.info(
+                    "apply_diff: wire %s -> %s (%s) already present; skipping redundant connections_added op",
+                    connection.output_connection.node_id,
+                    connection.input_connection.node_id,
+                    connection.input_connection.connection_class,
+                )
+                continue
             add_connection(flow, connection)
             applied_connection_count += 1
 
@@ -662,7 +690,22 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
 
         for c in diff.connections_removed:
             connection = input_schema.NodeConnection.model_validate(c.connection)
-            delete_connection(flow, connection)
+            try:
+                delete_connection(flow, connection)
+            except HTTPException as exc:
+                # Narrow catch: only the "Connection does not exist" 422 gets
+                # swallowed. ``add_connection``'s cycle-detection 422 lives in
+                # the other loop and is unaffected; any other HTTPException
+                # (genuine errors) bubbles up to the outer rollback.
+                if exc.status_code == 422 and "Connection does not exist" in str(exc.detail):
+                    logger.info(
+                        "apply_diff: connection %s -> %s (%s) already absent; skipping redundant connections_removed op",
+                        connection.output_connection.node_id,
+                        connection.input_connection.node_id,
+                        connection.input_connection.connection_class,
+                    )
+                    continue
+                raise
             removed_connection_count += 1
     except Exception:
         try:

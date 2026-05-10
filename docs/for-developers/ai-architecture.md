@@ -230,8 +230,8 @@ Per-vendor subclasses override class-level fields:
 | `AnthropicProvider` | `anthropic` | `anthropic/` | `claude-sonnet-4-6` | Haiku 4.5 for Cmd+K / ghost / autocomplete / agent_staged; Opus 4.7 for `agent_complex` |
 | `OpenAIProvider` | `openai` | `""` | `gpt-4.1-mini` | `gpt-4.1` for `explain` / `agent_complex` / `docgen` / `lineage` |
 | `GoogleProvider` | `google` | `gemini/` | `gemini-2.5-flash` | `gemini-2.5-pro` for `agent_complex` |
-| `GroqProvider` | `groq` | `groq/` | `llama-3.3-70b-versatile` | One model across surfaces |
-| `OpenRouterProvider` | `openrouter` | `openrouter/` | `anthropic/claude-sonnet-4.5` | `meta-llama/llama-3.3-70b-instruct` for `agent_staged` (free tier) |
+| `GroqProvider` | `groq` | `groq/` | `qwen/qwen3-coder-30b-a3b-instruct` | One model across surfaces |
+| `OpenRouterProvider` | `openrouter` | `openrouter/` | `qwen/qwen3-coder-30b-a3b-instruct` | `meta-llama/llama-3.3-70b-instruct` for `agent_staged` (free tier) |
 | `OllamaProvider` | `ollama` | `ollama_chat/` | `llama3.1:8b` | `llama3.1:70b` for `agent_complex`. `default_api_base="http://localhost:11434"` |
 
 `provider_factory(name, *, model, surface, api_key, api_base)` in `providers/registry.py` is the construction entry point. The `PROVIDERS` dict registers all six classes; `list_supported_providers()` returns the names in registration order.

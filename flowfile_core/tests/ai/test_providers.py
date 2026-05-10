@@ -153,7 +153,7 @@ def test_list_supported_providers() -> None:
         ("anthropic", "agent_complex", "opus"),
         ("google", "cmd_k", "flash"),
         ("google", "agent_complex", "pro"),
-        ("groq", "cmd_k", "llama"),
+        ("groq", "cmd_k", "qwen"),
         ("ollama", "agent_complex", "70b"),
         ("openrouter", "cmd_k", "haiku"),
     ],
