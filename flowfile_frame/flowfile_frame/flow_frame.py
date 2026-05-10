@@ -68,6 +68,7 @@ def _try_translate_flowfile_formulas(
     try:
         from polars_expr_transformer import to_flowframe_code
     except ImportError:
+        logger.debug("polars_expr_transformer.to_flowframe_code unavailable; using legacy formula path")
         return None
 
     import datetime as _datetime
@@ -81,14 +82,18 @@ def _try_translate_flowfile_formulas(
         try:
             generated = to_flowframe_code(formula)
         except Exception:
+            logger.debug("to_flowframe_code raised for formula %r; falling back", formula, exc_info=True)
             return None
         if not generated:
+            logger.debug("to_flowframe_code returned empty output for formula %r; falling back", formula)
             return None
         try:
             expr = eval(generated, {"__builtins__": {}}, eval_namespace)  # noqa: S307
         except Exception:
+            logger.debug("eval failed for generated code %r (formula %r); falling back", generated, formula, exc_info=True)
             return None
         if not isinstance(expr, Expr):
+            logger.debug("Generated code %r produced non-Expr %r (formula %r); falling back", generated, type(expr), formula)
             return None
         expressions.append(expr.alias(output_name))
     return expressions

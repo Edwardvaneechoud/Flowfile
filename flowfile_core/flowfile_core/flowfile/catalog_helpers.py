@@ -258,10 +258,7 @@ def register_python_editor_flow(
             )
             reg_id = reg.id
 
-    try:
-        flow.flow_settings.source_registration_id = reg_id
-    except (AttributeError, ValueError):
-        object.__setattr__(flow.flow_settings, "source_registration_id", reg_id)
+    flow.flow_settings.source_registration_id = reg_id
 
     return reg_id
 
