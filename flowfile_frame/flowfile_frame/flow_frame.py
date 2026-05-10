@@ -50,6 +50,61 @@ def _contains_lambda_pattern(text: str) -> bool:
     return "<lambda> at" in text
 
 
+def _try_translate_flowfile_formulas(
+    flowfile_formulas: list[str],
+    output_column_names: list[str],
+) -> list[Expr] | None:
+    """Translate flowfile-formula strings into native FlowFrame expressions.
+
+    Returns a list of :class:`Expr` (one per formula, aliased to its output
+    column name) when every formula translates successfully, otherwise
+    ``None`` so the caller can fall back to the legacy formula path.
+
+    Uses :func:`polars_expr_transformer.to_flowframe_code` (>= 0.5.4) which
+    emits ``ff.col(...)``/``ff.lit(...)`` style strings. Generated code is
+    eval'd in a restricted namespace (``ff``, ``pl``, ``datetime``) with
+    builtins disabled.
+    """
+    try:
+        from polars_expr_transformer import to_flowframe_code
+    except ImportError:
+        logger.debug("polars_expr_transformer.to_flowframe_code unavailable; using legacy formula path")
+        return None
+
+    import datetime as _datetime
+
+    import flowfile_frame as _ff_module
+
+    eval_namespace = {"ff": _ff_module, "pl": pl, "datetime": _datetime}
+
+    expressions: list[Expr] = []
+    for formula, output_name in zip(flowfile_formulas, output_column_names, strict=False):
+        try:
+            generated = to_flowframe_code(formula)
+        except Exception:
+            logger.debug("to_flowframe_code raised for formula %r; falling back", formula, exc_info=True)
+            return None
+        if not generated:
+            logger.debug("to_flowframe_code returned empty output for formula %r; falling back", formula)
+            return None
+        try:
+            expr = eval(generated, {"__builtins__": {}}, eval_namespace)  # noqa: S307
+        except Exception:
+            logger.debug(
+                "eval failed for generated code %r (formula %r); falling back",
+                generated, formula, exc_info=True,
+            )
+            return None
+        if not isinstance(expr, Expr):
+            logger.debug(
+                "Generated code %r produced non-Expr %r (formula %r); falling back",
+                generated, type(expr), formula,
+            )
+            return None
+        expressions.append(expr.alias(output_name))
+    return expressions
+
+
 def get_method_name_from_code(code: str) -> str | None:
     split_code = code.split("input_df.")
     if len(split_code) > 1:
@@ -2046,7 +2101,7 @@ class FlowFrame:
         *,
         schema: SchemaReference | None = None,
         namespace_id: int | None = None,
-        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite",
+        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite",
         merge_keys: list[str] | None = None,
         description: str | None = None,
     ) -> FlowFrame:
@@ -2056,7 +2111,10 @@ class FlowFrame:
             table_name: Name of the catalog table to write to.
             schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
             namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
-            write_mode: How to handle existing data.
+            write_mode: How to handle existing data. ``"virtual"`` registers
+                the result as a virtual catalog table backed by this flow
+                (requires the flow to be registered with the catalog first;
+                see :func:`flowfile_frame.register_flow_with_catalog`).
             merge_keys: Column names for merge operations (required for upsert/update/delete).
             description: Optional description for this operation.
 
@@ -2899,6 +2957,15 @@ class FlowFrame:
                 raise ValueError("Length of both the formulas and the output columns names must be identical")
             if output_column_datatypes is not None and len(output_column_datatypes) != len(flowfile_formulas):
                 raise ValueError("Length of output_column_datatypes must match the number of formulas")
+
+            # When the user did not request explicit output datatypes, try to
+            # upgrade flowfile formulas to native polars/flowframe expressions
+            # for a more efficient node type. Falls back transparently when
+            # the upstream translator can't handle a given formula.
+            if output_column_datatypes is None:
+                translated = _try_translate_flowfile_formulas(flowfile_formulas, output_column_names)
+                if translated is not None:
+                    return self.with_columns(*translated, description=description)
 
             datatypes = output_column_datatypes or ["Auto"] * len(flowfile_formulas)
             if len(flowfile_formulas) == 1:
