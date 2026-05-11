@@ -15,7 +15,7 @@ The [AI Assistant](index.md) runs against any major LLM provider — pick the on
 | **OpenRouter** | `qwen/qwen3-coder-30b-a3b-instruct` | ✓ | ✓ | `OPENROUTER_API_KEY` | Unified façade for 50+ models with a single key. The `agent_staged` default is `meta-llama/llama-3.3-70b-instruct` (free tier). |
 | **Ollama** | `llama3.1:8b` | ✓ (model-dependent) | ✓ | *(none — local)* | Self-hosted; talks to your local Ollama server (default `http://localhost:11434`). Tool-use works on Llama 3.1+ and most newer instruct models. |
 
-The "Tools" column means the provider can return structured tool-call arguments — required for the Agent surface, optional for chat-only surfaces. The Agent will refuse to start a session against a model that doesn't support tools.
+The "Tools" column means the provider can return structured tool-call arguments — required for the Agent surface. The Agent refuses to start against a model that lacks tool support.
 
 ---
 
@@ -46,10 +46,9 @@ Under the hood, these actions hit the BYOK routes:
 
 All BYOK endpoints require an authenticated user; credentials are scoped per user.
 
+### Env-var fallback
 
-When an env var is detected, the BYOK panel shows the provider as **Env fallback**. Saving a key in the UI takes precedence per user; deleting that key falls back to the env var again.
-
-Ollama needs no key but typically needs an `api_base` — save a credential row with `api_base="http://localhost:11434"` (or wherever your server is).
+If no credential row exists for a user, Flowfile falls back to the standard provider env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`) on the host process. The BYOK panel shows the provider as **Env fallback** in that case; saving a key in the UI takes precedence per user, and deleting it falls back to the env var again. Ollama needs no key — just an `api_base` (default `http://localhost:11434`).
 
 ---
 
@@ -76,9 +75,9 @@ A note on the Agent surface: it requires a tool-capable model. If you pin a cura
 
 ---
 
-The pattern is `FLOWFILE_AI_<PROVIDER>_RPM` and `FLOWFILE_AI_<PROVIDER>_RPD`. Unset means *no enforcement*. When a bucket fills, the scheduler delays the call (and surfaces a *"rate-limited, retrying in Ns"* hint to the UI rather than 5xx-ing). The same path also honours server `Retry-After` headers on 429 responses, regardless of your local caps.
+## Rate limits
 
-Limits are in-memory and per-provider, not per-`(provider, model)`; persistence across restarts is intentionally not implemented.
+Cap per-provider request volume via env vars on the host: `FLOWFILE_AI_<PROVIDER>_RPM` (per minute) and `FLOWFILE_AI_<PROVIDER>_RPD` (per day). Unset means *no enforcement*. When a bucket fills, the scheduler delays the call and surfaces a *"rate-limited, retrying in Ns"* hint rather than 5xx-ing. Server `Retry-After` headers on 429 responses are always honoured. Limits are in-memory and per-provider (not per-`(provider, model)`); not persisted across restarts.
 
 ---
 
