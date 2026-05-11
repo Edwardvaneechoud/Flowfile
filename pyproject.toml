@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.9.4"
+version = "0.10.0"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -69,6 +69,8 @@ google-cloud-storage = ">=2.14.0"
 gcsfs = ">=2024.2.0"
 google-analytics-data = ">=0.18.0"
 alembic = "^1.13.0"
+litellm = "^1.83.0"
+filelock = "^3.13.0"
 
 
 [tool.poetry.scripts]
@@ -105,6 +107,7 @@ psycopg2-binary = "^2.9.9"
 pymysql = "^1.1.0"
 sqlalchemy = "^2.0.27"
 pytest = "^8.4.1"
+pytest-asyncio = "^1.3.0"
 pytest-cov = "^6.0"
 testcontainers = "^4.10.0"
 numpy = "1.26.4"
@@ -120,6 +123,8 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "worker: Tests for the flowfile_worker package",
     "core: Tests for the flowfile_core package",

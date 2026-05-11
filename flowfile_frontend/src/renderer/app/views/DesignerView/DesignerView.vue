@@ -20,8 +20,8 @@
             @close-tab="handleCloseFlow"
           />
         </div>
-        <div class="right-section">
-          <Status />
+        <div v-if="hasOpenFlow" class="right-section">
+          <right-action-cluster ref="rightCluster" @open-settings="headerButtons?.openSettings()" />
         </div>
       </div>
     </div>
@@ -61,7 +61,7 @@
         ref="canvasFlow"
         class="canvas"
         @save="headerButtons?.openSaveModal()"
-        @run="headerButtons?.runFlow()"
+        @run="rightCluster?.runFlow()"
         @new="headerButtons?.handleQuickCreate()"
         @open="headerButtons?.openOpenDialog()"
         @open-settings="headerButtons?.openSettings()"
@@ -79,7 +79,7 @@ import { ref, computed, onMounted, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import { ElNotification } from "element-plus";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
-import Status from "../../features/designer/editor/status.vue";
+import RightActionCluster from "../../components/layout/Header/RightActionCluster.vue";
 import CanvasFlow from "./Canvas.vue";
 import FlowSelector from "../FlowSelectorView/FlowSelectorView.vue";
 import UndoRedoControls from "./UndoRedoControls.vue";
@@ -106,6 +106,7 @@ const isLoading = ref(true);
 const isSwitching = ref(false);
 const canvasFlow = ref<InstanceType<typeof CanvasFlow>>();
 const headerButtons = ref<InstanceType<typeof HeaderButtons>>();
+const rightCluster = ref<InstanceType<typeof RightActionCluster>>();
 const flowSelector = ref<InstanceType<typeof FlowSelector>>();
 const nodeOptions = ref<NodeTemplate[]>([]);
 const initialLoadComplete = ref(false);
@@ -280,11 +281,20 @@ const initialSetup = async () => {
     const [nodes, flows] = await Promise.all([fetchNodes(), fetchActiveFlows()]);
 
     nodeOptions.value = nodes;
-    if (flows.length > 0 && (!nodeStore.flow_id || nodeStore.flow_id <= 0)) {
+    const persistedFlowId = nodeStore.flow_id;
+    const persistedIsActive =
+      persistedFlowId > 0 && flows.some((f) => f.flow_id === persistedFlowId);
+
+    if (flows.length === 0) {
+      // Drop any stale persisted ID so `hasOpenFlow` guards don't render
+      // canvas-only controls (right-cluster, undo/redo, Save) over the
+      // "No Active Flows" empty state.
+      if (persistedFlowId > 0) nodeStore.setFlowId(-1);
+    } else if (!persistedIsActive) {
       console.log("Setting initial flow ID to:", flows[0].flow_id);
       nodeStore.setFlowId(flows[0].flow_id);
-    } else if (nodeStore.flow_id && nodeStore.flow_id > 0) {
-      console.log("Using existing flow ID:", nodeStore.flow_id);
+    } else {
+      console.log("Using existing flow ID:", persistedFlowId);
     }
 
     console.log("Initial setup completed");
@@ -393,7 +403,6 @@ onMounted(async () => {
   }
 
   .right-section {
-    min-width: 150px;
     padding: 0 var(--spacing-4);
     display: flex;
     align-items: center;

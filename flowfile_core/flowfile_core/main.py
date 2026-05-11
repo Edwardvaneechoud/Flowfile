@@ -12,6 +12,8 @@ import uvicorn
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from flowfile_core.ai import router as ai_router
+from flowfile_core.ai.admin_routes import router as ai_admin_router
 from flowfile_core.artifacts import router as artifacts_router
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.configs.settings import (
@@ -138,6 +140,11 @@ app.include_router(kafka_router)
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
+app.include_router(ai_router, prefix="/ai", tags=["ai"])
+# AI feature-flag admin endpoint. Mounted on /system (NOT /ai) so admins
+# can flip the AI gate from the UI without first satisfying the gate they're
+# trying to flip.
+app.include_router(ai_admin_router, prefix="/system", tags=["system"])
 
 
 @app.post("/shutdown")

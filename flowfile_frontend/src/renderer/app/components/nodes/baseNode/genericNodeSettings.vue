@@ -1,5 +1,39 @@
 <template>
   <div class="settings-wrapper">
+    <!-- — Inline ✨ menu. Always visible (across all three tabs) for
+         discoverability. Popover content is the AiInlineActions component;
+         the trigger sits in the top-right of the wrapper so it doesn't
+         displace the el-tabs nav bar. -->
+    <div class="ai-inline-actions-trigger">
+      <el-popover
+        v-model:visible="aiPopoverVisible"
+        placement="bottom-end"
+        :width="320"
+        trigger="click"
+        :show-arrow="true"
+        popper-class="ai-inline-actions-popper"
+      >
+        <template #reference>
+          <button
+            type="button"
+            class="ai-inline-actions-trigger__button"
+            title="AI actions for this node"
+            aria-label="AI actions for this node"
+          >
+            <span class="material-icons ai-inline-actions-trigger__icon" aria-hidden="true"
+              >auto_awesome</span
+            >
+          </button>
+        </template>
+        <AiInlineActions
+          :flow-id="aiFlowIdNumber"
+          :node-id="props.modelValue.node_id"
+          :node-name="aiNodeName"
+          @picked="aiPopoverVisible = false"
+        />
+      </el-popover>
+    </div>
+
     <el-tabs v-model="activeTab">
       <el-tab-pane label="Main Settings" name="main">
         <slot></slot>
@@ -232,9 +266,16 @@
 import { computed, ref, watch, reactive } from "vue";
 import type { NodeBase, OutputFieldConfig } from "./nodeInput";
 import { useNodeStore } from "../../../stores/node-store";
+import { useFlowStore } from "../../../stores/flow-store";
 import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
+import AiInlineActions from "../../../features/ai/AiInlineActions.vue";
 
 const nodeStore = useNodeStore();
+const flowStore = useFlowStore();
+
+// — Inline ✨ popover state. The popover content lives in
+// AiInlineActions.vue and looks up node_type from the live VueFlow graph.
+const aiPopoverVisible = ref(false);
 
 const props = defineProps<{
   modelValue: T;
@@ -255,6 +296,28 @@ const isValidatingReference = ref(false);
 let validationTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const defaultReference = computed(() => `df_${props.modelValue?.node_id ?? ""}`);
+
+// — coerce the flow id to a number for the AI route (the NodeBase
+// type allows ``string | number`` but the inline_action route's Pydantic
+// shape is strict). Falls back to flowStore.flowId when the prop hasn't
+// been initialised yet.
+const aiFlowIdNumber = computed<number>(() => {
+  const raw = (props.modelValue as NodeBase | null)?.flow_id ?? flowStore.flowId;
+  return typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
+});
+
+// — human label for the synthetic chat user message ("Explain `name`.").
+// Resolves from VueFlow's stored label when present so the chat shows the
+// node name the user sees on the canvas, not just the numeric id.
+const aiNodeName = computed<string | undefined>(() => {
+  const instance = flowStore.vueFlowInstance;
+  const nodeId = props.modelValue?.node_id;
+  if (!instance || nodeId === undefined || nodeId === null) return undefined;
+  const node = instance.findNode?.(String(nodeId));
+  if (!node) return undefined;
+  const label = (node.data as { label?: string | null } | undefined)?.label;
+  return typeof label === "string" && label.length > 0 ? label : undefined;
+});
 
 // Watch for tab changes to trigger save when switching to Output Schema
 watch(activeTab, (newTab, oldTab) => {
@@ -477,6 +540,40 @@ const loadFieldsFromSchema = async () => {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  position: relative;
+}
+
+.ai-inline-actions-trigger {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 10;
+}
+
+.ai-inline-actions-trigger__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--el-border-color-lighter);
+  background-color: var(--el-bg-color);
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--el-color-primary);
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.ai-inline-actions-trigger__button:hover {
+  background-color: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-5);
+}
+
+.ai-inline-actions-trigger__icon {
+  font-size: 0.95rem;
 }
 
 .settings-wrapper :deep(.el-tabs) {

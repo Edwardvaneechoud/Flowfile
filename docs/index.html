@@ -590,6 +590,11 @@
                 gap: 2rem;
             }
 
+            /* When there are 7 cards, the 7th lands alone on row 3 — push it to the middle column. */
+            .features-grid > :nth-child(7):last-child {
+                grid-column: 2;
+            }
+
             .feature-card {
                 padding: 2rem;
             }
@@ -733,8 +738,8 @@
             <img src="assets/images/logo.png" alt="Flowfile Logo" class="hero-logo fade-in">
             <h1 class="hero-title fade-in">Flowfile</h1>
             <p class="hero-subtitle fade-in">
-                An open-source data platform with a visual pipeline builder, data catalog, Delta Lake storage, scheduling,
-                Kafka ingestion, sandboxed Python execution, and a Polars-compatible API — all in a single pip install.
+                An open-source data platform with a visual pipeline builder, AI assistant, data catalog, Delta Lake storage,
+                scheduling, Kafka ingestion, sandboxed Python execution, and a Polars-compatible API — all in a single pip install.
             </p>
             <div class="hero-buttons fade-in">
                 <a href="quickstart.html" class="hero-button hero-button-primary">
@@ -761,7 +766,7 @@
 
     <!-- Interface Preview -->
     <div class="interface-preview">
-        <img src="assets/images/generic_screenshot.png" alt="Flowfile Interface" loading="lazy">
+        <img src="assets/images/ai/ai-overview.gif" alt="Flowfile AI Assistant in action" loading="lazy">
     </div>
 
     <!-- Features Section -->
@@ -770,6 +775,17 @@
         <p class="section-subtitle">A complete data platform — visual pipeline builder, catalog, scheduling, and more — powered by Polars</p>
 
         <div class="features-grid">
+            <a href="ai/index.html" class="feature-card fade-in feature-link">
+                <div class="feature-icon">✨</div>
+                <h3 class="feature-title">AI Assistant</h3>
+                <p class="feature-description">
+                    Build pipelines from natural-language prompts, ask questions about a flow you didn't write,
+                    and turn failed runs into one-paragraph diagnoses. Bring your own provider — Anthropic, OpenAI,
+                    Google, Groq, OpenRouter, or a local Ollama.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
             <a href="users/visual-editor/building-flows.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">🎨</div>
                 <h3 class="feature-title">Visual Pipeline Builder</h3>

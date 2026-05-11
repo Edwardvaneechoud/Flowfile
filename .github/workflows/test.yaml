@@ -442,6 +442,9 @@ jobs:
       - name: Install Node Dependencies
         run: npm ci
 
+      - name: Run frontend unit tests (vitest)
+        run: npm run test:unit
+
       - name: Build Web Version
         run: npm run build:web
 

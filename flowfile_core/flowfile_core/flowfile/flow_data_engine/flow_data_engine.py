@@ -1650,7 +1650,11 @@ class FlowDataEngine:
         splits: list[tuple[str, float]],
         seed: int | None = None,
     ) -> NamedOutputs:
-        """Randomly partition rows into N labeled groups.
+        """Randomly partition rows into N labeled groups (in-process).
+
+        Used by ``add_random_split`` when ``execution_location == "local"``
+        (WASM / no-worker). For remote mode the worker-offloaded variant
+        :meth:`random_split_external` is used instead.
 
         The shuffled frame is materialized once so that each output shares the
         same shuffle — otherwise every handle's ``.collect()`` would re-run the
@@ -1680,6 +1684,70 @@ class FlowDataEngine:
         for i, (name, percentage) in enumerate(splits):
             length = total - offset if i == len(splits) - 1 else int(round(total * percentage / 100.0))
             out[name] = FlowDataEngine(shuffled.slice(offset, max(0, length)).lazy())
+            offset += length
+        return NamedOutputs(out)
+
+    def random_split_external(
+        self,
+        splits: list[tuple[str, float]],
+        seed: int | None = None,
+        flow_id: int = -1,
+        node_id: int | str = -1,
+    ) -> NamedOutputs:
+        """Worker-offloaded variant of :meth:`random_split`.
+
+        The shuffled frame is materialised once on ``flowfile_worker`` (never
+        in this process). Each returned split is a lazy ``slice`` over the
+        cached parquet, so downstream ``.collect()`` on a handle reads only
+        that split's rows from disk.
+
+        Used by ``add_random_split`` when ``execution_location != "local"``;
+        the in-process path is :meth:`random_split`.
+        """
+        import uuid
+
+        from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
+            ExternalDfFetcher,
+        )
+        from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
+        if seed is None:
+            seed = random.randint(0, 2**31 - 1)
+
+        shuffled_lazy = (
+            self.data_frame.with_columns(pl.int_range(0, pl.len()).shuffle(seed=seed).alias("__split_rank__"))
+            .sort("__split_rank__")
+            .drop("__split_rank__")
+        )
+
+        # Stable, unique file_ref — avoids id()-reuse collisions with cache().
+        file_ref = f"random_split_{flow_id}_{node_id}_{seed}_{uuid.uuid4().hex}"
+        edf = ExternalDfFetcher(
+            lf=shuffled_lazy,
+            file_ref=file_ref,
+            wait_on_completion=True,
+            flow_id=flow_id,
+            node_id=node_id,
+        )
+        cached_lf = edf.get_result()
+        if not isinstance(cached_lf, pl.LazyFrame):
+            raise RuntimeError(
+                f"random_split_external: worker did not return a LazyFrame (got {type(cached_lf)!r})"
+            )
+
+        # Cheap — reads parquet footer metadata, not row data.
+        total = cached_lf.select(pl.len()).collect()[0, 0]
+
+        out: dict[str, FlowDataEngine] = {}
+        offset = 0
+        for i, (name, percentage) in enumerate(splits):
+            length = total - offset if i == len(splits) - 1 else int(round(total * percentage / 100.0))
+            length = max(0, length)
+            out[name] = FlowDataEngine(
+                cached_lf.slice(offset, length),
+                number_of_records=length,
+                schema=self.schema,
+            )
             offset += length
         return NamedOutputs(out)
 

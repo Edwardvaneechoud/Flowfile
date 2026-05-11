@@ -519,3 +519,78 @@ class DbInfo(Base):
     id = Column(Integer, primary_key=True, default=1)
     app_version = Column(String, nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
+# ==================== AI Audit Log ====================
+
+
+class AiAuditEvent(Base):
+    """One row per AI-driven action (plan §9.4).
+
+    Records what the agent did on the user's behalf so the user can inspect
+    after the fact. Source for the §13 success metrics (tool-call validation
+    pass rate, diff accept rate, cost-per-flow). ``flow_id`` is the in-memory
+    runtime id — kept as a plain integer rather than an FK because draft flows
+    don't always have a ``FlowRegistration``. ``tool_args`` is a JSON blob
+    truncated to ``ai.audit.MAX_ARGS_BYTES`` before persistence.
+    """
+
+    __tablename__ = "ai_audit_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, nullable=False, index=True)
+    flow_id = Column(Integer, nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    tool_name = Column(String, nullable=False, index=True)
+    tool_args = Column(Text, nullable=True)
+    result_status = Column(String, nullable=False)  # "success" | "error" | "rejected"
+    error = Column(Text, nullable=True)
+    provider = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    prompt_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    completion_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    total_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    diff_action = Column(String, nullable=True)  # "accepted" | "rejected" | None
+    created_at = Column(DateTime, default=func.now(), nullable=False, index=True)
+
+
+# ==================== AI BYOK Credentials ====================
+
+
+class AiProviderCredential(Base):
+    """One row per (user, provider) BYOK credential (plan §6.5, §8).
+
+    Mirrors ``cloud_storage_connections``: plaintext metadata in the row,
+    encrypted ``api_key`` blob via FK to the ``secrets`` table. Deletion of a
+    referenced ``Secret`` row sets ``api_key_secret_id`` to NULL rather than
+    cascading — a safety net so an accidental secret-row delete doesn't lose
+    the user's BYOK metadata. ``delete_provider_credential`` deletes both
+    rows explicitly inside a transaction.
+    """
+
+    __tablename__ = "ai_provider_credentials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False, index=True)  # 'anthropic', 'openai', ...
+    api_key_secret_id = Column(
+        Integer,
+        ForeignKey("secrets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    api_base = Column(String, nullable=True)
+    default_model = Column(String, nullable=True)
+    # JSON-encoded list[str] of models the user has curated for this credential
+    #. Decoded at the schema layer in flowfile_core.ai.credentials. Null
+    # or an empty list both mean "no curated list — fall through to the
+    # resolution order".
+    models = Column(Text, nullable=True)
+    last_tested_at = Column(DateTime, nullable=True)
+    last_test_status = Column(String, nullable=True)  # "ok" | "error"
+    last_test_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    api_key_secret = relationship("Secret", foreign_keys=[api_key_secret_id], lazy="joined")
+
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_ai_provider_per_user"),)
