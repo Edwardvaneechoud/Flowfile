@@ -1731,9 +1731,7 @@ class FlowDataEngine:
         )
         cached_lf = edf.get_result()
         if not isinstance(cached_lf, pl.LazyFrame):
-            raise RuntimeError(
-                f"random_split_external: worker did not return a LazyFrame (got {type(cached_lf)!r})"
-            )
+            raise RuntimeError(f"random_split_external: worker did not return a LazyFrame (got {type(cached_lf)!r})")
 
         # Cheap — reads parquet footer metadata, not row data.
         total = cached_lf.select(pl.len()).collect()[0, 0]
@@ -2737,6 +2735,9 @@ def execute_sql_query(*flowfile_tables: FlowDataEngine, sql_code: str) -> FlowDa
     Returns:
         A new FlowDataEngine instance containing the query result.
     """
+    from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import validate_sql_query
+
+    validate_sql_query(sql_code)
     ctx = pl.SQLContext()
     for i, flowfile_table in enumerate(flowfile_tables):
         ctx.register(f"input_{i + 1}", flowfile_table.data_frame)

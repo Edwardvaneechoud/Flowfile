@@ -48,6 +48,43 @@ from ..refusals import (
 logger = logging.getLogger(__name__)
 
 
+def _validate_python_script_body_or_reject(
+    *,
+    node_type: str,
+    code: str,
+    tool_name: str,
+    redacted_args: dict[str, Any],
+    session_id: str,
+    user_id: int,
+    flow_id: int,
+) -> ToolExecutionResult | None:
+    """Pre-flight python_script AST validation.
+
+    Blocks ``__import__``, ``importlib``, dunders, ``eval``/``exec``/``compile``
+    in python_script code. Mirrors the polars_code gate using the same
+    ``polars_code_parser.validate_code`` AST walker (which blocks the same
+    dangerous builtins and import patterns).
+
+    Returns ``None`` when clean or when ``node_type`` isn't ``python_script``;
+    returns a rejected ``ToolExecutionResult`` otherwise.
+    """
+    if node_type != "python_script":
+        return None
+    try:
+        polars_code_parser.validate_code(code)
+    except ValueError as exc:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow_id,
+            refusal_reason="python_script_validation",
+            refusal_detail=f"python_script rejected: {exc}",
+        )
+    return None
+
+
 def _validate_polars_code_body_or_reject(
     *,
     node_type: str,
@@ -154,12 +191,13 @@ def _handle_add_node(
             flow_id=flow.flow_id,
             refusal_reason="writer_blocked",
             refusal_detail=(
-                f"node_type {node_type!r} writes to an external destination "
-                "(file / database / cloud / catalog). The AI agent is not "
-                "allowed to stage writer nodes — the user adds these "
-                "manually. Suggest the writer to the user instead, or pick "
+                f"node_type {node_type!r} is blocked for AI agent use. "
+                "Writer nodes (output / database_writer / cloud_storage_writer / "
+                "catalog_writer) and kernel-executed nodes (python_script) "
+                "cannot be staged by the agent — the user adds these "
+                "manually. Suggest the node to the user instead, or pick "
                 "a transformation node (filter, sort, group_by, formula, "
-                "select, …) for the next step."
+                "polars_code, select, …) for the next step."
             ),
         )
 
@@ -271,6 +309,7 @@ def _handle_add_node(
     # the error reaches the LLM and the retry path produces correct
     # shape.
     from flowfile_core.ai.tools.meta_ops import JOIN_SHAPED_NODE_TYPES
+
     if node_type in JOIN_SHAPED_NODE_TYPES:
         upstream_ids_for_check = list(insertion_context.upstream_node_ids or [])
         right_id_for_check = insertion_context.right_input_node_id
@@ -383,9 +422,7 @@ def _handle_add_node(
     upstream_ids = list(insertion_context.upstream_node_ids)
     if insertion_context.right_input_node_id is not None and insertion_context.right_input_node_id not in upstream_ids:
         upstream_ids.append(insertion_context.right_input_node_id)
-    upstream_schemas, warnings = _resolve_upstream_schemas(
-        flow, upstream_ids, staged_schemas=extra_upstream_schemas
-    )
+    upstream_schemas, warnings = _resolve_upstream_schemas(flow, upstream_ids, staged_schemas=extra_upstream_schemas)
 
     # --- Refusal stage 3: column refs ---
     refs = collect_column_refs(node_type, settings)

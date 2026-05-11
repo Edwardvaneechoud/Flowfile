@@ -1079,7 +1079,15 @@ class PolarsCodeInput(BaseModel):
 
 
 class SqlQueryInput(BaseModel):
-    """A container for a SQL query to execute against connected data sources."""
+    """A container for a SQL query to execute against connected data sources.
+
+    Note: ``sql_code`` is *not* validated at schema-construction time. Construction
+    is a passive shape-check; the unsafe-SQL gate lives at the executor seam in
+    ``execute_sql_query`` (and is also enforced by the underlying
+    ``validate_sql_query`` utility callers can use directly). Validating here too
+    would block legitimate non-AI callers from drafting/testing SQL before
+    execution.
+    """
 
     sql_code: str
 
