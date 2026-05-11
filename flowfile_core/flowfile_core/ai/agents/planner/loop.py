@@ -133,19 +133,8 @@ def _update_last_added_source(
         node_type = tool_name.removeprefix(_ADD_PREFIX)
         if classify_node_type(node_type) == "source":
             session.last_added_source = (node_type, node_id)
-            logger.warning(
-                "[BACKSTOP] _update_last_added_source: SET to (%r, %d) after %s",
-                node_type,
-                node_id,
-                tool_name,
-            )
             return
     session.last_added_source = None
-    logger.warning(
-        "[BACKSTOP] _update_last_added_source: CLEARED (tool=%s, node_id=%s — not a source-only add)",
-        tool_name,
-        node_id,
-    )
 
 
 def _should_force_other_after_source_add(
@@ -178,46 +167,14 @@ def _should_force_other_after_source_add(
     ``staged_results`` directly missed every agent_live add — the
     failure mode that motivated this version.
 
-    Diagnostic INFO logging at every branch so the next regression is
-    self-explanatory in flowfile_core stdout. Each call prints exactly
-    one line.
     """
-    log_session = session.session_id[:8] if session.session_id else "??"
     if op_kind not in ("connect", "disconnect", "delete"):
-        logger.warning(
-            "[BACKSTOP] session=%s check: op_kind=%s is not wiring → release",
-            log_session,
-            op_kind,
-        )
         return False
     if session.last_added_source is None:
-        logger.warning(
-            "[BACKSTOP] session=%s check: op_kind=%s but last_added_source=None "
-            "→ release (no recent source-only add)",
-            log_session,
-            op_kind,
-        )
         return False
     user_text = (session.user_prompt or "").lower()
-    matching_kw = next((kw for kw in _WIRING_INTENT_KEYWORDS if kw in user_text), None)
-    if matching_kw is not None:
-        logger.warning(
-            "[BACKSTOP] session=%s check: op_kind=%s, last_added_source=%s, "
-            "but user_prompt contains wiring keyword %r → release (user "
-            "explicitly named integration)",
-            log_session,
-            op_kind,
-            session.last_added_source,
-            matching_kw,
-        )
+    if any(kw in user_text for kw in _WIRING_INTENT_KEYWORDS):
         return False
-    logger.warning(
-        "[BACKSTOP] session=%s FIRES: op_kind=%s after source-only add %s; "
-        "user_prompt has no wiring keywords → forcing op_kind='other'",
-        log_session,
-        op_kind,
-        session.last_added_source,
-    )
     return True
 _PICK_UPSTREAM_NAME = PICK_UPSTREAM_TOOL_NAME
 

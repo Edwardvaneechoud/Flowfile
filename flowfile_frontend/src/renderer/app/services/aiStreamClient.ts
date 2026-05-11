@@ -36,6 +36,14 @@ export interface ChatStreamRequest {
   // omitted and no selection is set, the backend defaults to ``@flow``
   // so chat is grounded in the whole graph by default.
   mentions?: string[] | null;
+  // Frontend's 3-way mode toggle, narrowed to the two values that can
+  // reach this route (``"agent"`` doesn't dispatch via chat).
+  // ``"chat"`` → user has force-disabled auto-promotion; backend swaps
+  // assist.md's footer for one that points at the agent toggle (saying
+  // "do it" / "implement" won't help in this mode).
+  // ``"auto_agent"`` / omitted → backend uses assist.md's default
+  // footer that mentions both the toggle AND the magic words.
+  chat_mode?: "chat" | "auto_agent" | null;
 }
 
 export interface ChatStreamHandlers {

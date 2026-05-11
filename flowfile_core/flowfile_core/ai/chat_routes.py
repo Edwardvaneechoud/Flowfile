@@ -102,6 +102,19 @@ class ChatStreamRequest(BaseModel):
     flow_id: int | None = None
     selected_node_ids: list[int] | None = None
     mentions: list[str] | None = None
+    chat_mode: Literal["chat", "auto_agent"] | None = None
+    """Frontend's 3-way mode toggle, narrowed to the two values that
+    can reach this route (``"agent"`` doesn't dispatch via chat).
+
+    * ``"auto_agent"`` — the user wants the assistant to auto-promote
+      to agent on action requests. Footer should mention the
+      ``"do it"`` / ``"implement"`` magic words (the regex fast-path
+      in :mod:`flowfile_core.ai.intent_router` will catch them).
+    * ``"chat"`` — the user explicitly forced chat mode; auto-promotion
+      is disabled. Footer should tell them to flip the toggle to
+      **agent** instead — *"do it"* won't help in this mode.
+    * ``None`` — legacy callers / unknown. Treated as ``"auto_agent"``
+      (the current default in :mod:`assist.md`'s footer)."""
 
 
 def _ensure_known_provider(name: str) -> None:
@@ -120,6 +133,32 @@ def _to_provider_messages(payload: list[ChatMessageInput]) -> list[Message]:
     non-streaming responses, and chat is read-only anyway.
     """
     return [Message(role=msg.role, content=msg.content) for msg in payload]
+
+
+def _chat_mode_footer_override(
+    chat_mode: Literal["chat", "auto_agent"] | None,
+) -> str | None:
+    """Return a system-message override of the assist.md escalation footer.
+
+    * ``"chat"`` — user has force-disabled auto-promotion. The
+      ``"do it"`` / ``"implement"`` magic words don't promote in this
+      mode, so the footer must point at the toggle instead.
+    * ``"auto_agent"`` / ``None`` — assist.md's default footer (which
+      mentions both the toggle AND the magic words) is correct;
+      return ``None`` so no override is appended.
+    """
+    if chat_mode != "chat":
+        return None
+    return (
+        "MODE OVERRIDE — user is in CHAT-ONLY mode. The assist.md "
+        "footer mentions 'do it' / 'implement' as auto-switch words; "
+        "those WILL NOT WORK in chat-only mode (no auto-promotion is "
+        "running). When you reply to any 'add this node' / 'do X' "
+        "request, REPLACE the footer with this exact 2-line block:\n"
+        "> \"Chat mode can't change the flow. Switch the chat to "
+        "**agent** mode (toggle at the bottom of the drawer) and ask "
+        "again — I'll stage the steps for you there.\""
+    )
 
 
 def _resolve_prompt_surface(requested: str | None) -> str:
@@ -227,6 +266,17 @@ async def chat_stream(
             Message(role="system", content=system_prompt),
             *_to_provider_messages(body.messages),
         ]
+
+    # Mode-specific footer override. Injected as a final system message
+    # so it wins over assist.md's default footer (which mentions
+    # ``"do it"`` / ``"implement"`` — the auto-agent escape hatch). In
+    # ``chat``-only mode the user has explicitly disabled
+    # auto-promotion, so those magic words do nothing here; the only
+    # escape is the agent toggle. The override is a 2-line directive
+    # that small models can parse without re-reading assist.md.
+    footer_override = _chat_mode_footer_override(body.chat_mode)
+    if footer_override is not None:
+        messages.append(Message(role="system", content=footer_override))
 
     provider_stream = provider.stream(
         messages=messages,
