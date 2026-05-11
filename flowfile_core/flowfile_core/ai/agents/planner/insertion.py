@@ -138,19 +138,10 @@ def _resolve_insertion_context(
        The executor handles this (sources don't need an upstream;
        most node types refuse).
 
-    Source-only short-circuit: when ``tc.name`` is ``add_<source-only-type>``
-    (manual_input / read / database_reader / cloud_storage_reader /
-    catalog_reader / kafka_source / google_analytics_reader / external_source)
-    the resolver bypasses every tier and returns empty upstream / right_input.
-    Source nodes have no input port; previously Tier 6 happily attached
-    ``add_manual_input`` to the most-recent live node, the executor wired
-    that in ``_apply_add_node``, and the user saw "Attaching to node N" for
-    a node type that can't accept inputs. Stripping is silent because the
-    LLM emitting an upstream for a source is a recoverable wrong shape —
-    per the "normalize at executor seam" rule. The symmetric outbound case
-    (LLM emitting a follow-up ``connect`` from a freshly-staged source) is
-    backstopped by ``unrequested_wire_to_live`` in
-    ``tools/executor/handlers/connections.py``.
+    Source-only adds (``manual_input`` / ``read`` / ``database_reader`` /
+    ``cloud_storage_reader`` / ``catalog_reader`` / ``kafka_source`` /
+    ``google_analytics_reader`` / ``external_source``) bypass every tier
+    and return empty upstream / right_input — they have no input port.
     """
     args: dict[str, Any] = tc.arguments or {}
 
@@ -180,13 +171,9 @@ def _resolve_insertion_context(
                     upstream_ids.append(uid)
 
     if is_source_only:
-        # Strip everything: source-only nodes don't take an upstream. Any
-        # value here is either an LLM hallucination (Tier 1) or a stale
-        # session-canonical pick (Tier 0); both should be silently coerced.
         if upstream_ids:
             logger.debug(
-                "stripping upstream_node_ids=%s from source-only add %s "
-                "(source nodes have no input port)",
+                "stripping upstream_node_ids=%s from source-only add %s",
                 upstream_ids,
                 node_type,
             )
@@ -247,7 +234,6 @@ def _resolve_insertion_context(
 
     # At fill_settings, right input is also session-canonical.
     if is_source_only:
-        # Source-only nodes have no right input either; strip silently.
         right_input_node_id = None
     elif session.surface in _STAGED_STATE_MACHINE_SURFACES and session.stage == "fill_settings":
         right_input_node_id = session.picked_right_input_id

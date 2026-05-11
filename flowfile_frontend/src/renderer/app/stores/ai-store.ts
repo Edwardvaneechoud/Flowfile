@@ -665,13 +665,6 @@ export const useAiStore = defineStore("ai", () => {
           flow_id: activeFlowId,
           selected_node_ids: selectedNodeIds.length > 0 ? selectedNodeIds : null,
           mentions: parsedMentions.length > 0 ? parsedMentions : null,
-          // Mode hint for the backend: ``"chat"`` (force-chat) means
-          // auto-promotion is disabled, so the backend swaps the
-          // assist.md footer for one that points at the agent toggle
-          // instead of mentioning the ``"do it"`` magic words. Treat
-          // ``"auto"`` as ``"auto_agent"`` (the canonical backend
-          // value). ``"agent"`` doesn't dispatch via chat — that
-          // branch is handled before this code runs.
           chat_mode: mode.value === "chat" ? "chat" : "auto_agent",
         },
         {

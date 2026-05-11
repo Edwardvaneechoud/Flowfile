@@ -88,24 +88,11 @@ _CLASSIFY_INTENT_NAME = CLASSIFY_INTENT_TOOL_NAME
 _PICK_NODE_TYPE_NAME = PICK_NODE_TYPE_TOOL_NAME
 _VERIFY_COMPLETION_NAME = VERIFY_COMPLETION_TOOL_NAME
 
-# Wiring-intent keywords used by the source-only-add backstop. If any of
-# these appears in the user's literal request (case-insensitive), we
-# treat the user as having explicitly named integration and let the LLM's
-# classify pick stand. Otherwise the backstop forces ``op_kind="other"``
-# after a source-only add to prevent the planner from inventing a
-# connect/disconnect chain. Order doesn't matter — this is a substring
-# scan.
+# Substring scan against ``session.user_prompt``. A match releases the
+# source-only-add backstop (user explicitly named integration).
 _WIRING_INTENT_KEYWORDS: tuple[str, ...] = (
-    "connect",
-    "wire",
-    "join",
-    "integrate",
-    "link",
-    "attach",
-    "hook",
-    "feed into",
-    "into node",
-    "merge with",
+    "connect", "wire", "join", "integrate", "link",
+    "attach", "hook", "feed into", "into node", "merge with",
 )
 
 
@@ -114,21 +101,6 @@ def _update_last_added_source(
     tool_name: str,
     node_id: int | None,
 ) -> None:
-    """Maintain ``session.last_added_source`` after a successful op.
-
-    Set to ``(node_type, node_id)`` when ``tool_name`` is an
-    ``add_<source-only-type>``; cleared to ``None`` for any other
-    successful op (non-source add, connect, disconnect, modify,
-    delete). The backstop reads this field; clearing on any non-add
-    success means multi-step user requests (e.g. *"add source then
-    connect it explicitly"*) don't keep firing the backstop after
-    the user's first explicit follow-up.
-
-    Called from BOTH the agent_live observation path AND the
-    agent_staged real-staging path so the field stays consistent
-    across surfaces (the agent_live path short-circuits before
-    reaching the regular ``staged_results.append`` site).
-    """
     if tool_name.startswith(_ADD_PREFIX) and node_id is not None:
         node_type = tool_name.removeprefix(_ADD_PREFIX)
         if classify_node_type(node_type) == "source":
@@ -141,33 +113,8 @@ def _should_force_other_after_source_add(
     session: sessions.AgentSession,
     op_kind: str,
 ) -> bool:
-    """Backstop for the W71 v2.14 source-only stand-alone rule.
-
-    Returns True iff the planner should override the LLM's
-    ``classify_intent`` pick to ``op_kind="other"``. Triggers when:
-
-    * the LLM picked a wiring/integration op
-      (``connect`` / ``disconnect`` / ``delete``), AND
-    * ``session.last_added_source`` is set (the immediately preceding
-      successful op was a source-only add — see
-      :func:`_update_last_added_source`), AND
-    * the user's literal prompt did not name wiring (no keyword from
-      :data:`_WIRING_INTENT_KEYWORDS`).
-
-    Why a code-level backstop on top of the prompt rule: small/cheap
-    coder models (e.g. qwen3-coder-30b) routinely pick
-    ``op_kind="connect"`` after ``add_manual_input`` even with the
-    explicit worked example in ``stage_classify.md`` (W71 v2.14). Per
-    the "normalize at executor seam, not in the prompt" rule, this
-    guard is the correct layer.
-
-    Why a session marker instead of inspecting ``staged_results``: the
-    agent_live observation path stores adds in ``applied_results`` and
-    short-circuits before the ``staged_results.append`` site. Reading
-    ``staged_results`` directly missed every agent_live add — the
-    failure mode that motivated this version.
-
-    """
+    """Override classify pick to ``other`` when LLM tries to wire a
+    just-added source the user didn't ask to wire."""
     if op_kind not in ("connect", "disconnect", "delete"):
         return False
     if session.last_added_source is None:
@@ -436,11 +383,8 @@ async def _run_planner_loop(
     sched = scheduler or default_scheduler()
     dry_run_cache = DryRunCache()
     retries_for_step = 0
-    # Tracks whether a tool call was rejected somewhere in the current
-    # step. When True, a subsequent prose-only round means the model is
-    # giving up mid-recovery — we route through the retry budget instead
-    # of letting the loop break silently (the classify-stage break path
-    # at line ~562 was previously masking exhausted retries).
+    # Set when a tool call is rejected this step; routes prose-only
+    # follow-ups through the retry budget instead of breaking silently.
     step_had_rejection = False
 
     if not session.messages:
@@ -587,36 +531,17 @@ async def _run_planner_loop(
                     session.stage,
                 )
 
-        # When the assistant turn is pure prose (no tool calls), surface
-        # it as a ``thinking`` event so the user sees what the model
-        # said. When tool calls follow, the same text rides on each
-        # ``tool_call_*`` event as ``rationale``, so emitting both would
-        # render the same sentence twice in the chat trail.
-        # Suppress the thinking event when this step has had a prior
-        # rejection: prose-only after a refusal is the model's internal
-        # self-correction ("I see the issue. I need to be more
-        # precise…"), not a user-facing message. The text is still kept
-        # in ``session.last_assistant_text`` (assigned in the provider
-        # call path above), so terminal question detection at loop end
-        # still works if the loop eventually exits on this prose.
+        # Surface prose-only turns as a ``thinking`` event. Suppressed
+        # mid-recovery (after a rejection) to hide the model's apologetic
+        # self-correction from the user-facing chat trail.
         if assistant_text and not tool_calls and not step_had_rejection:
             yield PlannerEvent(event="thinking", payload={"text": assistant_text})
 
         if not tool_calls:
-            # At mandatory-tool-call stages, an empty ``tool_calls``
-            # (even after text-JSON recovery tried) means the LLM emitted
-            # unparseable prose — e.g. llama-70b's token-corruption case
-            # ("altimoreFiltering to rows ..."). Treat it as a
-            # no-progress retry instead of a terminal "nothing to
-            # stage": append a synthetic reminder so the next round
-            # explicitly tells the LLM what's expected, and route
-            # through the existing ``max_retries_per_step`` budget.
-            # Classify stage with NO prior rejection in this step stays
-            # on the legacy break path — there an empty ``tool_calls``
-            # is a valid termination signal (op_kind="other" handled,
-            # or LLM has nothing more to add). Classify with a prior
-            # rejection means the model gave up mid-recovery; route
-            # through the retry budget instead of breaking silently.
+            # Mandatory stages can't legitimately emit zero tool calls;
+            # neither can a classify round mid-rejection-recovery. Both
+            # route through the retry budget. Other classify rounds keep
+            # the legacy break (op_kind="other" termination).
             if session.surface in _STAGED_STATE_MACHINE_SURFACES and (
                 session.stage in _MANDATORY_TOOL_CALL_STAGES
                 or step_had_rejection
@@ -644,9 +569,6 @@ async def _run_planner_loop(
                     )
                     return
                 if step_had_rejection:
-                    # Mid-recovery prose: point the model at the rejected
-                    # op and force a binary decision (re-emit corrected,
-                    # OR end the turn cleanly via classify_intent).
                     reminder = (
                         "A tool call earlier in this step was rejected and "
                         "your follow-up was prose-only. Either emit a "
@@ -675,11 +597,7 @@ async def _run_planner_loop(
                     },
                 )
                 continue
-            # All other stages / surfaces — preserve the existing
-            # termination path so legacy ``agent`` / ``agent_complex``
-            # and the ``classify`` stage of ``agent_staged`` (with no
-            # prior rejection) keep their current "LLM is done" semantics.
-            break
+            break  # legacy "LLM is done" termination
 
         any_succeeded_this_round = False
 
@@ -1088,13 +1006,6 @@ async def _run_planner_loop(
                 retries_for_step = 0
                 if live_node_id not in session.staged_node_ids:
                     session.staged_node_ids.append(live_node_id)
-                # Track most-recent source-only add for the
-                # ``_should_force_other_after_source_add`` backstop.
-                # In agent_live this is the only place the marker is
-                # set for adds — the "Real staging path" below
-                # (line ~1290 area, ``staged_results.append``) is
-                # never reached because of the ``continue`` at the
-                # end of this block.
                 _update_last_added_source(session, tc.name, live_node_id)
 
                 # Reset stage so the next round starts a fresh
@@ -1186,16 +1097,6 @@ async def _run_planner_loop(
                 if isinstance(op_kind, str) and _should_force_other_after_source_add(
                     session, op_kind
                 ):
-                    # Source-only stand-alone backstop. Override the LLM's
-                    # pick to "other" with a clean wrap-up rationale, and
-                    # append a synthetic system note so the model on the
-                    # next (terminal) round doesn't keep claiming the
-                    # connect happened. See ``_should_force_other_after_source_add``
-                    # for trigger conditions.
-                    # ``last_added_source`` is guaranteed non-None here by
-                    # the predicate, but be defensive — fall back to a
-                    # generic placeholder rather than raise if it's
-                    # somehow cleared between the check and here.
                     src_node_type, src_node_id = session.last_added_source or ("source", 0)
                     op_kind = "other"
                     rationale = (
@@ -1205,13 +1106,6 @@ async def _run_planner_loop(
                         f"integrate it, just say so on the next turn (e.g. "
                         f"\"now connect node {src_node_id} to ...\")."
                     )
-                    # Inject a system note BEFORE the assistant terminator
-                    # round so the model knows the host overrode its pick
-                    # and shouldn't keep narrating about the connect it
-                    # asked for. Without this the model often emits a
-                    # final assistant message that still claims it
-                    # connected the source — a lie that contradicts the
-                    # diff the user is reviewing.
                     session.messages.append(
                         Message(
                             role="user",
@@ -1337,15 +1231,8 @@ async def _run_planner_loop(
                 skipped_pick_upstream = False
                 if isinstance(node_type, str):
                     session.picked_node_type = node_type
-                    # Source-only nodes have no input port — skip the
-                    # pick_upstream LLM call entirely. Without this, the
-                    # pick_upstream stage routinely picks a live node
-                    # (often the one mentioned in chat history), the
-                    # frontend renders "Attaching to node N" for a node
-                    # type that can't accept inputs, and the resolver
-                    # has to silently strip the bogus pick downstream.
-                    # Skipping here makes the chat trail truthful
-                    # ("Filling settings…") and saves an LLM round.
+                    # Source-only nodes have no input port; skip the
+                    # pick_upstream LLM call entirely.
                     if classify_node_type(node_type) == "source":
                         session.picked_upstream_ids = []
                         session.picked_right_input_id = None
@@ -1372,13 +1259,6 @@ async def _run_planner_loop(
                     "op_kind_meta": "meta",
                 }
                 if skipped_pick_upstream:
-                    # Carry the empty upstream list explicitly so the
-                    # frontend (AiAgentEvent.vue:194-197) renders
-                    # "Filling settings…" rather than the default
-                    # missing-payload branch happens to also do.
-                    # Defensive — the frontend coalesces missing to []
-                    # already, but being explicit keeps the audit log
-                    # readable.
                     stage_payload["picked_upstream_ids"] = []
                     stage_payload["right_input_node_id"] = None
                 yield PlannerEvent(
@@ -1447,10 +1327,6 @@ async def _run_planner_loop(
                         if staged_id is not None and staged_id not in session.staged_node_ids:
                             session.staged_node_ids.append(staged_id)
                         staged_id_for_marker = staged_id
-                    # Maintain the source-only-add marker that
-                    # ``_should_force_other_after_source_add`` reads.
-                    # Cleared by any non-source-add success (connect,
-                    # disconnect, delete, etc.).
                     _update_last_added_source(session, tc.name, staged_id_for_marker)
                 event_name: PlannerEventName = "tool_call_warned" if result.status == "warned" else "tool_call_staged"
                 # Re-persist the session after each staging so a process

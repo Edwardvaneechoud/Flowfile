@@ -47,109 +47,40 @@ from flowfile_core.ai.scheduler import RateLimitScheduler, default_scheduler
 logger = logging.getLogger(__name__)
 
 
-# --------------------------------------------------------------------------- #
-# Regex fast-path                                                              #
-# --------------------------------------------------------------------------- #
-# Bypass the LLM classifier when the user's message is an unambiguous short
-# imperative AND the prior assistant turn proposed concrete build steps. The
-# LLM-based classifier was empirically unreliable on this exact case (small
-# Haiku-class models would return ``ambiguous`` or low-confidence ``build``
-# below the 0.6 threshold, sending the user back into chat). The fast-path
-# is a no-LLM, deterministic decision that catches the canonical case before
-# the LLM ever sees the message.
-#
-# Conservative by design: matches only when BOTH conditions hold. If the
-# user's message is anything richer than a bare imperative, OR the prior
-# turn doesn't look like a build suggestion, the fast-path returns ``None``
-# and the LLM classifier runs as the fallback. So the fast-path is purely
-# additive — it can't *worsen* the classifier's behaviour, only add hits.
-
 _FAST_PATH_IMPERATIVES: frozenset[str] = frozenset({
-    "do",
-    "do it",
-    "do this",
-    "do that",
-    "just do it",
-    "implement",
-    "implement it",
-    "implement that",
-    "implement this",
-    "apply",
-    "apply it",
-    "apply this",
-    "yes",
-    "yes please",
-    "yes do it",
-    "go",
-    "go ahead",
-    "execute",
-    "make it so",
-    "make it happen",
-    "run it",
+    "do", "do it", "do this", "do that", "just do it",
+    "implement", "implement it", "implement that", "implement this",
+    "apply", "apply it", "apply this",
+    "yes", "yes please", "yes do it",
+    "go", "go ahead", "execute",
+    "make it so", "make it happen", "run it",
 })
-"""Lowercased, punctuation-stripped imperatives that count as bare
-confirmation of a prior suggestion. ``in`` lookup against
-:func:`_normalize_user_message`."""
 
 
 _BUILD_SHAPE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # tool-call-shaped pseudocode (any add_* call written as text)
     re.compile(r"\badd_\w+\s*\(", re.IGNORECASE),
-    # JSON-shaped node settings
     re.compile(r'"type"\s*:\s*"\w+"', re.IGNORECASE),
-    # First-person action prose the chat agent is told NOT to use but
-    # sometimes still does
     re.compile(r"\bI'?ll add\b", re.IGNORECASE),
     re.compile(r"\bLet me add\b", re.IGNORECASE),
     re.compile(r"\bI'?ll place\b", re.IGNORECASE),
     re.compile(r"\bAdding the node\b", re.IGNORECASE),
-    # Palette-style instructions (the assist.md "drag X from sidebar" pattern)
     re.compile(r"\bdrag\s+\*?\*?\w[\w ]*\*?\*?\s+from\b", re.IGNORECASE),
-    # The Step 6 footer itself — when the chat agent says "say 'do it' to
-    # switch to agent mode", the chat agent has explicitly flagged this
-    # turn as actionable. If user replies with the magic word, definitely
-    # promote.
     re.compile(r"\bsay ['\"]?do it['\"]?\b", re.IGNORECASE),
     re.compile(r"\bsay ['\"]?implement['\"]?\b", re.IGNORECASE),
     re.compile(r"\bswitch to agent mode\b", re.IGNORECASE),
 )
-"""Regexes that detect build-shaped content in a prior assistant turn.
-ANY match flips the precondition for the fast-path. New patterns can be
-added freely — false positives just give us a build-classification on
-the next imperative, which is the safer side."""
 
 
 def _normalize_user_message(text: str) -> str:
-    """Lowercase, strip whitespace and trailing punctuation.
-
-    The fast-path needs to match *"do it"*, *"DO IT"*, *"do it."*,
-    *"do it!"*, etc. Strip everything that doesn't change the imperative
-    intent.
-    """
-    # Use a single regex strip to avoid B005 (rstrip with multi-char string
-    # is misleading because each char is treated independently — fine here
-    # but the linter complains; regex makes intent explicit).
-    lowered = text.strip().lower()
-    return re.sub(r"[\s.!?,;:'\"]+$", "", lowered)
+    if len(text) > 64:
+        return ""
+    return text.strip().lower().rstrip(" \t\n\r\f\v.!?,;:'\"")  # noqa: B005
 
 
 def _regex_fast_path_classify(
     user_message: str,
     history: list[Message] | None,
 ) -> IntentClassification | None:
-    """Bypass the LLM classifier for unambiguous imperative confirmations.
-
-    Returns:
-        ``IntentClassification(kind="build", confidence=0.95, ...)`` when
-        the user's message is a bare imperative AND the most recent
-        non-empty assistant turn matches a build-shape pattern.
-
-        ``None`` otherwise — the LLM classifier should run as the
-        fallback.
-
-    The function is fail-quiet: any malformed input returns ``None`` so
-    the LLM path takes over.
-    """
     if not user_message:
         return None
     normalized = _normalize_user_message(user_message)
@@ -157,8 +88,6 @@ def _regex_fast_path_classify(
         return None
     if not history:
         return None
-    # Find the most recent non-empty assistant message (oldest first list,
-    # so iterate reversed)
     last_assistant: str | None = None
     for msg in reversed(history):
         if msg.role == "assistant" and (msg.content or "").strip():
@@ -171,10 +100,7 @@ def _regex_fast_path_classify(
     return IntentClassification(
         kind="build",
         confidence=0.95,
-        reason=(
-            f"regex fast-path: imperative {normalized!r} after "
-            "build-shaped assistant turn"
-        ),
+        reason=f"regex fast-path: imperative {normalized!r} after build-shaped assistant turn",
     )
 
 
@@ -457,13 +383,6 @@ async def classify_intent(
     if not message.strip():
         return IntentClassification(kind="chat", confidence=1.0, reason="empty message")
 
-    # Regex fast-path: skip the LLM call for unambiguous short
-    # imperatives following a build-shaped assistant turn. The LLM
-    # classifier was empirically unreliable on this case (small
-    # Haiku-class models would return ``ambiguous`` or low-confidence
-    # ``build`` below the 0.6 threshold). The fast-path is conservative:
-    # it only fires when BOTH the imperative AND the build-shape match,
-    # so it can only add hits, never worsen the LLM's behaviour.
     fast = _regex_fast_path_classify(message, history)
     if fast is not None:
         return fast
