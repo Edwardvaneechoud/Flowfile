@@ -28,7 +28,6 @@ The recommended path is the in-app settings panel:
 3. Paste the API key into the *API key* field and click **Save**. For Ollama or self-hosted endpoints, set *API base* to the server URL.
 4. Click **Test**. Flowfile issues a 1-token ping and records the result on the credential (`last_tested_at`, `last_test_status`). A green checkmark means you're good to go.
 
-<!-- TODO screenshot: AI Providers list view (Settings → AI Providers) showing all six providers with their status chips (Configured / Env fallback / Unconfigured). -->
 ![AI Providers list with status chips](../assets/images/ai/byok_provider_list.png)
 
 !!! note "📸 Screenshot pending — `byok_provider_detail.png`"
@@ -47,20 +46,6 @@ Under the hood, these actions hit the BYOK routes:
 
 All BYOK endpoints require an authenticated user; credentials are scoped per user.
 
----
-
-## Configuring keys via env vars (fallback)
-
-If no credential row exists for a user, Flowfile falls back to the standard provider env vars on the host process. This is convenient for solo / local installs:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export OPENAI_API_KEY="sk-..."
-export GEMINI_API_KEY="..."        # or GOOGLE_API_KEY
-export GROQ_API_KEY="gsk_..."
-export OPENROUTER_API_KEY="sk-or-..."
-poetry run flowfile_core
-```
 
 When an env var is detected, the BYOK panel shows the provider as **Env fallback**. Saving a key in the UI takes precedence per user; deleting that key falls back to the env var again.
 
@@ -90,17 +75,6 @@ The full resolution order, in priority:
 A note on the Agent surface: it requires a tool-capable model. If you pin a curated list that contains only models without tool support, agent calls will return `422` with a clear message; switch back to a tool-capable model.
 
 ---
-
-## Rate limits
-
-You can cap per-provider request volume at the host process to avoid burning through a free-tier allowance during a session loop:
-
-```bash
-export FLOWFILE_AI_ANTHROPIC_RPM=30      # requests per minute
-export FLOWFILE_AI_ANTHROPIC_RPD=1000    # requests per day
-export FLOWFILE_AI_OPENAI_RPM=60
-# ... and so on for each provider name (uppercased)
-```
 
 The pattern is `FLOWFILE_AI_<PROVIDER>_RPM` and `FLOWFILE_AI_<PROVIDER>_RPD`. Unset means *no enforcement*. When a bucket fills, the scheduler delays the call (and surfaces a *"rate-limited, retrying in Ns"* hint to the UI rather than 5xx-ing). The same path also honours server `Retry-After` headers on 429 responses, regardless of your local caps.
 
@@ -144,18 +118,6 @@ Provider name typo. The supported names are exactly: `anthropic`, `openai`, `goo
 
 **Credential `Test` returns `ok=false` with an authentication error.**
 Key is wrong, expired, or missing required scopes. The error message from the upstream provider is surfaced in the `error` field of the test result.
-
-**Credential `Test` succeeds but a real call fails with `ProviderNotConfiguredError`.**
-The user account on the *call* doesn't match the user on the *credential row*. Credentials are per-user; another user on the same Flowfile install would need to save their own key (or fall back to the env var).
-
-**Agent runs but model emits text-shaped JSON instead of tool calls.**
-You're on a smaller model that struggles with the full tool catalog. Switch the agent surface to `agent_staged` (the default) — that mode exposes one tool per LLM round and is designed for exactly this.
-
-**The chat drawer auto-promoted my message to Agent and I didn't want it to.**
-The drawer's mode toggle has three values: *Chat*, *Auto*, *Agent*. Set it to *Chat* to disable auto-promotion. Auto-promotion uses a fast classifier model on the same provider; you can see what surface fired in the drawer header.
-
-**Where are my keys actually stored?**
-Encrypted with Fernet (master key `FLOWFILE_MASTER_KEY` / `master_key.txt`) in the same secrets table as the rest of your Flowfile secrets. The credential row carries an `api_key_secret_id` pointer; deleting the credential drops both the row and the secret atomically. **Don't commit `master_key.txt`.**
 
 ---
 

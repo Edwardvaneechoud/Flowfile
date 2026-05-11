@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 #: small enough that the table stays under a megabyte for thousands of
 #: events. Bumping this is fine if real workloads need it; just make sure
 #: callers also bump their downstream DB column allowances.
-MAX_ARGS_BYTES = 8 * 1024
+MAX_ARGS_BYTES = 32 * 1024
 
 ResultStatus = Literal["success", "error", "rejected"]
 DiffAction = Literal["accepted", "rejected"]
@@ -176,11 +176,7 @@ def query_events(
             q = q.filter(AiAuditEvent.session_id == session_id)
         if tool_name is not None:
             q = q.filter(AiAuditEvent.tool_name == tool_name)
-        rows = (
-            q.order_by(AiAuditEvent.created_at.desc(), AiAuditEvent.id.desc())
-            .limit(limit)
-            .all()
-        )
+        rows = q.order_by(AiAuditEvent.created_at.desc(), AiAuditEvent.id.desc()).limit(limit).all()
         # Detach so callers can use the rows after the session closes.
         for row in rows:
             session.expunge(row)

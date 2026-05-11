@@ -38,7 +38,7 @@ from .._internal import (
 )
 from ..coercions import _coerce_to_int_or_none
 from ..refusals import _format_settings_validation_refusal
-from .add import _validate_polars_code_body_or_reject
+from .add import _validate_polars_code_body_or_reject, _validate_python_script_body_or_reject
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +181,19 @@ def _handle_update_node_settings(
         if polars_rejection is not None:
             return polars_rejection
 
+        # --- Refusal stage 2.6: python_script sandbox validation ---
+        script_rejection = _validate_python_script_body_or_reject(
+            node_type=node_type,
+            code=code,
+            tool_name=tool_name,
+            redacted_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+        )
+        if script_rejection is not None:
+            return script_rejection
+
     # --- Resolve upstream schemas from the live node's existing wiring ---
     # Modifications never rewire the topology — the LLM must use connect /
     # delete_connection for that — so we read upstream ids off the live
@@ -204,9 +217,7 @@ def _handle_update_node_settings(
     upstream_ids = list(main_input_ids)
     if right_input_id is not None and right_input_id not in upstream_ids:
         upstream_ids.append(right_input_id)
-    upstream_schemas, warnings = _resolve_upstream_schemas(
-        flow, upstream_ids, staged_schemas=extra_upstream_schemas
-    )
+    upstream_schemas, warnings = _resolve_upstream_schemas(flow, upstream_ids, staged_schemas=extra_upstream_schemas)
 
     # --- Refusal stage 3: column refs ---
     refs = collect_column_refs(node_type, new_settings)
@@ -263,6 +274,21 @@ def _handle_update_node_settings(
             right_input_node_id=right_input_id,
         )
 
+    # --- Audit annotation: flag database_reader query changes as high-risk ---
+    db_query_changed = False
+    if node_type == "database_reader":
+        old_db = old_settings_dict.get("database_settings") or {}
+        new_db = new_settings.model_dump(mode="json").get("database_settings") or {}
+        old_query = old_db.get("query")
+        new_query = new_db.get("query")
+        if old_query is not None and new_query is not None and old_query != new_query:
+            db_query_changed = True
+            logger.warning(
+                "high-risk: database_reader query changed by AI agent",
+                extra={"node_id": node_id, "session_id": session_id},
+            )
+            warnings.append("high-risk: database_reader query was modified by the agent")
+
     # --- Apply or stage ---
     if mode == "stage":
         payload = {
@@ -272,6 +298,7 @@ def _handle_update_node_settings(
             "old_settings": old_settings_dict,
             "new_settings": new_settings.model_dump(mode="json"),
             "predicted_output_schema": schema_to_dict_list(predicted),
+            "high_risk": db_query_changed,
         }
         audit_row = _record_event(
             session_id=session_id,

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
@@ -1122,13 +1123,40 @@ def _safe_get_sample_data(node: FlowNode, n: int) -> list[dict[str, Any]] | None
     return list(rows)[:n] if n > 0 else []
 
 
+_COLUMN_NAME_MAX_LEN = 128
+_COLUMN_NAME_SAFE_RE = re.compile(r"[^A-Za-z0-9_\-. ]")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _sanitize_column_name(raw: str) -> str:
+    """Sanitize a column name for safe inclusion in LLM prompts.
+
+    * Strips control characters.
+    * Replaces characters outside ``[A-Za-z0-9_\\-. ]`` with ``?``.
+    * Caps length at 128.
+    * Prefixes with ``~`` when the value was modified so the model sees
+      the column came from an untrusted source.
+    """
+    cleaned = _CONTROL_CHAR_RE.sub("", raw)
+    cleaned = _COLUMN_NAME_SAFE_RE.sub("?", cleaned)
+    cleaned = cleaned[:_COLUMN_NAME_MAX_LEN]
+    if cleaned != raw:
+        logger.info(
+            "sanitized column name for LLM context",
+            extra={"original_length": len(raw), "sanitized": cleaned},
+        )
+        return f"~{cleaned}"
+    return cleaned
+
+
 def _column_snapshot(column: FlowfileColumn) -> ColumnSnapshot:
     nullable = None
     empty = getattr(column, "number_of_empty_values", None)
     if isinstance(empty, int) and empty == 0:
         nullable = False
+    raw_name = getattr(column, "column_name", "?")
     return ColumnSnapshot(
-        name=getattr(column, "column_name", "?"),
+        name=_sanitize_column_name(raw_name),
         data_type=getattr(column, "data_type", "Unknown"),
         nullable=nullable,
     )

@@ -27,6 +27,10 @@ budget is free; missed budget truncates the user's plan."""
 DEFAULT_MAX_RETRIES_PER_STEP: int = 3
 DEFAULT_MAX_TOKENS: int = 2_048
 RATIONALE_MAX_LEN: int = 500
+DEFAULT_MAX_DB_READER_OPS: int = 8
+"""Per-session budget for ``database_reader`` add/update operations.
+Limits the number of times the agent can create or modify database reader
+nodes in a single session to prevent runaway query execution."""
 
 
 PlannerEventName = Literal[

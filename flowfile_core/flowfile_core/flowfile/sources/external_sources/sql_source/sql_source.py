@@ -115,6 +115,13 @@ def validate_sql_query(query: str) -> None:
         (r"\bCALL\s+", "CALL statements (stored procedures) are not allowed"),
         (r"\bGRANT\s+", "GRANT statements are not allowed"),
         (r"\bREVOKE\s+", "REVOKE statements are not allowed"),
+        (r"\bCOPY\b", "COPY statements are not allowed"),
+        (r"\bMERGE\s+", "MERGE statements are not allowed"),
+        (r"\bINTO\s+OUTFILE\b", "INTO OUTFILE is not allowed"),
+        (r"\bLOAD\s+DATA\b", "LOAD DATA statements are not allowed"),
+        (r"\bPRAGMA\b", "PRAGMA statements are not allowed"),
+        (r"\bATTACH\b", "ATTACH statements are not allowed"),
+        (r"\bDETACH\b", "DETACH statements are not allowed"),
     ]
 
     for pattern, error_msg in dangerous_patterns:

@@ -424,7 +424,6 @@ def _redact(value: Any, *, key_hint: str | None, extra: frozenset[str]) -> Any:
 RefusalReason = Literal[
     "unknown_columns",
     "network_egress",
-    "missing_diff",
     "self_loop_prevented",
     "self_loop_connection",
     "settings_validation",
@@ -434,6 +433,9 @@ RefusalReason = Literal[
     "writer_blocked",
     "polars_code_import_forbidden",
     "polars_code_validation",
+    "sql_query_validation",
+    "db_query_change",
+    "python_script_validation",
 ]
 
 
@@ -454,6 +456,7 @@ AGENT_BLOCKED_NODE_TYPES: frozenset[str] = frozenset(
         "database_writer",
         "cloud_storage_writer",
         "catalog_writer",
+        "python_script",
     }
 )
 
