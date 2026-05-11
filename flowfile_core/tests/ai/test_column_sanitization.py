@@ -1,8 +1,3 @@
-"""Tests for column-name sanitisation in the AI context builder.
-
-Covers TODO-2: hostile DB column names must be sanitised before reaching
-the LLM prompt to prevent prompt injection.
-"""
 
 from __future__ import annotations
 

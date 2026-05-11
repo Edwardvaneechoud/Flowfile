@@ -1,4 +1,4 @@
-"""Tests for SQL query validation in the sql_query node (TODO 4).
+"""Tests for SQL query validation in the sql_query node
 
 Ensures that ``execute_sql_query`` and ``SqlQueryInput`` refuse unsafe SQL
 before it reaches pl.SQLContext.

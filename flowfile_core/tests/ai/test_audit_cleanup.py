@@ -1,11 +1,3 @@
-"""Tests for audit/budget cleanup (TODO 6).
-
-Covers:
-- ``missing_diff`` removed from ``RefusalReason``
-- ``MAX_ARGS_BYTES`` bumped to 32 KiB
-- ``DEFAULT_MAX_DB_READER_OPS`` budget constant exists
-"""
-
 from __future__ import annotations
 
 from typing import get_args
@@ -16,7 +8,7 @@ from flowfile_core.ai.safety import RefusalReason
 
 
 class TestAuditBudgetCleanup:
-    """Verify TODO 6 cleanup changes."""
+    """Verify cleanup changes."""
 
     def test_missing_diff_removed_from_refusal_reason(self) -> None:
         """``missing_diff`` must not appear in ``RefusalReason``."""

@@ -1,4 +1,4 @@
-"""Tests for database_reader query change annotation (TODO 5).
+"""Tests for database_reader query change annotation
 
 Verifies that when the AI agent modifies a ``database_reader`` node's query,
 the staged diff is annotated as high-risk and a warning is emitted.

@@ -1,4 +1,4 @@
-"""Tests for blocking python_script from AI agent (TODO 1).
+"""Tests for blocking python_script from AI agent
 
 Covers:
 - ``python_script`` is in ``AGENT_BLOCKED_NODE_TYPES`` (blocked at add time)
