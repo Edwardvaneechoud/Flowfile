@@ -7,7 +7,7 @@ from typing import Any, Literal, NamedTuple
 import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
 from polars import selectors
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from flowfile_core.schemas.yaml_types import (
     BasicFilterYaml,
@@ -1079,17 +1079,17 @@ class PolarsCodeInput(BaseModel):
 
 
 class SqlQueryInput(BaseModel):
-    """A container for a SQL query to execute against connected data sources."""
+    """A container for a SQL query to execute against connected data sources.
+
+    Note: ``sql_code`` is *not* validated at schema-construction time. Construction
+    is a passive shape-check; the unsafe-SQL gate lives at the executor seam in
+    ``execute_sql_query`` (and is also enforced by the underlying
+    ``validate_sql_query`` utility callers can use directly). Validating here too
+    would block legitimate non-AI callers from drafting/testing SQL before
+    execution.
+    """
 
     sql_code: str
-
-    @field_validator("sql_code")
-    @classmethod
-    def _validate_sql_code(cls, v: str) -> str:
-        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import validate_sql_query
-
-        validate_sql_query(v)
-        return v
 
 
 class SelectInputsManager:

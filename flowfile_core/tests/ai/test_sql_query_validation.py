@@ -1,14 +1,15 @@
 """Tests for SQL query validation in the sql_query node
 
-Ensures that ``execute_sql_query`` and ``SqlQueryInput`` refuse unsafe SQL
-before it reaches pl.SQLContext.
+Ensures that ``execute_sql_query`` refuses unsafe SQL before it reaches
+``pl.SQLContext``. Validation lives at the executor seam, not on the
+``SqlQueryInput`` schema — schema construction is intentionally passive so
+non-AI callers can draft/inspect SQL without hitting the gate prematurely.
 """
 
 from __future__ import annotations
 
 import polars as pl
 import pytest
-from pydantic import ValidationError
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -42,11 +43,11 @@ class TestSqlQueryNodeValidation:
         result = execute_sql_query(sample_engine, sql_code="SELECT * FROM input_1")
         assert result.data_frame.collect().shape[0] == 3
 
-    def test_pydantic_validator_rejects_drop(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            SqlQueryInput(sql_code="DROP TABLE users")
-        assert "UnsafeSQLError" in str(exc_info.value) or "Only SELECT" in str(exc_info.value)
+    def test_schema_construction_is_passive(self) -> None:
+        """Constructing ``SqlQueryInput`` does not validate — gate lives at execute."""
+        inp = SqlQueryInput(sql_code="DROP TABLE users")
+        assert inp.sql_code == "DROP TABLE users"
 
-    def test_pydantic_validator_accepts_select(self) -> None:
+    def test_schema_accepts_select(self) -> None:
         inp = SqlQueryInput(sql_code="SELECT id, name FROM users")
         assert inp.sql_code == "SELECT id, name FROM users"

@@ -40,11 +40,19 @@ class TestSanitizeColumnName:
         assert result.startswith("~")
         assert len(result) <= 129  # ~ + 128
 
-    def test_unicode_replaced(self) -> None:
-        result = _sanitize_column_name("café_résumé")
+    def test_unicode_letters_preserved(self) -> None:
+        """Letters in any script survive intact (non-ASCII users matter)."""
+        assert _sanitize_column_name("café_résumé") == "café_résumé"
+        assert _sanitize_column_name("顧客_id") == "顧客_id"
+        assert _sanitize_column_name("Größe") == "Größe"
+
+    def test_unicode_punctuation_still_sanitized(self) -> None:
+        """Non-letter / non-allowed chars are still replaced even in Unicode input."""
+        result = _sanitize_column_name("café[]")
         assert result.startswith("~")
-        assert "é" not in result
-        assert "?" in result
+        assert "[" not in result
+        assert "]" not in result
+        assert "café" in result
 
     def test_empty_string(self) -> None:
         result = _sanitize_column_name("")

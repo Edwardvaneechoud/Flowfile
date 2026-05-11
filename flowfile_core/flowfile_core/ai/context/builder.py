@@ -1124,7 +1124,10 @@ def _safe_get_sample_data(node: FlowNode, n: int) -> list[dict[str, Any]] | None
 
 
 _COLUMN_NAME_MAX_LEN = 128
-_COLUMN_NAME_SAFE_RE = re.compile(r"[^A-Za-z0-9_\-. ]")
+# Unicode-aware: ``\w`` matches letters/digits/underscore across scripts,
+# so non-ASCII column names (e.g. ``café``, ``顧客``) survive intact while
+# punctuation that could carry prompt-injection payloads still gets ``?``-d.
+_COLUMN_NAME_SAFE_RE = re.compile(r"[^\w\-. ]", re.UNICODE)
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
@@ -1132,7 +1135,7 @@ def _sanitize_column_name(raw: str) -> str:
     """Sanitize a column name for safe inclusion in LLM prompts.
 
     * Strips control characters.
-    * Replaces characters outside ``[A-Za-z0-9_\\-. ]`` with ``?``.
+    * Replaces characters outside ``[\\w\\-. ]`` (Unicode-aware) with ``?``.
     * Caps length at 128.
     * Prefixes with ``~`` when the value was modified so the model sees
       the column came from an untrusted source.
