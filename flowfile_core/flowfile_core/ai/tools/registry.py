@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any, Final, Literal, get_args
+from typing import Any, Final, Literal, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -275,6 +275,12 @@ def _resolve_inner_input_field(settings_cls: type) -> tuple[str, type] | None:
         return None
     field_name, annotation = next(iter(type_specific.items()))
     inner = _unwrap_optional_annotation(annotation)
+    # Reject parametrized generics (``list[X]``, ``dict[X, Y]``, ...) before
+    # the issubclass call: on Python 3.10 ``isinstance(list[X], type)`` is
+    # True (fixed in 3.11), and ``BaseModel``'s ABCMeta-derived metaclass
+    # then raises ``TypeError: issubclass() arg 1 must be a class``.
+    if get_origin(inner) is not None:
+        return None
     if isinstance(inner, type) and issubclass(inner, BaseModel):
         return field_name, inner
     return None

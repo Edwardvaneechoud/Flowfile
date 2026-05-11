@@ -239,6 +239,18 @@ class AgentSession(BaseModel):
     """Node ids the agent has staged this session via ``add_<node_type>``
     tool calls — used to exclude the agent's own additions from the
     ``external_added_node_ids`` drift bucket."""
+    last_added_source: tuple[str, int] | None = None
+    """``(node_type, node_id)`` of the most recent successful source-only
+    add this session, or ``None`` if the most recent op was anything
+    else (non-source add, connect, disconnect, modify, delete, ...).
+    Powers the source-only stand-alone backstop in
+    ``planner.loop._should_force_other_after_source_add``: when this is
+    set, a subsequent classify pick of ``connect`` / ``disconnect`` /
+    ``delete`` is overridden to ``other`` unless the user's literal
+    request named wiring. Set in BOTH the agent_live observation path
+    AND the agent_staged real-staging path so the marker stays
+    consistent across surfaces (the agent_live path doesn't reach the
+    regular staged_results.append site)."""
     selected_node_ids: list[int] = Field(default_factory=list)
     """Node ids the user had selected on the canvas at session start.
     Read by ``planner._resolve_insertion_context`` as a fallback signal

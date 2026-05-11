@@ -109,31 +109,43 @@ _WIRING_INTENT_KEYWORDS: tuple[str, ...] = (
 )
 
 
-def _last_staged_source_add(
+def _update_last_added_source(
     session: sessions.AgentSession,
-) -> tuple[str, int] | None:
-    """Return ``(node_type, node_id)`` for the most recent staged
-    source-only add, or ``None`` if the last staged op was not a
-    source-only add.
+    tool_name: str,
+    node_id: int | None,
+) -> None:
+    """Maintain ``session.last_added_source`` after a successful op.
 
-    Used by ``_should_force_other_after_source_add`` — the backstop
-    triggers only when the immediately preceding staged op was a
-    source. Once any non-source op (transformation add, connect,
-    disconnect) has been staged after the source, the user is
-    presumed to be doing multi-step work and the backstop releases.
+    Set to ``(node_type, node_id)`` when ``tool_name`` is an
+    ``add_<source-only-type>``; cleared to ``None`` for any other
+    successful op (non-source add, connect, disconnect, modify,
+    delete). The backstop reads this field; clearing on any non-add
+    success means multi-step user requests (e.g. *"add source then
+    connect it explicitly"*) don't keep firing the backstop after
+    the user's first explicit follow-up.
+
+    Called from BOTH the agent_live observation path AND the
+    agent_staged real-staging path so the field stays consistent
+    across surfaces (the agent_live path short-circuits before
+    reaching the regular ``staged_results.append`` site).
     """
-    if not session.staged_results:
-        return None
-    last_entry = session.staged_results[-1]
-    if not last_entry.tool_name.startswith(_ADD_PREFIX):
-        return None
-    last_node_type = last_entry.tool_name.removeprefix(_ADD_PREFIX)
-    if classify_node_type(last_node_type) != "source":
-        return None
-    last_node_id = sessions._entry_node_id(last_entry)
-    if last_node_id is None:
-        return None
-    return last_node_type, last_node_id
+    if tool_name.startswith(_ADD_PREFIX) and node_id is not None:
+        node_type = tool_name.removeprefix(_ADD_PREFIX)
+        if classify_node_type(node_type) == "source":
+            session.last_added_source = (node_type, node_id)
+            logger.warning(
+                "[BACKSTOP] _update_last_added_source: SET to (%r, %d) after %s",
+                node_type,
+                node_id,
+                tool_name,
+            )
+            return
+    session.last_added_source = None
+    logger.warning(
+        "[BACKSTOP] _update_last_added_source: CLEARED (tool=%s, node_id=%s — not a source-only add)",
+        tool_name,
+        node_id,
+    )
 
 
 def _should_force_other_after_source_add(
@@ -147,32 +159,65 @@ def _should_force_other_after_source_add(
 
     * the LLM picked a wiring/integration op
       (``connect`` / ``disconnect`` / ``delete``), AND
-    * the most recent staged op was a source-only add (per
-      :func:`_last_staged_source_add`), AND
+    * ``session.last_added_source`` is set (the immediately preceding
+      successful op was a source-only add — see
+      :func:`_update_last_added_source`), AND
     * the user's literal prompt did not name wiring (no keyword from
       :data:`_WIRING_INTENT_KEYWORDS`).
 
     Why a code-level backstop on top of the prompt rule: small/cheap
     coder models (e.g. qwen3-coder-30b) routinely pick
     ``op_kind="connect"`` after ``add_manual_input`` even with the
-    explicit worked example in ``stage_classify.md`` (W71 v2.14). The
-    "complete the user's task" instinct dominates inverse-instruction
-    rules. Per the user's "normalize at executor seam, not in the
-    prompt" guidance, this guard is the correct layer.
+    explicit worked example in ``stage_classify.md`` (W71 v2.14). Per
+    the "normalize at executor seam, not in the prompt" rule, this
+    guard is the correct layer.
 
-    The wiring-keyword check intentionally errs on the side of standalone:
-    if the user said *"add a manual_input AND join it to my customers"*,
-    the substring ``join`` lifts the backstop and the LLM's choice
-    stands. If the user said *"add a manual_input"* with nothing about
-    wiring, the backstop fires.
+    Why a session marker instead of inspecting ``staged_results``: the
+    agent_live observation path stores adds in ``applied_results`` and
+    short-circuits before the ``staged_results.append`` site. Reading
+    ``staged_results`` directly missed every agent_live add — the
+    failure mode that motivated this version.
+
+    Diagnostic INFO logging at every branch so the next regression is
+    self-explanatory in flowfile_core stdout. Each call prints exactly
+    one line.
     """
+    log_session = session.session_id[:8] if session.session_id else "??"
     if op_kind not in ("connect", "disconnect", "delete"):
+        logger.warning(
+            "[BACKSTOP] session=%s check: op_kind=%s is not wiring → release",
+            log_session,
+            op_kind,
+        )
         return False
-    if _last_staged_source_add(session) is None:
+    if session.last_added_source is None:
+        logger.warning(
+            "[BACKSTOP] session=%s check: op_kind=%s but last_added_source=None "
+            "→ release (no recent source-only add)",
+            log_session,
+            op_kind,
+        )
         return False
     user_text = (session.user_prompt or "").lower()
-    if any(kw in user_text for kw in _WIRING_INTENT_KEYWORDS):
+    matching_kw = next((kw for kw in _WIRING_INTENT_KEYWORDS if kw in user_text), None)
+    if matching_kw is not None:
+        logger.warning(
+            "[BACKSTOP] session=%s check: op_kind=%s, last_added_source=%s, "
+            "but user_prompt contains wiring keyword %r → release (user "
+            "explicitly named integration)",
+            log_session,
+            op_kind,
+            session.last_added_source,
+            matching_kw,
+        )
         return False
+    logger.warning(
+        "[BACKSTOP] session=%s FIRES: op_kind=%s after source-only add %s; "
+        "user_prompt has no wiring keywords → forcing op_kind='other'",
+        log_session,
+        op_kind,
+        session.last_added_source,
+    )
     return True
 _PICK_UPSTREAM_NAME = PICK_UPSTREAM_TOOL_NAME
 
@@ -1086,6 +1131,14 @@ async def _run_planner_loop(
                 retries_for_step = 0
                 if live_node_id not in session.staged_node_ids:
                     session.staged_node_ids.append(live_node_id)
+                # Track most-recent source-only add for the
+                # ``_should_force_other_after_source_add`` backstop.
+                # In agent_live this is the only place the marker is
+                # set for adds — the "Real staging path" below
+                # (line ~1290 area, ``staged_results.append``) is
+                # never reached because of the ``continue`` at the
+                # end of this block.
+                _update_last_added_source(session, tc.name, live_node_id)
 
                 # Reset stage so the next round starts a fresh
                 # classify→pick→fill cycle (multi-node turns
@@ -1182,17 +1235,11 @@ async def _run_planner_loop(
                     # next (terminal) round doesn't keep claiming the
                     # connect happened. See ``_should_force_other_after_source_add``
                     # for trigger conditions.
-                    source_info = _last_staged_source_add(session)
-                    assert source_info is not None  # guaranteed by the predicate
-                    src_node_type, src_node_id = source_info
-                    logger.info(
-                        "session=%s: forced op_kind='other' (LLM picked %s after source-only "
-                        "add %s/%s; user prompt did not name wiring)",
-                        session.session_id[:8],
-                        op_kind,
-                        src_node_type,
-                        src_node_id,
-                    )
+                    # ``last_added_source`` is guaranteed non-None here by
+                    # the predicate, but be defensive — fall back to a
+                    # generic placeholder rather than raise if it's
+                    # somehow cleared between the check and here.
+                    src_node_type, src_node_id = session.last_added_source or ("source", 0)
                     op_kind = "other"
                     rationale = (
                         f"Added the {src_node_type} as node {src_node_id}. "
@@ -1437,10 +1484,17 @@ async def _run_planner_loop(
                     # checks can exclude them from external-added
                     # detection. Only ``add_<node_type>`` calls produce
                     # a node_id — connection / delete payloads don't.
+                    staged_id_for_marker: int | None = None
                     if tc.name.startswith(_ADD_PREFIX):
                         staged_id = _payload_node_id(result.staged_node_payload)
                         if staged_id is not None and staged_id not in session.staged_node_ids:
                             session.staged_node_ids.append(staged_id)
+                        staged_id_for_marker = staged_id
+                    # Maintain the source-only-add marker that
+                    # ``_should_force_other_after_source_add`` reads.
+                    # Cleared by any non-source-add success (connect,
+                    # disconnect, delete, etc.).
+                    _update_last_added_source(session, tc.name, staged_id_for_marker)
                 event_name: PlannerEventName = "tool_call_warned" if result.status == "warned" else "tool_call_staged"
                 # Re-persist the session after each staging so a process
                 # crash mid-loop can resume against the up-to-date

@@ -830,3 +830,30 @@ def test_w67_audit_known_nested_pydantic_fields_render_as_object() -> None:
                 )
 
     assert not failures, "W67 audit failures:\n" + "\n".join(f"  - {f}" for f in failures)
+
+
+def test_resolve_inner_input_field_handles_list_generic_alias() -> None:
+    """``NodeSort.sort_input`` is annotated ``list[SortByInput]``. On
+    Python 3.10 ``isinstance(list[X], type)`` returns True (fixed in
+    3.11), and ``BaseModel``'s ABCMeta-derived metaclass then raises
+    ``TypeError: issubclass() arg 1 must be a class`` — crashing the
+    ``fill_settings`` system-prompt refresh whenever ``picked_node_type
+    == "sort"``. The resolver must reject parametrized generics
+    explicitly so the inner-input detection is a no-op for this shape.
+    """
+    from flowfile_core.ai.tools.registry import (
+        _resolve_inner_input_field,
+        build_staged_fill_tool_spec,
+        get_staged_fill_inner_field_name,
+    )
+
+    settings_cls = NODE_TYPE_TO_SETTINGS_CLASS["sort"]
+    # No raise — and ``list[SortByInput]`` is not a plain BaseModel,
+    # so the resolver returns None (the fallback flat-stripped spec
+    # is used at stage 3 instead of the inner-shape variant).
+    assert _resolve_inner_input_field(settings_cls) is None
+    assert get_staged_fill_inner_field_name("sort") is None
+    # End-to-end: stage-3 still produces a valid tool spec.
+    spec = build_staged_fill_tool_spec("sort")
+    assert spec is not None
+    assert spec.name == "flowfile.graph.add_sort"
