@@ -2172,7 +2172,7 @@ def test_agent_writer_node_types_refused_with_writer_blocked(call_kwargs: dict[s
     )
     assert result.status == "rejected"
     assert result.refusal_reason == "writer_blocked"
-    assert "external destination" in (result.refusal_detail or "")
+    assert "Writer nodes" in (result.refusal_detail or "")
     # The writer node never gets staged — the live graph stays
     # exactly as it was.
     assert flow.get_node(2) is None
