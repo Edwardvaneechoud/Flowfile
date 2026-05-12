@@ -38,7 +38,6 @@ from flowfile_core.catalog.services.visualizations import VisualizationService
 
 # Re-exports preserved so external callers / tests that still reach for the
 # underscore-prefixed names continue to work.
-from flowfile_core.catalog.text_utils import hash_source_versions as _hash_source_versions  # noqa: F401
 from flowfile_core.catalog.text_utils import is_table_reference as _is_table_reference  # noqa: F401
 from flowfile_core.catalog.text_utils import parse_delta_history as _parse_delta_history  # noqa: F401
 from flowfile_core.catalog.text_utils import rewrite_qualified_references as _rewrite_qualified_references  # noqa: F401
@@ -148,7 +147,7 @@ class CatalogService:
         self._sql.bind(virtual_tables=self._virtual_tables)
         self._virtual_tables.bind(sql=self._sql)
 
-        self._previews = TablePreviewService(repo, self._tables, self._virtual_tables)
+        self._previews = TablePreviewService(repo, self._tables)
         self._visualizations = VisualizationService(
             repo, self._namespaces, self._tables, self._virtual_tables, self._sql
         )
@@ -638,11 +637,8 @@ class CatalogService:
         producer_registration_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool = False,
         schema_json: str | None = None,
-        polars_plan: str | None = None,
-        source_table_versions: str | None = None,
     ) -> CatalogTableOut:
         """Create a virtual flow table (non-materialised catalog entry)."""
         return self._virtual_tables.create_virtual_flow_table(
@@ -651,11 +647,8 @@ class CatalogService:
             producer_registration_id,
             namespace_id,
             description,
-            serialized_lazy_frame,
             is_optimized,
             schema_json,
-            polars_plan,
-            source_table_versions,
         )
 
     def update_virtual_flow_table(
@@ -665,11 +658,8 @@ class CatalogService:
         description: str | None = None,
         namespace_id: int | None = None,
         producer_registration_id: int | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool | None = None,
         schema_json: str | None = None,
-        polars_plan: str | None = None,
-        source_table_versions: str | None = None,
     ) -> CatalogTableOut:
         """Update a virtual flow table's metadata or producer."""
         return self._virtual_tables.update_virtual_flow_table(
@@ -678,11 +668,8 @@ class CatalogService:
             description,
             namespace_id,
             producer_registration_id,
-            serialized_lazy_frame,
             is_optimized,
             schema_json,
-            polars_plan,
-            source_table_versions,
         )
 
     def create_query_virtual_table(
@@ -750,15 +737,6 @@ class CatalogService:
     ) -> CatalogTablePreview:
         """Read the first N rows from a catalog table (physical, virtual or Delta-versioned)."""
         return self._previews.get_table_preview(table_id, limit, version, user_id)
-
-    def resolve_virtual_flow_table_preview(
-        self,
-        table_id: int,
-        limit: int,
-        user_id: int | None = None,
-    ) -> CatalogTablePreview:
-        """Resolve a virtual flow table and return a preview (worker-backed)."""
-        return self._previews.resolve_virtual_flow_table_preview(table_id, limit, user_id)
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table."""

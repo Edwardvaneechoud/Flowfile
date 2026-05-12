@@ -12,11 +12,3 @@ class DeltaVersionCommit(BaseModel):
     timestamp: str | None = None
     operation: str | None = None
     parameters: dict | None = None
-
-
-class SourceTableVersion(BaseModel):
-    """Delta version of a source catalog table captured when a virtual table plan was generated."""
-
-    table_id: int
-    file_path: str
-    version: int

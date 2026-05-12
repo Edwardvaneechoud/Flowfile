@@ -273,18 +273,6 @@ export class CatalogApi {
     return response.data;
   }
 
-  static async resolveVirtualTable(
-    tableId: number,
-    limit = 100,
-  ): Promise<CatalogTablePreview> {
-    const response = await axios.post<CatalogTablePreview>(
-      `/catalog/virtual-tables/${tableId}/resolve`,
-      null,
-      { params: { limit } },
-    );
-    return response.data;
-  }
-
   // ====== Query-based Virtual Tables ======
 
   static async createQueryVirtualTable(body: QueryVirtualTableCreate): Promise<CatalogTable> {

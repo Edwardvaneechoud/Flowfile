@@ -581,7 +581,7 @@ def test_visualize_query_endpoint_ipc_path(tmp_path):
 
     target_dir = storage.catalog_virtual_results_directory
     target_dir.mkdir(parents=True, exist_ok=True)
-    ipc_name = "fvt-1-deadbeefdeadbeef.arrow"
+    ipc_name = "fvt-1.arrow"
     pl.DataFrame({"category": ["a", "b", "a"], "value": [1, 2, 3]}).write_ipc(str(target_dir / ipc_name))
 
     client = TestClient(main.app)
@@ -610,7 +610,7 @@ def test_visualize_query_sql_with_virtual_refs(tmp_path):
 
     target_dir = storage.catalog_virtual_results_directory
     target_dir.mkdir(parents=True, exist_ok=True)
-    ipc_name = "fvt-2-cafebabecafebabe.arrow"
+    ipc_name = "fvt-2.arrow"
     pl.DataFrame({"category": ["a", "b"], "boost": [10, 20]}).write_ipc(str(target_dir / ipc_name))
 
     client = TestClient(main.app)

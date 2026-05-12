@@ -312,8 +312,6 @@ class TableService:
             is_optimized=getattr(table, "is_optimized", None),
             laziness_blockers=laziness_blockers,
             sql_query=getattr(table, "sql_query", None),
-            polars_plan=getattr(table, "polars_plan", None),
-            source_table_versions=getattr(table, "source_table_versions", None),
             created_at=table.created_at,
             updated_at=table.updated_at,
         )
@@ -369,8 +367,6 @@ class TableService:
                     producer_registration_name=producer_registration_name,
                     is_optimized=getattr(table, "is_optimized", None),
                     sql_query=getattr(table, "sql_query", None),
-                    polars_plan=getattr(table, "polars_plan", None),
-                    source_table_versions=getattr(table, "source_table_versions", None),
                     created_at=table.created_at,
                     updated_at=table.updated_at,
                 )

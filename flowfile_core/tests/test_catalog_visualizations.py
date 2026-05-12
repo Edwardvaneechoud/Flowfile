@@ -449,7 +449,6 @@ class TestVisualizationCompute:
                 owner_id=1,
                 table_type="virtual",
                 producer_registration_id=None,
-                source_table_versions=None,
             )
             db.add(table)
             db.commit()
@@ -480,12 +479,9 @@ class TestVisualizationCompute:
         def fake_resolve(self, table_id, **kwargs):
             return pl.LazyFrame({"x": [1, 2, 3]})
 
-        def fake_resolve_virtual(table_id, plan_bytes, source_versions_hash):
-            captured["resolve"] = {
-                "table_id": table_id,
-                "hash": source_versions_hash,
-            }
-            return {"ipc_path": f"fvt-{table_id}-noversions00000.arrow", "mtime": 1234.5, "row_count": 3}
+        def fake_resolve_virtual(table_id, plan_bytes):
+            captured["resolve"] = {"table_id": table_id}
+            return {"ipc_path": f"fvt-{table_id}.arrow", "mtime": 1234.5, "row_count": 3}
 
         with (
             patch.object(svc_module.CatalogService, "resolve_virtual_flow_table", fake_resolve),
@@ -496,8 +492,7 @@ class TestVisualizationCompute:
 
         assert resp.status_code == 200, resp.text
         assert captured["source"]["kind"] == "ipc_path"
-        assert captured["source"]["ipc_path"].startswith(f"fvt-{tid}-")
+        assert captured["source"]["ipc_path"] == f"fvt-{tid}.arrow"
         assert captured["source"]["mtime"] == 1234.5
         assert captured["source"]["session_key"] == f"fvt:{tid}:1234"
         assert captured["resolve"]["table_id"] == tid
-        assert captured["resolve"]["hash"] == "noversions"

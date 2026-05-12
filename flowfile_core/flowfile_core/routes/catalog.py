@@ -898,18 +898,6 @@ def update_virtual_flow_table(
     )
 
 
-@router.post("/virtual-tables/{table_id}/resolve", response_model=CatalogTablePreview)
-@handle_catalog_exceptions(TableNotFoundError="Virtual table not found", FlowNotFoundError="Producer flow not found")
-def resolve_virtual_flow_table(
-    table_id: int,
-    limit: int = Query(100, ge=1, le=10000),
-    current_user=Depends(get_current_active_user),
-    service: CatalogService = Depends(get_catalog_service),
-) -> CatalogTablePreview:
-    """Resolve a virtual flow table and return a preview of the result."""
-    return service.resolve_virtual_flow_table_preview(table_id, limit, user_id=current_user.id)
-
-
 # ---------------------------------------------------------------------------
 # Query-based Virtual Tables
 # ---------------------------------------------------------------------------

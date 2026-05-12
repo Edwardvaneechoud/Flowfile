@@ -261,7 +261,6 @@ class ResolveVirtualTableRequest(BaseModel):
 
     table_id: int
     plan_bytes: Base64Bytes
-    source_versions_hash: str
 
 
 class ResolveVirtualTableResponse(BaseModel):
