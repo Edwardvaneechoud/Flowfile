@@ -1,11 +1,11 @@
 flowfile_version: 1.0.0
-flowfile_id: 1768345778339
-flowfile_name: Sales Analytics Demo
+flowfile_id: 1778701682807
+flowfile_name: my_flow
 flowfile_settings:
-  description: 'Demo flow: Join orders with regions, filter, aggregate, and export to Parquet'
+  description: ''
   execution_mode: Development
   execution_location: local
-  auto_save: false
+  auto_save: true
   show_detailed_progress: false
 nodes:
   - id: 1
@@ -82,6 +82,7 @@ nodes:
     input_ids:
       - 9
     outputs:
+      - 8
       - 5
     setting_input:
       cache_results: false
@@ -92,6 +93,174 @@ nodes:
           operator: equals
           value: Completed
         advanced_filter: ''
+  - id: 8
+    type: explore_data
+    is_start_node: false
+    description: Explore Orders
+    x_position: 849
+    y_position: 420
+    input_ids:
+      - 4
+    outputs: []
+    setting_input:
+      cache_results: false
+      graphic_walker_input:
+        is_initial: false
+        dataModel:
+          fields: []
+          data: []
+        specList:
+          - config:
+              defaultAggregated: true
+              geoms:
+                - line
+              coordSystem: generic
+              limit: -1
+            encodings:
+              dimensions:
+                - fid: customer_name
+                  name: customer_name
+                  basename: customer_name
+                  semanticType: nominal
+                  analyticType: dimension
+                - fid: product
+                  name: product
+                  basename: product
+                  semanticType: nominal
+                  analyticType: dimension
+                - fid: category
+                  name: category
+                  basename: category
+                  semanticType: nominal
+                  analyticType: dimension
+                - fid: order_date
+                  name: order_date
+                  basename: order_date
+                  semanticType: nominal
+                  analyticType: dimension
+                - fid: region
+                  name: region
+                  basename: region
+                  semanticType: nominal
+                  analyticType: dimension
+                - fid: status
+                  name: status
+                  basename: status
+                  semanticType: nominal
+                  analyticType: dimension
+                - fid: region_name
+                  name: region_name
+                  basename: region_name
+                  semanticType: nominal
+                  analyticType: dimension
+                - fid: manager
+                  name: manager
+                  basename: manager
+                  semanticType: nominal
+                  analyticType: dimension
+                - fid: gw_mea_key_fid
+                  name: Measure names
+                  analyticType: dimension
+                  semanticType: nominal
+              measures:
+                - fid: order_id
+                  name: order_id
+                  basename: order_id
+                  analyticType: measure
+                  semanticType: quantitative
+                  aggName: sum
+                - fid: quantity
+                  name: quantity
+                  basename: quantity
+                  analyticType: measure
+                  semanticType: quantitative
+                  aggName: sum
+                - fid: unit_price
+                  name: unit_price
+                  basename: unit_price
+                  analyticType: measure
+                  semanticType: quantitative
+                  aggName: sum
+                - fid: target_sales
+                  name: target_sales
+                  basename: target_sales
+                  analyticType: measure
+                  semanticType: quantitative
+                  aggName: sum
+                - fid: bonus_rate
+                  name: bonus_rate
+                  basename: bonus_rate
+                  analyticType: measure
+                  semanticType: quantitative
+                  aggName: sum
+                - fid: gw_count_fid
+                  name: Row count
+                  analyticType: measure
+                  semanticType: quantitative
+                  aggName: sum
+                  computed: true
+                  expression:
+                    op: one
+                    params: []
+                    as: gw_count_fid
+                - fid: gw_mea_val_fid
+                  name: Measure values
+                  analyticType: measure
+                  semanticType: quantitative
+                  aggName: sum
+              rows:
+                - fid: quantity
+                  name: quantity
+                  basename: quantity
+                  analyticType: measure
+                  semanticType: quantitative
+                  aggName: sum
+              columns:
+                - fid: order_date
+                  name: order_date
+                  basename: order_date
+                  semanticType: nominal
+                  analyticType: dimension
+              color: []
+              opacity: []
+              size: []
+              shape: []
+              radius: []
+              theta: []
+              longitude: []
+              latitude: []
+              geoId: []
+              details: []
+              filters: []
+              text:
+                - fid: quantity
+                  name: quantity
+                  basename: quantity
+                  analyticType: measure
+                  semanticType: quantitative
+                  aggName: sum
+            layout:
+              showActions: false
+              showTableSummary: false
+              stack: stack
+              interactiveScale: false
+              zeroScale: true
+              size:
+                mode: full
+                width: 320
+                height: 200
+              format: {}
+              geoKey: name
+              resolve:
+                x: false
+                'y': false
+                color: false
+                opacity: false
+                shape: false
+                size: false
+              renderer: vega-lite
+            visId: gw_XuXj
+            name: Chart 1
   - id: 5
     type: group_by
     is_start_node: false
@@ -157,5 +326,5 @@ nodes:
         write_mode: overwrite
         table_settings:
           file_type: csv
-          delimiter: ","
+          delimiter: ','
           encoding: utf-8
