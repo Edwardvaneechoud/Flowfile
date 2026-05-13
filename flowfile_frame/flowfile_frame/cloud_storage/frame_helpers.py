@@ -23,6 +23,7 @@ def read_from_cloud_storage(
     has_header: bool = True,
     encoding: str = "utf8",
     delta_version: int | None = None,
+    output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     """Read data from cloud storage.
 
@@ -39,6 +40,10 @@ def read_from_cloud_storage(
         has_header: Whether CSV has headers (only used for CSV format).
         encoding: CSV encoding (only used for CSV format).
         delta_version: Delta table version for time-travel (only used for Delta format).
+        output_field_config: Optional schema validation/transformation config.
+            Set ``enabled=True`` and supply ``fields`` to enforce the expected
+            output schema (matches the canvas-side ``output_field_config``
+            knob). Construct via :class:`flowfile_frame.OutputFieldConfig`.
 
     Returns:
         FlowFrame: A FlowFrame backed by a cloud storage reader node.
@@ -58,24 +63,28 @@ def read_from_cloud_storage(
             delimiter=delimiter,
             has_header=has_header,
             encoding=encoding,
+            output_field_config=output_field_config,
         )
     elif file_format == "parquet":
         frame = scan_parquet_from_cloud_storage(
             source,
             connection_name=connection_name,
             scan_mode=scan_mode,
+            output_field_config=output_field_config,
         )
     elif file_format == "json":
         frame = scan_json_from_cloud_storage(
             source,
             connection_name=connection_name,
             scan_mode=scan_mode,
+            output_field_config=output_field_config,
         )
     elif file_format == "delta":
         frame = scan_delta(
             source,
             connection_name=connection_name,
             version=delta_version,
+            output_field_config=output_field_config,
         )
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
@@ -112,11 +121,16 @@ def write_to_cloud_storage(
 
     if file_format == "csv":
         df.write_csv_to_cloud_storage(
-            path=path, connection_name=connection_name, delimiter=delimiter, encoding=encoding,
+            path=path,
+            connection_name=connection_name,
+            delimiter=delimiter,
+            encoding=encoding,
         )
     elif file_format == "parquet":
         df.write_parquet_to_cloud_storage(
-            path=path, connection_name=connection_name, compression=compression,
+            path=path,
+            connection_name=connection_name,
+            compression=compression,
         )
     elif file_format == "json":
         df.write_json_to_cloud_storage(path=path, connection_name=connection_name)

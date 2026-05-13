@@ -2449,6 +2449,36 @@ def test_random_split_returns_named_outputs():
     assert result.labels == ["train", "test"]
 
 
+def test_random_split_remote_offloads_to_worker():
+    """remote dispatch must hit random_split_external (worker), not random_split (in-core).
+
+    Both paths must produce identical partition counts for the same seed.
+    """
+    rows = [{"id": i} for i in range(500)]
+    seed = 7
+
+    def _run(loc: Literal["local", "remote"]) -> tuple[int, int]:
+        graph = create_graph(execution_location=loc)
+        add_manual_input(graph, rows, node_id=1)
+        _add_random_split_to_graph(
+            graph,
+            [
+                input_schema.RandomSplitGroup(name="train", percentage=70.0),
+                input_schema.RandomSplitGroup(name="test", percentage=30.0),
+            ],
+            seed=seed,
+        )
+        graph.run_graph()
+        node = graph.get_node(2)
+        return (
+            len(node.get_output("output-0").collect()),
+            len(node.get_output("output-1").collect()),
+        )
+
+    assert _run("local") == (350, 150)
+    assert _run("remote") == (350, 150)
+
+
 def _install_heterogeneous_multi_output(node):
     """Replace a node's function with one that returns two different schemas per handle.
 

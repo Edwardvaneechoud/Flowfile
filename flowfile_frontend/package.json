@@ -1,6 +1,6 @@
 {
   "name": "Flowfile",
-  "version": "0.9.4",
+  "version": "0.10.1",
   "description": "A tool for designing and executing data flows",
   "main": "main/main.js",
   "scripts": {
@@ -17,7 +17,9 @@
     "test": "playwright test tests/app.spec.ts",
     "test:electron": "playwright test tests/app.spec.ts tests/complex-flow.spec.ts",
     "test:web": "playwright test tests/web-flow.spec.ts",
-    "test:all": "playwright test"
+    "test:all": "playwright test",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:unit:watch": "vitest --config vitest.config.ts"
   },
   "repository": "https://github.com/Edwardvaneechoud/Flowfile",
   "author": {
@@ -54,6 +56,7 @@
     "ts-loader": "^9.5.1",
     "typescript": "~5.6.3",
     "vite": "^6.4.2",
+    "vitest": "^3.2.4",
     "vue-eslint-parser": "^8.3.0",
     "vue-tsc": "^2.0.19"
   },
@@ -76,7 +79,7 @@
     "@vue-flow/core": "^1.42.1",
     "@vue-flow/minimap": "^1.5.2",
     "@vue-flow/node-resizer": "^1.4.0",
-    "axios": "^1.15.0",
+    "axios": "^1.15.2",
     "chart.js": "^3.8.0",
     "depcheck": "^1.4.7",
     "dompurify": "^3.2.4",

@@ -653,9 +653,28 @@ def _handle_virtual_table_write(
     settings = node_catalog_writer.catalog_write_settings
     reg_id = graph._flow_settings.source_registration_id
     if not reg_id:
+        # Python-built flows have no catalog registration on creation. Try to
+        # auto-register under "General > Python Editor" so the user does not
+        # need to manually save+register before calling write_mode='virtual'.
+        try:
+            from flowfile_core.flowfile.catalog_helpers import register_python_editor_flow
+
+            reg_id = register_python_editor_flow(
+                graph,
+                user_id=node_catalog_writer.user_id,
+            )
+        except Exception:
+            import traceback
+
+            graph.flow_logger.warning(
+                f"Auto-registration for virtual catalog write failed:\n{traceback.format_exc()}"
+            )
+            reg_id = None
+    if not reg_id:
         raise ValueError(
             "Cannot create a virtual table: this flow is not linked to a catalog registration. "
-            "Open the flow from the catalog, or register it first."
+            "Open the flow from the catalog, or register it first via "
+            "flowfile_frame.register_flow_with_catalog(...)."
         )
 
     serialized_lf: bytes | None = None
@@ -2669,9 +2688,14 @@ class FlowGraph:
         from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
 
         def _func(table: FlowDataEngine) -> NamedOutputs:
-            return table.random_split(
-                [(s.name, s.percentage) for s in settings.splits],
+            split_pairs = [(s.name, s.percentage) for s in settings.splits]
+            if self.execution_location == "local":
+                return table.random_split(split_pairs, settings.seed)
+            return table.random_split_external(
+                split_pairs,
                 settings.seed,
+                flow_id=self.flow_id,
+                node_id=settings.node_id,
             )
 
         self.add_node_step(
@@ -2940,7 +2964,7 @@ class FlowGraph:
         self._node_ids.append(node_id)
         # Give the node a callable that returns the current flow parameters so
         # that lazy schema prediction (_predicted_data_getter) can substitute
-        # ${...} refs.  Using a callable (rather than a copy of the dict) means
+        # ${...} refs. Using a callable (rather than a copy of the dict) means
         # the node always reads the LATEST parameters, whether they were set via
         # the flow_settings.setter or mutated directly on flow_settings.parameters.
         _graph = self
@@ -3384,7 +3408,7 @@ class FlowGraph:
                         _decrypt_fn,
                     )
             # The worker DataFrame may have fewer columns than the inferred
-            # schema (e.g. empty topic or starting at "latest").  Align to
+            # schema (e.g. empty topic or starting at "latest"). Align to
             # the schema_callback result so downstream nodes see stable columns.
             expected_columns = schema_callback()
             fl = fl.align_to_schema(expected_columns)
@@ -4165,7 +4189,7 @@ class FlowGraph:
 
         # Temporarily substitute parameters into node settings (in-place so closures see the values)
         restorations = []
-        # Save the node's hash before substitution.  executor.execute() calls node.reset()
+        # Save the node's hash before substitution. executor.execute() calls node.reset()
         # while setting_input is mutated, which recomputes _hash from the resolved path.
         # After restore_parameters the path returns to the original ${...} form but _hash
         # still holds the resolved-path hash → needs_reset() returns True on the next
@@ -4586,7 +4610,7 @@ class FlowGraph:
             if suffix == ".flowfile":
                 raise DeprecationWarning(
                     "The .flowfile format is deprecated. Please use .yaml or .json formats.\n\n"
-                    "Or stay on v0.4.1 if you still need .flowfile support.\n\n"
+                    "Or stay on.1 if you still need .flowfile support.\n\n"
                 )
             elif suffix in (".yaml", ".yml"):
                 flowfile_data = self.get_flowfile_data()
@@ -4836,7 +4860,15 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
     to_node = flow.get_node(node_connection.input_connection.node_id)
     logger.info(f"from_node={from_node}, to_node={to_node}")
     if not (from_node and to_node):
-        raise HTTPException(404, "Not not available")
+        missing = [
+            str(nc.node_id)
+            for nc, n in (
+                (node_connection.output_connection, from_node),
+                (node_connection.input_connection, to_node),
+            )
+            if not n
+        ]
+        raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
     if _would_create_cycle(from_node, to_node):
         raise HTTPException(
             422,

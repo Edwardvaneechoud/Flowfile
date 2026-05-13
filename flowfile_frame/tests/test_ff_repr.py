@@ -453,6 +453,39 @@ class TestWithColumnsFormulaConversion:
         node = result.get_node_settings()
         assert _is_formula_node(node)
 
+    def test_flowfile_formulas_now_promotes_to_polars_code(self, sample_ff):
+        """now() has no clean flowfile-formula form, so translation should
+        produce a polars_code node, not a formula node."""
+        result = sample_ff.with_columns(
+            flowfile_formulas=["now()"],
+            output_column_names=["ts"],
+        )
+        node = result.get_node_settings()
+        assert _is_polars_code_node(node), (
+            "Expected NodePolarsCode for now() (translates to a datetime literal)"
+        )
+
+    def test_flowfile_formulas_untranslatable_falls_back(self, sample_ff):
+        """When the translator can't handle a formula (e.g. to_date with a
+        format string), the legacy formula path is used as fallback."""
+        result = sample_ff.with_columns(
+            flowfile_formulas=['to_date([name], "%Y-%m-%d")'],
+            output_column_names=["d"],
+        )
+        node = result.get_node_settings()
+        assert _is_formula_node(node)
+
+    def test_flowfile_formulas_explicit_datatypes_skip_translation(self, sample_ff):
+        """Explicit output_column_datatypes disables translation so the user's
+        type hint is honoured by the formula node."""
+        result = sample_ff.with_columns(
+            flowfile_formulas=["now()"],
+            output_column_names=["ts"],
+            output_column_datatypes=["Datetime"],
+        )
+        node = result.get_node_settings()
+        assert _is_formula_node(node)
+
 
 # ---------------------------------------------------------------------------
 # Correctness tests — formula results match polars results

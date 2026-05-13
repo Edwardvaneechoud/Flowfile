@@ -174,6 +174,62 @@ def read_catalog_sql(
     )
 
 
+def register_flow_with_catalog(
+    flow_or_frame,
+    *,
+    name: str | None = None,
+    schema: SchemaReference | None = None,
+    namespace_id: int | None = None,
+    flow_path: str | None = None,
+    user_id: int | None = None,
+) -> int:
+    """Register a Python-authored flow with the Flowfile catalog.
+
+    Persists the flow as a YAML file (under
+    ``~/.flowfile/flows/python_editor_flows/`` by default) and creates a
+    ``FlowRegistration`` row, mirroring how the canvas registers flows. The
+    resulting registration id is stamped onto the flow so subsequent calls
+    such as :func:`write_catalog_table` with ``write_mode='virtual'`` can
+    succeed.
+
+    Calling this explicitly is optional: ``write_catalog_table`` with
+    ``write_mode='virtual'`` will auto-register the flow under
+    ``General > Python Editor`` on first use. Use this helper when you want
+    a specific name, namespace, or save path.
+
+    Args:
+        flow_or_frame: A :class:`FlowFrame` or the underlying ``FlowGraph``.
+        name: Display name for the catalog entry. Defaults to the flow's
+            current name.
+        schema: Target :class:`SchemaReference`. Preferred over
+            ``namespace_id``.
+        namespace_id: Legacy. Raw namespace id; mutually exclusive with
+            ``schema``. Defaults to ``General > Python Editor``.
+        flow_path: Optional explicit YAML save path. When omitted, a path is
+            chosen under ``~/.flowfile/flows/python_editor_flows/``.
+        user_id: Owner id for the registration (defaults to ``1``).
+
+    Returns:
+        The id of the resulting flow registration.
+    """
+    from flowfile_core.flowfile.catalog_helpers import register_python_editor_flow
+
+    if hasattr(flow_or_frame, "flow_graph"):
+        graph = flow_or_frame.flow_graph
+    else:
+        graph = flow_or_frame
+
+    resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
+
+    return register_python_editor_flow(
+        graph,
+        name=name,
+        namespace_id=resolved_namespace_id,
+        flow_path=flow_path,
+        user_id=user_id,
+    )
+
+
 def write_catalog_table(
     df: FlowFrame,
     table_name: str,
@@ -198,6 +254,9 @@ def write_catalog_table(
             - 'upsert': Insert new rows or update existing by merge_keys
             - 'update': Update only existing rows by merge_keys
             - 'delete': Delete rows matching merge_keys
+            - 'virtual': Register a virtual table backed by this flow
+              (requires the flow to be registered with the catalog first;
+              see :func:`flowfile_frame.register_flow_with_catalog`).
         merge_keys: Column names to use as merge keys (required for upsert/update/delete).
         description: Optional description for the table.
 

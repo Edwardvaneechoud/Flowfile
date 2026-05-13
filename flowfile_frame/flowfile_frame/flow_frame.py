@@ -50,6 +50,61 @@ def _contains_lambda_pattern(text: str) -> bool:
     return "<lambda> at" in text
 
 
+def _try_translate_flowfile_formulas(
+    flowfile_formulas: list[str],
+    output_column_names: list[str],
+) -> list[Expr] | None:
+    """Translate flowfile-formula strings into native FlowFrame expressions.
+
+    Returns a list of :class:`Expr` (one per formula, aliased to its output
+    column name) when every formula translates successfully, otherwise
+    ``None`` so the caller can fall back to the legacy formula path.
+
+    Uses :func:`polars_expr_transformer.to_flowframe_code` (>= 0.5.4) which
+    emits ``ff.col(...)``/``ff.lit(...)`` style strings. Generated code is
+    eval'd in a restricted namespace (``ff``, ``pl``, ``datetime``) with
+    builtins disabled.
+    """
+    try:
+        from polars_expr_transformer import to_flowframe_code
+    except ImportError:
+        logger.debug("polars_expr_transformer.to_flowframe_code unavailable; using legacy formula path")
+        return None
+
+    import datetime as _datetime
+
+    import flowfile_frame as _ff_module
+
+    eval_namespace = {"ff": _ff_module, "pl": pl, "datetime": _datetime}
+
+    expressions: list[Expr] = []
+    for formula, output_name in zip(flowfile_formulas, output_column_names, strict=False):
+        try:
+            generated = to_flowframe_code(formula)
+        except Exception:
+            logger.debug("to_flowframe_code raised for formula %r; falling back", formula, exc_info=True)
+            return None
+        if not generated:
+            logger.debug("to_flowframe_code returned empty output for formula %r; falling back", formula)
+            return None
+        try:
+            expr = eval(generated, {"__builtins__": {}}, eval_namespace)  # noqa: S307
+        except Exception:
+            logger.debug(
+                "eval failed for generated code %r (formula %r); falling back",
+                generated, formula, exc_info=True,
+            )
+            return None
+        if not isinstance(expr, Expr):
+            logger.debug(
+                "Generated code %r produced non-Expr %r (formula %r); falling back",
+                generated, type(expr), formula,
+            )
+            return None
+        expressions.append(expr.alias(output_name))
+    return expressions
+
+
 def get_method_name_from_code(code: str) -> str | None:
     split_code = code.split("input_df.")
     if len(split_code) > 1:
@@ -2046,7 +2101,7 @@ class FlowFrame:
         *,
         schema: SchemaReference | None = None,
         namespace_id: int | None = None,
-        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite",
+        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite",
         merge_keys: list[str] | None = None,
         description: str | None = None,
     ) -> FlowFrame:
@@ -2056,7 +2111,10 @@ class FlowFrame:
             table_name: Name of the catalog table to write to.
             schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
             namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
-            write_mode: How to handle existing data.
+            write_mode: How to handle existing data. ``"virtual"`` registers
+                the result as a virtual catalog table backed by this flow
+                (requires the flow to be registered with the catalog first;
+                see :func:`flowfile_frame.register_flow_with_catalog`).
             merge_keys: Column names for merge operations (required for upsert/update/delete).
             description: Optional description for this operation.
 
@@ -2638,7 +2696,23 @@ class FlowFrame:
             node_id_data["c"] = node_id_data["c"] + len(combined_graph.nodes)
 
         new_node_id = generate_node_id()
-        use_native = how == "diagonal_relaxed" and parallel and not rechunk
+
+        # Build a stable, deduplicated view of upstream sources. The graph wires
+        # each (source_node, input_slot) pair at most once (add_connection is
+        # idempotent), so when the same FlowFrame appears in `all_frames` more
+        # than once we must reuse the same input variable rather than fan out
+        # to phantom input_df_N slots that will not be bound at execute-time.
+        unique_node_ids: list[int] = []
+        position_by_node_id: dict[int, int] = {}
+        for f in all_frames:
+            if f.node_id not in position_by_node_id:
+                position_by_node_id[f.node_id] = len(unique_node_ids)
+                unique_node_ids.append(f.node_id)
+        has_duplicate_sources = len(unique_node_ids) < len(all_frames)
+
+        # NodeUnion can't express "include this input twice"; fall back to the
+        # polars-code path (which can, positionally) when duplicates are present.
+        use_native = how == "diagonal_relaxed" and parallel and not rechunk and not has_duplicate_sources
         if use_native:
             # Create union input for the transform schema
             union_input = transform_schema.UnionInput(
@@ -2653,23 +2727,28 @@ class FlowFrame:
                 pos_x=200,
                 pos_y=150,
                 is_setup=True,
-                depending_on_ids=[self.node_id] + [frame.node_id for frame in others],
+                depending_on_ids=list(unique_node_ids),
                 description=description or "Concatenate dataframes",
             )
 
             # Add to graph
             self.flow_graph.add_union(union_settings)
 
-            # Add connections
-            self._add_connection(self.node_id, new_node_id, "main")
-            for other_frame in others:
-                other_frame._add_connection(other_frame.node_id, new_node_id, "main")
+            # Wire each unique upstream source exactly once.
+            seen_sources: set[int] = set()
+            for f in all_frames:
+                if f.node_id in seen_sources:
+                    continue
+                seen_sources.add(f.node_id)
+                f._add_connection(f.node_id, new_node_id, "main")
         else:
-            # Fall back to Polars code for other cases
-            # Create a list of input dataframes for the code
-            input_vars = ["input_df_1"]
-            for i in range(len(others)):
-                input_vars.append(f"input_df_{i+2}")
+            # Match execute_polars_code's binding convention: a single unique
+            # source binds as `input_df` (singular); two or more bind as
+            # `input_df_1`, `input_df_2`, ... in upstream-discovery order.
+            if len(unique_node_ids) == 1:
+                input_vars = ["input_df"] * len(all_frames)
+            else:
+                input_vars = [f"input_df_{position_by_node_id[f.node_id] + 1}" for f in all_frames]
 
             frames_list = f"[{', '.join(input_vars)}]"
             code = f"""
@@ -2682,14 +2761,14 @@ class FlowFrame:
             )
             """
 
-            # Add polars code node with dependencies on all input frames
-            depending_on_ids = [self.node_id] + [frame.node_id for frame in others]
-            self._add_polars_code(new_node_id, code, description, depending_on_ids=depending_on_ids)
-            # Add connections to ensure all frames are available
-            self._add_connection(self.node_id, new_node_id, "main")
-
-            for other_frame in others:
-                other_frame._add_connection(other_frame.node_id, new_node_id, "main")
+            self._add_polars_code(new_node_id, code, description, depending_on_ids=list(unique_node_ids))
+            # Wire each unique upstream source exactly once.
+            seen_sources: set[int] = set()
+            for f in all_frames:
+                if f.node_id in seen_sources:
+                    continue
+                seen_sources.add(f.node_id)
+                f._add_connection(f.node_id, new_node_id, "main")
         # Create and return the new frame
         return FlowFrame(
             data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
@@ -2899,6 +2978,15 @@ class FlowFrame:
                 raise ValueError("Length of both the formulas and the output columns names must be identical")
             if output_column_datatypes is not None and len(output_column_datatypes) != len(flowfile_formulas):
                 raise ValueError("Length of output_column_datatypes must match the number of formulas")
+
+            # When the user did not request explicit output datatypes, try to
+            # upgrade flowfile formulas to native polars/flowframe expressions
+            # for a more efficient node type. Falls back transparently when
+            # the upstream translator can't handle a given formula.
+            if output_column_datatypes is None:
+                translated = _try_translate_flowfile_formulas(flowfile_formulas, output_column_names)
+                if translated is not None:
+                    return self.with_columns(*translated, description=description)
 
             datatypes = output_column_datatypes or ["Auto"] * len(flowfile_formulas)
             if len(flowfile_formulas) == 1:
