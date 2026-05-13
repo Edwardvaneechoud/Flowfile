@@ -109,16 +109,35 @@
           </div>
 
           <div v-else class="edit-pkgs">
-            <input
-              v-model="editPackagesInput"
-              type="text"
-              class="form-input"
-              placeholder="matplotlib==3.8.0, seaborn>=0.13"
-              :disabled="saving"
-            />
+            <div class="chip-input">
+              <el-tag
+                v-for="(pkg, i) in editPackages"
+                :key="`${pkg}-${i}`"
+                closable
+                :disable-transitions="false"
+                class="chip-input__tag"
+                @close="handleRemovePackage(i)"
+              >
+                {{ pkg }}
+              </el-tag>
+              <input
+                v-model="editNewPackage"
+                type="text"
+                class="chip-input__input"
+                :placeholder="
+                  editPackages.length === 0
+                    ? 'matplotlib==3.8.0 — press Enter to add'
+                    : 'Add another…'
+                "
+                :disabled="saving"
+                @keydown.enter.prevent="handleAddPackage"
+                @keydown.delete="handleBackspaceTrim"
+              />
+            </div>
             <p class="form-help">
-              Comma-separated. Saving rebuilds the kernel image (~30 s) so transitive deps stay
-              pinned against the flavour's constraints.
+              Press Enter to add each package. Each chip is one full spec — ranges like
+              <code>name&gt;=1.0,&lt;2.0</code> work. Saving rebuilds the kernel image (~30 s) so
+              transitive deps stay pinned against the flavour's constraints.
             </p>
             <p v-if="saveError" class="form-error">{{ saveError }}</p>
             <div class="edit-actions">
@@ -154,6 +173,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { ElTag } from "element-plus";
 import {
   KERNEL_FLAVOURS,
   type FlavourInfo,
@@ -174,7 +194,8 @@ const emit = defineEmits<{
 }>();
 
 const editing = ref(false);
-const editPackagesInput = ref("");
+const editPackages = ref<string[]>([]);
+const editNewPackage = ref("");
 const saving = ref(false);
 const saveError = ref<string | null>(null);
 
@@ -207,29 +228,54 @@ const formattedCreatedAt = computed(() => {
 });
 
 const startEdit = () => {
-  editPackagesInput.value = props.kernel.packages.join(", ");
+  editPackages.value = [...props.kernel.packages];
+  editNewPackage.value = "";
   saveError.value = null;
   editing.value = true;
 };
 
 const cancelEdit = () => {
   editing.value = false;
-  editPackagesInput.value = "";
+  editPackages.value = [];
+  editNewPackage.value = "";
   saveError.value = null;
 };
 
-const parsePackages = (raw: string): string[] =>
-  raw
-    .split(",")
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+const handleAddPackage = () => {
+  const candidate = editNewPackage.value.trim();
+  if (!candidate) return;
+  if (editPackages.value.includes(candidate)) {
+    editNewPackage.value = "";
+    return;
+  }
+  editPackages.value = [...editPackages.value, candidate];
+  editNewPackage.value = "";
+};
+
+const handleRemovePackage = (index: number) => {
+  editPackages.value = editPackages.value.filter((_, i) => i !== index);
+};
+
+const handleBackspaceTrim = (event: KeyboardEvent) => {
+  // Backspace on an empty input pops the last chip — common chip-input UX.
+  if (event.key !== "Backspace") return;
+  if (editNewPackage.value.length > 0) return;
+  if (editPackages.value.length === 0) return;
+  event.preventDefault();
+  editPackages.value = editPackages.value.slice(0, -1);
+};
 
 const save = async () => {
   if (saving.value) return;
+  // Auto-commit a pending typed-but-unconfirmed package so a Save click
+  // doesn't silently drop the user's last entry.
+  if (editNewPackage.value.trim()) {
+    handleAddPackage();
+  }
   saving.value = true;
   saveError.value = null;
   try {
-    await props.onSave(props.kernel.id, parsePackages(editPackagesInput.value));
+    await props.onSave(props.kernel.id, [...editPackages.value]);
     editing.value = false;
   } catch (err: any) {
     saveError.value = err?.message ?? "Failed to update packages.";
@@ -436,5 +482,32 @@ const save = async () => {
 .btn-sm {
   padding: var(--spacing-1) var(--spacing-2-5);
   font-size: var(--font-size-xs);
+}
+
+.chip-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-background-primary);
+  min-height: 38px;
+  align-items: center;
+}
+
+.chip-input__tag {
+  margin: 0;
+}
+
+.chip-input__input {
+  flex: 1;
+  min-width: 200px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  padding: 4px 6px;
 }
 </style>

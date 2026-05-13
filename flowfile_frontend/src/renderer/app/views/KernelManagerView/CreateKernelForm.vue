@@ -19,7 +19,7 @@
         <p class="creating-overlay__title">{{ submitLabel }}</p>
         <p class="creating-overlay__hint">
           {{
-            packagesInput.trim()
+            packages.length > 0
               ? "Building a per-kernel Docker image with your extra packages — this can take ~30 s."
               : "Provisioning kernel…"
           }}
@@ -108,22 +108,39 @@
         <div class="form-field">
           <label for="kernel-packages" class="form-label">
             Extra Python packages
-            <span class="form-label-hint"
-              >(optional, comma-separated, version pins encouraged)</span
-            >
+            <span class="form-label-hint">(optional, version pins encouraged)</span>
           </label>
-          <input
-            id="kernel-packages"
-            v-model="packagesInput"
-            type="text"
-            class="form-input"
-            :placeholder="extraPackagesPlaceholder"
-          />
+          <div class="chip-input">
+            <el-tag
+              v-for="(pkg, i) in packages"
+              :key="`${pkg}-${i}`"
+              closable
+              :disable-transitions="false"
+              class="chip-input__tag"
+              @close="handleRemovePackage(i)"
+            >
+              {{ pkg }}
+            </el-tag>
+            <input
+              id="kernel-packages"
+              v-model="newPackage"
+              type="text"
+              class="chip-input__input"
+              :placeholder="
+                packages.length === 0
+                  ? `${extraPackagesPlaceholder} — press Enter to add`
+                  : 'Add another…'
+              "
+              @keydown.enter.prevent="handleAddPackage"
+              @keydown.delete="handleBackspaceTrim"
+            />
+          </div>
           <p class="form-help">
-            Pin versions with <code>name==1.2.3</code> or ranges like
-            <code>name&gt;=1.0,&lt;2.0</code> so kernel rebuilds are reproducible. Specifiers are
-            validated against the flavour's constraints file (<code>polars</code>,
-            <code>pyarrow</code>, <code>numpy</code> stay locked no matter what you ask for).
+            Press Enter to add each package. Each chip is one full spec — commas inside a spec are
+            fine, so ranges like <code>name&gt;=1.0,&lt;2.0</code> work. Pin versions with
+            <code>name==1.2.3</code> for reproducibility. Specifiers are validated against the
+            flavour's constraints file (<code>polars</code>, <code>pyarrow</code>,
+            <code>numpy</code> stay locked no matter what you ask for).
           </p>
           <p class="form-help">
             Baked into a per-kernel Docker image at creation (one-time, ~30 s). Subsequent kernel
@@ -180,6 +197,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
+import { ElTag } from "element-plus";
 import {
   KERNEL_FLAVOURS,
   type FlavourInfo,
@@ -195,7 +213,8 @@ const props = defineProps<{
 
 const isExpanded = ref(false);
 const isSubmitting = ref(false);
-const packagesInput = ref("");
+const packages = ref<string[]>([]);
+const newPackage = ref("");
 
 const form = ref({
   id: "",
@@ -220,9 +239,9 @@ const activePackages = computed<FlavourPackage[]>(
 );
 
 const extraPackagesPlaceholder = computed(() => {
-  if (form.value.image_flavour === "ml") return "matplotlib==3.8.0, seaborn>=0.13";
-  if (form.value.image_flavour === "base") return "scikit-learn==1.7.2, matplotlib>=3.8";
-  return "e.g. opencv-python==4.10.0";
+  if (form.value.image_flavour === "ml") return "matplotlib==3.8.0";
+  if (form.value.image_flavour === "base") return "scikit-learn==1.7.2";
+  return "opencv-python==4.10.0";
 });
 
 const _DIGEST_RE = /@sha256:[a-fA-F0-9]{12,}$/;
@@ -257,25 +276,47 @@ const isValid = computed(() => {
 const submitLabel = computed(() => {
   if (!isSubmitting.value) return "Create Kernel";
   // Building a derived image takes ~30 s; surface that so users don't think it hung.
-  if (packagesInput.value.trim()) return "Baking packages…";
+  if (packages.value.length > 0) return "Baking packages…";
   return "Creating…";
 });
 
-const parsePackages = (): string[] => {
-  if (!packagesInput.value.trim()) return [];
-  return packagesInput.value
-    .split(",")
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+const handleAddPackage = () => {
+  const candidate = newPackage.value.trim();
+  if (!candidate) return;
+  if (packages.value.includes(candidate)) {
+    newPackage.value = "";
+    return;
+  }
+  packages.value = [...packages.value, candidate];
+  newPackage.value = "";
+};
+
+const handleRemovePackage = (index: number) => {
+  packages.value = packages.value.filter((_, i) => i !== index);
+};
+
+const handleBackspaceTrim = (event: KeyboardEvent) => {
+  // Backspace on an empty input pops the last chip — common chip-input UX.
+  if (event.key !== "Backspace") return;
+  if (newPackage.value.length > 0) return;
+  if (packages.value.length === 0) return;
+  event.preventDefault();
+  packages.value = packages.value.slice(0, -1);
 };
 
 const handleSubmit = async () => {
   if (!isValid.value || isSubmitting.value) return;
 
+  // Auto-commit a pending typed-but-unconfirmed package so a Create click
+  // doesn't silently drop the user's last entry.
+  if (newPackage.value.trim()) {
+    handleAddPackage();
+  }
+
   const config: KernelConfig = {
     id: form.value.id.trim(),
     name: form.value.name.trim(),
-    packages: parsePackages(),
+    packages: [...packages.value],
     memory_gb: form.value.memory_gb,
     cpu_cores: form.value.cpu_cores,
     gpu: form.value.gpu,
@@ -296,7 +337,8 @@ const handleSubmit = async () => {
       image_flavour: "base",
       custom_image: "",
     };
-    packagesInput.value = "";
+    packages.value = [];
+    newPackage.value = "";
     isExpanded.value = false;
   } catch {
     // Parent has already shown an error alert. Keep form populated for retry.
@@ -481,5 +523,32 @@ const handleSubmit = async () => {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   max-width: 360px;
+}
+
+.chip-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-background-primary);
+  min-height: 38px;
+  align-items: center;
+}
+
+.chip-input__tag {
+  margin: 0;
+}
+
+.chip-input__input {
+  flex: 1;
+  min-width: 200px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  padding: 4px 6px;
 }
 </style>

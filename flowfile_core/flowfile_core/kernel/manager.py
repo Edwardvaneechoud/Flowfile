@@ -566,7 +566,7 @@ class KernelManager:
                     line.get("stream", "").rstrip()
                     for line in (exc.build_log or [])
                     if isinstance(line, dict) and line.get("stream")
-                )[-2000:]
+                )[-20000:]
                 raise RuntimeError(
                     f"Failed to bake packages into kernel image: {exc}\n{tail}"
                 ) from exc
