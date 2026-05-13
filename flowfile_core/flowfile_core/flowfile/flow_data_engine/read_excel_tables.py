@@ -42,7 +42,11 @@ def df_from_calamine_xlsx(file_path: str, sheet_name: str, start_row: int = 0, e
     if end_row > 0:
         read_options["n_rows"] = end_row - start_row
     df = pl.read_excel(
-        source=file_path, engine="calamine", sheet_name=sheet_name, read_options=read_options, raise_if_empty=False,
+        source=file_path,
+        engine="calamine",
+        sheet_name=sheet_name,
+        read_options=read_options,
+        raise_if_empty=False,
         has_header=True,
     )
     df.columns = ensure_unique(

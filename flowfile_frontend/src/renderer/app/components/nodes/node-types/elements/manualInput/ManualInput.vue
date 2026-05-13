@@ -169,6 +169,10 @@
 </template>
 
 <script lang="ts" setup>
+// TODO(refactor): ~1080 LOC. Plan to extract:
+//   - TableEditor.vue: template lines 44-107 + the ~370 LOC of table CSS at ~706-1081
+//   - useTableCellNav composable: paste/arrow/tab handling ~lines 440-580
+//   - JSON editor (~110 LOC) and CSV paste area (~120 LOC) can each become children
 import { ref, computed, watch, nextTick } from "vue";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
@@ -704,33 +708,13 @@ defineExpose({
 </script>
 
 <style scoped>
-/* Propagate height through the wrapper chain so the table can fill available space */
+/* The drawer + genericNodeSettings flex chain provides the height; this just
+   needs to be a flex column so .settings-section can flex-fill below. */
 .manual-input-root {
   height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.manual-input-root :deep(.settings-wrapper) {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.manual-input-root :deep(.el-tabs) {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.manual-input-root :deep(.el-tabs__content) {
-  flex: 1;
   min-height: 0;
-  overflow: auto;
-}
-
-.manual-input-root :deep(.el-tab-pane) {
-  height: 100%;
 }
 
 .settings-section {

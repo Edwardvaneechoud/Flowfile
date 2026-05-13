@@ -19,6 +19,7 @@ DirectoryOptions = Literal[
     "global_artifacts_directory",
     "artifact_staging_directory",
     "catalog_tables_directory",
+    "catalog_virtual_results_directory",
 ]
 
 
@@ -96,6 +97,11 @@ class FlowfileStorage:
     def unnamed_flows_directory(self) -> Path:
         """Directory for quick-created unnamed flows (persistent, user-accessible)."""
         return self.flows_directory / "unnamed_flows"
+
+    @property
+    def python_editor_flows_directory(self) -> Path:
+        """Directory for Python-built flows registered via the FlowFrame API."""
+        return self.flows_directory / "python_editor_flows"
 
     @property
     def uploads_directory(self) -> Path:
@@ -184,11 +190,34 @@ class FlowfileStorage:
         return self.base_directory / "template_data"
 
     @property
+    def ai_sessions_directory(self) -> Path:
+        """Directory for W42 disk-persisted AI agent sessions (per-user, sidecar).
+
+        Docker → ``user_data_directory / "ai_sessions"`` so multi-tenant
+        deployments keep per-user separation. Local → ``base_directory /
+        "ai_sessions"`` (``~/.flowfile/ai_sessions/``) so we don't write into
+        the user's HOME root (``Path.home() / "ai_sessions"`` would be
+        intrusive — same precedent as the W59 prompt-log path deviation).
+        Mirrors the existing ``flows_directory`` / ``outputs_directory``
+        resolution shape exactly.
+        """
+        if _is_docker_mode():
+            return self.user_data_directory / "ai_sessions"
+        return self.base_directory / "ai_sessions"
+
+    @property
     def catalog_tables_directory(self) -> Path:
         """Directory for materialized catalog table Parquet files."""
         if _is_docker_mode():
             return self.user_data_directory / "catalog_tables"
         return self.base_directory / "catalog_tables"
+
+    @property
+    def catalog_virtual_results_directory(self) -> Path:
+        """Worker-side IPC cache for materialised flow-virtual tables."""
+        if _is_docker_mode():
+            return self.user_data_directory / "catalog_virtual_results"
+        return self.base_directory / "catalog_virtual_results"
 
     @property
     def artifact_staging_directory(self) -> Path:
@@ -221,12 +250,14 @@ class FlowfileStorage:
         user_directories = [
             self.flows_directory,
             self.unnamed_flows_directory,
+            self.python_editor_flows_directory,
             self.uploads_directory,
             self.outputs_directory,
             self.user_defined_nodes_directory,
             self.user_defined_nodes_icons,
             self.global_artifacts_directory,
             self.catalog_tables_directory,
+            self.catalog_virtual_results_directory,
             self.template_data_directory,
         ]
 

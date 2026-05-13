@@ -1,6 +1,12 @@
 <script setup lang="ts">
+// TODO(refactor): ~1170 LOC; bundles 7+ concerns. Plan to extract:
+//   - 6 draggable panel wrappers (~lines 927-1021) → individual *Panel components
+//   - clipboard/copy-paste logic (~lines 533-700) → useFlowClipboard composable
+//   - context menu handling (~lines 702-794) → useContextMenu composable
+//   - keyboard shortcuts (~lines 729-778) → useFlowHotkeys composable
 import {
   ref,
+  computed,
   markRaw,
   onMounted,
   onUnmounted,
@@ -31,9 +37,10 @@ import {
 } from "../../composables/useDragAndDrop";
 import CodeGenerator from "./CodeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
+import { useAiStore } from "../../stores/ai-store";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
-import { useFlowStore } from "../../stores/flow-store";
+import { useFlowStore, FLOW_ID_STORAGE_KEY } from "../../stores/flow-store";
 import NodeSettingsDrawer from "./NodeSettingsDrawer.vue";
 import {
   getFlowData,
@@ -46,14 +53,16 @@ import { FlowApi } from "../../api";
 import { DEFAULT_OUTPUT_HANDLE } from "../../utils/outputHandle";
 import { snapshotClipboard } from "../../utils/clipboardUtils";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
-import FlowParametersPanel from "../../components/layout/FlowParametersPanel/FlowParametersPanel.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
 import { useItemStore } from "../../components/common/DraggableItem/stateStore";
 import DataPreview from "../../features/designer/dataPreview.vue";
 import FlowResults from "../../features/designer/editor/results.vue";
 import LogViewer from "./LogViewer/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
-import UndoRedoControls from "./UndoRedoControls.vue";
+import AiAssistant from "../../features/ai/AiAssistant.vue";
+import AiCommandPalette from "../../features/ai/AiCommandPalette.vue";
+import AiGhostNode from "../../features/ai/AiGhostNode.vue";
+import { useGhostNodeSuggestions } from "../../features/ai/useGhostNodeSuggestions";
 import {
   NodeCopyInput,
   NodeCopyValue,
@@ -65,7 +74,8 @@ import {
 import type { NodeHandle, NodeTemplate } from "../../types/flow.types";
 import type { Connection } from "@vue-flow/core";
 import { applyStandardLayout } from "./editorLayoutInterface";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
+import axios from "axios";
 
 /** Typed subset of VueFlow node data used for edge label computation. */
 interface FlowNodeData {
@@ -75,13 +85,33 @@ interface FlowNodeData {
 }
 
 const itemStore = useItemStore();
-const availableHeight = ref(0);
+// Tracks the live height of the canvas <main> element. Driven by ResizeObserver
+// in onMounted so derived heights (table preview, node settings) stay in sync
+// with the actual canvas region instead of a stale window.innerHeight snapshot.
+const availableHeight = ref(window.innerHeight - 50);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const flowStore = useFlowStore();
+const aiStore = useAiStore();
 const rawCustomNode = markRaw(CustomNode);
 const rawDeletableEdge = markRaw(DeletableEdge);
-const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes } = useVueFlow();
+const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes, onPaneReady } =
+  useVueFlow();
+
+let resolvePaneReady: () => void;
+const paneReadyPromise = new Promise<void>((resolve) => {
+  resolvePaneReady = resolve;
+});
+onPaneReady(() => resolvePaneReady());
+
+// Closure-scoped (non-reactive) counter used to discard stale loadFlow runs
+// when a newer one starts. Each call captures its own myToken; if loadToken
+// has advanced past it at any await boundary, that run bails out.
+let loadToken = 0;
+// Reactive flag the parent (DesignerView) reads to drive its switch-indicator.
+// Stays true for the entire async load so the spinner doesn't flicker off
+// before the canvas actually finishes populating.
+const isLoadingFlow = ref(false);
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
 const nodeTypes: NodeTypesObject = {
   "custom-node": rawCustomNode as NodeComponent,
@@ -90,14 +120,59 @@ const edgeTypes = {
   default: rawDeletableEdge as EdgeComponent,
 };
 const hoveredEdgeId = ref<string | null>(null);
-provide("hoveredEdgeId", hoveredEdgeId);
+// Short delay before clearing on edge-leave so the cursor can cross the SVG→HTML
+// boundary onto the delete button (rendered via EdgeLabelRenderer/Teleport)
+// without the button hiding from under it. Also lets a same-frame enter on a
+// neighbouring edge cancel the clear, killing a race where mouseleave on the
+// previous edge would wipe state set by mouseenter on the next one.
+let leaveTimeout: ReturnType<typeof setTimeout> | null = null;
 
-function onEdgeMouseEnter({ edge }: { edge: { id: string } }) {
-  hoveredEdgeId.value = edge.id;
+const cancelEdgeLeave = () => {
+  if (leaveTimeout) {
+    clearTimeout(leaveTimeout);
+    leaveTimeout = null;
+  }
+};
+
+const scheduleEdgeLeave = (edgeId: string) => {
+  cancelEdgeLeave();
+  leaveTimeout = setTimeout(() => {
+    if (hoveredEdgeId.value === edgeId) {
+      hoveredEdgeId.value = null;
+    }
+    leaveTimeout = null;
+  }, 150);
+};
+
+provide("hoveredEdgeId", hoveredEdgeId);
+provide("cancelEdgeLeave", cancelEdgeLeave);
+provide("scheduleEdgeLeave", scheduleEdgeLeave);
+
+// — schema-grounded next-node suggestions on edge hover. The composable
+// owns its own debounce + AbortController so a hover-flick doesn't fire N
+// requests; clear is wired into handleCanvasClick below so a click anywhere
+// off the popover dismisses it.
+const ghostNode = useGhostNodeSuggestions();
+
+function onEdgeMouseEnter(payload: {
+  edge: { id: string; source: string; target: string };
+  event: unknown;
+}) {
+  cancelEdgeLeave();
+  hoveredEdgeId.value = payload.edge.id;
+  // VueFlow's GraphEdge carries sourceX/Y/targetX/Y at runtime even though
+  // the public ``EdgeMouseEvent`` declares the narrower ``Edge`` shape; the
+  // composable defaults missing coords to 0 so this cast is safe.
+  ghostNode.onEdgeMouseEnter(
+    payload as Parameters<typeof ghostNode.onEdgeMouseEnter>[0],
+    flowStore.flowId,
+  );
 }
 
-function onEdgeMouseLeave() {
-  hoveredEdgeId.value = null;
+function onEdgeMouseLeave({ edge }: { edge: { id: string } }) {
+  if (hoveredEdgeId.value !== edge.id) return;
+  scheduleEdgeLeave(edge.id);
+  ghostNode.onEdgeMouseLeave();
 }
 
 /**
@@ -156,14 +231,18 @@ const {
   onDragOver,
   onDragStart,
   importFlow,
+  createEmptyFlow,
   createCopyNode,
   createMultiCopyNodes,
   createManualInputFromClipboard,
   insertNodeOnEdge,
 } = useDragAndDrop();
 const dataPreview = ref<InstanceType<typeof DataPreview>>();
-const tablePreviewHeight = ref(0);
-const nodeSettingsHeight = ref(0);
+// 25 / 75 split of the canvas height between the bottom table preview and the
+// right-side node settings drawer. Initial-only — DraggableItem reads these
+// once on mount and the user manages further sizing via resize handles.
+const tablePreviewHeight = computed(() => Math.max(120, Math.floor(availableHeight.value * 0.25)));
+const nodeSettingsHeight = computed(() => Math.max(200, Math.floor(availableHeight.value * 0.75)));
 const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
@@ -172,6 +251,8 @@ const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
   (e: "new"): void;
+  (e: "openSettings"): void;
+  (e: "open"): void;
 }>();
 
 interface NodeChange {
@@ -213,11 +294,35 @@ const handleCanvasClick = (event: any | PointerEvent) => {
   nodeStore.nodeId = -1;
   editorStore.activeDrawerComponent = null;
   nodeStore.hideLogViewer();
+  ghostNode.onViewportClick();
   clickedPosition.value = {
     x: event.x,
     y: event.y,
   };
   // Clear any browser text selection when clicking on canvas
+  window.getSelection()?.removeAllRanges();
+};
+
+// VueFlow only emits @pane-click — there's no @pane-dblclick. We listen for
+// native dblclick on <main> instead, then ignore double-clicks that landed on
+// a node, edge, handle, or any floating panel. What's left is the empty pane.
+const handleMainDblClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (
+    target.closest(".overlay") ||
+    target.closest(".vue-flow__node") ||
+    target.closest(".vue-flow__edge") ||
+    target.closest(".vue-flow__handle") ||
+    target.closest(".vue-flow__minimap") ||
+    target.closest(".layout-widget-wrapper")
+  ) {
+    return;
+  }
+  // Hide every floating overlay (right-side + bottom). Left palette stays.
+  editorStore.hideAllPanels();
+  showTablePreview.value = false;
+  nodeStore.nodeId = -1;
   window.getSelection()?.removeAllRanges();
 };
 
@@ -239,20 +344,44 @@ function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
 }
 
 const loadFlow = async () => {
-  const vueFlowInput = await getFlowData(flowStore.flowId);
-  await nextTick();
-  await importFlow(vueFlowInput);
-  await nextTick();
-  restoreViewport();
-  // Fetch history state and artifact data after loading flow
+  const myToken = ++loadToken;
+  isLoadingFlow.value = true;
   try {
-    const historyState = await FlowApi.getHistoryStatus(flowStore.flowId);
-    flowStore.updateHistoryState(historyState);
-  } catch (error) {
-    console.error("Failed to fetch history state:", error);
+    // Wait for VueFlow to finish its first internal mount before populating it.
+    // Already-resolved on every call after the first.
+    await paneReadyPromise;
+    if (myToken !== loadToken) return;
+
+    const flowIdAtStart = flowStore.flowId;
+    const vueFlowInput = await getFlowData(flowIdAtStart);
+    if (myToken !== loadToken) return;
+
+    await importFlow(vueFlowInput);
+    // Stale check after importFlow: createEmptyFlow inside importFlow already
+    // cleared the canvas, so bailing here is safe — the newer in-flight run
+    // (which bumped loadToken) will repopulate.
+    if (myToken !== loadToken) return;
+
+    await nextTick();
+    restoreViewport(flowIdAtStart);
+
+    try {
+      const historyState = await FlowApi.getHistoryStatus(flowIdAtStart);
+      if (myToken !== loadToken) return;
+      flowStore.updateHistoryState(historyState);
+    } catch (error) {
+      console.error("Failed to fetch history state:", error);
+    }
+    // Fire-and-forget; fetchArtifacts re-checks flowId before writing.
+    flowStore.fetchArtifacts(flowIdAtStart);
+  } finally {
+    // Only clear if we're still the most recent run — otherwise the newer
+    // run's spinner would be turned off prematurely.
+    if (myToken === loadToken) isLoadingFlow.value = false;
   }
-  flowStore.fetchArtifacts();
 };
+
+const reloadCurrentFlow = () => loadFlow();
 
 const selectNodeExternally = (nodeId: number) => {
   showTablePreview.value = true;
@@ -699,8 +828,33 @@ const handleCanvasPaste = async (x: number, y: number) => {
   }
 };
 
+const promptLineageQuestion = async (focusLabel: string): Promise<string | null> => {
+  // — use Element Plus's imperative prompt (already in use elsewhere
+  // in the codebase, e.g. CatalogView) instead of a new dialog component.
+  // Returns the trimmed question on confirm, or ``null`` on cancel.
+  try {
+    const result = await ElMessageBox.prompt(
+      `Ask the AI a lineage question about ${focusLabel}. The AI will read recent run history alongside the current flow graph to answer.`,
+      "Ask about lineage",
+      {
+        confirmButtonText: "Ask",
+        cancelButtonText: "Cancel",
+        inputType: "textarea",
+        inputPlaceholder: "e.g. Why is column customer_id null since Tuesday?",
+        inputValidator: (value: string) =>
+          (value && value.trim().length > 0) || "Please type a question.",
+      },
+    );
+    const value = (result as { value?: string }).value;
+    return value?.trim() || null;
+  } catch {
+    // ElMessageBox throws on cancel/close.
+    return null;
+  }
+};
+
 const handleContextMenuAction = async (actionData: ContextMenuAction) => {
-  const { actionId, position } = actionData;
+  const { actionId, position, targetId } = actionData;
   if (actionId === "fit-view") {
     fitView();
   } else if (actionId === "zoom-in") {
@@ -709,6 +863,68 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     instance.zoomOut();
   } else if (actionId === "paste-node") {
     handleCanvasPaste(position.x, position.y);
+  } else if (actionId === "generate-documentation") {
+    // — pull the canonical flow name server-side so the doc title
+    // matches what the user sees in the title bar. Falsy → undefined so
+    // the store falls back to ``flow ${flowId}``.
+    if (flowStore.flowId === null) return;
+    const settings = await FlowApi.getFlowSettings(flowStore.flowId);
+    const name = settings?.name?.trim() || undefined;
+    await aiStore.generateDocumentation(flowStore.flowId, name);
+  } else if (actionId === "add-descriptions-all") {
+    // Bulk variant of the per-node ✨ "Add description" action. Confirms
+    // first since each node is a separate LLM call (cost + time scale
+    // linearly with N), then streams them sequentially through the quiet
+    // ai-store path that writes straight to node.setting_input.description
+    // without flooding the chat drawer.
+    if (flowStore.flowId === null) return;
+    const allNodes = instance.getNodes.value;
+    if (allNodes.length === 0) {
+      ElMessage.info("No nodes on the canvas.");
+      return;
+    }
+    try {
+      await ElMessageBox.confirm(
+        `Generate AI descriptions for all ${allNodes.length} node${allNodes.length === 1 ? "" : "s"}? Existing descriptions will be replaced.`,
+        "Add description to all nodes",
+        {
+          confirmButtonText: "Generate",
+          cancelButtonText: "Cancel",
+          type: "warning",
+        },
+      );
+    } catch {
+      return;
+    }
+    const nodeIds = allNodes.map((n) => Number(n.id)).filter((id) => Number.isFinite(id));
+    ElMessage.info(
+      `Generating descriptions for ${nodeIds.length} node${nodeIds.length === 1 ? "" : "s"}…`,
+    );
+    const { succeeded, failed, aborted } = await aiStore.runBulkAddDescriptions(
+      flowStore.flowId,
+      nodeIds,
+    );
+    if (aborted) {
+      ElMessage.warning(`Aborted. Updated ${succeeded} of ${nodeIds.length}.`);
+    } else if (failed === 0) {
+      ElMessage.success(`Updated ${succeeded} description${succeeded === 1 ? "" : "s"}.`);
+    } else {
+      ElMessage.warning(`Updated ${succeeded} of ${nodeIds.length} (${failed} failed).`);
+    }
+  } else if (actionId === "ask-lineage") {
+    // — whole-flow lineage Q&A.
+    if (flowStore.flowId === null) return;
+    const question = await promptLineageQuestion("this flow");
+    if (!question) return;
+    await aiStore.askLineageQuestion(flowStore.flowId, question);
+  } else if (actionId === "ask-lineage-node") {
+    // — focused lineage Q&A on a single node id.
+    if (flowStore.flowId === null) return;
+    const focusNodeId = Number(targetId);
+    if (!Number.isFinite(focusNodeId)) return;
+    const question = await promptLineageQuestion(`node ${focusNodeId}`);
+    if (!question) return;
+    await aiStore.askLineageQuestion(flowStore.flowId, question, focusNodeId);
   }
 };
 
@@ -774,6 +990,27 @@ const handleKeyDown = (event: KeyboardEvent) => {
       event.preventDefault();
       nodeStore.toggleCodeGenerator();
     }
+  } else if (eventKeyClicked && key === ",") {
+    if (flowStore.flowId) {
+      event.preventDefault();
+      emit("openSettings");
+    }
+  } else if (eventKeyClicked && key === "o" && !isInputElement && !isInCodeMirror) {
+    // Open file picker — guarded against input/CodeMirror so users typing
+    // "o" with a stuck modifier (or rapid macro) don't open the dialog.
+    event.preventDefault();
+    emit("open");
+  } else if (eventKeyClicked && key === "k" && !isInputElement && !isInCodeMirror) {
+    // Cmd+K / Ctrl+K toggles the AI assistant drawer. Originally
+    // wired to the AI command palette; rewired to the drawer because
+    // the palette UX confused users. Palette component, store, and
+    // route are kept intact — reversible by restoring
+    // `commandPalette.toggle()` here. Skipped when typing in any
+    // input or CodeMirror so plain k presses pass through.
+    if (flowStore.flowId && flowStore.flowId > 0) {
+      event.preventDefault();
+      editorStore.toggleAiDrawer();
+    }
   }
 };
 
@@ -811,8 +1048,8 @@ const saveViewportToSession = () => {
   sessionStorage.setItem(key, JSON.stringify(viewport));
 };
 
-const restoreViewport = () => {
-  const key = getViewportStorageKey(flowStore.flowId);
+const restoreViewport = (flowId: number) => {
+  const key = getViewportStorageKey(flowId);
   const saved = sessionStorage.getItem(key);
   if (saved) {
     try {
@@ -827,16 +1064,58 @@ const handleMoveEnd = () => {
   saveViewportToSession();
 };
 
+let mainResizeObserver: ResizeObserver | null = null;
+
 onMounted(async () => {
-  availableHeight.value = window.innerHeight - 50;
-  tablePreviewHeight.value = availableHeight.value * 0.25; // 30% of the available height
-  nodeSettingsHeight.value = availableHeight.value * 0.75; // 70% of the available height
+  if (mainContainerRef.value) {
+    availableHeight.value = mainContainerRef.value.clientHeight;
+    mainResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        availableHeight.value = entry.contentRect.height;
+      }
+    });
+    mainResizeObserver.observe(mainContainerRef.value);
+  }
   window.addEventListener("keydown", handleKeyDown);
 
   nodeStore.setVueFlowInstance(instance);
-  loadFlow();
 
-  // Refresh artifact data when flow execution completes
+  watch(
+    () => flowStore.flowId,
+    async (id) => {
+      if (id && id > 0) {
+        try {
+          await loadFlow();
+        } catch (e: unknown) {
+          console.error("loadFlow failed:", e);
+          // A stale flowId in sessionStorage causes a permanent boot loop
+          // (every refresh 404s). Clear storage and reset the in-memory id
+          // so the current session recovers without a hard refresh.
+          if (axios.isAxiosError(e) && e.response?.status === 404) {
+            sessionStorage.removeItem(FLOW_ID_STORAGE_KEY);
+            flowStore.flowId = -1;
+          }
+          ElMessage.error("Failed to load flow");
+        }
+      } else {
+        // No active flow — visually clear the canvas (previously handled by
+        // the v-if unmount in DesignerView, which we no longer use). Goes
+        // through the same loadToken so a concurrent loadFlow can't lose to
+        // a slow createEmptyFlow.
+        const myToken = ++loadToken;
+        isLoadingFlow.value = true;
+        try {
+          await createEmptyFlow();
+          if (myToken !== loadToken) return;
+        } finally {
+          if (myToken === loadToken) isLoadingFlow.value = false;
+        }
+      }
+    },
+    { immediate: true },
+  );
+
   watch(
     () => editorStore.isRunning,
     (running, wasRunning) => {
@@ -853,14 +1132,62 @@ onMounted(async () => {
       refreshAllEdgeLabels();
     },
   );
+
+  // Bring the AI assistant DraggableItem to the front when the drawer
+  // opens. Replaces the previous `#aiAssistant.overlay { z-index: 245
+  // !important }` CSS hack — that rule clobbered stateStore's
+  // bring-to-front semantics for every other panel. nextTick gives
+  // DraggableItem.onMounted time to register itself with itemStore
+  // before we ask it to bump its zIndex.
+  watch(
+    () => editorStore.isAiOpen,
+    (open) => {
+      if (open) {
+        nextTick().then(() => itemStore.bringToFront("aiAssistant"));
+      }
+    },
+  );
+
+  // External-mutation signal — the backend mutated the live flow without
+  // going through the in-canvas mutation paths. Triggered today by
+  // `useAiDiffStore.accept()` after the apply_diff lands; future
+  // workstreams that mutate the server graph (e.g.'s
+  // `update_node_settings` end-to-end) call `flowStore.requestReload()`
+  // and Canvas reloads. The closure-scoped `loadToken` in `loadFlow`
+  // already cancels stale runs if multiple bumps land in quick succession.
+  watch(
+    () => flowStore.pendingReloadCounter,
+    (count, prev) => {
+      if (count > (prev ?? 0)) {
+        void loadFlow();
+      }
+    },
+  );
+
+  // — Layout-reset signal. Bumped by
+  // ``flowStore.requestLayoutReset()`` from the post-agent_live
+  // banner's [Reorganize] button. Re-runs the same code path the
+  // manual "Reset layout graph" toolbar button triggers.
+  watch(
+    () => flowStore.pendingLayoutResetCounter,
+    (count, prev) => {
+      if (count > (prev ?? 0)) {
+        void handleResetLayoutGraph();
+      }
+    },
+  );
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeyDown);
+  mainResizeObserver?.disconnect();
+  mainResizeObserver = null;
+  cancelEdgeLeave();
 });
 
 defineExpose({
-  loadFlow,
+  reloadCurrentFlow,
+  isLoadingFlow,
   updateEdgeLabelsForNode,
   refreshAllEdgeLabels,
 });
@@ -868,7 +1195,12 @@ defineExpose({
 
 <template>
   <div class="container">
-    <main ref="mainContainerRef" @drop="handleDrop" @dragover="onDragOver">
+    <main
+      ref="mainContainerRef"
+      @drop="handleDrop"
+      @dragover="onDragOver"
+      @dblclick="handleMainDblClick"
+    >
       <VueFlow
         ref="vueFlow"
         :nodes="nodes"
@@ -880,6 +1212,7 @@ defineExpose({
         :connection-radius="60"
         :edge-updater-radius="15"
         :default-viewport="{ zoom: 1 }"
+        :zoom-on-double-click="false"
         :is-valid-connection="isValidConnection"
         @edge-update="onEdgeUpdate"
         @edge-mouse-enter="onEdgeMouseEnter"
@@ -900,6 +1233,7 @@ defineExpose({
         @move-end="handleMoveEnd"
       >
         <MiniMap />
+        <AiGhostNode :composable="ghostNode" />
       </VueFlow>
       <context-menu
         v-if="showContextMenu"
@@ -910,104 +1244,97 @@ defineExpose({
         :on-close="closeContextMenu"
         @action="handleContextMenuAction"
       />
-      <UndoRedoControls @refresh-flow="loadFlow" />
+      <draggable-item
+        id="dataActions"
+        :show-left="true"
+        :initial-width="230"
+        initial-position="left"
+        title="Data actions"
+        :allow-free-move="true"
+      >
+        <NodeList @dragstart="onDragStart" />
+      </draggable-item>
+      <draggable-item
+        v-if="nodeStore.isShowingLogViewer"
+        id="logViewer"
+        :show-bottom="true"
+        title="Log overview"
+        :allow-full-screen="true"
+        initial-position="bottom"
+        :initial-left="180"
+        :on-minize="hideLogViewer"
+        group="bottomPanels"
+        :sync-dimensions="true"
+      >
+        <LogViewer />
+      </draggable-item>
+      <draggable-item
+        v-if="nodeStore.showFlowResult"
+        id="flowresults"
+        :show-right="true"
+        title="flow results"
+        initial-position="right"
+        :initial-width="400"
+        :allow-full-screen="true"
+        group="rightPanels"
+      >
+        <FlowResults :on-click="selectNodeExternally" />
+      </draggable-item>
+      <draggable-item
+        v-if="showTablePreview"
+        id="tablePreview"
+        :show-bottom="true"
+        :allow-full-screen="true"
+        title="Table Preview"
+        initial-position="bottom"
+        :on-minize="toggleShowTablePreview"
+        :initial-height="tablePreviewHeight"
+        :initial-left="180"
+        group="bottomPanels"
+        :sync-dimensions="true"
+      >
+        <data-preview ref="dataPreview"> text </data-preview>
+      </draggable-item>
+      <draggable-item
+        v-if="nodeStore.isDrawerOpen"
+        id="nodeSettings"
+        :show-right="true"
+        initial-position="right"
+        :initial-width="600"
+        :initial-height="nodeSettingsHeight"
+        title="Node Settings"
+        :on-minize="handleNodeSettingsClose"
+        :allow-full-screen="true"
+      >
+        <NodeSettingsDrawer />
+      </draggable-item>
+      <draggable-item
+        v-if="nodeStore.showCodeGenerator"
+        id="generatedCode"
+        :show-left="true"
+        :initial-width="800"
+        initial-position="right"
+        :allow-free-move="true"
+        :allow-full-screen="true"
+        :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
+      >
+        <CodeGenerator />
+      </draggable-item>
+      <draggable-item
+        v-if="editorStore.isAiOpen"
+        id="aiAssistant"
+        :show-right="true"
+        initial-position="right"
+        :initial-width="600"
+        title="AI Assistant"
+        :on-minize="editorStore.closeAiDrawer"
+        :allow-full-screen="true"
+      >
+        <AiAssistant />
+      </draggable-item>
+      <AiCommandPalette />
+      <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
     </main>
-    <draggable-item
-      id="dataActions"
-      :show-left="true"
-      :initial-width="230"
-      initial-position="left"
-      title="Data actions"
-      :allow-free-move="true"
-      :prevent-overlap="false"
-    >
-      <NodeList @dragstart="onDragStart" />
-    </draggable-item>
-    <draggable-item
-      v-if="nodeStore.isShowingLogViewer"
-      id="logViewer"
-      :show-bottom="true"
-      title="Log overview"
-      :allow-full-screen="true"
-      initial-position="bottom"
-      :initial-left="180"
-      :on-minize="hideLogViewer"
-      group="bottomPanels"
-      :sync-dimensions="true"
-      :prevent-overlap="false"
-    >
-      <LogViewer />
-    </draggable-item>
-    <draggable-item
-      v-if="nodeStore.showFlowResult"
-      id="flowresults"
-      :show-right="true"
-      title="flow results"
-      initial-position="right"
-      :initial-width="400"
-      group="rightPanels"
-      :prevent-overlap="false"
-    >
-      <FlowResults :on-click="selectNodeExternally" />
-    </draggable-item>
-    <draggable-item
-      v-if="showTablePreview"
-      id="tablePreview"
-      :show-bottom="true"
-      :allow-full-screen="true"
-      title="Table Preview"
-      initial-position="bottom"
-      :on-minize="toggleShowTablePreview"
-      :initial-height="tablePreviewHeight"
-      :initial-left="180"
-      group="bottomPanels"
-      :sync-dimensions="true"
-      :prevent-overlap="false"
-    >
-      <data-preview ref="dataPreview"> text </data-preview>
-    </draggable-item>
-    <draggable-item
-      v-if="nodeStore.isDrawerOpen"
-      id="nodeSettings"
-      :show-right="true"
-      initial-position="right"
-      :initial-width="600"
-      :initial-height="nodeSettingsHeight"
-      title="Node Settings"
-      :on-minize="handleNodeSettingsClose"
-      :allow-full-screen="true"
-      :prevent-overlap="false"
-    >
-      <NodeSettingsDrawer />
-    </draggable-item>
-    <draggable-item
-      v-if="nodeStore.showCodeGenerator"
-      id="generatedCode"
-      :show-left="true"
-      :initial-width="800"
-      initial-position="right"
-      :allow-free-move="true"
-      :allow-full-screen="true"
-      :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
-      :prevent-overlap="false"
-    >
-      <CodeGenerator />
-    </draggable-item>
-    <draggable-item
-      v-if="editorStore.showParametersPanel"
-      id="flowParameters"
-      :show-right="true"
-      initial-position="right"
-      :initial-width="520"
-      title="Flow Parameters"
-      :on-minize="() => editorStore.setParametersPanelVisibility(false)"
-      :allow-full-screen="true"
-      :prevent-overlap="false"
-      group="rightPanels"
-    >
-      <FlowParametersPanel />
-    </draggable-item>
-    <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
   </div>
 </template>
 
@@ -1149,11 +1476,13 @@ body,
 
 .container {
   display: flex;
-  height: 100vh;
+  height: 100%;
+  position: relative;
 }
 
 main {
   flex-grow: 1;
   position: relative;
+  overflow: hidden;
 }
 </style>

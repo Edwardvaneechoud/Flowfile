@@ -68,6 +68,10 @@ const routes: Array<RouteRecordRaw> = [
         redirect: { name: "connections", query: { tab: "secrets" } },
       },
       {
+        path: "aiProviders",
+        redirect: { name: "connections", query: { tab: "ai" } },
+      },
+      {
         name: "kernelManager",
         path: "kernelManager",
         component: () => import("../views/KernelManagerView/KernelManagerView.vue"),
@@ -81,6 +85,23 @@ const routes: Array<RouteRecordRaw> = [
         name: "catalog",
         path: "catalog",
         component: () => import("../views/CatalogView/CatalogView.vue"),
+      },
+      {
+        name: "dashboard-new",
+        path: "dashboards/new",
+        component: () => import("../views/DashboardsView/DashboardEditorView.vue"),
+      },
+      {
+        name: "dashboard-edit",
+        path: "dashboards/:id/edit",
+        component: () => import("../views/DashboardsView/DashboardEditorView.vue"),
+        props: true,
+      },
+      {
+        name: "dashboard-view",
+        path: "dashboards/:id",
+        component: () => import("../views/DashboardsView/DashboardViewerView.vue"),
+        props: true,
       },
       {
         name: "nodeDesigner",
@@ -179,7 +200,7 @@ router.beforeEach(async (to, _from, next) => {
       next({ name: "login" });
     }
   } else {
-   if (to.name === "login" && (authService.isInElectronMode() || authService.isAuthenticated())) {
+    if (to.name === "login" && (authService.isInElectronMode() || authService.isAuthenticated())) {
       next({ name: "designer" });
     } else {
       next();

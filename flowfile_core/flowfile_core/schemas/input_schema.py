@@ -745,8 +745,20 @@ class NodeDatasource(NodeBase):
 class RawData(BaseModel):
     """Represents data in a raw, columnar format for manual input."""
 
-    columns: list[MinimalFieldInfo] = None
-    data: list[list]
+    columns: list[MinimalFieldInfo] = Field(
+        ...,
+        description=("Schema in column order. The i-th MinimalFieldInfo describes the values " "in data[i]."),
+    )
+    data: list[list] = Field(
+        ...,
+        description=(
+            "Columnar layout: data[i] is the list of values for columns[i], in column "
+            "order. len(data) must equal len(columns); each inner list has the same "
+            "length (one entry per row). For two rows of {name, age}, emit "
+            '[["Alice", "Bob"], [30, 25]] — NOT [["Alice", 30], ["Bob", 25]]. '
+            "Reading rows back is data[col_idx][row_idx]."
+        ),
+    )
 
     @classmethod
     def from_pylist(cls, pylist: list[dict]):
@@ -777,7 +789,14 @@ class RawData(BaseModel):
 class NodeManualInput(NodeBase):
     """Settings for a node that allows direct data entry in the UI."""
 
-    raw_data_format: RawData | None = None
+    raw_data_format: RawData
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_none_raw_data_format(cls, values):
+        if isinstance(values, dict) and values.get("raw_data_format") is None:
+            return {**values, "raw_data_format": {"columns": [], "data": []}}
+        return values
 
     def get_default_description(self) -> str:
         """Describes the manual input columns."""
@@ -1504,3 +1523,137 @@ class UserDefinedNode(NodeMultiInput):
     @classmethod
     def validate_output_names(cls, v: list[str]) -> list[str]:
         return _validate_output_names(v)
+
+
+class TrainModelSettings(BaseModel):
+    """Settings payload for the Train Model node.
+
+    ``params`` is a flat dict so the form-driven hyperparameter UI doesn't need
+    a discriminated union — the worker validates against the algorithm-specific
+    Pydantic class via ``shared.ml.trainers.get_trainer(model_type).params_class``.
+
+    The trained model is always written to a flow-scoped path keyed off this
+    node's id so downstream Apply Model nodes in the same flow can read it
+    without first publishing to the catalog. Set ``publish_to_catalog=True``
+    to additionally store the artifact in the catalog (with a stable
+    cross-run name + version).
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    target_column: str = ""
+    feature_columns: list[str] = Field(default_factory=list)
+    model_type: str = "linear_regression"
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    # Catalog publishing — opt-in.
+    publish_to_catalog: bool = False
+    model_name: str = ""  # required when publish_to_catalog=True
+    namespace_id: int | None = None
+    catalog_description: str | None = None
+    catalog_tags: list[str] = Field(default_factory=list)
+
+
+class NodeTrainModel(NodeSingleInput):
+    """Train an ML model (regression or classification) and optionally publish it to the catalog."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    train_input: TrainModelSettings = Field(default_factory=TrainModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.train_input
+        if s.model_name and s.target_column:
+            return f"Train {s.model_type} '{s.model_name}' on {s.target_column}"
+        return "Train Model"
+
+
+class ApplyModelSettings(BaseModel):
+    """Settings payload for the Apply Model node.
+
+    Two model sources are supported:
+
+    - ``"upstream"`` (default): pick a Train Model node from somewhere in this
+      flow's upstream chain. The model file is read from the flow's cache
+      directory using the train node's id — works at design time, no catalog
+      round-trip needed.
+    - ``"catalog"``: fall back to the existing catalog lookup by name/version.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    source: Literal["upstream", "catalog"] = "upstream"
+
+    # source="upstream" — id of an upstream Train Model node in the same flow.
+    upstream_node_id: int | None = None
+
+    # source="catalog"
+    model_name: str = ""
+    model_version: int | None = None
+    namespace_id: int | None = None
+
+    output_column: str = "prediction"
+
+
+class NodeApplyModel(NodeSingleInput):
+    """Score data using a previously trained model artifact."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    apply_input: ApplyModelSettings = Field(default_factory=ApplyModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.apply_input
+        if s.model_name:
+            ver = f" v{s.model_version}" if s.model_version is not None else ""
+            return f"Apply '{s.model_name}'{ver} -> {s.output_column}"
+        return "Apply Model"
+
+
+class NodeWaitFor(NodeMultiInput):
+    """Pass-through node that enforces ordering on extra dependency inputs.
+
+    The first input flows through unchanged; the others have to complete before
+    this node runs but their data is discarded. Useful for enforcing "Apply
+    Model must wait for Train Model" without otherwise coupling their data.
+    """
+
+    def get_default_description(self) -> str:
+        n = len(self.depending_on_ids or [])
+        if n <= 1:
+            return "Wait For"
+        return f"Wait For ({n - 1} dep{'s' if n > 2 else ''})"
+
+
+class EvaluateModelSettings(BaseModel):
+    """Settings payload for the Evaluate Model node.
+
+    Decoupled from any specific Train/Apply pair: takes a dataframe that
+    already contains both the actual target column and a prediction column
+    and emits a long-form ``(metric, value)`` frame. Reusable on training,
+    test, or hold-out splits.
+
+    ``task_type="auto"`` resolves the metric set from an upstream Train
+    Model node when one is configured; otherwise defaults to ``regression``.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    actual_column: str = ""
+    predicted_column: str = "prediction"
+    task_type: Literal["auto", "regression", "classification"] = "auto"
+    upstream_train_node_id: int | None = None
+
+
+class NodeEvaluateModel(NodeSingleInput):
+    """Compute model-quality metrics by comparing actual and predicted columns."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    evaluate_input: EvaluateModelSettings = Field(default_factory=EvaluateModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.evaluate_input
+        if s.actual_column and s.predicted_column:
+            return f"Evaluate {s.predicted_column} vs {s.actual_column}"
+        return "Evaluate Model"

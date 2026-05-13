@@ -86,3 +86,16 @@ test-embed
 # Local remote-image compose setup
 /docker-remote/
 
+# Local review artefacts
+/diff.txt
+
+# Local editor / one-off backup files (e.g. *.local-backup-YYYYMMDD-HHMMSS)
+*.local-backup-*
+
+# Stray runtime artefacts
+error-linux
+.claude/scheduled_tasks.lock
+
+# Repo-root local Claude state only — leave subtree configs
+# (e.g. plugin/agent dirs nested under packages) tracked.
+/.claude/

@@ -24,6 +24,7 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import check_source_versions_current, delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
+from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.database.connection import get_db_context
@@ -33,6 +34,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
     get_local_database_connection,
 )
+from flowfile_core.flowfile.database_connection_manager.ga_connections import get_encrypted_refresh_token
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -52,6 +54,8 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDfFetcher,
     ExternalGoogleAnalyticsFetcher,
     ExternalKafkaFetcher,
+    MLApplyFetcher,
+    MLTrainFetcher,
     fetch_kafka_offsets,
 )
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -80,6 +84,7 @@ from flowfile_core.flowfile.schema_callbacks import (
 )
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
+from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
@@ -109,10 +114,23 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.transform_schema import CrossJoinInputManager, FuzzyMatchInputManager, JoinInputManager
-from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
+from flowfile_core.secret_manager.secret_manager import (
+    _encrypt_with_master_key,
+    decrypt_secret,
+    get_encrypted_secret,
+)
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared.delta_utils import get_delta_size_bytes, merge_into_delta
 from shared.delta_utils import write_delta as _write_delta
+from shared.google_analytics.models import (
+    GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
+)
+from shared.google_analytics.models import (
+    GoogleAnalyticsOrderBy as WorkerGoogleAnalyticsOrderBy,
+)
+from shared.google_analytics.models import (
+    GoogleAnalyticsReadSettings as WorkerGoogleAnalyticsReadSettings,
+)
 from shared.kafka.consumer import infer_topic_schema, make_kafka_commit_callback, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
@@ -359,6 +377,15 @@ class CatalogSqlTables(NamedTuple):
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]]
 
 
+def ml_flow_model_path(flow_id: int, train_node_id: int | str) -> Path:
+    """Path on the shared cache where a Train Model node writes its model JSON.
+
+    Stable across runs (keyed off the train node's id), so an Apply Model node
+    elsewhere in the flow can read the model without a catalog round-trip.
+    """
+    return storage.get_flow_cache_directory(flow_id) / "ml_models" / f"{train_node_id}.json"
+
+
 def _resolve_catalog_sql_tables(node_id: int | str) -> CatalogSqlTables:
     """Resolve all catalog tables (physical Delta + virtual) for a SQL query node."""
     table_paths: dict[str, str] = {}
@@ -421,10 +448,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
             if node_catalog_reader.catalog_table_id:
                 table_record = repo.get_table(node_catalog_reader.catalog_table_id)
             else:
-                reference = (
-                    node_catalog_reader.catalog_full_table_name
-                    or node_catalog_reader.catalog_table_name
-                )
+                reference = node_catalog_reader.catalog_full_table_name or node_catalog_reader.catalog_table_name
                 if reference:
                     try:
                         table_record = svc.resolve_table(
@@ -629,9 +653,28 @@ def _handle_virtual_table_write(
     settings = node_catalog_writer.catalog_write_settings
     reg_id = graph._flow_settings.source_registration_id
     if not reg_id:
+        # Python-built flows have no catalog registration on creation. Try to
+        # auto-register under "General > Python Editor" so the user does not
+        # need to manually save+register before calling write_mode='virtual'.
+        try:
+            from flowfile_core.flowfile.catalog_helpers import register_python_editor_flow
+
+            reg_id = register_python_editor_flow(
+                graph,
+                user_id=node_catalog_writer.user_id,
+            )
+        except Exception:
+            import traceback
+
+            graph.flow_logger.warning(
+                f"Auto-registration for virtual catalog write failed:\n{traceback.format_exc()}"
+            )
+            reg_id = None
+    if not reg_id:
         raise ValueError(
             "Cannot create a virtual table: this flow is not linked to a catalog registration. "
-            "Open the flow from the catalog, or register it first."
+            "Open the flow from the catalog, or register it first via "
+            "flowfile_frame.register_flow_with_catalog(...)."
         )
 
     serialized_lf: bytes | None = None
@@ -2077,6 +2120,432 @@ class FlowGraph:
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_train_model(self, train_settings: input_schema.NodeTrainModel) -> "FlowGraph":
+        """Adds a Train Model node.
+
+        Fits a regression model on the worker, stores the serialised artifact
+        in the global catalog (via :class:`ArtifactService`), and passes the
+        input data through unchanged so downstream nodes can keep transforming.
+
+        Args:
+            train_settings: Settings (model name, target/features, model_type, params).
+
+        Returns:
+            The :class:`FlowGraph` instance for chaining.
+        """
+
+        def _func(data: FlowDataEngine) -> FlowDataEngine:
+            # Imports are deferred to runtime: importing flowfile_core.artifacts
+            # at module top would trigger Alembic migrations and SQLAlchemy
+            # engine setup (~3.5s), slowing every flow_graph import — including
+            # CLI startup. Keep these inside _func.
+            import shutil
+
+            from flowfile_core.artifacts import get_storage_backend
+            from flowfile_core.artifacts.service import ArtifactService
+            from flowfile_core.auth.utils import get_local_user_id
+            from flowfile_core.flowfile.catalog_helpers import (
+                auto_register_flow,
+                resolve_source_registration_id,
+            )
+            from flowfile_core.schemas.artifact_schema import PrepareUploadRequest
+            from shared.ml.trainers import get_trainer
+
+            settings = train_settings.train_input
+            if not settings.target_column:
+                raise ValueError("Train Model requires a 'target_column'.")
+            if not settings.feature_columns:
+                raise ValueError("Train Model requires at least one 'feature_columns' entry.")
+            if settings.publish_to_catalog and not settings.model_name:
+                raise ValueError("Train Model: 'model_name' is required when 'publish_to_catalog' is enabled.")
+
+            # Validate model_type and hyperparameters early so the user gets
+            # a clear error from core, not a worker-side stack trace.
+            trainer = get_trainer(settings.model_type)
+            try:
+                trainer.params_class(**settings.params)
+            except Exception as e:
+                raise ValueError(f"Train Model: invalid params for model_type={settings.model_type!r}: {e}") from e
+
+            # Always write the model to a flow-scoped path keyed off this node's id;
+            # downstream Apply Model nodes in this flow read from there, no catalog
+            # required. The same path is used as the staging path when publishing
+            # so we only fit once.
+            flow_path = ml_flow_model_path(self.flow_id, train_settings.node_id)
+            flow_path.parent.mkdir(parents=True, exist_ok=True)
+
+            prepared = None
+            owner_id = train_settings.user_id or get_local_user_id() or 1
+            staging_path = flow_path
+            storage_backend = get_storage_backend()
+
+            if settings.publish_to_catalog:
+                # If the flow has a path on disk but no registration yet,
+                # auto-register it (idempotently — same mechanism the open/save
+                # routes use). This routes scratch flows under "General >
+                # Unnamed Flows" / "Local Flows" so artifacts have a stable
+                # lineage without forcing the user to explicitly register first.
+                registration_id = self._flow_settings.source_registration_id
+                if registration_id is None and self._flow_settings.path:
+                    auto_register_flow(
+                        self._flow_settings.path,
+                        self._flow_settings.name or "",
+                        owner_id,
+                    )
+                    resolve_source_registration_id(self)
+                    registration_id = self._flow_settings.source_registration_id
+                if registration_id is None:
+                    raise ValueError(
+                        "Publishing to catalog requires the flow to be registered. "
+                        "Save the flow first, or disable 'Publish to catalog'."
+                    )
+
+                tags = list({"ml", trainer.task_type, settings.model_type, *settings.catalog_tags})
+                prepare_request = PrepareUploadRequest(
+                    name=settings.model_name,
+                    source_registration_id=registration_id,
+                    namespace_id=settings.namespace_id,
+                    serialization_format=trainer.serialization_format,
+                    description=settings.catalog_description
+                    or f"Trained via Flowfile node {train_settings.node_id} ({settings.model_type})",
+                    tags=tags,
+                    source_flow_id=self.flow_id,
+                    source_node_id=train_settings.node_id,
+                    python_type=f"flowfile.ml.{settings.model_type}",
+                    python_module="flowfile.ml",
+                )
+                with get_db_context() as db:
+                    prepared = ArtifactService(db, storage_backend).prepare_upload(prepare_request, owner_id=owner_id)
+                if prepared.method != "file":
+                    # v1 only supports the shared-filesystem backend; S3 needs a
+                    # presigned-URL path on the worker which we haven't wired yet.
+                    with get_db_context() as db:
+                        ArtifactService(db, storage_backend).delete_artifact(prepared.artifact_id)
+                    raise ValueError(
+                        "Train Model currently requires the filesystem artifact backend "
+                        "(FLOWFILE_ARTIFACT_STORAGE=filesystem). S3 support is not implemented."
+                    )
+                # Train into the catalog staging path; we'll copy to the flow
+                # path after success so finalize_upload (which moves the
+                # staging file to the permanent location) still works.
+                staging_path = Path(prepared.path)
+
+            node = self.get_node(node_id=train_settings.node_id)
+            flow_path_written = False
+            try:
+                fetcher = MLTrainFetcher(
+                    lf=data.data_frame,
+                    staging_path=str(staging_path),
+                    model_type=settings.model_type,
+                    target_column=settings.target_column,
+                    feature_columns=settings.feature_columns,
+                    params=settings.params,
+                    flow_id=self.flow_id,
+                    node_id=train_settings.node_id,
+                    file_ref=node.hash,
+                    wait_on_completion=False,
+                )
+                node._fetch_cached_df = fetcher
+                result = fetcher.get_result()
+                if not isinstance(result, dict) or "sha256" not in result or "size_bytes" not in result:
+                    raise RuntimeError(f"Worker did not return expected sha256/size_bytes payload, got: {result!r}")
+
+                if prepared is not None:
+                    # The staging file is also our flow-scoped copy. Atomically
+                    # replace flow_path (write to .tmp, then os.replace) so a
+                    # concurrent Apply Model reader can't see a half-written
+                    # file. Done before finalize_upload (which moves the
+                    # staging file away).
+                    flow_tmp = flow_path.with_suffix(flow_path.suffix + ".tmp")
+                    shutil.copyfile(staging_path, flow_tmp)
+                    os.replace(flow_tmp, flow_path)
+                    flow_path_written = True
+                    with get_db_context() as db:
+                        ArtifactService(db, storage_backend).finalize_upload(
+                            artifact_id=prepared.artifact_id,
+                            storage_key=prepared.storage_key,
+                            sha256=result["sha256"],
+                            size_bytes=result["size_bytes"],
+                        )
+            except Exception:
+                if prepared is not None:
+                    # Roll back the pending row on any failure so the user
+                    # doesn't see ghost artifacts; subsequent re-runs auto-clean
+                    # pending rows too.
+                    with get_db_context() as db:
+                        try:
+                            ArtifactService(db, storage_backend).delete_artifact(prepared.artifact_id)
+                        except Exception:
+                            logger.exception("Failed to roll back pending artifact %s", prepared.artifact_id)
+                    # Also roll back the flow_path copy if we wrote it; otherwise
+                    # the next Apply Model run could quietly use the artifact
+                    # whose catalog row we just deleted.
+                    if flow_path_written:
+                        try:
+                            flow_path.unlink(missing_ok=True)
+                        except Exception:
+                            logger.exception("Failed to roll back flow_path copy %s", flow_path)
+                raise
+
+            if prepared is not None:
+                self.flow_logger.info(
+                    f"Train Model: stored '{settings.model_name}' v{prepared.version} "
+                    f"(artifact_id={prepared.artifact_id}, size={result['size_bytes']}B); "
+                    f"flow copy at {flow_path}"
+                )
+                artifact_name = f"{settings.model_name} v{prepared.version}"
+            else:
+                self.flow_logger.info(f"Train Model: wrote {result['size_bytes']}B to flow path {flow_path}")
+                artifact_name = f"{settings.model_type} (flow only)"
+
+            # Surface the trained model in the node's Artifacts tab + canvas badge.
+            # Re-runs replace any prior entry rather than accumulating duplicates.
+            self.artifact_context.clear_nodes({train_settings.node_id})
+            self.artifact_context.record_published(
+                node_id=train_settings.node_id,
+                kernel_id="",
+                artifacts=[
+                    {
+                        "name": artifact_name,
+                        "type_name": f"flowfile.ml.{settings.model_type}",
+                        "module": "flowfile.ml",
+                        "size_bytes": result["size_bytes"],
+                    }
+                ],
+            )
+            return data
+
+        def schema_callback():
+            input_node: FlowNode = self.get_node(train_settings.node_id).node_inputs.main_inputs[0]
+            return input_node.schema
+
+        depending_on_id = train_settings.depending_on_id if hasattr(train_settings, "depending_on_id") else None
+        self.add_node_step(
+            node_id=train_settings.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="train_model",
+            setting_input=train_settings,
+            schema_callback=schema_callback,
+            input_node_ids=[depending_on_id] if depending_on_id is not None else None,
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_apply_model(self, apply_settings: input_schema.NodeApplyModel) -> "FlowGraph":
+        """Adds an Apply Model node.
+
+        Fetches the artifact from the catalog and asks the worker to score the
+        input data, returning a LazyFrame with one extra ``Float64`` column.
+
+        Args:
+            apply_settings: Settings (model_name, optional version, output_column).
+
+        Returns:
+            The :class:`FlowGraph` instance for chaining.
+        """
+
+        def _func(data: FlowDataEngine) -> FlowDataEngine:
+            from flowfile_core.artifacts import get_storage_backend
+            from flowfile_core.artifacts.service import ArtifactService
+
+            settings = apply_settings.apply_input
+            if not settings.output_column:
+                raise ValueError("Apply Model requires an 'output_column'.")
+
+            model_path: str
+            origin_label: str
+
+            if settings.source == "upstream":
+                if settings.upstream_node_id is None:
+                    raise ValueError(
+                        "Apply Model: 'upstream_node_id' is required when source='upstream'. "
+                        "Pick a Train Model node in the drawer or switch to 'catalog' source."
+                    )
+                upstream = self.get_node(node_id=settings.upstream_node_id)
+                if upstream is None or upstream.node_type != "train_model":
+                    raise ValueError(
+                        f"Apply Model: upstream node {settings.upstream_node_id} is not a Train Model node."
+                    )
+                flow_path = ml_flow_model_path(self.flow_id, settings.upstream_node_id)
+                if not flow_path.exists():
+                    raise ValueError(
+                        f"Apply Model: upstream Train Model (node {settings.upstream_node_id}) "
+                        "has not produced a model yet. Make sure it runs before this node "
+                        "(e.g. with a Wait For barrier)."
+                    )
+                model_path = str(flow_path)
+                origin_label = f"upstream node {settings.upstream_node_id}"
+            else:
+                if not settings.model_name:
+                    raise ValueError("Apply Model: 'model_name' is required when source='catalog'.")
+                storage_backend = get_storage_backend()
+                with get_db_context() as db:
+                    artifact = ArtifactService(db, storage_backend).get_artifact_by_name(
+                        name=settings.model_name,
+                        namespace_id=settings.namespace_id,
+                        version=settings.model_version,
+                    )
+                if artifact.download_source is None or artifact.download_source.method != "file":
+                    raise ValueError(
+                        "Apply Model currently requires the filesystem artifact backend "
+                        "(FLOWFILE_ARTIFACT_STORAGE=filesystem). S3 support is not implemented."
+                    )
+                model_path = artifact.download_source.path
+                origin_label = f"catalog '{settings.model_name}' v{artifact.version}"
+
+            node = self.get_node(node_id=apply_settings.node_id)
+            fetcher = MLApplyFetcher(
+                lf=data.data_frame,
+                model_path=model_path,
+                output_column=settings.output_column,
+                flow_id=self.flow_id,
+                node_id=apply_settings.node_id,
+                file_ref=node.hash,
+                wait_on_completion=False,
+            )
+            node._fetch_cached_df = fetcher
+            result_lf = fetcher.get_result()
+            self.flow_logger.info(f"Apply Model: scored using {origin_label} -> column '{settings.output_column}'")
+            return FlowDataEngine(result_lf)
+
+        def schema_callback():
+            input_node: FlowNode = self.get_node(apply_settings.node_id).node_inputs.main_inputs[0]
+            input_schema_cols = list(input_node.schema)
+            s = apply_settings.apply_input
+            output_column = s.output_column or "prediction"
+            # source='upstream' lets us read the trainer's declared output_dtype
+            # so a future non-Float64 trainer (e.g. classification) gets the
+            # right schema. source='catalog' falls back to Float64 — resolving
+            # via the catalog DB at schema-resolve time would be too eager.
+            output_dtype = "Float64"
+            if s.source == "upstream" and s.upstream_node_id is not None:
+                upstream = self.get_node(s.upstream_node_id)
+                train_input = getattr(getattr(upstream, "setting_input", None), "train_input", None)
+                model_type = getattr(train_input, "model_type", None)
+                if model_type:
+                    try:
+                        from shared.ml.trainers import get_trainer
+
+                        output_dtype = get_trainer(model_type).output_dtype
+                    except ValueError:
+                        pass
+            return input_schema_cols + [FlowfileColumn.from_input(output_column, output_dtype)]
+
+        depending_on_id = apply_settings.depending_on_id if hasattr(apply_settings, "depending_on_id") else None
+        self.add_node_step(
+            node_id=apply_settings.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="apply_model",
+            setting_input=apply_settings,
+            schema_callback=schema_callback,
+            input_node_ids=[depending_on_id] if depending_on_id is not None else None,
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_evaluate_model(self, evaluate_settings: input_schema.NodeEvaluateModel) -> "FlowGraph":
+        """Adds an Evaluate Model node.
+
+        Compares the *actual* and *predicted* columns already present on the
+        input dataframe and emits a long-form ``(metric, value)`` frame.
+        Pure polars — no worker offload, no model file read.
+
+        ``task_type="auto"`` resolves the metric set from the configured
+        upstream Train Model node's trainer; otherwise uses the explicit
+        ``regression`` / ``classification`` choice from settings.
+        """
+
+        def _resolve_task_type() -> str:
+            s = evaluate_settings.evaluate_input
+            if s.task_type != "auto":
+                return s.task_type
+            if s.upstream_train_node_id is not None:
+                upstream = self.get_node(s.upstream_train_node_id)
+                train_input = getattr(getattr(upstream, "setting_input", None), "train_input", None)
+                model_type = getattr(train_input, "model_type", None)
+                if model_type:
+                    try:
+                        from shared.ml.trainers import get_trainer
+
+                        return get_trainer(model_type).task_type
+                    except ValueError:
+                        pass
+            return "regression"
+
+        def _func(data: FlowDataEngine) -> FlowDataEngine:
+            from shared.ml.metrics import compute_metrics
+
+            settings = evaluate_settings.evaluate_input
+            if not settings.actual_column:
+                raise ValueError("Evaluate Model requires an 'actual_column'.")
+            if not settings.predicted_column:
+                raise ValueError("Evaluate Model requires a 'predicted_column'.")
+
+            task_type = _resolve_task_type()
+            metrics_lf = compute_metrics(
+                data.data_frame,
+                actual_column=settings.actual_column,
+                predicted_column=settings.predicted_column,
+                task_type=task_type,
+            )
+            self.flow_logger.info(
+                f"Evaluate Model: {settings.predicted_column} vs {settings.actual_column} " f"(task_type={task_type})"
+            )
+            return FlowDataEngine(metrics_lf)
+
+        def schema_callback():
+            return [
+                FlowfileColumn.from_input(column_name="metric", data_type="String"),
+                FlowfileColumn.from_input(column_name="value", data_type="Float64"),
+            ]
+
+        depending_on_id = evaluate_settings.depending_on_id if hasattr(evaluate_settings, "depending_on_id") else None
+        self.add_node_step(
+            node_id=evaluate_settings.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="evaluate_model",
+            setting_input=evaluate_settings,
+            schema_callback=schema_callback,
+            input_node_ids=[depending_on_id] if depending_on_id is not None else None,
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_wait_for(self, settings: input_schema.NodeWaitFor) -> "FlowGraph":
+        """Adds a Wait For node — passes the left input through and waits on the right.
+
+        Two distinct input handles like Join: connect the data path to the left
+        and the dependency node (e.g. Train Model) to the right. The right
+        input's data is discarded; only its completion gates this node.
+        """
+
+        def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
+            # *right* is intentionally unused — its only job is to make sure
+            # the framework waits for the dependency node to finish.
+            del right
+            return main
+
+        def schema_callback():
+            node = self.get_node(settings.node_id)
+            if node.node_inputs.main_inputs:
+                return node.node_inputs.main_inputs[0].schema
+            return []
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="wait_for",
+            setting_input=settings,
+            schema_callback=schema_callback,
+            input_node_ids=settings.depending_on_ids,
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "FlowGraph":
         """Adds a fuzzy matching node to join data on approximate string matches.
 
@@ -2219,9 +2688,14 @@ class FlowGraph:
         from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
 
         def _func(table: FlowDataEngine) -> NamedOutputs:
-            return table.random_split(
-                [(s.name, s.percentage) for s in settings.splits],
+            split_pairs = [(s.name, s.percentage) for s in settings.splits]
+            if self.execution_location == "local":
+                return table.random_split(split_pairs, settings.seed)
+            return table.random_split_external(
+                split_pairs,
                 settings.seed,
+                flow_id=self.flow_id,
+                node_id=settings.node_id,
             )
 
         self.add_node_step(
@@ -2490,7 +2964,7 @@ class FlowGraph:
         self._node_ids.append(node_id)
         # Give the node a callable that returns the current flow parameters so
         # that lazy schema prediction (_predicted_data_getter) can substitute
-        # ${...} refs.  Using a callable (rather than a copy of the dict) means
+        # ${...} refs. Using a callable (rather than a copy of the dict) means
         # the node always reads the LATEST parameters, whether they were set via
         # the flow_settings.setter or mutated directly on flow_settings.parameters.
         _graph = self
@@ -2934,7 +3408,7 @@ class FlowGraph:
                         _decrypt_fn,
                     )
             # The worker DataFrame may have fewer columns than the inferred
-            # schema (e.g. empty topic or starting at "latest").  Align to
+            # schema (e.g. empty topic or starting at "latest"). Align to
             # the schema_callback result so downstream nodes see stable columns.
             expected_columns = schema_callback()
             fl = fl.align_to_schema(expected_columns)
@@ -3003,22 +3477,6 @@ class FlowGraph:
         derived locally from the selected metrics/dimensions — no network call
         is made during schema prediction, keeping downstream nodes lazy.
         """
-        from flowfile_core.configs.app_settings import get_google_oauth_config
-        from flowfile_core.flowfile.database_connection_manager.ga_connections import (
-            get_encrypted_refresh_token,
-        )
-        from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
-        from flowfile_core.secret_manager.secret_manager import _encrypt_with_master_key
-        from flowfile_worker.external_sources.google_analytics_source.models import (
-            GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
-        )
-        from flowfile_worker.external_sources.google_analytics_source.models import (
-            GoogleAnalyticsOrderBy as WorkerGoogleAnalyticsOrderBy,
-        )
-        from flowfile_worker.external_sources.google_analytics_source.models import (
-            GoogleAnalyticsReadSettings as WorkerGoogleAnalyticsReadSettings,
-        )
-
         logger.info("Adding google analytics reader")
         node_type = "google_analytics_reader"
         ga_settings = node_ga_reader.google_analytics_settings
@@ -3068,8 +3526,7 @@ class FlowGraph:
                 for f in ga_settings.filters
             ],
             order_bys=[
-                WorkerGoogleAnalyticsOrderBy(field=ob.field, descending=ob.descending)
-                for ob in ga_settings.order_bys
+                WorkerGoogleAnalyticsOrderBy(field=ob.field, descending=ob.descending) for ob in ga_settings.order_bys
             ],
             flowfile_flow_id=node_ga_reader.flow_id,
             flowfile_node_id=node_ga_reader.node_id,
@@ -3079,9 +3536,7 @@ class FlowGraph:
         # nodes can introspect columns without ever invoking ``_func`` (which
         # would trigger a worker → Google round-trip). ``derive_schema`` is
         # pure-Python and runs against the chosen metrics/dimensions only.
-        predicted_columns = derive_schema(
-            metrics=ga_settings.metrics, dimensions=ga_settings.dimensions
-        )
+        predicted_columns = derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
         node_ga_reader.fields = [c.get_minimal_field_info() for c in predicted_columns]
 
         def _func() -> FlowDataEngine:
@@ -3100,9 +3555,7 @@ class FlowGraph:
             # re-walk the heuristic table. ``derive_schema`` is the fallback
             # for the (rare) case where ``fields`` got cleared.
             if node_ga_reader.fields:
-                return [
-                    FlowfileColumn.from_input(f.name, f.data_type) for f in node_ga_reader.fields
-                ]
+                return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_ga_reader.fields]
             return derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
 
         node = self.get_node(node_ga_reader.node_id)
@@ -3736,7 +4189,7 @@ class FlowGraph:
 
         # Temporarily substitute parameters into node settings (in-place so closures see the values)
         restorations = []
-        # Save the node's hash before substitution.  executor.execute() calls node.reset()
+        # Save the node's hash before substitution. executor.execute() calls node.reset()
         # while setting_input is mutated, which recomputes _hash from the resolved path.
         # After restore_parameters the path returns to the original ${...} form but _hash
         # still holds the resolved-path hash → needs_reset() returns True on the next
@@ -4157,7 +4610,7 @@ class FlowGraph:
             if suffix == ".flowfile":
                 raise DeprecationWarning(
                     "The .flowfile format is deprecated. Please use .yaml or .json formats.\n\n"
-                    "Or stay on v0.4.1 if you still need .flowfile support.\n\n"
+                    "Or stay on.1 if you still need .flowfile support.\n\n"
                 )
             elif suffix in (".yaml", ".yml"):
                 flowfile_data = self.get_flowfile_data()
@@ -4407,7 +4860,15 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
     to_node = flow.get_node(node_connection.input_connection.node_id)
     logger.info(f"from_node={from_node}, to_node={to_node}")
     if not (from_node and to_node):
-        raise HTTPException(404, "Not not available")
+        missing = [
+            str(nc.node_id)
+            for nc, n in (
+                (node_connection.output_connection, from_node),
+                (node_connection.input_connection, to_node),
+            )
+            if not n
+        ]
+        raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
     if _would_create_cycle(from_node, to_node):
         raise HTTPException(
             422,

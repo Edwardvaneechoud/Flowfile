@@ -81,5 +81,41 @@ def test_scan_json_from_cloud_storage():
     flow_frame.count().collect()
 
 
+def test_cloud_storage_reader_signatures_accept_output_field_config():
+    """Every cloud storage reader helper in flowfile_frame should accept the
+    output_field_config kwarg so Python-built flows can opt into the same
+    schema validation that canvas-built flows get via output_field_config.
+
+    Verifies signature plumbing without requiring a live cloud connection.
+    Runtime application of the config is exercised at the core level by
+    flowfile_core/tests/flowfile/flow_node/test_output_field_config.py.
+    """
+    import inspect
+
+    config = ff.OutputFieldConfig(
+        enabled=True,
+        validation_mode_behavior="select_only",
+        fields=[
+            ff.OutputFieldInfo(name="vbMonth", data_type="String"),
+            ff.OutputFieldInfo(name="contracts", data_type="Float64"),
+        ],
+        validate_data_types=True,
+    )
+
+    for fn in (
+        ff.scan_parquet_from_cloud_storage,
+        ff.scan_csv_from_cloud_storage,
+        ff.scan_json_from_cloud_storage,
+        ff.scan_delta,
+        ff.read_from_cloud_storage,
+    ):
+        params = inspect.signature(fn).parameters
+        assert "output_field_config" in params, f"{fn.__name__} missing output_field_config kwarg"
+
+    # And ensure the config we built is the type the parameter advertises.
+    from flowfile_core.schemas.input_schema import OutputFieldConfig as CoreOutputFieldConfig
+    assert isinstance(config, CoreOutputFieldConfig)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

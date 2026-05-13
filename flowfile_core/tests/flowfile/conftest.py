@@ -76,7 +76,14 @@ CATALOG_SAMPLE_DATA = [
 
 
 def catalog_cleanup():
-    """Remove all catalog / flow-registration rows so tests start clean."""
+    """Remove all catalog / flow-registration rows so tests start clean.
+
+    Also wipes the worker's catalog_virtual_results cache so a previous
+    test's ``fvt-{table_id}-{hash}.arrow`` file doesn't satisfy the next
+    test's resolve request when fixtures recycle the same table id.
+    """
+    from shared.storage_config import storage
+
     with get_db_context() as db:
         db.query(CatalogTableReadLink).delete()
         db.query(FlowSchedule).delete()
@@ -84,6 +91,12 @@ def catalog_cleanup():
         db.query(FlowRegistration).delete()
         db.query(CatalogNamespace).delete()
         db.commit()
+
+    results_dir = storage.catalog_virtual_results_directory
+    if results_dir.exists():
+        for entry in results_dir.iterdir():
+            if entry.is_file():
+                entry.unlink(missing_ok=True)
 
 
 def create_test_namespace():

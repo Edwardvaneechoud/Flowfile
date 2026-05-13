@@ -99,6 +99,7 @@
               @select-flow="selectFlow($event)"
               @select-artifact="selectArtifact($event)"
               @select-table="selectTable($event)"
+              @select-visualization="openVisualization($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
               @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
               @register-flow="openRegisterFlow($event)"
@@ -204,11 +205,12 @@
         <!-- Favorites list -->
         <div v-else-if="catalogStore.activeTab === 'favorites'" class="favorites-panel">
           <h2>Favorites</h2>
-          <div v-if="catalogStore.favorites.length === 0" class="empty-state">
-            <i class="fa-solid fa-star empty-icon"></i>
-            <h3>No favorites yet</h3>
-            <p>Star flows from the catalog tree to see them here.</p>
-          </div>
+          <EmptyState
+            v-if="catalogStore.favorites.length === 0"
+            icon="fa-solid fa-star"
+            title="No favorites yet"
+            description="Star flows from the catalog tree to see them here."
+          />
           <div v-else class="favorites-list">
             <FlowListItem
               v-for="flow in catalogStore.favorites"
@@ -224,6 +226,11 @@
         <SqlEditorPanel
           v-else-if="showSqlEditor || catalogStore.activeTab === 'sql'"
           :initial-query="sqlInitialQuery"
+        />
+        <!-- Visuals (charts + dashboards) -->
+        <VisualsPanel
+          v-else-if="catalogStore.activeTab === 'visuals'"
+          @view-table="selectTable($event)"
         />
         <!-- Stats overview -->
         <StatsPanel
@@ -294,6 +301,23 @@
       @created="handleSyncCreated"
     />
 
+    <!-- Saved-viz viewer (opened from the catalog tree) -->
+    <el-dialog
+      v-model="vizViewerOpen"
+      title="Visualization"
+      width="92vw"
+      destroy-on-close
+      append-to-body
+      @close="closeVizViewer"
+    >
+      <VisualizationViewer
+        v-if="vizViewerOpen && activeVizId !== null"
+        :viz-id="activeVizId"
+        :appearance="vizViewerAppearance"
+        @close="closeVizViewer"
+      />
+    </el-dialog>
+
     <!-- Info Modal -->
     <el-dialog
       v-model="showInfoModal"
@@ -361,6 +385,10 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): God component (~1700 LOC). Plan to extract:
+//   - useModalState composable: 8 dialog refs at lines 472-490
+//   - 19 async handlers: move into catalog-store.ts as Pinia actions (~lines 657-927)
+//   - useRouteSync composable: applyRouteToStore (~lines 930-993)
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
@@ -368,6 +396,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
+import { EmptyState } from "../../components/common";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
 import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
@@ -385,6 +414,9 @@ import CreateScheduleModal from "./CreateScheduleModal.vue";
 import CreateSyncModal from "./CreateSyncModal.vue";
 import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
+import VisualsPanel from "./VisualsPanel.vue";
+import VisualizationViewer from "./VisualizationViewer.vue";
+import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   CatalogTab,
   FlowSchedule,
@@ -430,6 +462,12 @@ const tabs = computed(() => [
     icon: "fa-solid fa-code",
     badge: null,
   },
+  {
+    key: "visuals" as CatalogTab,
+    label: "Visuals",
+    icon: "fa-solid fa-chart-pie",
+    badge: null,
+  },
 ]);
 
 // Search and filter state
@@ -447,6 +485,11 @@ const registerTableNamespaceId = ref<number | null>(null);
 const showCreateSchedule = ref(false);
 const preselectedFlowId = ref<number | null>(null);
 const showCreateSync = ref(false);
+
+// Saved-viz viewer modal (opened from the catalog tree's Visualizations section).
+const vizViewerOpen = ref(false);
+const activeVizId = ref<number | null>(null);
+const vizViewerAppearance = useGraphicWalkerAppearance();
 const showCreateVirtualTable = ref(false);
 const showSqlEditor = ref(false);
 const sqlInitialQuery = ref<string | undefined>(undefined);
@@ -514,6 +557,18 @@ function selectTable(tableId: number) {
     name: "catalog",
     query: { tab: catalogStore.activeTab, tableId: String(tableId) },
   });
+}
+
+function openVisualization(vizId: number) {
+  activeVizId.value = vizId;
+  vizViewerOpen.value = true;
+}
+
+function closeVizViewer() {
+  vizViewerOpen.value = false;
+  activeVizId.value = null;
+  // Keep the namespace tree in sync if the user renamed/deleted from the viewer.
+  catalogStore.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
 }
 
 function selectArtifact(artifactId: number) {

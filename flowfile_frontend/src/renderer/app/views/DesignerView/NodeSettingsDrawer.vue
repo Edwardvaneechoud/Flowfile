@@ -1,11 +1,15 @@
 <template>
-  <NodeTitle :title="nodeStore.drawerProps.title" :intro="nodeStore.drawerProps.intro" />
-  <component
-    :is="nodeStore.activeDrawerComponent"
-    v-bind="nodeStore.drawerProps"
-    ref="drawerComponentInstance"
-    :node-id="nodeStore.node_id"
-  />
+  <div class="node-settings-drawer">
+    <NodeTitle :title="nodeStore.drawerProps.title" :intro="nodeStore.drawerProps.intro" />
+    <div class="node-settings-body">
+      <component
+        :is="nodeStore.activeDrawerComponent"
+        v-bind="nodeStore.drawerProps"
+        ref="drawerComponentInstance"
+        :node-id="nodeStore.node_id"
+      />
+    </div>
+  </div>
 </template>
 <script setup lang="ts">
 import { ref, watch, nextTick } from "vue";
@@ -70,3 +74,21 @@ watch(
   { immediate: true },
 );
 </script>
+
+<style scoped>
+.node-settings-drawer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Body holds the active node component. It has an explicit (flex-allocated)
+   height, so a node whose root opts in with `height: 100%` (or flex: 1) will
+   fill the panel; nodes with natural-height forms still render at the top
+   with the remaining space below them. */
+.node-settings-body {
+  flex: 1;
+  min-height: 0;
+}
+</style>

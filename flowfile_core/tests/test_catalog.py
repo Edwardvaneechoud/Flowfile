@@ -216,6 +216,131 @@ class TestFlowRegistration:
         resp = client.delete(f"/catalog/flows/{created['id']}")
         assert resp.status_code == 204
 
+    def test_delete_flow_detaches_runs_preserves_uuid(self):
+        """Deleting a flow nulls FlowRun.registration_id but preserves flow_uuid.
+
+        The orphaned runs stay in the global Run History (attributed via uuid)
+        but never surface under another flow's per-flow page.
+        """
+        from datetime import datetime, timezone
+
+        ns_id = self._make_namespace()
+        flow = client.post(
+            "/catalog/flows",
+            json={"name": "victim", "flow_path": "/tmp/victim.yaml", "namespace_id": ns_id},
+        ).json()
+
+        with get_db_context() as db:
+            reg_uuid = db.query(FlowRegistration.flow_uuid).filter_by(id=flow["id"]).scalar()
+            assert reg_uuid is not None
+            db.add(
+                FlowRun(
+                    registration_id=flow["id"],
+                    flow_uuid=reg_uuid,
+                    flow_name="victim",
+                    flow_path="/tmp/victim.yaml",
+                    user_id=1,
+                    started_at=datetime.now(timezone.utc),
+                    number_of_nodes=1,
+                    run_type="in_designer_run",
+                )
+            )
+            db.commit()
+
+        client.delete(f"/catalog/flows/{flow['id']}")
+
+        with get_db_context() as db:
+            run = db.query(FlowRun).filter_by(flow_uuid=reg_uuid).one()
+            assert run.registration_id is None
+            assert run.flow_uuid == reg_uuid
+
+    def test_run_history_does_not_leak_after_id_reuse(self):
+        """A new flow that happens to take a deleted flow's registration_id
+        must not inherit the deleted flow's run history.
+        """
+        from datetime import datetime, timezone
+
+        ns_id = self._make_namespace()
+        original = client.post(
+            "/catalog/flows",
+            json={"name": "first", "flow_path": "/tmp/first.yaml", "namespace_id": ns_id},
+        ).json()
+        original_id = original["id"]
+
+        with get_db_context() as db:
+            reg_uuid = db.query(FlowRegistration.flow_uuid).filter_by(id=original_id).scalar()
+            db.add(
+                FlowRun(
+                    registration_id=original_id,
+                    flow_uuid=reg_uuid,
+                    flow_name="first",
+                    flow_path="/tmp/first.yaml",
+                    user_id=1,
+                    started_at=datetime.now(timezone.utc),
+                    number_of_nodes=1,
+                    run_type="in_designer_run",
+                )
+            )
+            db.commit()
+
+        client.delete(f"/catalog/flows/{original_id}")
+
+        # Force a new registration row to claim the same id (simulating SQLite
+        # reusing the freed id, which is what was contaminating the user's
+        # per-flow Run History page).
+        with get_db_context() as db:
+            new_reg = FlowRegistration(
+                id=original_id,
+                flow_uuid="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                name="reused",
+                flow_path="/tmp/reused.yaml",
+                namespace_id=ns_id,
+                owner_id=1,
+            )
+            db.add(new_reg)
+            db.commit()
+
+        resp = client.get("/catalog/runs", params={"registration_id": original_id})
+        assert resp.status_code == 200
+        # Must be empty: the orphaned run still has the original flow_uuid,
+        # but the new registration has a different flow_uuid.
+        assert resp.json()["total"] == 0
+        assert resp.json()["items"] == []
+
+    def test_run_history_uses_current_registration_name(self):
+        """Run-history list must show the registration's current user-typed name,
+        not the file-stem snapshot baked into FlowRun.flow_name at run time.
+        """
+        from datetime import datetime, timezone
+
+        ns_id = self._make_namespace()
+        flow = client.post(
+            "/catalog/flows",
+            json={"name": "nice_name", "flow_path": "/tmp/nice.yaml", "namespace_id": ns_id},
+        ).json()
+
+        with get_db_context() as db:
+            reg_uuid = db.query(FlowRegistration.flow_uuid).filter_by(id=flow["id"]).scalar()
+            db.add(
+                FlowRun(
+                    registration_id=flow["id"],
+                    flow_uuid=reg_uuid,
+                    # Simulate the buggy historical capture: prefixed file stem.
+                    flow_name="9_nice_name",
+                    flow_path="/tmp/nice.yaml",
+                    user_id=1,
+                    started_at=datetime.now(timezone.utc),
+                    number_of_nodes=1,
+                    run_type="in_designer_run",
+                )
+            )
+            db.commit()
+
+        items = client.get("/catalog/runs").json()["items"]
+        assert len(items) == 1
+        # Display must use the registration's current name, not the snapshot.
+        assert items[0]["flow_name"] == "nice_name"
+
     def test_flow_file_exists_false_for_missing_path(self):
         ns_id = self._make_namespace()
         created = client.post(
@@ -228,6 +353,37 @@ class TestFlowRegistration:
         ).json()
         resp = client.get(f"/catalog/flows/{created['id']}")
         assert resp.json()["file_exists"] is False
+
+    def test_missing_file_warning_is_deduped(self, caplog):
+        """First lookup of a missing-file flow logs a warning; subsequent lookups
+        within the same process must not re-log it (avoids per-page-load spam)."""
+        import logging
+
+        from flowfile_core.catalog.services import flows as flows_module
+
+        ns_id = self._make_namespace()
+        created = client.post(
+            "/catalog/flows",
+            json={
+                "name": "ghost_dedupe",
+                "flow_path": "/tmp/missing_dedupe_xyz.yaml",
+                "namespace_id": ns_id,
+            },
+        ).json()
+
+        # Reset the process-local memo so this test is order-independent.
+        flows_module._warned_missing_paths.clear()
+        # Drop any records left over from the POST above; we only want to
+        # count what gets emitted by the GETs below.
+        caplog.clear()
+
+        with caplog.at_level(logging.WARNING, logger=flows_module.logger.name):
+            client.get(f"/catalog/flows/{created['id']}")
+            client.get(f"/catalog/flows/{created['id']}")
+            client.get(f"/catalog/flows/{created['id']}")
+
+        warnings = [r for r in caplog.records if "references missing file" in r.getMessage()]
+        assert len(warnings) == 1, f"expected 1 warning, got {len(warnings)}: {warnings}"
 
 
 class TestCatalogTableMaterialization:
@@ -247,8 +403,8 @@ class TestCatalogTableMaterialization:
             service = CatalogService(repo)
 
             response_payload = {
-                "parquet_path": "/tmp/fake.parquet",
-                "schema": [{"name": "col_a", "dtype": "Int64"}],
+                "table_path": "/tmp/fake_delta",
+                "column_schema": [{"name": "col_a", "dtype": "Int64"}],
                 "row_count": 12,
                 "column_count": 1,
                 "size_bytes": 2048,
@@ -393,11 +549,15 @@ class TestRuns:
             json={"name": "run_flow", "flow_path": "/tmp/run_flow.yaml", "namespace_id": schema["id"]},
         ).json()
 
-        # Create 5 runs directly in DB
+        # Create 5 runs directly in DB. flow_uuid must be copied from the
+        # registration so the per-flow filter (which routes through flow_uuid)
+        # finds them.
         with get_db_context() as db:
+            reg_uuid = db.query(FlowRegistration.flow_uuid).filter_by(id=flow["id"]).scalar()
             for i in range(5):
                 run = FlowRun(
                     registration_id=flow["id"],
+                    flow_uuid=reg_uuid,
                     flow_name="run_flow",
                     flow_path="/tmp/run_flow.yaml",
                     user_id=1,
@@ -1096,7 +1256,10 @@ class TestPushTableTrigger:
         """Overwriting a table should create a FlowRun for its table_trigger schedule."""
         schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
 
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda *a, **kw: None,
+        )
 
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -1112,12 +1275,18 @@ class TestPushTableTrigger:
 
         schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
 
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda *a, **kw: None,
+        )
 
-        # Create an active (unfinished) run
+        # Create an active (unfinished) run. flow_uuid must match the
+        # registration so has_active_run (which routes through flow_uuid) finds it.
         with get_db_context() as db:
+            reg_uuid = db.query(FlowRegistration.flow_uuid).filter_by(id=flow_id).scalar()
             active_run = FlowRun(
                 registration_id=flow_id,
+                flow_uuid=reg_uuid,
                 flow_name="triggered_flow",
                 flow_path="/tmp/triggered.yaml",
                 user_id=1,
@@ -1141,7 +1310,10 @@ class TestPushTableTrigger:
         """After firing, the schedule's last_triggered_at and last_trigger_table_updated_at should be set."""
         schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
 
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda *a, **kw: None,
+        )
 
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -1158,7 +1330,10 @@ class TestPushTableTrigger:
             schedule_type="table_set_trigger"
         )
 
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda *a, **kw: None,
+        )
 
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -1361,7 +1536,7 @@ class TestCrossNamespaceResolution:
 
             captured: dict = {}
 
-            def fake_trigger(query, tables, max_rows, virtual_ipc=None):
+            def fake_trigger(query, tables, max_rows, virtual_refs=None):
                 captured["query"] = query
                 return {
                     "columns": [],

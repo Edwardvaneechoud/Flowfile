@@ -31,11 +31,7 @@ _OAUTH_KEYS = (
 
 
 def _get_secret_row(db: Session, name: str, user_id: int) -> Secret | None:
-    return (
-        db.query(Secret)
-        .filter(Secret.name == name, Secret.user_id == user_id)
-        .first()
-    )
+    return db.query(Secret).filter(Secret.name == name, Secret.user_id == user_id).first()
 
 
 def get_user_secret(db: Session, name: str, user_id: int) -> str | None:
@@ -60,9 +56,7 @@ def set_user_secret(db: Session, name: str, value: str, user_id: int) -> None:
 
 
 def delete_user_secret(db: Session, name: str, user_id: int) -> None:
-    db.query(Secret).filter(Secret.name == name, Secret.user_id == user_id).delete(
-        synchronize_session=False
-    )
+    db.query(Secret).filter(Secret.name == name, Secret.user_id == user_id).delete(synchronize_session=False)
     db.commit()
 
 
@@ -73,12 +67,8 @@ def get_google_oauth_config(db: Session, user_id: int) -> dict[str, str]:
     unresolved key is returned as an empty string (callers check for truthiness).
     """
     client_id = get_user_secret(db, GOOGLE_OAUTH_CLIENT_ID_KEY, user_id) or GOOGLE_OAUTH_CLIENT_ID
-    client_secret = (
-        get_user_secret(db, GOOGLE_OAUTH_CLIENT_SECRET_KEY, user_id) or GOOGLE_OAUTH_CLIENT_SECRET
-    )
-    redirect_uri = (
-        get_user_secret(db, GOOGLE_OAUTH_REDIRECT_URI_KEY, user_id) or GOOGLE_OAUTH_REDIRECT_URI
-    )
+    client_secret = get_user_secret(db, GOOGLE_OAUTH_CLIENT_SECRET_KEY, user_id) or GOOGLE_OAUTH_CLIENT_SECRET
+    redirect_uri = get_user_secret(db, GOOGLE_OAUTH_REDIRECT_URI_KEY, user_id) or GOOGLE_OAUTH_REDIRECT_URI
     return {
         "client_id": client_id or "",
         "client_secret": client_secret or "",

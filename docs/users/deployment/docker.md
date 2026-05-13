@@ -133,7 +133,6 @@ docker compose logs -f    # View logs
 
 The File Manager provides a web-based interface for uploading and downloading data files when running Flowfile in Docker (where users cannot browse the host filesystem).
 
-<!-- PLACEHOLDER: Screenshot of the File Manager page -->
 ![File Manager](../../assets/images/guides/docker-deployment/file-manager.png)
 
 *The File Manager showing uploaded files*

@@ -8,6 +8,11 @@ import type {
   CatalogTableCreate,
   CatalogTablePreview,
   CatalogTableUpdate,
+  ColumnStatsResponse,
+  CatalogVisualization,
+  Dashboard,
+  DashboardCreatePayload,
+  DashboardUpdatePayload,
   DeltaTableHistory,
   FlowRegistration,
   FlowRegistrationCreate,
@@ -27,6 +32,11 @@ import type {
   SqlQueryResult,
   VirtualFlowTableCreate,
   VirtualFlowTableUpdate,
+  VisualizationComputeResponse,
+  VisualizationCreatePayload,
+  VisualizationFieldsResponse,
+  VisualizationUpdatePayload,
+  VizSourceDescriptor,
 } from "../types";
 
 export class CatalogApi {
@@ -233,6 +243,21 @@ export class CatalogApi {
     return response.data;
   }
 
+  /** Distinct values + min/max for a single column on a catalog table.
+   * Used by the dashboard filter UI to pre-populate categorical
+   * dropdowns and pre-fill numeric / date range inputs. */
+  static async getTableColumnStats(
+    tableId: number,
+    columnName: string,
+    limit = 100,
+  ): Promise<ColumnStatsResponse> {
+    const response = await axios.get<ColumnStatsResponse>(
+      `/catalog/tables/${tableId}/columns/${encodeURIComponent(columnName)}/stats`,
+      { params: { limit } },
+    );
+    return response.data;
+  }
+
   // ====== Virtual Flow Tables ======
 
   static async createVirtualTable(body: VirtualFlowTableCreate): Promise<CatalogTable> {
@@ -359,5 +384,128 @@ export class CatalogApi {
       used_tables: usedTables ?? [],
     });
     return response.data;
+  }
+
+  // ====== Visualizations ======
+
+  /** List every saved visualization in the catalog. */
+  static async listVisualizationLibrary(): Promise<CatalogVisualization[]> {
+    const response = await axios.get<CatalogVisualization[]>("/catalog/visualizations");
+    return response.data;
+  }
+
+  /** Filtered listing — viz that reference a specific catalog table. */
+  static async listVisualizationsForTable(tableId: number): Promise<CatalogVisualization[]> {
+    const response = await axios.get<CatalogVisualization[]>(
+      `/catalog/tables/${tableId}/visualizations`,
+    );
+    return response.data;
+  }
+
+  static async getVisualization(vizId: number): Promise<CatalogVisualization> {
+    const response = await axios.get<CatalogVisualization>(`/catalog/visualizations/${vizId}`);
+    return response.data;
+  }
+
+  static async createVisualization(
+    payload: VisualizationCreatePayload,
+  ): Promise<CatalogVisualization> {
+    const response = await axios.post<CatalogVisualization>("/catalog/visualizations", payload);
+    return response.data;
+  }
+
+  static async updateVisualization(
+    vizId: number,
+    payload: VisualizationUpdatePayload,
+  ): Promise<CatalogVisualization> {
+    const response = await axios.put<CatalogVisualization>(
+      `/catalog/visualizations/${vizId}`,
+      payload,
+    );
+    return response.data;
+  }
+
+  static async deleteVisualization(vizId: number): Promise<void> {
+    await axios.delete(`/catalog/visualizations/${vizId}`);
+  }
+
+  /** Compute rows for a saved viz.
+   *
+   * Pass ``payload`` (a GraphicWalker IDataQueryPayload) to push a chart
+   * aggregation down to the worker via polars-gw. Omit it for a raw row
+   * fetch (used as a fallback / for preview cards).
+   */
+  static async computeSavedVisualization(
+    vizId: number,
+    options: { maxRows?: number; payload?: Record<string, any> } = {},
+  ): Promise<VisualizationComputeResponse> {
+    const body: Record<string, unknown> = {};
+    if (options.maxRows !== undefined) body.max_rows = options.maxRows;
+    if (options.payload !== undefined) body.payload = options.payload;
+    const response = await axios.post<VisualizationComputeResponse>(
+      `/catalog/visualizations/${vizId}/compute`,
+      body,
+    );
+    return response.data;
+  }
+
+  /** Get the field schema for a saved viz's source (worker-cached). */
+  static async getSavedVisualizationFields(
+    vizId: number,
+  ): Promise<VisualizationFieldsResponse> {
+    const response = await axios.post<VisualizationFieldsResponse>(
+      `/catalog/visualizations/${vizId}/fields`,
+    );
+    return response.data;
+  }
+
+  /** Compute a chart from a transient source (used by the live GW editor). */
+  static async computeAdHocVisualization(
+    source: VizSourceDescriptor,
+    payload: Record<string, any>,
+    maxRows?: number,
+  ): Promise<VisualizationComputeResponse> {
+    const response = await axios.post<VisualizationComputeResponse>(
+      "/catalog/visualizations/compute",
+      { source, payload, max_rows: maxRows ?? 100_000 },
+    );
+    return response.data;
+  }
+
+  /** Return the GraphicWalker IMutField list for a viz source (cached on worker). */
+  static async getVisualizationFields(
+    source: VizSourceDescriptor,
+  ): Promise<VisualizationFieldsResponse> {
+    const response = await axios.post<VisualizationFieldsResponse>(
+      "/catalog/visualizations/fields",
+      { source },
+    );
+    return response.data;
+  }
+
+  // ====== Dashboards ======
+
+  static async listDashboards(): Promise<Dashboard[]> {
+    const response = await axios.get<Dashboard[]>("/catalog/dashboards");
+    return response.data;
+  }
+
+  static async getDashboard(id: number): Promise<Dashboard> {
+    const response = await axios.get<Dashboard>(`/catalog/dashboards/${id}`);
+    return response.data;
+  }
+
+  static async createDashboard(payload: DashboardCreatePayload): Promise<Dashboard> {
+    const response = await axios.post<Dashboard>("/catalog/dashboards", payload);
+    return response.data;
+  }
+
+  static async updateDashboard(id: number, payload: DashboardUpdatePayload): Promise<Dashboard> {
+    const response = await axios.put<Dashboard>(`/catalog/dashboards/${id}`, payload);
+    return response.data;
+  }
+
+  static async deleteDashboard(id: number): Promise<void> {
+    await axios.delete(`/catalog/dashboards/${id}`);
   }
 }

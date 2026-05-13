@@ -37,29 +37,22 @@ class CloudStorageReader:
             aws_region=connection.aws_region,
             aws_access_key_id=connection.aws_access_key_id,
             aws_secret_access_key=(
-                connection.aws_secret_access_key.get_secret_value()
-                if connection.aws_secret_access_key else None
+                connection.aws_secret_access_key.get_secret_value() if connection.aws_secret_access_key else None
             ),
             aws_role_arn=connection.aws_role_arn,
             aws_allow_unsafe_html=connection.aws_allow_unsafe_html,
             azure_account_name=connection.azure_account_name,
             azure_account_key=(
-                connection.azure_account_key.get_secret_value()
-                if connection.azure_account_key else None
+                connection.azure_account_key.get_secret_value() if connection.azure_account_key else None
             ),
             azure_tenant_id=connection.azure_tenant_id,
             azure_client_id=connection.azure_client_id,
             azure_client_secret=(
-                connection.azure_client_secret.get_secret_value()
-                if connection.azure_client_secret else None
+                connection.azure_client_secret.get_secret_value() if connection.azure_client_secret else None
             ),
-            azure_sas_token=(
-                connection.azure_sas_token.get_secret_value()
-                if connection.azure_sas_token else None
-            ),
+            azure_sas_token=(connection.azure_sas_token.get_secret_value() if connection.azure_sas_token else None),
             gcs_service_account_key=(
-                connection.gcs_service_account_key.get_secret_value()
-                if connection.gcs_service_account_key else None
+                connection.gcs_service_account_key.get_secret_value() if connection.gcs_service_account_key else None
             ),
             gcs_project_id=connection.gcs_project_id,
             endpoint_url=connection.endpoint_url,
@@ -82,6 +75,7 @@ class CloudStorageReader:
             Credential provider function or None
         """
         if connection.storage_type == "s3" and connection.auth_method == "iam_role":
+
             def aws_credential_provider():
                 return {
                     "aws_access_key_id": "...",

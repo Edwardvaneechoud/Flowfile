@@ -7,34 +7,12 @@
     >
       <!-- Connection Selection -->
       <div class="listbox-wrapper">
-        <div class="form-group">
-          <label for="connection-select">Cloud Storage Connection</label>
-          <div v-if="connectionsAreLoading" class="loading-state">
-            <div class="loading-spinner"></div>
-            <p>Loading connections...</p>
-          </div>
-          <div v-else>
-            <select
-              id="connection-select"
-              v-model="selectedConnection"
-              class="form-control minimal-select"
-              @change="resetFields"
-            >
-              <option :value="null">No connection (use local credentials)</option>
-              <option v-for="conn in connectionInterfaces" :key="conn.connectionName" :value="conn">
-                {{ conn.connectionName }} ({{ getStorageTypeLabel(conn.storageType) }} -
-                {{ getAuthMethodLabel(conn.authMethod) }})
-              </option>
-            </select>
-            <div
-              v-if="!nodeCloudStorageReader.cloud_storage_settings.connection_name"
-              class="helper-text"
-            >
-              <i class="fa-solid fa-info-circle"></i>
-              Will use local AWS CLI credentials or environment variables
-            </div>
-          </div>
-        </div>
+        <CloudConnectionPicker
+          v-model="selectedConnection"
+          :connections="connectionInterfaces"
+          :loading="connectionsAreLoading"
+          @change="resetFields"
+        />
       </div>
       <!-- File Path and Scan Settings -->
       <div class="listbox-wrapper">
@@ -180,6 +158,7 @@ import { fetchCloudStorageConnectionsInterfaces } from "../../../../../views/Clo
 import { FullCloudStorageConnectionInterface } from "../../../../../views/CloudConnectionView/CloudConnectionTypes";
 import { ElMessage } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { CloudConnectionPicker } from "../../../../common";
 
 interface Props {
   nodeId: number;
@@ -197,40 +176,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
 const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null);
-
-const getStorageTypeLabel = (storageType: string) => {
-  switch (storageType) {
-    case "s3":
-      return "AWS S3";
-    case "adls":
-      return "Azure ADLS";
-    case "gcs":
-      return "Google Cloud Storage";
-    default:
-      return storageType.toUpperCase();
-  }
-};
-
-const getAuthMethodLabel = (authMethod: string) => {
-  switch (authMethod) {
-    case "access_key":
-      return "Access Key";
-    case "iam_role":
-      return "IAM Role";
-    case "service_principal":
-      return "Service Principal";
-    case "managed_identity":
-      return "Managed Identity";
-    case "sas_token":
-      return "SAS Token";
-    case "aws-cli":
-      return "AWS CLI";
-    case "auto":
-      return "Auto";
-    default:
-      return authMethod;
-  }
-};
 
 const handleFileFormatChange = () => {
   resetFields();

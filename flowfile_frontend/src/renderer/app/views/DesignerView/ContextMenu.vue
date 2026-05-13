@@ -30,14 +30,44 @@ const emit = defineEmits(["action"]);
 
 const menuRef = ref<HTMLElement | null>(null);
 
-// Define menu actions based on the target type
+// Define menu actions based on the target type. Pane-only entries pick up
+// the "Generate documentation" affordance and the new "Ask about
+// lineage" affordance; the per-node "Ask about this node's lineage"
+// joins the node-target entries. The four pre-existing canvas actions
+// still render against node/edge targets — that's a known pre-existing
+// inconsistency, fixing it is out of scope for.
 const getMenuActions = () => {
-  return [
+  const baseActions = [
     { id: "fit-view", label: "Fit View", icon: "🔍" },
     { id: "zoom-in", label: "Zoom In", icon: "🔍+" },
     { id: "zoom-out", label: "Zoom Out", icon: "🔍-" },
     { id: "paste-node", label: "Paste Node", icon: "📋" },
   ];
+  if (props.targetType === "pane") {
+    baseActions.push({
+      id: "generate-documentation",
+      label: "Generate documentation",
+      icon: "📝",
+    });
+    baseActions.push({
+      id: "add-descriptions-all",
+      label: "Add description to all nodes",
+      icon: "✨",
+    });
+    baseActions.push({
+      id: "ask-lineage",
+      label: "Ask about lineage…",
+      icon: "🔎",
+    });
+  }
+  if (props.targetType === "node") {
+    baseActions.push({
+      id: "ask-lineage-node",
+      label: "Ask about this node's lineage…",
+      icon: "🔎",
+    });
+  }
+  return baseActions;
 };
 
 const handleAction = (actionId: string): void => {

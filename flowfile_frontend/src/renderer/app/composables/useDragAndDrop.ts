@@ -1,5 +1,13 @@
 // composables/useDragAndDrop.ts
 // Drag and drop composable for flow canvas
+//
+// TODO(refactor): ~867 LOC, doing 5 jobs. Plan to split into:
+//   - useNodeComponentLoader: dynamic imports + caching (~lines 148-227)
+//   - useDragMechanics: drag start/over/end (~lines 298-334)
+//   - useNodeCopy: single & multi-node copy logic (~lines 336-382, 637-776)
+//   - useClipboardPaste: tabular data parsing (~lines 782-848)
+//   - useEdgeInsertion: splice node onto edge (~lines 557-631)
+// Keep this file as a thin façade re-exporting all five.
 import { useVueFlow, Node, Position, Edge } from "@vue-flow/core";
 import { ref, watch, markRaw, nextTick } from "vue";
 import { ElMessage } from "element-plus";
@@ -860,6 +868,7 @@ export default function useDragAndDrop() {
     createMultiCopyNodes,
     createManualInputFromClipboard,
     importFlow,
+    createEmptyFlow,
     insertNodeOnEdge,
   };
 }

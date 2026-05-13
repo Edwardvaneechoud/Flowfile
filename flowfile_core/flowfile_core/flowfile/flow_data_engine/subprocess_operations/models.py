@@ -2,7 +2,7 @@ from base64 import b64decode, b64encode
 from typing import Annotated, Any, Literal
 
 from pl_fuzzy_frame_match.models import FuzzyMapping
-from pydantic import BaseModel, BeforeValidator, PlainSerializer
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
 
 OperationType = Literal[
     "store",
@@ -48,6 +48,37 @@ class FuzzyJoinInput(BaseModel):
     left_df_operation: PolarsOperation
     right_df_operation: PolarsOperation
     fuzzy_maps: list[FuzzyMapping]
+    flowfile_node_id: int | str
+    flowfile_flow_id: int
+
+
+class TrainModelInput(BaseModel):
+    """Outgoing payload for ``POST /train_ml_model`` on the worker."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    task_id: str | None = None
+    cache_dir: str | None = None
+    df_operation: PolarsOperation
+    model_type: str
+    target_column: str
+    feature_columns: list[str]
+    params: dict[str, Any] = Field(default_factory=dict)
+    staging_path: str
+    flowfile_node_id: int | str
+    flowfile_flow_id: int
+
+
+class ApplyModelInput(BaseModel):
+    """Outgoing payload for ``POST /apply_ml_model`` on the worker."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    task_id: str | None = None
+    cache_dir: str | None = None
+    df_operation: PolarsOperation
+    model_path: str
+    output_column: str = "prediction"
     flowfile_node_id: int | str
     flowfile_flow_id: int
 

@@ -77,6 +77,7 @@ import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
 import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
 import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
 import { kernelHelp } from "../../../views/KernelManagerView/kernelHelp";
+import { dashboardHelp } from "../../../views/DashboardsView/dashboardHelp";
 
 // Define the isCollapse prop
 defineProps({
@@ -103,10 +104,14 @@ const helpByRoute: Record<string, PageHelpContent> = {
   connections: connectionsHelp,
   templates: templatesHelp,
   kernelManager: kernelHelp,
+  "dashboard-new": dashboardHelp,
+  "dashboard-edit": dashboardHelp,
+  "dashboard-view": dashboardHelp,
 };
 
 const currentPageHelp = computed(() => {
   const name = route.name as string;
+  if (name === "catalog" && route.query.tab === "dashboards") return dashboardHelp;
   return helpByRoute[name] ?? null;
 });
 

@@ -11,6 +11,7 @@ Public interface:
 from .exceptions import (
     AmbiguousTableError,
     CatalogError,
+    DashboardNotFoundError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
     FlowExistsError,
@@ -29,6 +30,9 @@ from .exceptions import (
     TableExistsError,
     TableFavoriteNotFoundError,
     TableNotFoundError,
+    VisualizationComputeError,
+    VisualizationExistsError,
+    VisualizationNotFoundError,
 )
 from .repository import CatalogRepository, SQLAlchemyCatalogRepository
 from .service import CatalogService
@@ -57,4 +61,8 @@ __all__ = [
     "TableExistsError",
     "TableFavoriteNotFoundError",
     "AmbiguousTableError",
+    "VisualizationNotFoundError",
+    "VisualizationExistsError",
+    "VisualizationComputeError",
+    "DashboardNotFoundError",
 ]

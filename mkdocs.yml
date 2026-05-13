@@ -91,16 +91,18 @@ nav:
         - Combine Nodes: users/visual-editor/nodes/combine.md
         - Aggregate Nodes: users/visual-editor/nodes/aggregate.md
         - Output Nodes: users/visual-editor/nodes/output.md
+        - Machine Learning Nodes: users/visual-editor/nodes/ml.md
       - Catalog:
         - Overview: users/visual-editor/catalog/index.md
         - Virtual Tables: users/visual-editor/catalog/virtual-tables.md
+        - Visualizations: users/visual-editor/catalog/visualizations.md
         - Schedules: users/visual-editor/catalog/schedules.md
         - SQL Editor: users/visual-editor/catalog/sql-editor.md
         - Secrets & Encryption: users/visual-editor/catalog/secrets.md
       - Features:
         - Kernel Execution: users/visual-editor/kernels.md
         - Node Designer: users/visual-editor/node-designer.md
-        - Connections: users/visual-editor/catalog/connections.md
+        - Connections: users/visual-editor/connections.md
       - Tutorials:
         - Overview: users/visual-editor/tutorials/index.md
         - Connect to PostgreSQL: users/visual-editor/tutorials/database-connectivity.md
@@ -119,6 +121,7 @@ nav:
         - Overview: users/python-api/reference/index.md
         - Reading Data: users/python-api/reference/reading-data.md
         - Writing Data: users/python-api/reference/writing-data.md
+        - Catalog References: users/python-api/reference/catalog-references.md
         - Data Types: users/python-api/reference/data-types.md
         - DataFrame Operations: users/python-api/reference/flowframe-operations.md
         - Aggregations: users/python-api/reference/aggregations.md
@@ -135,6 +138,10 @@ nav:
     - Python Package: users/deployment/python.md
     - Docker: users/deployment/docker.md
 
+  - AI Assistant:
+    - Overview: ai/index.md
+    - Provider Setup: ai/providers.md
+
   - For Developers:
     - Introduction: for-developers/index.md
     - Design Philosophy: for-developers/design-philosophy.md
@@ -142,7 +149,10 @@ nav:
     - Core Internals: for-developers/flowfile-core.md
     - Internal API Reference: for-developers/python-api-reference.md
     - Kernel Architecture: for-developers/kernel-architecture.md
+    - AI Integration Architecture: for-developers/ai-architecture.md
+    - Visualizations & Graphic Walker: for-developers/visualizations.md
     - Create Custom Nodes: for-developers/creating-custom-nodes.md
     - Building more custom Nodes: for-developers/custom-node-tutorial.md
+    - Extending ML Nodes: for-developers/extending-ml-nodes.md
 
   - Community: community.md

@@ -5,7 +5,7 @@ run history, favorites and follows.
 """
 
 from datetime import datetime
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -45,6 +45,7 @@ class NamespaceTree(NamespaceOut):
     flows: list["FlowRegistrationOut"] = Field(default_factory=list)
     artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
     tables: list["CatalogTableOut"] = Field(default_factory=list)
+    visualizations: list["VisualizationOut"] = Field(default_factory=list)
 
 
 # ==================== Flow Registration Schemas ====================
@@ -101,6 +102,7 @@ class CatalogTableSummary(BaseModel):
 class FlowRunOut(BaseModel):
     id: int
     registration_id: int | None = None
+    flow_uuid: str | None = None
     flow_name: str
     flow_path: str | None = None
     user_id: int
@@ -345,6 +347,234 @@ class SaveQueryAsFlowRequest(BaseModel):
     namespace_id: int | None = None
     description: str | None = None
     used_tables: list[str] = Field(default_factory=list)
+
+
+# ==================== Visualization Schemas ====================
+
+
+class VisualizationCreate(BaseModel):
+    """Create a viz. The source must be either a catalog table or an inline
+    SQL query — set ``source_type`` accordingly. ``namespace_id`` defaults to
+    the parent table's namespace (when ``source_type="table"``) but can be
+    overridden so a viz can live anywhere in the catalog tree."""
+
+    name: str
+    description: str | None = None
+    chart_type: str | None = None
+    # ``spec`` is the array of GraphicWalker IChart entries that
+    # ``exportCode()`` returns — one per chart tab. A single-entry list is
+    # the common case but multi-tab specs round-trip too.
+    spec: list[dict]
+    spec_gw_version: str | None = None
+    source_type: Literal["table", "sql"] = "table"
+    catalog_table_id: int | None = None
+    sql_query: str | None = None
+    namespace_id: int | None = None
+    thumbnail_data_url: str | None = None
+
+
+class VisualizationUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    chart_type: str | None = None
+    spec: list[dict] | None = None
+    spec_gw_version: str | None = None
+    namespace_id: int | None = None
+    sql_query: str | None = None
+    catalog_table_id: int | None = None
+    thumbnail_data_url: str | None = None
+
+
+class VisualizationOut(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    chart_type: str | None = None
+    spec: list[dict] = Field(default_factory=list)
+    spec_gw_version: str | None = None
+    source_type: Literal["table", "sql"]
+    catalog_table_id: int | None = None
+    sql_query: str | None = None
+    namespace_id: int | None = None
+    thumbnail_data_url: str | None = None
+    created_by: int | None = None
+    created_at: datetime
+    updated_at: datetime
+    # Enrichment so the viewer can show "ns.tablename" without a second
+    # round-trip. None for SQL-source viz or when the parent table was deleted.
+    table_name: str | None = None
+    table_namespace_name: str | None = None
+    table_full_name: str | None = None
+    table_type: str | None = None
+    namespace_name: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VizSourceDescriptor(BaseModel):
+    """Frontend-supplied identifier for the viz source.
+
+    For saved viz this is implied by the URL (table_id); ad-hoc compute
+    explicitly carries the descriptor so the editor can preview before saving.
+    """
+
+    source_type: Literal["table", "sql"]
+    table_id: int | None = None
+    sql_query: str | None = None
+
+
+class VisualizationComputeRequest(BaseModel):
+    payload: dict
+    max_rows: int = 100_000
+
+
+class VisualizationSavedComputeRequest(BaseModel):
+    """Body for the saved-viz compute route.
+
+    When ``payload`` is set, the worker runs ``polars_gw.execute_workflow``
+    with that GraphicWalker IDataQueryPayload against the viz's stored
+    source — this is the path GW's ``computation`` callback drives so every
+    aggregation pushes down to the worker. When ``payload`` is omitted the
+    server falls back to a "raw select all" so legacy callers (and the
+    initial sample-fetch path) keep working.
+    """
+
+    payload: dict | None = None
+    max_rows: int | None = None
+
+
+class VisualizationAdHocComputeRequest(BaseModel):
+    source: VizSourceDescriptor
+    payload: dict
+    max_rows: int = 100_000
+
+
+class VisualizationFieldsRequest(BaseModel):
+    source: VizSourceDescriptor
+
+
+class VisualizationComputeResponse(BaseModel):
+    rows: list[dict] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    elapsed_ms: float = 0.0
+    cache_hit: bool = False
+    error: str | None = None
+
+
+class VisualizationFieldsResponse(BaseModel):
+    fields: list[dict] = Field(default_factory=list)
+    cache_hit: bool = False
+    error: str | None = None
+
+
+class ColumnStatsResponse(BaseModel):
+    """Distinct values (capped) plus min/max for a single column on a catalog table.
+
+    Used by the dashboard filter UI to pre-populate categorical option
+    lists and numeric range inputs. ``truncated`` is true when there are
+    more distinct values than ``values`` returns; ``min`` / ``max`` are
+    only set for numeric and temporal columns.
+    """
+
+    dtype: str = ""
+    values: list = Field(default_factory=list)
+    truncated: bool = False
+    distinct_count: int | None = None
+    min: object | None = None
+    max: object | None = None
+    cache_hit: bool = False
+    error: str | None = None
+
+
+# ==================== Dashboard Schemas ====================
+
+
+class DashboardTile(BaseModel):
+    """One tile on a dashboard canvas.
+
+    ``id`` is a client-generated UUID, stable across saves so the frontend
+    can preserve component state on layout updates. ``type`` discriminates
+    tile kinds: ``"viz"`` renders a saved visualization (uses ``viz_id`` /
+    ``chart_index``); ``"text"`` renders user-authored Markdown from
+    ``text_md``. Type-irrelevant fields are simply ignored.
+    """
+
+    id: str
+    type: Literal["viz", "text"] = "viz"
+    viz_id: int | None = None
+    chart_index: int = 0
+    text_md: str | None = None
+    x: int
+    y: int
+    w: int
+    h: int
+
+
+class DashboardGrid(BaseModel):
+    cols: int = 12
+    row_height: int = 40
+    version: int = 1
+
+
+class DashboardFilter(BaseModel):
+    """Dashboard-level filter applied to one or more tiles.
+
+    ``datasource_id`` (optional) binds the filter to a ``CatalogTable``;
+    only tiles whose visualization reads from the same table are eligible
+    targets, and the field picker is populated from that table's
+    ``schema_columns``. Filters without ``datasource_id`` are legacy /
+    "untied" — they apply on field-name match alone.
+
+    ``state`` carries widget-specific values (selected categorical values,
+    a date range, a numeric range). The frontend injects these as a
+    ``filter`` workflow step at the front of every targeted tile's GW
+    payload before forwarding to ``/visualizations/{viz_id}/compute``.
+    """
+
+    id: str
+    field_name: str
+    label: str | None = None
+    kind: Literal["categorical", "date_range", "numeric_range"]
+    state: dict[str, Any] = Field(default_factory=dict)
+    target: Literal["all", "tiles"] = "all"
+    target_tile_ids: list[str] = Field(default_factory=list)
+    datasource_id: int | None = None
+
+
+class DashboardLayout(BaseModel):
+    tiles: list[DashboardTile] = Field(default_factory=list)
+    grid: DashboardGrid = Field(default_factory=DashboardGrid)
+    filters: list[DashboardFilter] = Field(default_factory=list)
+
+
+class DashboardCreate(BaseModel):
+    name: str
+    description: str | None = None
+    namespace_id: int | None = None
+    layout: DashboardLayout = Field(default_factory=DashboardLayout)
+
+
+class DashboardUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    namespace_id: int | None = None
+    layout: DashboardLayout | None = None
+
+
+class DashboardOut(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    layout: DashboardLayout
+    layout_version: int
+    namespace_id: int | None = None
+    namespace_name: str | None = None
+    created_by: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== Catalog Overview ====================
