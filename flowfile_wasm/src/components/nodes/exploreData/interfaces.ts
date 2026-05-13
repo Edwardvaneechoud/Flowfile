@@ -8,8 +8,10 @@ export type {
   IMutField,
   IChart,
   IGWProps,
+  IGWHandler,
   VizSpecStore,
 } from '@kanaries/graphic-walker'
+export { ISegmentKey } from '@kanaries/graphic-walker'
 
 import type { IRow, IMutField, IChart } from '@kanaries/graphic-walker'
 

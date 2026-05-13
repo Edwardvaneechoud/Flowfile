@@ -3,9 +3,10 @@ import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useFlowStore } from '../../../stores/flow-store'
 import { useThemeStore } from '../../../stores/theme-store'
+import { useGraphicWalkerAppearance } from '../../../composables/useGraphicWalkerAppearance'
 import type { ExploreDataSettings, NodeResult } from '../../../types'
 import VueGraphicWalker from './VueGraphicWalker.vue'
-import type { IRow, IMutField, IChart, IGWProps } from './interfaces'
+import type { IRow, IMutField, IChart } from './interfaces'
 
 const props = defineProps<{
   nodeId: number
@@ -40,11 +41,7 @@ const specList = computed<IChart[]>(
   () => (props.settings.graphic_walker_input?.specList ?? []) as unknown as IChart[]
 )
 
-const appearance = computed<IGWProps['appearance']>(() => {
-  const theme = themeStore.mode
-  if (theme === 'system') return 'media'
-  return theme // 'light' | 'dark'
-})
+const appearance = useGraphicWalkerAppearance()
 
 const notExecuted = computed(
   () => result.value === undefined || result.value.success === undefined
@@ -214,7 +211,7 @@ defineExpose({
           class="btn btn-primary"
           type="button"
           @click="openFullscreen"
-          title="Open the Graphic Walker visualization in fullscreen"
+          title="Build and explore interactive charts (opens fullscreen)"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -226,13 +223,13 @@ defineExpose({
             stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
+            aria-hidden="true"
           >
-            <path d="M15 3h6v6" />
-            <path d="M9 21H3v-6" />
-            <path d="M21 3l-7 7" />
-            <path d="M3 21l7-7" />
+            <line x1="6" y1="20" x2="6" y2="14" />
+            <line x1="12" y1="20" x2="12" y2="4" />
+            <line x1="18" y1="20" x2="18" y2="10" />
           </svg>
-          <span>Open in fullscreen</span>
+          <span>Open chart builder</span>
         </button>
         <span
           v-if="statusMessage"
