@@ -1,28 +1,45 @@
 """
 Simplified secure storage module for FlowFile worker to read credentials and secrets.
+
+The crypto envelope itself lives in :mod:`shared.crypto.envelope` so the
+worker and core agree byte-for-byte on encoding. This module owns the
+worker-side master-key lookup (Docker secret / env / local file) and re-exports
+the shared envelope functions for backward compatibility with existing callers
+and tests.
 """
 
-import base64
 import json
 import logging
 import os
 from pathlib import Path
 
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import SecretStr
 
 from flowfile_worker.configs import TEST_MODE
+from shared.crypto.envelope import (
+    KEY_DERIVATION_VERSION,
+    SECRET_FORMAT_PREFIX,
+    decrypt_secret_envelope,
+    encrypt_secret_envelope,
+)
+from shared.crypto.envelope import (
+    derive_user_key as _derive_user_key,
+)
 
-# Set up logging
 logger = logging.getLogger(__name__)
 
-# Version identifier for key derivation scheme (must match flowfile_core)
-KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"
-
-# Encrypted secret format: $ffsec$1${user_id}${fernet_token}
-SECRET_FORMAT_PREFIX = "$ffsec$1$"
+__all__ = [
+    "KEY_DERIVATION_VERSION",
+    "SECRET_FORMAT_PREFIX",
+    "SecureStorage",
+    "decrypt_secret",
+    "derive_user_key",
+    "encrypt_secret",
+    "get_docker_secret_key",
+    "get_master_key",
+    "get_password",
+]
 
 
 class SecureStorage:
@@ -63,6 +80,12 @@ class SecureStorage:
 
 _storage = SecureStorage()
 
+# Cache for the auto-generated test master key. We generate one per-process when
+# TEST_MODE is on and no explicit key is supplied via env, so an encrypt/decrypt
+# round-trip in a single test process stays consistent without committing a key
+# to source control.
+_TEST_MASTER_KEY: str | None = None
+
 
 def get_password(service_name, username):
     """
@@ -88,10 +111,8 @@ def get_docker_secret_key() -> str | None:
     Raises:
         RuntimeError: If the secret file exists but cannot be read, or key is invalid.
     """
-    # First, check for environment variable (allows runtime configuration)
     env_key = os.environ.get("FLOWFILE_MASTER_KEY")
     if env_key:
-        # Validate it's a proper Fernet key
         try:
             Fernet(env_key.encode())
             return env_key
@@ -99,20 +120,17 @@ def get_docker_secret_key() -> str | None:
             logger.error("FLOWFILE_MASTER_KEY environment variable is not a valid Fernet key")
             raise RuntimeError("FLOWFILE_MASTER_KEY is not a valid Fernet key") from None
 
-    # Then, check for Docker secret file
     secret_path = "/run/secrets/flowfile_master_key"
     if os.path.exists(secret_path):
         try:
             with open(secret_path) as f:
                 key = f.read().strip()
-                # Validate the key
                 Fernet(key.encode())
                 return key
         except Exception as e:
             logger.error(f"Failed to read or validate master key from Docker secret: {e}")
             raise RuntimeError("Failed to read master key from Docker secret") from e
 
-    # No key configured
     return None
 
 
@@ -120,9 +138,13 @@ def get_master_key() -> str:
     """
     Get the master encryption key.
 
-    If in TEST_MODE, returns a test key.
-    If running in Docker, retrieves the key from Docker secrets or environment.
-    Otherwise, retrieves the key from secure storage.
+    Resolution order:
+    1. If ``TEST_MODE`` is on, prefer ``FLOWFILE_MASTER_KEY`` (so core+worker
+       integration tests can share a key); otherwise generate a fresh per-process
+       key so worker-only round-trip tests have a usable key without storing a
+       value in source.
+    2. If running in Docker, read the key from the Docker secret or env var.
+    3. Otherwise read the key from the local SecureStorage.
 
     Returns:
         str: The master encryption key
@@ -131,11 +153,15 @@ def get_master_key() -> str:
         RuntimeError: If in Docker mode and no key is configured.
         ValueError: If the master key is not found in storage.
     """
-    # First check for test mode
     if TEST_MODE:
-        return b"06t640eu3AG2FmglZS0n0zrEdqadoT7lYDwgSmKyxE4=".decode()
+        explicit = os.environ.get("FLOWFILE_MASTER_KEY")
+        if explicit:
+            return explicit
+        global _TEST_MASTER_KEY
+        if _TEST_MASTER_KEY is None:
+            _TEST_MASTER_KEY = Fernet.generate_key().decode()
+        return _TEST_MASTER_KEY
 
-    # Next check if running in Docker
     if os.environ.get("FLOWFILE_MODE") == "docker":
         key = get_docker_secret_key()
         if key is None:
@@ -145,7 +171,6 @@ def get_master_key() -> str:
             )
         return key
 
-    # Otherwise read from local storage
     key = get_password("flowfile", "master_key")
     if not key:
         raise ValueError("Master key not found in storage.")
@@ -153,89 +178,23 @@ def get_master_key() -> str:
 
 
 def derive_user_key(user_id: int) -> bytes:
-    """
-    Derive a user-specific encryption key from the master key using HKDF.
-
-    This provides cryptographic isolation between users - each user's secrets
-    are encrypted with a unique key derived from the master key.
-
-    Args:
-        user_id: The unique identifier for the user
-
-    Returns:
-        bytes: A 32-byte URL-safe base64-encoded key suitable for Fernet
-    """
-    master_key = get_master_key().encode()
-
-    # Use HKDF to derive a user-specific key
-    hkdf = HKDF(
-        algorithm=hashes.SHA256(),
-        length=32,  # Fernet requires 32 bytes
-        salt=KEY_DERIVATION_VERSION,  # Static salt is fine for key derivation
-        info=f"user-{user_id}".encode(),  # User-specific context
-    )
-
-    # Derive raw key material and encode for Fernet
-    derived_key = hkdf.derive(master_key)
-    return base64.urlsafe_b64encode(derived_key)
+    """Derive a per-user Fernet key from the current master key."""
+    return _derive_user_key(get_master_key().encode(), user_id)
 
 
 def decrypt_secret(encrypted_value: str) -> SecretStr:
-    """
-    Decrypt an encrypted value.
-
-    Supports both new format (with embedded user_id) and legacy format.
-    - New format: $ffsec$1${user_id}${fernet_token} - user_id extracted automatically
-    - Legacy format: raw Fernet token - uses master key directly
-
-    Args:
-        encrypted_value: The encrypted value as a string
-
-    Returns:
-        SecretStr: The decrypted value as a SecretStr
-    """
-    # Check for new versioned format with embedded user_id
-    if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
-        # Parse: $ffsec$1${user_id}${fernet_token}
-        remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]
-        parts = remainder.split("$", 1)
-        if len(parts) != 2:
-            raise ValueError("Invalid encrypted secret format")
-
-        embedded_user_id = int(parts[0])
-        fernet_token = parts[1]
-
-        key = derive_user_key(embedded_user_id)
-        f = Fernet(key)
-        return SecretStr(f.decrypt(fernet_token.encode()).decode())
-
-    # Legacy format - use master key directly
-    key = get_master_key().encode()
-    f = Fernet(key)
-    return SecretStr(f.decrypt(encrypted_value.encode()).decode())
+    """Decrypt a v1 envelope (``$ffsec$1$...``) or a legacy raw Fernet token."""
+    return decrypt_secret_envelope(get_master_key().encode(), encrypted_value)
 
 
 def encrypt_secret(secret_value: str, user_id: int | None = None) -> str:
+    """Encrypt a secret value.
+
+    With ``user_id`` set, emits a v1 envelope (``$ffsec$1$<user_id>$<token>``).
+    Without ``user_id``, emits a legacy raw Fernet token encrypted with the
+    master key — kept for backward compatibility with existing worker tests.
     """
-    Encrypt a secret value.
-
-    If user_id is provided, uses per-user key derivation with embedded user_id format.
-    Otherwise, uses legacy master key encryption (for backward compatibility in tests).
-
-    Args:
-        secret_value: The secret value to encrypt
-        user_id: Optional user ID for per-user key derivation
-
-    Returns:
-        str: The encrypted value as a string
-    """
+    master_key = get_master_key().encode()
     if user_id is not None:
-        key = derive_user_key(user_id)
-        f = Fernet(key)
-        fernet_token = f.encrypt(secret_value.encode()).decode()
-        return f"{SECRET_FORMAT_PREFIX}{user_id}${fernet_token}"
-
-    # Legacy format for backward compatibility
-    key = get_master_key().encode()
-    f = Fernet(key)
-    return f.encrypt(secret_value.encode()).decode()
+        return encrypt_secret_envelope(master_key, secret_value, user_id)
+    return Fernet(master_key).encrypt(secret_value.encode()).decode()

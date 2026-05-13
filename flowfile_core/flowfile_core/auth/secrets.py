@@ -2,6 +2,7 @@
 Secure storage module for FlowFile credentials and secrets.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -10,6 +11,16 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
+
+
+def _key_fingerprint(key: str) -> str:
+    """Short, stable, non-reversible identifier for a Fernet key.
+
+    The first 8 hex chars of SHA-256 are enough for an operator to
+    visually compare a backed-up key against the live one without
+    exposing the raw key material in logs or status responses.
+    """
+    return hashlib.sha256(key.encode()).hexdigest()[:8]
 
 
 class SecureStorage:
@@ -220,4 +231,20 @@ def get_master_key():
     if not key:
         key = Fernet.generate_key().decode()
         set_password("flowfile", "master_key", key)
+        # Loud one-shot banner. This branch only fires when the secure store
+        # had no master key — i.e. the *very first* call on a fresh install.
+        # The absence of the key file is itself the trigger, so no sentinel is
+        # needed. Subsequent runs read the cached key and skip this entirely.
+        storage_dir = _storage.storage_path
+        logger.warning(
+            "FLOWFILE MASTER KEY GENERATED — BACK UP THESE FILES IMMEDIATELY.\n"
+            "  fingerprint: %s\n"
+            "  file 1 (store key):  %s\n"
+            "  file 2 (encrypted secrets store): %s\n"
+            "If either file is lost, every secret encrypted by this Flowfile "
+            "instance becomes permanently unrecoverable. There is no recovery path.",
+            _key_fingerprint(key),
+            storage_dir / ".secret_key",
+            storage_dir / "flowfile.json.enc",
+        )
     return key
