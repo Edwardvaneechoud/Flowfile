@@ -42,6 +42,7 @@ export default defineConfig({
     target: 'esnext'
   },
   optimizeDeps: {
-    exclude: ['pyodide']
+    exclude: ['pyodide'],
+    include: ['react', 'react-dom/client', '@kanaries/graphic-walker']
   }
 })

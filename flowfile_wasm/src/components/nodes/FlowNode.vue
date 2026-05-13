@@ -96,7 +96,7 @@ const iconMap: Record<string, string> = {
   polars_code: 'polars_code.png',
   unique: 'unique.png',
   head: 'sample.png',
-  explore_data: 'view.png',
+  explore_data: 'explore_data.png',
   pivot: 'pivot.png',
   unpivot: 'unpivot.png',
   output: 'output.png',

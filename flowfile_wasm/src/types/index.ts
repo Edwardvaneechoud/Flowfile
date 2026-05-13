@@ -478,6 +478,38 @@ export interface DownloadInfo {
   row_count: number
 }
 
+// =============================================================================
+// GRAPHIC WALKER TYPES (mirrors flowfile_core/schemas/analysis_schemas/graphic_walker_schemas.py)
+// =============================================================================
+
+export interface GWMutField {
+  fid: string
+  key?: string
+  name?: string
+  basename?: string
+  semanticType: string  // 'nominal' | 'quantitative' | 'temporal' | ...
+  analyticType: 'measure' | 'dimension'
+  disable?: boolean
+}
+
+export interface GWDataModel {
+  fields: GWMutField[]
+  data: Record<string, any>[]  // IRow[]
+}
+
+export interface GraphicWalkerInput {
+  is_initial: boolean
+  dataModel: GWDataModel
+  specList: any[]  // IChart[] - opaque on the TS side, passed through to Graphic Walker
+}
+
+export interface RowInfo {
+  total_rows: number | null
+  loaded_rows: number
+  truncated: boolean
+  max_rows: number
+}
+
 export interface NodeResult {
   success?: boolean  // undefined = not executed yet (shows grey), true = success (green), false = error (red)
   error?: string
@@ -485,6 +517,8 @@ export interface NodeResult {
   schema?: ColumnSchema[]
   execution_time?: number
   download?: DownloadInfo  // For output nodes - contains downloadable file data
+  graphic_walker_input?: GraphicWalkerInput  // For explore_data nodes - full dataset + fields + saved specs
+  row_info?: RowInfo  // Truncation metadata for explore_data nodes
 }
 
 export interface FlowState {
@@ -624,6 +658,13 @@ export interface PolarsCodeSettings extends NodeBase {
 }
 
 export interface PreviewSettings extends NodeBase {
+  depending_on_id?: number
+}
+
+// Matches flowfile_core's NodeExploreData - holds the Graphic Walker input
+// (saved chart specs persist here; data/fields are regenerated on execution).
+export interface ExploreDataSettings extends NodeBase {
+  graphic_walker_input?: GraphicWalkerInput
   depending_on_id?: number
 }
 

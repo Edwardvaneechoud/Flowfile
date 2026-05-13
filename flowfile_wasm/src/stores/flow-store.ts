@@ -112,6 +112,27 @@ export const useFlowStore = defineStore('flow', () => {
   // External datasets provided by the host application (for embedded mode)
   const externalDatasets = ref<Map<string, string>>(new Map())
 
+  // Before-export hooks: called right before the flow is exported to YAML.
+  // Used by ExploreData.vue to flush the live Graphic Walker chart spec
+  // into the node settings so it survives round-trip save/load.
+  type BeforeExportHook = () => void | Promise<void>
+  const beforeExportHooks = new Set<BeforeExportHook>()
+
+  function registerBeforeExportHook(hook: BeforeExportHook): () => void {
+    beforeExportHooks.add(hook)
+    return () => beforeExportHooks.delete(hook)
+  }
+
+  async function runBeforeExportHooks(): Promise<void> {
+    for (const hook of beforeExportHooks) {
+      try {
+        await hook()
+      } catch (err) {
+        console.warn('[flow-store] beforeExport hook failed:', err)
+      }
+    }
+  }
+
   // Preview cache state (for lazy loading)
   const previewCache = ref<Map<number, {
     data: any;
@@ -540,6 +561,19 @@ export const useFlowStore = defineStore('flow', () => {
 
       // Invalidate preview cache for this node and downstream
       invalidatePreviewCache(id)
+    }
+  }
+
+  /**
+   * Update a subset of node settings without triggering cache invalidation
+   * or re-execution. Used by explore_data to persist saved Graphic Walker
+   * chart specs back to the node settings without re-running the flow.
+   */
+  function updateNodeSettingsSilent(id: number, partial: Record<string, any>) {
+    const node = nodes.value.get(id)
+    if (node) {
+      node.settings = { ...(node.settings as any), ...partial } as NodeSettings
+      nodes.value.set(id, { ...node })
     }
   }
 
@@ -1173,7 +1207,10 @@ gc.collect()
             data: existingResult?.data,
             error: existingResult?.error,  // ADD THIS - preserve error!
             execution_time: existingResult?.execution_time,
-            download: existingResult?.download
+            download: existingResult?.download,
+            // Preserve explore_data Graphic Walker payload across schema propagation
+            graphic_walker_input: existingResult?.graphic_walker_input,
+            row_info: existingResult?.row_info
           })
       } else {
         // inferOutputSchema returned null - this means:
@@ -1604,7 +1641,8 @@ result
             return { success: false, error: 'No input connected' }
           }
           result = await runPythonWithResult(`
-result = execute_preview(${nodeId}, ${inputId})
+import json
+result = execute_explore_data(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -1747,6 +1785,8 @@ result
         schema: result.schema,
         error: result.error,
         download: result.download,
+        graphic_walker_input: result.graphic_walker_input,
+        row_info: result.row_info,
         // Preserve data if schema unchanged (prevents data loss during schema propagation)
         data: schemaUnchanged ? existingResult?.data : undefined
       }
@@ -1806,14 +1846,15 @@ result
       await propagateSchemas()
 
       // Optional: Auto-fetch preview for selected node
+      // explore_data nodes use Graphic Walker (payload already on nodeResult),
+      // so the AG Grid preview is not needed for them.
       if (selectedNodeId.value !== null) {
         const result = nodeResults.value.get(selectedNodeId.value)
         if (result?.success) {
-          // Use more rows for explore_data nodes (Preview Settings)
-          // Limited to 1000 to prevent UI lag with large datasets
           const node = nodes.value.get(selectedNodeId.value)
-          const maxRows = node?.type === 'explore_data' ? 1000 : 100
-          await fetchNodePreview(selectedNodeId.value, { maxRows })
+          if (node?.type !== 'explore_data') {
+            await fetchNodePreview(selectedNodeId.value, { maxRows: 100 })
+          }
         }
       }
 
@@ -1982,8 +2023,13 @@ result
 
       case 'explore_data':
         return {
-          ...base
-        } as NodeSettings
+          ...base,
+          graphic_walker_input: {
+            is_initial: true,
+            dataModel: { fields: [], data: [] },
+            specList: []
+          }
+        } as any
 
       case 'output':
         return {
@@ -2197,7 +2243,11 @@ result
    * @param name - Optional name for the flow
    * @param format - 'yaml' or 'json' (default: 'yaml' for flowfile_core compatibility)
    */
-  function downloadFlowfile(name?: string, format: 'yaml' | 'json' = 'yaml') {
+  async function downloadFlowfile(name?: string, format: 'yaml' | 'json' = 'yaml') {
+    // Flush any pending state from open explore_data panels so saved chart
+    // specs end up in the exported node settings.
+    await runBeforeExportHooks()
+
     const flowName = name || `flow_${new Date().toISOString().slice(0, 10)}`
     const data = exportToFlowfile(flowName)
 
@@ -2398,6 +2448,8 @@ result
     addNode,
     updateNode,
     updateNodeSettings,
+    updateNodeSettingsSilent,
+    registerBeforeExportHook,
     updateNodeDescription,
     updateNodeReference,
     validateNodeReference,
