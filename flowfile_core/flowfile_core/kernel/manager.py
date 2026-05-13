@@ -85,7 +85,8 @@ def _resolve_image(flavour: ImageFlavour, custom_image: str | None) -> str:
 
 # Pip package specifier (PEP 508-ish, conservative): rejects anything with
 # shell metacharacters so we can pass the list straight into a docker build.
-_VALID_PACKAGE_SPEC = re.compile(r"^[A-Za-z0-9_.\-+\[\]<>=!~,]+$")
+# \A / \Z anchor strictly — `$` would let a trailing newline through.
+_VALID_PACKAGE_SPEC = re.compile(r"\A[A-Za-z0-9_.\-+\[\]<>=!~,]+\Z")
 _KERNEL_ID_TAG_RE = re.compile(r"[^a-z0-9._-]")
 _VALID_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 _DIGEST_RE = re.compile(r"@sha256:[A-Fa-f0-9]{12,}$")
@@ -207,6 +208,7 @@ class KernelManager:
 
         self._restore_kernels_from_db()
         self._reclaim_running_containers()
+        self._remove_orphan_derived_images()
 
     @property
     def shared_volume_path(self) -> str:
@@ -639,6 +641,43 @@ class KernelManager:
             pass
         except docker.errors.APIError as exc:
             logger.warning("Could not remove derived image '%s': %s", tag, exc)
+
+    def _remove_orphan_derived_images(self) -> None:
+        """Remove derived kernel images whose owning kernel no longer exists.
+
+        Called once at startup, after ``_restore_kernels_from_db``, so any
+        derived image left over from a kernel that was deleted between core
+        runs (e.g. core crashed between dropping the DB row and removing the
+        image) gets reclaimed. Each orphan is hundreds of MB.
+        """
+        try:
+            images = self._docker.images.list()
+        except (docker.errors.APIError, docker.errors.DockerException) as exc:
+            logger.warning("Could not list images for orphan GC: %s", exc)
+            return
+
+        # Sanitisation is not reversible, so compare on the sanitised id.
+        expected = {_KERNEL_ID_TAG_RE.sub("-", kid.lower()) for kid in self._kernels}
+        prefix = "flowfile-kernel-derived-"
+
+        for image in images:
+            for tag in image.tags or []:
+                if not tag.startswith(prefix):
+                    continue
+                ref = tag.split(":", 1)[0]
+                safe_id = ref[len(prefix) :]
+                if not safe_id or safe_id in expected:
+                    continue
+                try:
+                    self._docker.images.remove(tag, force=True)
+                    logger.info("Removed orphan derived image '%s'", tag)
+                except docker.errors.ImageNotFound:
+                    pass
+                except docker.errors.APIError as exc:
+                    logger.warning(
+                        "Could not remove orphan derived image '%s': %s", tag, exc
+                    )
+                break  # other tags on the same image are aliases
 
     def _build_kernel_env(self, kernel_id: str, kernel: KernelInfo) -> dict[str, str]:
         """Build the environment dictionary for a kernel container.
