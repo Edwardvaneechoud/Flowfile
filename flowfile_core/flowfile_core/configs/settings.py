@@ -21,6 +21,21 @@ SINGLE_FILE_MODE: MutableBool = MutableBool(os.environ.get("FLOWFILE_SINGLE_FILE
 # Offload to worker flag, this determines if the worker should handle processing tasks.
 OFFLOAD_TO_WORKER: MutableBool = MutableBool(os.environ.get("FLOWFILE_OFFLOAD_TO_WORKER", "1") == "1")
 
+# Master switch gating the entire `/ai/*` router; mutable so the admin endpoint can flip it live.
+FEATURE_FLAG_AI: MutableBool = MutableBool(
+    os.environ.get("FEATURE_FLAG_AI", "1").strip().lower() in ("true", "1", "yes", "on")
+)
+
+# When True, every LLM call appends a JSONL line to `{FLOWFILE_STORAGE_DIR}/ai_prompts/{YYYY-MM-DD}.jsonl` for debugging.
+FLOWFILE_AI_LOG_PROMPTS: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_AI_LOG_PROMPTS", "0").strip().lower() in ("true", "1", "yes", "on")
+)
+
+# Optional PII scrub for user / tool messages in the prompt log; system prompts and assistant responses stay verbatim.
+FLOWFILE_AI_LOG_PROMPTS_SCRUB: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_AI_LOG_PROMPTS_SCRUB", "0").strip().lower() in ("true", "1", "yes", "on")
+)
+
 
 def parse_args():
     """Parse command line arguments"""

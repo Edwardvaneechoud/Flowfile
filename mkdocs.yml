@@ -138,6 +138,10 @@ nav:
     - Python Package: users/deployment/python.md
     - Docker: users/deployment/docker.md
 
+  - AI Assistant:
+    - Overview: ai/index.md
+    - Provider Setup: ai/providers.md
+
   - For Developers:
     - Introduction: for-developers/index.md
     - Design Philosophy: for-developers/design-philosophy.md
@@ -145,6 +149,7 @@ nav:
     - Core Internals: for-developers/flowfile-core.md
     - Internal API Reference: for-developers/python-api-reference.md
     - Kernel Architecture: for-developers/kernel-architecture.md
+    - AI Integration Architecture: for-developers/ai-architecture.md
     - Visualizations & Graphic Walker: for-developers/visualizations.md
     - Create Custom Nodes: for-developers/creating-custom-nodes.md
     - Building more custom Nodes: for-developers/custom-node-tutorial.md

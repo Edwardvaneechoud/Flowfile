@@ -745,8 +745,20 @@ class NodeDatasource(NodeBase):
 class RawData(BaseModel):
     """Represents data in a raw, columnar format for manual input."""
 
-    columns: list[MinimalFieldInfo] = None
-    data: list[list]
+    columns: list[MinimalFieldInfo] = Field(
+        ...,
+        description=("Schema in column order. The i-th MinimalFieldInfo describes the values " "in data[i]."),
+    )
+    data: list[list] = Field(
+        ...,
+        description=(
+            "Columnar layout: data[i] is the list of values for columns[i], in column "
+            "order. len(data) must equal len(columns); each inner list has the same "
+            "length (one entry per row). For two rows of {name, age}, emit "
+            '[["Alice", "Bob"], [30, 25]] — NOT [["Alice", 30], ["Bob", 25]]. '
+            "Reading rows back is data[col_idx][row_idx]."
+        ),
+    )
 
     @classmethod
     def from_pylist(cls, pylist: list[dict]):
@@ -777,7 +789,14 @@ class RawData(BaseModel):
 class NodeManualInput(NodeBase):
     """Settings for a node that allows direct data entry in the UI."""
 
-    raw_data_format: RawData | None = None
+    raw_data_format: RawData
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_none_raw_data_format(cls, values):
+        if isinstance(values, dict) and values.get("raw_data_format") is None:
+            return {**values, "raw_data_format": {"columns": [], "data": []}}
+        return values
 
     def get_default_description(self) -> str:
         """Describes the manual input columns."""

@@ -19,6 +19,7 @@
       <KafkaConnectionView v-else-if="activeTab === 'kafka'" />
       <GoogleAnalyticsConnectionView v-else-if="activeTab === 'google_analytics'" />
       <SecretsView v-else-if="activeTab === 'secrets'" />
+      <AiSettingsTab v-else-if="activeTab === 'ai'" />
     </div>
   </div>
 </template>
@@ -31,11 +32,12 @@ import CloudConnectionView from "../CloudConnectionView/CloudConnectionView.vue"
 import KafkaConnectionView from "../KafkaConnectionView/KafkaConnectionView.vue";
 import GoogleAnalyticsConnectionView from "../GoogleAnalyticsConnectionView/GoogleAnalyticsConnectionView.vue";
 import SecretsView from "../SecretsView/SecretsView.vue";
+import AiSettingsTab from "../AiProvidersView/AiSettingsTab.vue";
 
 const route = useRoute();
 const router = useRouter();
 
-const validTabs = ["database", "cloud", "kafka", "google_analytics", "secrets"] as const;
+const validTabs = ["database", "cloud", "kafka", "google_analytics", "secrets", "ai"] as const;
 type TabName = (typeof validTabs)[number];
 
 const STORAGE_KEY = "connections-active-tab";
@@ -46,6 +48,7 @@ const tabs: { key: TabName; label: string; icon: string }[] = [
   { key: "kafka", label: "Kafka", icon: "fa-solid fa-tower-broadcast" },
   { key: "google_analytics", label: "Google Analytics", icon: "fa-solid fa-chart-line" },
   { key: "secrets", label: "Secrets", icon: "fa-solid fa-key" },
+  { key: "ai", label: "AI Providers", icon: "fa-solid fa-wand-magic-sparkles" },
 ];
 
 function getInitialTab(): TabName {

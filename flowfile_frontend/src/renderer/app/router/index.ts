@@ -68,6 +68,10 @@ const routes: Array<RouteRecordRaw> = [
         redirect: { name: "connections", query: { tab: "secrets" } },
       },
       {
+        path: "aiProviders",
+        redirect: { name: "connections", query: { tab: "ai" } },
+      },
+      {
         name: "kernelManager",
         path: "kernelManager",
         component: () => import("../views/KernelManagerView/KernelManagerView.vue"),
@@ -196,7 +200,7 @@ router.beforeEach(async (to, _from, next) => {
       next({ name: "login" });
     }
   } else {
-   if (to.name === "login" && (authService.isInElectronMode() || authService.isAuthenticated())) {
+    if (to.name === "login" && (authService.isInElectronMode() || authService.isAuthenticated())) {
       next({ name: "designer" });
     } else {
       next();

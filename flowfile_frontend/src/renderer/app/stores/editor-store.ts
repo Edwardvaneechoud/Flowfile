@@ -34,6 +34,10 @@ export const useEditorStore = defineStore("editor", {
     showFlowResult: false,
     tableVisible: false,
 
+    // AI assistant drawer. Independent panel pattern — coexists
+    // with node settings; intentionally NOT routed through activeDrawerComponent.
+    isAiOpen: false,
+
     // Incremented whenever a graph-mutating action completes. Consumers (e.g.
     // the flow tab strip) watch this to refresh dirty state.
     graphVersion: 0,
@@ -170,6 +174,19 @@ export const useEditorStore = defineStore("editor", {
       this.graphVersion += 1;
     },
 
+    // ========== AI Assistant Drawer ==========
+    openAiDrawer() {
+      this.isAiOpen = true;
+    },
+
+    closeAiDrawer() {
+      this.isAiOpen = false;
+    },
+
+    toggleAiDrawer() {
+      this.isAiOpen = !this.isAiOpen;
+    },
+
     // ========== Bulk panel control ==========
     // Closes every floating overlay (right-side and bottom). The left palette
     // (`dataActions`) is owned by the canvas component and stays visible.
@@ -180,6 +197,7 @@ export const useEditorStore = defineStore("editor", {
       this.isDrawerOpen = false;
       this.isShowingLogViewer = false;
       this.tableVisible = false;
+      this.isAiOpen = false;
     },
   },
 });

@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import logging
 import sys
+import uuid
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
@@ -24,6 +27,28 @@ import shared.storage_config as _storage_config
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 500
+
+
+def _make_flow_registration_uuid_generator(new_conn) -> Callable[[dict], str]:
+    return lambda row: str(uuid.uuid4())
+
+
+def _make_flow_run_uuid_generator(new_conn) -> Callable[[dict], str | None]:
+    rows = new_conn.execute(text("SELECT id, flow_uuid FROM flow_registrations")).fetchall()
+    lookup: dict[int, str] = {row_id: flow_uuid for row_id, flow_uuid in rows}
+
+    def gen(row: dict) -> str | None:
+        return lookup.get(row.get("registration_id"))
+
+    return gen
+
+
+# Per-table generators for new-only columns that need a value at copy time.
+# Outer fn receives the new-engine connection (allows pre-fetch); returns a per-row callable.
+_NEW_COLUMN_GENERATORS: dict[str, dict[str, Callable[[Any], Callable[[dict], Any]]]] = {
+    "flow_registrations": {"flow_uuid": _make_flow_registration_uuid_generator},
+    "flow_runs": {"flow_uuid": _make_flow_run_uuid_generator},
+}
 
 
 def _get_base_dir() -> Path:
@@ -157,8 +182,13 @@ def _migrate_table(
         logger.info("Table '%s': skipping old columns not in new schema: %s", table_name, skipped_old)
 
     new_only = new_columns - old_columns
-    if new_only:
-        logger.info("Table '%s': new columns (will use defaults): %s", table_name, new_only)
+    generators_for_table = _NEW_COLUMN_GENERATORS.get(table_name, {})
+    injected_cols = sorted(c for c in new_only if c in generators_for_table)
+    unhandled_new = new_only - set(injected_cols)
+    if unhandled_new:
+        logger.info("Table '%s': new columns (will use defaults): %s", table_name, unhandled_new)
+    if injected_cols:
+        logger.info("Table '%s': new columns (will be generated): %s", table_name, injected_cols)
 
     col_list = ", ".join(common_columns)
 
@@ -169,12 +199,20 @@ def _migrate_table(
         logger.info("Table '%s': no rows to migrate", table_name)
         return
 
-    placeholders = ", ".join(f":{c}" for c in common_columns)
-    insert_sql = text(f"INSERT INTO {table_name} ({col_list}) VALUES ({placeholders})")  # noqa: S608
+    insert_columns = common_columns + injected_cols
+    insert_col_list = ", ".join(insert_columns)
+    placeholders = ", ".join(f":{c}" for c in insert_columns)
+    insert_sql = text(f"INSERT INTO {table_name} ({insert_col_list}) VALUES ({placeholders})")  # noqa: S608
 
     with new_engine.connect() as new_conn:
+        bound_generators = {col: generators_for_table[col](new_conn) for col in injected_cols}
         for i in range(0, len(rows), BATCH_SIZE):
-            batch = [dict(zip(common_columns, row, strict=False)) for row in rows[i : i + BATCH_SIZE]]
+            batch = []
+            for row in rows[i : i + BATCH_SIZE]:
+                row_dict = dict(zip(common_columns, row, strict=False))
+                for col, gen in bound_generators.items():
+                    row_dict[col] = gen(row_dict)
+                batch.append(row_dict)
             new_conn.execute(insert_sql, batch)
         new_conn.commit()
 
