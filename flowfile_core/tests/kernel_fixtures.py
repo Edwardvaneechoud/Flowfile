@@ -174,7 +174,7 @@ def managed_kernel(
 
         # Tests requiring Core API (global artifacts)
         with managed_kernel(start_core=True) as (manager, kernel_id):
-            # kernel can now call flowfile.publish_global() etc.
+            # kernel can now call flowfile_ctx.publish_global() etc.
             result = await manager.execute(kernel_id, request)
     """
     from flowfile_core.kernel.manager import KernelManager

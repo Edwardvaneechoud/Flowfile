@@ -346,8 +346,8 @@ def test_generate_kernel_code_includes_output_names():
 
     node = MultiOutputNode()
     code = node.generate_kernel_code()
-    assert 'flowfile.publish_output(result["main"], name="main")' in code
-    assert 'flowfile.publish_output(result["secondary"], name="secondary")' in code
+    assert 'flowfile_ctx.publish_output(result["main"], name="main")' in code
+    assert 'flowfile_ctx.publish_output(result["secondary"], name="secondary")' in code
 
 
 def test_custom_node_from_settings(sample_node_settings: NodeSettings):

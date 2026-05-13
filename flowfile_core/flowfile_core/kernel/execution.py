@@ -59,7 +59,7 @@ def write_inputs_to_parquet(
     When *input_names* is provided, each table gets its own named key in the
     returned dict (e.g. ``{"orders": [...], "customers": [...]}``).  A
     ``"main"`` key is always included pointing to **all** input files so that
-    ``flowfile.read_input("main")`` continues to work.
+    ``flowfile_ctx.read_input("main")`` continues to work.
 
     When *input_names* is ``None``, falls back to the original behaviour
     where every input is grouped under ``"main"``.

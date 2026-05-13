@@ -6,7 +6,7 @@ A FastAPI-based Python code execution kernel that runs in isolated Docker contai
 
 The kernel runtime provides:
 - Isolated Python code execution via REST API
-- Built-in `flowfile` module for data I/O and artifact management
+- Built-in `flowfile_ctx` context (the legacy name `flowfile` still works as a deprecated alias) for data I/O and artifact management
 - Parquet-based data exchange using Polars LazyFrames
 - Thread-safe in-memory artifact storage
 - Multi-flow support with artifact isolation
@@ -132,7 +132,7 @@ curl -X POST http://localhost:9999/execute \
   -H "Content-Type: application/json" \
   -d '{
     "node_id": "node_1",
-    "code": "import polars as pl\ndf = flowfile.read_input()\nresult = df.collect()\nflowfile.publish_output(result)",
+    "code": "import polars as pl\ndf = flowfile_ctx.read_input()\nresult = df.collect()\nflowfile_ctx.publish_output(result)",
     "input_paths": {"main": ["/shared/input.parquet"]},
     "output_dir": "/shared/output",
     "flow_id": 1
@@ -188,16 +188,16 @@ When code is executed, the `flowfile` module is automatically injected into the 
 
 ```python
 # Read the main input as a LazyFrame
-df = flowfile.read_input()
+df = flowfile_ctx.read_input()
 
 # Read a named input
-df = flowfile.read_input(name="customers")
+df = flowfile_ctx.read_input(name="customers")
 
 # Read only the first file of an input
-df = flowfile.read_first(name="main")
+df = flowfile_ctx.read_first(name="main")
 
 # Read all inputs as a dictionary
-inputs = flowfile.read_inputs()
+inputs = flowfile_ctx.read_inputs()
 # Returns: {"main": LazyFrame, "customers": LazyFrame, ...}
 ```
 
@@ -206,10 +206,10 @@ inputs = flowfile.read_inputs()
 ```python
 # Publish a DataFrame or LazyFrame
 result = df.collect()
-flowfile.publish_output(result)
+flowfile_ctx.publish_output(result)
 
 # Publish with a custom name
-flowfile.publish_output(result, name="cleaned_data")
+flowfile_ctx.publish_output(result, name="cleaned_data")
 ```
 
 ### Artifact Management
@@ -219,28 +219,28 @@ Artifacts allow you to store Python objects in memory for use across executions:
 ```python
 # Store an artifact
 model = train_model(data)
-flowfile.publish_artifact("trained_model", model)
+flowfile_ctx.publish_artifact("trained_model", model)
 
 # Retrieve an artifact
-model = flowfile.read_artifact("trained_model")
+model = flowfile_ctx.read_artifact("trained_model")
 
 # List all artifacts in current flow
-artifacts = flowfile.list_artifacts()
+artifacts = flowfile_ctx.list_artifacts()
 
 # Delete an artifact
-flowfile.delete_artifact("trained_model")
+flowfile_ctx.delete_artifact("trained_model")
 ```
 
 ### Logging
 
 ```python
 # General logging
-flowfile.log("Processing started", level="INFO")
+flowfile_ctx.log("Processing started", level="INFO")
 
 # Convenience methods
-flowfile.log_info("Step 1 complete")
-flowfile.log_warning("Missing values detected")
-flowfile.log_error("Failed to process record")
+flowfile_ctx.log_info("Step 1 complete")
+flowfile_ctx.log_warning("Missing values detected")
+flowfile_ctx.log_error("Failed to process record")
 ```
 
 ## Complete Example
@@ -249,7 +249,7 @@ flowfile.log_error("Failed to process record")
 import polars as pl
 
 # Read input data
-df = flowfile.read_input()
+df = flowfile_ctx.read_input()
 
 # Transform the data
 result = (
@@ -260,13 +260,13 @@ result = (
     .collect()
 )
 
-flowfile.log_info(f"Processed {result.height} categories")
+flowfile_ctx.log_info(f"Processed {result.height} categories")
 
 # Store intermediate result as artifact
-flowfile.publish_artifact("category_totals", result)
+flowfile_ctx.publish_artifact("category_totals", result)
 
 # Write output
-flowfile.publish_output(result)
+flowfile_ctx.publish_output(result)
 ```
 
 ## Pre-installed Packages

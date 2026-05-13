@@ -257,10 +257,9 @@ def publish_global(
         httpx.HTTPStatusError: If API calls fail.
 
     Example:
-        >>> import flowfile
         >>> from sklearn.ensemble import RandomForestClassifier
         >>> model = RandomForestClassifier().fit(X, y)
-        >>> artifact_id = flowfile.publish_global(
+        >>> artifact_id = flowfile_ctx.publish_global(
         ...     "my_model",
         ...     model,
         ...     description="Random Forest trained on Q4 data",
@@ -392,9 +391,8 @@ def get_global(
         httpx.HTTPStatusError: If API calls fail.
 
     Example:
-        >>> import flowfile
-        >>> model = flowfile.get_global("my_model")
-        >>> model_v1 = flowfile.get_global("my_model", version=1)
+        >>> model = flowfile_ctx.get_global("my_model")
+        >>> model_v1 = flowfile_ctx.get_global("my_model", version=1)
     """
     from kernel_runtime.serialization import deserialize_from_bytes, deserialize_from_file
 
@@ -447,8 +445,7 @@ def list_global_artifacts(
         List of :class:`GlobalArtifactInfo` objects.
 
     Example:
-        >>> import flowfile
-        >>> artifacts = flowfile.list_global_artifacts(tags=["ml"])
+        >>> artifacts = flowfile_ctx.list_global_artifacts(tags=["ml"])
         >>> for a in artifacts:
         ...     print(f"{a.name} v{a.version} - {a.python_type}")
     """
@@ -482,9 +479,8 @@ def delete_global_artifact(
         httpx.HTTPStatusError: If API calls fail.
 
     Example:
-        >>> import flowfile
-        >>> flowfile.delete_global_artifact("my_model")  # delete all versions
-        >>> flowfile.delete_global_artifact("my_model", version=1)  # delete v1 only
+        >>> flowfile_ctx.delete_global_artifact("my_model")  # delete all versions
+        >>> flowfile_ctx.delete_global_artifact("my_model", version=1)  # delete v1 only
     """
     auth_headers = _get_internal_auth_headers()
     with httpx.Client(timeout=30.0, headers=auth_headers) as client:
@@ -542,8 +538,8 @@ def get_shared_location(filename: str) -> str:
 
     Examples::
 
-        df.write_csv(flowfile.get_shared_location("test_file.csv"))
-        df.write_csv(flowfile.get_shared_location("reports/monthly.csv"))
+        df.write_csv(flowfile_ctx.get_shared_location("test_file.csv"))
+        df.write_csv(flowfile_ctx.get_shared_location("reports/monthly.csv"))
     """
     base = os.environ.get("FLOWFILE_KERNEL_SHARED_DIR", "/shared")
     full_path = os.path.join(base, "user_files", filename)
