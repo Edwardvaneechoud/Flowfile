@@ -119,6 +119,26 @@ class TestArtifactContextRecording:
         state = ctx._node_states[5]
         assert state.consumed == ["model", "scaler"]
 
+    def test_record_published_appends_without_dedup(self):
+        """``record_published`` is append-only — callers must ``clear_nodes``
+        between re-executions or ``state.published`` grows unboundedly.
+
+        Regression for: re-running a Python Script node that publishes
+        ``"name"`` repeatedly used to make the UI's Published panel show
+        duplicate entries. The fix lives at the call site
+        (``flow_graph._execute_python_in_kernel`` clears the node's state
+        before recording), not here — this test pins the append-only
+        contract so a future "fix" of the contract here would surface
+        through the call-site test instead.
+        """
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["name"])
+        ctx.record_published(1, "k1", ["name"])
+        ctx.record_published(1, "k1", ["name"])
+        assert len(ctx.get_published_by_node(1)) == 3
+        # But the kernel-wide index dedupes (latest publish wins for a name)
+        assert len(ctx.get_kernel_artifacts("k1")) == 1
+
 
 # ---------------------------------------------------------------------------
 # ArtifactContext — Availability

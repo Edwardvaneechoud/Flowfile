@@ -62,6 +62,40 @@ def delete_kernel(db: Session, kernel_id: str) -> None:
     db.commit()
 
 
+def set_kernel_scratch_flow_id(db: Session, kernel_id: str, scratch_flow_id: int | None) -> None:
+    """Attach a scratch FlowRegistration id to a kernel row.
+
+    Used by the kernel manager after auto-creating the scratch flow during
+    ``create_kernel``. Passing ``None`` clears the column (used by the lazy
+    upgrade path if the scratch row was deleted out-of-band).
+    """
+    row = db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id).first()
+    if row is None:
+        return
+    row.scratch_flow_registration_id = scratch_flow_id
+    db.commit()
+
+
+def get_kernel_scratch_flow_id(db: Session, kernel_id: str) -> int | None:
+    """Return the persisted scratch FlowRegistration id, or ``None`` if unset."""
+    row = db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id).first()
+    if row is None:
+        return None
+    return getattr(row, "scratch_flow_registration_id", None)
+
+
+def get_all_kernel_scratch_ids(db: Session) -> dict[str, int | None]:
+    """Bulk-load every kernel's scratch FlowRegistration id.
+
+    Called by ``KernelManager._restore_kernels_from_db`` so the in-memory
+    ``_scratch_flow_ids`` mapping stays in sync with the DB on startup.
+    """
+    rows = db.query(db_models.Kernel).all()
+    return {
+        row.id: getattr(row, "scratch_flow_registration_id", None) for row in rows
+    }
+
+
 def get_kernels_for_user(db: Session, user_id: int) -> list[KernelConfig]:
     """Return all persisted kernel configs belonging to a user."""
     rows = db.query(db_models.Kernel).filter(db_models.Kernel.user_id == user_id).all()

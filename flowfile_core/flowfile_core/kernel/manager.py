@@ -240,6 +240,12 @@ class KernelManager:
         self._docker = docker.from_env()
         self._kernels: dict[str, KernelInfo] = {}
         self._kernel_owners: dict[str, int] = {}  # kernel_id -> user_id
+        # Cached scratch FlowRegistration ids — one per kernel. Populated on
+        # create_kernel and during _restore_kernels_from_db; consulted in the
+        # execute path so ``flowfile_ctx.publish_global`` / ``schema.publish_artifact``
+        # have a valid producer to point at when no real source_registration_id
+        # is in scope. Cleared on delete_kernel.
+        self._scratch_flow_ids: dict[str, int] = {}
         # Background image-pull state: image-tag -> "pulling" or "error:<msg>".
         # Absent key means idle. Lock is held only for read/write, never across
         # a network call (the actual pull runs on a thread without the lock).
@@ -505,7 +511,7 @@ class KernelManager:
         """Load persisted kernel configs from the database on startup."""
         try:
             from flowfile_core.database.connection import get_db_context
-            from flowfile_core.kernel.persistence import get_all_kernels
+            from flowfile_core.kernel.persistence import get_all_kernel_scratch_ids, get_all_kernels
 
             with get_db_context() as db:
                 for config, resolved_packages, user_id in get_all_kernels(db):
@@ -526,6 +532,13 @@ class KernelManager:
                     self._kernels[config.id] = kernel
                     self._kernel_owners[config.id] = user_id
                     logger.info("Restored kernel '%s' for user %d from database", config.id, user_id)
+                # Hydrate the in-memory scratch-flow id cache so the execute
+                # path doesn't have to hit the DB on each call. Missing values
+                # (e.g. kernels created before this migration ran) are filled
+                # in lazily by get_scratch_flow_id.
+                for kernel_id, scratch_id in get_all_kernel_scratch_ids(db).items():
+                    if scratch_id is not None:
+                        self._scratch_flow_ids[kernel_id] = scratch_id
         except Exception:
             # Log with full traceback so a silently-swallowed schema-drift bug
             # can't lurk again (a missing column here used to disappear into a
@@ -553,6 +566,114 @@ class KernelManager:
                 delete_kernel(db, kernel_id)
         except Exception as exc:
             logger.warning("Could not remove kernel '%s' from database: %s", kernel_id, exc)
+
+    # ------------------------------------------------------------------
+    # Scratch FlowRegistration management
+    # ------------------------------------------------------------------
+    #
+    # Each kernel owns an auto-created FlowRegistration row that gets used as
+    # ``source_registration_id`` whenever a publish call has no real flow in
+    # scope. This preserves Core's invariant that every artifact has a
+    # producing flow without requiring the user to register one manually.
+
+    def _provision_scratch_flow(self, kernel_id: str, user_id: int) -> None:
+        """Create a scratch FlowRegistration row for *kernel_id* if missing.
+
+        The scratch flow is registered inside the seeded ``General/default``
+        schema so that artifacts published from cells without an explicit
+        ``namespace_id`` inherit that namespace and become visible in the
+        catalog UI's tree view (which only walks ``namespace_id`` non-null
+        rows). Safe to call multiple times — does nothing if the kernel
+        already has one cached. Failures are logged and swallowed; publish
+        calls then fall back to the legacy "no source registration" path
+        (warning + return -1).
+        """
+        if kernel_id in self._scratch_flow_ids:
+            return
+        try:
+            from flowfile_core.catalog import SQLAlchemyCatalogRepository
+            from flowfile_core.catalog.service import CatalogService
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.database.models import FlowRegistration
+            from flowfile_core.kernel.persistence import set_kernel_scratch_flow_id
+
+            with get_db_context() as db:
+                # Place the scratch flow under the seeded default schema so
+                # artifacts published from cells appear in the catalog tree.
+                # If the default schema hasn't been initialised yet, fall back
+                # to namespace_id=None (artifacts will exist but won't show
+                # in the tree until a default schema exists).
+                try:
+                    default_namespace_id = CatalogService(
+                        SQLAlchemyCatalogRepository(db)
+                    ).get_default_namespace_id()
+                except Exception:
+                    default_namespace_id = None
+                flow = FlowRegistration(
+                    name=f"_kernel_scratch_{kernel_id}",
+                    description=(
+                        "Auto-created producer for artifacts published from "
+                        f"kernel '{kernel_id}' interactive cells."
+                    ),
+                    flow_path=f"<kernel:{kernel_id}>",
+                    namespace_id=default_namespace_id,
+                    owner_id=user_id,
+                )
+                db.add(flow)
+                db.commit()
+                db.refresh(flow)
+                set_kernel_scratch_flow_id(db, kernel_id, flow.id)
+                self._scratch_flow_ids[kernel_id] = flow.id
+                logger.debug(
+                    "Provisioned scratch FlowRegistration id=%s (namespace=%s) for kernel '%s'",
+                    flow.id,
+                    default_namespace_id,
+                    kernel_id,
+                )
+        except Exception:
+            logger.exception(
+                "Could not provision scratch FlowRegistration for kernel '%s'",
+                kernel_id,
+            )
+
+    def _discard_scratch_flow(self, kernel_id: str) -> None:
+        """Delete the scratch FlowRegistration row (if any) on kernel deletion."""
+        scratch_id = self._scratch_flow_ids.pop(kernel_id, None)
+        if scratch_id is None:
+            return
+        try:
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.database.models import FlowRegistration
+
+            with get_db_context() as db:
+                row = db.get(FlowRegistration, scratch_id)
+                if row is not None:
+                    db.delete(row)
+                    db.commit()
+        except Exception as exc:
+            logger.warning(
+                "Could not delete scratch FlowRegistration id=%s for kernel '%s': %s",
+                scratch_id,
+                kernel_id,
+                exc,
+            )
+
+    def get_scratch_flow_id(self, kernel_id: str) -> int | None:
+        """Return the kernel's scratch FlowRegistration id, provisioning lazily if absent.
+
+        Called by the execute path when no explicit ``source_registration_id``
+        is in scope. The lazy-provision branch covers kernels created before
+        the auto-scratch feature shipped (their row has ``NULL`` in the new
+        column) and edges where the scratch was removed out-of-band.
+        """
+        cached = self._scratch_flow_ids.get(kernel_id)
+        if cached is not None:
+            return cached
+        user_id = self._kernel_owners.get(kernel_id)
+        if user_id is None:
+            return None
+        self._provision_scratch_flow(kernel_id, user_id)
+        return self._scratch_flow_ids.get(kernel_id)
 
     # ------------------------------------------------------------------
     # Port allocation
@@ -969,6 +1090,9 @@ class KernelManager:
         self._kernels[config.id] = kernel
         self._kernel_owners[config.id] = user_id
         self._persist_kernel(kernel, user_id)
+        # Auto-register a scratch FlowRegistration so artifacts published from
+        # interactive cells have a valid producer. See ``_create_scratch_flow``.
+        self._provision_scratch_flow(config.id, user_id)
         logger.info("Created kernel '%s' on port %s for user %d", config.id, port, user_id)
         return kernel
 
@@ -1165,6 +1289,10 @@ class KernelManager:
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             await self.stop_kernel(kernel_id)
         had_packages = bool(kernel.packages)
+        # Delete the scratch FlowRegistration first so the FK ON DELETE SET NULL
+        # doesn't fire as a side-effect; explicit deletion keeps the catalog
+        # tidy. Tolerant of a missing row (manual removal, downgrade-then-upgrade).
+        self._discard_scratch_flow(kernel_id)
         del self._kernels[kernel_id]
         self._kernel_owners.pop(kernel_id, None)
         self._remove_kernel_from_db(kernel_id)
@@ -1205,6 +1333,13 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             await self._ensure_running(kernel_id)
 
+        # Fall back to the per-kernel scratch FlowRegistration so artifacts
+        # published from interactive cells have a valid producer to point at.
+        # Registered-flow execution paths set ``source_registration_id`` ahead
+        # of time, so this short-circuits when it's already populated.
+        if request.source_registration_id is None:
+            request.source_registration_id = self.get_scratch_flow_id(kernel_id)
+
         kernel.state = KernelState.EXECUTING
         try:
             url = f"{self._kernel_url(kernel)}/execute"
@@ -1243,6 +1378,10 @@ class KernelManager:
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
+
+        # See ``execute`` above — same scratch-flow fallback applies here.
+        if request.source_registration_id is None:
+            request.source_registration_id = self.get_scratch_flow_id(kernel_id)
 
         kernel.state = KernelState.EXECUTING
         try:

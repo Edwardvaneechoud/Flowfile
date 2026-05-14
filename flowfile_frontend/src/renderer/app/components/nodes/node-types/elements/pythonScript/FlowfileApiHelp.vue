@@ -11,26 +11,26 @@
         <section class="api-section">
           <h4>Data I/O</h4>
           <div class="api-item">
-            <code>flowfile.read_input()</code>
+            <code>flowfile_ctx.read_input()</code>
             <p>Read all inputs concatenated as a single Polars LazyFrame (backward compatible).</p>
           </div>
           <div class="api-item">
-            <code>flowfile.read_input("orders")</code>
+            <code>flowfile_ctx.read_input("orders")</code>
             <p>
               Read a specific named input. Names are derived from the source node's
               <em>node_reference</em> (visible in the "Available Inputs" panel above).
             </p>
           </div>
           <div class="api-item">
-            <code>flowfile.read_inputs()</code>
+            <code>flowfile_ctx.read_inputs()</code>
             <p>Read all inputs as a dict of LazyFrame lists keyed by name.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.publish_output(df)</code>
+            <code>flowfile_ctx.publish_output(df)</code>
             <p>Write the main output DataFrame (mapped to the first output handle).</p>
           </div>
           <div class="api-item">
-            <code>flowfile.publish_output(df, "rejected")</code>
+            <code>flowfile_ctx.publish_output(df, "rejected")</code>
             <p>
               Write to a named output handle. Configure output names in the "Output Names" section
               above.
@@ -46,19 +46,19 @@
             the same kernel.
           </p>
           <div class="api-item">
-            <code>flowfile.publish_artifact("model", obj)</code>
+            <code>flowfile_ctx.publish_artifact("model", obj)</code>
             <p>Store a Python object as a named artifact.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.read_artifact("model")</code>
+            <code>flowfile_ctx.read_artifact("model")</code>
             <p>Retrieve a previously published artifact.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.delete_artifact("model")</code>
+            <code>flowfile_ctx.delete_artifact("model")</code>
             <p>Remove an artifact from kernel memory.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.list_artifacts() -> list[ArtifactInfo]</code>
+            <code>flowfile_ctx.list_artifacts() -> list[ArtifactInfo]</code>
             <p>
               List all available artifacts in the kernel. Each item has: <code>.name</code>,
               <code>.type_name</code>, <code>.module</code>, <code>.node_id</code>,
@@ -75,11 +75,11 @@
             the output panel.
           </p>
           <div class="api-item">
-            <code>flowfile.display(obj)</code>
+            <code>flowfile_ctx.display(obj)</code>
             <p>Display a rich object in the output panel.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.display(fig, "My Chart")</code>
+            <code>flowfile_ctx.display(fig, "My Chart")</code>
             <p>Display with an optional title.</p>
           </div>
         </section>
@@ -92,24 +92,24 @@
             to use global artifacts.
           </p>
           <div class="api-item">
-            <code>flowfile.publish_global("model", obj)</code>
+            <code>flowfile_ctx.publish_global("model", obj)</code>
             <p>Persist a Python object to the global artifact store.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.publish_global("model", obj, description="...", tags=["ml"])</code>
+            <code>flowfile_ctx.publish_global("model", obj, description="...", tags=["ml"])</code>
             <p>Publish with optional description, tags, namespace, and format.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.get_global("model")</code>
+            <code>flowfile_ctx.get_global("model")</code>
             <p>Retrieve a Python object from the global artifact store.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.get_global("model", version=2)</code>
+            <code>flowfile_ctx.get_global("model", version=2)</code>
             <p>Retrieve a specific version of a global artifact.</p>
           </div>
           <div class="api-item">
             <code
-              >flowfile.list_global_artifacts(namespace_id?, tags?) ->
+              >flowfile_ctx.list_global_artifacts(namespace_id?, tags?) ->
               list[GlobalArtifactInfo]</code
             >
             <p>
@@ -121,7 +121,7 @@
             </p>
           </div>
           <div class="api-item">
-            <code>flowfile.delete_global_artifact("model")</code>
+            <code>flowfile_ctx.delete_global_artifact("model")</code>
             <p>Delete a global artifact by name (optionally a specific version).</p>
           </div>
         </section>
@@ -132,19 +132,19 @@
             Send log messages to the FlowFile log viewer for debugging and monitoring.
           </p>
           <div class="api-item">
-            <code>flowfile.log("message")</code>
+            <code>flowfile_ctx.log("message")</code>
             <p>Send a log message (default level: INFO).</p>
           </div>
           <div class="api-item">
-            <code>flowfile.log_info("message")</code>
+            <code>flowfile_ctx.log_info("message")</code>
             <p>Send an INFO log message.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.log_warning("message")</code>
+            <code>flowfile_ctx.log_warning("message")</code>
             <p>Send a WARNING log message.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.log_error("message")</code>
+            <code>flowfile_ctx.log_error("message")</code>
             <p>Send an ERROR log message.</p>
           </div>
         </section>
@@ -156,14 +156,14 @@
             accessible from all FlowFile services and persist across kernel executions.
           </p>
           <div class="api-item">
-            <code>flowfile.get_shared_location("test_file.csv")</code>
+            <code>flowfile_ctx.get_shared_location("test_file.csv")</code>
             <p>
               Returns the absolute path for a file in the shared directory. Parent directories are
               created automatically.
             </p>
           </div>
           <div class="api-item">
-            <code>flowfile.get_shared_location("subdir/report.parquet")</code>
+            <code>flowfile_ctx.get_shared_location("subdir/report.parquet")</code>
             <p>Supports nested paths — subdirectories are created as needed.</p>
           </div>
         </section>
@@ -175,9 +175,9 @@
             <h5>Basic Transform</h5>
             <pre><code>import polars as pl
 
-df = flowfile.read_input()
+df = flowfile_ctx.read_input()
 df = df.filter(pl.col("age") > 18)
-flowfile.publish_output(df)</code></pre>
+flowfile_ctx.publish_output(df)</code></pre>
           </div>
 
           <div class="pattern">
@@ -185,23 +185,23 @@ flowfile.publish_output(df)</code></pre>
             <pre><code>import polars as pl
 from sklearn.ensemble import RandomForestClassifier
 
-df = flowfile.read_input().collect()
+df = flowfile_ctx.read_input().collect()
 X = df.select(["feature_1", "feature_2"]).to_numpy()
 y = df.get_column("target").to_numpy()
 
 model = RandomForestClassifier()
 model.fit(X, y)
 
-flowfile.publish_artifact("model", model)
-flowfile.publish_output(flowfile.read_input())</code></pre>
+flowfile_ctx.publish_artifact("model", model)
+flowfile_ctx.publish_output(flowfile_ctx.read_input())</code></pre>
           </div>
 
           <div class="pattern">
             <h5>Apply a Model</h5>
             <pre><code>import polars as pl
 
-model = flowfile.read_artifact("model")
-df = flowfile.read_input().collect()
+model = flowfile_ctx.read_artifact("model")
+df = flowfile_ctx.read_input().collect()
 
 X = df.select(["feature_1", "feature_2"]).to_numpy()
 predictions = model.predict(X)
@@ -209,29 +209,29 @@ predictions = model.predict(X)
 result = df.with_columns(
     pl.Series("prediction", predictions)
 )
-flowfile.publish_output(result.lazy())</code></pre>
+flowfile_ctx.publish_output(result.lazy())</code></pre>
           </div>
 
           <div class="pattern">
             <h5>Publish a Global Artifact</h5>
             <pre><code>from sklearn.ensemble import RandomForestClassifier
 
-model = flowfile.read_artifact("model")
-flowfile.publish_global("rf_model", model,
+model = flowfile_ctx.read_artifact("model")
+flowfile_ctx.publish_global("rf_model", model,
     description="Trained random forest",
     tags=["ml", "production"])
-flowfile.log_info("Model published to catalog")</code></pre>
+flowfile_ctx.log_info("Model published to catalog")</code></pre>
           </div>
 
           <div class="pattern">
             <h5>Write to Shared Directory</h5>
             <pre><code>import polars as pl
 
-df = flowfile.read_input().collect()
+df = flowfile_ctx.read_input().collect()
 
 # Write to the shared directory (accessible from all services)
-df.write_csv(flowfile.get_shared_location("exports/output.csv"))
-df.write_parquet(flowfile.get_shared_location("exports/output.parquet"))</code></pre>
+df.write_csv(flowfile_ctx.get_shared_location("exports/output.csv"))
+df.write_parquet(flowfile_ctx.get_shared_location("exports/output.parquet"))</code></pre>
           </div>
 
           <div class="pattern">
@@ -239,25 +239,25 @@ df.write_parquet(flowfile.get_shared_location("exports/output.parquet"))</code><
             <pre><code>import polars as pl
 
 # Read specific inputs by their source node name
-orders = flowfile.read_input("orders")
-customers = flowfile.read_input("customers")
+orders = flowfile_ctx.read_input("orders")
+customers = flowfile_ctx.read_input("customers")
 
 # Join them
 result = orders.join(customers, on="customer_id")
-flowfile.publish_output(result)</code></pre>
+flowfile_ctx.publish_output(result)</code></pre>
           </div>
 
           <div class="pattern">
             <h5>Multiple Named Outputs</h5>
             <pre><code>import polars as pl
 
-df = flowfile.read_input()
+df = flowfile_ctx.read_input()
 clean = df.filter(pl.col("valid") == True)
 rejected = df.filter(pl.col("valid") == False)
 
 # Each goes to a different output handle
-flowfile.publish_output(clean, "clean")
-flowfile.publish_output(rejected, "rejected")</code></pre>
+flowfile_ctx.publish_output(clean, "clean")
+flowfile_ctx.publish_output(rejected, "rejected")</code></pre>
           </div>
         </section>
       </div>
