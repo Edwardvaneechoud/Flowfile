@@ -40,11 +40,16 @@ def _bare_manager() -> KernelManager:
         mgr._docker = MagicMock()
         mgr._kernels = {}
         mgr._kernel_owners = {}
+        mgr._scratch_flow_ids = {}
         mgr._shared_volume = "/tmp/test"
+        mgr._catalog_tables_dir = "/__catalog_tables_unused__"
         mgr._docker_network = None
         mgr._kernel_volume = None
         mgr._kernel_volume_type = None
         mgr._kernel_mount_target = None
+        mgr._catalog_volume = None
+        mgr._catalog_volume_type = None
+        mgr._catalog_mount_target = None
         mgr._pull_state = {}
         mgr._pull_state_lock = threading.Lock()
     return mgr
