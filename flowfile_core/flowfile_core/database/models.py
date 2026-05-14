@@ -129,7 +129,8 @@ class Kernel(Base):
     custom_image = Column(String, nullable=True)
     # Auto-created FlowRegistration that artifacts published from this kernel's
     # interactive cells are attributed to. Lives and dies with the kernel; see
-    # ``flowfile_core/kernel/scratch_flow.py``. ``ON DELETE SET NULL`` so a
+    # ``KernelManager._provision_scratch_flow`` in
+    # ``flowfile_core/kernel/manager.py``. ``ON DELETE SET NULL`` so a
     # manually-removed registration leaves the kernel record intact (the
     # manager will lazily re-create on the next publish).
     scratch_flow_registration_id = Column(

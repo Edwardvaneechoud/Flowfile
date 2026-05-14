@@ -38,9 +38,11 @@ def _bare_manager() -> KernelManager:
     with patch.object(KernelManager, "__init__", lambda self, *a, **kw: None):
         mgr = KernelManager.__new__(KernelManager)
         mgr._docker = MagicMock()
+        mgr._core_instance_id = "test-core-id"
         mgr._kernels = {}
         mgr._kernel_owners = {}
         mgr._scratch_flow_ids = {}
+        mgr._scratch_flow_lock = threading.Lock()
         mgr._shared_volume = "/tmp/test"
         mgr._catalog_tables_dir = "/__catalog_tables_unused__"
         mgr._docker_network = None
@@ -321,9 +323,22 @@ class TestDerivedImageTag:
 # ----------------------------------------------------------------------------
 
 
-def _image_with_tag(tag: str) -> MagicMock:
+def _image_with_tag(tag: str, labels: dict[str, str] | None = None) -> MagicMock:
     img = MagicMock()
     img.tags = [tag]
+    # Derive a sensible default labels dict from the tag so tests written
+    # before label-based GC don't have to spell it out.
+    if labels is None:
+        prefix = "flowfile-kernel-derived-"
+        if tag.startswith(prefix):
+            safe_kernel_id = tag.split(":", 1)[0][len(prefix) :]
+            labels = {
+                "flowfile_core_instance": "test-core-id",
+                "flowfile_kernel_id": safe_kernel_id,
+            }
+        else:
+            labels = {}
+    img.labels = labels
     return img
 
 

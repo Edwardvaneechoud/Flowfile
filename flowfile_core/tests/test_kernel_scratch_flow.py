@@ -44,9 +44,11 @@ def _bare_manager() -> KernelManager:
     with patch.object(KernelManager, "__init__", lambda self, *a, **kw: None):
         mgr = KernelManager.__new__(KernelManager)
         mgr._docker = MagicMock()
+        mgr._core_instance_id = "test-core-id"
         mgr._kernels = {}
         mgr._kernel_owners = {}
         mgr._scratch_flow_ids = {}
+        mgr._scratch_flow_lock = threading.Lock()
         mgr._shared_volume = "/tmp/test"
         mgr._docker_network = None
         mgr._kernel_volume = None

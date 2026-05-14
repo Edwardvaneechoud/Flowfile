@@ -71,6 +71,12 @@ def set_kernel_scratch_flow_id(db: Session, kernel_id: str, scratch_flow_id: int
     """
     row = db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id).first()
     if row is None:
+        logger.warning(
+            "set_kernel_scratch_flow_id: kernel '%s' row missing; "
+            "scratch_flow_id=%s not persisted",
+            kernel_id,
+            scratch_flow_id,
+        )
         return
     row.scratch_flow_registration_id = scratch_flow_id
     db.commit()

@@ -430,13 +430,19 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
         exec_globals["flowfile"] = _DeprecatedFlowfileAlias(flowfile_client)
         exec_globals["__builtins__"] = __builtins__
         exec_globals["__name__"] = "__main__"
-        # Force the default warning filter so the deprecation warning above is
-        # actually shown — Python's default config suppresses
-        # ``DeprecationWarning`` for non-``__main__`` callers, and ``exec``'s
-        # frame attribution is fragile.
-        warnings.simplefilter("default", DeprecationWarning)
 
-        with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+        with (
+            warnings.catch_warnings(),
+            contextlib.redirect_stdout(stdout_buf),
+            contextlib.redirect_stderr(stderr_buf),
+        ):
+            # Force the default warning filter so the ``flowfile`` deprecation
+            # warning is actually shown — Python's default config suppresses
+            # ``DeprecationWarning`` for non-``__main__`` callers, and ``exec``'s
+            # frame attribution is fragile. Scoped to user-code execution so the
+            # process-wide filter state is not mutated.
+            warnings.simplefilter("default", DeprecationWarning)
+
             # Execute matplotlib setup to patch plt.show()
             exec(_MATPLOTLIB_SETUP, exec_globals)  # noqa: S102
 

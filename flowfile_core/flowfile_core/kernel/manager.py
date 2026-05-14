@@ -7,6 +7,7 @@ import socket
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import docker
@@ -160,6 +161,37 @@ _KERNEL_ID_TAG_RE = re.compile(r"[^a-z0-9._-]")
 _VALID_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 _DIGEST_RE = re.compile(r"@sha256:[A-Fa-f0-9]{12,}$")
 
+# Docker labels stamped on every derived image so orphan GC can filter by
+# (a) which Core instance built it, and (b) which kernel id it belongs to —
+# without parsing the tag. Multiple Core instances against the same daemon
+# can coexist because GC only touches images carrying this Core's instance id.
+_IMAGE_LABEL_CORE_INSTANCE = "flowfile_core_instance"
+_IMAGE_LABEL_KERNEL_ID = "flowfile_kernel_id"
+
+
+def _load_or_create_core_instance_id() -> str:
+    """Return a stable UUID identifying this Core install.
+
+    Persisted under ``<storage.base_directory>/core_instance_id.txt`` so a
+    Core restart matches its previously-built derived images. Falls back to
+    an in-memory UUID if the file can't be written (e.g. read-only FS).
+    """
+    try:
+        path = storage.base_directory / "core_instance_id.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            existing = path.read_text().strip()
+            if existing:
+                return existing
+        new_id = str(uuid.uuid4())
+        path.write_text(new_id)
+        return new_id
+    except OSError:
+        logger.warning(
+            "Could not persist core instance id; using volatile id for this run only"
+        )
+        return str(uuid.uuid4())
+
 
 def _derived_image_tag(kernel_id: str) -> str:
     """Stable tag for the per-kernel derived image."""
@@ -238,6 +270,9 @@ def _is_port_available(port: int) -> bool:
 class KernelManager:
     def __init__(self, shared_volume_path: str | None = None):
         self._docker = docker.from_env()
+        # Stable id for this Core install; stamped onto every derived image
+        # so orphan GC only touches images this Core built.
+        self._core_instance_id = _load_or_create_core_instance_id()
         self._kernels: dict[str, KernelInfo] = {}
         self._kernel_owners: dict[str, int] = {}  # kernel_id -> user_id
         # Cached scratch FlowRegistration ids — one per kernel. Populated on
@@ -246,6 +281,9 @@ class KernelManager:
         # have a valid producer to point at when no real source_registration_id
         # is in scope. Cleared on delete_kernel.
         self._scratch_flow_ids: dict[str, int] = {}
+        # Serialises _provision_scratch_flow so two concurrent create / publish
+        # paths for the same kernel can't both insert a FlowRegistration row.
+        self._scratch_flow_lock = threading.Lock()
         # Background image-pull state: image-tag -> "pulling" or "error:<msg>".
         # Absent key means idle. Lock is held only for read/write, never across
         # a network call (the actual pull runs on a thread without the lock).
@@ -588,53 +626,57 @@ class KernelManager:
         calls then fall back to the legacy "no source registration" path
         (warning + return -1).
         """
-        if kernel_id in self._scratch_flow_ids:
-            return
-        try:
-            from flowfile_core.catalog import SQLAlchemyCatalogRepository
-            from flowfile_core.catalog.service import CatalogService
-            from flowfile_core.database.connection import get_db_context
-            from flowfile_core.database.models import FlowRegistration
-            from flowfile_core.kernel.persistence import set_kernel_scratch_flow_id
+        # Serialise check-then-insert so concurrent callers don't both create
+        # a FlowRegistration row for the same kernel. The path is rare (once
+        # per kernel) so a single dict-wide lock is fine.
+        with self._scratch_flow_lock:
+            if kernel_id in self._scratch_flow_ids:
+                return
+            try:
+                from flowfile_core.catalog import SQLAlchemyCatalogRepository
+                from flowfile_core.catalog.service import CatalogService
+                from flowfile_core.database.connection import get_db_context
+                from flowfile_core.database.models import FlowRegistration
+                from flowfile_core.kernel.persistence import set_kernel_scratch_flow_id
 
-            with get_db_context() as db:
-                # Place the scratch flow under the seeded default schema so
-                # artifacts published from cells appear in the catalog tree.
-                # If the default schema hasn't been initialised yet, fall back
-                # to namespace_id=None (artifacts will exist but won't show
-                # in the tree until a default schema exists).
-                try:
-                    default_namespace_id = CatalogService(
-                        SQLAlchemyCatalogRepository(db)
-                    ).get_default_namespace_id()
-                except Exception:
-                    default_namespace_id = None
-                flow = FlowRegistration(
-                    name=f"_kernel_scratch_{kernel_id}",
-                    description=(
-                        "Auto-created producer for artifacts published from "
-                        f"kernel '{kernel_id}' interactive cells."
-                    ),
-                    flow_path=f"<kernel:{kernel_id}>",
-                    namespace_id=default_namespace_id,
-                    owner_id=user_id,
-                )
-                db.add(flow)
-                db.commit()
-                db.refresh(flow)
-                set_kernel_scratch_flow_id(db, kernel_id, flow.id)
-                self._scratch_flow_ids[kernel_id] = flow.id
-                logger.debug(
-                    "Provisioned scratch FlowRegistration id=%s (namespace=%s) for kernel '%s'",
-                    flow.id,
-                    default_namespace_id,
+                with get_db_context() as db:
+                    # Place the scratch flow under the seeded default schema so
+                    # artifacts published from cells appear in the catalog tree.
+                    # If the default schema hasn't been initialised yet, fall back
+                    # to namespace_id=None (artifacts will exist but won't show
+                    # in the tree until a default schema exists).
+                    try:
+                        default_namespace_id = CatalogService(
+                            SQLAlchemyCatalogRepository(db)
+                        ).get_default_namespace_id()
+                    except Exception:
+                        default_namespace_id = None
+                    flow = FlowRegistration(
+                        name=f"_kernel_scratch_{kernel_id}",
+                        description=(
+                            "Auto-created producer for artifacts published from "
+                            f"kernel '{kernel_id}' interactive cells."
+                        ),
+                        flow_path=f"<kernel:{kernel_id}>",
+                        namespace_id=default_namespace_id,
+                        owner_id=user_id,
+                    )
+                    db.add(flow)
+                    db.commit()
+                    db.refresh(flow)
+                    set_kernel_scratch_flow_id(db, kernel_id, flow.id)
+                    self._scratch_flow_ids[kernel_id] = flow.id
+                    logger.debug(
+                        "Provisioned scratch FlowRegistration id=%s (namespace=%s) for kernel '%s'",
+                        flow.id,
+                        default_namespace_id,
+                        kernel_id,
+                    )
+            except Exception:
+                logger.exception(
+                    "Could not provision scratch FlowRegistration for kernel '%s'",
                     kernel_id,
                 )
-        except Exception:
-            logger.exception(
-                "Could not provision scratch FlowRegistration for kernel '%s'",
-                kernel_id,
-            )
 
     def _discard_scratch_flow(self, kernel_id: str) -> None:
         """Delete the scratch FlowRegistration row (if any) on kernel deletion."""
@@ -844,8 +886,13 @@ class KernelManager:
             ["pip", "install", "--no-cache-dir", "--constraint", "/opt/constraints.txt"]
             + list(kernel.packages)
         )
+        # Stamp Core-instance + kernel-id labels so orphan GC can find images
+        # owned by this Core without relying on tag-name parsing.
+        safe_kernel_id = _KERNEL_ID_TAG_RE.sub("-", kernel.id.lower())
         dockerfile = (
             f"FROM {base_image}\n"
+            f"LABEL {_IMAGE_LABEL_CORE_INSTANCE}={self._core_instance_id}\n"
+            f"LABEL {_IMAGE_LABEL_KERNEL_ID}={safe_kernel_id}\n"
             f"RUN {json.dumps(pip_args)}\n"
         )
 
@@ -954,9 +1001,16 @@ class KernelManager:
         derived image left over from a kernel that was deleted between core
         runs (e.g. core crashed between dropping the DB row and removing the
         image) gets reclaimed. Each orphan is hundreds of MB.
+
+        Filters by the ``flowfile_core_instance`` label so two Core instances
+        sharing a Docker daemon don't wipe each other's images. Uses the
+        ``flowfile_kernel_id`` label as the source of truth — falls back to
+        tag-name parsing only for legacy un-labelled images.
         """
         try:
-            images = self._docker.images.list()
+            images = self._docker.images.list(
+                filters={"label": f"{_IMAGE_LABEL_CORE_INSTANCE}={self._core_instance_id}"}
+            )
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning("Could not list images for orphan GC: %s", exc)
             return
@@ -966,23 +1020,32 @@ class KernelManager:
         prefix = "flowfile-kernel-derived-"
 
         for image in images:
-            for tag in image.tags or []:
-                if not tag.startswith(prefix):
-                    continue
-                ref = tag.split(":", 1)[0]
-                safe_id = ref[len(prefix) :]
-                if not safe_id or safe_id in expected:
-                    continue
-                try:
-                    self._docker.images.remove(tag, force=True)
-                    logger.info("Removed orphan derived image '%s'", tag)
-                except docker.errors.ImageNotFound:
-                    pass
-                except docker.errors.APIError as exc:
-                    logger.warning(
-                        "Could not remove orphan derived image '%s': %s", tag, exc
-                    )
-                break  # other tags on the same image are aliases
+            labels = image.labels or {}
+            safe_id = labels.get(_IMAGE_LABEL_KERNEL_ID)
+            if not safe_id:
+                # Legacy image built before labelling existed — fall back to
+                # the tag prefix. Skip if even the tag is missing.
+                for tag in image.tags or []:
+                    if tag.startswith(prefix):
+                        safe_id = tag.split(":", 1)[0][len(prefix) :]
+                        break
+            if not safe_id or safe_id in expected:
+                continue
+            # Prefer the canonical tag; fall back to the image id when the
+            # image has no remaining tags.
+            target = next(
+                (t for t in (image.tags or []) if t.startswith(prefix)),
+                image.id,
+            )
+            try:
+                self._docker.images.remove(target, force=True)
+                logger.info("Removed orphan derived image '%s'", target)
+            except docker.errors.ImageNotFound:
+                pass
+            except docker.errors.APIError as exc:
+                logger.warning(
+                    "Could not remove orphan derived image '%s': %s", target, exc
+                )
 
     def _build_kernel_env(self, kernel_id: str, kernel: KernelInfo) -> dict[str, str]:
         """Build the environment dictionary for a kernel container.

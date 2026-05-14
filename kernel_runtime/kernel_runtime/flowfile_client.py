@@ -216,20 +216,29 @@ def _get_internal_auth_headers() -> dict[str, str]:
 
     Prefers the token passed via ExecuteRequest context (always fresh),
     falls back to FLOWFILE_INTERNAL_TOKEN env var for backwards compatibility.
+    X-Kernel-Id is included so Core can attribute ownership to the kernel's
+    actual owner rather than the synthetic internal-service user.
     """
+    headers: dict[str, str] = {}
     # Prefer token from execution context (set per-request by Core)
     try:
         ctx = _context.get({})
         token = ctx.get("internal_token")
         if token:
-            return {"X-Internal-Token": token}
+            headers["X-Internal-Token"] = token
     except LookupError:
         pass
     # Fall back to env var (set at container creation time)
-    token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
-    if token:
-        return {"X-Internal-Token": token}
-    return {}
+    if "X-Internal-Token" not in headers:
+        token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+        if token:
+            headers["X-Internal-Token"] = token
+    if not headers:
+        return headers
+    kernel_id = os.environ.get("FLOWFILE_KERNEL_ID")
+    if kernel_id:
+        headers["X-Kernel-Id"] = kernel_id
+    return headers
 
 
 def publish_global(
@@ -835,16 +844,13 @@ def _read_delta_metadata(table_path: str) -> dict[str, Any]:
     schema_fields = dt.schema().fields
     schema_columns = [{"name": f.name, "dtype": _friendly_dtype(f.type)} for f in schema_fields]
     row_count: int | None = None
-    try:
-        row_count = pl.scan_delta(table_path).select(pl.len()).collect().item()
-    except Exception:
-        row_count = None
     size_bytes = 0
     try:
         add_actions = dt.get_add_actions(flatten=True)
-        size_col = add_actions.column("size_bytes")
-        size_bytes = sum(v for v in size_col.to_pylist() if v is not None)
+        size_bytes = sum(v for v in add_actions.column("size_bytes").to_pylist() if v is not None)
+        row_count = sum(v for v in add_actions.column("num_records").to_pylist() if v is not None)
     except Exception:
+        # Fall back to file-walk for size; row_count stays None.
         for f in Path(table_path).rglob("*.parquet"):
             try:
                 size_bytes += f.stat().st_size
@@ -1627,6 +1633,10 @@ def _perform_delta_write(
     ``deltalake.DeltaTable.merge`` directly so the kernel doesn't depend on
     ``flowfile_core`` or ``flowfile_worker``.
     """
+    if not table_exists and write_mode in ("update", "delete"):
+        raise FileNotFoundError(
+            f"Cannot {write_mode} catalog table: table does not exist at {kernel_path!r}"
+        )
     os.makedirs(kernel_path, exist_ok=True)
 
     if write_mode in ("overwrite", "append"):
@@ -1643,15 +1653,10 @@ def _perform_delta_write(
         df.write_delta(kernel_path, mode="error")
         return
 
-    # Merge modes: upsert / update / delete.
+    # Merge modes: upsert against a missing table is logically "insert all" — create it.
+    # update/delete were already rejected above.
     if not table_exists:
-        # Need to create the Delta structure first so subsequent operations
-        # have something to target.
-        if write_mode in ("update", "delete"):
-            # No-op operation against an empty table — establish the schema only.
-            df.clear().write_delta(kernel_path, mode="error")
-        else:
-            df.write_delta(kernel_path, mode="error")
+        df.write_delta(kernel_path, mode="error")
         return
 
     from deltalake import DeltaTable
