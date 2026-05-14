@@ -35,6 +35,15 @@ _ML_EXTRA_PACKAGE_NAMES: tuple[str, ...] = (
     "lightgbm",
     "statsmodels",
 )
+# Only the packages users actually import in flow code. The kernel image
+# also has fastapi/uvicorn/httpx (to serve the runtime HTTP API) and
+# cloudpickle/joblib (for artifact persistence) baked and pinned via the
+# SLIM_CONSTRAINTS whitelist in kernel_runtime/Dockerfile — but those are
+# kernel plumbing, not something users build on top of, so we don't surface
+# them as part of the lite "guarantee".
+_LITE_PACKAGE_NAMES: tuple[str, ...] = (
+    "polars",
+)
 
 _NAME_RE = re.compile(r'^name = "([^"]+)"', re.MULTILINE)
 _VERSION_RE = re.compile(r'^version = "([^"]+)"', re.MULTILINE)
@@ -75,8 +84,16 @@ def get_flavour_packages() -> dict[ImageFlavour, list[tuple[str, str]]]:
         (name, versions.get(name.lower(), "—"))
         for name in _ML_EXTRA_PACKAGE_NAMES
     ]
+    # Lite bakes the same packages as base but only ``_LITE_PACKAGE_NAMES``
+    # are pinned in /opt/constraints.txt — pyarrow / numpy float so user
+    # installs aren't blocked by transitive pins.
+    lite = [
+        (name, versions.get(name.lower(), "—"))
+        for name in _LITE_PACKAGE_NAMES
+    ]
     return {
         ImageFlavour.BASE: base,
         ImageFlavour.ML: ml,
+        ImageFlavour.LITE: lite,
         ImageFlavour.CUSTOM: [],
     }

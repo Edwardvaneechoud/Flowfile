@@ -9,16 +9,11 @@ df = flowfile_ctx.read_input()
 flowfile_ctx.publish_output(df)
 `;
 
-export const createPythonScriptNode = (
-  flowId: number,
-  nodeId: number,
-): NodePythonScript => {
+export const createPythonScriptNode = (flowId: number, nodeId: number): NodePythonScript => {
   const pythonScriptInput: PythonScriptInput = {
     code: DEFAULT_PYTHON_SCRIPT_CODE,
     kernel_id: null,
-    cells: [
-      { id: crypto.randomUUID(), code: DEFAULT_PYTHON_SCRIPT_CODE },
-    ],
+    cells: [{ id: crypto.randomUUID(), code: DEFAULT_PYTHON_SCRIPT_CODE }],
   };
 
   return {

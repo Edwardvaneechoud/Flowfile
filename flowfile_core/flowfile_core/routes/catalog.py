@@ -20,7 +20,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
-from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
 from flowfile_core.catalog import (
     AmbiguousTableError,
     CatalogService,
@@ -54,8 +54,10 @@ from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
     CatalogStats,
     CatalogTableCreate,
+    CatalogTableFromDataCreate,
     CatalogTableOut,
     CatalogTablePreview,
+    CatalogTableRefreshRequest,
     CatalogTableUpdate,
     ColumnStatsResponse,
     DashboardCreate,
@@ -103,7 +105,13 @@ from shared.storage_config import storage
 router = APIRouter(
     prefix="/catalog",
     tags=["catalog"],
-    dependencies=[Depends(get_current_active_user)],
+    # Router-level auth accepts either JWT or the kernel's ``X-Internal-Token``.
+    # Endpoints that should remain JWT-only keep ``current_user=Depends(get_current_active_user)``
+    # which re-checks at the endpoint level and rejects internal tokens. Endpoints that
+    # the kernel needs to call (table resolve / register / update / fetch) use
+    # ``get_user_or_internal_service`` for their ``current_user`` so the internal
+    # token is accepted there.
+    dependencies=[Depends(get_user_or_internal_service)],
 )
 
 
@@ -496,10 +504,14 @@ def remove_follow(
 @router.get("/tables", response_model=list[CatalogTableOut])
 def list_tables(
     namespace_id: int | None = None,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """List catalog tables, optionally filtered by namespace."""
+    """List catalog tables, optionally filtered by namespace.
+
+    Accepts the kernel's internal token so ``flowfile_ctx.list_catalog_tables``
+    can enumerate available tables.
+    """
     return service.list_tables(namespace_id=namespace_id, user_id=current_user.id)
 
 
@@ -507,10 +519,14 @@ def list_tables(
 @handle_catalog_exceptions()
 def register_table(
     body: CatalogTableCreate,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Register a new table by materializing a source file as Parquet."""
+    """Register a new table by materializing a source file as Parquet.
+
+    Accepts the kernel's internal token so ``flowfile_ctx.write_catalog_table``
+    can register tables it produced.
+    """
     validated_path = validate_path_under_cwd(body.file_path)
     return service.register_table(
         name=body.name,
@@ -521,13 +537,67 @@ def register_table(
     )
 
 
+@router.post("/tables/from-data", response_model=CatalogTableOut, status_code=201)
+@handle_catalog_exceptions()
+def register_table_from_data(
+    body: CatalogTableFromDataCreate,
+    current_user=Depends(get_user_or_internal_service),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Register a new catalog table from already-materialized data.
+
+    Used by ``flowfile_ctx.write_catalog_table`` once the kernel has written
+    the Delta directory locally — Core only persists the metadata record (no
+    worker-side materialization).
+    """
+    return service.register_table_from_data(
+        name=body.name,
+        table_path=body.table_path,
+        owner_id=current_user.id,
+        namespace_id=body.namespace_id,
+        description=body.description,
+        storage_format=body.storage_format,
+        schema=body.schema_columns,
+        row_count=body.row_count,
+        column_count=body.column_count,
+        size_bytes=body.size_bytes,
+    )
+
+
+@router.post("/tables/{table_id}/refresh", response_model=CatalogTableOut)
+@handle_catalog_exceptions()
+def refresh_table_metadata(
+    table_id: int,
+    body: CatalogTableRefreshRequest,
+    current_user=Depends(get_user_or_internal_service),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Refresh an existing catalog table's metadata after an in-place data write.
+
+    Used by ``flowfile_ctx.write_catalog_table`` for append / upsert / update /
+    delete modes — the kernel writes new data to the existing Delta directory
+    and then reports back the new row_count / size_bytes / schema so Core's
+    record stays consistent.
+    """
+    return service.overwrite_table_data(
+        table_id=table_id,
+        table_path=body.table_path,
+        description=body.description,
+        storage_format=body.storage_format,
+        schema=body.schema_columns,
+        row_count=body.row_count,
+        column_count=body.column_count,
+        size_bytes=body.size_bytes,
+    )
+
+
 @router.get("/tables/resolve", response_model=ResolveTableResult)
 @handle_catalog_exceptions()
 def resolve_table(
     q: str,
     namespace_id: int | None = None,
     strict: bool = False,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Resolve a catalog table by ``"namespace.table"`` or bare ``"table"`` reference.
@@ -548,7 +618,7 @@ def resolve_table(
 @handle_catalog_exceptions()
 def get_table(
     table_id: int,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.get_table(table_id, user_id=current_user.id)
@@ -559,7 +629,7 @@ def get_table(
 def update_table(
     table_id: int,
     body: CatalogTableUpdate,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.update_table(

@@ -86,18 +86,45 @@ async def docker_status():
 
     from flowfile_core.kernel.manager import _flavour_images
 
+    # Manager may be unavailable (Docker not initialised yet); degrade
+    # gracefully — resolved_image / pull_state stay None, fallback discovery
+    # turns into "registry default only" until the manager comes up.
+    try:
+        manager = _get_manager()
+    except HTTPException:
+        manager = None
+
     flavour_images = _flavour_images()
     images: list[KernelImageStatus] = []
     for flavour, image_tag in flavour_images.items():
-        try:
-            client.images.get(image_tag)
-            available = True
-        except _docker.errors.ImageNotFound:
-            available = False
-        except Exception:
-            available = False
+        resolved: str | None = None
+        if manager is not None:
+            resolved = manager.resolve_local_image(flavour)
+        available = resolved is not None
+        if not available:
+            # Fall back to a direct check so the field still reflects reality
+            # when the manager helper is unavailable.
+            try:
+                client.images.get(image_tag)
+                available = True
+            except _docker.errors.ImageNotFound:
+                available = False
+            except Exception:
+                available = False
+
+        # Only expose ``resolved_image`` when it differs from the registry
+        # default — keeps the UI logic simple ("set => show 'Found locally'").
+        resolved_image = resolved if resolved and resolved != image_tag else None
+        pull_state = manager.get_pull_state(image_tag) if manager is not None else None
+
         images.append(
-            KernelImageStatus(flavour=flavour, image=image_tag, available=available)
+            KernelImageStatus(
+                flavour=flavour,
+                image=image_tag,
+                available=available,
+                resolved_image=resolved_image,
+                pull_state=pull_state,
+            )
         )
 
     base_available = any(i.available for i in images if i.flavour == ImageFlavour.BASE)
@@ -107,6 +134,22 @@ async def docker_status():
         image_available=base_available,
         images=images,
     )
+
+
+@router.post("/images/{flavour}/pull", status_code=202)
+async def pull_kernel_image(flavour: ImageFlavour):
+    """Start a background pull for the given flavour's registry-default image.
+
+    Returns immediately (202). The UI polls ``/docker-status`` to track
+    progress via the ``pull_state`` field — ``"pulling"`` while in flight,
+    ``"error:<msg>"`` on failure, cleared once the image is available.
+    """
+    manager = _get_manager()
+    try:
+        state = manager.start_image_pull(flavour)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"flavour": flavour.value, "pull_state": state}
 
 
 @router.get("/{kernel_id}", response_model=KernelInfo)

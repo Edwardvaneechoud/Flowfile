@@ -1,7 +1,7 @@
 <template>
   <div class="modal-overlay" @click="$emit('close')">
-    <div class="modal-container modal-container--lg" @click.stop>
-      <div class="modal-header">
+    <div class="modal-container modal-container--lg km-details-modal" @click.stop>
+      <div class="modal-header km-details-modal__header">
         <div class="modal-title-row">
           <h3 class="modal-title">{{ kernel.name }}</h3>
           <KernelStatusBadge :state="kernel.state" />
@@ -289,6 +289,20 @@ const save = async () => {
 .modal-container--lg {
   max-width: 720px;
   width: 90vw;
+}
+
+.km-details-modal {
+  border-radius: var(--border-radius-xl);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.km-details-modal__header {
+  background: linear-gradient(135deg, rgba(8, 145, 178, 0.08) 0%, rgba(102, 126, 234, 0.06) 100%);
+}
+
+[data-theme="dark"] .km-details-modal__header {
+  background: linear-gradient(135deg, rgba(8, 145, 178, 0.18) 0%, rgba(102, 126, 234, 0.14) 100%);
 }
 
 .modal-title-row {

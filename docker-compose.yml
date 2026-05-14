@@ -40,6 +40,7 @@ services:
       - FLOWFILE_KERNEL_IMAGE=${FLOWFILE_KERNEL_IMAGE:-}
       - FLOWFILE_KERNEL_IMAGE_BASE=${FLOWFILE_KERNEL_IMAGE_BASE:-}
       - FLOWFILE_KERNEL_IMAGE_ML=${FLOWFILE_KERNEL_IMAGE_ML:-}
+      - FLOWFILE_KERNEL_IMAGE_LITE=${FLOWFILE_KERNEL_IMAGE_LITE:-}
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
@@ -102,6 +103,23 @@ services:
       args:
         EXTRAS: ml
     image: flowfile-kernel-ml:local
+    entrypoint: ["true"]
+    restart: "no"
+    profiles:
+      - kernel
+
+  # Lite flavour: same baked packages as base, but only the kernel-critical
+  # pins (polars, pyarrow, numpy, fastapi, uvicorn, httpx, cloudpickle, joblib)
+  # are kept in /opt/constraints.txt. Everything else floats so user-installed
+  # packages with their own dep trees (e.g. flowfile) can resolve freely.
+  # Build with:  docker compose --profile kernel build flowfile-kernel-lite
+  flowfile-kernel-lite:
+    build:
+      context: kernel_runtime
+      dockerfile: Dockerfile
+      args:
+        SLIM_CONSTRAINTS: "true"
+    image: flowfile-kernel-lite:local
     entrypoint: ["true"]
     restart: "no"
     profiles:

@@ -5,6 +5,7 @@ import type {
   ExecuteCellRequest,
   ExecuteResult,
   FlavourInfo,
+  ImageFlavour,
   KernelConfig,
   KernelInfo,
   KernelMemoryInfo,
@@ -111,6 +112,19 @@ export class KernelApi {
     } catch (error) {
       console.error("API Error: Failed to load kernel flavours:", error);
       return [];
+    }
+  }
+
+  static async pullImage(flavour: ImageFlavour): Promise<{ pull_state: string }> {
+    try {
+      const response = await axios.post<{ pull_state: string }>(
+        `${API_BASE_URL}/images/${encodeURIComponent(flavour)}/pull`,
+      );
+      return response.data;
+    } catch (error) {
+      console.error("API Error: Failed to start image pull:", error);
+      const errorMsg = (error as any).response?.data?.detail || "Failed to start image pull";
+      throw new Error(errorMsg);
     }
   }
 

@@ -326,6 +326,70 @@ flowfile_ctx.delete_global_artifact("sales_model_v2")
 !!! tip "Artifact Persistence"
     Local artifacts are automatically saved to disk and recovered if the kernel restarts — no configuration needed.
 
+### Catalog Tables
+
+Kernel cells can read and write Delta-format catalog tables directly, mirroring the ``flowfile_frame.read_catalog_table`` / ``write_catalog_table`` API. The kernel performs the Delta write locally (it has direct access to the catalog storage) and reports the resulting metadata to Core — Core never materialises the dataset.
+
+The kernel exposes three typed handles — `CatalogRef`, `SchemaRef`, `TableRef` — for path-style navigation. The top-level `read_catalog_table` / `write_catalog_table` still accept plain strings for one-shot scripts.
+
+```python
+import polars as pl
+
+# Navigate the hierarchy
+cat = flowfile_ctx.get_catalog("General")           # CatalogRef
+sch = cat.get_schema("default")                     # SchemaRef
+orders = sch.get_table_ref("orders")                # TableRef (may not exist yet)
+
+# Shortcut from a catalog ref
+orders = cat.get_table_ref(schema_name="default", table_name="orders")
+
+# Or grab the seeded default schema directly
+sch = flowfile_ctx.default_schema()
+
+# Discover everything available
+for cat in flowfile_ctx.list_catalogs():
+    print(cat.name)
+    for sch in cat.list_schemas():
+        for tbl in sch.list_tables():
+            print(f"  {sch.name}.{tbl.name} ({tbl.row_count} rows)")
+
+# Read via a ref — equivalent to flowfile_ctx.read_catalog_table(orders)
+df = orders.read()
+df_v3 = orders.read(delta_version=3)   # time travel
+
+# Write via the ref — creates the table if it doesn't exist yet
+new_data = pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
+orders = orders.write(new_data, write_mode="overwrite")  # returns refreshed ref
+
+# Per-mode writes
+orders.write(new_data, write_mode="append")
+orders.write(new_data, write_mode="upsert", merge_keys=["id"])
+orders.write(new_data, write_mode="update", merge_keys=["id"])
+orders.write(new_data.select("id"), write_mode="delete", merge_keys=["id"])
+orders.write(new_data, write_mode="error")   # raises if table already exists
+
+# Schema-level convenience: same effect, no intermediate ref
+sch.write_table(new_data, "customers", write_mode="overwrite")
+sch.read_table("customers")
+
+# String form still works for one-shot usage
+lf = flowfile_ctx.read_catalog_table("orders")              # default schema
+lf = flowfile_ctx.read_catalog_table("orders", schema="sales")
+flowfile_ctx.write_catalog_table(new_data, "customers", write_mode="overwrite")
+```
+
+| `write_mode` | Behaviour | Requires `merge_keys` |
+|--------------|-----------|------------------------|
+| `overwrite`  | Replace the table's data (Delta version increments). | No |
+| `append`     | Add rows; schema_mode="merge" so new columns are tolerated. | No |
+| `upsert`     | Insert new rows, update existing rows matched by merge keys. | Yes |
+| `update`     | Update only existing rows that match merge keys. | Yes |
+| `delete`     | Remove rows matching merge keys. | Yes |
+| `error`      | Fail if the table already exists. | No |
+
+!!! note "No `virtual` mode in the kernel"
+    `flowfile_frame.write_catalog_table` also supports a `"virtual"` mode that backs a table by a registered flow. The kernel intentionally does not expose flow registration or virtual writes — author those flows from the visual editor or `flowfile_frame` instead.
+
 ---
 
 ## Shared Files

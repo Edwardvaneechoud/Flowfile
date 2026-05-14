@@ -9,6 +9,7 @@ tests on their own can't verify cheaply.
 from __future__ import annotations
 
 import asyncio
+import threading
 from unittest.mock import MagicMock, patch
 
 import docker.errors
@@ -19,6 +20,7 @@ from flowfile_core.kernel.manager import (
     KernelManager,
     _derived_image_tag,
     _resolve_image,
+    _resolve_local_image,
     _spec_to_name,
     _validate_custom_image,
     _validate_packages,
@@ -43,6 +45,8 @@ def _bare_manager() -> KernelManager:
         mgr._kernel_volume = None
         mgr._kernel_volume_type = None
         mgr._kernel_mount_target = None
+        mgr._pull_state = {}
+        mgr._pull_state_lock = threading.Lock()
     return mgr
 
 
@@ -166,6 +170,120 @@ class TestResolveImage:
 
     def test_custom_returns_uri(self):
         assert _resolve_image(ImageFlavour.CUSTOM, "myorg/kernel:1.0") == "myorg/kernel:1.0"
+
+    def test_falls_back_to_local_tag_when_registry_missing(self, monkeypatch):
+        """When the registry default isn't local but :local is, prefer :local."""
+        monkeypatch.delenv("FLOWFILE_KERNEL_IMAGE_LITE", raising=False)
+        client = MagicMock()
+        # First .get() (registry default) raises ImageNotFound, then images.list
+        # returns a fake image tagged ":local".
+        client.images.get.side_effect = docker.errors.ImageNotFound("not here")
+        local_img = MagicMock()
+        local_img.tags = ["flowfile-kernel-lite:local"]
+        local_img.attrs = {"Created": "2026-05-14T10:00:00Z"}
+        client.images.list.return_value = [local_img]
+        assert _resolve_image(ImageFlavour.LITE, None, client) == "flowfile-kernel-lite:local"
+
+
+class TestResolveLocalImage:
+    def test_registry_default_wins_when_present(self):
+        client = MagicMock()
+        # images.get succeeds → registry tag is locally available
+        client.images.get.return_value = MagicMock()
+        result = _resolve_local_image(
+            ImageFlavour.BASE, client, "edwardvaneechoud/flowfile-kernel-base:0.3.0"
+        )
+        assert result == "edwardvaneechoud/flowfile-kernel-base:0.3.0"
+        client.images.list.assert_not_called()  # short-circuited
+
+    def test_prefers_local_tag_over_other_variants(self):
+        client = MagicMock()
+        client.images.get.side_effect = docker.errors.ImageNotFound("nope")
+        local_img = MagicMock()
+        local_img.tags = ["flowfile-kernel-base:local"]
+        local_img.attrs = {"Created": "2026-05-14T10:00:00Z"}
+        older_img = MagicMock()
+        older_img.tags = ["flowfile-kernel-base:dev-2025"]
+        older_img.attrs = {"Created": "2025-01-01T00:00:00Z"}
+        client.images.list.return_value = [older_img, local_img]
+        result = _resolve_local_image(
+            ImageFlavour.BASE, client, "edwardvaneechoud/flowfile-kernel-base:0.3.0"
+        )
+        assert result == "flowfile-kernel-base:local"
+
+    def test_falls_back_to_newest_when_no_local_tag(self):
+        client = MagicMock()
+        client.images.get.side_effect = docker.errors.ImageNotFound("nope")
+        old = MagicMock()
+        old.tags = ["flowfile-kernel-base:dev-2025"]
+        old.attrs = {"Created": "2025-01-01T00:00:00Z"}
+        newer = MagicMock()
+        newer.tags = ["flowfile-kernel-base:dev-2026"]
+        newer.attrs = {"Created": "2026-05-14T10:00:00Z"}
+        client.images.list.return_value = [old, newer]
+        result = _resolve_local_image(
+            ImageFlavour.BASE, client, "edwardvaneechoud/flowfile-kernel-base:0.3.0"
+        )
+        assert result == "flowfile-kernel-base:dev-2026"
+
+    def test_returns_none_when_nothing_local(self):
+        client = MagicMock()
+        client.images.get.side_effect = docker.errors.ImageNotFound("nope")
+        client.images.list.return_value = []
+        assert (
+            _resolve_local_image(
+                ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.3.0"
+            )
+            is None
+        )
+
+    def test_returns_none_on_docker_api_error(self):
+        client = MagicMock()
+        client.images.get.side_effect = docker.errors.APIError("docker down")
+        # The first APIError on .get short-circuits to None without listing
+        assert (
+            _resolve_local_image(
+                ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.3.0"
+            )
+            is None
+        )
+
+
+class TestImagePull:
+    def test_start_pull_is_idempotent(self):
+        mgr = _bare_manager()
+        with patch("flowfile_core.kernel.manager.threading.Thread") as thread_cls:
+            thread_cls.return_value.start.return_value = None
+            first = mgr.start_image_pull(ImageFlavour.LITE)
+            second = mgr.start_image_pull(ImageFlavour.LITE)
+            assert first == "pulling"
+            assert second == "pulling"
+            # Only one worker spawned — the second call short-circuits.
+            assert thread_cls.call_count == 1
+
+    def test_custom_flavour_cannot_be_pulled(self):
+        mgr = _bare_manager()
+        with pytest.raises(ValueError, match="custom"):
+            mgr.start_image_pull(ImageFlavour.CUSTOM)
+
+    def test_do_pull_clears_state_on_success(self):
+        mgr = _bare_manager()
+        mgr._docker.images.pull.return_value = MagicMock()
+        # Seed state to "pulling" as if start_image_pull had been called.
+        mgr._pull_state["edwardvaneechoud/flowfile-kernel-lite:0.3.0"] = "pulling"
+        mgr._do_pull("edwardvaneechoud/flowfile-kernel-lite:0.3.0")
+        # Success clears the entry so the next docker-status poll shows idle.
+        assert mgr.get_pull_state("edwardvaneechoud/flowfile-kernel-lite:0.3.0") is None
+
+    def test_do_pull_records_error_on_failure(self):
+        mgr = _bare_manager()
+        mgr._docker.images.pull.side_effect = docker.errors.APIError("registry timeout")
+        mgr._pull_state["x:1"] = "pulling"
+        mgr._do_pull("x:1")
+        state = mgr.get_pull_state("x:1")
+        assert state is not None
+        assert state.startswith("error:")
+        assert "timeout" in state
 
 
 class TestSpecToName:

@@ -2,7 +2,7 @@
 
 export type KernelState = "stopped" | "starting" | "idle" | "executing" | "error";
 
-export type ImageFlavour = "base" | "ml" | "custom";
+export type ImageFlavour = "base" | "ml" | "lite" | "custom";
 
 export interface KernelFlavourMeta {
   value: ImageFlavour;
@@ -20,6 +20,15 @@ export const KERNEL_FLAVOURS: KernelFlavourMeta[] = [
     value: "ml",
     label: "ML",
     description: "Base + scikit-learn, XGBoost, LightGBM, statsmodels.",
+  },
+  {
+    value: "lite",
+    label: "Lite",
+    description:
+      "Same image as Base, but only Polars and the kernel-runtime libs are pinned — " +
+      "numpy, pyarrow and other transitives float. Best for installing large libraries " +
+      "(e.g. flowfile) whose own dep trees need room to resolve. " +
+      "flowfile_ctx is always available, regardless of flavour.",
   },
   {
     value: "custom",
@@ -54,6 +63,13 @@ export interface KernelImageStatus {
   flavour: ImageFlavour;
   image: string;
   available: boolean;
+  // Tag actually picked by the resolver when ``image`` itself isn't present
+  // but a locally-built variant was found. Null = the registry default is in
+  // use (or nothing is). Drives the "Found locally" info banner.
+  resolved_image: string | null;
+  // "pulling" while a background install is running, "error:<msg>" if the
+  // last attempt failed, null otherwise.
+  pull_state: string | null;
 }
 
 export interface DockerStatus {

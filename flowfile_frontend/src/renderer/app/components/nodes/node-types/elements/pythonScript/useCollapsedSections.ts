@@ -20,8 +20,7 @@ function readFromStorage(): CollapsedState {
     return {
       kernel: typeof parsed.kernel === "boolean" ? parsed.kernel : DEFAULT_STATE.kernel,
       outputs: typeof parsed.outputs === "boolean" ? parsed.outputs : DEFAULT_STATE.outputs,
-      artifacts:
-        typeof parsed.artifacts === "boolean" ? parsed.artifacts : DEFAULT_STATE.artifacts,
+      artifacts: typeof parsed.artifacts === "boolean" ? parsed.artifacts : DEFAULT_STATE.artifacts,
     };
   } catch {
     return { ...DEFAULT_STATE };

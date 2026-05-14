@@ -1,5 +1,11 @@
 <template>
-  <div class="kernel-card" :class="{ 'kernel-card--error': kernel.state === 'error' }">
+  <div
+    class="kernel-card"
+    :class="[
+      `kernel-card--state-${kernel.state}`,
+      { 'kernel-card--error': kernel.state === 'error' },
+    ]"
+  >
     <div class="kernel-card__header">
       <div class="kernel-card__title-row">
         <h4 class="kernel-card__name">{{ kernel.name }}</h4>
@@ -166,18 +172,69 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
 
 <style scoped>
 .kernel-card {
+  position: relative;
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-lg);
   padding: var(--spacing-4);
+  padding-left: calc(var(--spacing-4) + 3px);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-3);
-  transition: border-color var(--transition-base) var(--transition-timing);
+  transition:
+    border-color var(--transition-base) var(--transition-timing),
+    box-shadow var(--transition-base) var(--transition-timing),
+    transform var(--transition-base) var(--transition-timing);
+  overflow: hidden;
+}
+
+.kernel-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: var(--color-text-muted);
+  transition: background-color var(--transition-base) var(--transition-timing);
+}
+
+.kernel-card--state-idle::before {
+  background-color: var(--color-success);
+}
+
+.kernel-card--state-executing::before {
+  background-color: var(--color-info);
+  animation: km-stripe-pulse 1.6s ease-in-out infinite;
+}
+
+.kernel-card--state-starting::before {
+  background-color: var(--color-warning);
+  animation: km-stripe-pulse 1.6s ease-in-out infinite;
+}
+
+.kernel-card--state-error::before {
+  background-color: var(--color-danger);
+}
+
+.kernel-card--state-stopped::before {
+  background-color: var(--color-border-secondary);
+}
+
+@keyframes km-stripe-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .kernel-card:hover {
   border-color: var(--color-border-secondary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 .kernel-card--error {
@@ -333,16 +390,20 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
 }
 
 .kernel-card__memory-track {
-  height: 4px;
+  height: 6px;
   background-color: var(--color-background-tertiary);
   border-radius: var(--border-radius-full);
   overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .kernel-card__memory-fill {
   height: 100%;
   border-radius: var(--border-radius-full);
-  transition: width 0.3s ease;
+  transition:
+    width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color var(--transition-base) var(--transition-timing);
+  box-shadow: 0 0 6px currentColor;
 }
 
 .kernel-card__memory-fill.memory-level--normal {

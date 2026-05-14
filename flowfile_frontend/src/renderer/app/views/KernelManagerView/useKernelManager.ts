@@ -156,6 +156,7 @@ export function useKernelManager() {
     memoryStats,
     flavourInfo,
     loadKernels,
+    checkDockerStatus,
     createKernel,
     updateKernel,
     startKernel,

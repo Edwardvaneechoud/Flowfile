@@ -59,9 +59,12 @@ import { indentMore, indentLess } from "@codemirror/commands";
 import type { NotebookCell } from "../../../../../types/node.types";
 import CellOutput from "./CellOutput.vue";
 import {
+  catalogRefChainCompletions,
   flowfileApiCompletions,
+  globalIdentifierCompletions,
   polarsModuleCompletions,
-  polarsExprCompletions,
+  createPolarsExprCompletions,
+  createRefVariableCompletions,
   createNamedInputCompletions,
   createUpstreamColumnCompletions,
   createScopeCompletions,
@@ -108,6 +111,8 @@ const cellClasses = computed(() => ({
 const namedInputCompletions = createNamedInputCompletions(() => props.inputNames);
 const columnCompletions = createUpstreamColumnCompletions(() => props.upstreamColumns);
 const scopeCompletions = createScopeCompletions(() => props.priorCellCodes);
+const refVarCompletions = createRefVariableCompletions(() => props.priorCellCodes);
+const polarsExprCompletions = createPolarsExprCompletions(() => props.priorCellCodes);
 
 // Theme for compact cell editors
 const cellEditorTheme = EditorView.theme({
@@ -169,6 +174,9 @@ const cellExtensions: Extension[] = [
   // own keyword/builtin completions remain active (instead of `override` which
   // would silence them).
   pythonLanguage.data.of({ autocomplete: flowfileApiCompletions }),
+  pythonLanguage.data.of({ autocomplete: globalIdentifierCompletions }),
+  pythonLanguage.data.of({ autocomplete: catalogRefChainCompletions }),
+  pythonLanguage.data.of({ autocomplete: refVarCompletions }),
   pythonLanguage.data.of({ autocomplete: polarsModuleCompletions }),
   pythonLanguage.data.of({ autocomplete: polarsExprCompletions }),
   pythonLanguage.data.of({ autocomplete: namedInputCompletions }),

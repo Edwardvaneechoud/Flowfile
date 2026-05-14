@@ -124,14 +124,91 @@ const FLOWFILE_API_ENTRIES: Completion[] = [
     detail: 'flowfile_ctx.log_error("message")',
     apply: 'log_error("message")',
   },
+  {
+    label: "read_catalog_table",
+    type: "function",
+    info: "Read a catalog table as a lazy Polars LazyFrame. Pass schema=/namespace_id= to disambiguate; delta_version= for time travel.",
+    detail: 'flowfile_ctx.read_catalog_table("name", schema?, namespace_id?, delta_version?)',
+    apply: 'read_catalog_table("name")',
+  },
+  {
+    label: "list_catalog_tables",
+    type: "function",
+    info: "List catalog tables available to the kernel as TableRef objects. Optionally filter by schema= or namespace_id=.",
+    detail: "flowfile_ctx.list_catalog_tables(schema?, namespace_id?) -> list[TableRef]",
+    apply: "list_catalog_tables()",
+  },
+  {
+    label: "list_catalogs",
+    type: "function",
+    info: "List top-level catalog namespaces as CatalogRef objects. Navigate further with .get_schema() / .list_schemas() / .get_table_ref().",
+    detail: "flowfile_ctx.list_catalogs() -> list[CatalogRef]",
+    apply: "list_catalogs()",
+  },
+  {
+    label: "list_schemas",
+    type: "function",
+    info: "List schemas as SchemaRef objects, optionally filtered by catalog= or catalog_id=.",
+    detail: "flowfile_ctx.list_schemas(catalog?, catalog_id?) -> list[SchemaRef]",
+    apply: "list_schemas()",
+  },
+  {
+    label: "get_catalog",
+    type: "function",
+    info: "Return a CatalogRef for the named top-level catalog. Raises LookupError if missing.",
+    detail: 'flowfile_ctx.get_catalog("name") -> CatalogRef',
+    apply: 'get_catalog("")',
+  },
+  {
+    label: "default_schema",
+    type: "function",
+    info: "Return the seeded default schema (General/default) as a SchemaRef.",
+    detail: "flowfile_ctx.default_schema() -> SchemaRef",
+    apply: "default_schema()",
+  },
+  {
+    label: "CatalogRef",
+    type: "class",
+    info: "Typed handle to a top-level catalog. Methods: get_schema, list_schemas, list_tables, get_table_ref(schema_name=, table_name=).",
+    detail: "flowfile_ctx.CatalogRef",
+  },
+  {
+    label: "SchemaRef",
+    type: "class",
+    info: "Typed handle to a schema. Methods: get_table_ref, list_tables, read_table, write_table.",
+    detail: "flowfile_ctx.SchemaRef",
+  },
+  {
+    label: "TableRef",
+    type: "class",
+    info: "Typed handle to a catalog table. Methods: read, write, exists, refresh.",
+    detail: "flowfile_ctx.TableRef",
+  },
+  {
+    label: "write_catalog_table",
+    type: "function",
+    info: 'Write a Polars DataFrame/LazyFrame to a catalog table. write_mode: "overwrite" | "append" | "upsert" | "update" | "delete" | "error". Merge modes require merge_keys=.',
+    detail: 'flowfile_ctx.write_catalog_table(df, "name", schema?, write_mode?, merge_keys?)',
+    apply: 'write_catalog_table(df, "name")',
+  },
 ];
 
 // Polars module-level (after `pl.`)
 const POLARS_MODULE_ENTRIES: Completion[] = [
   { label: "col", type: "function", info: "Reference a column by name", apply: 'col("")' },
   { label: "lit", type: "function", info: "Literal value", apply: "lit()" },
-  { label: "when", type: "function", info: "Conditional expression: when(...).then(...).otherwise(...)", apply: "when()" },
-  { label: "concat", type: "function", info: "Concatenate DataFrames/LazyFrames", apply: "concat()" },
+  {
+    label: "when",
+    type: "function",
+    info: "Conditional expression: when(...).then(...).otherwise(...)",
+    apply: "when()",
+  },
+  {
+    label: "concat",
+    type: "function",
+    info: "Concatenate DataFrames/LazyFrames",
+    apply: "concat()",
+  },
   { label: "struct", type: "function", info: "Create a struct expression", apply: "struct()" },
   { label: "format", type: "function", info: "String format expression", apply: "format()" },
   { label: "sum_horizontal", type: "function", apply: "sum_horizontal()" },
@@ -297,7 +374,247 @@ const POLARS_METHOD_ENTRIES: Completion[] = [
   { label: "cat", type: "namespace", info: "Categorical operations" },
 ];
 
+// ─── Catalog ref method entries ──────────────────────────────────────────────
+
+const CATALOG_REF_METHODS: Completion[] = [
+  {
+    label: "get_schema",
+    type: "method",
+    info: "Return the named child schema as a SchemaRef. Raises LookupError if missing.",
+    detail: "CatalogRef.get_schema(name) -> SchemaRef",
+    apply: 'get_schema("")',
+  },
+  {
+    label: "list_schemas",
+    type: "method",
+    info: "All schemas (level-1 namespaces) under this catalog.",
+    detail: "CatalogRef.list_schemas() -> list[SchemaRef]",
+    apply: "list_schemas()",
+  },
+  {
+    label: "list_tables",
+    type: "method",
+    info: "All tables across every schema in this catalog (flat list).",
+    detail: "CatalogRef.list_tables() -> list[TableRef]",
+    apply: "list_tables()",
+  },
+  {
+    label: "get_table_ref",
+    type: "method",
+    info: "Shortcut for self.get_schema(schema_name).get_table_ref(table_name).",
+    detail: "CatalogRef.get_table_ref(schema_name=, table_name=) -> TableRef",
+    apply: 'get_table_ref(schema_name="", table_name="")',
+  },
+  { label: "id", type: "property", info: "Catalog namespace id." },
+  { label: "name", type: "property", info: "Catalog name as stored in Core." },
+];
+
+const SCHEMA_REF_METHODS: Completion[] = [
+  {
+    label: "get_table_ref",
+    type: "method",
+    info: "Get a TableRef for the named table. Returns a lazy ref (id=None) if the table doesn't exist yet.",
+    detail: "SchemaRef.get_table_ref(name) -> TableRef",
+    apply: 'get_table_ref("")',
+  },
+  {
+    label: "list_tables",
+    type: "method",
+    info: "All tables registered in this schema.",
+    detail: "SchemaRef.list_tables() -> list[TableRef]",
+    apply: "list_tables()",
+  },
+  {
+    label: "read_table",
+    type: "method",
+    info: "Read a table from this schema as a Polars LazyFrame.",
+    detail: "SchemaRef.read_table(name, delta_version?) -> LazyFrame",
+    apply: 'read_table("")',
+  },
+  {
+    label: "write_table",
+    type: "method",
+    info: 'Write a DataFrame/LazyFrame into this schema. write_mode: "overwrite"|"append"|"upsert"|"update"|"delete"|"error".',
+    detail: "SchemaRef.write_table(df, name, write_mode=, merge_keys=, description=) -> TableRef",
+    apply: 'write_table(df, "")',
+  },
+  {
+    label: "read_catalog_table",
+    type: "method",
+    info: "Alias for read_table — name mirrors flowfile_ctx.read_catalog_table.",
+    detail: "SchemaRef.read_catalog_table(name, delta_version?) -> LazyFrame",
+    apply: 'read_catalog_table("")',
+  },
+  {
+    label: "write_catalog_table",
+    type: "method",
+    info: "Alias for write_table — name mirrors flowfile_ctx.write_catalog_table.",
+    detail:
+      "SchemaRef.write_catalog_table(df, name, write_mode=, merge_keys=, description=) -> TableRef",
+    apply: 'write_catalog_table(df, "")',
+  },
+  {
+    label: "publish_artifact",
+    type: "method",
+    info: "Persist a Python object to the global artifact store under this schema. Requires a registered catalog flow.",
+    detail: "SchemaRef.publish_artifact(name, obj, description=, tags=, fmt=) -> int",
+    apply: 'publish_artifact("", obj)',
+  },
+  {
+    label: "read_artifact",
+    type: "method",
+    info: "Retrieve an artifact from this schema's namespace.",
+    detail: "SchemaRef.read_artifact(name, version?) -> Any",
+    apply: 'read_artifact("")',
+  },
+  {
+    label: "list_artifacts",
+    type: "method",
+    info: "List artifacts in this schema's namespace.",
+    detail: "SchemaRef.list_artifacts(tags?) -> list[GlobalArtifactInfo]",
+    apply: "list_artifacts()",
+  },
+  {
+    label: "delete_artifact",
+    type: "method",
+    info: "Delete an artifact from this schema's namespace.",
+    detail: "SchemaRef.delete_artifact(name, version?)",
+    apply: 'delete_artifact("")',
+  },
+  { label: "id", type: "property", info: "Schema namespace id." },
+  { label: "name", type: "property", info: "Schema name." },
+  { label: "catalog", type: "property", info: "Parent CatalogRef." },
+];
+
+const TABLE_REF_METHODS: Completion[] = [
+  {
+    label: "read",
+    type: "method",
+    info: "Read this table as a Polars LazyFrame.",
+    detail: "TableRef.read(delta_version?) -> LazyFrame",
+    apply: "read()",
+  },
+  {
+    label: "write",
+    type: "method",
+    info: 'Write df into this table. Creates it if it doesn\'t exist yet. write_mode: "overwrite"|"append"|"upsert"|"update"|"delete"|"error".',
+    detail: "TableRef.write(df, write_mode=, merge_keys=, description=) -> TableRef",
+    apply: "write(df)",
+  },
+  {
+    label: "exists",
+    type: "method",
+    info: "True if this ref points at an existing catalog table.",
+    detail: "TableRef.exists() -> bool",
+    apply: "exists()",
+  },
+  {
+    label: "refresh",
+    type: "method",
+    info: "Return a fresh TableRef with re-fetched metadata from Core.",
+    detail: "TableRef.refresh() -> TableRef",
+    apply: "refresh()",
+  },
+  { label: "name", type: "property", info: "Table name." },
+  { label: "schema", type: "property", info: "Parent SchemaRef." },
+  { label: "id", type: "property", info: "Catalog table id (None until the table is created)." },
+  { label: "file_path", type: "property", info: "Absolute path of the Delta directory on disk." },
+  { label: "row_count", type: "property", info: "Last-recorded row count." },
+  { label: "column_count", type: "property", info: "Last-recorded column count." },
+  { label: "size_bytes", type: "property", info: "Last-recorded size on disk." },
+];
+
+// Regex fragments shared by the catalog chain-completion source.
+// ``[^()]*`` is intentionally simple — handles the common case of a single
+// string/kwarg argument. Nested parens (`get_table_ref(name=foo("x"))`) won't
+// match; users with that shape will fall through to the Polars completions.
+const _RE_CATALOG_CALL = /\.get_catalog\s*\([^()]*\)\s*$/;
+const _RE_SCHEMA_CALL = /\.(?:get_schema|default_schema)\s*\([^()]*\)\s*$/;
+const _RE_TABLE_CALL = /\.get_table_ref\s*\([^()]*\)\s*$/;
+
+// Variable-assignment regexes anchored to the final ref-producing method.
+// Greedy `.+` covers any base expression — `cat = flowfile_ctx.get_catalog("x")`
+// AND `tref = schema.get_table_ref("t")` both match the table-assignment rule
+// because the final `.method(...)` segment is what determines the resulting
+// ref's type. Multi-line bases aren't supported (the `m` flag anchors `^`/`$`
+// to line boundaries).
+const _RE_ASSIGN_CATALOG = /^\s*([A-Za-z_]\w*)\s*=\s*.+\.get_catalog\s*\([^()]*\)\s*$/gm;
+const _RE_ASSIGN_SCHEMA =
+  /^\s*([A-Za-z_]\w*)\s*=\s*.+\.(?:get_schema|default_schema)\s*\([^()]*\)\s*$/gm;
+const _RE_ASSIGN_TABLE = /^\s*([A-Za-z_]\w*)\s*=\s*.+\.get_table_ref\s*\([^()]*\)\s*$/gm;
+
+type RefKind = "catalog" | "schema" | "table";
+
+const _REF_METHODS_BY_KIND: Record<RefKind, Completion[]> = {
+  catalog: CATALOG_REF_METHODS,
+  schema: SCHEMA_REF_METHODS,
+  table: TABLE_REF_METHODS,
+};
+
+/**
+ * Scan code for `name = <expr>.get_catalog|get_schema|default_schema|get_table_ref(...)`
+ * lines and return a map of varname → ref kind. Re-built on each completion
+ * request because notebook cells change frequently.
+ */
+function buildRefVarMap(code: string): Map<string, RefKind> {
+  const map = new Map<string, RefKind>();
+  for (const m of code.matchAll(_RE_ASSIGN_CATALOG)) map.set(m[1], "catalog");
+  for (const m of code.matchAll(_RE_ASSIGN_SCHEMA)) map.set(m[1], "schema");
+  for (const m of code.matchAll(_RE_ASSIGN_TABLE)) map.set(m[1], "table");
+  return map;
+}
+
 // ─── Scoped completion sources ────────────────────────────────────────────────
+
+/**
+ * Globals injected into the kernel exec namespace. Suggested as bare-name
+ * completions so typing `flowfile_ct…` offers `flowfile_ctx` before the user
+ * has typed the dot. `flowfile` is also suggested but flagged as deprecated.
+ */
+const KERNEL_GLOBAL_ENTRIES: Completion[] = [
+  {
+    label: "flowfile_ctx",
+    type: "namespace",
+    info: "Kernel-runtime context. Provides read_input/publish_output, display, log, artifacts, catalog tables — type `flowfile_ctx.` to see methods.",
+    detail: "kernel global",
+  },
+  {
+    label: "flowfile",
+    type: "namespace",
+    info: "Deprecated alias for `flowfile_ctx`. Still works but emits a DeprecationWarning on first attribute access.",
+    detail: "kernel global (deprecated → flowfile_ctx)",
+  },
+  {
+    label: "pl",
+    type: "namespace",
+    info: "Polars module (when imported as `import polars as pl`). Type `pl.` to see DataFrame/LazyFrame/Series constructors and read_* / scan_* helpers.",
+    detail: "polars",
+  },
+];
+
+/**
+ * Completions for bare global identifiers — fires when the user is typing a
+ * word that is NOT preceded by a dot (so it doesn't interfere with the
+ * scoped member-access completions below). Suggests the kernel globals
+ * (`flowfile_ctx`, `flowfile`, `pl`).
+ */
+export const globalIdentifierCompletions: CompletionSource = (context) => {
+  const match = context.matchBefore(/\w+/);
+  if (!match) return null;
+  // Skip if preceded by a dot — that's member access, handled elsewhere.
+  if (match.from > 0) {
+    const prev = context.state.doc.sliceString(match.from - 1, match.from);
+    if (prev === ".") return null;
+  }
+  // Don't fire on explicit-trigger-only contexts (avoid stomping the language's
+  // builtin keyword/identifier completions when the user is just typing).
+  if (!context.explicit && match.text.length < 2) return null;
+  return {
+    from: match.from,
+    options: KERNEL_GLOBAL_ENTRIES,
+    validFor: /^\w*$/,
+  };
+};
 
 /**
  * Completions after `flowfile_ctx.` (canonical) or `flowfile.` (legacy alias) —
@@ -333,24 +650,105 @@ export const polarsModuleCompletions: CompletionSource = (context) => {
 };
 
 /**
- * Completions after any `.` — common Polars Expr / DataFrame / LazyFrame methods.
- * Skipped when the preceding identifier is `flowfile_ctx`, the legacy `flowfile`
- * alias, or `pl` (those have dedicated sources).
+ * Completions after a `.` that follows a catalog-ref-producing call —
+ * `…get_catalog(…).`, `…get_schema(…).`, `…default_schema().`,
+ * `…get_table_ref(…).`. Suggests the corresponding ref's methods so chained
+ * calls (`flowfile_ctx.get_catalog("X").get_schema("Y").read_table(...)`)
+ * autocomplete the way users expect even though CodeMirror doesn't do
+ * type inference.
+ *
+ * Limitation: detection is purely textual with a ~200-char lookback. Chains
+ * that span more than that, or that nest parentheses inside the arg list,
+ * won't be recognised and fall back to the generic Polars completions.
  */
-export const polarsExprCompletions: CompletionSource = (context) => {
+export const catalogRefChainCompletions: CompletionSource = (context) => {
   const match = context.matchBefore(/\.\w*/);
   if (!match) return null;
-
-  // Skip if preceded by `flowfile_ctx`, `flowfile`, or `pl` — those have dedicated, more specific sources
-  const lookback = context.state.doc.sliceString(Math.max(0, match.from - 16), match.from);
-  if (/\b(?:flowfile_ctx|flowfile)$/.test(lookback) || /\bpl$/.test(lookback)) return null;
-
+  const lookback = context.state.doc.sliceString(Math.max(0, match.from - 200), match.from);
+  let options: Completion[] | null = null;
+  if (_RE_TABLE_CALL.test(lookback)) {
+    options = TABLE_REF_METHODS;
+  } else if (_RE_SCHEMA_CALL.test(lookback)) {
+    options = SCHEMA_REF_METHODS;
+  } else if (_RE_CATALOG_CALL.test(lookback)) {
+    options = CATALOG_REF_METHODS;
+  }
+  if (!options) return null;
   return {
     from: match.from + 1,
-    options: POLARS_METHOD_ENTRIES,
+    options,
     validFor: /^\w*$/,
   };
 };
+
+/**
+ * Completions after `<varname>.` where `<varname>` is locally assigned to a
+ * catalog/schema/table ref. Scans the current cell doc + prior cells for
+ * assignment patterns like `schema = flowfile_ctx.default_schema()` so the
+ * popup offers the right ref methods on the next line instead of generic
+ * Polars items.
+ */
+export function createRefVariableCompletions(getPriorCellCodes: () => string[]): CompletionSource {
+  return (context) => {
+    const match = context.matchBefore(/\.\w*/);
+    if (!match) return null;
+    // Identifier immediately before the dot.
+    const before = context.state.doc.sliceString(Math.max(0, match.from - 64), match.from);
+    const idMatch = before.match(/([A-Za-z_]\w*)$/);
+    if (!idMatch) return null;
+    const varName = idMatch[1];
+    // These have their own dedicated sources — don't shadow them.
+    if (varName === "flowfile_ctx" || varName === "flowfile" || varName === "pl") return null;
+
+    const allCode = [...getPriorCellCodes(), context.state.doc.toString()].join("\n");
+    const kind = buildRefVarMap(allCode).get(varName);
+    if (!kind) return null;
+
+    return {
+      from: match.from + 1,
+      options: _REF_METHODS_BY_KIND[kind],
+      validFor: /^\w*$/,
+    };
+  };
+}
+
+/**
+ * Completions after any `.` — common Polars Expr / DataFrame / LazyFrame methods.
+ * Skipped when the preceding identifier is `flowfile_ctx`, the legacy `flowfile`
+ * alias, `pl`, any catalog-ref-producing call, or a variable locally bound to a
+ * catalog/schema/table ref (those have dedicated sources).
+ */
+export function createPolarsExprCompletions(getPriorCellCodes: () => string[]): CompletionSource {
+  return (context) => {
+    const match = context.matchBefore(/\.\w*/);
+    if (!match) return null;
+
+    // Skip if preceded by `flowfile_ctx`, `flowfile`, or `pl` — those have dedicated, more specific sources
+    const lookback = context.state.doc.sliceString(Math.max(0, match.from - 200), match.from);
+    if (/\b(?:flowfile_ctx|flowfile)$/.test(lookback) || /\bpl$/.test(lookback)) return null;
+    // Also step aside for catalog-ref chains so the Polars list doesn't pollute
+    // ref completions.
+    if (
+      _RE_CATALOG_CALL.test(lookback) ||
+      _RE_SCHEMA_CALL.test(lookback) ||
+      _RE_TABLE_CALL.test(lookback)
+    ) {
+      return null;
+    }
+    // Step aside for ref-bound variables (handled by createRefVariableCompletions).
+    const idMatch = lookback.match(/([A-Za-z_]\w*)$/);
+    if (idMatch) {
+      const allCode = [...getPriorCellCodes(), context.state.doc.toString()].join("\n");
+      if (buildRefVarMap(allCode).has(idMatch[1])) return null;
+    }
+
+    return {
+      from: match.from + 1,
+      options: POLARS_METHOD_ENTRIES,
+      validFor: /^\w*$/,
+    };
+  };
+}
 
 /**
  * Build a completion source that suggests connected input names inside `read_input("...")`.
@@ -426,7 +824,8 @@ function extractSymbols(code: string): ScopeSymbol[] {
   const ASSIGN_RE = /^\s*([A-Za-z_]\w*)\s*=(?!=)/gm;
   const DEF_RE = /^\s*def\s+([A-Za-z_]\w*)/gm;
   const CLASS_RE = /^\s*class\s+([A-Za-z_]\w*)/gm;
-  const IMPORT_RE = /^\s*import\s+([A-Za-z_][\w.]*(?:\s+as\s+[A-Za-z_]\w*)?(?:\s*,\s*[A-Za-z_][\w.]*(?:\s+as\s+[A-Za-z_]\w*)?)*)/gm;
+  const IMPORT_RE =
+    /^\s*import\s+([A-Za-z_][\w.]*(?:\s+as\s+[A-Za-z_]\w*)?(?:\s*,\s*[A-Za-z_][\w.]*(?:\s+as\s+[A-Za-z_]\w*)?)*)/gm;
   const FROM_IMPORT_RE = /^\s*from\s+\S+\s+import\s+([^\n]+)/gm;
 
   let m: RegExpExecArray | null;

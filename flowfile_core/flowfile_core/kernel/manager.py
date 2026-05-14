@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 _KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.0"
 _KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.0"
+_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.3.0"
 
 
 def _envvar_or_default(name: str, default: str) -> str:
@@ -65,14 +66,31 @@ def _kernel_image_ml() -> str:
     return _envvar_or_default("FLOWFILE_KERNEL_IMAGE_ML", _KERNEL_IMAGE_ML_DEFAULT)
 
 
+def _kernel_image_lite() -> str:
+    return _envvar_or_default("FLOWFILE_KERNEL_IMAGE_LITE", _KERNEL_IMAGE_LITE_DEFAULT)
+
+
 def _flavour_images() -> dict[ImageFlavour, str]:
     return {
         ImageFlavour.BASE: _kernel_image_base(),
         ImageFlavour.ML: _kernel_image_ml(),
+        ImageFlavour.LITE: _kernel_image_lite(),
     }
 
 
-def _resolve_image(flavour: ImageFlavour, custom_image: str | None) -> str:
+def _resolve_image(
+    flavour: ImageFlavour,
+    custom_image: str | None,
+    docker_client=None,
+) -> str:
+    """Resolve the image tag to use for ``flavour``.
+
+    When ``docker_client`` is provided, falls back to a locally-built variant
+    (``flowfile-kernel-<flavour>:local`` or any other tag matching the repo
+    name) if the registry default isn't present. Without a client (e.g. unit
+    tests not exercising the docker layer) returns the registry default
+    unchanged.
+    """
     if flavour == ImageFlavour.CUSTOM:
         if not custom_image:
             raise ValueError(
@@ -80,7 +98,58 @@ def _resolve_image(flavour: ImageFlavour, custom_image: str | None) -> str:
             )
         _validate_custom_image(custom_image)
         return custom_image
-    return _flavour_images()[flavour]
+    registry_default = _flavour_images()[flavour]
+    if docker_client is None:
+        return registry_default
+    return _resolve_local_image(flavour, docker_client, registry_default) or registry_default
+
+
+def _resolve_local_image(
+    flavour: ImageFlavour,
+    docker_client,
+    registry_default: str,
+) -> str | None:
+    """Return a locally-available tag for ``flavour``, or ``None`` if nothing matches.
+
+    Priority:
+    1. The registry default itself if present locally
+    2. ``flowfile-kernel-<flavour>:local`` (docker-compose dev build convention)
+    3. Any other tag of the ``flowfile-kernel-<flavour>`` repo, newest first
+    """
+    # 1. Registry default available locally
+    try:
+        docker_client.images.get(registry_default)
+        return registry_default
+    except docker.errors.ImageNotFound:
+        pass
+    except docker.errors.APIError:
+        return None
+
+    # 2 + 3: any locally-built variant under the conventional repo name
+    repo_name = f"flowfile-kernel-{flavour.value}"
+    try:
+        images = docker_client.images.list(name=repo_name)
+    except docker.errors.APIError:
+        return None
+    if not images:
+        return None
+
+    preferred_tag = f"{repo_name}:local"
+    for img in images:
+        if preferred_tag in (img.tags or ()):
+            return preferred_tag
+
+    # Fall back to the most recently-created tag for this repo
+    images_sorted = sorted(
+        images,
+        key=lambda i: i.attrs.get("Created", "") if isinstance(i.attrs, dict) else "",
+        reverse=True,
+    )
+    for img in images_sorted:
+        for tag in img.tags or ():
+            if tag.startswith(f"{repo_name}:"):
+                return tag
+    return None
 
 
 # Pip package specifier (PEP 508-ish, conservative): rejects anything with
@@ -171,7 +240,16 @@ class KernelManager:
         self._docker = docker.from_env()
         self._kernels: dict[str, KernelInfo] = {}
         self._kernel_owners: dict[str, int] = {}  # kernel_id -> user_id
+        # Background image-pull state: image-tag -> "pulling" or "error:<msg>".
+        # Absent key means idle. Lock is held only for read/write, never across
+        # a network call (the actual pull runs on a thread without the lock).
+        self._pull_state: dict[str, str] = {}
+        self._pull_state_lock = threading.Lock()
         self._shared_volume = shared_volume_path or str(storage.cache_directory)
+        # Catalog tables (Delta-format) live outside the shared volume. The
+        # kernel needs a separate mount so ``flowfile_ctx.read_catalog_table`` /
+        # ``write_catalog_table`` can read/write Delta directories directly.
+        self._catalog_tables_dir = str(storage.catalog_tables_directory)
 
         # Docker-in-Docker settings: when core itself runs in a container,
         # kernel containers must use a named volume (not a bind mount) and
@@ -185,6 +263,11 @@ class KernelManager:
         self._kernel_volume: str | None = None
         self._kernel_volume_type: str | None = None
         self._kernel_mount_target: str | None = None  # mount point inside containers
+        # Catalog volume (separate from _kernel_volume when catalog_tables is
+        # under user_data_directory rather than the internal storage volume).
+        self._catalog_volume: str | None = None
+        self._catalog_volume_type: str | None = None
+        self._catalog_mount_target: str | None = None
         if _is_docker_mode():
             vol_name, vol_type, mount_dest = self._discover_volume_for_path(self._shared_volume)
             if vol_name:
@@ -204,6 +287,19 @@ class KernelManager:
                     "Could not discover volume for shared_path=%s; "
                     "kernel containers will use bind mounts (local mode only)",
                     self._shared_volume,
+                )
+
+            cvol_name, cvol_type, cmount_dest = self._discover_volume_for_path(self._catalog_tables_dir)
+            if cvol_name and cvol_name != self._kernel_volume:
+                self._catalog_volume = cvol_name
+                self._catalog_volume_type = cvol_type
+                self._catalog_mount_target = cmount_dest
+                logger.info(
+                    "Catalog volume=%s (type=%s) at %s covers catalog_tables_path=%s",
+                    cvol_name,
+                    cvol_type,
+                    cmount_dest,
+                    self._catalog_tables_dir,
                 )
 
         self._restore_kernels_from_db()
@@ -285,13 +381,18 @@ class KernelManager:
         """Translate a local filesystem path to the path visible inside a kernel container.
 
         In Docker-in-Docker mode the volume is mounted at the same path in all
-        containers, so paths are identical.  In local mode the host directory is
-        bind-mounted at ``/shared`` inside the kernel, so we swap the prefix.
+        containers, so paths are identical.  In local mode the host shared dir is
+        bind-mounted at ``/shared`` and the host catalog_tables dir at
+        ``/catalog_tables``; we swap whichever prefix matches.
         """
         if self._kernel_volume:
             # Same volume, same mount point — no translation needed
             return local_path
-        # Local mode: host shared_volume → /shared inside kernel
+        # Local mode: try each known prefix
+        normalized = os.path.normpath(local_path)
+        catalog_norm = os.path.normpath(self._catalog_tables_dir)
+        if normalized == catalog_norm or normalized.startswith(catalog_norm + os.sep):
+            return local_path.replace(self._catalog_tables_dir, "/catalog_tables", 1)
         return local_path.replace(self._shared_volume, "/shared", 1)
 
     def resolve_node_paths(self, request: "ExecuteRequest") -> None:
@@ -345,6 +446,8 @@ class KernelManager:
         """Build Docker ``containers.run()`` keyword arguments.
 
         Adapts volume mounts and networking for local vs Docker-in-Docker.
+        Always mounts the catalog_tables directory so kernel cells can read
+        and write Delta-format catalog tables directly.
         """
         run_kwargs: dict = {
             "detach": True,
@@ -359,7 +462,7 @@ class KernelManager:
             # all file paths are identical in core, worker, and kernel.
             mount_type = self._kernel_volume_type or "volume"
             mount_target = self._kernel_mount_target or "/app/internal_storage"
-            run_kwargs["mounts"] = [
+            mounts = [
                 docker.types.Mount(
                     target=mount_target,
                     source=self._kernel_volume,
@@ -367,12 +470,27 @@ class KernelManager:
                     read_only=False,
                 )
             ]
+            # Add the catalog volume if it's separate (catalog_tables lives
+            # under user_data_directory, which is typically a different volume
+            # than internal storage).
+            if self._catalog_volume:
+                mounts.append(
+                    docker.types.Mount(
+                        target=self._catalog_mount_target or "/app/user_data",
+                        source=self._catalog_volume,
+                        type=self._catalog_volume_type or "volume",
+                        read_only=False,
+                    )
+                )
+            run_kwargs["mounts"] = mounts
             if self._docker_network:
                 run_kwargs["network"] = self._docker_network
         else:
-            # Local: bind-mount a host directory and map ports.
+            # Local: bind-mount the shared dir + the catalog_tables dir, and map ports.
+            os.makedirs(self._catalog_tables_dir, exist_ok=True)
             run_kwargs["volumes"] = {
                 self._shared_volume: {"bind": "/shared", "mode": "rw"},
+                self._catalog_tables_dir: {"bind": "/catalog_tables", "mode": "rw"},
             }
             run_kwargs["ports"] = {"9999/tcp": kernel.port}
             run_kwargs["extra_hosts"] = {"host.docker.internal": "host-gateway"}
@@ -500,6 +618,72 @@ class KernelManager:
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
+    # Image discovery and pulling
+    # ------------------------------------------------------------------
+
+    def resolve_local_image(self, flavour: ImageFlavour) -> str | None:
+        """Public accessor for the local-image fallback resolver.
+
+        Returns the tag actually in use for ``flavour`` (registry default if
+        present locally, else a ``flowfile-kernel-<flavour>:*`` variant). Used
+        by the docker-status route so the UI can show "Found locally: X".
+        """
+        if flavour == ImageFlavour.CUSTOM:
+            return None
+        registry_default = _flavour_images()[flavour]
+        return _resolve_local_image(flavour, self._docker, registry_default)
+
+    def get_pull_state(self, image_tag: str) -> str | None:
+        """Return current pull state for ``image_tag``, or ``None`` if idle."""
+        with self._pull_state_lock:
+            return self._pull_state.get(image_tag)
+
+    def start_image_pull(self, flavour: ImageFlavour) -> str:
+        """Kick off a background pull for the flavour's registry-default image.
+
+        Idempotent: if a pull is already running for that tag, returns the
+        existing state without spawning a duplicate worker.
+        """
+        if flavour == ImageFlavour.CUSTOM:
+            raise ValueError(
+                "Cannot pull the 'custom' flavour: no canonical image to pull. "
+                "Provide a custom image URI when creating the kernel instead."
+            )
+        image_tag = _flavour_images()[flavour]
+        with self._pull_state_lock:
+            existing = self._pull_state.get(image_tag)
+            if existing == "pulling":
+                return existing
+            self._pull_state[image_tag] = "pulling"
+
+        threading.Thread(
+            target=self._do_pull,
+            args=(image_tag,),
+            name=f"image-pull-{image_tag}",
+            daemon=True,
+        ).start()
+        return "pulling"
+
+    def _do_pull(self, image_tag: str) -> None:
+        """Worker run on a background thread to fetch ``image_tag``.
+
+        On success clears the pull state (the image is now locally available,
+        and a follow-up ``docker-status`` poll will reflect that). On failure
+        stores ``error:<message>`` so the UI can show what went wrong.
+        """
+        try:
+            repo, _, tag = image_tag.partition(":")
+            self._docker.images.pull(repo, tag=tag or "latest")
+            with self._pull_state_lock:
+                self._pull_state.pop(image_tag, None)
+            logger.info("Pulled image '%s'", image_tag)
+        except Exception as exc:
+            msg = str(exc).splitlines()[0][:200] if str(exc) else exc.__class__.__name__
+            with self._pull_state_lock:
+                self._pull_state[image_tag] = f"error:{msg}"
+            logger.exception("Failed to pull image '%s'", image_tag)
+
+    # ------------------------------------------------------------------
     # Derived image build (per-kernel, packages baked in)
     # ------------------------------------------------------------------
 
@@ -510,7 +694,7 @@ class KernelManager:
         derived image tag.
         """
         _validate_packages(kernel.packages)
-        base_image = _resolve_image(kernel.image_flavour, kernel.custom_image)
+        base_image = _resolve_image(kernel.image_flavour, kernel.custom_image, self._docker)
         derived_tag = _derived_image_tag(kernel.id)
 
         try:
@@ -720,8 +904,17 @@ class KernelManager:
             env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
         # FLOWFILE_KERNEL_SHARED_DIR tells the kernel the absolute path of
         # the shared directory *as seen from inside the kernel container*.
-        # Used by flowfile.get_shared_location() to resolve user file paths.
+        # Used by flowfile_ctx.get_shared_location() to resolve user file paths.
         env["FLOWFILE_KERNEL_SHARED_DIR"] = self.to_kernel_path(self._shared_volume)
+        # Catalog tables: kernel needs to translate host catalog paths returned
+        # by Core (e.g. ~/.flowfile/catalog_tables/orders_abc123/) to the
+        # in-container path under the new mount. Mirror the shared-dir pattern:
+        # ``FLOWFILE_HOST_CATALOG_TABLES_DIR`` is the host path (only set in
+        # local mode), ``FLOWFILE_KERNEL_CATALOG_TABLES_DIR`` is what the kernel
+        # sees inside its container.
+        if not self._kernel_volume:
+            env["FLOWFILE_HOST_CATALOG_TABLES_DIR"] = self._catalog_tables_dir
+        env["FLOWFILE_KERNEL_CATALOG_TABLES_DIR"] = self.to_kernel_path(self._catalog_tables_dir)
         # Persistence settings from kernel config
         env["KERNEL_ID"] = kernel_id
         env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
@@ -739,7 +932,7 @@ class KernelManager:
         # Validate image flavour and packages up-front so we fail before
         # persisting state or kicking off a long-running build.
         try:
-            _resolve_image(config.image_flavour, config.custom_image)
+            _resolve_image(config.image_flavour, config.custom_image, self._docker)
             _validate_packages(config.packages)
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
@@ -784,7 +977,7 @@ class KernelManager:
         if kernel.state == KernelState.IDLE:
             return kernel
 
-        base_image = _resolve_image(kernel.image_flavour, kernel.custom_image)
+        base_image = _resolve_image(kernel.image_flavour, kernel.custom_image, self._docker)
 
         # Verify the (base) kernel image exists before doing anything else.
         try:
@@ -843,7 +1036,7 @@ class KernelManager:
         if kernel.state == KernelState.IDLE:
             return kernel
 
-        base_image = _resolve_image(kernel.image_flavour, kernel.custom_image)
+        base_image = _resolve_image(kernel.image_flavour, kernel.custom_image, self._docker)
 
         try:
             self._docker.images.get(base_image)
