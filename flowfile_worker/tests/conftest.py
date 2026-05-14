@@ -5,8 +5,10 @@ import socket
 import sys
 
 import pytest
+from cryptography.fernet import Fernet
 
 os.environ['TEST_MODE'] = '1'
+os.environ.setdefault('FLOWFILE_MASTER_KEY', Fernet.generate_key().decode())
 
 from tests.utils import is_docker_available
 
