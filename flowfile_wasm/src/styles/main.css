@@ -1387,3 +1387,11 @@ html, body, #app {
   background: var(--color-border-primary);
   margin: 0 var(--spacing-1);
 }
+
+/* vega-tooltip injects #vg-tooltip-element into <body> with z-index: 1000.
+   The explore_data fullscreen overlay sits at z-index 9999, so chart-mark
+   tooltips render *behind* the overlay — values appear inert on hover.
+   Lift the tooltip above the overlay so hover interactions work. */
+#vg-tooltip-element {
+  z-index: 10000 !important;
+}
