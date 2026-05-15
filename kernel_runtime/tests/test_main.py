@@ -848,7 +848,8 @@ class TestPublishGlobalInteractiveExecution:
     """publish_global should be silently skipped when running interactively."""
 
     def test_publish_global_skipped_in_interactive_mode(self, client: TestClient):
-        """Calling publish_global in interactive mode should succeed without error."""
+        """Calling publish_global without a source_registration_id should
+        succeed but degrade gracefully (warn + return -1)."""
         code = 'result = flowfile_ctx.publish_global("my_model", {"key": "value"})\nprint(result)'
         resp = client.post(
             "/execute",
@@ -864,12 +865,16 @@ class TestPublishGlobalInteractiveExecution:
         )
         data = resp.json()
         assert data["success"] is True, f"Execution failed: {data['error']}"
-        assert "not available in interactive mode" in data["stdout"]
+        assert "without a source_registration_id" in data["stdout"]
         assert "-1" in data["stdout"]
 
-    def test_publish_global_still_works_in_flow_mode_with_registration(self, client: TestClient):
-        """publish_global in non-interactive mode without source_registration_id should still raise."""
-        code = 'flowfile_ctx.publish_global("my_model", {"key": "value"})'
+    def test_publish_global_warns_in_flow_mode_without_registration(self, client: TestClient):
+        """Flow mode without a source_registration_id mirrors interactive mode:
+        publish_global warns + returns -1 instead of raising. Core normally
+        provisions a scratch FlowRegistration so this fallback only fires
+        when talking to an older Core.
+        """
+        code = 'result = flowfile_ctx.publish_global("my_model", {"key": "value"})\nprint(result)'
         resp = client.post(
             "/execute",
             json={
@@ -883,8 +888,9 @@ class TestPublishGlobalInteractiveExecution:
             },
         )
         data = resp.json()
-        assert data["success"] is False
-        assert "source_registration_id is required" in data["error"]
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        assert "without a source_registration_id" in data["stdout"]
+        assert "-1" in data["stdout"]
 
 
 class TestContextCleanup:

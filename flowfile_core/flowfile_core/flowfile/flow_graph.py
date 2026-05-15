@@ -1484,6 +1484,8 @@ class FlowGraph:
         flow_id = self.flow_id
         node_logger = self.flow_logger.get_node_logger(node_id)
 
+        self.artifact_context.clear_nodes({node_id})
+
         # Compute available artifacts
         self.artifact_context.compute_available(
             node_id=node_id,
@@ -1530,15 +1532,6 @@ class FlowGraph:
         forward_kernel_logs(result, node_logger)
         if not result.success:
             raise RuntimeError(f"Kernel execution failed: {result.error}")
-
-        # Reset this node's recorded artifact state before recording the new
-        # run. ``record_published`` appends to ``state.published`` and never
-        # deduplicates, so without this reset every re-execution would
-        # accumulate stale refs in the UI's "Published" panel (the kernel
-        # itself already cleared the underlying artifacts via
-        # clear_by_node_ids at the top of _execute_sync). The ML node path
-        # in this file follows the same pattern.
-        self.artifact_context.clear_nodes({node_id})
 
         # Record artifacts
         if result.artifacts_published:
