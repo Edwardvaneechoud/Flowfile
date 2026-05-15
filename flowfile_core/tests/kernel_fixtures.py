@@ -101,8 +101,8 @@ def _stop_core_server() -> None:
         logger.info("Core API server stopped")
 
 
-def _build_kernel_image() -> bool:
-    """Build the flowfile-kernel Docker image from kernel_runtime/."""
+def _build_kernel_image(image_tag: str) -> bool:
+    """Build the flowfile-kernel Docker image from kernel_runtime/ with the given tag."""
     dockerfile = _REPO_ROOT / "kernel_runtime" / "Dockerfile"
     context = _REPO_ROOT / "kernel_runtime"
 
@@ -118,16 +118,16 @@ def _build_kernel_image() -> bool:
             logger.error("Context directory %s does not exist", context)
         return False
 
-    logger.info("Building Docker image '%s' ...", KERNEL_IMAGE)
+    logger.info("Building Docker image '%s' ...", image_tag)
     try:
         result = subprocess.run(
-            ["docker", "build", "-t", KERNEL_IMAGE, "-f", str(dockerfile), str(context)],
+            ["docker", "build", "-t", image_tag, "-f", str(dockerfile), str(context)],
             check=True,
             capture_output=True,
             text=True,
             timeout=300,
         )
-        logger.info("Docker image '%s' built successfully", KERNEL_IMAGE)
+        logger.info("Docker image '%s' built successfully", image_tag)
         logger.debug("Build stdout: %s", result.stdout)
         return True
     except subprocess.CalledProcessError as exc:
@@ -174,7 +174,7 @@ def managed_kernel(
 
         # Tests requiring Core API (global artifacts)
         with managed_kernel(start_core=True) as (manager, kernel_id):
-            # kernel can now call flowfile.publish_global() etc.
+            # kernel can now call flowfile_ctx.publish_global() etc.
             result = await manager.execute(kernel_id, request)
     """
     from flowfile_core.kernel.manager import KernelManager
@@ -189,6 +189,7 @@ def managed_kernel(
     original_token = None
     original_core_url = None
     original_shared_dir = None
+    original_kernel_image = os.environ.get("FLOWFILE_KERNEL_IMAGE")
 
     # 1 — Create temp shared volume FIRST (needed for storage config)
     shared_dir = tempfile.mkdtemp(prefix="kernel_test_shared_")
@@ -225,9 +226,17 @@ def managed_kernel(
             raise RuntimeError("Could not start Core API server for integration tests")
         core_started_by_us = True
 
-    # 3 — Build image
-    if not _build_kernel_image():
-        raise RuntimeError("Could not build flowfile-kernel Docker image")
+    # 3 — Resolve kernel image. If a workflow pre-built one and pointed core at
+    # it via FLOWFILE_KERNEL_IMAGE, trust that and skip the build (saves ~30 s).
+    # Otherwise build with the default test tag and tell core to use it.
+    preset_image = (original_kernel_image or "").strip()
+    if preset_image:
+        logger.info("Using pre-set kernel image: %s", preset_image)
+    else:
+        if not _build_kernel_image(KERNEL_IMAGE):
+            raise RuntimeError("Could not build flowfile-kernel Docker image")
+        os.environ["FLOWFILE_KERNEL_IMAGE"] = KERNEL_IMAGE
+        logger.info("Built kernel image and registered FLOWFILE_KERNEL_IMAGE=%s", KERNEL_IMAGE)
 
     # 4 — Ensure stale container is removed
     _remove_container(container_name)
@@ -292,6 +301,11 @@ def managed_kernel(
             os.environ["FLOWFILE_SHARED_DIR"] = original_shared_dir
         else:
             os.environ.pop("FLOWFILE_SHARED_DIR", None)
+
+        if original_kernel_image is not None:
+            os.environ["FLOWFILE_KERNEL_IMAGE"] = original_kernel_image
+        else:
+            os.environ.pop("FLOWFILE_KERNEL_IMAGE", None)
 
         # Reset storage singletons to pick up original paths
         from shared.storage_config import FlowfileStorage

@@ -278,7 +278,7 @@ Query catalog tables directly using SQL. See the dedicated [SQL Editor](sql-edit
 
 ## Global Artifacts
 
-Global artifacts are Python objects (ML models, DataFrames, configs) persisted in the catalog and accessible from any flow. They are published from [Kernel code](../kernels.md#global-artifacts-catalog) using `flowfile.publish_global()`.
+Global artifacts are Python objects (ML models, DataFrames, configs) persisted in the catalog and accessible from any flow. They are published from [Kernel code](../kernels.md#global-artifacts-catalog) using `flowfile_ctx.publish_global()`.
 
 Click an artifact in the tree to view its versions, metadata, and producing flow.
 

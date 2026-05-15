@@ -90,7 +90,7 @@ class TestArtifactPersistenceBasics:
         # Publish an artifact
         result = _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("persist_test", {"weights": [1, 2, 3]})',
+            'flowfile_ctx.publish_artifact("persist_test", {"weights": [1, 2, 3]})',
             node_id=100,
         )
         assert result.success
@@ -112,7 +112,7 @@ class TestArtifactPersistenceBasics:
 
         _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("meta_test", [1, 2, 3])',
+            'flowfile_ctx.publish_artifact("meta_test", [1, 2, 3])',
             node_id=101,
         )
 
@@ -129,7 +129,7 @@ class TestArtifactPersistenceBasics:
 
         _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("big_item", list(range(10000)))',
+            'flowfile_ctx.publish_artifact("big_item", list(range(10000)))',
             node_id=102,
         )
 
@@ -179,14 +179,14 @@ class TestManualRecovery:
         # Publish two artifacts
         result1 = _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("model_a", {"type": "linear"})',
+            'flowfile_ctx.publish_artifact("model_a", {"type": "linear"})',
             node_id=200,
         )
         assert result1.success
 
         result2 = _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("model_b", {"type": "tree"})',
+            'flowfile_ctx.publish_artifact("model_b", {"type": "tree"})',
             node_id=201,
         )
         assert result2.success
@@ -226,7 +226,7 @@ class TestManualRecovery:
         # Node 300 publishes
         r1 = _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("shared_model", {"accuracy": 0.95})',
+            'flowfile_ctx.publish_artifact("shared_model", {"accuracy": 0.95})',
             node_id=300,
         )
         assert r1.success
@@ -235,7 +235,7 @@ class TestManualRecovery:
         r2 = _execute(
             manager, kernel_id,
             """
-model = flowfile.read_artifact("shared_model")
+model = flowfile_ctx.read_artifact("shared_model")
 assert model["accuracy"] == 0.95, f"Expected 0.95, got {model}"
 print(f"model accuracy: {model['accuracy']}")
 """,
@@ -263,12 +263,12 @@ class TestArtifactCleanup:
         # Publish two artifacts
         _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("keep_me", 42)',
+            'flowfile_ctx.publish_artifact("keep_me", 42)',
             node_id=400,
         )
         _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("delete_me", 99)',
+            'flowfile_ctx.publish_artifact("delete_me", 99)',
             node_id=401,
         )
 
@@ -288,7 +288,7 @@ class TestArtifactCleanup:
 
         _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("recent_item", "fresh")',
+            'flowfile_ctx.publish_artifact("recent_item", "fresh")',
             node_id=410,
         )
 
@@ -307,7 +307,7 @@ class TestArtifactCleanup:
 
         _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("doomed", 123)',
+            'flowfile_ctx.publish_artifact("doomed", 123)',
             node_id=420,
         )
 
@@ -378,7 +378,7 @@ class TestPersistenceThroughReexecution:
         # Node 500 publishes "stable_model"
         r1 = _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("stable_model", {"v": 1})',
+            'flowfile_ctx.publish_artifact("stable_model", {"v": 1})',
             node_id=500,
         )
         assert r1.success
@@ -386,7 +386,7 @@ class TestPersistenceThroughReexecution:
         # Node 501 publishes "temp_model"
         r2 = _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("temp_model", {"v": 1})',
+            'flowfile_ctx.publish_artifact("temp_model", {"v": 1})',
             node_id=501,
         )
         assert r2.success
@@ -394,7 +394,7 @@ class TestPersistenceThroughReexecution:
         # Re-execute node 501 (clears its own artifacts, publishes new)
         r3 = _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("temp_model", {"v": 2})',
+            'flowfile_ctx.publish_artifact("temp_model", {"v": 2})',
             node_id=501,
         )
         assert r3.success
@@ -416,7 +416,7 @@ class TestPersistenceThroughReexecution:
         # Publish model
         _execute(
             manager, kernel_id,
-            'flowfile.publish_artifact("durable_model", {"accuracy": 0.99})',
+            'flowfile_ctx.publish_artifact("durable_model", {"accuracy": 0.99})',
             node_id=510,
         )
 
@@ -424,7 +424,7 @@ class TestPersistenceThroughReexecution:
         for i in range(3):
             _execute(
                 manager, kernel_id,
-                f'flowfile.publish_artifact("ephemeral_{i}", {i})',
+                f'flowfile_ctx.publish_artifact("ephemeral_{i}", {i})',
                 node_id=511 + i,
             )
 
@@ -432,7 +432,7 @@ class TestPersistenceThroughReexecution:
         r = _execute(
             manager, kernel_id,
             """
-model = flowfile.read_artifact("durable_model")
+model = flowfile_ctx.read_artifact("durable_model")
 assert model["accuracy"] == 0.99
 print("durable model OK")
 """,

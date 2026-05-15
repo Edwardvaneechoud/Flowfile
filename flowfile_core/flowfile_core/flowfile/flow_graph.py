@@ -1484,6 +1484,8 @@ class FlowGraph:
         flow_id = self.flow_id
         node_logger = self.flow_logger.get_node_logger(node_id)
 
+        self.artifact_context.clear_nodes({node_id})
+
         # Compute available artifacts
         self.artifact_context.compute_available(
             node_id=node_id,

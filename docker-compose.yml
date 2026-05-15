@@ -33,6 +33,14 @@ services:
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
+      # Kernel image overrides — empty string means "use the registry default"
+      # (the manager treats unset and empty the same). Set on the host (or in
+      # an .env file) to point core at a locally-built or alternative image,
+      # e.g. FLOWFILE_KERNEL_IMAGE=flowfile-kernel-base:local for CI / dev.
+      - FLOWFILE_KERNEL_IMAGE=${FLOWFILE_KERNEL_IMAGE:-}
+      - FLOWFILE_KERNEL_IMAGE_BASE=${FLOWFILE_KERNEL_IMAGE_BASE:-}
+      - FLOWFILE_KERNEL_IMAGE_ML=${FLOWFILE_KERNEL_IMAGE_ML:-}
+      - FLOWFILE_KERNEL_IMAGE_LITE=${FLOWFILE_KERNEL_IMAGE_LITE:-}
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
@@ -70,14 +78,48 @@ services:
     networks:
       - flowfile-network
 
-  # Build-only service: produces the flowfile-kernel image used by kernel
+  # Build-only service: produces the flowfile-kernel-base image used by kernel
   # containers.  Not started by `docker compose up` — build with:
-  #   docker compose build flowfile-kernel
+  #   docker compose --profile kernel build flowfile-kernel
+  # Set FLOWFILE_KERNEL_IMAGE on flowfile-core to point at this local tag,
+  # e.g. FLOWFILE_KERNEL_IMAGE=flowfile-kernel-base:local. Otherwise core
+  # defaults to pulling edwardvaneechoud/flowfile-kernel-base:<version>.
   flowfile-kernel:
     build:
       context: kernel_runtime
       dockerfile: Dockerfile
-    image: flowfile-kernel
+    image: flowfile-kernel-base:local
+    entrypoint: ["true"]
+    restart: "no"
+    profiles:
+      - kernel
+
+  # ML flavour: same Dockerfile with EXTRAS=ml. Build with:
+  #   docker compose --profile kernel build flowfile-kernel-ml
+  flowfile-kernel-ml:
+    build:
+      context: kernel_runtime
+      dockerfile: Dockerfile
+      args:
+        EXTRAS: ml
+    image: flowfile-kernel-ml:local
+    entrypoint: ["true"]
+    restart: "no"
+    profiles:
+      - kernel
+
+  # Lite flavour: same baked packages as base, but only the kernel-critical
+  # pins (polars, pyarrow, numpy, fastapi, uvicorn, httpx, cloudpickle, joblib)
+  # are kept in /opt/constraints.txt. Everything else floats so user-installed
+  # packages with their own dep trees (e.g. flowfile) can resolve freely.
+  # Build with:  docker compose --profile kernel build flowfile-kernel-lite
+  flowfile-kernel-lite:
+    build:
+      context: kernel_runtime
+      dockerfile: Dockerfile
+      args:
+        SLIM_CONSTRAINTS: "true"
+    image: flowfile-kernel-lite:local
     entrypoint: ["true"]
     restart: "no"
     profiles:

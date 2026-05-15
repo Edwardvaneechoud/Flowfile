@@ -28,6 +28,9 @@
         :is-executing="executingCellId === cell.id"
         :is-last-cell="index === cells.length - 1"
         :cell-count="cells.length"
+        :input-names="inputNames"
+        :upstream-columns="upstreamColumns"
+        :prior-cell-codes="cells.slice(0, index).map((c) => c.code)"
         @update:code="(code) => updateCellCode(cell.id, code)"
         @run-cell="() => runCell(cell.id)"
         @run-cell-and-advance="() => runCellAndAdvance(cell.id, index)"
@@ -49,6 +52,7 @@ import { ref, computed } from "vue";
 import { KernelApi } from "../../../../../api/kernel.api";
 import type { NotebookCell } from "../../../../../types/node.types";
 import NotebookCellComponent from "./NotebookCell.vue";
+import type { UpstreamColumn } from "./useUpstreamColumns";
 
 interface Props {
   cells: NotebookCell[];
@@ -56,9 +60,14 @@ interface Props {
   flowId: number;
   nodeId: number;
   dependingOnIds: number[];
+  inputNames?: string[];
+  upstreamColumns?: UpstreamColumn[];
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  inputNames: () => [],
+  upstreamColumns: () => [],
+});
 const emit = defineEmits<{
   (e: "update:cells", cells: NotebookCell[]): void;
 }>();

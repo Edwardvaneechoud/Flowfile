@@ -118,9 +118,26 @@ class Kernel(Base):
     name = Column(String, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     packages = Column(Text, default="[]")  # JSON-serialized list of package names
+    # JSON-serialized list of {name, version} for packages actually installed in
+    # the derived image. Populated after bake; empty for legacy kernels until they
+    # are next edited.
+    resolved_packages = Column(Text, default="[]")
     cpu_cores = Column(Float, default=2.0)
     memory_gb = Column(Float, default=4.0)
     gpu = Column(Boolean, default=False)
+    image_flavour = Column(String, nullable=False, default="base")
+    custom_image = Column(String, nullable=True)
+    # Auto-created FlowRegistration that artifacts published from this kernel's
+    # interactive cells are attributed to. Lives and dies with the kernel; see
+    # ``KernelManager._provision_scratch_flow`` in
+    # ``flowfile_core/kernel/manager.py``. ``ON DELETE SET NULL`` so a
+    # manually-removed registration leaves the kernel record intact (the
+    # manager will lazily re-create on the next publish).
+    scratch_flow_registration_id = Column(
+        Integer,
+        ForeignKey("flow_registrations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
 

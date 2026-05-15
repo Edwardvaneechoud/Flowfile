@@ -13,7 +13,8 @@ export const kernelHelp: PageHelpContent = {
         {
           icon: "fa-solid fa-box",
           title: "Isolated Execution",
-          description: "Each kernel runs in its own Docker container with a separate Python environment",
+          description:
+            "Each kernel runs in its own Docker container with a separate Python environment",
         },
         {
           icon: "fa-solid fa-code",
@@ -21,14 +22,22 @@ export const kernelHelp: PageHelpContent = {
           description: "Required for running Python Script nodes and custom transformation code",
         },
         {
+          icon: "fa-solid fa-layer-group",
+          title: "Image flavours",
+          description:
+            "Pick Base (Polars/PyArrow/NumPy) or ML (sklearn, xgboost, lightgbm, statsmodels pre-baked). Use Custom for your own image.",
+        },
+        {
           icon: "fa-solid fa-cubes",
-          title: "Package Support",
-          description: "Install additional Python packages (scikit-learn, etc.) inside the kernel",
+          title: "Extra packages",
+          description:
+            "Pip packages listed here are baked into a per-kernel Docker image at creation (one-time, ~30 s) and pinned against the flavour's constraints. Subsequent kernel starts skip the install.",
         },
         {
           icon: "fa-solid fa-arrows-rotate",
           title: "Persistent State",
-          description: "Artifacts and variables persist between node executions within the same kernel",
+          description:
+            "Artifacts and variables persist between node executions within the same kernel",
         },
       ],
     },
@@ -44,7 +53,14 @@ export const kernelHelp: PageHelpContent = {
         {
           type: "warning",
           title: "Kernels use system resources",
-          description: "Each kernel is a running container. Stop unused kernels to free memory and CPU.",
+          description:
+            "Each kernel is a running container. Stop unused kernels to free memory and CPU.",
+        },
+        {
+          type: "warning",
+          title: "Pull the image first",
+          description:
+            "On first use, Docker pulls the chosen kernel image (~500 MB base, ~720 MB ML). Subsequent kernels start in seconds.",
         },
       ],
     },

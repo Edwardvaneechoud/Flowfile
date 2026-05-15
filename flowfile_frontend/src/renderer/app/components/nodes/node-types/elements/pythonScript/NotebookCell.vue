@@ -51,15 +51,25 @@ import type { Extension } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { EditorState, Prec } from "@codemirror/state";
 import { Codemirror } from "vue-codemirror";
-import { python } from "@codemirror/lang-python";
+import { python, pythonLanguage } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { autocompletion, acceptCompletion } from "@codemirror/autocomplete";
-import type { CompletionSource } from "@codemirror/autocomplete";
 import { indentMore, indentLess } from "@codemirror/commands";
 
 import type { NotebookCell } from "../../../../../types/node.types";
 import CellOutput from "./CellOutput.vue";
-import { flowfileCompletionVals } from "./flowfileCompletions";
+import {
+  catalogRefChainCompletions,
+  flowfileApiCompletions,
+  globalIdentifierCompletions,
+  polarsModuleCompletions,
+  createPolarsExprCompletions,
+  createRefVariableCompletions,
+  createNamedInputCompletions,
+  createUpstreamColumnCompletions,
+  createScopeCompletions,
+} from "./flowfileCompletions";
+import type { UpstreamColumn } from "./useUpstreamColumns";
 
 interface Props {
   cell: NotebookCell;
@@ -67,9 +77,16 @@ interface Props {
   isExecuting: boolean;
   isLastCell: boolean;
   cellCount: number;
+  inputNames?: string[];
+  upstreamColumns?: UpstreamColumn[];
+  priorCellCodes?: string[];
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  inputNames: () => [],
+  upstreamColumns: () => [],
+  priorCellCodes: () => [],
+});
 
 const emit = defineEmits<{
   (e: "update:code", code: string): void;
@@ -88,11 +105,14 @@ const cellClasses = computed(() => ({
 
 // ─── CodeMirror Extensions ───────────────────────────────────────────────────
 
-const flowfileCompletions: CompletionSource = (context) => {
-  const word = context.matchBefore(/\w*/);
-  if (word?.from === word?.to && !context.explicit) return null;
-  return { from: word?.from ?? 0, options: flowfileCompletionVals };
-};
+// Dynamic completion sources read from props lazily so they pick up newly
+// connected inputs, freshly-loaded upstream schemas, and edits in prior cells
+// without rebuilding the editor.
+const namedInputCompletions = createNamedInputCompletions(() => props.inputNames);
+const columnCompletions = createUpstreamColumnCompletions(() => props.upstreamColumns);
+const scopeCompletions = createScopeCompletions(() => props.priorCellCodes);
+const refVarCompletions = createRefVariableCompletions(() => props.priorCellCodes);
+const polarsExprCompletions = createPolarsExprCompletions(() => props.priorCellCodes);
 
 // Theme for compact cell editors
 const cellEditorTheme = EditorView.theme({
@@ -150,11 +170,22 @@ const tabKeymap = keymap.of([
 
 const cellExtensions: Extension[] = [
   python(),
+  // Register completion sources through language-data so the Python language's
+  // own keyword/builtin completions remain active (instead of `override` which
+  // would silence them).
+  pythonLanguage.data.of({ autocomplete: flowfileApiCompletions }),
+  pythonLanguage.data.of({ autocomplete: globalIdentifierCompletions }),
+  pythonLanguage.data.of({ autocomplete: catalogRefChainCompletions }),
+  pythonLanguage.data.of({ autocomplete: refVarCompletions }),
+  pythonLanguage.data.of({ autocomplete: polarsModuleCompletions }),
+  pythonLanguage.data.of({ autocomplete: polarsExprCompletions }),
+  pythonLanguage.data.of({ autocomplete: namedInputCompletions }),
+  pythonLanguage.data.of({ autocomplete: columnCompletions }),
+  pythonLanguage.data.of({ autocomplete: scopeCompletions }),
   oneDark,
   cellEditorTheme,
   EditorState.tabSize.of(4),
   autocompletion({
-    override: [flowfileCompletions],
     defaultKeymap: true,
     closeOnBlur: false,
   }),

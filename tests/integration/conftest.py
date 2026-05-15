@@ -156,12 +156,15 @@ def compose_services():
         "JWT_SECRET_KEY": secrets.token_hex(32),
         "FLOWFILE_ADMIN_USER": "admin",
         "FLOWFILE_ADMIN_PASSWORD": "test-password",
+        # Point core at the locally-built kernel image (tagged by compose as
+        # flowfile-kernel-base:local). Without this the manager defaults to
+        # the registry tag edwardvaneechoud/flowfile-kernel-base:<version>
+        # which won't exist on a fresh CI runner or local dev machine.
+        "FLOWFILE_KERNEL_IMAGE": "flowfile-kernel-base:local",
     }
 
     # Write to a temporary .env file so compose picks them up
-    env_file = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".env", delete=False, dir=REPO_ROOT
-    )
+    env_file = tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False, dir=REPO_ROOT)
     try:
         for key, value in env.items():
             env_file.write(f"{key}={value}\n")

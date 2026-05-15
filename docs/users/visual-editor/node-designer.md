@@ -288,9 +288,9 @@ When kernel execution is enabled:
 
 - The Node Designer auto-generates a kernel script from your `process` method
 - Your `self.settings_schema` values are baked into the script as a lightweight proxy
-- Inputs are read via `flowfile.read_input()` instead of being passed as LazyFrame arguments
-- Return values are published via `flowfile.publish_output()` for each named output
-- The full `flowfile` API is available — artifacts, display, logging, and more
+- Inputs are read via `flowfile_ctx.read_input()` instead of being passed as LazyFrame arguments
+- Return values are published via `flowfile_ctx.publish_output()` for each named output
+- The full `flowfile_ctx` API is available — artifacts, display, logging, and more
 
 Your process method code stays the same. The `self.settings_schema` pattern works identically in kernel mode — the generated script creates proxy classes that replicate the same access pattern.
 
@@ -308,7 +308,6 @@ Here's a process method that trains a model and publishes it as an artifact:
 
 ```python
 def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
-    import flowfile
     from sklearn.ensemble import RandomForestClassifier
 
     lf = inputs[0]
@@ -319,14 +318,14 @@ def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
     y = df[target_col].to_numpy()
 
     model = RandomForestClassifier(n_estimators=100).fit(X, y)
-    flowfile.publish_artifact("trained_model", model)
-    flowfile.log_info(f"Model trained with accuracy: {model.score(X, y):.3f}")
+    flowfile_ctx.publish_artifact("trained_model", model)
+    flowfile_ctx.log_info(f"Model trained with accuracy: {model.score(X, y):.3f}")
 
     predictions = model.predict(X)
     return df.with_columns(pl.Series("prediction", predictions)).lazy()
 ```
 
-For more details on the `flowfile` API available inside kernels, see [Kernel Execution](kernels.md).
+For more details on the `flowfile_ctx` API available inside kernels, see [Kernel Execution](kernels.md).
 
 ---
 
