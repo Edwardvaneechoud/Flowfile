@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- WebView / JIT (Tauri uses WKWebView; some Python deps JIT-compile) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- Bundled native modules (numpy/pyarrow/polars dylibs) -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- Network -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+    <!-- File access -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    <key>com.apple.security.files.downloads.read-write</key>
+    <true/>
+    <key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+    <array>
+      <string>/Users/</string>
+      <string>/tmp/</string>
+      <string>/var/folders/</string>
+      <string>/var/run/docker.sock</string>
+    </array>
+  </dict>
+</plist>

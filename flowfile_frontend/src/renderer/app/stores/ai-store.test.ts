@@ -67,7 +67,7 @@ vi.mock("../services/auth.service", () => {
   const stub = {
     getToken: vi.fn(async () => null),
     logout: vi.fn(),
-    isInElectronMode: () => false,
+    isInDesktopMode: () => false,
     setModeFromBackend: vi.fn(),
     initialize: vi.fn(async () => false),
     hasValidToken: () => false,

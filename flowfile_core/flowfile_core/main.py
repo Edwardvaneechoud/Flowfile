@@ -106,12 +106,19 @@ app = FastAPI(
 )
 
 # Configure CORS
+#
+# The Tauri 2 desktop shell loads the renderer from a custom protocol — the
+# exact origin differs per OS (`tauri://localhost` on macOS/iOS, `http://tauri.localhost`
+# on Linux, `https://tauri.localhost` on Windows/Android). A regex covers all
+# of them without us having to enumerate. The explicit list below stays for
+# the web/Docker/dev flows that hit the backend over plain HTTP.
 origins = [
     "http://localhost",
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:8080",
     "http://localhost:8081",
+    "http://localhost:8082",
     "http://localhost:4173",
     "http://localhost:4174",
     "http://localhost:63578",
@@ -121,6 +128,7 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"^(tauri|http|https)://(tauri\.localhost|localhost(:\d+)?)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

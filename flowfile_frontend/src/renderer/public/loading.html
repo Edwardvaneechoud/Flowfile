@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Flowfile</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: transparent;
+      -webkit-app-region: drag;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+    .loading-container {
+      background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+      border-radius: 20px;
+      padding: 2.5rem 3rem;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-shadow:
+        0 25px 50px -12px rgba(0, 0, 0, 0.15),
+        0 0 0 1px rgba(0, 0, 0, 0.05);
+      width: 600px;
+      max-width: 92vw;
+      position: relative;
+    }
+    .app-name {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #0f172a;
+      margin: 0 0 0.25rem 0;
+      letter-spacing: -0.025em;
+    }
+    .tagline {
+      font-size: 0.875rem;
+      color: #64748b;
+      margin: 0 0 1.5rem 0;
+    }
+    .progress-container {
+      width: 100%;
+      height: 4px;
+      background: #e2e8f0;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%);
+      border-radius: 2px;
+      width: 0%;
+      animation: progress 2s ease-in-out infinite;
+    }
+    @keyframes progress {
+      0% { width: 0%; margin-left: 0%; }
+      50% { width: 60%; margin-left: 20%; }
+      100% { width: 0%; margin-left: 100%; }
+    }
+    .status-list {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      padding: 0.75rem 1rem;
+      background: #f8fafc;
+      border-radius: 10px;
+      border: 1px solid #e2e8f0;
+      transition: all 0.3s ease;
+    }
+    .status-item.success { background: #f0fdf4; border-color: #bbf7d0; }
+    .status-item.error   { background: #fef2f2; border-color: #fecaca; }
+    .status-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 11px;
+      font-weight: bold;
+      color: white;
+      transition: all 0.3s ease;
+    }
+    .status-icon.pending { background: #f59e0b; animation: pulse 1.5s ease-in-out infinite; }
+    .status-icon.success { background: #22c55e; }
+    .status-icon.error   { background: #ef4444; }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.1); opacity: 0.8; }
+    }
+    .status-text {
+      font-size: 0.875rem;
+      color: #334155;
+      text-align: left;
+      flex: 1;
+    }
+    .status-item.success .status-text { color: #166534; }
+    .status-item.error   .status-text { color: #991b1b; }
+    .version {
+      margin-top: 1.5rem;
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+    .elapsed-text {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      font-variant-numeric: tabular-nums;
+      margin-left: 0.5rem;
+    }
+    .hint {
+      margin-top: 1rem;
+      min-height: 1.25em;
+      font-size: 0.8125rem;
+      color: #64748b;
+      text-align: center;
+      line-height: 1.4;
+      transition: opacity 0.4s ease;
+    }
+  </style>
+</head>
+<body>
+  <div class="loading-container">
+    <h1 class="app-name">Flowfile</h1>
+    <p class="tagline">Preparing your workspace...</p>
+    <div class="progress-container">
+      <div class="progress-bar"></div>
+    </div>
+    <div class="status-list">
+      <div id="services-item" class="status-item">
+        <div id="services-icon" class="status-icon pending"></div>
+        <span id="services-text" class="status-text">Starting services...</span>
+        <span id="elapsed" class="elapsed-text"></span>
+      </div>
+    </div>
+    <div id="hint" class="hint"></div>
+    <div id="version" class="version"></div>
+  </div>
+
+  <script type="module">
+    const tauri = window.__TAURI__;
+    if (tauri && tauri.app && tauri.app.getVersion) {
+      tauri.app.getVersion().then((v) => {
+        document.getElementById('version').textContent = 'v' + v;
+      });
+    }
+
+    // State machine for the loading UI. The Rust side emits services-status
+    // events when state transitions happen; this side runs its own elapsed
+    // counter so the user sees the wait is alive (vs apparently hung).
+    let startTime = Date.now();
+    let isReady = false;
+    let hasError = false;
+
+    // Progressive messaging based on how long startup has taken. The actual
+    // backend boot is gated on Python imports + alembic + kernel init —
+    // first launch can legitimately take 30–60s on a slow machine.
+    const HINTS = [
+      { after: 1,   message: 'Putting the kettle on…' },
+      { after: 10,  message: 'Waking up the Python interpreter. Yawn.' },
+      { after: 20,  message: 'Polars is heavy. Give it a moment.' },
+      { after: 35,  message: 'Asking the database nicely about migrations.' },
+      { after: 50,  message: 'Importing every router we own. We own a lot of routers.' },
+      { after: 70,  message: 'Still going. Slow disk? Antivirus scanning the binary? Both?' },
+      { after: 90,  message: 'Hmm, this is unusual. If you\'re curious: ~/Library/Logs/com.flowfile.app/' },
+      { after: 110, message: 'Right at the edge of patience. Hang on.' },
+    ];
+
+    function currentHint(elapsedSec) {
+      let best = '';
+      for (const h of HINTS) {
+        if (elapsedSec >= h.after) best = h.message;
+      }
+      return best;
+    }
+
+    function refreshUi() {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      const elapsedEl = document.getElementById('elapsed');
+      const hintEl = document.getElementById('hint');
+      if (!isReady && !hasError) {
+        elapsedEl.textContent = ` (${elapsed}s)`;
+        hintEl.textContent = currentHint(elapsed);
+      } else {
+        elapsedEl.textContent = '';
+      }
+    }
+
+    setInterval(refreshUi, 1000);
+    refreshUi();
+
+    if (tauri && tauri.event && tauri.event.listen) {
+      tauri.event.listen('services-status', (event) => {
+        const payload = event && event.payload ? event.payload : {};
+        const item = document.getElementById('services-item');
+        const icon = document.getElementById('services-icon');
+        const text = document.getElementById('services-text');
+        const hintEl = document.getElementById('hint');
+        const state = payload.state || payload.status;
+        isReady = state === 'ready';
+        hasError = state === 'error' || !!payload.error;
+        item.className = 'status-item ' + (isReady ? 'success' : hasError ? 'error' : '');
+        icon.className = 'status-icon ' + (isReady ? 'success' : hasError ? 'error' : 'pending');
+        icon.textContent = isReady ? '✓' : hasError ? '!' : '';
+        const errMsg = payload.error || (hasError ? payload.message : null);
+        text.textContent = errMsg || (isReady ? 'Services ready' : 'Starting services...');
+        if (hasError) hintEl.textContent = 'See logs at ~/Library/Logs/com.flowfile.app/';
+        refreshUi();
+      });
+    }
+  </script>
+</body>
+</html>

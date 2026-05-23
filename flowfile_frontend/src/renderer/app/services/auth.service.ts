@@ -1,6 +1,7 @@
 // src/app/services/auth.service.ts
 import axios from "axios";
 import { ref } from "vue";
+import { isDesktop } from "../../lib/desktop";
 
 interface AuthResponse {
   access_token: string;
@@ -25,29 +26,30 @@ interface UserInfo {
 class AuthService {
   private token = ref<string | null>(null);
   private tokenExpiration = ref<number | null>(null);
-  private isElectronMode = ref(false);
+  private isDesktopMode = ref(false);
   private modeInitialized = false;
   private refreshPromise: Promise<string | null> | null = null;
   private currentUsername = ref<string | null>(null);
 
   constructor() {
-    // Initial detection based on electronAPI presence
-    this.isElectronMode.value = this.detectElectronMode();
+    // Initial detection based on the Tauri runtime presence.
+    this.isDesktopMode.value = this.detectDesktopMode();
     this.clearStoredTokens();
     this.loadStoredToken();
   }
 
   /**
-   * Update electron mode based on backend status.
-   * This is called when we get the mode from /health/status endpoint.
-   * In "flowfile run ui" mode, electronAPI won't exist but backend mode is "electron".
+   * Update desktop mode based on backend status.
+   * Backend reports `mode` from FLOWFILE_MODE env. We treat both legacy
+   * "electron" and current "tauri"/"desktop" as desktop mode, so
+   * `flowfile run ui` (web shell, backend reports "electron") still
+   * skips the setup wizard and auto-authenticates.
    */
   setModeFromBackend(mode: string): void {
     if (!this.modeInitialized) {
-      // If electronAPI exists, we're definitely in Electron
-      // If not, trust the backend's mode
-      if (!this.detectElectronMode()) {
-        this.isElectronMode.value = mode === "electron";
+      if (!this.detectDesktopMode()) {
+        this.isDesktopMode.value =
+          mode === "electron" || mode === "tauri" || mode === "desktop";
       }
       this.modeInitialized = true;
     }
@@ -70,14 +72,14 @@ class AuthService {
     }
   }
 
-  private detectElectronMode(): boolean {
-    // Check if running in Electron by looking for the electronAPI exposed by preload
-    // In Docker/web mode, this won't be available
-    return !!(window as unknown as { electronAPI?: unknown }).electronAPI;
+  private detectDesktopMode(): boolean {
+    // True iff running inside the Tauri shell (or any future desktop shell
+    // that exposes the same `__TAURI_INTERNALS__` contract via `isDesktop`).
+    return isDesktop;
   }
 
-  isInElectronMode(): boolean {
-    return this.isElectronMode.value;
+  isInDesktopMode(): boolean {
+    return this.isDesktopMode.value;
   }
 
   private clearStoredTokens(): void {
@@ -96,12 +98,12 @@ class AuthService {
       return true;
     }
 
-    // In Electron mode, auto-authenticate without credentials
-    if (this.isElectronMode.value) {
-      return await this.getElectronToken();
+    // In desktop mode, auto-authenticate without credentials.
+    if (this.isDesktopMode.value) {
+      return await this.getDesktopToken();
     }
 
-    // In Docker/web mode, require manual login
+    // In Docker/web mode, require manual login.
     return false;
   }
 
@@ -153,10 +155,10 @@ class AuthService {
   }
 
   requiresLogin(): boolean {
-    return !this.isElectronMode.value && !this.hasValidToken();
+    return !this.isDesktopMode.value && !this.hasValidToken();
   }
 
-  private async getElectronToken(): Promise<boolean> {
+  private async getDesktopToken(): Promise<boolean> {
     try {
       const response = await axios.post<AuthResponse>(
         "/auth/token",
@@ -173,7 +175,7 @@ class AuthService {
       }
       return false;
     } catch (error) {
-      console.error("Failed to get Electron token:", error);
+      console.error("Failed to get desktop token:", error);
       return false;
     }
   }
@@ -184,8 +186,8 @@ class AuthService {
     }
 
     if (this.hasValidToken()) {
-      // Proactively refresh if token expires within 5 minutes (Docker mode only)
-      if (!this.isElectronMode.value && this.isTokenExpiringSoon() && !this.refreshPromise) {
+      // Proactively refresh if token expires within 5 minutes (Docker mode only).
+      if (!this.isDesktopMode.value && this.isTokenExpiringSoon() && !this.refreshPromise) {
         this.refreshPromise = this.refreshAccessToken();
         this.refreshPromise.finally(() => {
           this.refreshPromise = null;
@@ -194,15 +196,15 @@ class AuthService {
       return this.token.value;
     }
 
-    // In Docker mode, try refresh token before requiring manual login
-    if (!this.isElectronMode.value) {
+    // In Docker mode, try refresh token before requiring manual login.
+    if (!this.isDesktopMode.value) {
       this.refreshPromise = this.refreshAccessToken();
       const newToken = await this.refreshPromise;
       this.refreshPromise = null;
       return newToken;
     }
 
-    // In Electron mode, refresh the token automatically
+    // In desktop mode, refresh the token automatically.
     this.refreshPromise = this.refreshToken();
     const newToken = await this.refreshPromise;
     this.refreshPromise = null;
@@ -240,18 +242,18 @@ class AuthService {
       }
       return null;
     } catch {
-      // Refresh token expired or invalid — must re-login
+      // Refresh token expired or invalid — must re-login.
       this.logout();
       return null;
     }
   }
 
   private async refreshToken(): Promise<string | null> {
-    if (!this.isElectronMode.value) {
+    if (!this.isDesktopMode.value) {
       return null;
     }
 
-    const success = await this.getElectronToken();
+    const success = await this.getDesktopToken();
     if (!success) {
       this.logout();
     }
@@ -297,11 +299,11 @@ class AuthService {
   }
 }
 
-// Create the singleton instance
+// Create the singleton instance.
 export const authService = new AuthService();
 
-// Axios interceptor to handle 401 errors
-// Note: This uses the authService singleton which has the correct mode from backend
+// Axios interceptor to handle 401 errors.
+// Note: This uses the authService singleton which has the correct mode from backend.
 axios.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -313,8 +315,8 @@ axios.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry && !isAuthRequest) {
       originalRequest._retry = true;
 
-      if (authService.isInElectronMode()) {
-        // In Electron mode (or "flowfile run ui" mode), auto-refresh the token
+      if (authService.isInDesktopMode()) {
+        // In desktop mode (or "flowfile run ui" mode), auto-refresh the token.
         localStorage.removeItem("auth_token");
         localStorage.removeItem("auth_token_expiration");
 
@@ -326,14 +328,14 @@ axios.interceptors.response.use(
           return axios(originalRequest);
         }
       } else {
-        // In Docker mode, try refresh token before redirecting to login
+        // In Docker mode, try refresh token before redirecting to login.
         const newToken = await authService.refreshAccessToken();
         if (newToken) {
           originalRequest.headers["Authorization"] = `Bearer ${newToken}`;
           return axios(originalRequest);
         }
 
-        // Refresh failed — redirect to login
+        // Refresh failed — redirect to login.
         localStorage.removeItem("auth_token");
         localStorage.removeItem("auth_token_expiration");
         localStorage.removeItem("auth_refresh_token");

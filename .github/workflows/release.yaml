@@ -1,4 +1,4 @@
-name: Build and Release on macOS and Windows
+name: Build and Release Desktop (Tauri)
 
 permissions:
   contents: write
@@ -6,12 +6,32 @@ permissions:
 on:
   push:
     tags:
-      - 'v*'  # triggers on tags like v1.0.0 or v1.0.0-beta
+      - 'v*'
   workflow_dispatch:
 
 jobs:
-  build-macos:
-    runs-on: macos-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            target: aarch64-apple-darwin
+            artifact_glob: 'flowfile_frontend/src-tauri/target/aarch64-apple-darwin/release/bundle/**/Flowfile_*.dmg'
+            sig_glob: 'flowfile_frontend/src-tauri/target/aarch64-apple-darwin/release/bundle/**/Flowfile_*.dmg.sig'
+          - platform: macos-13
+            target: x86_64-apple-darwin
+            artifact_glob: 'flowfile_frontend/src-tauri/target/x86_64-apple-darwin/release/bundle/**/Flowfile_*.dmg'
+            sig_glob: 'flowfile_frontend/src-tauri/target/x86_64-apple-darwin/release/bundle/**/Flowfile_*.dmg.sig'
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_glob: 'flowfile_frontend/src-tauri/target/release/bundle/nsis/Flowfile_*-setup.exe'
+            sig_glob: 'flowfile_frontend/src-tauri/target/release/bundle/nsis/Flowfile_*-setup.exe.sig'
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact_glob: 'flowfile_frontend/src-tauri/target/release/bundle/{appimage,deb}/Flowfile_*.{AppImage,deb}'
+            sig_glob: 'flowfile_frontend/src-tauri/target/release/bundle/{appimage,deb}/Flowfile_*.{AppImage,deb}.sig'
+    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,100 +39,120 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install Poetry
-        shell: bash
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: flowfile_frontend/src-tauri
+
+      - name: Install Linux WebKit dependencies
+        if: matrix.platform == 'ubuntu-22.04'
         run: |
-          curl -sSL https://install.python-poetry.org | python -
-          echo "${HOME}/.local/bin" >> $GITHUB_PATH
-
-      - name: Build project
-        shell: bash
-        run: make
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-
-      - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flowfile-mac-dmg
-          path: flowfile_frontend/dist/Flowfile-*-arm64.dmg
-
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
       - name: Install Poetry
-        shell: pwsh
-        run: |
-          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
-          echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        run: pip install poetry
 
-      - name: Install Python dependencies
-        shell: pwsh
-        run: |
-          poetry install --with build
+      - name: Install Python deps
+        run: poetry install --with build --no-interaction --no-ansi
 
-      - name: Build Python services
-        shell: pwsh
-        run: |
-          poetry run build_backends
+      - name: Build Python services (PyInstaller)
+        run: poetry run build_backends
 
-      - name: Build Electron app
-        shell: pwsh
-        run: |
-          cd flowfile_frontend
-          npm install
-          npm run build
+      - name: Stage sidecars for Tauri
+        run: poetry run python tools/rename_sidecar.py --triple ${{ matrix.target }}
+
+      - name: Install frontend deps
+        working-directory: flowfile_frontend
+        run: npm ci
+
+      - name: Import Apple certs (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Build Tauri app
+        working-directory: flowfile_frontend
         env:
+          # Updater signing (all platforms)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing + notarization
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # The repo's master_key for embedded Fernet auth
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: npx tauri build --target ${{ matrix.target }}
 
-      - name: Upload EXE artifact
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Flowfile-windows-exe
-          path: flowfile_frontend/dist/Flowfile*.exe
+          name: bundle-${{ matrix.target }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+
+      - name: Upload signature artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: signature-${{ matrix.target }}
+          path: ${{ matrix.sig_glob }}
+          if-no-files-found: warn
 
   release:
-    needs: [build-macos, build-windows]
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Inspect artifacts
+        run: |
+          ls -R artifacts || true
 
       - name: Create GitHub Release
-        id: create_release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"
           files: |
-            Flowfile-mac-dmg/Flowfile-*-arm64.dmg
-            Flowfile-windows-exe/Flowfile*.exe
+            artifacts/bundle-*/**/Flowfile_*
+            artifacts/signature-*/**/*.sig
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
-      - name: Log release information
+      # Operators must run `tools/make_latest_json.py` (or equivalent) to
+      # assemble `latest.json` from the .sig files and attach it to the
+      # release. We do not automate that here yet — Tauri's updater only
+      # activates once both files are present and signed.
+      - name: Reminder — manual latest.json upload required
         run: |
-          echo "GitHub Release created."
-          echo "Tag: ${{ github.ref_name }}"
-          echo "Release ID: ${{ steps.create_release.outputs.id }}"
-          echo "Assets have been uploaded to the GitHub Release."
+          echo "::notice::Attach latest.json to the release after this workflow"
+          echo "completes. See flowfile_frontend/src-tauri/SIGNING.md for the schema."
