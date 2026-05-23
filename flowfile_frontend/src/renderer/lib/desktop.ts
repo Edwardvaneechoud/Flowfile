@@ -64,7 +64,7 @@ async function listen<T>(
   handler: (payload: T) => void,
 ): Promise<() => void> {
   const rt = runtime();
-  if (!rt?.event?.listen) return () => {};
+  if (!rt?.event?.listen) return () => undefined;
   return rt.event.listen<T>(event, (e) => handler(e.payload));
 }
 

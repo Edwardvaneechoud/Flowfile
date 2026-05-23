@@ -208,7 +208,7 @@ Deeper dive: [Architecting a Visual ETL Tool with Polars](https://dev.to/edwardv
 
 ## License
 
-[MIT](LICENSE) — the code is yours.
+[MIT](LICENSE)
 
 ---
 
