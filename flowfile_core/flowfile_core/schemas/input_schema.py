@@ -1248,6 +1248,24 @@ class NodeOutput(NodeSingleInput):
         return result
 
 
+class NodeApiResponse(NodeSingleInput):
+    """Settings for a node that marks its input as the body of an HTTP API response.
+
+    This node is a sink (one input, no output). When the flow is published as an
+    API endpoint, the data flowing into this node is serialized and returned to the
+    caller. During interactive runs it is a pass-through (its result equals its
+    input), so previews keep working.
+    """
+
+    orientation: Literal["records", "columns"] = "records"
+    max_rows: int | None = None
+
+    def get_default_description(self) -> str:
+        """Describes the API response shape."""
+        limit = f", max {self.max_rows} rows" if self.max_rows else ""
+        return f"API response ({self.orientation}{limit})"
+
+
 class CatalogWriteSettings(BaseModel):
     """Settings for writing data to the catalog."""
 

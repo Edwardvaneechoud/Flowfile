@@ -40,6 +40,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "explore_data": input_schema.NodeExploreData,
     "union": input_schema.NodeUnion,
     "output": input_schema.NodeOutput,
+    "api_response": input_schema.NodeApiResponse,
     "read": input_schema.NodeRead,
     "database_reader": input_schema.NodeDatabaseReader,
     "database_writer": input_schema.NodeDatabaseWriter,

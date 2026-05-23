@@ -1,0 +1,117 @@
+"""Pydantic schemas for the "host flows as HTTP APIs" feature.
+
+Covers publishing a registered flow as an endpoint, the typed-parameter
+specification exposed by an endpoint, and per-endpoint API keys.
+"""
+
+import re
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+ApiParamType = Literal["string", "integer", "float", "boolean", "enum"]
+
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+class ApiParamSpec(BaseModel):
+    """A single query parameter exposed by a published endpoint.
+
+    The ``name`` must match a flow-level ``${name}`` parameter. ``type`` drives
+    validation/coercion of the incoming query value before it is substituted.
+    """
+
+    name: str
+    type: ApiParamType = "string"
+    required: bool = False
+    default: str | None = None
+    enum_values: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _validate_enum(self) -> "ApiParamSpec":
+        if self.type == "enum" and not self.enum_values:
+            raise ValueError(f"parameter '{self.name}' is type 'enum' but has no enum_values")
+        return self
+
+
+class ApiEndpointCreate(BaseModel):
+    """Request body to publish a registered flow as an API endpoint."""
+
+    registration_id: int
+    slug: str
+    enabled: bool = True
+    parameters: list[ApiParamSpec] = Field(default_factory=list)
+
+    @field_validator("slug")
+    @classmethod
+    def _validate_slug(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _SLUG_RE.match(v):
+            raise ValueError(
+                "slug must start with a letter or digit and contain only lowercase "
+                "letters, digits, hyphens, and underscores"
+            )
+        return v
+
+
+class ApiEndpointUpdate(BaseModel):
+    """Request body to update a published endpoint. All fields optional."""
+
+    slug: str | None = None
+    enabled: bool | None = None
+    parameters: list[ApiParamSpec] | None = None
+
+    @field_validator("slug")
+    @classmethod
+    def _validate_slug(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip().lower()
+        if not _SLUG_RE.match(v):
+            raise ValueError(
+                "slug must start with a letter or digit and contain only lowercase "
+                "letters, digits, hyphens, and underscores"
+            )
+        return v
+
+
+class ApiEndpointOut(BaseModel):
+    """Public view of a published endpoint."""
+
+    id: int
+    registration_id: int
+    owner_id: int
+    slug: str
+    enabled: bool
+    response_node_id: int | None = None
+    parameters: list[ApiParamSpec] = Field(default_factory=list)
+    path: str = ""  # convenience: "/api/data/{slug}"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ApiKeyCreate(BaseModel):
+    """Request body to mint a new API key for an endpoint."""
+
+    name: str
+    expires_at: datetime | None = None
+
+
+class ApiKeyOut(BaseModel):
+    """Public view of an API key. Never includes the raw token."""
+
+    id: int
+    endpoint_id: int
+    name: str
+    key_prefix: str
+    enabled: bool
+    last_used_at: datetime | None = None
+    expires_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class ApiKeyCreated(ApiKeyOut):
+    """Returned once, at key creation, carrying the raw token."""
+
+    api_key: str

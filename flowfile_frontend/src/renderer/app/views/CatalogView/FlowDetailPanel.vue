@@ -187,6 +187,10 @@
         @delete-schedule="handleDeleteSchedule"
       />
     </div>
+
+    <!-- Expose as API -->
+    <ApiEndpointPanel :flow="flow" />
+
     <!-- Data Lineage -->
     <div
       v-if="
@@ -296,6 +300,7 @@ import { formatDate, formatSize, formatType } from "./catalog-formatters";
 import RunHistoryTable from "./RunHistoryTable.vue";
 import { EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
+import ApiEndpointPanel from "./ApiEndpointPanel.vue";
 
 const catalogStore = useCatalogStore();
 

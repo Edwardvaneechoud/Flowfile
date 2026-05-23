@@ -238,6 +238,52 @@ class FlowFollow(Base):
     __table_args__ = (UniqueConstraint("user_id", "registration_id", name="uq_user_follow"),)
 
 
+class FlowApiEndpoint(Base):
+    """Publishes a registered flow as an HTTP data API endpoint.
+
+    At most one endpoint per registered flow. A GET to ``/api/data/{slug}``
+    authenticated by a ``FlowApiKey`` runs the flow synchronously and returns the
+    data flowing into the flow's single ``api_response`` node.
+    """
+
+    __tablename__ = "flow_api_endpoints"
+
+    id = Column(Integer, primary_key=True, index=True)
+    registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    slug = Column(String, nullable=False, unique=True, index=True)
+    enabled = Column(Boolean, default=True, nullable=False)
+    # node_id of the flow's api_response node, resolved at publish time.
+    response_node_id = Column(Integer, nullable=True)
+    # JSON list of typed parameter specs (see schemas/flow_api_schema.py:ApiParamSpec).
+    param_schema_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("registration_id", name="uq_api_endpoint_registration"),)
+
+
+class FlowApiKey(Base):
+    """A per-endpoint API key.
+
+    The raw token is shown once at creation; only its SHA-256 hash is stored
+    (one-way) so it can never be recovered from the database.
+    """
+
+    __tablename__ = "flow_api_keys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    endpoint_id = Column(Integer, ForeignKey("flow_api_endpoints.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)
+    key_hash = Column(String, nullable=False, unique=True, index=True)
+    key_prefix = Column(String, nullable=False)  # display only, e.g. "ffk_ab12…"
+    enabled = Column(Boolean, default=True, nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+
 class FlowSchedule(Base):
     """Defines a schedule for automatic flow execution."""
 

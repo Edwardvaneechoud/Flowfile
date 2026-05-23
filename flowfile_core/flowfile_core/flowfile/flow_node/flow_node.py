@@ -1015,7 +1015,7 @@ class FlowNode:
             if self.is_setup and self.results.errors is None:
                 if self.node_schema.result_schema is not None and len(self.node_schema.result_schema) > 0:
                     return self.node_schema.result_schema
-                elif self.node_type == "output":
+                elif self.node_type in ("output", "api_response"):
                     if len(self.node_inputs.main_inputs) > 0:
                         self.node_schema.result_schema = self.node_inputs.main_inputs[0].schema
                 else:
@@ -1169,7 +1169,7 @@ class FlowNode:
                 return
             except Exception:
                 node_logger.warning("Failed to read the cache, rerunning the code")
-        if self.node_type == "output":
+        if self.node_type in ("output", "api_response"):
             self.results.resulting_data = self.get_resulting_data()
             self.node_stats.has_run_with_current_setup = True
             return
