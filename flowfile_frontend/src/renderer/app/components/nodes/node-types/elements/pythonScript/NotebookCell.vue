@@ -57,6 +57,7 @@ import { autocompletion, acceptCompletion } from "@codemirror/autocomplete";
 import { indentMore, indentLess } from "@codemirror/commands";
 
 import type { NotebookCell } from "../../../../../types/node.types";
+import { apiHoverTooltip } from "./apiSchema";
 import CellOutput from "./CellOutput.vue";
 import {
   catalogRefChainCompletions,
@@ -182,6 +183,7 @@ const cellExtensions: Extension[] = [
   pythonLanguage.data.of({ autocomplete: namedInputCompletions }),
   pythonLanguage.data.of({ autocomplete: columnCompletions }),
   pythonLanguage.data.of({ autocomplete: scopeCompletions }),
+  apiHoverTooltip,
   oneDark,
   cellEditorTheme,
   EditorState.tabSize.of(4),
@@ -281,5 +283,28 @@ const cellExtensions: Extension[] = [
   padding: 0.25rem 0.5rem;
   font-size: 0.75rem;
   color: var(--el-color-warning);
+}
+</style>
+
+<!-- Global (un-scoped): the hover tooltip is rendered outside the component tree by CodeMirror. -->
+<style>
+.cm-api-hover {
+  max-width: 480px;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.cm-api-hover-sig {
+  font-family: "Fira Code", "Monaco", "Menlo", monospace;
+  font-weight: 600;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cm-api-hover-doc {
+  margin-top: 0.35rem;
+  white-space: pre-wrap;
+  opacity: 0.85;
 }
 </style>

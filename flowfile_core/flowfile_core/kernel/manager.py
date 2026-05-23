@@ -1724,6 +1724,25 @@ class KernelManager:
             response.raise_for_status()
             return response.json()
 
+    async def get_api_schema(self, kernel_id: str) -> list:
+        """Return the kernel's introspected API schema for editor type hints.
+
+        Returns an empty list when the kernel isn't running so the editor can
+        fall back to its built-in static completions.
+        """
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            return []
+
+        url = f"{self._kernel_url(kernel)}/api_schema"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response.json()
+        except (httpx.HTTPError, OSError):
+            return []
+
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------

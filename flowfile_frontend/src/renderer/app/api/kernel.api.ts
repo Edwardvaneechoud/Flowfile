@@ -1,5 +1,6 @@
 import axios from "../services/axios.config";
 import type {
+  ApiSymbol,
   DisplayOutput,
   DockerStatus,
   ExecuteCellRequest,
@@ -181,6 +182,18 @@ export class KernelApi {
       );
       return response.data;
     } catch {
+      return [];
+    }
+  }
+
+  static async getApiSchema(kernelId: string): Promise<ApiSymbol[]> {
+    try {
+      const response = await axios.get<ApiSymbol[]>(
+        `${API_BASE_URL}/${encodeURIComponent(kernelId)}/api_schema`,
+      );
+      return response.data;
+    } catch {
+      // Editor falls back to its built-in static completions when unavailable.
       return [];
     }
   }

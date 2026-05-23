@@ -339,6 +339,7 @@
     "connections": "Connections",
     "nodeDesigner": "Node Designer",
     "kernelManager": "Kernel Manager",
+    "notebook": "Notebook",
     "fileManager": "File Manager",
     "admin": "User Management",
     "popovers": "Popovers",

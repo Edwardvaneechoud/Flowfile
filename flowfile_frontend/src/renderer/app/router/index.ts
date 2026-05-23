@@ -87,6 +87,11 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/CatalogView/CatalogView.vue"),
       },
       {
+        name: "notebook",
+        path: "notebook",
+        component: () => import("../views/NotebookView/NotebookView.vue"),
+      },
+      {
         name: "dashboard-new",
         path: "dashboards/new",
         component: () => import("../views/DashboardsView/DashboardEditorView.vue"),

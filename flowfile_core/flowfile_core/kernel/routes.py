@@ -381,6 +381,25 @@ async def get_display_outputs(
         return []
 
 
+@router.get("/{kernel_id}/api_schema")
+async def get_api_schema(kernel_id: str, current_user=Depends(get_current_active_user)):
+    """Introspected API schema (flowfile_ctx + polars) for editor type hints.
+
+    Returns an empty list when the kernel isn't running so the editor falls
+    back to its built-in static completions.
+    """
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        return await manager.get_api_schema(kernel_id)
+    except Exception:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Artifact Persistence & Recovery endpoints
 # ---------------------------------------------------------------------------

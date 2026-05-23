@@ -1,5 +1,6 @@
 import type { Completion, CompletionSource } from "@codemirror/autocomplete";
 
+import { enrich } from "./apiSchema";
 import type { UpstreamColumn } from "./useUpstreamColumns";
 
 // ─── Static entries ──────────────────────────────────────────────────────────
@@ -629,7 +630,7 @@ export const flowfileApiCompletions: CompletionSource = (context) => {
   const dotPos = match.from + match.text.indexOf(".") + 1;
   return {
     from: dotPos,
-    options: FLOWFILE_API_ENTRIES,
+    options: enrich(FLOWFILE_API_ENTRIES, ["flowfile_ctx"]),
     validFor: /^\w*$/,
   };
 };
@@ -644,7 +645,7 @@ export const polarsModuleCompletions: CompletionSource = (context) => {
   const dotPos = match.from + match.text.indexOf(".") + 1;
   return {
     from: dotPos,
-    options: POLARS_MODULE_ENTRIES,
+    options: enrich(POLARS_MODULE_ENTRIES, ["pl"]),
     validFor: /^\w*$/,
   };
 };
@@ -744,7 +745,7 @@ export function createPolarsExprCompletions(getPriorCellCodes: () => string[]): 
 
     return {
       from: match.from + 1,
-      options: POLARS_METHOD_ENTRIES,
+      options: enrich(POLARS_METHOD_ENTRIES, ["LazyFrame", "DataFrame", "Expr"]),
       validFor: /^\w*$/,
     };
   };
