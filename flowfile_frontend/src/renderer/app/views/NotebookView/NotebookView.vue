@@ -36,41 +36,30 @@
           <input
             v-model="nameDraft"
             class="notebook-title-input"
-            :title="'Rename notebook'"
+            title="Rename notebook"
             @change="onRename"
           />
           <div class="header-spacer"></div>
 
           <label class="kernel-label">Kernel</label>
-          <select
-            class="kernel-select"
-            :value="store.selectedKernelId ?? ''"
+          <KernelSelect
+            class="header-kernel-select"
+            :model-value="store.selectedKernelId"
+            :kernels="kernels"
             @change="onKernelChange"
-          >
-            <option value="" disabled>Select a kernel…</option>
-            <option v-for="k in store.kernels" :key="k.id" :value="k.id">
-              {{ k.name }} ({{ k.state }})
-            </option>
-          </select>
+          />
           <button
-            v-if="store.selectedKernelId && !store.kernelReady"
+            v-if="store.selectedKernelId && !kernelReady"
             class="start-btn"
             title="Start the selected kernel"
-            @click="store.startSelectedKernel()"
+            @click="onStartKernel"
           >
             <i class="fa-solid fa-play"></i> Start
           </button>
-          <router-link
-            v-if="store.kernels.length === 0"
-            :to="{ name: 'kernelManager' }"
-            class="kernel-link"
-          >
-            Create a kernel
-          </router-link>
           <span class="save-state">{{ store.saving ? "Saving…" : "Saved" }}</span>
         </header>
 
-        <div v-if="!store.kernelReady" class="kernel-warning">
+        <div v-if="!kernelReady" class="kernel-warning">
           <i class="fa-solid fa-circle-info"></i>
           Select and start a kernel to run cells. Code uses <code>flowfile_ctx</code> and
           <code>pl</code> (Polars).
@@ -80,7 +69,7 @@
           <NotebookEditor
             :key="store.active.id"
             :cells="editorCells"
-            :kernel-id="store.kernelReady ? store.selectedKernelId : null"
+            :kernel-id="kernelReady ? store.selectedKernelId : null"
             :flow-id="store.active.flow_id"
             :node-id="0"
             :depending-on-ids="[]"
@@ -102,9 +91,14 @@ import { computed, onMounted, ref, watch } from "vue";
 
 import type { NotebookCell as EditorCell } from "../../types/node.types";
 import { useNotebookStore } from "../../stores/notebook-store";
+import { useKernelManager } from "../KernelManagerView/useKernelManager";
+import KernelSelect from "../../components/kernel/KernelSelect.vue";
 import NotebookEditor from "../../components/nodes/node-types/elements/pythonScript/NotebookEditor.vue";
 
 const store = useNotebookStore();
+// Reuse the shared kernel composable (list + polling + start) rather than
+// re-implementing kernel loading in the notebook store.
+const { kernels, startKernel } = useKernelManager();
 const nameDraft = ref("");
 
 // The reused NotebookEditor speaks the in-node cell shape ({ id, code }); the
@@ -112,6 +106,14 @@ const nameDraft = ref("");
 const editorCells = computed<EditorCell[]>(() =>
   store.activeCells.map((c) => ({ id: c.id, code: c.source, output: null })),
 );
+
+const selectedKernel = computed(
+  () => kernels.value.find((k) => k.id === store.selectedKernelId) ?? null,
+);
+const kernelReady = computed(() => {
+  const k = selectedKernel.value;
+  return !!k && (k.state === "idle" || k.state === "executing");
+});
 
 watch(
   () => store.active?.name,
@@ -121,8 +123,17 @@ watch(
   { immediate: true },
 );
 
-onMounted(async () => {
-  await Promise.all([store.loadKernels(), store.loadNotebooks()]);
+// Default the kernel selection (in-memory only) when opening a notebook that
+// hasn't bound one yet — explicit changes are persisted via selectKernel().
+watch([() => store.active?.id, kernels], () => {
+  if (store.active && !store.selectedKernelId && kernels.value.length) {
+    store.selectedKernelId =
+      kernels.value.find((k) => k.state === "idle")?.id ?? kernels.value[0].id;
+  }
+});
+
+onMounted(() => {
+  void store.loadNotebooks();
 });
 
 const onCellsUpdate = (cells: EditorCell[]) => {
@@ -143,9 +154,12 @@ const onRename = () => {
   if (nameDraft.value.trim()) void store.renameActive(nameDraft.value.trim());
 };
 
-const onKernelChange = (event: Event) => {
-  const value = (event.target as HTMLSelectElement).value;
-  void store.selectKernel(value || null);
+const onKernelChange = (id: string | null) => {
+  void store.selectKernel(id);
+};
+
+const onStartKernel = () => {
+  if (store.selectedKernelId) void startKernel(store.selectedKernelId);
 };
 </script>
 
@@ -254,17 +268,11 @@ const onKernelChange = (event: Event) => {
   color: var(--el-text-color-secondary);
 }
 
-.kernel-select {
-  font-size: 0.8rem;
-  padding: 0.2rem 0.4rem;
-  border: 1px solid var(--el-border-color);
-  border-radius: 3px;
-  background: var(--el-bg-color);
-  color: var(--el-text-color-primary);
+.header-kernel-select {
+  min-width: 16rem;
 }
 
-.start-btn,
-.kernel-link {
+.start-btn {
   font-size: 0.75rem;
   padding: 0.2rem 0.5rem;
   border: 1px solid var(--el-border-color);
@@ -272,7 +280,6 @@ const onKernelChange = (event: Event) => {
   background: var(--el-bg-color);
   cursor: pointer;
   color: var(--el-text-color-regular);
-  text-decoration: none;
 }
 
 .save-state {

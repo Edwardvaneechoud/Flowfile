@@ -1,13 +1,13 @@
 import { defineStore } from "pinia";
 
-import { KernelApi } from "../api/kernel.api";
-import type { KernelInfo, Notebook, NotebookCellData, NotebookSummary } from "../types";
+import type { Notebook, NotebookCellData, NotebookSummary } from "../types";
 import { NotebookApi } from "../views/NotebookView/api";
 
 interface NotebookState {
   notebooks: NotebookSummary[];
   active: Notebook | null;
-  kernels: KernelInfo[];
+  // Kernel bound to the active notebook (persisted to its .ipynb metadata).
+  // The kernel *list* lives in the shared useKernelManager composable.
   selectedKernelId: string | null;
   loading: boolean;
   saving: boolean;
@@ -21,7 +21,6 @@ export const useNotebookStore = defineStore("notebook", {
   state: (): NotebookState => ({
     notebooks: [],
     active: null,
-    kernels: [],
     selectedKernelId: null,
     loading: false,
     saving: false,
@@ -30,12 +29,6 @@ export const useNotebookStore = defineStore("notebook", {
 
   getters: {
     activeCells: (state): NotebookCellData[] => state.active?.cells ?? [],
-    selectedKernel: (state): KernelInfo | null =>
-      state.kernels.find((k) => k.id === state.selectedKernelId) ?? null,
-    kernelReady(): boolean {
-      const k = this.selectedKernel;
-      return !!k && (k.state === "idle" || k.state === "executing");
-    },
   },
 
   actions: {
@@ -51,25 +44,13 @@ export const useNotebookStore = defineStore("notebook", {
       }
     },
 
-    async loadKernels(): Promise<void> {
-      try {
-        this.kernels = await KernelApi.getAll();
-      } catch {
-        this.kernels = [];
-      }
-    },
-
     async openNotebook(id: string): Promise<void> {
       this.loading = true;
       this.error = null;
       try {
         const notebook = await NotebookApi.get(id);
         this.active = notebook;
-        this.selectedKernelId =
-          notebook.kernel_id ??
-          this.kernels.find((k) => k.state === "idle")?.id ??
-          this.kernels[0]?.id ??
-          null;
+        this.selectedKernelId = notebook.kernel_id ?? null;
       } catch (e) {
         this.error = e instanceof Error ? e.message : "Failed to open notebook";
       } finally {
@@ -82,6 +63,7 @@ export const useNotebookStore = defineStore("notebook", {
         const notebook = await NotebookApi.create({ name, kernel_id: this.selectedKernelId });
         await this.loadNotebooks();
         this.active = notebook;
+        this.selectedKernelId = notebook.kernel_id ?? this.selectedKernelId;
         return notebook;
       } catch (e) {
         this.error = e instanceof Error ? e.message : "Failed to create notebook";
@@ -115,15 +97,6 @@ export const useNotebookStore = defineStore("notebook", {
       if (!this.active) return;
       this.active.name = name;
       await this._save(this.active.id, { name });
-    },
-
-    async startSelectedKernel(): Promise<void> {
-      if (!this.selectedKernelId) return;
-      try {
-        await KernelApi.start(this.selectedKernelId);
-      } finally {
-        await this.loadKernels();
-      }
     },
 
     async _save(

@@ -20,35 +20,12 @@
                 </span>
               </div>
             </template>
-            <div class="kernel-row">
-              <el-select
-                v-model="selectedKernelId"
-                placeholder="Select a kernel..."
-                class="kernel-select"
-                size="small"
-                :loading="kernelsLoading"
-                @change="handleKernelChange"
-              >
-                <el-option
-                  v-for="kernel in kernels"
-                  :key="kernel.id"
-                  :value="kernel.id"
-                  :label="`${kernel.name} (${kernel.state})`"
-                >
-                  <span class="kernel-option">
-                    <span
-                      class="kernel-state-dot"
-                      :class="`kernel-state-dot--${kernel.state}`"
-                    ></span>
-                    <span>{{ kernel.name }}</span>
-                    <span class="kernel-state-label">({{ kernel.state }})</span>
-                  </span>
-                </el-option>
-              </el-select>
-              <router-link :to="{ name: 'kernelManager' }" class="manage-kernels-link">
-                Manage Kernels
-              </router-link>
-            </div>
+            <KernelSelect
+              v-model="selectedKernelId"
+              :kernels="kernels"
+              :loading="kernelsLoading"
+              @change="handleKernelChange"
+            />
 
             <!-- Memory usage -->
             <div
@@ -285,6 +262,7 @@ import { KernelApi } from "../../../../../api/kernel.api";
 import { FlowApi } from "../../../../../api/flow.api";
 import { outputHandle } from "../../../../../utils/outputHandle";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import KernelSelect from "../../../../kernel/KernelSelect.vue";
 import FlowfileApiHelp from "./FlowfileApiHelp.vue";
 import NotebookEditor from "./NotebookEditor.vue";
 import { createPythonScriptNode, DEFAULT_PYTHON_SCRIPT_CODE } from "./utils";
@@ -783,67 +761,6 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   font-weight: 500;
   font-size: 0.8rem;
   color: var(--el-text-color-primary);
-}
-
-/* ─── Kernel selection ───────────────────────────────────────────────────── */
-
-.kernel-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.kernel-select {
-  flex: 1;
-}
-
-.manage-kernels-link {
-  font-size: 0.8rem;
-  color: var(--el-color-primary);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.manage-kernels-link:hover {
-  text-decoration: underline;
-}
-
-.kernel-option {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.kernel-state-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.kernel-state-dot--idle {
-  background-color: #67c23a;
-}
-
-.kernel-state-dot--executing {
-  background-color: #e6a23c;
-}
-
-.kernel-state-dot--starting {
-  background-color: #409eff;
-}
-
-.kernel-state-dot--stopped {
-  background-color: #909399;
-}
-
-.kernel-state-dot--error {
-  background-color: #f56c6c;
-}
-
-.kernel-state-label {
-  font-size: 0.8rem;
-  color: var(--el-text-color-secondary);
 }
 
 /* ─── Memory usage ────────────────────────────────────────────────────── */
