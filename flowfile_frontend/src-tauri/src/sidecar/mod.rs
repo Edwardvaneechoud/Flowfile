@@ -212,6 +212,17 @@ pub(crate) fn spawn_service(
         .stderr(Stdio::piped())
         .kill_on_drop(false);
 
+    // The PyInstaller sidecars are console-subsystem binaries. Without this flag
+    // Windows allocates a visible console window for each one when spawned from
+    // the GUI shell. CREATE_NO_WINDOW suppresses those terminals; stdout/stderr
+    // are still piped to pump_stream for logging. (creation_flags is an inherent
+    // method on tokio's Command on Windows.)
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     let mut child = cmd.spawn().map_err(|e| SidecarError::Spawn {
         name,
         cause: format!("{}: {}", path.display(), e),
