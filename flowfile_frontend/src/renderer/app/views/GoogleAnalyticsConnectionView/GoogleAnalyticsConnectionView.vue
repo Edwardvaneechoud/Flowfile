@@ -246,6 +246,7 @@ import type {
 import GoogleAnalyticsConnectionSettings from "./GoogleAnalyticsConnectionSettings.vue";
 import GoogleOAuthClientCard from "./GoogleOAuthClientCard.vue";
 import SetupLink from "./SetupLink.vue";
+import { desktop, isDesktop } from "../../../lib/desktop";
 
 const connections = ref<GoogleAnalyticsConnectionInterface[]>([]);
 const isLoading = ref(true);
@@ -270,6 +271,48 @@ const connectionToDelete = ref<GoogleAnalyticsConnectionInterface | null>(null);
 const activeConnection = ref<GoogleAnalyticsConnectionInterface | undefined>(undefined);
 
 let oauthPopup: Window | null = null;
+// Desktop OAuth runs in the system browser (Google blocks embedded webviews),
+// so we can't postMessage back. Instead we poll the connection list until the
+// backend callback has stored the credential. This timer drives that poll.
+let gaOauthPollTimer: ReturnType<typeof setTimeout> | null = null;
+
+const stopGaOauthPolling = () => {
+  if (gaOauthPollTimer !== null) {
+    clearTimeout(gaOauthPollTimer);
+    gaOauthPollTimer = null;
+  }
+};
+
+// After opening the browser, refresh the connection list until the target
+// connection shows a linked Google account (the callback upserts it), or we
+// hit the timeout. Reports success only for a freshly-linked connection so a
+// re-auth of an already-linked one doesn't trigger a false positive.
+const pollForGaOauthCompletion = (connectionName: string, wasLinkedBefore: boolean) => {
+  stopGaOauthPolling();
+  const deadline = Date.now() + 3 * 60 * 1000;
+  const tick = async () => {
+    gaOauthPollTimer = null;
+    try {
+      const latest = await fetchGoogleAnalyticsConnections();
+      connections.value = latest;
+      const match = latest.find((c) => c.connectionName === connectionName && c.oauthUserEmail);
+      if (match && !wasLinkedBefore) {
+        isConnecting.value = false;
+        dialogVisible.value = false;
+        ElMessage.success(`Connected as ${match.oauthUserEmail}`);
+        return;
+      }
+    } catch (error) {
+      console.error("Error polling GA connections:", error);
+    }
+    if (Date.now() > deadline) {
+      isConnecting.value = false;
+      return;
+    }
+    gaOauthPollTimer = setTimeout(tick, 2000);
+  };
+  gaOauthPollTimer = setTimeout(tick, 2000);
+};
 
 const fetchConnections = async () => {
   isLoading.value = true;
@@ -323,6 +366,20 @@ const handleConnectOAuth = async (metadata: GoogleAnalyticsConnectionMetadata) =
   isConnecting.value = true;
   try {
     const { authUrl } = await startGoogleAnalyticsOAuth(metadata);
+
+    if (isDesktop) {
+      // Embedded webviews are rejected by Google's OAuth (disallowed_useragent),
+      // so hand the consent flow to the system browser. The backend callback
+      // stores the credential; we poll the list to reflect completion.
+      const wasLinkedBefore = connections.value.some(
+        (c) => c.connectionName === metadata.connectionName && c.oauthUserEmail,
+      );
+      await desktop.openExternal(authUrl);
+      ElMessage.info("Continue signing in with Google in your browser…");
+      pollForGaOauthCompletion(metadata.connectionName, wasLinkedBefore);
+      return;
+    }
+
     oauthPopup = window.open(authUrl, "flowfile-ga-oauth", "width=520,height=720");
     if (!oauthPopup) {
       ElMessage.error("Popup blocked — allow popups for this site and try again");
@@ -389,6 +446,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("message", handleOAuthMessage);
+  stopGaOauthPolling();
 });
 </script>
 

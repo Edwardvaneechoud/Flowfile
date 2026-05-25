@@ -106,6 +106,21 @@ export const desktop = {
     return invoke<string | null>("open_oauth", { url });
   },
 
+  /**
+   * Open a URL in the user's default system browser. Used for OAuth on desktop:
+   * Google blocks its sign-in flow inside embedded webviews (disallowed_useragent),
+   * so the consent screen must run in a real browser. Routes through the `opener`
+   * plugin (granted via `opener:default` in capabilities/main.json). In web mode
+   * this opens a new tab instead.
+   */
+  async openExternal(url: string): Promise<void> {
+    if (!isDesktop) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    await invoke<void>("plugin:opener|open_url", { url });
+  },
+
   onServicesStatus(handler: (status: ServicesStatus) => void): Promise<() => void> {
     return listen<ServicesStatus>("services-status", handler);
   },
