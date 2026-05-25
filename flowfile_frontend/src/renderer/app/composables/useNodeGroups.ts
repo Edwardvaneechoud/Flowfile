@@ -235,8 +235,13 @@ export function useNodeGroups() {
     const width = maxX - minX;
     const height = maxY - minY;
     // Move the box origin, then re-anchor each child relative to it (absolute unchanged).
+    // A nested group's VueFlow position is relative to its parent, so convert from absolute.
+    const groupNode = findNode(groupVueId);
+    const parent = groupNode?.parentNode ? findNode(groupNode.parentNode) : undefined;
     updateNode(groupVueId, {
-      position: { x: minX, y: minY },
+      position: parent
+        ? { x: minX - parent.computedPosition.x, y: minY - parent.computedPosition.y }
+        : { x: minX, y: minY },
       style: { width: `${width}px`, height: `${height}px` },
     });
     for (const item of snapshot) {
@@ -303,12 +308,14 @@ export function useNodeGroups() {
         newVueId,
         topLevel.map((node) => node.id),
       );
-      // Tighten the box to the real rendered sizes and persist those bounds.
+      // Tighten the box to the real rendered sizes and persist those bounds. createGroup
+      // already recorded the undo entry, so fold these bounds into it (record_history: false).
       const fit = refitGroup(newVueId);
       if (fit) {
         await FlowApi.updateLayout(flowStore.flowId, {
           node_positions: [],
           group_bounds: [fit.bounds],
+          record_history: false,
         });
       }
     }
@@ -412,7 +419,8 @@ export function useNodeGroups() {
       await nextTick();
       updateNodeInternals([parentId]); // measure this group's new box before the parent refits
       await nextTick();
-      await persistGroupChainRefit(ancestorVueId);
+      // updateGroup already recorded the undo entry; fold the ancestor refit into it.
+      await persistGroupChainRefit(ancestorVueId, false);
     }
   };
 
@@ -446,7 +454,10 @@ export function useNodeGroups() {
   };
 
   /** Refit a group and every ancestor group (so a moved nested group re-wraps up the tree). */
-  const persistGroupChainRefit = async (startGroupVueId: string): Promise<void> => {
+  const persistGroupChainRefit = async (
+    startGroupVueId: string,
+    recordHistory = true,
+  ): Promise<void> => {
     if (flowStore.flowId === null) return;
     const group_bounds: GroupBoundsUpdate[] = [];
     let node_positions: NodePositionUpdate[] = [];
@@ -469,7 +480,11 @@ export function useNodeGroups() {
       current = parent;
     }
     if (group_bounds.length === 0 && node_positions.length === 0) return;
-    const response = await FlowApi.updateLayout(flowStore.flowId, { node_positions, group_bounds });
+    const response = await FlowApi.updateLayout(flowStore.flowId, {
+      node_positions,
+      group_bounds,
+      record_history: recordHistory,
+    });
     flowStore.updateHistoryState(response.history);
   };
 
@@ -484,7 +499,8 @@ export function useNodeGroups() {
     if (node.type === GROUP_NODE_TYPE) {
       // Persist the whole subtree — children moved with the parent.
       await persistLayout(descendantsOf(node.id), [node]);
-      if (node.parentNode) await persistGroupChainRefit(node.parentNode);
+      // persistLayout already recorded the undo entry; fold the ancestor refit into it.
+      if (node.parentNode) await persistGroupChainRefit(node.parentNode, false);
       return;
     }
     if (node.parentNode) {

@@ -593,6 +593,8 @@ class UpdateLayoutRequest(BaseModel):
 
     node_positions: list[NodePositionUpdate] = Field(default_factory=list)
     group_bounds: list[GroupBoundsUpdate] = Field(default_factory=list)
+    # False -> apply without a new undo entry (folds into a preceding op's snapshot).
+    record_history: bool = True
 
 
 class NodeDefault(BaseModel):

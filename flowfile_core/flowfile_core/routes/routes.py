@@ -819,7 +819,8 @@ def update_layout(flow_id: int, request: schemas.UpdateLayoutRequest) -> Operati
     """
     flow = _get_running_flow(flow_id)
     if request.node_positions or request.group_bounds:
-        flow.capture_history_snapshot(HistoryActionType.MOVE_NODES, "Update layout")
+        if request.record_history:
+            flow.capture_history_snapshot(HistoryActionType.MOVE_NODES, "Update layout")
         flow.set_node_positions(request.node_positions)
         flow.set_group_bounds(request.group_bounds)
     return OperationResponse(success=True, history=flow.get_history_state())

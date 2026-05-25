@@ -244,6 +244,8 @@ export interface GroupBoundsUpdate {
 export interface UpdateLayoutRequest {
   node_positions: NodePositionUpdate[];
   group_bounds: GroupBoundsUpdate[];
+  // false -> apply layout without a new undo entry (fold into a preceding op's snapshot)
+  record_history?: boolean;
 }
 
 // mirrors routes.GroupOperationResponse

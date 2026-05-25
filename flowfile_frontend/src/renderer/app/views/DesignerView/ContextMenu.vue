@@ -64,38 +64,38 @@ const ICONS: Record<string, string> = {
 // inconsistency, fixing it is out of scope for.
 const getMenuActions = () => {
   const baseActions = [
-    { id: "fit-view", label: "Fit View", icon: "🔍" },
-    { id: "zoom-in", label: "Zoom In", icon: "🔍+" },
-    { id: "zoom-out", label: "Zoom Out", icon: "🔍-" },
-    { id: "paste-node", label: "Paste Node", icon: "📋" },
+    { id: "fit-view", label: "Fit View", icon: "fitView" },
+    { id: "zoom-in", label: "Zoom In", icon: "zoomIn" },
+    { id: "zoom-out", label: "Zoom Out", icon: "zoomOut" },
+    { id: "paste-node", label: "Paste Node", icon: "paste" },
   ];
   if (props.targetType === "pane") {
     baseActions.push({
       id: "group-selection",
       label: "Group selected nodes",
-      icon: "🗂️",
+      icon: "group",
     });
     baseActions.push({
       id: "generate-documentation",
       label: "Generate documentation",
-      icon: "📝",
+      icon: "document",
     });
     baseActions.push({
       id: "add-descriptions-all",
       label: "Add description to all nodes",
-      icon: "✨",
+      icon: "sparkles",
     });
     baseActions.push({
       id: "ask-lineage",
       label: "Ask about lineage…",
-      icon: "🔎",
+      icon: "lineage",
     });
   }
   if (props.targetType === "selection") {
     baseActions.push({
       id: "group-selection",
       label: "Group selected nodes",
-      icon: "🗂️",
+      icon: "group",
     });
   }
   if (props.targetType === "node") {
@@ -103,19 +103,19 @@ const getMenuActions = () => {
       baseActions.push({
         id: "remove-from-group",
         label: "Remove from group",
-        icon: "🗂️",
+        icon: "ungroup",
       });
     } else {
       baseActions.push({
         id: "group-selection",
         label: "Group selected nodes",
-        icon: "🗂️",
+        icon: "group",
       });
     }
     baseActions.push({
       id: "ask-lineage-node",
       label: "Ask about this node's lineage…",
-      icon: "🔎",
+      icon: "lineage",
     });
   }
   return baseActions;
@@ -181,7 +181,21 @@ onUnmounted(() => {
         class="context-menu-item"
         @click="handleAction(action.id)"
       >
-        <span class="context-menu-icon">{{ action.icon }}</span>
+        <!-- eslint-disable vue/no-v-html -- ICONS is a trusted internal constant of static SVG paths -->
+        <span class="context-menu-icon" aria-hidden="true">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            v-html="ICONS[action.icon]"
+          ></svg>
+        </span>
+        <!-- eslint-enable vue/no-v-html -->
         <span>{{ action.label }}</span>
       </div>
     </div>
@@ -193,5 +207,12 @@ onUnmounted(() => {
 /* Component-specific overrides only */
 .context-menu {
   min-width: 200px;
+}
+
+.context-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 </style>

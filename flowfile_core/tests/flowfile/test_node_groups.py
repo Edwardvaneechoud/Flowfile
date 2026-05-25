@@ -287,3 +287,38 @@ def test_nested_groups_round_trip(temp_dir):
 
     by_name = {g.name: g for g in reloaded._groups.values()}
     assert by_name["Inner"].parent_group_id == by_name["Outer"].id
+
+
+# ---------------------------------------------------------------------------
+# Group id allocation
+# ---------------------------------------------------------------------------
+
+
+def test_next_group_id_does_not_reuse_freed_id():
+    graph = build_two_node_graph()
+    add_manual_input(graph, [{"a": 5}], node_id=3)
+    g1 = graph.create_group("A", [1])
+    g2 = graph.create_group("B", [2])
+    g3 = graph.create_group("C", [3])
+    assert [g1.id, g2.id, g3.id] == [1, 2, 3]
+
+    graph.delete_group(g3.id)  # free the highest id
+    g4 = graph.create_group("D", [3])
+    assert g4.id == 4  # monotonic; the freed id 3 is not reused
+    assert g4.id not in {g1.id, g2.id}
+
+
+def test_restore_groups_resyncs_id_counter(temp_dir):
+    graph = build_two_node_graph()
+    add_manual_input(graph, [{"a": 5}], node_id=3)
+    graph.create_group("A", [1])
+    graph.create_group("B", [2])
+    graph.create_group("C", [3])  # ids 1, 2, 3
+
+    path = temp_dir / "flow.yaml"
+    graph.save_flow(str(path))
+    reloaded = open_flow(path)
+
+    assert reloaded._group_id_seq == 3  # counter resumes above the highest restored id
+    regrouped = reloaded.create_group("D", [1])
+    assert regrouped.id == 4

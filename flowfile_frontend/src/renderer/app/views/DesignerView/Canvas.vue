@@ -490,7 +490,9 @@ function isValidConnection(connection: Connection): boolean {
   const source = connection.source;
   const target = connection.target;
   if (!source || !target) return false;
-  // Group-proxy edges (to/from a collapsed pill) are UI-only and can't be user-drawn.
+  // A collapsed group's pill edges are added programmatically but still validated through
+  // here, so they must be accepted or they won't render. Users can't draw them by hand
+  // (group nodes are connectable:false); this only greenlights those UI-only proxy edges.
   if (isGroupNodeId(source) || isGroupNodeId(target)) return true;
   if (source === target) return rejectConnection("A node can't connect to itself");
 

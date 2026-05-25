@@ -142,6 +142,43 @@ def test_update_unknown_group_returns_404():
     assert resp.status_code == 404
 
 
+def test_update_layout_record_history_false_skips_undo_entry():
+    flow_id = make_flow(956)
+    created = client.post(
+        "/editor/create_group/", params={"flow_id": flow_id}, json={"node_ids": [1, 2], "name": "G"}
+    ).json()
+    group_id = created["group"]["id"]
+    undo_after_create = created["history"]["undo_count"]
+
+    folded = client.post(
+        "/editor/update_layout/",
+        params={"flow_id": flow_id},
+        json={
+            "group_bounds": [
+                {"group_id": group_id, "x_position": 1.0, "y_position": 2.0, "width": 300.0, "height": 200.0}
+            ],
+            "record_history": False,
+        },
+    )
+    assert folded.status_code == 200, folded.text
+    # Bounds applied, but no new undo step (folded into the create entry).
+    assert folded.json()["history"]["undo_count"] == undo_after_create
+    assert flow_file_handler.get_flow(flow_id)._groups[group_id].width == 300.0
+
+    # Omitting the flag keeps the default: one new undo step.
+    recorded = client.post(
+        "/editor/update_layout/",
+        params={"flow_id": flow_id},
+        json={
+            "group_bounds": [
+                {"group_id": group_id, "x_position": 3.0, "y_position": 4.0, "width": 320.0, "height": 220.0}
+            ]
+        },
+    )
+    assert recorded.status_code == 200, recorded.text
+    assert recorded.json()["history"]["undo_count"] == undo_after_create + 1
+
+
 def test_create_group_rejected_while_running():
     flow_id = make_flow(954)
     flow_file_handler.get_flow(flow_id).flow_settings.is_running = True

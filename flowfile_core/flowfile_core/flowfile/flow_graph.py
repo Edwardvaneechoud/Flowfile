@@ -904,6 +904,7 @@ class FlowGraph:
         # Visual node groups: organizational only, never read by the executor.
         # Membership lives on each node's setting_input.group_id; this is the box registry.
         self._groups: dict[int, schemas.GroupInformation] = {}
+        self._group_id_seq: int = 0  # monotonic group-id allocator; never reuses a freed id
         self._active_group_id: int | None = None
         self.cache_results = cache_results
         self.__name__ = name if name else "flow_" + str(id(self))
@@ -1172,8 +1173,9 @@ class FlowGraph:
     # (name/color/bounds) live in self._groups and ride along in FlowfileData.
 
     def _next_group_id(self) -> int:
-        """Allocate a group id unique among this flow's groups (separate from node ids)."""
-        return (max(self._groups) if self._groups else 0) + 1
+        """Allocate a monotonically increasing group id (never reuses a freed id this session)."""
+        self._group_id_seq = max([self._group_id_seq, *self._groups]) + 1
+        return self._group_id_seq
 
     def _member_node_ids(self, group_id: int) -> list[int]:
         """Derive a group's members by scanning node group_id (single source of truth)."""
@@ -1394,6 +1396,7 @@ class FlowGraph:
     def restore_groups(self, groups: list[schemas.GroupInformation]) -> None:
         """Replace the runtime group registry (used by open_flow and restore_from_snapshot)."""
         self._groups = {group.id: group for group in groups}
+        self._group_id_seq = max(self._groups, default=0)  # next id resumes above the highest restored
         for group in self._groups.values():
             if group.width <= 0 or group.height <= 0:
                 self._recompute_group_bounds(group.id)
