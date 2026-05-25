@@ -25,6 +25,7 @@ jobs:
             target: x86_64-pc-windows-msvc
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            tauri_args: '--verbose'
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
@@ -89,6 +90,10 @@ jobs:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
           p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
+      - name: Prefer system xattr over the PyPI/Homebrew one (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        run: echo "/usr/bin" >> "$GITHUB_PATH"
+
       - name: Build Tauri app
         working-directory: flowfile_frontend
         env:
@@ -106,7 +111,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           # The repo's master_key for embedded Fernet auth
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: npx tauri build --target ${{ matrix.target }}
+        run: npx tauri build --target ${{ matrix.target }} ${{ matrix.tauri_args }}
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
