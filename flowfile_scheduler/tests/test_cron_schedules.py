@@ -77,6 +77,19 @@ def _runs(sched: FlowScheduler, registration_id: int) -> list[FlowRun]:
         return db.query(FlowRun).filter_by(registration_id=registration_id).all()
 
 
+def _end_runs(sched: FlowScheduler, registration_id: int) -> None:
+    """Mark active runs as ended — simulate a flow finishing so the active-run
+    guard doesn't mask whether the *next* tick would re-fire."""
+    with sched._session_factory() as db:
+        for run in (
+            db.query(FlowRun)
+            .filter(FlowRun.registration_id == registration_id, FlowRun.ended_at.is_(None))
+            .all()
+        ):
+            run.ended_at = datetime(2026, 1, 1, 0, 0, 0)
+        db.commit()
+
+
 def test_cron_due_launches(sched, monkeypatch):
     reg_id = _seed(sched, cron_expression="*/15 * * * *", last_triggered_at=datetime(2026, 5, 25, 10, 0, 0))
     _set_now(monkeypatch, datetime(2026, 5, 25, 10, 16, 0, tzinfo=timezone.utc))
@@ -174,3 +187,83 @@ def test_invalid_timezone_skipped(sched, monkeypatch):
     _set_now(monkeypatch, datetime(2026, 5, 25, 10, 0, 0, tzinfo=timezone.utc))
     assert _run_tick(sched) == 0
     assert _runs(sched, reg_id) == []
+
+
+# --------------------------------------------------------------------------
+# DST: a daily/weekly/monthly cron must fire exactly once per wall-clock slot,
+# even when the slot's clock time occurs twice (fall-back) or never (spring-
+# forward). The cursor is evaluated in naive local time, which collapses the
+# repeated hour to a single instant.
+# --------------------------------------------------------------------------
+
+
+def test_cron_fall_back_fires_once_then_resumes(sched, monkeypatch):
+    # Europe/Amsterdam falls back on 2026-10-25: 03:00 CEST -> 02:00 CET, so
+    # wall-clock 02:30 occurs twice (first 00:30Z CEST, then 01:30Z CET).
+    reg_id = _seed(
+        sched,
+        cron_expression="30 2 * * *",
+        cron_timezone="Europe/Amsterdam",
+        last_triggered_at=datetime(2026, 10, 24, 0, 30, 0),  # 02:30 CEST on the 24th
+    )
+
+    # First 02:30 (CEST, 00:30Z): fires.
+    _set_now(monkeypatch, datetime(2026, 10, 25, 0, 30, 0, tzinfo=timezone.utc))
+    assert _run_tick(sched) == 1
+    _end_runs(sched, reg_id)  # flow finished within the hour
+
+    # Second 02:30 (CET, 01:30Z): same wall-clock slot — must NOT fire again.
+    _set_now(monkeypatch, datetime(2026, 10, 25, 1, 30, 0, tzinfo=timezone.utc))
+    assert _run_tick(sched) == 0
+    assert len(_runs(sched, reg_id)) == 1
+
+    # Next day's 02:30 (CET, 01:30Z on the 26th): resumes — the cursor is not stuck.
+    _end_runs(sched, reg_id)
+    _set_now(monkeypatch, datetime(2026, 10, 26, 1, 30, 0, tzinfo=timezone.utc))
+    assert _run_tick(sched) == 1
+    assert len(_runs(sched, reg_id)) == 2
+
+
+def test_cron_fall_back_multi_slot_fires_once_each(sched, monkeypatch):
+    # "0,30 2 * * *" fires at 02:00 and 02:30. On the fall-back day each
+    # wall-clock time occurs twice; naive-local evaluation fires each slot once
+    # (at its first, CEST, occurrence) — 2 runs total, not 4.
+    reg_id = _seed(
+        sched,
+        cron_expression="0,30 2 * * *",
+        cron_timezone="Europe/Amsterdam",
+        last_triggered_at=datetime(2026, 10, 24, 1, 0, 0),  # 03:00 CEST 24th, past both slots
+    )
+    # 02:00 CEST (00:00Z), 02:30 CEST (00:30Z), 02:00 CET (01:00Z), 02:30 CET (01:30Z)
+    for utc_dt in (
+        datetime(2026, 10, 25, 0, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 10, 25, 0, 30, 0, tzinfo=timezone.utc),
+        datetime(2026, 10, 25, 1, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 10, 25, 1, 30, 0, tzinfo=timezone.utc),
+    ):
+        _set_now(monkeypatch, utc_dt)
+        _run_tick(sched)
+        _end_runs(sched, reg_id)
+
+    assert len(_runs(sched, reg_id)) == 2
+
+
+def test_cron_spring_forward_fires_once(sched, monkeypatch):
+    # Europe/Amsterdam springs forward on 2026-03-29: 02:00 CET -> 03:00 CEST,
+    # so wall-clock 02:30 never occurs. "30 2 * * *" still fires once, caught at
+    # the first tick at/after the (skipped) slot.
+    reg_id = _seed(
+        sched,
+        cron_expression="30 2 * * *",
+        cron_timezone="Europe/Amsterdam",
+        last_triggered_at=datetime(2026, 3, 28, 1, 30, 0),  # 02:30 CET on the 28th
+    )
+    # 03:00 CEST on the 29th == 01:00Z: first wall-clock instant after the gap.
+    _set_now(monkeypatch, datetime(2026, 3, 29, 1, 0, 0, tzinfo=timezone.utc))
+    assert _run_tick(sched) == 1
+    _end_runs(sched, reg_id)
+
+    # A later tick the same day must not re-fire.
+    _set_now(monkeypatch, datetime(2026, 3, 29, 1, 30, 0, tzinfo=timezone.utc))
+    assert _run_tick(sched) == 0
+    assert len(_runs(sched, reg_id)) == 1

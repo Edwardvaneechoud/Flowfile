@@ -77,6 +77,7 @@ SurfaceLiteral = Literal[
     "settings_autocomplete",
     "lineage",
     "intent_classifier",
+    "cron",
 ]
 
 # Regex that every emitted tool name must match.
@@ -555,6 +556,10 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
     # Intent classifier — single-shot judgement; the route passes
     # ``tools=None`` and reads strict JSON. No tool catalog needed.
     "intent_classifier": frozenset(),
+    # Cron NL→expression — single-shot JSON, no tools. The route passes
+    # ``tools=None`` and reads strict JSON; the empty frozenset keeps the
+    # surface lockstep happy.
+    "cron": frozenset(),
 }
 
 

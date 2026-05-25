@@ -255,6 +255,7 @@ class FlowSchedule(Base):
     cron_timezone = Column(String, nullable=True)  # IANA tz name (e.g. "Europe/Amsterdam") the cron runs in
     trigger_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True)
     last_triggered_at = Column(DateTime, nullable=True)
+    last_cron_slot = Column(DateTime, nullable=True)  # naive LOCAL wall-clock cron cursor (NOT UTC); DST-safe
     last_trigger_table_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)

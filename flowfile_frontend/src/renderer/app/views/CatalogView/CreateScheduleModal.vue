@@ -154,8 +154,38 @@
           </div>
         </div>
 
-        <div v-if="cron.frequency === 'custom'" class="hint-text">
-          Standard 5-field cron: minute, hour, day-of-month, month, day-of-week.
+        <div
+          v-if="cron.frequency === 'custom' && aiStore.hasConfiguredProvider"
+          class="cron-ai-row"
+        >
+          <el-input
+            v-model="aiDescription"
+            placeholder="Describe it, e.g. every weekday at 9am"
+            :disabled="aiGenerating"
+            clearable
+            @keyup.enter="generateCron"
+          >
+            <template #prefix>
+              <i class="fa-solid fa-wand-magic-sparkles cron-ai-spark"></i>
+            </template>
+          </el-input>
+          <el-button
+            type="primary"
+            plain
+            :loading="aiGenerating"
+            :disabled="!aiDescription.trim() || aiGenerating"
+            @click="generateCron"
+          >
+            Generate
+          </el-button>
+        </div>
+
+        <div
+          v-if="cron.frequency === 'custom'"
+          class="hint-text"
+          :class="{ 'cron-ai-error': !!aiError }"
+        >
+          {{ aiError || "Standard 5-field cron: minute, hour, day-of-month, month, day-of-week." }}
         </div>
       </div>
 
@@ -302,6 +332,8 @@ import {
   describeCron,
   localTimezone,
 } from "./cron-builder";
+import { useAiStore } from "../../stores/ai-store";
+import { AiDisabledError, generateCronExpression } from "../../api/ai.api";
 
 const props = defineProps<{
   visible: boolean;
@@ -338,6 +370,12 @@ const SCHEDULE_TYPES: { value: ScheduleKind; icon: string; title: string; subtit
 // Captured once: the user's IANA zone, so "every night at 2 AM" runs at their local time.
 const timezone = localTimezone();
 const cron = ref(defaultCronState());
+
+// AI "describe in words" → cron, shown only in Custom mode when a provider is configured.
+const aiStore = useAiStore();
+const aiDescription = ref("");
+const aiGenerating = ref(false);
+const aiError = ref<string | null>(null);
 
 const form = ref<{
   registration_id: number | null;
@@ -391,6 +429,9 @@ watch(
       form.value.name = "";
       form.value.description = "";
       cron.value = defaultCronState();
+      aiDescription.value = "";
+      aiError.value = null;
+      if (!aiStore.providers.length) void aiStore.loadProviders();
     }
   },
 );
@@ -403,6 +444,35 @@ const isValid = computed(() => {
     return form.value.trigger_table_ids.length >= 2;
   return true;
 });
+
+async function generateCron() {
+  const description = aiDescription.value.trim();
+  if (!description || aiGenerating.value) return;
+  aiGenerating.value = true;
+  aiError.value = null;
+  try {
+    const resp = await generateCronExpression({
+      description,
+      provider: aiStore.selectedProvider ?? undefined,
+      model: aiStore.selectedModel,
+    });
+    if (resp.degraded || !resp.cronExpression) {
+      aiError.value =
+        resp.reason === "no_expression" && resp.explanation
+          ? resp.explanation
+          : "Couldn't read that as a schedule. Try rephrasing.";
+      return;
+    }
+    cron.value.expression = resp.cronExpression;
+  } catch (err) {
+    aiError.value =
+      err instanceof AiDisabledError
+        ? "AI is currently unavailable."
+        : "Couldn't reach the AI service — please try again.";
+  } finally {
+    aiGenerating.value = false;
+  }
+}
 
 function handleCreate() {
   if (!isValid.value || !form.value.registration_id) return;
@@ -652,5 +722,23 @@ function handleCreate() {
   font-size: var(--font-size-sm);
   color: var(--el-text-color-secondary);
   margin-top: 4px;
+}
+
+/* AI "describe in words" → cron row (Custom mode only) */
+.cron-ai-row {
+  display: flex;
+  gap: var(--spacing-2);
+  align-items: center;
+  margin-top: var(--spacing-2);
+}
+.cron-ai-row :deep(.el-input) {
+  flex: 1 1 auto;
+}
+.cron-ai-spark {
+  font-size: 15px;
+  color: var(--el-color-primary);
+}
+.cron-ai-error {
+  color: var(--el-color-error);
 }
 </style>

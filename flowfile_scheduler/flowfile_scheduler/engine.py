@@ -204,21 +204,25 @@ class FlowScheduler:
     def _process_cron_schedules(self, db: Session) -> int:
         """Evaluate cron schedules and launch those whose next fire time has passed.
 
-        The next fire time is computed from ``last_triggered_at`` (or
-        ``created_at`` for a never-run schedule) in the schedule's own
-        timezone, so "every day at 2 AM" fires at 2 AM local wall-clock
-        time and stays correct across DST transitions.  Because the base
-        is the last trigger, a scheduler that was down only fires **once**
-        on catch-up rather than backfilling every missed slot — and
-        ``_maybe_launch``'s active-run guard prevents double-firing within
-        the same minute across consecutive ticks.
+        Cron is evaluated in the schedule's own timezone as *naive local
+        wall-clock* time: ``last_cron_slot`` holds the local-time cursor and
+        ``croniter`` advances it, so "every day at 2 AM" fires at 2 AM local
+        and stays correct across DST.  Because local wall-clock carries no UTC
+        offset, the repeated hour of a fall-back transition is a single naive
+        instant — "02:30" fires once, not twice — and a skipped spring-forward
+        time is simply caught at the next tick.
+
+        The cursor is advanced to *now* on each fire (not to the slot), so a
+        scheduler that was down catches up with a single fire rather than
+        backfilling every missed slot.  ``last_triggered_at`` continues to
+        record the actual UTC fire time (used for display).
         """
         schedules: list[FlowSchedule] = (
             db.query(FlowSchedule)
             .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "cron")
             .all()
         )
-        logger.info("Evaluating %d cron schedule(s)", len(schedules))
+        logger.debug("Evaluating %d cron schedule(s)", len(schedules))
 
         launched = 0
         now = _utcnow()
@@ -235,8 +239,26 @@ class FlowScheduler:
                 )
                 continue
 
-            base = sched.last_triggered_at or sched.created_at
-            base_local = base.replace(tzinfo=timezone.utc).astimezone(tz)
+            # Cron runs in *naive local wall-clock* time: the cursor and
+            # croniter both work in local time with no UTC offset, so the
+            # repeated hour of a fall-back transition is a single instant
+            # ("02:30" fires once) and skipped spring-forward times are caught
+            # at the next tick.
+            base_local = sched.last_cron_slot
+            if base_local is None:
+                # Never fired under the cursor model (or a pre-existing row):
+                # seed from the last real trigger / creation time in local time.
+                base_utc = sched.last_triggered_at or sched.created_at
+                if base_utc is None:
+                    logger.warning(
+                        "Cron schedule %s has no last_triggered_at/created_at, skipping", sched.id
+                    )
+                    continue
+                try:
+                    base_local = base_utc.replace(tzinfo=timezone.utc).astimezone(tz).replace(tzinfo=None)
+                except Exception:
+                    logger.warning("Cron schedule %s has an unusable base timestamp, skipping", sched.id)
+                    continue
 
             try:
                 next_run = croniter(sched.cron_expression, base_local).get_next(datetime)
@@ -246,14 +268,19 @@ class FlowScheduler:
                 )
                 continue
 
-            if next_run <= now.astimezone(tz):
+            now_local = now.astimezone(tz).replace(tzinfo=None)
+            if next_run <= now_local:
                 logger.info(
-                    "Cron schedule %s due (next_run=%s, now=%s) — triggering", sched.id, next_run, now
+                    "Cron schedule %s due (next_run=%s local, now=%s) — triggering", sched.id, next_run, now
                 )
                 if self._maybe_launch(db, sched, now):
+                    # Advance the cursor to *now* (not next_run) so a scheduler
+                    # that was down catches up with a single fire.
+                    sched.last_cron_slot = now_local
+                    db.commit()
                     launched += 1
             else:
-                logger.info("Cron schedule %s not due yet (next_run=%s)", sched.id, next_run)
+                logger.debug("Cron schedule %s not due yet (next_run=%s local)", sched.id, next_run)
         return launched
 
     # ------------------------------------------------------------------

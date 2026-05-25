@@ -29,4 +29,5 @@ class GroqProvider(LiteLLMProvider):
         "settings_autocomplete": "qwen/qwen3-coder-30b-a3b-instruct",
         "lineage": "qwen/qwen3-coder-30b-a3b-instruct",
         "intent_classifier": "qwen/qwen3-coder-30b-a3b-instruct",
+        "cron": "qwen/qwen3-coder-30b-a3b-instruct",
     }
