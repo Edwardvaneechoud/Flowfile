@@ -23,6 +23,7 @@ import type {
   OperationResponse,
 } from "../types";
 import { FlowApi, NodeApi } from "../api";
+import { buildGroupNode, groupNodeId, useNodeGroups } from "./useNodeGroups";
 import { useEditorStore } from "../stores/editor-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
 import { DEFAULT_OUTPUT_HANDLE, outputHandle, outputLabel } from "../utils/outputHandle";
@@ -299,6 +300,8 @@ export default function useDragAndDrop() {
     fromObject,
   } = useVueFlow();
 
+  const { addGroupProxyEdges } = useNodeGroups();
+
   watch(isDragging, (dragging) => {
     document.body.style.userSelect = dragging ? "none" : "";
   });
@@ -438,16 +441,35 @@ export default function useDragAndDrop() {
 
   async function importFlow(flowData: VueFlowInput) {
     await createEmptyFlow();
-    const allNodes = await Promise.all(flowData.node_inputs.map((node) => getNodeToAdd(node)));
+    const childNodes = await Promise.all(flowData.node_inputs.map((node) => getNodeToAdd(node)));
 
-    addNodes(allNodes);
+    // Build group container nodes, then reparent member nodes — converting each
+    // member's absolute position to be relative to its group origin (VueFlow stores
+    // child positions relative to the parent).
+    const groups = flowData.groups ?? [];
+    const groupById = new Map(groups.map((group) => [group.id, group]));
+    const groupNodes: Node[] = groups.map((group) => buildGroupNode(group));
+    flowData.node_inputs.forEach((input, index) => {
+      if (input.group_id == null) return;
+      const group = groupById.get(input.group_id);
+      if (!group) return;
+      childNodes[index].parentNode = groupNodeId(group.id);
+      childNodes[index].position = {
+        x: input.pos_x - group.x_position,
+        y: input.pos_y - group.y_position,
+      };
+      if (group.collapsed) childNodes[index].hidden = true;
+    });
+
+    // Groups first so a parent exists before its children reference it.
+    addNodes([...groupNodes, ...childNodes]);
     id = getMaxDataId(flowData.node_inputs);
 
     // Add labels to edges from source node output handles, node_reference, or df_{nodeId} default
     const editorStore = useEditorStore();
     const edgesWithLabels = flowData.node_edges.map((edge) => {
       if (!editorStore.showEdgeLabels) return edge;
-      const sourceNode = allNodes.find((n) => n.id === edge.source);
+      const sourceNode = childNodes.find((n) => n.id === edge.source);
       if (sourceNode?.data?.outputs) {
         const output = (sourceNode.data.outputs as NodeHandle[]).find(
           (o) => o.id === edge.sourceHandle,
@@ -463,6 +485,16 @@ export default function useDragAndDrop() {
     });
 
     addEdges(edgesWithLabels);
+
+    // Collapsed groups load with their members hidden, so VueFlow drops the members'
+    // edges. Re-create the boundary proxy edges once the pill handles have rendered.
+    const collapsedGroups = groups.filter((group) => group.collapsed);
+    if (collapsedGroups.length > 0) {
+      await nextTick();
+      for (const group of collapsedGroups) {
+        addGroupProxyEdges(groupNodeId(group.id));
+      }
+    }
   }
 
   async function onDrop(event: DragEvent, flowId: number): Promise<OperationResponse | undefined> {

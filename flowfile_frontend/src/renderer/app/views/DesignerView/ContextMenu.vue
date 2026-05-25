@@ -14,11 +14,15 @@ const props = defineProps({
   targetType: {
     type: String,
     required: true,
-    validator: (value: string) => ["node", "edge", "pane"].includes(value),
+    validator: (value: string) => ["node", "edge", "pane", "selection"].includes(value),
   },
   targetId: {
     type: String,
     default: "",
+  },
+  targetInGroup: {
+    type: Boolean,
+    default: false,
   },
   onClose: {
     type: Function,
@@ -45,6 +49,11 @@ const getMenuActions = () => {
   ];
   if (props.targetType === "pane") {
     baseActions.push({
+      id: "group-selection",
+      label: "Group selected nodes",
+      icon: "🗂️",
+    });
+    baseActions.push({
       id: "generate-documentation",
       label: "Generate documentation",
       icon: "📝",
@@ -60,7 +69,27 @@ const getMenuActions = () => {
       icon: "🔎",
     });
   }
+  if (props.targetType === "selection") {
+    baseActions.push({
+      id: "group-selection",
+      label: "Group selected nodes",
+      icon: "🗂️",
+    });
+  }
   if (props.targetType === "node") {
+    if (props.targetInGroup) {
+      baseActions.push({
+        id: "remove-from-group",
+        label: "Remove from group",
+        icon: "🗂️",
+      });
+    } else {
+      baseActions.push({
+        id: "group-selection",
+        label: "Group selected nodes",
+        icon: "🗂️",
+      });
+    }
     baseActions.push({
       id: "ask-lineage-node",
       label: "Ask about this node's lineage…",
@@ -73,7 +102,7 @@ const getMenuActions = () => {
 const handleAction = (actionId: string): void => {
   emit("action", {
     actionId,
-    targetType: props.targetType as "node" | "edge" | "pane",
+    targetType: props.targetType as "node" | "edge" | "pane" | "selection",
     targetId: props.targetId,
     position: { x: props.x, y: props.y },
   } as ContextMenuAction);

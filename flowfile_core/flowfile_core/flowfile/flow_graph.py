@@ -901,6 +901,10 @@ class FlowGraph:
         self._output_cols = [] if output_cols is None else output_cols
         self._node_ids = []
         self._node_db = {}
+        # Visual node groups: organizational only, never read by the executor.
+        # Membership lives on each node's setting_input.group_id; this is the box registry.
+        self._groups: dict[int, schemas.GroupInformation] = {}
+        self._active_group_id: int | None = None
         self.cache_results = cache_results
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
@@ -1070,6 +1074,7 @@ class FlowGraph:
         self._node_db.clear()
         self._node_ids.clear()
         self._flow_starts.clear()
+        self._groups.clear()
         self._results = None
 
         # Restore flow settings (preserve original flow_id and source_registration_id)
@@ -1153,9 +1158,198 @@ class FlowGraph:
 
                 to_node.add_node_connection(from_node, insert_type)
 
+        # Member group_ids were re-applied above via add_<type>(setting_input);
+        # repopulate the box registry (name/color/bounds) from the snapshot.
+        self.restore_groups(flow_info.groups)
+
         logger.info(f"Restored flow from snapshot with {len(self._node_db)} nodes")
 
     # ==================== End History Management Methods ====================
+
+    # ==================== Group Management Methods ====================
+    # Groups are purely visual containers. They never affect execution; the only
+    # link to a node is that node's setting_input.group_id. The group box props
+    # (name/color/bounds) live in self._groups and ride along in FlowfileData.
+
+    def _next_group_id(self) -> int:
+        """Allocate a group id unique among this flow's groups (separate from node ids)."""
+        return (max(self._groups) if self._groups else 0) + 1
+
+    def _member_node_ids(self, group_id: int) -> list[int]:
+        """Derive a group's members by scanning node group_id (single source of truth)."""
+        return [node.node_id for node in self.nodes if getattr(node.setting_input, "group_id", None) == group_id]
+
+    def _set_node_group(self, node_id: int, group_id: int | None) -> None:
+        node = self.get_node(node_id)
+        if node is not None and node.setting_input is not None and hasattr(node.setting_input, "group_id"):
+            node.setting_input.group_id = group_id
+
+    def _recompute_group_bounds(self, group_id: int | None = None) -> None:
+        """Refit one or all group boxes around their member nodes.
+
+        Uses nominal node dimensions since the backend doesn't know rendered sizes;
+        the frontend refines bounds on first user interaction. Groups with no members
+        keep their current bounds.
+        """
+        node_width, node_height, padding, header = 180.0, 80.0, 40.0, 36.0
+        target_ids = [group_id] if group_id is not None else list(self._groups)
+        for gid in target_ids:
+            group = self._groups.get(gid)
+            if group is None:
+                continue
+            members = [self.get_node(nid) for nid in self._member_node_ids(gid)]
+            members = [m for m in members if m is not None and m.setting_input is not None]
+            if not members:
+                continue
+            xs = [float(m.setting_input.pos_x or 0) for m in members]
+            ys = [float(m.setting_input.pos_y or 0) for m in members]
+            min_x, min_y = min(xs), min(ys)
+            max_x = max(x + node_width for x in xs)
+            max_y = max(y + node_height for y in ys)
+            group.x_position = min_x - padding
+            group.y_position = min_y - padding - header
+            group.width = (max_x - min_x) + 2 * padding
+            group.height = (max_y - min_y) + 2 * padding + header
+
+    def create_group(
+        self,
+        name: str,
+        node_ids: list[int],
+        *,
+        color: schemas.GroupColor | None = None,
+        bounds: schemas.GroupBounds | None = None,
+    ) -> schemas.GroupInformation:
+        """Create a visual group and assign the given nodes to it. Organizational only.
+
+        Bounds are computed from member positions when not supplied.
+        """
+
+        def _do() -> schemas.GroupInformation:
+            group_id = self._next_group_id()
+            group = schemas.GroupInformation(id=group_id, name=name, color=color)
+            if bounds is not None:
+                group.x_position, group.y_position, group.width, group.height = bounds
+            self._groups[group_id] = group
+            for node_id in node_ids:
+                self._set_node_group(node_id, group_id)
+            if bounds is None:
+                self._recompute_group_bounds(group_id)
+            return group
+
+        return self._execute_with_history(_do, HistoryActionType.CREATE_GROUP, f"Create group '{name}'")
+
+    def update_group(
+        self,
+        group_id: int,
+        *,
+        name: str | None = None,
+        color: schemas.GroupColor | None = None,
+        bounds: schemas.GroupBounds | None = None,
+        collapsed: bool | None = None,
+    ) -> schemas.GroupInformation:
+        """Rename / recolor / move / resize / collapse a group box."""
+        group = self._groups.get(group_id)
+        if group is None:
+            raise ValueError(f"Group {group_id} does not exist")
+
+        def _do() -> schemas.GroupInformation:
+            if name is not None:
+                group.name = name
+            if color is not None:
+                group.color = color
+            if bounds is not None:
+                group.x_position, group.y_position, group.width, group.height = bounds
+            if collapsed is not None:
+                group.collapsed = collapsed
+            return group
+
+        return self._execute_with_history(_do, HistoryActionType.UPDATE_GROUP, f"Update group '{group.name}'")
+
+    def delete_group(self, group_id: int) -> None:
+        """Remove a group box (ungroup). Member nodes are kept."""
+        group = self._groups.get(group_id)
+        if group is None:
+            return
+
+        def _do() -> None:
+            for node_id in self._member_node_ids(group_id):
+                self._set_node_group(node_id, None)
+            self._groups.pop(group_id, None)
+
+        self._execute_with_history(_do, HistoryActionType.DELETE_GROUP, f"Delete group '{group.name}'")
+
+    def add_nodes_to_group(self, group_id: int, node_ids: list[int]) -> schemas.GroupInformation:
+        """Add nodes to an existing group and refit its bounds."""
+        group = self._groups.get(group_id)
+        if group is None:
+            raise ValueError(f"Group {group_id} does not exist")
+
+        def _do() -> schemas.GroupInformation:
+            for node_id in node_ids:
+                self._set_node_group(node_id, group_id)
+            self._recompute_group_bounds(group_id)
+            return group
+
+        return self._execute_with_history(_do, HistoryActionType.UPDATE_GROUP_MEMBERSHIP, "Add nodes to group")
+
+    def remove_nodes_from_group(self, node_ids: list[int]) -> None:
+        """Remove nodes from whatever group they belong to; prune groups left empty."""
+
+        def _do() -> None:
+            affected: set[int] = set()
+            for node_id in node_ids:
+                node = self.get_node(node_id)
+                current = getattr(node.setting_input, "group_id", None) if node is not None else None
+                if current is not None:
+                    affected.add(current)
+                    self._set_node_group(node_id, None)
+            for gid in affected:
+                if not self._member_node_ids(gid):
+                    self._groups.pop(gid, None)
+                else:
+                    self._recompute_group_bounds(gid)
+
+        self._execute_with_history(_do, HistoryActionType.UPDATE_GROUP_MEMBERSHIP, "Remove nodes from group")
+
+    def assign_node_to_named_group(
+        self, node_id: int, name: str, *, color: schemas.GroupColor | None = None
+    ) -> schemas.GroupInformation:
+        """Assign a node to a group identified by name, creating it if absent (find-or-create)."""
+        existing = next((group for group in self._groups.values() if group.name == name), None)
+        if existing is not None:
+            return self.add_nodes_to_group(existing.id, [node_id])
+        return self.create_group(name, [node_id], color=color)
+
+    def set_node_positions(self, updates: list[schemas.NodePositionUpdate]) -> None:
+        """Persist dragged node positions (absolute canvas coordinates) onto setting_input.
+
+        Plain mutator: the caller (update_layout route) captures history once for the
+        whole drag-end batch so node moves and group-bounds changes share one snapshot.
+        """
+        for update in updates:
+            node = self.get_node(update.node_id)
+            if node is not None and node.setting_input is not None and hasattr(node.setting_input, "pos_x"):
+                node.setting_input.pos_x = update.pos_x
+                node.setting_input.pos_y = update.pos_y
+
+    def set_group_bounds(self, updates: list[schemas.GroupBoundsUpdate]) -> None:
+        """Persist group box bounds (used together with set_node_positions on drag/resize)."""
+        for update in updates:
+            group = self._groups.get(update.group_id)
+            if group is not None:
+                group.x_position = update.x_position
+                group.y_position = update.y_position
+                group.width = update.width
+                group.height = update.height
+
+    def restore_groups(self, groups: list[schemas.GroupInformation]) -> None:
+        """Replace the runtime group registry (used by open_flow and restore_from_snapshot)."""
+        self._groups = {group.id: group for group in groups}
+        for group in self._groups.values():
+            if group.width <= 0 or group.height <= 0:
+                self._recompute_group_bounds(group.id)
+
+    # ==================== End Group Management Methods ====================
 
     def add_node_to_starting_list(self, node: FlowNode) -> None:
         """Adds a node to the list of starting nodes for the flow if not already present.
@@ -1252,6 +1446,9 @@ class FlowGraph:
                 elif node:
                     self.flow_logger.warning(f"Node {node_id} lacks setting_input attribute.")
                 # else: Node not found, already warned by calculate_layered_layout
+
+            # Reflowed node positions invalidate group boxes — refit them.
+            self._recompute_group_bounds()
 
             end_time = time()
             self.flow_logger.info(
@@ -2825,6 +3022,7 @@ class FlowGraph:
         node = self._node_db.get(node_id)
         if node:
             logger.info(f"Found node: {node_id}, processing deletion")
+            group_id = getattr(node.setting_input, "group_id", None)
 
             lead_to_steps: list[FlowNode] = node.leads_to_nodes
             logger.debug(f"Node {node_id} leads to {len(lead_to_steps)} other nodes")
@@ -2846,6 +3044,9 @@ class FlowGraph:
             logger.debug(f"Successfully removed node {node_id} from node_db")
             del node
             logger.info("Node object deleted")
+            # Drop a group that just lost its last member.
+            if group_id is not None and group_id in self._groups and not self._member_node_ids(group_id):
+                self._groups.pop(group_id, None)
         else:
             logger.error(f"Failed to find node with id {node_id}")
             raise Exception(f"Node with id {node_id} does not exist")
@@ -3308,6 +3509,10 @@ class FlowGraph:
 
         node = self.get_node(node_database_reader.node_id)
         if node:
+            # Persist as user_provided so it survives the reset() triggered by setting_input
+            # below; otherwise the schema callback rebuilds from _func and routes schema
+            # prediction through a full worker data read.
+            node.user_provided_schema_callback = schema_callback
             node.schema_callback = schema_callback
             node.node_type = node_type
             node.name = node_type
@@ -4513,6 +4718,7 @@ class FlowGraph:
                 node_reference=node_info.node_reference,
                 x_position=int(node_info.x_position),
                 y_position=int(node_info.y_position),
+                group_id=node_info.group_id,
                 left_input_id=node_info.left_input_id,
                 right_input_id=node_info.right_input_id,
                 input_ids=node_info.input_ids,
@@ -4532,12 +4738,19 @@ class FlowGraph:
             source_registration_id=self.flow_settings.source_registration_id,
             parameters=self.flow_settings.parameters,
         )
+        # Persist only groups that still have members (prune orphans).
+        groups = [
+            schemas.FlowfileGroup(**self._groups[group_id].model_dump())
+            for group_id in self._groups
+            if self._member_node_ids(group_id)
+        ]
         return schemas.FlowfileData(
             flowfile_version=__version__,
             flowfile_id=self.flow_id,
             flowfile_name=self.__name__,
             flowfile_settings=settings,
             nodes=nodes,
+            groups=groups,
         )
 
     def get_node_storage(self) -> schemas.FlowInformation:
@@ -4765,7 +4978,12 @@ class FlowGraph:
         for node in self.nodes:
             nodes.append(node.get_node_input())
             edges.extend(node.get_edge_input())
-        return schemas.VueFlowInput(node_edges=edges, node_inputs=nodes)
+        groups = [
+            schemas.FlowfileGroup(**self._groups[group_id].model_dump())
+            for group_id in self._groups
+            if self._member_node_ids(group_id)
+        ]
+        return schemas.VueFlowInput(node_edges=edges, node_inputs=nodes, groups=groups)
 
     def reset(self):
         """Forces a deep reset on all nodes in the graph."""

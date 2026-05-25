@@ -720,6 +720,104 @@ def connect_node(flow_id: int, node_connection: input_schema.NodeConnection) -> 
     return OperationResponse(success=True, history=flow.get_history_state())
 
 
+# ============================================================================
+# Node-group editor endpoints (visual containers; organizational only)
+# ============================================================================
+
+
+class GroupOperationResponse(OperationResponse):
+    """OperationResponse that also returns the affected group (for server-assigned ids)."""
+
+    group: schemas.FlowfileGroup | None = None
+
+
+def _group_to_schema(group: schemas.GroupInformation) -> schemas.FlowfileGroup:
+    return schemas.FlowfileGroup(**group.model_dump())
+
+
+def _bounds_from_request(req: schemas.CreateGroupRequest | schemas.UpdateGroupRequest) -> schemas.GroupBounds | None:
+    """Build explicit bounds only when the frontend supplied all four values."""
+    values = (req.x_position, req.y_position, req.width, req.height)
+    if all(value is not None for value in values):
+        return schemas.GroupBounds(*values)
+    return None
+
+
+def _get_running_flow(flow_id: int):
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "could not find the flow")
+    if flow.flow_settings.is_running:
+        raise HTTPException(422, "Flow is running")
+    return flow
+
+
+@router.post("/editor/create_group/", tags=["editor"], response_model=GroupOperationResponse)
+def create_group(flow_id: int, request: schemas.CreateGroupRequest) -> GroupOperationResponse:
+    """Create a visual group around a set of nodes. Returns the new server-assigned group."""
+    flow = _get_running_flow(flow_id)
+    group = flow.create_group(request.name, request.node_ids, color=request.color, bounds=_bounds_from_request(request))
+    return GroupOperationResponse(success=True, history=flow.get_history_state(), group=_group_to_schema(group))
+
+
+@router.post("/editor/update_group/", tags=["editor"], response_model=GroupOperationResponse)
+def update_group(flow_id: int, group_id: int, request: schemas.UpdateGroupRequest) -> GroupOperationResponse:
+    """Rename / recolor / move / resize / collapse a group box."""
+    flow = _get_running_flow(flow_id)
+    try:
+        group = flow.update_group(
+            group_id,
+            name=request.name,
+            color=request.color,
+            bounds=_bounds_from_request(request),
+            collapsed=request.collapsed,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return GroupOperationResponse(success=True, history=flow.get_history_state(), group=_group_to_schema(group))
+
+
+@router.post("/editor/delete_group/", tags=["editor"], response_model=OperationResponse)
+def delete_group(flow_id: int, group_id: int) -> OperationResponse:
+    """Delete a group box (ungroup). Member nodes are kept."""
+    flow = _get_running_flow(flow_id)
+    flow.delete_group(group_id)
+    return OperationResponse(success=True, history=flow.get_history_state())
+
+
+@router.post("/editor/group/add_nodes/", tags=["editor"], response_model=GroupOperationResponse)
+def add_nodes_to_group(flow_id: int, group_id: int, request: schemas.GroupMembershipRequest) -> GroupOperationResponse:
+    """Add nodes to an existing group."""
+    flow = _get_running_flow(flow_id)
+    try:
+        group = flow.add_nodes_to_group(group_id, request.node_ids)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return GroupOperationResponse(success=True, history=flow.get_history_state(), group=_group_to_schema(group))
+
+
+@router.post("/editor/group/remove_nodes/", tags=["editor"], response_model=OperationResponse)
+def remove_nodes_from_group(flow_id: int, request: schemas.GroupMembershipRequest) -> OperationResponse:
+    """Remove nodes from their group; a group emptied this way is pruned."""
+    flow = _get_running_flow(flow_id)
+    flow.remove_nodes_from_group(request.node_ids)
+    return OperationResponse(success=True, history=flow.get_history_state())
+
+
+@router.post("/editor/update_layout/", tags=["editor"], response_model=OperationResponse)
+def update_layout(flow_id: int, request: schemas.UpdateLayoutRequest) -> OperationResponse:
+    """Persist dragged node positions and/or group bounds (one drag-end -> one call).
+
+    Also closes the long-standing gap where dragged node positions were never persisted.
+    """
+    flow = _get_running_flow(flow_id)
+    if request.node_positions or request.group_bounds:
+        flow.capture_history_snapshot(HistoryActionType.MOVE_NODES, "Update layout")
+        flow.set_node_positions(request.node_positions)
+        flow.set_group_bounds(request.group_bounds)
+    return OperationResponse(success=True, history=flow.get_history_state())
+
+
 @router.get("/editor/expression_doc", tags=["editor"], response_model=list[output_model.ExpressionsOverview])
 def get_expression_doc() -> list[output_model.ExpressionsOverview]:
     """Retrieves documentation for available Polars expressions."""

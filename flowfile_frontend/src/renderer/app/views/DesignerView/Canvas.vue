@@ -22,13 +22,22 @@ import {
   NodeComponent,
   EdgeComponent,
   Node,
+  NodeMouseEvent,
   useVueFlow,
   ConnectionMode,
 } from "@vue-flow/core";
 import { MiniMap } from "@vue-flow/minimap";
 
 import CustomNode from "../../components/nodes/NodeWrapper.vue";
+import GroupNode from "../../components/nodes/GroupNode.vue";
+import {
+  useNodeGroups,
+  isGroupNodeId,
+  GROUP_PROXY_EDGE_PREFIX,
+  GROUP_PROXY_EDGE_TYPE,
+} from "../../composables/useNodeGroups";
 import DeletableEdge from "./DeletableEdge.vue";
+import GroupProxyEdge from "./GroupProxyEdge.vue";
 import useDragAndDrop from "./useDnD";
 import {
   suppressedEdgeRemovals,
@@ -94,7 +103,9 @@ const editorStore = useEditorStore();
 const flowStore = useFlowStore();
 const aiStore = useAiStore();
 const rawCustomNode = markRaw(CustomNode);
+const rawGroupNode = markRaw(GroupNode);
 const rawDeletableEdge = markRaw(DeletableEdge);
+const rawGroupProxyEdge = markRaw(GroupProxyEdge);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes, onPaneReady } =
   useVueFlow();
 
@@ -115,9 +126,11 @@ const isLoadingFlow = ref(false);
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
 const nodeTypes: NodeTypesObject = {
   "custom-node": rawCustomNode as NodeComponent,
+  group: rawGroupNode as NodeComponent,
 };
 const edgeTypes = {
   default: rawDeletableEdge as EdgeComponent,
+  [GROUP_PROXY_EDGE_TYPE]: rawGroupProxyEdge as EdgeComponent,
 };
 const hoveredEdgeId = ref<string | null>(null);
 // Short delay before clearing on edge-leave so the cursor can cross the SVG→HTML
@@ -213,12 +226,20 @@ async function onNodeDragStop({ node }: { node: Node }) {
   const edgeId = nodeDragInsertCandidate;
   nodeDragInsertCandidate = null;
   markHoveredEdge(null);
-  if (!edgeId) return;
-  const template = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
-  if (!template) return;
-  const response = await insertNodeOnEdge(flowStore.flowId, Number(node.id), template, edgeId);
-  if (response?.history) {
-    flowStore.updateHistoryState(response.history);
+  if (edgeId) {
+    const template = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
+    if (!template) return;
+    const response = await insertNodeOnEdge(flowStore.flowId, Number(node.id), template, edgeId);
+    if (response?.history) {
+      flowStore.updateHistoryState(response.history);
+    }
+    return;
+  }
+  // No edge-splice: persist the new position(s). Also closes the long-standing gap
+  // where dragged node positions were never sent to the backend.
+  const graphNode = instance.findNode(node.id);
+  if (graphNode) {
+    await persistDrag(graphNode);
   }
 }
 const nodes = ref<Node[]>([]);
@@ -237,6 +258,7 @@ const {
   createManualInputFromClipboard,
   insertNodeOnEdge,
 } = useDragAndDrop();
+const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
 const dataPreview = ref<InstanceType<typeof DataPreview>>();
 // 25 / 75 split of the canvas height between the bottom table preview and the
 // right-side node settings drawer. Initial-only — DraggableItem reads these
@@ -247,6 +269,9 @@ const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
+// Whether the right-clicked node is currently inside a group (drives Group vs
+// Remove-from-group in the node context menu).
+const contextMenuTargetInGroup = ref(false);
 const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
@@ -596,6 +621,9 @@ const handleNodeChange = async (nodeChangesEvent: any) => {
   let lastResponse: Awaited<ReturnType<typeof deleteNode>> | undefined;
   for (const nodeChange of nodeChanges) {
     if (nodeChange.type === "remove") {
+      // Group boxes are not real nodes — their removal is handled by the ungroup
+      // action (which calls deleteGroup). Skip them so we don't deleteNode(NaN).
+      if (isGroupNodeId(nodeChange.id)) continue;
       const nodeChangeId = Number(nodeChange.id);
       lastResponse = await deleteNode(flowStore.flowId, nodeChangeId);
     }
@@ -627,6 +655,11 @@ const handleEdgeChange = async (edgeChangesEvent: any) => {
   let lastResponse: Awaited<ReturnType<typeof deleteConnection>> | undefined;
   for (const edgeChange of edgeChanges) {
     if (edgeChange.type === "remove") {
+      // Proxy edges are UI-only stand-ins for a collapsed group; removing them on
+      // expand/ungroup must never touch the backend.
+      if (edgeChange.id.startsWith(GROUP_PROXY_EDGE_PREFIX)) {
+        continue;
+      }
       if (suppressedEdgeRemovals.delete(edgeChange.id)) {
         // Edge was already deleted on the backend by an in-flight operation
         // (e.g. drag-to-insert) — skip the redundant API call.
@@ -925,6 +958,10 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     const question = await promptLineageQuestion(`node ${focusNodeId}`);
     if (!question) return;
     await aiStore.askLineageQuestion(flowStore.flowId, question, focusNodeId);
+  } else if (actionId === "group-selection") {
+    await groupSelectedNodes();
+  } else if (actionId === "remove-from-group") {
+    await removeSelectedFromGroup();
   }
 };
 
@@ -1018,10 +1055,38 @@ const handleContextMenu = (event: Event) => {
   event.preventDefault();
   let pointerEvent = event as PointerEvent;
 
+  contextMenuTarget.value = { type: "pane", id: "" };
+  contextMenuTargetInGroup.value = false;
   clickedPosition.value = {
     x: pointerEvent.x,
     y: pointerEvent.y,
   };
+  showContextMenu.value = true;
+};
+
+// Right-click on a node opens the context menu with node-target actions (incl.
+// grouping). The container "group" node has its own affordances, so skip it here.
+const handleNodeContextMenu = ({ event, node }: NodeMouseEvent) => {
+  event.preventDefault();
+  if (node.type === "group") return;
+  // Ensure the right-clicked node participates in the selection-based group action.
+  if (!node.selected) {
+    addSelectedNodes([node]);
+  }
+  const mouseEvent = event as MouseEvent;
+  contextMenuTarget.value = { type: "node", id: node.id };
+  contextMenuTargetInGroup.value = Boolean(node.parentNode);
+  clickedPosition.value = { x: mouseEvent.clientX, y: mouseEvent.clientY };
+  showContextMenu.value = true;
+};
+
+// Right-click on the multi-selection rectangle (the highlighted box around several
+// selected nodes) — VueFlow routes this here rather than to pane/node menus.
+const handleSelectionContextMenu = ({ event }: { event: MouseEvent }) => {
+  event.preventDefault();
+  contextMenuTarget.value = { type: "selection", id: "" };
+  contextMenuTargetInGroup.value = false;
+  clickedPosition.value = { x: event.clientX, y: event.clientY };
   showContextMenu.value = true;
 };
 
@@ -1227,6 +1292,8 @@ defineExpose({
         @nodes-change="handleNodeChange"
         @edges-change="handleEdgeChange"
         @pane-context-menu="handleContextMenu"
+        @node-context-menu="handleNodeContextMenu"
+        @selection-context-menu="handleSelectionContextMenu"
         @click="closeContextMenu"
         @selection-start="handleSelectionStart"
         @selection-end="handleSelectionEnd"
@@ -1241,6 +1308,7 @@ defineExpose({
         :y="clickedPosition.y"
         :target-type="contextMenuTarget.type"
         :target-id="contextMenuTarget.id"
+        :target-in-group="contextMenuTargetInGroup"
         :on-close="closeContextMenu"
         @action="handleContextMenuAction"
       />

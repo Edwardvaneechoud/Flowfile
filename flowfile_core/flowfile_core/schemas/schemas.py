@@ -1,4 +1,4 @@
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_serializer, field_validator
 
@@ -261,6 +261,7 @@ class FlowfileNode(BaseModel):
     node_reference: str | None = None  # Unique reference identifier for code generation
     x_position: int | None = 0
     y_position: int | None = 0
+    group_id: int | None = None  # Visual group this node belongs to (organizational only)
     left_input_id: int | None = None
     right_input_id: int | None = None
     input_ids: list[int] | None = Field(default_factory=list)
@@ -276,6 +277,7 @@ class FlowfileNode(BaseModel):
         "node_id",
         "pos_x",
         "pos_y",
+        "group_id",
         "is_setup",
         "description",
         "node_reference",
@@ -299,6 +301,44 @@ class FlowfileNode(BaseModel):
         return value.model_dump(exclude=self._setting_input_exclude)
 
 
+# Allowed group tints. Single source of truth — mirrored by the frontend `GroupColor` union.
+GroupColor = Literal["slate", "blue", "green", "amber", "rose", "violet", "cyan"]
+
+
+class GroupBounds(NamedTuple):
+    """Axis-aligned bounds of a group box, in absolute canvas coordinates."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class _GroupFields(BaseModel):
+    """Shared fields for the runtime and serialization group models (one definition, zero drift).
+
+    Groups are purely visual containers; they have no effect on execution or the DAG.
+    """
+
+    id: int
+    name: str = "Group"
+    color: GroupColor | None = None  # None -> frontend default tint
+    x_position: float = 0.0
+    y_position: float = 0.0
+    width: float = 400.0
+    height: float = 250.0
+    collapsed: bool = False  # whether the box is collapsed to a compact bar
+    parent_group_id: int | None = None  # reserved for future nesting; unused in v1
+
+
+class GroupInformation(_GroupFields):
+    """Runtime representation of a visual node group (stored in FlowGraph._groups)."""
+
+
+class FlowfileGroup(_GroupFields):
+    """Serialized representation of a visual node group (YAML/JSON)."""
+
+
 class FlowfileData(BaseModel):
     """Root model for flowfile serialization (YAML/JSON)."""
 
@@ -307,6 +347,7 @@ class FlowfileData(BaseModel):
     flowfile_name: str
     flowfile_settings: FlowfileSettings
     nodes: list[FlowfileNode]
+    groups: list[FlowfileGroup] = Field(default_factory=list)
 
 
 class NodeTemplate(BaseModel):
@@ -356,6 +397,7 @@ class NodeInformation(BaseModel):
     node_reference: str | None = None  # Unique reference identifier for code generation
     x_position: int | None = 0
     y_position: int | None = 0
+    group_id: int | None = None
     left_input_id: int | None = None
     right_input_id: int | None = None
     input_ids: list[int] | None = Field(default_factory=list)
@@ -410,6 +452,7 @@ class FlowInformation(BaseModel):
     data: dict[int, NodeInformation] = {}
     node_starts: list[int]
     node_connections: list[tuple[int, int]] = []
+    groups: list[GroupInformation] = Field(default_factory=list)
 
     @field_validator("flow_name", mode="before")
     def ensure_string(cls, v):
@@ -450,6 +493,7 @@ class NodeInput(NodeTemplate):
     id: int
     pos_x: float
     pos_y: float
+    group_id: int | None = None
     output_names: list[str] | None = None
     node_reference: str | None = None
 
@@ -486,6 +530,67 @@ class VueFlowInput(BaseModel):
 
     node_edges: list[NodeEdge]
     node_inputs: list[NodeInput]
+    groups: list[FlowfileGroup] = Field(default_factory=list)
+
+
+# ============================================================================
+# Node-group editor request bodies (organizational only; no execution impact)
+# ============================================================================
+
+
+class CreateGroupRequest(BaseModel):
+    """Body for POST /editor/create_group/. Bounds are optional; computed from members if omitted."""
+
+    node_ids: list[int]
+    name: str = "Group"
+    color: GroupColor | None = None
+    x_position: float | None = None
+    y_position: float | None = None
+    width: float | None = None
+    height: float | None = None
+
+
+class UpdateGroupRequest(BaseModel):
+    """Body for POST /editor/update_group/. All fields optional -> partial update."""
+
+    name: str | None = None
+    color: GroupColor | None = None
+    x_position: float | None = None
+    y_position: float | None = None
+    width: float | None = None
+    height: float | None = None
+    collapsed: bool | None = None
+
+
+class GroupMembershipRequest(BaseModel):
+    """Body for adding/removing nodes from a group."""
+
+    node_ids: list[int]
+
+
+class NodePositionUpdate(BaseModel):
+    """A single node's new absolute canvas position."""
+
+    node_id: int
+    pos_x: float
+    pos_y: float
+
+
+class GroupBoundsUpdate(BaseModel):
+    """A single group's new absolute bounds."""
+
+    group_id: int
+    x_position: float
+    y_position: float
+    width: float
+    height: float
+
+
+class UpdateLayoutRequest(BaseModel):
+    """Batch persistence of dragged node positions and/or group bounds (one drag-end -> one call)."""
+
+    node_positions: list[NodePositionUpdate] = Field(default_factory=list)
+    group_bounds: list[GroupBoundsUpdate] = Field(default_factory=list)
 
 
 class NodeDefault(BaseModel):
