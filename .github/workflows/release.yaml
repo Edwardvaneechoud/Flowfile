@@ -11,26 +11,20 @@ on:
 
 jobs:
   build:
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-14
             target: aarch64-apple-darwin
-            artifact_glob: 'flowfile_frontend/src-tauri/target/aarch64-apple-darwin/release/bundle/**/Flowfile_*.dmg'
-            sig_glob: 'flowfile_frontend/src-tauri/target/aarch64-apple-darwin/release/bundle/**/Flowfile_*.dmg.sig'
           - platform: macos-13
             target: x86_64-apple-darwin
-            artifact_glob: 'flowfile_frontend/src-tauri/target/x86_64-apple-darwin/release/bundle/**/Flowfile_*.dmg'
-            sig_glob: 'flowfile_frontend/src-tauri/target/x86_64-apple-darwin/release/bundle/**/Flowfile_*.dmg.sig'
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_glob: 'flowfile_frontend/src-tauri/target/release/bundle/nsis/Flowfile_*-setup.exe'
-            sig_glob: 'flowfile_frontend/src-tauri/target/release/bundle/nsis/Flowfile_*-setup.exe.sig'
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            artifact_glob: 'flowfile_frontend/src-tauri/target/release/bundle/{appimage,deb}/Flowfile_*.{AppImage,deb}'
-            sig_glob: 'flowfile_frontend/src-tauri/target/release/bundle/{appimage,deb}/Flowfile_*.{AppImage,deb}.sig'
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
@@ -69,7 +63,8 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            libfuse2
 
       - name: Install Poetry
         run: pip install poetry
@@ -88,7 +83,7 @@ jobs:
         run: npm ci
 
       - name: Import Apple certs (macOS)
-        if: startsWith(matrix.platform, 'macos')
+        if: ${{ startsWith(matrix.platform, 'macos') && env.APPLE_CERTIFICATE != '' }}
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
@@ -97,6 +92,10 @@ jobs:
       - name: Build Tauri app
         working-directory: flowfile_frontend
         env:
+          # Linux AppImage bundling (linuxdeploy): extract instead of FUSE-mount,
+          # and skip symbol stripping. Inert on macOS/Windows.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
           # Updater signing (all platforms)
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -113,19 +112,24 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bundle-${{ matrix.target }}
-          path: ${{ matrix.artifact_glob }}
+          path: |
+            flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/Flowfile_*.dmg
+            flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/Flowfile_*-setup.exe
+            flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/Flowfile_*.AppImage
+            flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/deb/Flowfile_*.deb
           if-no-files-found: error
 
       - name: Upload signature artifact
         uses: actions/upload-artifact@v4
         with:
           name: signature-${{ matrix.target }}
-          path: ${{ matrix.sig_glob }}
+          path: flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
           if-no-files-found: warn
 
   release:
     needs: build
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4

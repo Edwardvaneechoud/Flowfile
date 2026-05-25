@@ -1,4 +1,6 @@
-use tauri::menu::{AboutMetadata, Menu, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
+use tauri::menu::{Menu, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
+#[cfg(target_os = "macos")]
+use tauri::menu::AboutMetadata;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_opener::OpenerExt;
 
@@ -7,20 +9,19 @@ const ISSUES_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile/issues";
 const REPO_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile";
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let pkg_info = app.package_info();
-    let about_metadata = AboutMetadata {
-        name: Some(pkg_info.name.clone()),
-        version: Some(pkg_info.version.to_string()),
-        copyright: Some(format!("© {} Edwardvaneechoud", chrono_year())),
-        ..Default::default()
-    };
-
     let mut builder = MenuBuilder::new(app);
 
     #[cfg(target_os = "macos")]
     {
+        let pkg_info = app.package_info();
+        let about_metadata = AboutMetadata {
+            name: Some(pkg_info.name.clone()),
+            version: Some(pkg_info.version.to_string()),
+            copyright: Some(format!("© {} Edwardvaneechoud", chrono_year())),
+            ..Default::default()
+        };
         let app_menu = SubmenuBuilder::new(app, &pkg_info.name)
-            .item(&PredefinedMenuItem::about(app, None, Some(about_metadata.clone()))?)
+            .item(&PredefinedMenuItem::about(app, None, Some(about_metadata))?)
             .separator()
             .item(&PredefinedMenuItem::services(app, None)?)
             .separator()
@@ -135,6 +136,7 @@ fn open_external<R: Runtime>(app: &AppHandle<R>, url: &str) {
 
 /// We avoid pulling in `chrono` just for the copyright string — fall back to a
 /// fixed year. If the year matters, the user can update this string.
+#[cfg(target_os = "macos")]
 fn chrono_year() -> i32 {
     2025
 }
