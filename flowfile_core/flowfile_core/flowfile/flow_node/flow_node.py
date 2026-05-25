@@ -828,9 +828,6 @@ class FlowNode:
                     self.print("getting resulting data")
                     try:
                         if self._execution_state.is_canceled:
-                            # Cancel may release _execution_lock (held by a schema callback
-                            # running the node function) before this thread acquires it; do not
-                            # (re)start the function for a canceled node.
                             raise Exception("Node execution canceled")
                         if isinstance(self.function, FlowDataEngine):
                             fl: FlowDataEngine = self.function

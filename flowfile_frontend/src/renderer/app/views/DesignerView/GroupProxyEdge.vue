@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// UI-only edge shown while a group is collapsed: it reroutes a boundary connection to the
-// collapsed pill. Non-interactive (no delete button, no label) and never persisted — see
-// useNodeGroups.addGroupProxyEdges. Rendered dashed/muted to read as a proxy, not a real wire.
+// UI-only dashed edge for a collapsed group's rerouted connection.
 import { computed } from "vue";
 import { BaseEdge, getBezierPath } from "@vue-flow/core";
 import type { EdgeProps } from "@vue-flow/core";

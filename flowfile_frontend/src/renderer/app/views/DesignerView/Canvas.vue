@@ -490,6 +490,8 @@ function isValidConnection(connection: Connection): boolean {
   const source = connection.source;
   const target = connection.target;
   if (!source || !target) return false;
+  // Group-proxy edges (to/from a collapsed pill) are UI-only and can't be user-drawn.
+  if (isGroupNodeId(source) || isGroupNodeId(target)) return true;
   if (source === target) return rejectConnection("A node can't connect to itself");
 
   const currentEdges = instance.getEdges.value;
@@ -591,6 +593,7 @@ const NodeIsSelected = (nodeId: string) => {
 };
 
 const nodeClick = (mouseEvent: any) => {
+  if (isGroupNodeId(mouseEvent.node.id)) return; // groups have no node data to preview
   showTablePreview.value = true;
 
   nextTick().then(() => {
@@ -655,8 +658,7 @@ const handleEdgeChange = async (edgeChangesEvent: any) => {
   let lastResponse: Awaited<ReturnType<typeof deleteConnection>> | undefined;
   for (const edgeChange of edgeChanges) {
     if (edgeChange.type === "remove") {
-      // Proxy edges are UI-only stand-ins for a collapsed group; removing them on
-      // expand/ungroup must never touch the backend.
+      // UI-only proxy edges must not trigger a backend deleteConnection.
       if (edgeChange.id.startsWith(GROUP_PROXY_EDGE_PREFIX)) {
         continue;
       }

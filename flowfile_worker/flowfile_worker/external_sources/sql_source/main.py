@@ -9,9 +9,7 @@ from flowfile_worker.external_sources.sql_source.models import (
     DatabaseWriteSettings,
 )
 
-# Default ports per database type for a fast pre-flight connectivity check, so an
-# unreachable database raises in seconds instead of waiting out connectorx's ~30s
-# connection-pool timeout.
+# Default ports per database type for the pre-flight connectivity check.
 _DEFAULT_DB_PORTS = {
     "postgresql": 5432,
     "postgres": 5432,

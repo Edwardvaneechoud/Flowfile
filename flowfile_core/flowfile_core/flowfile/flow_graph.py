@@ -3509,9 +3509,7 @@ class FlowGraph:
 
         node = self.get_node(node_database_reader.node_id)
         if node:
-            # Persist as user_provided so it survives the reset() triggered by setting_input
-            # below; otherwise the schema callback rebuilds from _func and routes schema
-            # prediction through a full worker data read.
+            # Persist so the lightweight callback survives the reset() that setting_input triggers.
             node.user_provided_schema_callback = schema_callback
             node.schema_callback = schema_callback
             node.node_type = node_type

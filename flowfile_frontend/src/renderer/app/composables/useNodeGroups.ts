@@ -23,15 +23,14 @@ const GROUP_PADDING = 40;
 const GROUP_HEADER = 36;
 // Height of a collapsed group (header bar only).
 const GROUP_COLLAPSED_HEIGHT = 34;
-// Width of a collapsed group — a compact pill, independent of the expanded box width.
 const GROUP_COLLAPSED_WIDTH = 200;
+// Fallback node footprint when a member isn't measured yet (matches the backend's
+// nominal sizes in _recompute_group_bounds).
+const NOMINAL_NODE_WIDTH = 180;
+const NOMINAL_NODE_HEIGHT = 80;
 
-// Handle ids on the collapsed pill that boundary "proxy" edges attach to.
 export const GROUP_TARGET_HANDLE = "group-target";
 export const GROUP_SOURCE_HANDLE = "group-source";
-// Proxy edges are UI-only stand-ins shown while a group is collapsed: they reroute the
-// edges crossing the group boundary to the pill. Ids are prefixed so Canvas.vue can skip
-// backend persistence for them and so we can find/remove them on expand/ungroup.
 export const GROUP_PROXY_EDGE_PREFIX = "group-proxy-";
 export const GROUP_PROXY_EDGE_TYPE = "group-proxy";
 
@@ -77,18 +76,14 @@ export function useNodeGroups() {
     removeEdges,
     updateNode,
     updateNodeData,
+    updateNodeInternals,
   } = useVueFlow();
   const flowStore = useFlowStore();
 
   const childNodesOf = (groupVueId: string): GraphNode[] =>
     getNodes.value.filter((node) => node.parentNode === groupVueId);
 
-  /**
-   * While a group is collapsed its members are hidden, so VueFlow drops every edge that
-   * touches them. Re-show the connections crossing the group boundary as UI-only "proxy"
-   * edges routed to the collapsed pill: external→member becomes external→pill, and
-   * member→external becomes pill→external. Internal (member↔member) edges stay hidden.
-   */
+  /** Reroute the collapsed group's boundary edges to the pill as UI-only proxy edges. */
   const addGroupProxyEdges = (groupVueId: string): void => {
     const groupId = groupBackendId(groupVueId);
     const memberIds = new Set(childNodesOf(groupVueId).map((node) => node.id));
@@ -99,7 +94,7 @@ export function useNodeGroups() {
     for (const edge of getEdges.value) {
       const sourceIn = memberIds.has(edge.source);
       const targetIn = memberIds.has(edge.target);
-      if (sourceIn === targetIn) continue; // internal or fully external — nothing to reroute
+      if (sourceIn === targetIn) continue;
       const proxy: Edge = targetIn
         ? {
             id: `${prefix}in-${edge.source}-${edge.sourceHandle ?? ""}`,
@@ -109,7 +104,6 @@ export function useNodeGroups() {
             targetHandle: GROUP_TARGET_HANDLE,
             type: GROUP_PROXY_EDGE_TYPE,
             selectable: false,
-            deletable: false,
             focusable: false,
             data: { isGroupProxy: true, groupId },
           }
@@ -121,7 +115,6 @@ export function useNodeGroups() {
             targetHandle: edge.targetHandle,
             type: GROUP_PROXY_EDGE_TYPE,
             selectable: false,
-            deletable: false,
             focusable: false,
             data: { isGroupProxy: true, groupId },
           };
@@ -129,10 +122,14 @@ export function useNodeGroups() {
       seen.add(proxy.id);
       proxies.push(proxy);
     }
-    if (proxies.length > 0) addEdges(proxies);
+    if (proxies.length > 0) {
+      addEdges(proxies);
+      // re-measure so the right-edge source handle tracks the new compact width
+      updateNodeInternals([groupVueId]);
+    }
   };
 
-  /** Remove the proxy edges created for a (now expanding/ungrouping) collapsed group. */
+  /** Remove a collapsed group's proxy edges. */
   const removeGroupProxyEdges = (groupId: number): void => {
     const prefix = `${GROUP_PROXY_EDGE_PREFIX}${groupId}-`;
     const ids = getEdges.value.filter((edge) => edge.id.startsWith(prefix)).map((edge) => edge.id);
@@ -184,8 +181,8 @@ export function useNodeGroups() {
         id: child.id,
         x: abs.x,
         y: abs.y,
-        w: child.dimensions.width || 0,
-        h: child.dimensions.height || 0,
+        w: child.dimensions.width || NOMINAL_NODE_WIDTH,
+        h: child.dimensions.height || NOMINAL_NODE_HEIGHT,
       };
     });
     const minX = Math.min(...snapshot.map((s) => s.x)) - GROUP_PADDING;
@@ -284,7 +281,6 @@ export function useNodeGroups() {
     const parentId = groupNodeId(groupId);
     const group = findNode(parentId);
     if (!group) return;
-    // Expanding: drop the proxy edges first so the real edges re-render once members unhide.
     if (!collapsed) removeGroupProxyEdges(groupId);
     for (const child of childNodesOf(parentId)) {
       updateNode(child.id, { hidden: collapsed });
@@ -302,11 +298,14 @@ export function useNodeGroups() {
         width: GROUP_COLLAPSED_WIDTH,
         height: GROUP_COLLAPSED_HEIGHT,
       };
-      // The pill's handles only render once `collapsed` is applied; wait a tick so the
-      // proxy edges have handles to attach to.
-      await nextTick();
+      await nextTick(); // wait for the pill's handles to render before attaching proxies
       addGroupProxyEdges(parentId);
     } else {
+      // After a refresh, members loaded hidden and were never measured — force a
+      // re-measure before refit so the box accounts for their sizes.
+      await nextTick();
+      updateNodeInternals(childNodesOf(parentId).map((child) => child.id));
+      await nextTick();
       const fit = refitGroup(parentId);
       bounds = fit
         ? fit.bounds

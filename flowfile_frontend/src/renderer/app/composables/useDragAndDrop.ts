@@ -24,6 +24,7 @@ import type {
 } from "../types";
 import { FlowApi, NodeApi } from "../api";
 import { buildGroupNode, groupNodeId, useNodeGroups } from "./useNodeGroups";
+import { fetchNodeTemplates } from "./useNodes";
 import { useEditorStore } from "../stores/editor-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
 import { DEFAULT_OUTPUT_HANDLE, outputHandle, outputLabel } from "../utils/outputHandle";
@@ -161,9 +162,7 @@ const componentCache: Map<string, Promise<any>> = new Map();
  */
 export async function getNodeTemplateByItem(item: string): Promise<NodeTemplate | undefined> {
   try {
-    const { default: axios } = await import("axios");
-    const response = await axios.get("/node_list");
-    const allNodes = response.data as NodeTemplate[];
+    const allNodes = await fetchNodeTemplates();
     return allNodes.find((node) => node.item === item);
   } catch (error) {
     console.error("Failed to get node template for item:", item, error);
@@ -486,8 +485,7 @@ export default function useDragAndDrop() {
 
     addEdges(edgesWithLabels);
 
-    // Collapsed groups load with their members hidden, so VueFlow drops the members'
-    // edges. Re-create the boundary proxy edges once the pill handles have rendered.
+    // Re-create proxy edges for groups that load collapsed.
     const collapsedGroups = groups.filter((group) => group.collapsed);
     if (collapsedGroups.length > 0) {
       await nextTick();

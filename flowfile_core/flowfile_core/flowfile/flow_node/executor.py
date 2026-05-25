@@ -338,10 +338,7 @@ class NodeExecutor:
         """Prepare node state before execution."""
         self.node.clear_table_example()
         state.reset_results_only()
-        # Clear a stale cancel flag from a prior run so the get_resulting_data guard
-        # only trips for a cancel issued during this run (node.reset() is a no-op when
-        # the hash is unchanged, so reset it here unconditionally).
-        state.is_canceled = False
+        state.is_canceled = False  # clear any stale cancel flag from a prior run
         self.node.results.errors = None
         self.node.results.resulting_data = None
         self.node.results.example_data = None

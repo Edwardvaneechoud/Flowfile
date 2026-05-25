@@ -89,8 +89,6 @@ async function onToggleCollapse(): Promise<void> {
     :class="{ selected, collapsed: data.collapsed }"
     :style="{ '--group-accent': accent, borderColor: accent }"
   >
-    <!-- When collapsed the members are hidden, so the pill exposes its own in/out handles
-         that boundary "proxy" edges attach to (see useNodeGroups.addGroupProxyEdges). -->
     <template v-if="data.collapsed">
       <Handle
         :id="GROUP_TARGET_HANDLE"
@@ -173,7 +171,6 @@ async function onToggleCollapse(): Promise<void> {
   font-weight: 600;
   position: relative;
 }
-/* A collapsed group is just the header pill — fill it and round all corners. */
 .group-node.collapsed .group-header {
   height: 100%;
   border-radius: 8px;
@@ -257,7 +254,6 @@ async function onToggleCollapse(): Promise<void> {
   cursor: pointer;
   padding: 0;
 }
-/* In/out connection points on the collapsed pill (proxy edges attach here). */
 .group-handle {
   width: 9px;
   height: 9px;
