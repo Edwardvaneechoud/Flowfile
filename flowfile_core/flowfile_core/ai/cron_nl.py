@@ -63,7 +63,8 @@ The five space-separated fields are, in order:
 
   minute(0-59)  hour(0-23, 24-hour clock)  day-of-month(1-31)  month(1-12)  day-of-week(0-6, 0=Sunday)
 
-Use `*` for "every", `,` for lists, `-` for ranges, and `*/n` for steps.
+Use `*` for "every", `,` for lists, `-` for ranges, `*/n` for steps, and `L` in
+the day-of-month field for the last day of the month.
 
 Hard rules:
 
@@ -84,6 +85,7 @@ Examples (input -> output):
   "daily at 2:30pm" -> {"cron_expression": "30 14 * * *", "explanation": "14:30 daily"}
   "Mondays and Thursdays at 6am" -> {"cron_expression": "0 6 * * 1,4", "explanation": "06:00 Mon and Thu"}
   "first day of every month at midnight" -> {"cron_expression": "0 0 1 * *", "explanation": "00:00 on the 1st"}
+  "first and last day of the month" -> {"cron_expression": "0 0 1,L * *", "explanation": "00:00, 1st and last day"}
   "every hour on the hour" -> {"cron_expression": "0 * * * *", "explanation": "Top of every hour"}
   "every 6 hours" -> {"cron_expression": "0 */6 * * *", "explanation": "Every 6 hours"}
   "hello there" -> {"cron_expression": "", "explanation": "Not a schedule"}

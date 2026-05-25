@@ -145,12 +145,11 @@
             />
           </el-form-item>
 
-          <div class="cron-preview" :class="{ invalid: !cronPreview }">
-            <i
-              :class="cronPreview ? 'fa-solid fa-calendar-check' : 'fa-solid fa-circle-exclamation'"
-            ></i>
-            <span v-if="cronPreview">{{ cronPreview }}</span>
-            <span v-else>Enter a valid schedule.</span>
+          <div class="cron-preview" :class="{ invalid: !cronValid && !customCronChecking }">
+            <i :class="cronPreviewIcon"></i>
+            <span v-if="isCustom && customCronChecking">Checking…</span>
+            <span v-else-if="cronPreviewText">{{ cronPreviewText }}</span>
+            <span v-else>{{ customCronError || "Enter a valid schedule." }}</span>
           </div>
         </div>
 
@@ -171,7 +170,6 @@
           </el-input>
           <el-button
             type="primary"
-            plain
             :loading="aiGenerating"
             :disabled="!aiDescription.trim() || aiGenerating"
             @click="generateCron"
@@ -322,7 +320,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onBeforeUnmount } from "vue";
 import type { CatalogTable, FlowRegistration, FlowScheduleCreate } from "../../types";
 import {
   FREQUENCY_OPTIONS,
@@ -334,6 +332,7 @@ import {
 } from "./cron-builder";
 import { useAiStore } from "../../stores/ai-store";
 import { AiDisabledError, generateCronExpression } from "../../api/ai.api";
+import { CatalogApi } from "../../api/catalog.api";
 
 const props = defineProps<{
   visible: boolean;
@@ -396,6 +395,81 @@ const form = ref<{
 const builtCron = computed(() => buildCron(cron.value));
 const cronPreview = computed(() => describeCron(builtCron.value, timezone));
 
+const isCustom = computed(() => cron.value.frequency === "custom");
+
+// Custom mode lets users type any cron, but the preview parser (cronstrue) and
+// the backend's croniter accept slightly different grammars. Ask the backend to
+// validate — it is the single source of truth for whether the schedule will be
+// accepted. Builder modes always emit croniter-valid cron and keep the cronstrue
+// preview as their gate, so no round-trip is needed there.
+const customCronValid = ref(false);
+const customCronError = ref<string | null>(null);
+const customCronChecking = ref(false);
+let cronCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let cronCheckSeq = 0;
+
+function validateCustomCron() {
+  if (cronCheckTimer) clearTimeout(cronCheckTimer);
+  customCronError.value = null;
+  const expr = builtCron.value;
+  if (!expr) {
+    customCronValid.value = false;
+    customCronChecking.value = false;
+    return;
+  }
+  customCronChecking.value = true;
+  const seq = ++cronCheckSeq;
+  cronCheckTimer = setTimeout(async () => {
+    try {
+      const result = await CatalogApi.validateCron({
+        cron_expression: expr,
+        cron_timezone: timezone,
+      });
+      if (seq !== cronCheckSeq) return; // superseded by a newer keystroke
+      customCronValid.value = result.valid;
+      customCronError.value = result.valid ? null : result.error || "Invalid cron expression.";
+    } catch {
+      if (seq !== cronCheckSeq) return;
+      // Backend unreachable — fall back to cronstrue so we don't hard-block.
+      customCronValid.value = !!cronPreview.value;
+    } finally {
+      if (seq === cronCheckSeq) customCronChecking.value = false;
+    }
+  }, 350);
+}
+
+watch([isCustom, builtCron], ([custom]) => {
+  if (custom) {
+    validateCustomCron();
+  } else {
+    if (cronCheckTimer) clearTimeout(cronCheckTimer);
+    customCronChecking.value = false;
+    customCronError.value = null;
+  }
+});
+
+onBeforeUnmount(() => {
+  if (cronCheckTimer) clearTimeout(cronCheckTimer);
+});
+
+// Valid for submission: backend verdict in Custom mode, cronstrue describability otherwise.
+const cronValid = computed(() => (isCustom.value ? customCronValid.value : !!cronPreview.value));
+
+// Preview text: human-readable description when available; a neutral confirmation
+// for a valid custom expr cronstrue can't describe; empty when invalid.
+const cronPreviewText = computed(() => {
+  if (isCustom.value) {
+    if (!customCronValid.value) return "";
+    return cronPreview.value || `Valid schedule (${timezone})`;
+  }
+  return cronPreview.value;
+});
+
+const cronPreviewIcon = computed(() => {
+  if (isCustom.value && customCronChecking.value) return "fa-solid fa-circle-notch fa-spin";
+  return cronValid.value ? "fa-solid fa-calendar-check" : "fa-solid fa-circle-exclamation";
+});
+
 const availableFlows = computed(() => props.flows.filter((f) => f.file_exists));
 
 const selectedFlow = computed(
@@ -429,6 +503,9 @@ watch(
       form.value.name = "";
       form.value.description = "";
       cron.value = defaultCronState();
+      customCronValid.value = false;
+      customCronError.value = null;
+      customCronChecking.value = false;
       aiDescription.value = "";
       aiError.value = null;
       if (!aiStore.providers.length) void aiStore.loadProviders();
@@ -438,7 +515,7 @@ watch(
 
 const isValid = computed(() => {
   if (!form.value.registration_id) return false;
-  if (form.value.schedule_type === "cron") return !!cronPreview.value;
+  if (form.value.schedule_type === "cron") return cronValid.value;
   if (form.value.schedule_type === "table_trigger") return !!form.value.trigger_table_id;
   if (form.value.schedule_type === "table_set_trigger")
     return form.value.trigger_table_ids.length >= 2;

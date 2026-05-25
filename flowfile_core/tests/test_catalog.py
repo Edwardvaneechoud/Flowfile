@@ -1719,3 +1719,28 @@ class TestCronSchedules:
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["cron_expression"] == "0 18 * * *"
+
+    def test_validate_cron_endpoint(self):
+        # Same croniter rules as create, but returns a flag (200) instead of 422
+        # so the builder can gate its submit button on the backend's verdict.
+        ok = client.post(
+            "/catalog/schedules/validate-cron",
+            json={"cron_expression": "0 9 * * 1-5", "cron_timezone": "Europe/Amsterdam"},
+        )
+        assert ok.status_code == 200, ok.text
+        assert ok.json() == {"valid": True, "error": None}
+
+        bad_expr = client.post(
+            "/catalog/schedules/validate-cron",
+            json={"cron_expression": "not a cron", "cron_timezone": "UTC"},
+        )
+        assert bad_expr.status_code == 200, bad_expr.text
+        assert bad_expr.json()["valid"] is False
+        assert bad_expr.json()["error"]  # carries the backend's reason
+
+        bad_tz = client.post(
+            "/catalog/schedules/validate-cron",
+            json={"cron_expression": "0 9 * * *", "cron_timezone": "Not/AZone"},
+        )
+        assert bad_tz.status_code == 200, bad_tz.text
+        assert bad_tz.json()["valid"] is False

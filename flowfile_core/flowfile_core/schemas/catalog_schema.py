@@ -683,6 +683,20 @@ class FlowScheduleOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CronValidationRequest(BaseModel):
+    cron_expression: str | None = None
+    cron_timezone: str | None = None
+
+
+class CronValidationResult(BaseModel):
+    """Result of validating a cron expression (+ optional timezone) against the
+    same croniter rules the create/update path enforces. ``valid`` drives the
+    builder's submit gate; ``error`` is the backend's message when invalid."""
+
+    valid: bool
+    error: str | None = None
+
+
 # ==================== Active Run Schemas ====================
 
 

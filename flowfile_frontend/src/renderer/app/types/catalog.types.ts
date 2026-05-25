@@ -291,6 +291,16 @@ export interface FlowScheduleUpdate {
   description?: string | null;
 }
 
+export interface CronValidationRequest {
+  cron_expression?: string | null;
+  cron_timezone?: string | null;
+}
+
+export interface CronValidationResult {
+  valid: boolean;
+  error: string | null;
+}
+
 // ============================================================================
 // Active Flow Run
 // ============================================================================
