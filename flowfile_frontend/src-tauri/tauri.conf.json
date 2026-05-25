@@ -38,7 +38,7 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": false,
-    "targets": ["app", "dmg", "nsis", "appimage", "deb"],
+    "targets": ["app", "dmg", "nsis", "deb"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -76,9 +76,6 @@
       "deb": {
         "section": "utils",
         "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
-      },
-      "appimage": {
-        "bundleMediaFramework": false
       }
     }
   },

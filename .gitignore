@@ -1,6 +1,7 @@
 /mysql
 /mysql/*
 .idea
+.build-logs
 files/*
 .env
 /.env

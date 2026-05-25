@@ -25,7 +25,6 @@ jobs:
             target: x86_64-pc-windows-msvc
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            tauri_args: '--verbose'
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
@@ -64,8 +63,7 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf \
-            libfuse2
+            patchelf
 
       - name: Install Poetry
         run: pip install poetry
@@ -97,10 +95,6 @@ jobs:
       - name: Build Tauri app
         working-directory: flowfile_frontend
         env:
-          # Linux AppImage bundling (linuxdeploy): extract instead of FUSE-mount,
-          # and skip symbol stripping. Inert on macOS/Windows.
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          NO_STRIP: "true"
           # Updater signing (all platforms)
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -120,7 +114,6 @@ jobs:
           path: |
             flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/Flowfile_*.dmg
             flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/Flowfile_*-setup.exe
-            flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/Flowfile_*.AppImage
             flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/deb/Flowfile_*.deb
           if-no-files-found: error
 

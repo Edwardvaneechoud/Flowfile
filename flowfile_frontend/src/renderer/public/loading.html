@@ -156,6 +156,25 @@
       });
     }
 
+    // Where Tauri's log plugin writes `flowfile.log`, per platform. Resolved
+    // up front so the startup hints can point users at the right directory
+    // (the path differs on macOS / Linux / Windows).
+    let logDirHint = 'the app log directory';
+    if (tauri && tauri.os && tauri.os.platform) {
+      try {
+        const platform = tauri.os.platform();
+        if (platform === 'macos') {
+          logDirHint = '~/Library/Logs/com.flowfile.app/';
+        } else if (platform === 'windows') {
+          logDirHint = '%APPDATA%\\com.flowfile.app\\logs';
+        } else {
+          logDirHint = '~/.local/share/com.flowfile.app/logs';
+        }
+      } catch (_) {
+        /* keep the generic fallback */
+      }
+    }
+
     // State machine for the loading UI. The Rust side emits services-status
     // events when state transitions happen; this side runs its own elapsed
     // counter so the user sees the wait is alive (vs apparently hung).
@@ -173,7 +192,7 @@
       { after: 35,  message: 'Asking the database nicely about migrations.' },
       { after: 50,  message: 'Importing every router we own. We own a lot of routers.' },
       { after: 70,  message: 'Still going. Slow disk? Antivirus scanning the binary? Both?' },
-      { after: 90,  message: 'Hmm, this is unusual. If you\'re curious: ~/Library/Logs/com.flowfile.app/' },
+      { after: 90,  message: 'Hmm, this is unusual. If you\'re curious: ' + logDirHint },
       { after: 110, message: 'Right at the edge of patience. Hang on.' },
     ];
 
@@ -215,7 +234,7 @@
         icon.textContent = isReady ? '✓' : hasError ? '!' : '';
         const errMsg = payload.error || (hasError ? payload.message : null);
         text.textContent = errMsg || (isReady ? 'Services ready' : 'Starting services...');
-        if (hasError) hintEl.textContent = 'See logs at ~/Library/Logs/com.flowfile.app/';
+        if (hasError) hintEl.textContent = 'See logs at ' + logDirHint;
         refreshUi();
       });
     }
