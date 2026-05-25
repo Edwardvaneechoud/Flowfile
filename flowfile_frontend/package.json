@@ -81,6 +81,7 @@
     "@vue-flow/node-resizer": "^1.4.0",
     "axios": "^1.15.2",
     "chart.js": "^3.8.0",
+    "cronstrue": "^2.59.0",
     "depcheck": "^1.4.7",
     "dompurify": "^3.2.4",
     "electron-is-dev": "^2.0.0",

@@ -15,6 +15,8 @@ from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.validators import (
     format_full_name,
+    validate_cron_expression,
+    validate_cron_timezone,
     validate_schedule_create,
     validate_schedule_update,
 )
@@ -82,6 +84,8 @@ class ScheduleService:
             description=schedule.description,
             schedule_type=schedule.schedule_type,
             interval_seconds=schedule.interval_seconds,
+            cron_expression=schedule.cron_expression,
+            cron_timezone=schedule.cron_timezone,
             trigger_table_id=schedule.trigger_table_id,
             trigger_table_name=trigger_table_name,
             trigger_namespace_id=trigger_namespace_id,
@@ -102,6 +106,8 @@ class ScheduleService:
         owner_id: int,
         schedule_type: str,
         interval_seconds: int | None = None,
+        cron_expression: str | None = None,
+        cron_timezone: str | None = None,
         trigger_table_id: int | None = None,
         trigger_table_ids: list[int] | None = None,
         enabled: bool = True,
@@ -119,6 +125,8 @@ class ScheduleService:
             trigger_table_id=trigger_table_id,
             trigger_table_ids=trigger_table_ids,
             table_exists=lambda table_id: self.repo.get_table(table_id) is not None,
+            cron_expression=cron_expression,
+            cron_timezone=cron_timezone,
         )
 
         schedule = FlowSchedule(
@@ -129,6 +137,8 @@ class ScheduleService:
             description=description,
             schedule_type=schedule_type,
             interval_seconds=interval_seconds,
+            cron_expression=cron_expression,
+            cron_timezone=cron_timezone,
             trigger_table_id=trigger_table_id,
         )
         schedule = self.repo.create_schedule(schedule)
@@ -143,6 +153,8 @@ class ScheduleService:
         schedule_id: int,
         enabled: bool | None = None,
         interval_seconds: int | None = None,
+        cron_expression: str | None = None,
+        cron_timezone: str | None = None,
         name: str | None = None,
         description: str | None = None,
     ) -> FlowScheduleOut:
@@ -155,6 +167,12 @@ class ScheduleService:
         if interval_seconds is not None:
             validate_schedule_update(interval_seconds)
             schedule.interval_seconds = interval_seconds
+        if cron_expression is not None:
+            validate_cron_expression(cron_expression)
+            schedule.cron_expression = cron_expression
+        if cron_timezone is not None:
+            validate_cron_timezone(cron_timezone)
+            schedule.cron_timezone = cron_timezone
         if name is not None:
             schedule.name = name
         if description is not None:

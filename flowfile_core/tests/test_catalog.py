@@ -1653,3 +1653,69 @@ class TestCrossNamespaceResolution:
             assert out.trigger_namespace_id == schema_a_id
             assert out.trigger_namespace_name == "ns_a"
             assert out.trigger_full_table_name == "ns_a.foo"
+
+
+class TestCronSchedules:
+    """Cron schedule create/read/update via the catalog API."""
+
+    @staticmethod
+    def _register_flow() -> int:
+        with get_db_context() as db:
+            flow = FlowRegistration(name="cron_flow", flow_path="/tmp/cron_flow.flowfile", owner_id=1)
+            db.add(flow)
+            db.commit()
+            db.refresh(flow)
+            return flow.id
+
+    def test_create_cron_schedule(self):
+        flow_id = self._register_flow()
+        resp = client.post(
+            "/catalog/schedules",
+            json={
+                "registration_id": flow_id,
+                "schedule_type": "cron",
+                "cron_expression": "0 9 * * 1-5",
+                "cron_timezone": "Europe/Amsterdam",
+                "name": "Weekday morning",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["schedule_type"] == "cron"
+        assert data["cron_expression"] == "0 9 * * 1-5"
+        assert data["cron_timezone"] == "Europe/Amsterdam"
+
+        got = client.get(f"/catalog/schedules/{data['id']}")
+        assert got.status_code == 200
+        assert got.json()["cron_expression"] == "0 9 * * 1-5"
+
+    def test_create_cron_invalid_expression_rejected(self):
+        flow_id = self._register_flow()
+        resp = client.post(
+            "/catalog/schedules",
+            json={
+                "registration_id": flow_id,
+                "schedule_type": "cron",
+                "cron_expression": "not a cron",
+                "cron_timezone": "UTC",
+            },
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_update_cron_expression(self):
+        flow_id = self._register_flow()
+        created = client.post(
+            "/catalog/schedules",
+            json={
+                "registration_id": flow_id,
+                "schedule_type": "cron",
+                "cron_expression": "0 9 * * *",
+                "cron_timezone": "UTC",
+            },
+        ).json()
+        resp = client.put(
+            f"/catalog/schedules/{created['id']}",
+            json={"cron_expression": "0 18 * * *"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cron_expression"] == "0 18 * * *"

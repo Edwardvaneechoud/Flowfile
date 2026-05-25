@@ -94,6 +94,10 @@
         <span class="meta-label">Interval</span>
         <span class="meta-value">{{ formatScheduleType(schedule) }}</span>
       </div>
+      <div v-if="schedule.schedule_type === 'cron'" class="meta-card">
+        <span class="meta-label">Schedule</span>
+        <span class="meta-value">{{ formatScheduleType(schedule) }}</span>
+      </div>
       <div v-if="schedule.schedule_type === 'table_trigger'" class="meta-card">
         <span class="meta-label">Trigger Table</span>
         <span class="meta-value">{{
@@ -208,6 +212,7 @@ const flowName = computed(() => {
 
 const scheduleTypeName = computed(() => {
   if (props.schedule.schedule_type === "interval") return "Interval";
+  if (props.schedule.schedule_type === "cron") return "Schedule";
   if (props.schedule.schedule_type === "table_trigger") return "Table Trigger";
   if (props.schedule.schedule_type === "table_set_trigger") return "Table Set Trigger";
   return props.schedule.schedule_type;

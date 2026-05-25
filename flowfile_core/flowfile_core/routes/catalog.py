@@ -1096,6 +1096,8 @@ def create_schedule(
         owner_id=current_user.id,
         schedule_type=body.schedule_type,
         interval_seconds=body.interval_seconds,
+        cron_expression=body.cron_expression,
+        cron_timezone=body.cron_timezone,
         trigger_table_id=body.trigger_table_id,
         trigger_table_ids=body.trigger_table_ids,
         enabled=body.enabled,
@@ -1124,6 +1126,8 @@ def update_schedule(
         schedule_id=schedule_id,
         enabled=body.enabled,
         interval_seconds=body.interval_seconds,
+        cron_expression=body.cron_expression,
+        cron_timezone=body.cron_timezone,
         name=body.name,
         description=body.description,
     )

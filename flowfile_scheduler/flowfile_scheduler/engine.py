@@ -10,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+import zoneinfo
 from datetime import datetime, timezone
 
+from croniter import croniter
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -111,6 +113,7 @@ class FlowScheduler:
                 logger.info("Tick skipped — lock held by another instance")
                 return
             launched = self._process_interval_schedules(db)
+            launched += self._process_cron_schedules(db)
             launched += self._process_table_trigger_schedules(db)
             launched += self._process_table_set_trigger_schedules(db)
             if launched:
@@ -192,6 +195,65 @@ class FlowScheduler:
 
             if self._maybe_launch(db, sched, now):
                 launched += 1
+        return launched
+
+    # ------------------------------------------------------------------
+    # Cron schedules
+    # ------------------------------------------------------------------
+
+    def _process_cron_schedules(self, db: Session) -> int:
+        """Evaluate cron schedules and launch those whose next fire time has passed.
+
+        The next fire time is computed from ``last_triggered_at`` (or
+        ``created_at`` for a never-run schedule) in the schedule's own
+        timezone, so "every day at 2 AM" fires at 2 AM local wall-clock
+        time and stays correct across DST transitions.  Because the base
+        is the last trigger, a scheduler that was down only fires **once**
+        on catch-up rather than backfilling every missed slot — and
+        ``_maybe_launch``'s active-run guard prevents double-firing within
+        the same minute across consecutive ticks.
+        """
+        schedules: list[FlowSchedule] = (
+            db.query(FlowSchedule)
+            .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "cron")
+            .all()
+        )
+        logger.info("Evaluating %d cron schedule(s)", len(schedules))
+
+        launched = 0
+        now = _utcnow()
+        for sched in schedules:
+            if not sched.cron_expression:
+                logger.warning("Cron schedule %s has no expression, skipping", sched.id)
+                continue
+
+            try:
+                tz = zoneinfo.ZoneInfo(sched.cron_timezone or "UTC")
+            except Exception:
+                logger.warning(
+                    "Cron schedule %s has invalid timezone %r, skipping", sched.id, sched.cron_timezone
+                )
+                continue
+
+            base = sched.last_triggered_at or sched.created_at
+            base_local = base.replace(tzinfo=timezone.utc).astimezone(tz)
+
+            try:
+                next_run = croniter(sched.cron_expression, base_local).get_next(datetime)
+            except Exception:
+                logger.warning(
+                    "Cron schedule %s has invalid expression %r, skipping", sched.id, sched.cron_expression
+                )
+                continue
+
+            if next_run <= now.astimezone(tz):
+                logger.info(
+                    "Cron schedule %s due (next_run=%s, now=%s) — triggering", sched.id, next_run, now
+                )
+                if self._maybe_launch(db, sched, now):
+                    launched += 1
+            else:
+                logger.info("Cron schedule %s not due yet (next_run=%s)", sched.id, next_run)
         return launched
 
     # ------------------------------------------------------------------

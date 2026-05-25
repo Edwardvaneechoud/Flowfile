@@ -71,6 +71,8 @@ google-analytics-data = ">=0.18.0"
 alembic = "^1.13.0"
 litellm = "^1.83.14"
 filelock = "^3.13.0"
+croniter = ">=2.0"
+tzdata = ">=2024.1"
 
 
 [tool.poetry.scripts]

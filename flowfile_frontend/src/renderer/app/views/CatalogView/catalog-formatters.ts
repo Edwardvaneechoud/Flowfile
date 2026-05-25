@@ -1,4 +1,5 @@
 import type { FlowSchedule, GlobalArtifact } from "../../types";
+import { describeCron } from "./cron-builder";
 
 /**
  * Compact date format: "Mar 23, 10:30 AM"
@@ -6,9 +7,8 @@ import type { FlowSchedule, GlobalArtifact } from "../../types";
  */
 export function formatDate(dateStr: string): string {
   // Backend sends UTC timestamps; ensure JS parses them as UTC
-  const normalized = dateStr.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(dateStr)
-    ? dateStr
-    : dateStr + "Z";
+  const normalized =
+    dateStr.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(dateStr) ? dateStr : dateStr + "Z";
   return new Date(normalized).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
@@ -53,6 +53,13 @@ export function formatScheduleType(schedule: FlowSchedule): string {
     const remMins = mins % 60;
     return remMins > 0 ? `Every ${hrs}h ${remMins}m` : `Every ${hrs}h`;
   }
+  if (schedule.schedule_type === "cron") {
+    return (
+      describeCron(schedule.cron_expression, schedule.cron_timezone) ||
+      schedule.cron_expression ||
+      "Cron schedule"
+    );
+  }
   if (schedule.schedule_type === "table_trigger") {
     const name =
       schedule.trigger_full_table_name ??
@@ -72,6 +79,7 @@ export function formatScheduleType(schedule: FlowSchedule): string {
 
 export function scheduleIcon(schedule: FlowSchedule): string {
   if (schedule.schedule_type === "interval") return "fa-solid fa-clock";
+  if (schedule.schedule_type === "cron") return "fa-solid fa-calendar-day";
   if (schedule.schedule_type === "table_set_trigger") return "fa-solid fa-layer-group";
   return "fa-solid fa-table";
 }
@@ -90,14 +98,18 @@ export function getScheduleDisplayName(
   return formatScheduleType(schedule);
 }
 
-export function formatRunType(runType: "in_designer_run" | "scheduled" | "manual" | "on_demand"): string {
+export function formatRunType(
+  runType: "in_designer_run" | "scheduled" | "manual" | "on_demand",
+): string {
   if (runType === "scheduled") return "Scheduled";
   if (runType === "manual") return "Manual";
   if (runType === "on_demand") return "On-demand";
   return "Designer";
 }
 
-export function runTypeIcon(runType: "in_designer_run" | "scheduled" | "manual" | "on_demand"): string {
+export function runTypeIcon(
+  runType: "in_designer_run" | "scheduled" | "manual" | "on_demand",
+): string {
   if (runType === "scheduled") return "fa-solid fa-calendar-days";
   if (runType === "manual") return "fa-solid fa-hand-pointer";
   if (runType === "on_demand") return "fa-solid fa-bolt";
