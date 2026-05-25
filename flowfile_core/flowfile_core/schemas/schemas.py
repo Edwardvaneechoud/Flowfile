@@ -548,6 +548,8 @@ class CreateGroupRequest(BaseModel):
     y_position: float | None = None
     width: float | None = None
     height: float | None = None
+    parent_group_id: int | None = None  # nest the new group under this group
+    child_group_ids: list[int] = Field(default_factory=list)  # existing groups to nest inside the new one
 
 
 class UpdateGroupRequest(BaseModel):

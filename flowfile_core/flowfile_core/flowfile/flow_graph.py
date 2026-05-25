@@ -1184,32 +1184,67 @@ class FlowGraph:
         if node is not None and node.setting_input is not None and hasattr(node.setting_input, "group_id"):
             node.setting_input.group_id = group_id
 
+    def _child_group_ids(self, group_id: int) -> list[int]:
+        """Sub-groups whose immediate parent is this group."""
+        return [gid for gid, g in self._groups.items() if g.parent_group_id == group_id]
+
+    def _group_depth(self, group_id: int) -> int:
+        """Nesting depth (0 = top-level); cycle-safe."""
+        depth, seen, current = 0, set(), self._groups.get(group_id)
+        while current is not None and current.parent_group_id is not None and current.id not in seen:
+            seen.add(current.id)
+            depth += 1
+            current = self._groups.get(current.parent_group_id)
+        return depth
+
+    def _is_ancestor_group(self, ancestor_id: int, group_id: int) -> bool:
+        """True if ancestor_id equals group_id or one of its ancestors (cycle-safe)."""
+        seen, current = set(), self._groups.get(group_id)
+        while current is not None and current.id not in seen:
+            if current.id == ancestor_id:
+                return True
+            seen.add(current.id)
+            current = self._groups.get(current.parent_group_id) if current.parent_group_id is not None else None
+        return False
+
     def _recompute_group_bounds(self, group_id: int | None = None) -> None:
-        """Refit one or all group boxes around their member nodes.
+        """Refit one or all group boxes around their member nodes and child groups.
 
         Uses nominal node dimensions since the backend doesn't know rendered sizes;
         the frontend refines bounds on first user interaction. Groups with no members
-        keep their current bounds.
+        keep their current bounds. When refitting all groups, deepest first so a parent
+        unions already-fitted child-group boxes.
         """
         node_width, node_height, padding, header = 180.0, 80.0, 40.0, 36.0
-        target_ids = [group_id] if group_id is not None else list(self._groups)
+        if group_id is not None:
+            target_ids = [group_id]
+        else:
+            target_ids = sorted(self._groups, key=self._group_depth, reverse=True)
         for gid in target_ids:
             group = self._groups.get(gid)
             if group is None:
                 continue
-            members = [self.get_node(nid) for nid in self._member_node_ids(gid)]
-            members = [m for m in members if m is not None and m.setting_input is not None]
-            if not members:
+            boxes: list[tuple[float, float, float, float]] = []  # (x, y, w, h)
+            for nid in self._member_node_ids(gid):
+                node = self.get_node(nid)
+                if node is not None and node.setting_input is not None:
+                    nx = float(node.setting_input.pos_x or 0)
+                    ny = float(node.setting_input.pos_y or 0)
+                    boxes.append((nx, ny, node_width, node_height))
+            for cid in self._child_group_ids(gid):
+                child = self._groups.get(cid)
+                if child is not None:
+                    boxes.append((child.x_position, child.y_position, child.width, child.height))
+            if not boxes:
                 continue
-            xs = [float(m.setting_input.pos_x or 0) for m in members]
-            ys = [float(m.setting_input.pos_y or 0) for m in members]
-            min_x, min_y = min(xs), min(ys)
-            max_x = max(x + node_width for x in xs)
-            max_y = max(y + node_height for y in ys)
-            group.x_position = min_x - padding
-            group.y_position = min_y - padding - header
-            group.width = (max_x - min_x) + 2 * padding
-            group.height = (max_y - min_y) + 2 * padding + header
+            min_x = min(b[0] for b in boxes) - padding
+            min_y = min(b[1] for b in boxes) - padding - header
+            max_x = max(b[0] + b[2] for b in boxes) + padding
+            max_y = max(b[1] + b[3] for b in boxes) + padding
+            group.x_position = min_x
+            group.y_position = min_y
+            group.width = max_x - min_x
+            group.height = max_y - min_y
 
     def create_group(
         self,
@@ -1218,20 +1253,29 @@ class FlowGraph:
         *,
         color: schemas.GroupColor | None = None,
         bounds: schemas.GroupBounds | None = None,
+        parent_group_id: int | None = None,
+        child_group_ids: list[int] | None = None,
     ) -> schemas.GroupInformation:
-        """Create a visual group and assign the given nodes to it. Organizational only.
+        """Create a visual group. Organizational only.
 
-        Bounds are computed from member positions when not supplied.
+        Members are the given nodes (group_id) and child groups (their parent_group_id).
+        The new group itself nests under parent_group_id. Bounds are computed when not supplied.
         """
 
         def _do() -> schemas.GroupInformation:
             group_id = self._next_group_id()
-            group = schemas.GroupInformation(id=group_id, name=name, color=color)
+            group = schemas.GroupInformation(
+                id=group_id, name=name, color=color, parent_group_id=parent_group_id
+            )
             if bounds is not None:
                 group.x_position, group.y_position, group.width, group.height = bounds
             self._groups[group_id] = group
             for node_id in node_ids:
                 self._set_node_group(node_id, group_id)
+            for cid in child_group_ids or []:
+                child = self._groups.get(cid)
+                if child is not None and not self._is_ancestor_group(cid, group_id):
+                    child.parent_group_id = group_id
             if bounds is None:
                 self._recompute_group_bounds(group_id)
             return group
@@ -1266,14 +1310,19 @@ class FlowGraph:
         return self._execute_with_history(_do, HistoryActionType.UPDATE_GROUP, f"Update group '{group.name}'")
 
     def delete_group(self, group_id: int) -> None:
-        """Remove a group box (ungroup). Member nodes are kept."""
+        """Remove a group box (ungroup). Members and sub-groups lift up one level."""
         group = self._groups.get(group_id)
         if group is None:
             return
+        new_parent = group.parent_group_id
 
         def _do() -> None:
             for node_id in self._member_node_ids(group_id):
-                self._set_node_group(node_id, None)
+                self._set_node_group(node_id, new_parent)
+            for cid in self._child_group_ids(group_id):
+                child = self._groups.get(cid)
+                if child is not None:
+                    child.parent_group_id = new_parent
             self._groups.pop(group_id, None)
 
         self._execute_with_history(_do, HistoryActionType.DELETE_GROUP, f"Delete group '{group.name}'")
@@ -1304,7 +1353,7 @@ class FlowGraph:
                     affected.add(current)
                     self._set_node_group(node_id, None)
             for gid in affected:
-                if not self._member_node_ids(gid):
+                if not self._member_node_ids(gid) and not self._child_group_ids(gid):
                     self._groups.pop(gid, None)
                 else:
                     self._recompute_group_bounds(gid)
@@ -3044,8 +3093,13 @@ class FlowGraph:
             logger.debug(f"Successfully removed node {node_id} from node_db")
             del node
             logger.info("Node object deleted")
-            # Drop a group that just lost its last member.
-            if group_id is not None and group_id in self._groups and not self._member_node_ids(group_id):
+            # Drop a group that just lost its last member (keep it if it still holds sub-groups).
+            if (
+                group_id is not None
+                and group_id in self._groups
+                and not self._member_node_ids(group_id)
+                and not self._child_group_ids(group_id)
+            ):
                 self._groups.pop(group_id, None)
         else:
             logger.error(f"Failed to find node with id {node_id}")
@@ -4740,7 +4794,7 @@ class FlowGraph:
         groups = [
             schemas.FlowfileGroup(**self._groups[group_id].model_dump())
             for group_id in self._groups
-            if self._member_node_ids(group_id)
+            if self._member_node_ids(group_id) or self._child_group_ids(group_id)
         ]
         return schemas.FlowfileData(
             flowfile_version=__version__,
@@ -4979,7 +5033,7 @@ class FlowGraph:
         groups = [
             schemas.FlowfileGroup(**self._groups[group_id].model_dump())
             for group_id in self._groups
-            if self._member_node_ids(group_id)
+            if self._member_node_ids(group_id) or self._child_group_ids(group_id)
         ]
         return schemas.VueFlowInput(node_edges=edges, node_inputs=nodes, groups=groups)
 

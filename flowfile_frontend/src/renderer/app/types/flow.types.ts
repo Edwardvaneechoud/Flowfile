@@ -209,6 +209,8 @@ export interface CreateGroupRequest {
   y_position?: number | null;
   width?: number | null;
   height?: number | null;
+  parent_group_id?: number | null;
+  child_group_ids?: number[];
 }
 
 // mirrors schemas.UpdateGroupRequest

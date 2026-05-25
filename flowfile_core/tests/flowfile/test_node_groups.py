@@ -194,3 +194,96 @@ def test_collapse_toggle_is_undoable():
     graph.update_group(group.id, collapsed=True)
     graph.undo()
     assert graph._groups[group.id].collapsed is False
+
+
+# ---------------------------------------------------------------------------
+# Nested (embedded) groups
+# ---------------------------------------------------------------------------
+
+
+def test_nested_create_sets_parent_group_id():
+    graph = build_two_node_graph()
+    add_manual_input(graph, [{"a": 5}], node_id=3)
+    outer = graph.create_group("Outer", [1, 2, 3])
+    inner = graph.create_group("Inner", [1, 2], parent_group_id=outer.id)
+
+    assert graph._groups[inner.id].parent_group_id == outer.id
+    assert graph._child_group_ids(outer.id) == [inner.id]
+    # Nodes 1,2 moved to the sub-group; node 3 stays in the outer group (no stealing).
+    assert graph.get_node(1).setting_input.group_id == inner.id
+    assert graph.get_node(2).setting_input.group_id == inner.id
+    assert graph.get_node(3).setting_input.group_id == outer.id
+
+
+def test_create_group_wraps_existing_groups():
+    graph = build_two_node_graph()
+    a = graph.create_group("A", [1])
+    b = graph.create_group("B", [2])
+    wrapper = graph.create_group("Wrapper", [], child_group_ids=[a.id, b.id])
+
+    assert graph._groups[a.id].parent_group_id == wrapper.id
+    assert graph._groups[b.id].parent_group_id == wrapper.id
+    assert sorted(graph._child_group_ids(wrapper.id)) == sorted([a.id, b.id])
+
+
+def test_delete_group_lifts_members_one_level():
+    graph = build_two_node_graph()
+    outer = graph.create_group("Outer", [])
+    inner = graph.create_group("Inner", [1, 2], parent_group_id=outer.id)
+    graph.delete_group(inner.id)
+
+    assert inner.id not in graph._groups
+    assert graph.get_node(1).setting_input.group_id == outer.id
+    assert graph.get_node(2).setting_input.group_id == outer.id
+
+
+def test_delete_top_level_group_ungroups_to_none():
+    graph = build_two_node_graph()
+    g = graph.create_group("G", [1, 2])
+    graph.delete_group(g.id)
+    assert g.id not in graph._groups
+    assert graph.get_node(1).setting_input.group_id is None
+
+
+def test_group_with_child_groups_not_pruned_when_last_node_removed():
+    graph = build_two_node_graph()
+    add_manual_input(graph, [{"a": 5}], node_id=3)
+    outer = graph.create_group("Outer", [3])
+    inner = graph.create_group("Inner", [1, 2], parent_group_id=outer.id)
+    graph.remove_nodes_from_group([3])  # outer loses its only node but still holds a sub-group
+
+    assert outer.id in graph._groups
+    assert graph._child_group_ids(outer.id) == [inner.id]
+
+
+def test_bounds_wrap_child_groups():
+    graph = build_two_node_graph()
+    add_manual_input(graph, [{"a": 5}], node_id=3)
+    graph.set_node_positions(
+        [
+            schemas.NodePositionUpdate(node_id=1, pos_x=0.0, pos_y=0.0),
+            schemas.NodePositionUpdate(node_id=2, pos_x=120.0, pos_y=120.0),
+            schemas.NodePositionUpdate(node_id=3, pos_x=600.0, pos_y=400.0),
+        ]
+    )
+    inner = graph.create_group("Inner", [1, 2])
+    outer = graph.create_group("Outer", [3], child_group_ids=[inner.id])
+
+    o, i = graph._groups[outer.id], graph._groups[inner.id]
+    assert o.x_position <= i.x_position
+    assert o.y_position <= i.y_position
+    assert o.x_position + o.width >= i.x_position + i.width
+    assert o.y_position + o.height >= i.y_position + i.height
+
+
+def test_nested_groups_round_trip(temp_dir):
+    graph = build_two_node_graph()
+    outer = graph.create_group("Outer", [])
+    graph.create_group("Inner", [1, 2], parent_group_id=outer.id)
+
+    path = temp_dir / "flow.yaml"
+    graph.save_flow(str(path))
+    reloaded = open_flow(path)
+
+    by_name = {g.name: g for g in reloaded._groups.values()}
+    assert by_name["Inner"].parent_group_id == by_name["Outer"].id

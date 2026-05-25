@@ -756,7 +756,14 @@ def _get_running_flow(flow_id: int):
 def create_group(flow_id: int, request: schemas.CreateGroupRequest) -> GroupOperationResponse:
     """Create a visual group around a set of nodes. Returns the new server-assigned group."""
     flow = _get_running_flow(flow_id)
-    group = flow.create_group(request.name, request.node_ids, color=request.color, bounds=_bounds_from_request(request))
+    group = flow.create_group(
+        request.name,
+        request.node_ids,
+        color=request.color,
+        bounds=_bounds_from_request(request),
+        parent_group_id=request.parent_group_id,
+        child_group_ids=request.child_group_ids,
+    )
     return GroupOperationResponse(success=True, history=flow.get_history_state(), group=_group_to_schema(group))
 
 

@@ -46,8 +46,9 @@ export const absolutePosition = (node: GraphNode): XYPosition => ({
   y: node.computedPosition.y,
 });
 
-/** Build the VueFlow container node for a group (rendered behind its children). */
-export const buildGroupNode = (group: GroupInput): Node<GroupNodeData> => ({
+/** Build the VueFlow container node for a group (rendered behind its children).
+ * depth = nesting level; deeper groups paint above shallower ones, all below member nodes. */
+export const buildGroupNode = (group: GroupInput, depth = 0): Node<GroupNodeData> => ({
   id: groupNodeId(group.id),
   type: GROUP_NODE_TYPE,
   position: { x: group.x_position, y: group.y_position },
@@ -58,7 +59,7 @@ export const buildGroupNode = (group: GroupInput): Node<GroupNodeData> => ({
     color: group.color ?? null,
     collapsed: group.collapsed ?? false,
   },
-  zIndex: 0,
+  zIndex: -1000 + depth,
   connectable: false,
   // Removed only via the explicit "ungroup" action — never by the generic delete path.
   deletable: false,
@@ -82,6 +83,45 @@ export function useNodeGroups() {
 
   const childNodesOf = (groupVueId: string): GraphNode[] =>
     getNodes.value.filter((node) => node.parentNode === groupVueId);
+
+  /** All descendants (nodes and nested groups) of a group, depth-first. Cycle-guarded. */
+  const descendantsOf = (groupVueId: string): GraphNode[] => {
+    const out: GraphNode[] = [];
+    const stack = [...childNodesOf(groupVueId)];
+    const seen = new Set<string>();
+    while (stack.length) {
+      const node = stack.pop() as GraphNode;
+      if (seen.has(node.id)) continue;
+      seen.add(node.id);
+      out.push(node);
+      if (node.type === GROUP_NODE_TYPE) stack.push(...childNodesOf(node.id));
+    }
+    return out;
+  };
+
+  /** Nesting depth of a group node (0 = top level), walking its parentNode chain. */
+  const vueGroupDepth = (vueId: string | undefined): number => {
+    let depth = 0;
+    let current = vueId ? findNode(vueId) : undefined;
+    const seen = new Set<string>();
+    while (current?.parentNode && !seen.has(current.id)) {
+      seen.add(current.id);
+      depth += 1;
+      current = findNode(current.parentNode);
+    }
+    return depth;
+  };
+
+  /** Hide/show a group's whole subtree. Hiding cascades to all descendants; showing stops at
+   * a nested collapsed group (its own members stay hidden). */
+  const setSubtreeHidden = (groupVueId: string, hidden: boolean): void => {
+    for (const child of childNodesOf(groupVueId)) {
+      updateNode(child.id, { hidden });
+      if (child.type === GROUP_NODE_TYPE && (hidden || !(child.data as GroupNodeData)?.collapsed)) {
+        setSubtreeHidden(child.id, hidden);
+      }
+    }
+  };
 
   /** Reroute the collapsed group's boundary edges to the pill as UI-only proxy edges. */
   const addGroupProxyEdges = (groupVueId: string): void => {
@@ -144,16 +184,19 @@ export function useNodeGroups() {
     removeNodes([groupVueId]);
   };
 
-  /** Reparent on-canvas nodes into a group, converting positions to parent-relative. */
-  const attachNodesToGroup = (group: GroupInput, nodeIds: number[]): void => {
-    const parentId = groupNodeId(group.id);
-    for (const nodeId of nodeIds) {
-      const node = findNode(String(nodeId));
+  /** Reparent VueFlow nodes (custom or group) into a parent group, converting positions
+   * to be relative to the parent's absolute origin. The parent must already exist. */
+  const attachNodesToGroup = (parentVueId: string, childVueIds: string[]): void => {
+    const parent = findNode(parentVueId);
+    const px = parent ? parent.computedPosition.x : 0;
+    const py = parent ? parent.computedPosition.y : 0;
+    for (const childId of childVueIds) {
+      const node = findNode(childId);
       if (!node) continue;
       const abs = absolutePosition(node);
-      updateNode(String(nodeId), {
-        parentNode: parentId,
-        position: { x: abs.x - group.x_position, y: abs.y - group.y_position },
+      updateNode(childId, {
+        parentNode: parentVueId,
+        position: { x: abs.x - px, y: abs.y - py },
       });
     }
   };
@@ -207,29 +250,61 @@ export function useNodeGroups() {
         width,
         height,
       },
-      positions: snapshot.map((s) => ({ node_id: Number(s.id), pos_x: s.x, pos_y: s.y })),
+      positions: snapshot
+        .filter((s) => !isGroupNodeId(s.id))
+        .map((s) => ({ node_id: Number(s.id), pos_x: s.x, pos_y: s.y })),
     };
   };
 
-  /** Group the currently selected (non-group) nodes into a new auto-fitted container. */
+  /** Group the selected nodes/groups into a new container, nested under their common parent. */
   const groupSelectedNodes = async (): Promise<void> => {
     if (flowStore.flowId === null) return;
-    const selected = getSelectedNodes.value.filter((node) => node.type === CUSTOM_NODE_TYPE);
+    const selected = getSelectedNodes.value.filter(
+      (node) => node.type === CUSTOM_NODE_TYPE || node.type === GROUP_NODE_TYPE,
+    );
     if (selected.length === 0) {
       ElMessage.info("Select one or more nodes to group.");
       return;
     }
-    const nodeIds = selected.map((node) => Number(node.id));
+    // Items nested inside another selected group ride along inside it; only "top-level"
+    // selected items become direct children of the new group.
+    const selectedIds = new Set(selected.map((node) => node.id));
+    const topLevel = selected.filter(
+      (node) => !(node.parentNode && selectedIds.has(node.parentNode)),
+    );
+    // Nest the new group under the parent shared by every top-level item (undefined => top level).
+    const parents = new Set(topLevel.map((node) => node.parentNode));
+    const commonParentVueId = parents.size === 1 ? [...parents][0] : undefined;
+    const nodeIds = topLevel.filter((n) => n.type === CUSTOM_NODE_TYPE).map((n) => Number(n.id));
+    const childGroupIds = topLevel
+      .filter((n) => n.type === GROUP_NODE_TYPE)
+      .map((n) => groupBackendId(n.id));
     const response = await FlowApi.createGroup(flowStore.flowId, {
       node_ids: nodeIds,
       name: "Group",
+      parent_group_id: commonParentVueId ? groupBackendId(commonParentVueId) : null,
+      child_group_ids: childGroupIds,
     });
     if (response.group) {
+      const newVueId = groupNodeId(response.group.id);
+      const depth = commonParentVueId ? vueGroupDepth(commonParentVueId) + 1 : 0;
       // Parent must exist before children reference it.
-      addNodes([buildGroupNode(response.group)]);
-      attachNodesToGroup(response.group, nodeIds);
-      // Tighten the box to the real rendered node sizes and persist those bounds.
-      const fit = refitGroup(groupNodeId(response.group.id));
+      addNodes([buildGroupNode(response.group, depth)]);
+      if (commonParentVueId) {
+        const parent = findNode(commonParentVueId);
+        const px = parent ? parent.computedPosition.x : 0;
+        const py = parent ? parent.computedPosition.y : 0;
+        updateNode(newVueId, {
+          parentNode: commonParentVueId,
+          position: { x: response.group.x_position - px, y: response.group.y_position - py },
+        });
+      }
+      attachNodesToGroup(
+        newVueId,
+        topLevel.map((node) => node.id),
+      );
+      // Tighten the box to the real rendered sizes and persist those bounds.
+      const fit = refitGroup(newVueId);
       if (fit) {
         await FlowApi.updateLayout(flowStore.flowId, {
           node_positions: [],
@@ -245,8 +320,16 @@ export function useNodeGroups() {
     if (flowStore.flowId === null) return;
     const parentId = groupNodeId(groupId);
     removeGroupProxyEdges(groupId);
-    for (const child of childNodesOf(parentId)) {
-      detachNodeToAbsolute(child);
+    const grandparentVueId = findNode(parentId)?.parentNode;
+    const children = childNodesOf(parentId);
+    if (grandparentVueId) {
+      // Lift members and sub-groups up one level into the grandparent.
+      attachNodesToGroup(
+        grandparentVueId,
+        children.map((child) => child.id),
+      );
+    } else {
+      for (const child of children) detachNodeToAbsolute(child);
     }
     removeGroupNode(parentId);
     const response = await FlowApi.deleteGroup(flowStore.flowId, groupId);
@@ -282,9 +365,7 @@ export function useNodeGroups() {
     const group = findNode(parentId);
     if (!group) return;
     if (!collapsed) removeGroupProxyEdges(groupId);
-    for (const child of childNodesOf(parentId)) {
-      updateNode(child.id, { hidden: collapsed });
-    }
+    setSubtreeHidden(parentId, collapsed);
     updateNodeData(parentId, { collapsed });
     let bounds: GroupBoundsUpdate;
     if (collapsed) {
@@ -325,16 +406,31 @@ export function useNodeGroups() {
       height: bounds.height,
     });
     flowStore.updateHistoryState(response.history);
+    // This group's box changed size; re-wrap its ancestors so a nested group stays inside.
+    const ancestorVueId = findNode(parentId)?.parentNode;
+    if (ancestorVueId) {
+      await nextTick();
+      updateNodeInternals([parentId]); // measure this group's new box before the parent refits
+      await nextTick();
+      await persistGroupChainRefit(ancestorVueId);
+    }
   };
 
   /** Persist absolute positions for a set of nodes and/or bounds for a set of groups. */
   const persistLayout = async (nodes: GraphNode[], groups: GraphNode[] = []): Promise<void> => {
     if (flowStore.flowId === null) return;
-    const nodePositions: NodePositionUpdate[] = nodes.map((node) => {
-      const abs = absolutePosition(node);
-      return { node_id: Number(node.id), pos_x: abs.x, pos_y: abs.y };
-    });
-    const groupBounds: GroupBoundsUpdate[] = groups.map((group) => ({
+    // Group nodes carry bounds; only custom nodes produce a numeric node position.
+    const groupNodes: GraphNode[] = [...groups];
+    const nodePositions: NodePositionUpdate[] = [];
+    for (const node of nodes) {
+      if (node.type === GROUP_NODE_TYPE) {
+        groupNodes.push(node);
+      } else {
+        const abs = absolutePosition(node);
+        nodePositions.push({ node_id: Number(node.id), pos_x: abs.x, pos_y: abs.y });
+      }
+    }
+    const groupBounds: GroupBoundsUpdate[] = groupNodes.map((group) => ({
       group_id: groupBackendId(group.id),
       x_position: group.computedPosition.x,
       y_position: group.computedPosition.y,
@@ -349,27 +445,50 @@ export function useNodeGroups() {
     flowStore.updateHistoryState(response.history);
   };
 
+  /** Refit a group and every ancestor group (so a moved nested group re-wraps up the tree). */
+  const persistGroupChainRefit = async (startGroupVueId: string): Promise<void> => {
+    if (flowStore.flowId === null) return;
+    const group_bounds: GroupBoundsUpdate[] = [];
+    let node_positions: NodePositionUpdate[] = [];
+    let current: string | undefined = startGroupVueId;
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const fit = refitGroup(current);
+      if (fit) {
+        group_bounds.push(fit.bounds);
+        if (node_positions.length === 0) node_positions = fit.positions;
+      }
+      const parent: string | undefined = findNode(current)?.parentNode;
+      if (parent) {
+        // Measure this group's resized box before refitting its parent (dimensions update async).
+        await nextTick();
+        updateNodeInternals([current]);
+        await nextTick();
+      }
+      current = parent;
+    }
+    if (group_bounds.length === 0 && node_positions.length === 0) return;
+    const response = await FlowApi.updateLayout(flowStore.flowId, { node_positions, group_bounds });
+    flowStore.updateHistoryState(response.history);
+  };
+
   /**
    * Persist a drag-end:
-   * - group moved → its bounds + every child's new absolute position;
-   * - grouped child moved → auto-fit the box and persist box + member positions;
+   * - group moved → its bounds + every child's new absolute position (and refit ancestors);
+   * - grouped child moved → auto-fit the box and every ancestor box;
    * - free node moved → the dragged node, or all selected free nodes (multi-select).
    */
   const persistDrag = async (node: GraphNode): Promise<void> => {
     if (flowStore.flowId === null) return;
     if (node.type === GROUP_NODE_TYPE) {
-      await persistLayout(childNodesOf(node.id), [node]);
+      // Persist the whole subtree — children moved with the parent.
+      await persistLayout(descendantsOf(node.id), [node]);
+      if (node.parentNode) await persistGroupChainRefit(node.parentNode);
       return;
     }
     if (node.parentNode) {
-      const fit = refitGroup(node.parentNode);
-      if (fit) {
-        const response = await FlowApi.updateLayout(flowStore.flowId, {
-          node_positions: fit.positions,
-          group_bounds: [fit.bounds],
-        });
-        flowStore.updateHistoryState(response.history);
-      }
+      await persistGroupChainRefit(node.parentNode);
       return;
     }
     const selected = getSelectedNodes.value.filter(

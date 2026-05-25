@@ -447,7 +447,49 @@ export default function useDragAndDrop() {
     // child positions relative to the parent).
     const groups = flowData.groups ?? [];
     const groupById = new Map(groups.map((group) => [group.id, group]));
-    const groupNodes: Node[] = groups.map((group) => buildGroupNode(group));
+    const groupDepth = (group: (typeof groups)[number]): number => {
+      let depth = 0;
+      let current: (typeof groups)[number] | undefined = group;
+      const seen = new Set<number>();
+      while (current?.parent_group_id != null && !seen.has(current.id)) {
+        seen.add(current.id);
+        depth += 1;
+        current = groupById.get(current.parent_group_id);
+      }
+      return depth;
+    };
+    // Hidden if the group itself or any ancestor is collapsed.
+    const anyCollapsedFrom = (groupId: number): boolean => {
+      let current = groupById.get(groupId);
+      const seen = new Set<number>();
+      while (current && !seen.has(current.id)) {
+        if (current.collapsed) return true;
+        seen.add(current.id);
+        current =
+          current.parent_group_id != null ? groupById.get(current.parent_group_id) : undefined;
+      }
+      return false;
+    };
+
+    // Parents before children so a nested group's parent exists first; nested groups get a
+    // parent-relative position and a depth-based z-index (deeper above shallower, below nodes).
+    const groupNodes: Node[] = [...groups]
+      .sort((a, b) => groupDepth(a) - groupDepth(b))
+      .map((group) => {
+        const node = buildGroupNode(group, groupDepth(group));
+        if (group.parent_group_id != null) {
+          const parent = groupById.get(group.parent_group_id);
+          if (parent) {
+            node.parentNode = groupNodeId(group.parent_group_id);
+            node.position = {
+              x: group.x_position - parent.x_position,
+              y: group.y_position - parent.y_position,
+            };
+          }
+          if (anyCollapsedFrom(group.parent_group_id)) node.hidden = true;
+        }
+        return node;
+      });
     flowData.node_inputs.forEach((input, index) => {
       if (input.group_id == null) return;
       const group = groupById.get(input.group_id);
@@ -457,7 +499,7 @@ export default function useDragAndDrop() {
         x: input.pos_x - group.x_position,
         y: input.pos_y - group.y_position,
       };
-      if (group.collapsed) childNodes[index].hidden = true;
+      if (anyCollapsedFrom(group.id)) childNodes[index].hidden = true;
     });
 
     // Groups first so a parent exists before its children reference it.
@@ -485,8 +527,13 @@ export default function useDragAndDrop() {
 
     addEdges(edgesWithLabels);
 
-    // Re-create proxy edges for groups that load collapsed.
-    const collapsedGroups = groups.filter((group) => group.collapsed);
+    // Re-create proxy edges for groups that load collapsed and are not themselves hidden
+    // inside a collapsed ancestor.
+    const collapsedGroups = groups.filter(
+      (group) =>
+        group.collapsed &&
+        (group.parent_group_id == null || !anyCollapsedFrom(group.parent_group_id)),
+    );
     if (collapsedGroups.length > 0) {
       await nextTick();
       for (const group of collapsedGroups) {
