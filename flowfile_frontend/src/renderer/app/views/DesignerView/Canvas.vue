@@ -52,6 +52,7 @@ import {
 import { FlowApi } from "../../api";
 import { DEFAULT_OUTPUT_HANDLE } from "../../utils/outputHandle";
 import { snapshotClipboard } from "../../utils/clipboardUtils";
+import { desktop, isDesktop } from "../../../lib/desktop";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
 import { useItemStore } from "../../components/common/DraggableItem/stateStore";
@@ -785,23 +786,28 @@ const copyValue = async (x: number, y: number) => {
   }
 };
 
-const handleCanvasPaste = async (x: number, y: number) => {
+const handleCanvasPaste = async (x: number, y: number, clipboardText?: string | null) => {
   const hasCopiedNode =
     localStorage.getItem("copiedMultiNodes") || localStorage.getItem("copiedNode");
 
-  if (hasCopiedNode) {
-    // A node was previously copied. Check if the system clipboard has changed
-    // since then — if so, the user copied something new externally (e.g. from
-    // Excel) and we should try tabular paste instead.
-    let clipboardChanged = false;
+  // Resolve the current system clipboard. The ClipboardEvent path passes it in
+  // (reliable in the Tauri WebView); the context-menu "paste-node" action leaves
+  // it undefined and we fall back to the async Clipboard API.
+  let currentClipboard: string | null = clipboardText ?? null;
+  if (currentClipboard === null) {
     try {
-      const currentClipboard = await navigator.clipboard.readText();
-      const snapshot = localStorage.getItem("clipboardAtNodeCopy") ?? "";
-      clipboardChanged = currentClipboard !== snapshot;
+      currentClipboard = await navigator.clipboard.readText();
     } catch {
-      // Can't read clipboard — fall back to node paste
+      currentClipboard = null;
     }
+  }
 
+  if (hasCopiedNode) {
+    // A node was previously copied. If the clipboard is unchanged since then,
+    // paste the node; if it changed, the user copied something new externally
+    // (e.g. from Excel) and we try tabular paste below.
+    const snapshot = localStorage.getItem("clipboardAtNodeCopy") ?? "";
+    const clipboardChanged = currentClipboard !== null && currentClipboard !== snapshot;
     if (!clipboardChanged) {
       copyValue(x, y);
       return;
@@ -814,6 +820,7 @@ const handleCanvasPaste = async (x: number, y: number) => {
     flowStore.flowId,
     flowPosition.x,
     flowPosition.y,
+    currentClipboard,
   );
   if (response) {
     if (response.history) {
@@ -942,6 +949,40 @@ const hideLogViewer = () => {
   nodeStore.hideLogViewer();
 };
 
+// Shared editable-context check: when focus is in a text field / code editor or
+// there's a text selection, native copy/paste must win — only the bare canvas
+// gets node copy/paste.
+const isEditableContext = (target: EventTarget | null): boolean => {
+  const el = target as HTMLElement | null;
+  if (el) {
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable) {
+      return true;
+    }
+    if (typeof el.closest === "function" && el.closest(".cm-editor")) {
+      return true;
+    }
+  }
+  const selection = window.getSelection();
+  return !!(selection && selection.toString().trim().length > 0);
+};
+
+// Native `copy`/`paste` ClipboardEvents drive canvas node copy/paste. They fire
+// for both browser shortcuts (web mode) and the Tauri Edit-menu copy:/paste:
+// roles (desktop). Keydown can't be used on macOS desktop because the menu
+// accelerator consumes Cmd+C / Cmd+V before it reaches the keydown handler.
+const handleCopyEvent = (event: ClipboardEvent) => {
+  if (isEditableContext(event.target)) return; // let the WebView copy text natively
+  copySelectedNodes();
+  event.preventDefault();
+};
+
+const handlePasteEvent = (event: ClipboardEvent) => {
+  if (isEditableContext(event.target)) return; // let the WebView paste into the field
+  event.preventDefault();
+  const text = event.clipboardData?.getData("text/plain") ?? null;
+  handleCanvasPaste(clickedPosition.value.x, clickedPosition.value.y, text);
+};
+
 const handleKeyDown = (event: KeyboardEvent) => {
   let eventKeyClicked = event.ctrlKey || event.metaKey;
   // Normalize key to lowercase to handle Caps Lock being on
@@ -954,23 +995,16 @@ const handleKeyDown = (event: KeyboardEvent) => {
   // Check if inside a CodeMirror editor
   const isInCodeMirror = target.closest(".cm-editor") !== null;
 
-  // Check if text is selected - if so, let browser handle copy/paste natively
-  const selection = window.getSelection();
-  const hasTextSelected = selection && selection.toString().trim().length > 0;
-
   if (eventKeyClicked && key === "a" && !isInputElement && !isInCodeMirror) {
     // Select all nodes on canvas (prevent browser from selecting all page text)
     event.preventDefault();
     const allNodes = instance.getNodes.value;
     addSelectedNodes(allNodes);
-  } else if (eventKeyClicked && key === "c" && !isInputElement && !hasTextSelected) {
-    // Copy selected nodes only if no text is selected
-    copySelectedNodes();
-    event.preventDefault();
-  } else if (eventKeyClicked && key === "v" && !isInputElement && !hasTextSelected) {
-    // Paste: try clipboard tabular data first, then fall back to node paste
-    event.preventDefault();
-    handleCanvasPaste(clickedPosition.value.x, clickedPosition.value.y);
+    // Cmd/Ctrl+C and Cmd/Ctrl+V are handled by the document-level `copy`/`paste`
+    // ClipboardEvent listeners (handleCopyEvent/handlePasteEvent), not here — on
+    // macOS the native Edit menu's copy:/paste: accelerators are dispatched before
+    // the keystroke reaches this keydown handler, but they still fire DOM
+    // ClipboardEvents the page can intercept. This also unifies web + desktop.
   } else if (eventKeyClicked && key === "n") {
     // Create new flow
     event.preventDefault();
@@ -1065,6 +1099,7 @@ const handleMoveEnd = () => {
 };
 
 let mainResizeObserver: ResizeObserver | null = null;
+let unlistenViewZoom: (() => void) | null = null;
 
 onMounted(async () => {
   if (mainContainerRef.value) {
@@ -1078,6 +1113,21 @@ onMounted(async () => {
     mainResizeObserver.observe(mainContainerRef.value);
   }
   window.addEventListener("keydown", handleKeyDown);
+  document.addEventListener("copy", handleCopyEvent);
+  document.addEventListener("paste", handlePasteEvent);
+
+  // Drive canvas zoom from the native View menu / Cmd+`+`/`-`/`0` (desktop only).
+  if (isDesktop) {
+    unlistenViewZoom = await desktop.onViewZoom((direction) => {
+      if (direction === "in") {
+        instance.zoomIn();
+      } else if (direction === "out") {
+        instance.zoomOut();
+      } else {
+        instance.zoomTo(1);
+      }
+    });
+  }
 
   nodeStore.setVueFlowInstance(instance);
 
@@ -1180,6 +1230,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeyDown);
+  document.removeEventListener("copy", handleCopyEvent);
+  document.removeEventListener("paste", handlePasteEvent);
+  unlistenViewZoom?.();
+  unlistenViewZoom = null;
   mainResizeObserver?.disconnect();
   mainResizeObserver = null;
   cancelEdgeLeave();

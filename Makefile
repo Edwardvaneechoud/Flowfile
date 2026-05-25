@@ -61,8 +61,20 @@ rename_sidecars:
 # diagnostics (test_built_services, measure_bundle, --triple overrides).
 services: build_python_services rename_sidecars
 
+# Detach stale Flowfile DMG volumes + temp images left by a previous (failed)
+# build. Tauri's bundle_dmg.sh mounts the new image at /Volumes/Flowfile; if a
+# leftover already occupies that name macOS remaps the mount and the script
+# (set -e) fails. Detach by device node so the "Flowfile 1"/space variants are
+# caught too. No-op on non-macOS.
+clean_dmg_mounts:
+ifeq ($(shell uname),Darwin)
+	@echo "Cleaning stale Flowfile DMG mounts..."
+	-@hdiutil info | awk '/\/Volumes\/Flowfile/ {print $$1}' | while read dev; do hdiutil detach -force "$$dev" >/dev/null 2>&1 || true; done
+	-@rm -f "$(FRONTEND_DIR)/src-tauri/target/release/bundle/macos/rw."*.dmg 2>/dev/null || true
+endif
+
 # Build Tauri app
-build_tauri_app:
+build_tauri_app: clean_dmg_mounts
 	@echo "Building Tauri app..."
 	$(CD) "$(FRONTEND_DIR)" && npm install
 	$(CD) "$(FRONTEND_DIR)" && npm run build
@@ -72,13 +84,13 @@ build_tauri_app:
 build_tauri_win:
 	$(CD) "$(FRONTEND_DIR)" && npx tauri build --target x86_64-pc-windows-msvc
 
-build_tauri_mac:
+build_tauri_mac: clean_dmg_mounts
 	$(CD) "$(FRONTEND_DIR)" && npx tauri build
 
-build_tauri_mac_arm:
+build_tauri_mac_arm: clean_dmg_mounts
 	$(CD) "$(FRONTEND_DIR)" && npx tauri build --target aarch64-apple-darwin
 
-build_tauri_mac_intel:
+build_tauri_mac_intel: clean_dmg_mounts
 	$(CD) "$(FRONTEND_DIR)" && npx tauri build --target x86_64-apple-darwin
 
 build_tauri_linux:
@@ -254,4 +266,4 @@ check_stubs: stubs
 	@echo "Stubs are in sync."
 
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test test_coverage stubs check_stubs
+.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test test_coverage stubs check_stubs

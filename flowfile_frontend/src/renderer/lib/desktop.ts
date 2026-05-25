@@ -13,10 +13,7 @@ interface TauriCore {
 }
 
 interface TauriEvent {
-  listen<T = unknown>(
-    event: string,
-    handler: (event: { payload: T }) => void,
-  ): Promise<() => void>;
+  listen<T = unknown>(event: string, handler: (event: { payload: T }) => void): Promise<() => void>;
 }
 
 interface TauriApp {
@@ -43,8 +40,7 @@ declare global {
 }
 
 /** True when the renderer is running inside the Tauri desktop shell. */
-export const isDesktop: boolean =
-  typeof window !== "undefined" && !!window.__TAURI_INTERNALS__;
+export const isDesktop: boolean = typeof window !== "undefined" && !!window.__TAURI_INTERNALS__;
 
 function runtime(): TauriRuntime | null {
   if (typeof window === "undefined") return null;
@@ -59,10 +55,7 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return rt.core.invoke<T>(cmd, args);
 }
 
-async function listen<T>(
-  event: string,
-  handler: (payload: T) => void,
-): Promise<() => void> {
+async function listen<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
   const rt = runtime();
   if (!rt?.event?.listen) return () => undefined;
   return rt.event.listen<T>(event, (e) => handler(e.payload));
@@ -119,5 +112,15 @@ export const desktop = {
 
   onStartupSuccess(handler: () => void): Promise<() => void> {
     return listen<unknown>("startup-success", handler);
+  },
+
+  /**
+   * Native View-menu zoom commands (Zoom In / Out / Reset, incl. the
+   * Cmd+`+`/`-`/`0` accelerators) emitted by the Tauri shell. The shell can't
+   * zoom the VueFlow canvas itself, so it forwards the intent here; the renderer
+   * drives the actual zoom. No-op in web mode. See src-tauri/src/menu.rs::emit_zoom.
+   */
+  onViewZoom(handler: (direction: "in" | "out" | "reset") => void): Promise<() => void> {
+    return listen<"in" | "out" | "reset">("view:zoom", handler);
   },
 };

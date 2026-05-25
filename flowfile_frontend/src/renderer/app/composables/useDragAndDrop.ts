@@ -791,15 +791,21 @@ export default function useDragAndDrop() {
     flowId: number,
     x: number,
     y: number,
+    clipboardText?: string | null,
   ): Promise<OperationResponse | undefined> {
-    let clipboardText: string;
-    try {
-      clipboardText = await navigator.clipboard.readText();
-    } catch {
-      return undefined;
+    // Callers on the ClipboardEvent path pass the already-read text (reliable in
+    // the Tauri WebView). Otherwise fall back to the async Clipboard API, which
+    // can reject inside the desktop shell — bail if it does.
+    let text = clipboardText ?? null;
+    if (text === null) {
+      try {
+        text = await navigator.clipboard.readText();
+      } catch {
+        return undefined;
+      }
     }
 
-    const parsed = parseTabularText(clipboardText);
+    const parsed = parseTabularText(text);
     if (!parsed || parsed.length < 2) return undefined;
 
     // First row is headers, rest is data
