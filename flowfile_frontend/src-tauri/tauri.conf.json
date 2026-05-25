@@ -37,7 +37,7 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "targets": ["app", "dmg", "nsis", "deb"],
     "icon": [
       "icons/32x32.png",
@@ -84,7 +84,7 @@
       "endpoints": [
         "https://github.com/Edwardvaneechoud/Flowfile/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_WITH_TAURI_SIGNER_PUBKEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENDODExNEY5NUU3QzJFOTAKUldTUUxueGUrUlNCektOdjJVYXhjeEtSRFVrNmNmUkNQdFhZbTlWaHJ4Z0Iya0ZtQkJleGZzTWIK",
       "windows": {
         "installMode": "passive"
       }
