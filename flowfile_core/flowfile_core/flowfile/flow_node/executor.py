@@ -338,6 +338,7 @@ class NodeExecutor:
         """Prepare node state before execution."""
         self.node.clear_table_example()
         state.reset_results_only()
+        state.is_canceled = False  # clear any stale cancel flag from a prior run
         self.node.results.errors = None
         self.node.results.resulting_data = None
         self.node.results.example_data = None

@@ -13,6 +13,10 @@ import type {
   UndoRedoResult,
   OperationResponse,
   FlowArtifactData,
+  CreateGroupRequest,
+  UpdateGroupRequest,
+  UpdateLayoutRequest,
+  GroupOperationResponse,
 } from "../types";
 
 export class FlowApi {
@@ -285,6 +289,90 @@ export class FlowApi {
   }
 
   // ============================================================================
+  // Node Group Operations (visual containers; organizational only)
+  // ============================================================================
+
+  /** Create a visual group around a set of nodes. Returns the server-assigned group. */
+  static async createGroup(
+    flowId: number,
+    request: CreateGroupRequest,
+  ): Promise<GroupOperationResponse> {
+    const response = await axios.post<GroupOperationResponse>("/editor/create_group/", request, {
+      params: { flow_id: flowId },
+      headers: { "Content-Type": "application/json", accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  /** Rename / recolor / move / resize a group box. */
+  static async updateGroup(
+    flowId: number,
+    groupId: number,
+    request: UpdateGroupRequest,
+  ): Promise<GroupOperationResponse> {
+    const response = await axios.post<GroupOperationResponse>("/editor/update_group/", request, {
+      params: { flow_id: flowId, group_id: groupId },
+      headers: { "Content-Type": "application/json", accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  /** Delete (ungroup) a group box. Member nodes are kept. */
+  static async deleteGroup(flowId: number, groupId: number): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>(
+      "/editor/delete_group/",
+      {},
+      {
+        params: { flow_id: flowId, group_id: groupId },
+        headers: { accept: "application/json" },
+      },
+    );
+    return response.data;
+  }
+
+  /** Add nodes to an existing group. */
+  static async addNodesToGroup(
+    flowId: number,
+    groupId: number,
+    nodeIds: number[],
+  ): Promise<GroupOperationResponse> {
+    const response = await axios.post<GroupOperationResponse>(
+      "/editor/group/add_nodes/",
+      { node_ids: nodeIds },
+      {
+        params: { flow_id: flowId, group_id: groupId },
+        headers: { "Content-Type": "application/json", accept: "application/json" },
+      },
+    );
+    return response.data;
+  }
+
+  /** Remove nodes from their group (a group emptied this way is pruned). */
+  static async removeNodesFromGroup(flowId: number, nodeIds: number[]): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>(
+      "/editor/group/remove_nodes/",
+      { node_ids: nodeIds },
+      {
+        params: { flow_id: flowId },
+        headers: { "Content-Type": "application/json", accept: "application/json" },
+      },
+    );
+    return response.data;
+  }
+
+  /** Persist dragged node positions and/or group bounds (one drag-end -> one call). */
+  static async updateLayout(
+    flowId: number,
+    request: UpdateLayoutRequest,
+  ): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>("/editor/update_layout/", request, {
+      params: { flow_id: flowId },
+      headers: { "Content-Type": "application/json", accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  // ============================================================================
   // History/Undo-Redo Operations
   // ============================================================================
 
@@ -352,10 +440,7 @@ export class FlowApi {
    * Get the named input keys available for a kernel node.
    * Each entry has: name, source_node_id, source_node_type.
    */
-  static async getNodeInputNames(
-    flowId: number,
-    nodeId: number,
-  ): Promise<InputNameInfo[]> {
+  static async getNodeInputNames(flowId: number, nodeId: number): Promise<InputNameInfo[]> {
     const response = await axios.get("/node/input_names", {
       params: { flow_id: flowId, node_id: nodeId },
       headers: { accept: "application/json" },

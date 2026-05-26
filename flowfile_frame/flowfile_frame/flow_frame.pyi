@@ -234,6 +234,9 @@ class FlowFrame:
 
     def get_node_settings(self, description: Optional[str] = None) -> FlowNode: ...
 
+    # Group every node created inside this block into a labeled visual container.
+    def group(self, name: str, color: GroupColor | None = None, description: Optional[str] = None) -> Iterator[FlowFrame]: ...
+
     # Start a group by operation.
     def group_by(self, *by, description: Optional[str] = None, maintain_order: bool = False, **named_by) -> group_frame.GroupByFrame: ...
 
@@ -340,6 +343,9 @@ class FlowFrame:
 
     # Serialize the logical plan of this LazyFrame to a file or string in JSON format.
     def serialize(self, file: IOBase | str | Path | None = None, format: SerializationFormat = 'binary', description: Optional[str] = None) -> bytes | str | None: ...
+
+    # Assign this frame's current node to a (new or existing) named visual group.
+    def set_group(self, name: str, color: GroupColor | None = None, description: Optional[str] = None) -> 'FlowFrame': ...
 
     # Flag a column as sorted.
     def set_sorted(self, column: str | list[str], *more_columns, descending: bool | list[bool] = False, nulls_last: bool | list[bool] = False, description: Optional[str] = None) -> 'FlowFrame': ...

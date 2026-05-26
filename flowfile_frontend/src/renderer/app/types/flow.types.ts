@@ -123,6 +123,7 @@ export interface NodeInput extends NodeTemplate {
   id: number;
   pos_x: number;
   pos_y: number;
+  group_id?: number | null;
   node_reference?: string;
 }
 
@@ -167,6 +168,89 @@ export interface EdgeInput {
 export interface VueFlowInput {
   node_edges: EdgeInput[];
   node_inputs: NodeInput[];
+  groups: GroupInput[];
+}
+
+// ============================================================================
+// Node Group Types (visual containers; organizational only)
+// Mirror flowfile_core/.../schemas.py field-for-field (no OpenAPI codegen).
+// ============================================================================
+
+// mirrors schemas.GroupColor
+export type GroupColor = "slate" | "blue" | "green" | "amber" | "rose" | "violet" | "cyan";
+
+// mirrors schemas.FlowfileGroup
+export interface GroupInput {
+  id: number;
+  name: string;
+  color?: GroupColor | null;
+  x_position: number;
+  y_position: number;
+  width: number;
+  height: number;
+  collapsed?: boolean;
+  parent_group_id?: number | null;
+}
+
+// VueFlow node `data` payload for a group container node.
+export interface GroupNodeData {
+  id: number;
+  label: string;
+  color?: GroupColor | null;
+  collapsed?: boolean;
+}
+
+// mirrors schemas.CreateGroupRequest
+export interface CreateGroupRequest {
+  node_ids: number[];
+  name?: string;
+  color?: GroupColor | null;
+  x_position?: number | null;
+  y_position?: number | null;
+  width?: number | null;
+  height?: number | null;
+  parent_group_id?: number | null;
+  child_group_ids?: number[];
+}
+
+// mirrors schemas.UpdateGroupRequest
+export interface UpdateGroupRequest {
+  name?: string;
+  color?: GroupColor | null;
+  x_position?: number | null;
+  y_position?: number | null;
+  width?: number | null;
+  height?: number | null;
+  collapsed?: boolean | null;
+}
+
+// mirrors schemas.NodePositionUpdate
+export interface NodePositionUpdate {
+  node_id: number;
+  pos_x: number;
+  pos_y: number;
+}
+
+// mirrors schemas.GroupBoundsUpdate
+export interface GroupBoundsUpdate {
+  group_id: number;
+  x_position: number;
+  y_position: number;
+  width: number;
+  height: number;
+}
+
+// mirrors schemas.UpdateLayoutRequest
+export interface UpdateLayoutRequest {
+  node_positions: NodePositionUpdate[];
+  group_bounds: GroupBoundsUpdate[];
+  // false -> apply layout without a new undo entry (fold into a preceding op's snapshot)
+  record_history?: boolean;
+}
+
+// mirrors routes.GroupOperationResponse
+export interface GroupOperationResponse extends OperationResponse {
+  group: GroupInput | null;
 }
 
 // ============================================================================
