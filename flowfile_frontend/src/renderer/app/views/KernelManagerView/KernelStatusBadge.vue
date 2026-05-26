@@ -33,12 +33,13 @@ const label = computed(() => config.value.label);
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-1);
-  padding: var(--spacing-0-5) var(--spacing-2);
+  padding: var(--spacing-0-5) var(--spacing-2-5);
   border-radius: var(--border-radius-full);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-normal);
   white-space: nowrap;
+  letter-spacing: 0.01em;
 }
 
 .status-stopped {
@@ -49,6 +50,7 @@ const label = computed(() => config.value.label);
 .status-starting {
   background-color: var(--color-warning-light);
   color: var(--color-warning-dark);
+  animation: km-badge-pulse 1.6s ease-in-out infinite;
 }
 
 .status-idle {
@@ -59,10 +61,21 @@ const label = computed(() => config.value.label);
 .status-executing {
   background-color: var(--color-info-light);
   color: var(--color-info-hover);
+  animation: km-badge-pulse 1.6s ease-in-out infinite;
 }
 
 .status-error {
   background-color: var(--color-danger-light);
   color: var(--color-danger);
+}
+
+@keyframes km-badge-pulse {
+  0%,
+  100% {
+    opacity: 0.78;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 </style>

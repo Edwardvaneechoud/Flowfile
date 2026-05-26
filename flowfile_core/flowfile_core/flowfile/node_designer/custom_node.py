@@ -507,9 +507,9 @@ class CustomNodeBase(BaseModel):
         The generated script:
         - Creates lightweight proxy classes that replicate the
           ``self.settings_schema.section.component.value`` access pattern
-        - Reads inputs via ``flowfile.read_input()``
+        - Reads inputs via ``flowfile_ctx.read_input()``
         - Executes the user's process method body
-        - Publishes each named output via ``flowfile.publish_output()``
+        - Publishes each named output via ``flowfile_ctx.publish_output()``
         """
         # --- Build settings proxy code ---
         settings_values = self._extract_settings_values()
@@ -572,25 +572,26 @@ class CustomNodeBase(BaseModel):
         # --- Build output publishing code ---
         output_names = self.output_names or ["main"]
         if len(output_names) == 1:
-            publish_code = f'flowfile.publish_output(result, name="{output_names[0]}")'
+            publish_code = f'flowfile_ctx.publish_output(result, name="{output_names[0]}")'
         else:
             # Multi-output: process returns a dict
             pub_lines = ["if isinstance(result, dict):"]
             for name in output_names:
                 pub_lines.append(f'    if "{name}" in result:')
-                pub_lines.append(f'        flowfile.publish_output(result["{name}"], name="{name}")')
+                pub_lines.append(f'        flowfile_ctx.publish_output(result["{name}"], name="{name}")')
             pub_lines.append("else:")
-            pub_lines.append(f'    flowfile.publish_output(result, name="{output_names[0]}")')
+            pub_lines.append(f'    flowfile_ctx.publish_output(result, name="{output_names[0]}")')
             publish_code = "\n".join(pub_lines)
 
         # --- Assemble full kernel script ---
+        # ``flowfile_ctx`` is injected into globals by the kernel runtime;
+        # binding it locally keeps the script readable and fails loudly if
+        # the runtime is misconfigured (rather than producing a ``NoneType
+        # has no attribute …`` deep inside the user body).
         script = f"""\
 import polars as pl
 
-try:
-    import flowfile as flowfile
-except ModuleNotFoundError:
-    flowfile = globals().get("flowfile")
+flowfile_ctx = globals()["flowfile_ctx"]
 
 # --- Settings proxy (auto-generated) ---
 {proxy_code}
@@ -598,9 +599,9 @@ except ModuleNotFoundError:
 self = _Self()
 
 # --- Read inputs ---
-inputs = flowfile.read_inputs().get("main", [])
+inputs = flowfile_ctx.read_inputs().get("main", [])
 if not inputs:
-    inputs = [flowfile.read_input()] if hasattr(flowfile, "read_input") else []
+    inputs = [flowfile_ctx.read_input()] if hasattr(flowfile_ctx, "read_input") else []
 
 # --- Process body ---
 {body}

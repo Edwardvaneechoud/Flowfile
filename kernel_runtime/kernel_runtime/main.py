@@ -8,6 +8,7 @@ import os
 import signal
 import threading
 import time
+import warnings
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -17,6 +18,40 @@ from pydantic import BaseModel, Field
 from kernel_runtime import __version__, flowfile_client
 from kernel_runtime.artifact_persistence import ArtifactPersistence, RecoveryMode
 from kernel_runtime.artifact_store import ArtifactStore
+
+
+class _DeprecatedFlowfileAlias:
+    """Backwards-compat alias for the renamed ``flowfile_ctx`` kernel global.
+
+    Forwards attribute access to the real ``flowfile_client`` module and emits
+    a one-shot ``DeprecationWarning`` per execution. The kernel injects an
+    instance under the legacy name ``flowfile`` so existing user code, saved
+    flows, and tutorials keep working while users migrate to ``flowfile_ctx``.
+    """
+
+    __slots__ = ("_target", "_warned")
+
+    def __init__(self, target):
+        object.__setattr__(self, "_target", target)
+        object.__setattr__(self, "_warned", False)
+
+    def __getattr__(self, name):
+        if not self._warned:
+            warnings.warn(
+                "The kernel global `flowfile` is deprecated; use `flowfile_ctx` "
+                "instead (e.g. `flowfile_ctx.read_input()`). The old name will "
+                "be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            object.__setattr__(self, "_warned", True)
+        return getattr(self._target, name)
+
+    def __dir__(self):
+        return dir(self._target)
+
+    def __repr__(self):
+        return f"<DeprecatedFlowfileAlias for {self._target!r}>"
 
 logger = logging.getLogger(__name__)
 
@@ -223,8 +258,11 @@ app = FastAPI(title="FlowFile Kernel Runtime", version=__version__, lifespan=_li
 # Request / Response models
 # ---------------------------------------------------------------------------
 
-# Matplotlib setup code to auto-capture plt.show() calls
+# Matplotlib setup code to auto-capture plt.show() calls.
+# Captures ``flowfile_ctx`` into a dunder-prefixed name so the hook keeps
+# working even if user code later rebinds ``flowfile_ctx``.
 _MATPLOTLIB_SETUP = """\
+__flowfile_ctx = flowfile_ctx
 try:
     import matplotlib as _mpl
     _mpl.use('Agg')
@@ -233,7 +271,7 @@ try:
     def _flowfile_show(*args, **kwargs):
         import matplotlib.pyplot as __plt
         for _fig_num in __plt.get_fignums():
-            flowfile.display(__plt.figure(_fig_num))
+            __flowfile_ctx.display(__plt.figure(_fig_num))
         __plt.close('all')
     _plt.show = _flowfile_show
 except ImportError:
@@ -242,7 +280,7 @@ except ImportError:
 
 
 def _maybe_wrap_last_expression(code: str) -> str:
-    """If the last statement is a bare expression, wrap it in flowfile.display().
+    """If the last statement is a bare expression, wrap it in flowfile_ctx.display().
 
     This provides Jupyter-like behavior where the result of the last expression
     is automatically displayed.
@@ -279,7 +317,7 @@ def _maybe_wrap_last_expression(code: str) -> str:
     prefix = "\n".join(lines[: last.lineno - 1])
     if prefix:
         prefix += "\n"
-    return prefix + f"flowfile.display({last_expr_text})\n"
+    return prefix + f"flowfile_ctx.display({last_expr_text})\n"
 
 
 class ExecuteRequest(BaseModel):
@@ -382,15 +420,29 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
         # Variables defined in one cell will be available in subsequent cells
         exec_globals = _get_namespace(request.flow_id)
 
-        # Always update flowfile reference (context changes between executions)
-        # Include __name__ and __builtins__ so classes defined in user code
-        # get __module__ = "__main__" instead of "builtins", enabling cloudpickle
-        # to serialize them correctly.
-        exec_globals["flowfile"] = flowfile_client
+        # Always update the kernel-context reference (context changes between
+        # executions). ``flowfile_ctx`` is the canonical name; ``flowfile``
+        # remains as a deprecation-warning alias so legacy user code keeps
+        # running. Include ``__name__`` and ``__builtins__`` so classes
+        # defined in user code get ``__module__ = "__main__"`` instead of
+        # ``builtins``, enabling cloudpickle to serialize them correctly.
+        exec_globals["flowfile_ctx"] = flowfile_client
+        exec_globals["flowfile"] = _DeprecatedFlowfileAlias(flowfile_client)
         exec_globals["__builtins__"] = __builtins__
         exec_globals["__name__"] = "__main__"
 
-        with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+        with (
+            warnings.catch_warnings(),
+            contextlib.redirect_stdout(stdout_buf),
+            contextlib.redirect_stderr(stderr_buf),
+        ):
+            # Force the default warning filter so the ``flowfile`` deprecation
+            # warning is actually shown — Python's default config suppresses
+            # ``DeprecationWarning`` for non-``__main__`` callers, and ``exec``'s
+            # frame attribution is fragile. Scoped to user-code execution so the
+            # process-wide filter state is not mutated.
+            warnings.simplefilter("default", DeprecationWarning)
+
             # Execute matplotlib setup to patch plt.show()
             exec(_MATPLOTLIB_SETUP, exec_globals)  # noqa: S102
 

@@ -1085,7 +1085,7 @@ def test_python_script_node_data_before_run():
         pos_y=0,
         depending_on_ids=[1],
         python_script_input=input_schema.PythonScriptInput(
-            code="df = flowfile.read_input()\nflowfile.publish_output(df)",
+            code="df = flowfile_ctx.read_input()\nflowfile_ctx.publish_output(df)",
             kernel_id="some-kernel",
         ),
     )

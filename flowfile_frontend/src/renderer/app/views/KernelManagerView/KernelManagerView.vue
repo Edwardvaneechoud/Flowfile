@@ -1,11 +1,12 @@
 <template>
   <div class="kernel-manager-container">
+    <!-- Page header -->
     <div class="mb-3">
       <h2 class="page-title">Kernel Manager</h2>
       <p class="page-description">Manage Python execution environments for your flows</p>
     </div>
 
-    <!-- Docker status banners -->
+    <!-- Docker status banner (only when down) -->
     <div
       v-if="dockerStatus && !dockerStatus.available"
       class="status-banner status-banner--error mb-3"
@@ -17,19 +18,7 @@
         page.
       </div>
     </div>
-    <div
-      v-else-if="dockerStatus && dockerStatus.available && !dockerStatus.image_available"
-      class="status-banner status-banner--warning mb-3"
-    >
-      <i class="fa-solid fa-triangle-exclamation"></i>
-      <div>
-        <strong>Kernel image not found.</strong>
-        The <code>flowfile-kernel</code> Docker image is not available. Build or pull the image
-        before starting kernels.
-      </div>
-    </div>
-
-    <!-- API-level error (e.g. network failure) -->
+    <!-- Network / API error banner — page-level, full width -->
     <div
       v-if="errorMessage && (!dockerStatus || dockerStatus.available)"
       class="status-banner status-banner--error mb-3"
@@ -38,48 +27,94 @@
       <span>{{ errorMessage }}</span>
     </div>
 
-    <!-- Create Kernel Form -->
-    <CreateKernelForm @create="handleCreate" />
-
-    <!-- Kernel List -->
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Your Kernels ({{ kernels.length }})</h3>
-      </div>
-      <div class="card-content">
-        <!-- Loading state -->
-        <div v-if="isLoading" class="loading-state">
-          <div class="loading-spinner"></div>
-          <p>Loading kernels...</p>
-        </div>
-
-        <!-- Empty state -->
-        <div v-else-if="kernels.length === 0 && !errorMessage" class="empty-state">
+    <!-- Stats overview -->
+    <div class="km-stats">
+      <div class="km-stat km-stat--total">
+        <div class="km-stat__icon">
           <i class="fa-solid fa-server"></i>
-          <p>No kernels configured yet</p>
-          <p>Create a kernel above to start running Python code in your flows</p>
         </div>
+        <div class="km-stat__body">
+          <div class="km-stat__value">{{ totalKernels }}</div>
+          <div class="km-stat__label">Total kernels</div>
+        </div>
+      </div>
 
-        <!-- Kernel grid -->
-        <div v-else class="kernel-grid">
-          <KernelCard
-            v-for="kernel in kernels"
-            :key="kernel.id"
-            :kernel="kernel"
-            :busy="isActionInProgress(kernel.id)"
-            :memory-info="memoryStats[kernel.id] ?? null"
-            @start="handleStart"
-            @stop="handleStop"
-            @delete="confirmDelete"
-          />
+      <div class="km-stat km-stat--active">
+        <div class="km-stat__icon">
+          <i class="fa-solid fa-bolt"></i>
+        </div>
+        <div class="km-stat__body">
+          <div class="km-stat__value">
+            {{ activeKernels }}<span class="km-stat__value-suffix">/ {{ totalKernels }}</span>
+          </div>
+          <div class="km-stat__label">Active now</div>
+        </div>
+      </div>
+
+      <div class="km-stat km-stat--memory">
+        <div class="km-stat__icon">
+          <i class="fa-solid fa-memory"></i>
+        </div>
+        <div class="km-stat__body">
+          <div class="km-stat__value">{{ memoryDisplay }}</div>
+          <div class="km-stat__label">Memory in use</div>
+        </div>
+      </div>
+
+      <div class="km-stat" :class="dockerStatus?.available ? 'km-stat--ok' : 'km-stat--down'">
+        <div class="km-stat__icon">
+          <i
+            :class="
+              dockerStatus?.available ? 'fa-brands fa-docker' : 'fa-solid fa-plug-circle-xmark'
+            "
+          ></i>
+        </div>
+        <div class="km-stat__body">
+          <div class="km-stat__value">
+            {{ dockerStatus === null ? "…" : dockerStatus.available ? "Connected" : "Unavailable" }}
+          </div>
+          <div class="km-stat__label">Docker engine</div>
         </div>
       </div>
     </div>
 
+    <!-- Two-column layout: status sidebar (left) + create form (right) -->
+    <div class="km-grid">
+      <KernelStatusSidebar
+        :docker-status="dockerStatus"
+        :kernels="kernels"
+        :memory-stats="memoryStats"
+        :is-action-in-progress="isActionInProgress"
+        :is-loading="isLoading"
+        @start="handleStart"
+        @stop="handleStop"
+        @details="openDetails"
+        @delete="confirmDelete"
+        @refresh-status="checkDockerStatus"
+      />
+
+      <main class="km-main">
+        <CreateKernelForm
+          :flavour-info="flavourInfo"
+          :image-statuses="dockerStatus?.images ?? []"
+          :on-create="handleCreate"
+        />
+      </main>
+    </div>
+
+    <!-- Details Modal -->
+    <KernelDetailsModal
+      v-if="detailsKernel"
+      :kernel="detailsKernel"
+      :flavour-info="flavourInfo"
+      :on-save="handleSavePackages"
+      @close="closeDetails"
+    />
+
     <!-- Delete Confirmation Modal -->
     <div v-if="showDeleteModal" class="modal-overlay" @click="cancelDelete">
-      <div class="modal-container" @click.stop>
-        <div class="modal-header">
+      <div class="modal-container km-modal" @click.stop>
+        <div class="modal-header km-modal__header">
           <h3 class="modal-title">Delete Kernel</h3>
           <button class="modal-close" aria-label="Close" @click="cancelDelete">
             <i class="fa-solid fa-times"></i>
@@ -108,11 +143,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
-import type { KernelConfig } from "../../types";
+import { computed, ref } from "vue";
+import { ElMessage } from "element-plus";
+import type { KernelConfig, KernelInfo } from "../../types";
 import { useKernelManager } from "./useKernelManager";
 import CreateKernelForm from "./CreateKernelForm.vue";
-import KernelCard from "./KernelCard.vue";
+import KernelStatusSidebar from "./KernelStatusSidebar.vue";
+import KernelDetailsModal from "./KernelDetailsModal.vue";
 
 const {
   kernels,
@@ -120,12 +157,60 @@ const {
   errorMessage,
   dockerStatus,
   memoryStats,
+  flavourInfo,
   createKernel,
+  updateKernel,
   startKernel,
   stopKernel,
   deleteKernel,
   isActionInProgress,
+  checkDockerStatus,
 } = useKernelManager();
+
+// Details modal state — keyed by kernel id, kept reactive against the polled list.
+const detailsKernelId = ref<string | null>(null);
+const detailsKernel = computed<KernelInfo | null>(
+  () => kernels.value.find((k) => k.id === detailsKernelId.value) ?? null,
+);
+
+const openDetails = (kernelId: string) => {
+  detailsKernelId.value = kernelId;
+};
+
+const closeDetails = () => {
+  detailsKernelId.value = null;
+};
+
+const handleSavePackages = async (kernelId: string, packages: string[]): Promise<void> => {
+  // Re-throws so the modal can surface the error inline; parent doesn't toast.
+  await updateKernel(kernelId, { packages });
+};
+
+// ---- stats derivations --------------------------------------------------
+
+const totalKernels = computed(() => kernels.value.length);
+
+const activeKernels = computed(
+  () => kernels.value.filter((k) => k.state === "idle" || k.state === "executing").length,
+);
+
+const formatBytes = (bytes: number): string => {
+  if (!bytes) return "0 B";
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1) return `${mb.toFixed(0)} MB`;
+  return `${bytes} B`;
+};
+
+const memoryDisplay = computed(() => {
+  const total = Object.values(memoryStats.value).reduce(
+    (sum, info) => sum + (info?.used_bytes ?? 0),
+    0,
+  );
+  if (total === 0) return "—";
+  return formatBytes(total);
+});
 
 // Delete confirmation state
 const showDeleteModal = ref(false);
@@ -135,10 +220,11 @@ const isDeleting = ref(false);
 const handleCreate = async (config: KernelConfig) => {
   try {
     await createKernel(config);
-    alert(`Kernel "${config.name}" created successfully.`);
+    ElMessage.success(`Kernel "${config.name}" created`);
   } catch (error: any) {
     const msg = error.message || "Failed to create kernel.";
-    alert(`Error creating kernel: ${msg}`);
+    ElMessage.error({ message: `Error creating kernel: ${msg}` });
+    throw error; // Re-throw so the form keeps the user's input for retry.
   }
 };
 
@@ -146,8 +232,7 @@ const handleStart = async (kernelId: string) => {
   try {
     await startKernel(kernelId);
   } catch (error: any) {
-    const msg = error.message || "Failed to start kernel.";
-    alert(`Error: ${msg}`);
+    ElMessage.error({ message: error.message || "Failed to start kernel." });
   }
 };
 
@@ -155,7 +240,7 @@ const handleStop = async (kernelId: string) => {
   try {
     await stopKernel(kernelId);
   } catch (error: any) {
-    alert(`Error: ${error.message || "Failed to stop kernel."}`);
+    ElMessage.error({ message: error.message || "Failed to stop kernel." });
   }
 };
 
@@ -176,9 +261,9 @@ const handleDelete = async () => {
     const name = deleteTarget.value.name;
     await deleteKernel(deleteTarget.value.id);
     cancelDelete();
-    alert(`Kernel "${name}" deleted successfully.`);
+    ElMessage.success(`Kernel "${name}" deleted`);
   } catch {
-    alert("Failed to delete kernel. Please try again.");
+    ElMessage.error({ message: "Failed to delete kernel. Please try again." });
     cancelDelete();
   } finally {
     isDeleting.value = false;
@@ -188,15 +273,106 @@ const handleDelete = async () => {
 
 <style scoped>
 .kernel-manager-container {
-  max-width: 1200px;
+  max-width: 1320px;
   margin: 0 auto;
   padding: var(--spacing-5);
 }
 
-.kernel-grid {
+/* ─── Stats overview ──────────────────────────────────────────────────── */
+
+.km-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: var(--spacing-3);
+  margin-bottom: var(--spacing-4);
+}
+
+.km-stat {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition:
+    transform var(--transition-base) var(--transition-timing),
+    box-shadow var(--transition-base) var(--transition-timing);
+}
+
+.km-stat:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.km-stat__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--border-radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+  background-color: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+}
+
+.km-stat--down .km-stat__icon {
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.km-stat__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.km-stat__value {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  line-height: 1.1;
+}
+
+.km-stat__value-suffix {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
+  margin-left: var(--spacing-1);
+}
+
+.km-stat__label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: var(--spacing-0-5);
+}
+
+/* ─── Two-column body ─────────────────────────────────────────────────── */
+
+.km-grid {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: var(--spacing-4);
+  align-items: flex-start;
+}
+
+@media (max-width: 900px) {
+  .km-grid {
+    grid-template-columns: 1fr;
+  }
+  .km-hero {
+    padding: var(--spacing-4);
+  }
+  .km-hero__title {
+    font-size: var(--font-size-2xl);
+  }
+}
+
+.km-main {
+  min-width: 0;
 }
 
 .status-banner {
@@ -214,23 +390,25 @@ const handleDelete = async () => {
   flex-shrink: 0;
 }
 
-.status-banner code {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  background-color: rgba(0, 0, 0, 0.06);
-  padding: 1px 4px;
-  border-radius: var(--border-radius-sm);
-}
-
 .status-banner--error {
   background-color: var(--color-danger-light);
   color: var(--color-danger);
   border: 1px solid var(--color-danger);
 }
 
-.status-banner--warning {
-  background-color: var(--color-warning-light);
-  color: var(--color-warning-dark);
-  border: 1px solid var(--color-warning);
+/* ─── Modal polish ────────────────────────────────────────────────────── */
+
+.km-modal {
+  border-radius: var(--border-radius-xl);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.km-modal__header {
+  background: linear-gradient(135deg, rgba(8, 145, 178, 0.06) 0%, rgba(102, 126, 234, 0.04) 100%);
+}
+
+[data-theme="dark"] .km-modal__header {
+  background: linear-gradient(135deg, rgba(8, 145, 178, 0.12) 0%, rgba(102, 126, 234, 0.1) 100%);
 }
 </style>

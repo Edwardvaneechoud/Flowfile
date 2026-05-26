@@ -18,6 +18,22 @@ class RecoveryMode(str, Enum):
     CLEAR = "clear"  # Clears all persisted artifacts on startup (destructive)
 
 
+class ImageFlavour(str, Enum):
+    BASE = "base"
+    ML = "ml"
+    # Same packages as BASE are baked, but /opt/constraints.txt only pins the
+    # kernel-critical ones — everything else floats so user installs can
+    # resolve their own dep trees freely.
+    LITE = "lite"
+    CUSTOM = "custom"
+
+
+class KernelUpdate(BaseModel):
+    """Mutable fields on an existing kernel (packages-only for now)."""
+
+    packages: list[str] = Field(default_factory=list)
+
+
 class KernelConfig(BaseModel):
     id: str
     name: str
@@ -26,9 +42,19 @@ class KernelConfig(BaseModel):
     memory_gb: float = 4.0
     gpu: bool = False
     health_timeout: int = 120
+    # Image selection: which baked flavour to launch, or a custom URI
+    image_flavour: ImageFlavour = ImageFlavour.BASE
+    custom_image: str | None = None
     # Persistence configuration
     persistence_enabled: bool = True
     recovery_mode: RecoveryMode = RecoveryMode.LAZY
+
+
+class ResolvedPackage(BaseModel):
+    """Actual version pip resolved for a user-requested package after bake."""
+
+    name: str
+    version: str
 
 
 class KernelInfo(BaseModel):
@@ -38,10 +64,15 @@ class KernelInfo(BaseModel):
     container_id: str | None = None
     port: int | None = None
     packages: list[str] = Field(default_factory=list)
+    # Populated after the derived image is built; one entry per requested package.
+    resolved_packages: list[ResolvedPackage] = Field(default_factory=list)
     memory_gb: float = 4.0
     cpu_cores: float = 2.0
     gpu: bool = False
     health_timeout: int = 120
+    image_flavour: ImageFlavour = ImageFlavour.BASE
+    custom_image: str | None = None
+    image: str | None = None  # Resolved image tag, populated when the kernel starts
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: str | None = None
     kernel_version: str | None = None
@@ -50,9 +81,42 @@ class KernelInfo(BaseModel):
     recovery_mode: RecoveryMode = RecoveryMode.LAZY
 
 
+class KernelImageStatus(BaseModel):
+    """Availability of one kernel image flavour on the host."""
+
+    flavour: ImageFlavour
+    image: str  # full registry tag, e.g. edwardvaneechoud/flowfile-kernel-base:0.3.0
+    available: bool
+    # Tag actually picked by the resolver when ``image`` itself isn't present
+    # but a locally-built variant (e.g. ``flowfile-kernel-base:local``) was
+    # found. ``None`` means the registry default is in use (or nothing is).
+    resolved_image: str | None = None
+    # ``"pulling"`` while a background pull is running, ``"error:<msg>"`` if
+    # the last attempt failed, ``None`` otherwise. Lets the UI show progress.
+    pull_state: str | None = None
+
+
+class FlavourPackage(BaseModel):
+    """A single package baked into a kernel image flavour."""
+
+    name: str
+    version: str  # e.g. "1.38.1", or "—" if the lockfile couldn't be read
+
+
+class FlavourInfo(BaseModel):
+    """Static metadata + locked package list for a kernel image flavour."""
+
+    flavour: ImageFlavour
+    image: str | None = None  # registry tag for built flavours; None for "custom"
+    packages: list[FlavourPackage] = Field(default_factory=list)
+
+
 class DockerStatus(BaseModel):
     available: bool
+    # Legacy: True iff the default base image is available locally.
     image_available: bool
+    # Per-flavour breakdown so the UI can list exact pull commands.
+    images: list[KernelImageStatus] = Field(default_factory=list)
     error: str | None = None
 
 

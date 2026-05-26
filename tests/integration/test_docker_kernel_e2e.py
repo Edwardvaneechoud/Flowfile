@@ -118,12 +118,12 @@ FLOW_JSON = {
                 "python_script_input": {
                     "code": (
                         "\nimport numpy as np\nimport polars as pl\n\n"
-                        "df = flowfile.read_input().collect()\n"
+                        "df = flowfile_ctx.read_input().collect()\n"
                         'X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])\n'
                         'y_vals = df["y"].to_numpy()\n'
                         "coeffs = np.linalg.lstsq(X, y_vals, rcond=None)[0]\n"
-                        'flowfile.publish_artifact("linear_model", {"coefficients": coeffs.tolist()})\n'
-                        "flowfile.publish_output(df)\n"
+                        'flowfile_ctx.publish_artifact("linear_model", {"coefficients": coeffs.tolist()})\n'
+                        "flowfile_ctx.publish_output(df)\n"
                     ),
                     "kernel_id": KERNEL_ID,
                     "cells": None,
@@ -148,13 +148,13 @@ FLOW_JSON = {
                 "python_script_input": {
                     "code": (
                         "\nimport numpy as np\nimport polars as pl\n\n"
-                        "df = flowfile.read_input().collect()\n"
-                        'model = flowfile.read_artifact("linear_model")\n'
+                        "df = flowfile_ctx.read_input().collect()\n"
+                        'model = flowfile_ctx.read_artifact("linear_model")\n'
                         'coeffs = np.array(model["coefficients"])\n'
                         'X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])\n'
                         "predictions = X @ coeffs\n"
                         'result = df.with_columns(pl.Series("predicted_y", predictions))\n'
-                        "flowfile.publish_output(result)\n"
+                        "flowfile_ctx.publish_output(result)\n"
                     ),
                     "kernel_id": KERNEL_ID,
                     "cells": None,

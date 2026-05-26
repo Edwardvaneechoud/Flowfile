@@ -33,7 +33,7 @@
 
 ---
 
-**Visual ETL tools usually trap your work inside their platform. Flowfile doesn't.** Build pipelines on a visual canvas, run them locally or in the browser, and export the result as plain Polars code that runs anywhere — with no Flowfile dependency. Code and visual are two views of the same graph: drag nodes or write Python with a Polars-like API, your choice.
+Build pipelines on a visual canvas, run them, and export the graph as plain Python code that runs anywhere. Code and visual are two views of the same graph: drag nodes or write Python with a Polars-like API, your choice.
 
 Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a SQL editor with embedded viz, flow parameters, sandboxed Python kernels, and a built-in scheduler.
 

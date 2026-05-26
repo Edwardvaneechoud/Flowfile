@@ -1,5 +1,11 @@
 <template>
-  <div class="kernel-card" :class="{ 'kernel-card--error': kernel.state === 'error' }">
+  <div
+    class="kernel-card"
+    :class="[
+      `kernel-card--state-${kernel.state}`,
+      { 'kernel-card--error': kernel.state === 'error' },
+    ]"
+  >
     <div class="kernel-card__header">
       <div class="kernel-card__title-row">
         <h4 class="kernel-card__name">{{ kernel.name }}</h4>
@@ -7,6 +13,13 @@
       </div>
       <div class="kernel-card__meta">
         <p class="kernel-card__id">{{ kernel.id }}</p>
+        <span
+          class="kernel-card__flavour"
+          :class="`kernel-card__flavour--${kernel.image_flavour}`"
+          :title="flavourTitle"
+        >
+          {{ flavourLabel }}
+        </span>
         <span
           v-if="kernel.kernel_version"
           class="kernel-card__version"
@@ -85,6 +98,13 @@
         <i class="fa-solid fa-stop"></i> Stop
       </button>
       <button
+        class="btn btn-secondary btn-sm"
+        :disabled="busy"
+        @click="$emit('details', kernel.id)"
+      >
+        <i class="fa-solid fa-circle-info"></i> Details
+      </button>
+      <button
         class="btn btn-danger btn-sm"
         :disabled="busy || kernel.state === 'starting'"
         @click="$emit('delete', kernel.id, kernel.name)"
@@ -97,7 +117,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import type { KernelInfo, KernelMemoryInfo } from "../../types";
+import { KERNEL_FLAVOURS, type KernelInfo, type KernelMemoryInfo } from "../../types";
 import KernelStatusBadge from "./KernelStatusBadge.vue";
 
 const props = defineProps<{
@@ -106,9 +126,23 @@ const props = defineProps<{
   memoryInfo: KernelMemoryInfo | null;
 }>();
 
+const flavourMeta = computed(
+  () => KERNEL_FLAVOURS.find((f) => f.value === props.kernel.image_flavour) ?? KERNEL_FLAVOURS[0],
+);
+
+const flavourLabel = computed(() => flavourMeta.value.label);
+
+const flavourTitle = computed(() => {
+  if (props.kernel.image_flavour === "custom") {
+    return props.kernel.custom_image ?? props.kernel.image ?? "Custom image";
+  }
+  return props.kernel.image ?? flavourMeta.value.description;
+});
+
 defineEmits<{
   (e: "start", id: string): void;
   (e: "stop", id: string): void;
+  (e: "details", id: string): void;
   (e: "delete", id: string, name: string): void;
 }>();
 
@@ -138,18 +172,69 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
 
 <style scoped>
 .kernel-card {
+  position: relative;
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-lg);
   padding: var(--spacing-4);
+  padding-left: calc(var(--spacing-4) + 3px);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-3);
-  transition: border-color var(--transition-base) var(--transition-timing);
+  transition:
+    border-color var(--transition-base) var(--transition-timing),
+    box-shadow var(--transition-base) var(--transition-timing),
+    transform var(--transition-base) var(--transition-timing);
+  overflow: hidden;
+}
+
+.kernel-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: var(--color-text-muted);
+  transition: background-color var(--transition-base) var(--transition-timing);
+}
+
+.kernel-card--state-idle::before {
+  background-color: var(--color-success);
+}
+
+.kernel-card--state-executing::before {
+  background-color: var(--color-info);
+  animation: km-stripe-pulse 1.6s ease-in-out infinite;
+}
+
+.kernel-card--state-starting::before {
+  background-color: var(--color-warning);
+  animation: km-stripe-pulse 1.6s ease-in-out infinite;
+}
+
+.kernel-card--state-error::before {
+  background-color: var(--color-danger);
+}
+
+.kernel-card--state-stopped::before {
+  background-color: var(--color-border-secondary);
+}
+
+@keyframes km-stripe-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .kernel-card:hover {
   border-color: var(--color-border-secondary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 .kernel-card--error {
@@ -200,6 +285,30 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
   background-color: var(--color-accent-subtle);
   padding: 0 var(--spacing-1);
   border-radius: var(--border-radius-sm);
+}
+
+.kernel-card__flavour {
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 var(--spacing-1);
+  border-radius: var(--border-radius-sm);
+  border: 1px solid currentColor;
+}
+
+.kernel-card__flavour--base {
+  color: var(--color-text-secondary);
+}
+
+.kernel-card__flavour--ml {
+  color: var(--color-success);
+}
+
+.kernel-card__flavour--custom {
+  /* warning-dark is brown — unreadable on dark page bg. Use the brighter
+     orange so the badge stays legible in both themes. */
+  color: var(--color-warning);
 }
 
 .kernel-card__body {
@@ -281,16 +390,20 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
 }
 
 .kernel-card__memory-track {
-  height: 4px;
+  height: 6px;
   background-color: var(--color-background-tertiary);
   border-radius: var(--border-radius-full);
   overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .kernel-card__memory-fill {
   height: 100%;
   border-radius: var(--border-radius-full);
-  transition: width 0.3s ease;
+  transition:
+    width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color var(--transition-base) var(--transition-timing);
+  box-shadow: 0 0 6px currentColor;
 }
 
 .kernel-card__memory-fill.memory-level--normal {
