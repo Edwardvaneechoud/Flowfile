@@ -25,6 +25,11 @@ export interface ApiEndpoint {
   updated_at: string | null;
 }
 
+export interface FlowParamInfo {
+  name: string;
+  default: string;
+}
+
 export interface ApiTestResult {
   data: Record<string, unknown>[] | Record<string, unknown[]>;
   row_count: number;
@@ -69,6 +74,11 @@ export class FlowApiApi {
 
   static async listAllEndpoints(): Promise<ApiEndpoint[]> {
     const res = await axios.get<ApiEndpoint[]>("/flow-api/endpoints");
+    return res.data;
+  }
+
+  static async getFlowParameters(registrationId: number): Promise<FlowParamInfo[]> {
+    const res = await axios.get<FlowParamInfo[]>(`/flow-api/flows/${registrationId}/parameters`);
     return res.data;
   }
 

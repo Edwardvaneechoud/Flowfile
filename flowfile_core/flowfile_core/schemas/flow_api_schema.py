@@ -98,6 +98,13 @@ class ApiTestRequest(BaseModel):
     params: dict[str, str] = Field(default_factory=dict)
 
 
+class FlowParamInfo(BaseModel):
+    """A flow-level ${name} parameter, surfaced so the UI can pre-fill query params."""
+
+    name: str
+    default: str = ""
+
+
 class ApiKeyCreate(BaseModel):
     """Request body to mint a new API key for an endpoint."""
 

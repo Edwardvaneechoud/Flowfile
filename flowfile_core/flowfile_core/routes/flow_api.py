@@ -38,6 +38,7 @@ from flowfile_core.schemas.flow_api_schema import (
     ApiKeyOut,
     ApiParamSpec,
     ApiTestRequest,
+    FlowParamInfo,
 )
 
 _API_RUN_TIMEOUT = float(os.environ.get("FLOWFILE_API_RUN_TIMEOUT_SECONDS", "120"))
@@ -195,6 +196,28 @@ def list_endpoints(
     if registration_id is not None:
         query = query.filter(db_models.FlowApiEndpoint.registration_id == registration_id)
     return [_endpoint_out(ep, db) for ep in query.all()]
+
+
+@management_router.get("/flows/{registration_id}/parameters", response_model=list[FlowParamInfo])
+def get_flow_parameters(
+    registration_id: int,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Return the flow's ${name} parameters so the UI can pre-fill query params.
+
+    Best-effort: returns an empty list if the flow file is missing or can't be opened.
+    """
+    registration = db.get(db_models.FlowRegistration, registration_id)
+    if registration is None or registration.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    if not registration.flow_path:
+        return []
+    try:
+        flow = open_flow(Path(registration.flow_path), user_id=current_user.id)
+    except Exception:  # noqa: BLE001 - convenience lookup, degrade gracefully
+        return []
+    return [FlowParamInfo(name=p.name, default=p.default_value or "") for p in flow.flow_settings.parameters]
 
 
 @management_router.get("/endpoints/{endpoint_id}", response_model=ApiEndpointOut)

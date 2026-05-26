@@ -188,6 +188,13 @@
             class="test-param-input"
           />
         </div>
+        <div class="test-request">
+          <span class="test-request-label">Request</span>
+          <code class="test-request-url">{{ testRequestUrl }}</code>
+          <el-button size="small" text @click="copy(testRequestUrl.replace(/^GET /, ''))">
+            <i class="fa-solid fa-copy" />
+          </el-button>
+        </div>
         <p v-if="testError" class="api-warning">{{ testError }}</p>
         <div v-if="testResult" class="test-result">
           <span class="test-result-meta">{{ testResult.row_count }} rows</span>
@@ -208,6 +215,7 @@ import {
   type ApiKey,
   type ApiParamType,
   type ApiTestResult,
+  type FlowParamInfo,
 } from "../../api/flowApi.api";
 import type { FlowRegistration } from "../../types";
 import { formatDate } from "./catalog-formatters";
@@ -241,6 +249,32 @@ const testing = ref(false);
 
 const fullUrl = computed(() => `${flowfileCorebaseURL}api/data/${endpoint.value?.slug ?? ""}`);
 const curlExample = computed(() => `curl -H "X-API-Key: <your-key>" "${fullUrl.value}"`);
+
+// The equivalent public GET request for the current "Try it" values.
+const testRequestUrl = computed(() => {
+  const qs = new URLSearchParams();
+  for (const p of endpoint.value?.parameters ?? []) {
+    const v = testValues.value[p.name];
+    if (v !== undefined && v !== "") qs.append(p.name, v);
+  }
+  const query = qs.toString();
+  return `GET ${fullUrl.value}${query ? `?${query}` : ""}`;
+});
+
+/** Ensure every flow ${name} parameter appears as a row, preserving existing edits. */
+function mergeFlowParams(rows: ParamRow[], flowParams: FlowParamInfo[]): ParamRow[] {
+  const existing = new Set(rows.map((r) => r.name));
+  const added: ParamRow[] = flowParams
+    .filter((p) => !existing.has(p.name))
+    .map((p) => ({
+      name: p.name,
+      type: "string" as ApiParamType,
+      required: false,
+      default: p.default ?? "",
+      enum_values_text: "",
+    }));
+  return [...rows, ...added];
+}
 
 function toRows(ep: ApiEndpoint): ParamRow[] {
   return ep.parameters.map((p) => ({
@@ -282,15 +316,23 @@ function syncFromEndpoint(ep: ApiEndpoint | null) {
 async function load() {
   loading.value = true;
   newKey.value = null;
+  testResult.value = null;
+  testError.value = null;
   try {
-    const ep = await FlowApiApi.getEndpointForFlow(props.flow.id);
+    const [ep, flowParams] = await Promise.all([
+      FlowApiApi.getEndpointForFlow(props.flow.id),
+      FlowApiApi.getFlowParameters(props.flow.id).catch(() => [] as FlowParamInfo[]),
+    ]);
     syncFromEndpoint(ep);
     if (ep) {
       keys.value = await FlowApiApi.listKeys(ep.id);
     } else {
       keys.value = [];
       slug.value = "";
+      params.value = [];
     }
+    // Pre-populate any flow ${name} parameter that isn't already configured.
+    params.value = mergeFlowParams(params.value, flowParams);
   } catch {
     ElMessage.error("Failed to load API endpoint");
   } finally {
@@ -305,7 +347,7 @@ async function publish() {
       registration_id: props.flow.id,
       slug: slug.value,
       enabled: true,
-      parameters: [],
+      parameters: fromRows(params.value),
     });
     syncFromEndpoint(ep);
     keys.value = [];
@@ -549,6 +591,24 @@ watch(() => props.flow.id, load, { immediate: true });
 .test-result-meta {
   font-size: 12px;
   color: var(--color-text-secondary);
+}
+.test-request {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.test-request-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.test-request-url {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  background-color: var(--color-background-secondary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  word-break: break-all;
 }
 .test-result pre {
   background-color: var(--color-background-secondary);
