@@ -37,6 +37,7 @@ from flowfile_core.schemas.flow_api_schema import (
     ApiKeyCreated,
     ApiKeyOut,
     ApiParamSpec,
+    ApiTestRequest,
 )
 
 _API_RUN_TIMEOUT = float(os.environ.get("FLOWFILE_API_RUN_TIMEOUT_SECONDS", "120"))
@@ -60,7 +61,8 @@ def _dump_param_schema(specs: list[ApiParamSpec]) -> str:
     return json.dumps([spec.model_dump() for spec in specs])
 
 
-def _endpoint_out(ep: db_models.FlowApiEndpoint) -> ApiEndpointOut:
+def _endpoint_out(ep: db_models.FlowApiEndpoint, db: Session) -> ApiEndpointOut:
+    registration = db.get(db_models.FlowRegistration, ep.registration_id)
     return ApiEndpointOut(
         id=ep.id,
         registration_id=ep.registration_id,
@@ -70,6 +72,7 @@ def _endpoint_out(ep: db_models.FlowApiEndpoint) -> ApiEndpointOut:
         response_node_id=ep.response_node_id,
         parameters=_parse_param_schema(ep.param_schema_json),
         path=f"/api/data/{ep.slug}",
+        flow_name=registration.name if registration else None,
         created_at=ep.created_at,
         updated_at=ep.updated_at,
     )
@@ -178,7 +181,7 @@ def publish_endpoint(
     db.add(ep)
     db.commit()
     db.refresh(ep)
-    return _endpoint_out(ep)
+    return _endpoint_out(ep, db)
 
 
 @management_router.get("/endpoints", response_model=list[ApiEndpointOut])
@@ -191,7 +194,7 @@ def list_endpoints(
     query = db.query(db_models.FlowApiEndpoint).filter(db_models.FlowApiEndpoint.owner_id == current_user.id)
     if registration_id is not None:
         query = query.filter(db_models.FlowApiEndpoint.registration_id == registration_id)
-    return [_endpoint_out(ep) for ep in query.all()]
+    return [_endpoint_out(ep, db) for ep in query.all()]
 
 
 @management_router.get("/endpoints/{endpoint_id}", response_model=ApiEndpointOut)
@@ -200,7 +203,7 @@ def get_endpoint(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    return _endpoint_out(_get_owned_endpoint(db, endpoint_id, current_user.id))
+    return _endpoint_out(_get_owned_endpoint(db, endpoint_id, current_user.id), db)
 
 
 @management_router.put("/endpoints/{endpoint_id}", response_model=ApiEndpointOut)
@@ -226,7 +229,33 @@ def update_endpoint(
         ep.param_schema_json = _dump_param_schema(body.parameters)
     db.commit()
     db.refresh(ep)
-    return _endpoint_out(ep)
+    return _endpoint_out(ep, db)
+
+
+@management_router.post("/endpoints/{endpoint_id}/test")
+def test_endpoint(
+    endpoint_id: int,
+    body: ApiTestRequest | None = None,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Owner-only 'try it': run the published flow with the given params and return the JSON.
+
+    Runs as the endpoint owner without requiring an API key, so the owner can test
+    the endpoint from the catalog UI. Mirrors the public endpoint's behavior.
+    """
+    ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
+    registration = db.get(db_models.FlowRegistration, ep.registration_id)
+    if registration is None or not registration.flow_path:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    specs = _parse_param_schema(ep.param_schema_json)
+    params = dict(body.params) if body else {}
+    try:
+        return run_flow_as_api(registration.flow_path, ep.owner_id, specs, params)
+    except ApiParamError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ApiConfigError, ApiExecutionError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @management_router.delete("/endpoints/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)

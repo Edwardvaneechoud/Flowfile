@@ -34,7 +34,7 @@
           type="primary"
           size="small"
           :loading="busy"
-          :disabled="!flow.file_exists || !slug"
+          :disabled="!flow.file_exists || !flow.is_api_compatible || !slug"
           @click="publish"
         >
           <i class="fa-solid fa-plus" /> Publish
@@ -42,6 +42,9 @@
       </div>
       <p v-if="!flow.file_exists" class="api-warning">
         The flow file is missing on disk, so it cannot be published.
+      </p>
+      <p v-else-if="!flow.is_api_compatible" class="api-warning">
+        This flow isn't API-compatible yet — add exactly one API response node and save the flow.
       </p>
     </div>
 
@@ -163,6 +166,34 @@
           </el-table-column>
         </el-table>
       </div>
+
+      <!-- Try it -->
+      <div class="api-subsection">
+        <div class="subsection-header">
+          <h4>Try it</h4>
+          <el-button size="small" type="primary" :loading="testing" @click="runTest">
+            <i class="fa-solid fa-play" /> Run test
+          </el-button>
+        </div>
+        <p class="api-hint">
+          Runs the flow as you (no key needed) with the values below, exactly as the public endpoint
+          would.
+        </p>
+        <div v-for="p in endpoint.parameters" :key="p.name" class="api-row test-param-row">
+          <label class="test-param-label">{{ p.name }}<span v-if="p.required"> *</span></label>
+          <el-input
+            v-model="testValues[p.name]"
+            size="small"
+            :placeholder="p.default ?? p.type"
+            class="test-param-input"
+          />
+        </div>
+        <p v-if="testError" class="api-warning">{{ testError }}</p>
+        <div v-if="testResult" class="test-result">
+          <span class="test-result-meta">{{ testResult.row_count }} rows</span>
+          <pre>{{ JSON.stringify(testResult.data, null, 2) }}</pre>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -176,6 +207,7 @@ import {
   type ApiEndpoint,
   type ApiKey,
   type ApiParamType,
+  type ApiTestResult,
 } from "../../api/flowApi.api";
 import type { FlowRegistration } from "../../types";
 import { formatDate } from "./catalog-formatters";
@@ -201,6 +233,11 @@ const slug = ref("");
 const enabled = ref(true);
 const params = ref<ParamRow[]>([]);
 const newKey = ref<string | null>(null);
+
+const testValues = ref<Record<string, string>>({});
+const testResult = ref<ApiTestResult | null>(null);
+const testError = ref<string | null>(null);
+const testing = ref(false);
 
 const fullUrl = computed(() => `${flowfileCorebaseURL}api/data/${endpoint.value?.slug ?? ""}`);
 const curlExample = computed(() => `curl -H "X-API-Key: <your-key>" "${fullUrl.value}"`);
@@ -375,6 +412,25 @@ async function revokeKey(keyId: number) {
   }
 }
 
+async function runTest() {
+  if (!endpoint.value) return;
+  testing.value = true;
+  testError.value = null;
+  testResult.value = null;
+  try {
+    const sent: Record<string, string> = {};
+    for (const p of endpoint.value.parameters) {
+      const v = testValues.value[p.name];
+      if (v !== undefined && v !== "") sent[p.name] = v;
+    }
+    testResult.value = await FlowApiApi.testEndpoint(endpoint.value.id, sent);
+  } catch (e: any) {
+    testError.value = e?.response?.data?.detail ?? "Test run failed";
+  } finally {
+    testing.value = false;
+  }
+}
+
 async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -476,5 +532,30 @@ watch(() => props.flow.id, load, { immediate: true });
 .new-key-value {
   font-family: var(--font-mono, monospace);
   word-break: break-all;
+}
+.test-param-row {
+  margin-top: 6px;
+}
+.test-param-label {
+  min-width: 120px;
+  font-size: 13px;
+}
+.test-param-input {
+  max-width: 260px;
+}
+.test-result {
+  margin-top: 10px;
+}
+.test-result-meta {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.test-result pre {
+  background-color: var(--color-background-secondary);
+  padding: 8px;
+  border-radius: 4px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
 }
 </style>

@@ -278,6 +278,35 @@ def test_publish_endpoint_and_keys(db_session, tmp_path):
     assert not hasattr(keys[0], "api_key")
 
 
+def test_owner_test_run(db_session, tmp_path):
+    from flowfile_core.schemas.flow_api_schema import ApiTestRequest
+
+    flow_path = tmp_path / "flow.yaml"
+    _build_and_save_flow(flow_path, "records")
+    reg = db_models.FlowRegistration(
+        flow_uuid=str(uuid4()), name="api_flow", flow_path=str(flow_path), owner_id=1
+    )
+    db_session.add(reg)
+    db_session.commit()
+    db_session.refresh(reg)
+    user = SimpleNamespace(id=1)
+
+    out = flow_api.publish_endpoint(
+        ApiEndpointCreate(
+            registration_id=reg.id, slug="sales", parameters=[ApiParamSpec(name="region", type="string")]
+        ),
+        current_user=user,
+        db=db_session,
+    )
+    assert out.flow_name == "api_flow"
+
+    result = flow_api.test_endpoint(
+        out.id, body=ApiTestRequest(params={"region": "US"}), current_user=user, db=db_session
+    )
+    assert result["row_count"] == 1
+    assert result["data"] == [{"region": "US", "v": 2}]
+
+
 def test_publish_requires_api_response_node(db_session, tmp_path):
     """A flow without an api_response node cannot be published."""
     handler = FlowfileHandler()

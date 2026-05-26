@@ -179,6 +179,9 @@ class FlowRegistration(Base):
     flow_path = Column(String, nullable=False)
     namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # True when the flow contains exactly one ``api_response`` node, i.e. it can be
+    # published as an HTTP data API. Recomputed from the flow graph on save.
+    is_api_compatible = Column(Boolean, default=False, nullable=False, server_default="0")
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 

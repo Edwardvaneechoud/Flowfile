@@ -54,6 +54,7 @@ export interface FlowRegistration {
   last_run_at: string | null;
   last_run_success: boolean | null;
   file_exists: boolean;
+  is_api_compatible: boolean;
   artifact_count: number;
   tables_produced: CatalogTableSummary[];
   tables_read: CatalogTableSummary[];
@@ -344,7 +345,8 @@ export type CatalogTab =
   | "runs"
   | "schedules"
   | "sql"
-  | "visuals";
+  | "visuals"
+  | "apis";
 
 // ============================================================================
 // SQL Query types

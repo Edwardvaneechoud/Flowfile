@@ -87,8 +87,15 @@ class ApiEndpointOut(BaseModel):
     response_node_id: int | None = None
     parameters: list[ApiParamSpec] = Field(default_factory=list)
     path: str = ""  # convenience: "/api/data/{slug}"
+    flow_name: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class ApiTestRequest(BaseModel):
+    """Body for the owner-only 'try it' test run of a published endpoint."""
+
+    params: dict[str, str] = Field(default_factory=dict)
 
 
 class ApiKeyCreate(BaseModel):

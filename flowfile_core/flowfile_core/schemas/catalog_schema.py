@@ -79,6 +79,7 @@ class FlowRegistrationOut(BaseModel):
     last_run_at: datetime | None = None
     last_run_success: bool | None = None
     file_exists: bool = True
+    is_api_compatible: bool = False
     artifact_count: int = 0
     tables_produced: list["CatalogTableSummary"] = Field(default_factory=list)
     tables_read: list["CatalogTableSummary"] = Field(default_factory=list)

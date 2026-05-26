@@ -132,6 +132,29 @@ def register_flow_in_namespace(
         service.repo.create_flow(reg)
 
 
+def sync_api_compatibility(flow) -> None:
+    """Refresh the flow's catalog ``is_api_compatible`` flag from its in-memory graph.
+
+    A flow is API-compatible when it has exactly one ``api_response`` node. No-op if
+    the flow isn't registered yet. Best-effort: failures are logged, never raised, so
+    they cannot break a save.
+    """
+    if flow is None:
+        return
+    flow_path = getattr(flow.flow_settings, "path", None) or getattr(flow.flow_settings, "save_location", None)
+    if not flow_path:
+        return
+    is_compatible = sum(1 for n in flow.nodes if n.node_type == "api_response") == 1
+    try:
+        with get_db_context() as db:
+            reg = SQLAlchemyCatalogRepository(db).get_flow_by_path(flow_path)
+            if reg is not None and bool(reg.is_api_compatible) != is_compatible:
+                reg.is_api_compatible = is_compatible
+                db.commit()
+    except Exception:
+        logger.info(f"Failed to sync API compatibility for '{flow_path}' (non-critical)", exc_info=True)
+
+
 def _snapshot(reg: FlowRegistration | None) -> FlowRegistrationSnapshot | None:
     if reg is None:
         return None

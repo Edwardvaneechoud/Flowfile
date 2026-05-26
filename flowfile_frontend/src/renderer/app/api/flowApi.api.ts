@@ -20,8 +20,15 @@ export interface ApiEndpoint {
   response_node_id: number | null;
   parameters: ApiParamSpec[];
   path: string;
+  flow_name: string | null;
   created_at: string | null;
   updated_at: string | null;
+}
+
+export interface ApiTestResult {
+  data: Record<string, unknown>[] | Record<string, unknown[]>;
+  row_count: number;
+  orientation: "records" | "columns";
 }
 
 export interface ApiEndpointCreate {
@@ -58,6 +65,21 @@ export class FlowApiApi {
       params: { registration_id: registrationId },
     });
     return res.data.length > 0 ? res.data[0] : null;
+  }
+
+  static async listAllEndpoints(): Promise<ApiEndpoint[]> {
+    const res = await axios.get<ApiEndpoint[]>("/flow-api/endpoints");
+    return res.data;
+  }
+
+  static async testEndpoint(
+    endpointId: number,
+    params: Record<string, string>,
+  ): Promise<ApiTestResult> {
+    const res = await axios.post<ApiTestResult>(`/flow-api/endpoints/${endpointId}/test`, {
+      params,
+    });
+    return res.data;
   }
 
   static async publishEndpoint(body: ApiEndpointCreate): Promise<ApiEndpoint> {
