@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run build:renderer-only"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "loading",
