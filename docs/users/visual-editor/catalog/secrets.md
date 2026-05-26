@@ -22,9 +22,12 @@ Three short ideas, in order.
 
 **Master key.** One Fernet key per Flowfile instance. Every encrypted secret in your database is unlockable by this key — and only this key. If it's lost, the encrypted secrets are unrecoverable; there is no backdoor.
 
-**Per-user derivation.** Each user's secrets are encrypted with a key *derived* from the master key plus that user's ID (HKDF-SHA256). User A's derived key cannot decrypt User B's secrets, even though both come from the same master key. This isolates accidental cross-user reads at the cryptographic level.
+**Per-user derivation.** Each user's secrets are encrypted with a key *derived* from the master key plus that user's ID (HKDF-SHA256). This is **defense-in-depth, not an access boundary**: anyone holding the master key can derive every user's key and decrypt any user's secret — the envelope even embeds the `user_id`. The boundaries that actually keep users apart are (a) keeping the master key secret and (b) the `user_id` filter applied to every secret query at the database layer. Per-user derivation only buys you something if a single *derived* key leaks without the master key.
 
 **Envelope format.** Each encrypted value in the database is stored as `$ffsec$1$<user_id>$<fernet_token>`. The `1` is a version digit reserved for future format changes. The `<user_id>` lets the worker process decrypt without being separately told who the secret belongs to.
+
+!!! warning "The worker holds the master key too"
+    Both `flowfile_core` and `flowfile_worker` read the same master key, so the worker can decrypt **any** user's secret. Compromise of the worker is therefore equivalent to full secret compromise. Harden it the same way you harden core: no plaintext-secret logging, network isolation (the worker should not be exposed beyond core), and least-privilege for its host and credentials.
 
 ## Where the master key lives
 
@@ -107,8 +110,11 @@ Every secret create / list / read / delete attempt — successful or failed — 
 - The action (`create`, `list`, `read`, `delete`)
 - The secret name (when applicable)
 - Result status (`success` or `error`) and error code (e.g. `not_found`, `duplicate_name`)
-- Source IP address (best-effort, honors `X-Forwarded-For`)
+- Source IP address (best-effort; see note below)
 - Timestamp
+
+!!! note "When is the recorded IP trustworthy?"
+    By default Flowfile records the direct connection IP and **ignores** `X-Forwarded-For`, because a directly-exposed instance lets any client forge that header. Set `FLOWFILE_TRUST_PROXY_HEADERS=true` only when Flowfile sits behind a reverse proxy that *overwrites* `X-Forwarded-For` — then the recorded `ip_address` reflects the real client. Without such a proxy, treat `ip_address` as advisory, not forensic.
 
 Admins can query the log via `GET /secrets/secrets/audit` (with optional `secret_name`, `action`, and `limit` query parameters). Non-admins see only their own events.
 

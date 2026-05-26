@@ -32,13 +32,16 @@ router = APIRouter(dependencies=[Depends(get_current_active_user)])
 def _client_ip(request: Request) -> str | None:
     """Best-effort client IP extraction.
 
-    Prefers the forwarded-for header when the deployment sits behind a proxy,
-    falls back to the direct connection. Returned as a string or ``None`` if
-    nothing is available (e.g. in some test clients).
+    ``X-Forwarded-For`` is honored only when ``FLOWFILE_TRUST_PROXY_HEADERS`` is
+    set (the deployment sits behind a proxy that overwrites the header);
+    otherwise the header is ignored and the direct connection IP is used, since
+    a directly-exposed instance would let clients forge the recorded source IP.
+    Returns ``None`` if nothing is available (e.g. in some test clients).
     """
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    if os.environ.get("FLOWFILE_TRUST_PROXY_HEADERS", "").strip().lower() in ("1", "true", "yes", "on"):
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
     client = request.client
     return client.host if client else None
 

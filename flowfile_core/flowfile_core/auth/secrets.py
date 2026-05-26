@@ -10,6 +10,8 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from shared.crypto.master_key import normalize_master_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -160,7 +162,7 @@ def get_docker_secret_key() -> str | None:
     """
     env_key = os.environ.get("FLOWFILE_MASTER_KEY")
     if env_key:
-        env_key = env_key.strip().strip('"').strip("'")
+        env_key = normalize_master_key(env_key)
         try:
             Fernet(env_key.encode())
             return env_key
@@ -171,7 +173,7 @@ def get_docker_secret_key() -> str | None:
     if os.path.isfile(secret_path):
         try:
             with open(secret_path) as f:
-                key = f.read().strip()
+                key = normalize_master_key(f.read())
                 Fernet(key.encode())
                 return key
         except Exception:

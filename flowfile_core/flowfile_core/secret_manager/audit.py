@@ -69,8 +69,8 @@ def record_event(event: SecretEvent, db: Session | None = None) -> SecretAccessE
 
     try:
         if db is not None:
-            db.add(row)
-            db.flush()
+            with db.begin_nested():
+                db.add(row)
         else:
             with SessionLocal() as session:
                 session.add(row)

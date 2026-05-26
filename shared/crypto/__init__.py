@@ -15,6 +15,7 @@ from shared.crypto.envelope import (
     encrypt_secret_envelope,
     parse_v1_envelope,
 )
+from shared.crypto.master_key import normalize_master_key
 
 __all__ = [
     "KEY_DERIVATION_VERSION",
@@ -22,5 +23,6 @@ __all__ = [
     "decrypt_secret_envelope",
     "derive_user_key",
     "encrypt_secret_envelope",
+    "normalize_master_key",
     "parse_v1_envelope",
 ]

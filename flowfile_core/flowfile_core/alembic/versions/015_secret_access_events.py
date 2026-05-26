@@ -11,8 +11,8 @@ survives a secret deletion (otherwise we'd lose the very record we need to
 investigate the deletion). ``secret_name`` is denormalized into the audit row
 for the same reason.
 
-Revision ID: 012
-Revises: 011
+Revision ID: 015
+Revises: 014
 Create Date: 2026-05-12
 """
 
@@ -21,8 +21,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "012"
-down_revision: str | None = "011"
+revision: str = "015"
+down_revision: str | None = "014"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

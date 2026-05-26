@@ -99,7 +99,7 @@ Table: `secret_access_events`.
 | `result_status` | string | `success` / `error` |
 | `error` | text, nullable | short snake_case codes: `not_found`, `duplicate_name`, … |
 | `source` | string, default `api` | reserved for future non-API emitters |
-| `ip_address` | string, nullable | best-effort; honors `X-Forwarded-For` |
+| `ip_address` | string, nullable | best-effort; direct connection IP by default. `X-Forwarded-For` is honored only when `FLOWFILE_TRUST_PROXY_HEADERS` is set — trustworthy only behind a proxy that overwrites the header. |
 | `created_at` | datetime, indexed | server-side `now()` |
 
 ### Recording an event from a new route

@@ -138,6 +138,25 @@ def test_audit_endpoint_returns_recent_events():
         client.delete(f"/secrets/secrets/{name}")
 
 
+def test_list_endpoint_survives_audit_write_failure(monkeypatch):
+    """F3: a failing audit insert must not poison the session and 500 the read."""
+    from sqlalchemy.orm import Session
+
+    client = _get_client()
+
+    real_flush = Session.flush
+
+    def failing_flush(self, *args, **kwargs):
+        if any(isinstance(obj, SecretAccessEvent) for obj in self.new):
+            raise RuntimeError("simulated audit flush failure")
+        return real_flush(self, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "flush", failing_flush)
+
+    r = client.get("/secrets/secrets")
+    assert r.status_code == 200, r.text
+
+
 def test_audit_endpoint_filters_by_action():
     client = _get_client()
     name = f"audit_filter_{uuid.uuid4().hex[:8]}"
