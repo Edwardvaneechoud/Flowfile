@@ -1720,6 +1720,27 @@ class TestCronSchedules:
         assert resp.status_code == 200, resp.text
         assert resp.json()["cron_expression"] == "0 18 * * *"
 
+    def test_update_cron_on_non_cron_schedule_rejected(self):
+        # Cron fields must not be stored on a non-cron schedule (they'd be silently ignored).
+        flow_id = self._register_flow()
+        with get_db_context() as db:
+            sched = FlowSchedule(
+                registration_id=flow_id,
+                owner_id=1,
+                schedule_type="interval",
+                interval_seconds=3600,
+                enabled=True,
+            )
+            db.add(sched)
+            db.commit()
+            db.refresh(sched)
+            sched_id = sched.id
+        resp = client.put(
+            f"/catalog/schedules/{sched_id}",
+            json={"cron_expression": "0 9 * * *"},
+        )
+        assert resp.status_code == 422, resp.text
+
     def test_validate_cron_endpoint(self):
         # Same croniter rules as create, but returns a flag (200) instead of 422
         # so the builder can gate its submit button on the backend's verdict.

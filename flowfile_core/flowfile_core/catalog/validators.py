@@ -78,7 +78,13 @@ def validate_cron_expression(cron_expression: str | None) -> None:
 
     if not cron_expression or not cron_expression.strip():
         raise ValueError("cron_expression is required for cron schedules")
-    if not croniter.is_valid(cron_expression):
+    # croniter.is_valid also accepts 6-field (seconds-granularity) exprs and @-macros
+    # ("@daily"), but the scheduler only evaluates standard 5-field cron — so enforce the
+    # documented contract: no leading @, exactly 5 whitespace-separated fields.
+    expr = cron_expression.strip()
+    if expr.startswith("@") or len(expr.split()) != 5:
+        raise ValueError(f"Invalid cron expression: {cron_expression!r}")
+    if not croniter.is_valid(expr):
         raise ValueError(f"Invalid cron expression: {cron_expression!r}")
 
 

@@ -68,6 +68,17 @@ async def shutdown_handler(app: FastAPI):
         set_scheduler(scheduler)
         print("Flow scheduler started")
 
+    # Pre-warm the litellm SDK off the request hot path: its import (~2-3s) is lazy
+    # (inside the first provider call), so a cold first AI call would otherwise count
+    # that import against the per-call timeout and block the event loop. Skipped when
+    # AI is disabled so we never import the heavy SDK needlessly.
+    from flowfile_core.ai.feature_flag import is_ai_enabled
+
+    if is_ai_enabled():
+        from flowfile_core.ai.providers._litellm_base import start_prewarm
+
+        start_prewarm()
+
     try:
         yield
     finally:

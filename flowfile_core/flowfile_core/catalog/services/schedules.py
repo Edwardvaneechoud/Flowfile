@@ -15,8 +15,6 @@ from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.validators import (
     format_full_name,
-    validate_cron_expression,
-    validate_cron_timezone,
     validate_schedule_create,
     validate_schedule_update,
 )
@@ -162,16 +160,18 @@ class ScheduleService:
         schedule = self.repo.get_schedule(schedule_id)
         if schedule is None:
             raise ScheduleNotFoundError(schedule_id=schedule_id)
+        # Cron fields only make sense on a cron schedule; reject them otherwise so we never
+        # store a cron_expression on an interval/table-trigger schedule (where it is ignored).
+        if (cron_expression is not None or cron_timezone is not None) and schedule.schedule_type != "cron":
+            raise ValueError("cron_expression/cron_timezone can only be set on cron schedules")
+        validate_schedule_update(interval_seconds, cron_expression, cron_timezone)
         if enabled is not None:
             schedule.enabled = enabled
         if interval_seconds is not None:
-            validate_schedule_update(interval_seconds)
             schedule.interval_seconds = interval_seconds
         if cron_expression is not None:
-            validate_cron_expression(cron_expression)
             schedule.cron_expression = cron_expression
         if cron_timezone is not None:
-            validate_cron_timezone(cron_timezone)
             schedule.cron_timezone = cron_timezone
         if name is not None:
             schedule.name = name

@@ -8,16 +8,20 @@
   >
     <template #header>
       <div class="dialog-header">
-        <span class="dialog-header-icon"><i class="fa-solid fa-calendar-plus"></i></span>
+        <span class="dialog-header-icon">
+          <i :class="isEdit ? 'fa-solid fa-pen-to-square' : 'fa-solid fa-calendar-plus'"></i>
+        </span>
         <div class="dialog-header-text">
-          <span class="dialog-title">Create schedule</span>
-          <span class="dialog-subtitle">Run a flow automatically</span>
+          <span class="dialog-title">{{ isEdit ? "Edit schedule" : "Create schedule" }}</span>
+          <span class="dialog-subtitle">{{
+            isEdit ? "Change when this flow runs" : "Run a flow automatically"
+          }}</span>
         </div>
       </div>
     </template>
 
     <el-form label-position="top" class="schedule-form" @submit.prevent="handleCreate">
-      <el-form-item label="Flow">
+      <el-form-item v-if="!isEdit" label="Flow">
         <el-select
           v-model="form.registration_id"
           placeholder="Select a flow"
@@ -33,7 +37,7 @@
         </el-select>
       </el-form-item>
 
-      <el-form-item label="When should it run?">
+      <el-form-item v-if="!isEdit" label="When should it run?">
         <div class="type-cards">
           <button
             v-for="t in SCHEDULE_TYPES"
@@ -292,28 +296,30 @@
         </div>
       </el-form-item>
 
-      <el-divider class="details-divider" content-position="left">Details (optional)</el-divider>
+      <template v-if="!isEdit">
+        <el-divider class="details-divider" content-position="left">Details (optional)</el-divider>
 
-      <el-form-item label="Name">
-        <el-input v-model="form.name" :maxlength="100" placeholder="e.g. Nightly sales refresh" />
-      </el-form-item>
+        <el-form-item label="Name">
+          <el-input v-model="form.name" :maxlength="100" placeholder="e.g. Nightly sales refresh" />
+        </el-form-item>
 
-      <el-form-item label="Description">
-        <el-input
-          v-model="form.description"
-          type="textarea"
-          :rows="2"
-          :maxlength="200"
-          show-word-limit
-          placeholder="e.g. Nightly sales data refresh"
-        />
-      </el-form-item>
+        <el-form-item label="Description">
+          <el-input
+            v-model="form.description"
+            type="textarea"
+            :rows="2"
+            :maxlength="200"
+            show-word-limit
+            placeholder="e.g. Nightly sales data refresh"
+          />
+        </el-form-item>
+      </template>
     </el-form>
 
     <template #footer>
       <el-button @click="$emit('close')">Cancel</el-button>
       <el-button type="primary" :disabled="!isValid" @click="handleCreate">
-        Create schedule
+        {{ isEdit ? "Save changes" : "Create schedule" }}
       </el-button>
     </template>
   </el-dialog>
@@ -321,7 +327,13 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from "vue";
-import type { CatalogTable, FlowRegistration, FlowScheduleCreate } from "../../types";
+import type {
+  CatalogTable,
+  FlowRegistration,
+  FlowSchedule,
+  FlowScheduleCreate,
+  FlowScheduleUpdate,
+} from "../../types";
 import {
   FREQUENCY_OPTIONS,
   WEEKDAYS,
@@ -329,6 +341,7 @@ import {
   defaultCronState,
   describeCron,
   localTimezone,
+  parseCron,
 } from "./cron-builder";
 import { useAiStore } from "../../stores/ai-store";
 import { AiDisabledError, generateCronExpression } from "../../api/ai.api";
@@ -339,9 +352,14 @@ const props = defineProps<{
   flows: FlowRegistration[];
   tables: CatalogTable[];
   preselectedFlowId?: number | null;
+  // "edit" reuses the same builder to retime an existing cron schedule (timing only).
+  mode?: "create" | "edit";
+  editSchedule?: FlowSchedule | null;
 }>();
 
-const emit = defineEmits(["close", "create"]);
+const emit = defineEmits(["close", "create", "update"]);
+
+const isEdit = computed(() => props.mode === "edit");
 
 type ScheduleKind = "cron" | "table_trigger" | "table_set_trigger";
 
@@ -366,8 +384,10 @@ const SCHEDULE_TYPES: { value: ScheduleKind; icon: string; title: string; subtit
   },
 ];
 
-// Captured once: the user's IANA zone, so "every night at 2 AM" runs at their local time.
-const timezone = localTimezone();
+// The IANA zone the schedule runs in. Create: the user's local zone (so "every night at
+// 2 AM" runs at their local time). Edit: seeded from the schedule's stored zone (see the
+// visible-watcher) so re-saving never silently relocates it to the editor's browser zone.
+const timezone = ref(localTimezone());
 const cron = ref(defaultCronState());
 
 // AI "describe in words" → cron, shown only in Custom mode when a provider is configured.
@@ -393,7 +413,7 @@ const form = ref<{
 });
 
 const builtCron = computed(() => buildCron(cron.value));
-const cronPreview = computed(() => describeCron(builtCron.value, timezone));
+const cronPreview = computed(() => describeCron(builtCron.value, timezone.value));
 
 const isCustom = computed(() => cron.value.frequency === "custom");
 
@@ -423,7 +443,7 @@ function validateCustomCron() {
     try {
       const result = await CatalogApi.validateCron({
         cron_expression: expr,
-        cron_timezone: timezone,
+        cron_timezone: timezone.value,
       });
       if (seq !== cronCheckSeq) return; // superseded by a newer keystroke
       customCronValid.value = result.valid;
@@ -460,7 +480,7 @@ const cronValid = computed(() => (isCustom.value ? customCronValid.value : !!cro
 const cronPreviewText = computed(() => {
   if (isCustom.value) {
     if (!customCronValid.value) return "";
-    return cronPreview.value || `Valid schedule (${timezone})`;
+    return cronPreview.value || `Valid schedule (${timezone.value})`;
   }
   return cronPreview.value;
 });
@@ -495,7 +515,26 @@ watch(
 watch(
   () => props.visible,
   (open) => {
-    if (open) {
+    if (!open) return;
+    // Shared resets for both create and edit.
+    customCronValid.value = false;
+    customCronError.value = null;
+    customCronChecking.value = false;
+    aiDescription.value = "";
+    aiError.value = null;
+    if (!aiStore.providers.length) void aiStore.loadProviders();
+
+    if (isEdit.value && props.editSchedule) {
+      // Edit: seed the builder from the existing schedule; preserve its stored timezone.
+      const s = props.editSchedule;
+      timezone.value = s.cron_timezone || localTimezone();
+      form.value.schedule_type = "cron";
+      cron.value = s.cron_expression ? parseCron(s.cron_expression) : defaultCronState();
+      // Re-opening the same custom expression won't change builtCron, so the
+      // [isCustom, builtCron] watch won't re-fire — kick the async check explicitly.
+      if (cron.value.frequency === "custom") validateCustomCron();
+    } else {
+      timezone.value = localTimezone();
       form.value.registration_id = props.preselectedFlowId ?? null;
       form.value.schedule_type = "cron";
       form.value.trigger_table_id = null;
@@ -503,17 +542,12 @@ watch(
       form.value.name = "";
       form.value.description = "";
       cron.value = defaultCronState();
-      customCronValid.value = false;
-      customCronError.value = null;
-      customCronChecking.value = false;
-      aiDescription.value = "";
-      aiError.value = null;
-      if (!aiStore.providers.length) void aiStore.loadProviders();
     }
   },
 );
 
 const isValid = computed(() => {
+  if (isEdit.value) return cronValid.value; // edit is cron-only; no flow selection
   if (!form.value.registration_id) return false;
   if (form.value.schedule_type === "cron") return cronValid.value;
   if (form.value.schedule_type === "table_trigger") return !!form.value.trigger_table_id;
@@ -528,11 +562,17 @@ async function generateCron() {
   aiGenerating.value = true;
   aiError.value = null;
   try {
-    const resp = await generateCronExpression({
+    const request = {
       description,
       provider: aiStore.selectedProvider ?? undefined,
       model: aiStore.selectedModel,
-    });
+    };
+    let resp = await generateCronExpression(request);
+    // A cold first call can time out while the provider SDK imports; that attempt
+    // warms it, so a single retry resolves without the user having to click again.
+    if (resp.degraded && resp.reason === "timeout") {
+      resp = await generateCronExpression(request);
+    }
     if (resp.degraded || !resp.cronExpression) {
       aiError.value =
         resp.reason === "no_expression" && resp.explanation
@@ -552,7 +592,18 @@ async function generateCron() {
 }
 
 function handleCreate() {
-  if (!isValid.value || !form.value.registration_id) return;
+  if (!isValid.value) return;
+
+  if (isEdit.value) {
+    const body: FlowScheduleUpdate = {
+      cron_expression: builtCron.value,
+      cron_timezone: timezone.value,
+    };
+    emit("update", body);
+    return;
+  }
+
+  if (!form.value.registration_id) return;
 
   const body: FlowScheduleCreate = {
     registration_id: form.value.registration_id,
@@ -563,7 +614,7 @@ function handleCreate() {
 
   if (form.value.schedule_type === "cron") {
     body.cron_expression = builtCron.value;
-    body.cron_timezone = timezone;
+    body.cron_timezone = timezone.value;
   } else if (form.value.schedule_type === "table_trigger") {
     body.trigger_table_id = form.value.trigger_table_id;
   } else if (form.value.schedule_type === "table_set_trigger") {

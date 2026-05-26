@@ -33,7 +33,10 @@ class TestCronValidators:
         # A missing timezone is allowed — the scheduler defaults it to UTC.
         validate_schedule_create("cron", None, None, None, _always, cron_expression="*/15 * * * *")
 
-    @pytest.mark.parametrize("expr", ["", "   ", "nonsense", "0 9 * *", "60 9 * * *"])
+    @pytest.mark.parametrize(
+        "expr",
+        ["", "   ", "nonsense", "0 9 * *", "60 9 * * *", "0 0 9 * * *", "@daily"],
+    )
     def test_invalid_cron_expression(self, expr):
         with pytest.raises(ValueError):
             validate_cron_expression(expr)
