@@ -1203,6 +1203,7 @@ class KernelManager:
         try:
             env = self._build_kernel_env(kernel_id, kernel)
             run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
+            self._remove_stale_container(kernel_id)
             container = self._docker.containers.run(image, **run_kwargs)
             kernel.container_id = container.id
             await self._wait_for_healthy(kernel_id, timeout=kernel.health_timeout)
@@ -1261,6 +1262,7 @@ class KernelManager:
         try:
             env = self._build_kernel_env(kernel_id, kernel)
             run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
+            self._remove_stale_container(kernel_id)
             container = self._docker.containers.run(image, **run_kwargs)
             kernel.container_id = container.id
             self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
@@ -1821,6 +1823,30 @@ class KernelManager:
             pass
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning("Error cleaning up container for kernel '%s': %s", kernel_id, exc)
+
+    def _remove_stale_container(self, kernel_id: str) -> None:
+        """Remove any pre-existing container occupying this kernel's name.
+
+        Container names (``flowfile-kernel-<id>``) are unique per kernel, so the
+        only container with that name is this kernel's. A stopped one left over
+        from a previous core session keeps its name reserved, which makes
+        ``containers.run`` fail with a 409 ("name already in use"). Running
+        containers are reclaimed elsewhere; by the time we reach the create path
+        the kernel is not idle, so clearing a same-named container is safe.
+        """
+        name = f"flowfile-kernel-{kernel_id}"
+        try:
+            existing = self._docker.containers.get(name)
+        except docker.errors.NotFound:
+            return
+        except (docker.errors.APIError, docker.errors.DockerException) as exc:
+            logger.debug("Could not check for existing container '%s': %s", name, exc)
+            return
+        try:
+            existing.remove(force=True)
+            logger.info("Removed stale container '%s' before starting kernel '%s'", name, kernel_id)
+        except (docker.errors.APIError, docker.errors.DockerException) as exc:
+            logger.warning("Could not remove stale container '%s': %s", name, exc)
 
     async def _wait_for_healthy(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)

@@ -68,7 +68,7 @@
         <div class="notebook-editor-host">
           <NotebookEditor
             :key="store.active.id"
-            :cells="editorCells"
+            :cells="cells"
             :kernel-id="kernelReady ? store.selectedKernelId : null"
             :flow-id="store.active.flow_id"
             :node-id="0"
@@ -101,10 +101,21 @@ const store = useNotebookStore();
 const { kernels, startKernel } = useKernelManager();
 const nameDraft = ref("");
 
-// The reused NotebookEditor speaks the in-node cell shape ({ id, code }); the
-// stored notebook uses the .ipynb-friendly { id, source }. Map between them.
-const editorCells = computed<EditorCell[]>(() =>
-  store.activeCells.map((c) => ({ id: c.id, code: c.source, output: null })),
+// Local source of truth for the editor — like PythonScript.vue, this keeps the
+// runtime `output` on each cell. (The store only persists { id, source }, so
+// deriving the editor cells from it would wipe cell output on every update.)
+// The NotebookEditor speaks the in-node cell shape ({ id, code }); the stored
+// notebook uses the .ipynb-friendly { id, source }.
+const cells = ref<EditorCell[]>([]);
+
+// (Re)load cells from the store only when switching notebooks, not on every
+// keystroke/run — otherwise persisted { id, source } would overwrite output.
+watch(
+  () => store.active?.id,
+  () => {
+    cells.value = store.activeCells.map((c) => ({ id: c.id, code: c.source, output: null }));
+  },
+  { immediate: true },
 );
 
 const selectedKernel = computed(
@@ -136,8 +147,10 @@ onMounted(() => {
   void store.loadNotebooks();
 });
 
-const onCellsUpdate = (cells: EditorCell[]) => {
-  store.persistCells(cells.map((c) => ({ id: c.id, source: c.code })));
+const onCellsUpdate = (updated: EditorCell[]) => {
+  // Keep output locally; persist only id + source (debounced) to the store.
+  cells.value = updated;
+  store.persistCells(updated.map((c) => ({ id: c.id, source: c.code })));
 };
 
 const onOpen = (id: string) => store.openNotebook(id);
