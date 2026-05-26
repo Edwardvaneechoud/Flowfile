@@ -75,12 +75,6 @@ def set_ai_feature_flag(
     """
     _settings.FEATURE_FLAG_AI.set(payload.enabled)
     os.environ["FEATURE_FLAG_AI"] = "true" if payload.enabled else "false"
-    if payload.enabled:
-        # Enabling at runtime (AI may have booted off): warm the litellm import now so
-        # the first AI call doesn't pay the ~2-3s cold-start on the request hot path.
-        from flowfile_core.ai.providers._litellm_base import start_prewarm
-
-        start_prewarm()
     return FeatureFlagState(enabled=bool(_settings.FEATURE_FLAG_AI), persisted=False)
 
 

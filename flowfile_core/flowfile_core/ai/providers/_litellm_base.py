@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 import time
 from collections.abc import AsyncIterator
 from typing import Any, ClassVar, TypedDict
@@ -48,29 +47,6 @@ def _lazy_litellm() -> Any:
 
     litellm.suppress_debug_info = True
     return litellm
-
-
-def prewarm() -> None:
-    """Eagerly import ``litellm`` so the first ``chat`` / ``stream`` never pays its
-    ~2-3s import on the request hot path.
-
-    The import is lazy (inside ``chat`` / ``stream``) and runs synchronously on the
-    event loop, so on a cold process it both blocks the loop and counts against the
-    per-call AI timeout — the cause of spurious first-call ``reason="timeout"`` on
-    surfaces like ``/ai/generate_cron``. Calling this once at startup moves that cost
-    off the first request. Best-effort and idempotent: the import is cached (repeat
-    calls are no-ops) and any failure is swallowed — warm-up must never break startup.
-    """
-    try:
-        _lazy_litellm()
-    except Exception:  # noqa: BLE001 - warm-up is best-effort; never propagate
-        logger.debug("litellm prewarm failed", exc_info=True)
-
-
-def start_prewarm() -> None:
-    """Run :func:`prewarm` in a daemon thread so neither startup nor the event loop
-    blocks on the litellm import."""
-    threading.Thread(target=prewarm, name="litellm-prewarm", daemon=True).start()
 
 
 class LiteLLMKwargs(TypedDict, total=False):
