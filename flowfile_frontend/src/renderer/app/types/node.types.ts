@@ -981,6 +981,54 @@ export interface NodeGoogleAnalyticsReader extends NodeBase {
 }
 
 // ============================================================================
+// REST API Reader
+
+export interface RestApiAuthSettings {
+  auth_type: "none" | "api_key" | "bearer" | "basic";
+  api_key_name: string;
+  api_key_location: "header" | "query";
+  basic_username: string;
+  // Reference to a reusable secret in the user's secret store (empty = none).
+  secret_name: string;
+  // Optional inline plaintext for programmatic (read_api) use only.
+  secret?: string | null;
+}
+
+export interface RestApiPaginationSettings {
+  pagination_type: "none" | "offset" | "page" | "cursor";
+  offset_param: string;
+  limit_param: string;
+  page_size: number;
+  page_param: string;
+  start_page: number;
+  cursor_param: string;
+  cursor_location: "body" | "header";
+  cursor_response_path: string;
+  initial_cursor: string;
+  max_pages: number;
+  max_records: number | null;
+  page_delay_seconds: number;
+}
+
+export interface RestApiSettings {
+  url: string;
+  method: "GET" | "POST";
+  headers: Record<string, string>;
+  query_params: Record<string, string>;
+  json_body: unknown | null;
+  auth: RestApiAuthSettings;
+  pagination: RestApiPaginationSettings;
+  record_path: string;
+  timeout_seconds: number;
+  max_retries: number;
+}
+
+export interface NodeRestApiReader extends NodeBase {
+  rest_api_settings: RestApiSettings;
+  fields?: MinimalFieldInput[] | null;
+}
+
+// ============================================================================
 // ML Nodes
 // ============================================================================
 

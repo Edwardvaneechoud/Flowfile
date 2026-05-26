@@ -216,6 +216,14 @@ def trigger_google_analytics_read(ga_read_settings) -> Status:
     return Status(**f.json())
 
 
+def trigger_rest_api_read(settings) -> Status:
+    """Send a REST API read request to the worker service."""
+    f = requests.post(url=f"{WORKER_URL}/store_rest_api_read_result", data=settings.model_dump_json())
+    if not f.ok:
+        raise Exception(f"trigger_rest_api_read: Could not read from the REST API, {f.text}")
+    return Status(**f.json())
+
+
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
     f = requests.post(
         url=f"{WORKER_URL}/store_database_write_result", data=database_external_write_settings.model_dump_json()
@@ -1079,6 +1087,17 @@ class ExternalGoogleAnalyticsFetcher(BaseFetcher):
 
     def __init__(self, ga_read_settings, wait_on_completion: bool = True):
         r = trigger_google_analytics_read(ga_read_settings=ga_read_settings)
+        super().__init__(file_ref=r.background_task_id)
+        self.running = r.status == "Processing"
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class ExternalRestApiFetcher(BaseFetcher):
+    """Fetches REST API data via the worker service. Same pattern as ExternalDatabaseFetcher."""
+
+    def __init__(self, settings, wait_on_completion: bool = True):
+        r = trigger_rest_api_read(settings=settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == "Processing"
         if wait_on_completion:

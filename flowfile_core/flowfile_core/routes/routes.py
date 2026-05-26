@@ -66,8 +66,16 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    ExternalRestApiFetcher,
+)
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
+    build_rest_api_worker_settings,
+    infer_schema_from_sample,
+    resolve_auth_secret_encrypted,
+)
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     create_engine_from_db_settings,
     create_sql_source_from_db_settings,
@@ -1034,6 +1042,57 @@ def add_generic_settings(
         raise HTTPException(419, str(f"error: {e}")) from e
 
     return OperationResponse(success=True, history=flow.get_history_state())
+
+
+class RestApiSampleResponse(BaseModel):
+    """Inferred output columns from a REST API sample fetch."""
+
+    fields: list[input_schema.MinimalFieldInfo]
+
+
+@router.post("/rest_api/sample", tags=["editor"], response_model=RestApiSampleResponse)
+def fetch_rest_api_sample(
+    input_data: dict[str, Any], sample_size: int = 50, current_user=Depends(get_current_active_user)
+) -> RestApiSampleResponse:
+    """Fetch a small sample from the configured REST API and infer its schema.
+
+    Runs one capped request through the worker (so all network I/O stays
+    sandboxed off the core event loop), infers the output columns with Polars,
+    caches them on the node's ``fields`` (so downstream schema prediction needs
+    no network), and returns the inferred columns. This powers the node's
+    "Fetch sample" button. Defined as a sync endpoint so the blocking worker
+    round-trip runs in FastAPI's threadpool rather than the event loop.
+    """
+    input_data["user_id"] = current_user.id
+    try:
+        node = input_schema.NodeRestApiReader(**input_data)
+    except Exception as e:
+        raise HTTPException(421, str(e)) from e
+
+    flow = flow_file_handler.get_flow(node.flow_id)
+    if flow is None:
+        raise HTTPException(404, "could not find the flow")
+
+    # Resolve the credential to an encrypted token (stored secret by name, or an
+    # inline plaintext); the worker decrypts it. Never persist inline plaintext.
+    auth = node.rest_api_settings.auth
+    secret_encrypted = resolve_auth_secret_encrypted(auth, node.user_id)
+    auth.secret = None
+
+    sample_size = max(1, sample_size)
+    worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
+    try:
+        fetcher = ExternalRestApiFetcher(worker_settings, wait_on_completion=True)
+        sample_df = fetcher.get_result().head(sample_size).collect()
+    except Exception as e:
+        raise HTTPException(422, f"Failed to fetch sample from REST API: {e}") from e
+
+    fields = [c.get_minimal_field_info() for c in infer_schema_from_sample(sample_df)]
+    # Cache onto the live node so schema prediction is immediately available.
+    live = flow.get_node(node.node_id)
+    if live is not None and isinstance(live.setting_input, input_schema.NodeRestApiReader):
+        live.setting_input.fields = fields
+    return RestApiSampleResponse(fields=fields)
 
 
 @router.get("/files/available_flow_files", tags=["editor"], response_model=list[FileInfo])

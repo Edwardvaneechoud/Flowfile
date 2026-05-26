@@ -13,6 +13,7 @@ const BUILTIN_ICONS = new Set([
   "catalog_writer.svg",
   "kafka_source.svg",
   "google_analytics.svg",
+  "rest_api_reader.svg",
   "database_reader.svg",
   "database_writer.svg",
   "dynamic_rename.svg",

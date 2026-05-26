@@ -1102,6 +1102,91 @@ class NodeGoogleAnalyticsReader(NodeBase):
         return " | ".join(pieces)
 
 
+class RestApiAuthSettings(BaseModel):
+    """Authentication settings for a REST API reader node.
+
+    The credential (API key / bearer token / basic password, per ``auth_type``)
+    is NOT stored inline. ``secret_name`` references a secret in the user's
+    secret store — created once via the Secrets manager and reusable across
+    nodes — mirroring how the database reader references a stored password. The
+    ``.flowfile`` persists only the reference name, never the credential itself.
+
+    ``secret`` is an optional inline plaintext for programmatic use
+    (``flowfile_frame.read_api``); it is encrypted with the master key and
+    cleared, never persisted.
+    """
+
+    auth_type: Literal["none", "api_key", "bearer", "basic"] = "none"
+    # API key placement
+    api_key_name: str = "X-API-Key"
+    api_key_location: Literal["header", "query"] = "header"
+    # Basic auth username (not secret)
+    basic_username: str = ""
+    # Reference to a stored secret holding the credential value (empty = none).
+    secret_name: str = ""
+    # Optional inline plaintext for programmatic use; encrypted, never persisted.
+    secret: str | None = None
+
+
+class RestApiPaginationSettings(BaseModel):
+    """Pagination strategy and parameters for a REST API reader node."""
+
+    pagination_type: Literal["none", "offset", "page", "cursor"] = "none"
+    # offset / limit
+    offset_param: str = "offset"
+    limit_param: str = "limit"
+    page_size: int = 100
+    # page number
+    page_param: str = "page"
+    start_page: int = 1
+    # cursor / next-page token
+    cursor_param: str = "cursor"
+    cursor_location: Literal["body", "header"] = "body"
+    cursor_response_path: str = ""
+    initial_cursor: str = ""
+    # safety caps
+    max_pages: int = 1000
+    max_records: int | None = None
+    page_delay_seconds: float = 0.0
+
+
+class RestApiSettings(BaseModel):
+    """UI settings for a REST API reader node.
+
+    Secrets are stored inline but encrypted (see ``RestApiAuthSettings``). JSON
+    is the only supported response format; ``record_path`` is a dot-path that
+    locates the record array within the response body (empty = top-level).
+    """
+
+    url: str = ""
+    method: Literal["GET", "POST"] = "GET"
+    headers: dict[str, str] = Field(default_factory=dict)
+    query_params: dict[str, str] = Field(default_factory=dict)
+    json_body: Any | None = None
+    auth: RestApiAuthSettings = Field(default_factory=RestApiAuthSettings)
+    pagination: RestApiPaginationSettings = Field(default_factory=RestApiPaginationSettings)
+    record_path: str = ""
+    timeout_seconds: float = 30.0
+    max_retries: int = 3
+
+
+class NodeRestApiReader(NodeBase):
+    """Settings for a node that reads from a REST API."""
+
+    rest_api_settings: RestApiSettings
+    fields: list[MinimalFieldInfo] | None = None
+
+    def get_default_description(self) -> str:
+        """Describes the REST API request."""
+        s = self.rest_api_settings
+        pieces: list[str] = []
+        if s.url:
+            pieces.append(f"{s.method} {s.url}")
+        if s.pagination and s.pagination.pagination_type != "none":
+            pieces.append(f"paginated: {s.pagination.pagination_type}")
+        return " | ".join(pieces)
+
+
 class NodeFormula(NodeSingleInput):
     """Settings for a node that applies a formula to create/modify a column."""
 

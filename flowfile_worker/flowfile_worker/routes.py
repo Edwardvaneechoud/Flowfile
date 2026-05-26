@@ -14,6 +14,8 @@ from flowfile_worker.create.models import ReceivedTable
 from flowfile_worker.external_sources.google_analytics_source.main import read_google_analytics
 from flowfile_worker.external_sources.google_analytics_source.models import GoogleAnalyticsReadSettings
 from flowfile_worker.external_sources.kafka_source.main import read_kafka
+from flowfile_worker.external_sources.rest_api_source.main import read_rest_api
+from flowfile_worker.external_sources.rest_api_source.models import RestApiReadSettings
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
 from flowfile_worker.spawner import (
@@ -371,6 +373,41 @@ def store_google_analytics_result(
 
     except Exception as e:
         logger.error("Error processing Google Analytics source: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/store_rest_api_read_result")
+def store_rest_api_result(
+    rest_api_read_settings: RestApiReadSettings, background_tasks: BackgroundTasks
+) -> models.Status:
+    """Fetch from a REST API in the background and persist it as an Arrow IPC file.
+
+    Follows the same offload pattern as ``store_google_analytics_read_result`` /
+    ``store_database_read_result``: the HTTP round-trips, pagination, and retries
+    run in a worker subprocess so the core's event loop never blocks on the API.
+    """
+    logger.info("Processing REST API source operation for url: %s", rest_api_read_settings.url)
+    try:
+        task_id = str(uuid.uuid4())
+        file_path = os.path.join(
+            create_and_get_default_cache_dir(rest_api_read_settings.flowfile_flow_id), f"{task_id}.arrow"
+        )
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path, result_type="polars")
+        status_dict[task_id] = status
+        logger.info("Starting REST API read task: %s", task_id)
+        background_tasks.add_task(
+            start_generic_process,
+            func_ref=read_rest_api,
+            file_ref=file_path,
+            flowfile_flow_id=rest_api_read_settings.flowfile_flow_id,
+            flowfile_node_id=rest_api_read_settings.flowfile_node_id,
+            task_id=task_id,
+            kwargs={"settings": rest_api_read_settings},
+        )
+        return status
+
+    except Exception as e:
+        logger.error("Error processing REST API source: %s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
