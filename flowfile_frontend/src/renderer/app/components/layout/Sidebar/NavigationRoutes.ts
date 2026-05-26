@@ -44,13 +44,6 @@ export default {
       },
     },
     {
-      name: "notebook",
-      displayName: "menu.notebook",
-      meta: {
-        icon: "fa-solid fa-book",
-      },
-    },
-    {
       name: "nodeDesigner",
       displayName: "menu.nodeDesigner",
       meta: {
