@@ -1161,7 +1161,10 @@ class KernelManager:
 
     async def start_kernel(self, kernel_id: str) -> KernelInfo:
         kernel = self._get_kernel_or_raise(kernel_id)
-        if kernel.state == KernelState.IDLE:
+        # Treat STARTING as a no-op too: a kernel already mid-start must not be
+        # started again (a concurrent call would create a second container with
+        # the same name and 409). _ensure_running waits on STARTING separately.
+        if kernel.state in (KernelState.IDLE, KernelState.STARTING):
             return kernel
 
         base_image = _resolve_image(kernel.image_flavour, kernel.custom_image, self._docker)
@@ -1221,7 +1224,10 @@ class KernelManager:
     def start_kernel_sync(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> KernelInfo:
         """Synchronous version of start_kernel() for use from non-async code."""
         kernel = self._get_kernel_or_raise(kernel_id)
-        if kernel.state == KernelState.IDLE:
+        # Treat STARTING as a no-op too: a kernel already mid-start must not be
+        # started again (a concurrent call would create a second container with
+        # the same name and 409). _ensure_running waits on STARTING separately.
+        if kernel.state in (KernelState.IDLE, KernelState.STARTING):
             return kernel
 
         base_image = _resolve_image(kernel.image_flavour, kernel.custom_image, self._docker)

@@ -51,10 +51,12 @@
           <button
             v-if="store.selectedKernelId && !kernelReady"
             class="start-btn"
-            title="Start the selected kernel"
+            :disabled="starting"
+            :title="starting ? 'Kernel is starting…' : 'Start the selected kernel'"
             @click="onStartKernel"
           >
-            <i class="fa-solid fa-play"></i> Start
+            <i :class="starting ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-play'"></i>
+            {{ starting ? "Starting…" : "Start" }}
           </button>
           <span class="save-state">{{ store.saving ? "Saving…" : "Saved" }}</span>
         </header>
@@ -98,7 +100,7 @@ import NotebookEditor from "../../components/nodes/node-types/elements/pythonScr
 const store = useNotebookStore();
 // Reuse the shared kernel composable (list + polling + start) rather than
 // re-implementing kernel loading in the notebook store.
-const { kernels, startKernel } = useKernelManager();
+const { kernels, startKernel, isActionInProgress } = useKernelManager();
 const nameDraft = ref("");
 
 // Local source of truth for the editor — like PythonScript.vue, this keeps the
@@ -124,6 +126,13 @@ const selectedKernel = computed(
 const kernelReady = computed(() => {
   const k = selectedKernel.value;
   return !!k && (k.state === "idle" || k.state === "executing");
+});
+// True while a start is in flight (request pending or container booting) so the
+// Start button can be disabled — clicking it again would spawn a duplicate
+// container with the same name and fail.
+const starting = computed(() => {
+  const id = store.selectedKernelId;
+  return (!!id && isActionInProgress(id)) || selectedKernel.value?.state === "starting";
 });
 
 watch(
@@ -172,7 +181,7 @@ const onKernelChange = (id: string | null) => {
 };
 
 const onStartKernel = () => {
-  if (store.selectedKernelId) void startKernel(store.selectedKernelId);
+  if (store.selectedKernelId && !starting.value) void startKernel(store.selectedKernelId);
 };
 </script>
 
