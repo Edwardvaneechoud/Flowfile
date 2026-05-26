@@ -1,8 +1,12 @@
+import socket
+import time
+
 import polars as pl
 import pytest
 
 from flowfile_worker.external_sources.sql_source.main import (
     read_sql_source,
+    verify_database_reachable,
     write_df_to_database,
     write_serialized_df_to_database,
 )
@@ -30,6 +34,42 @@ def test_database_connection_uri_parsing(pw):
     result_uri = database_connection.create_uri()
     expected_uri = 'postgresql://testuser:testpass@localhost:5433'
     assert result_uri == expected_uri, f"Expected URI: {expected_uri}, but got: {result_uri}"
+
+
+def _free_port() -> int:
+    """Return a TCP port that is (almost certainly) not listening."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def test_verify_database_reachable_raises_fast_on_closed_port():
+    connection = DataBaseConnection(host="127.0.0.1", port=_free_port(), database_type="postgresql",
+                                    username="x", database="d")
+    start = time.perf_counter()
+    with pytest.raises(ConnectionError):
+        verify_database_reachable(connection, timeout=3.0)
+    # connectorx would retry for ~30s; the pre-check must surface it immediately.
+    assert time.perf_counter() - start < 5.0
+
+
+def test_verify_database_reachable_skips_sqlite_and_url():
+    # File-based and url-based connections have no usable host/port: must not raise.
+    verify_database_reachable(DataBaseConnection(database_type="sqlite", database="sqlite:///x.db"))
+    verify_database_reachable(DataBaseConnection(database_type="postgresql",
+                                                 url="postgresql://u:p@unreachable-host:5432/d"))
+
+
+def test_read_sql_source_fails_fast_on_unreachable_db():
+    connection = DataBaseConnection(host="127.0.0.1", port=_free_port(), database_type="postgresql",
+                                    username="testuser", database="testdb")
+    settings = DatabaseReadSettings(connection=connection, query="SELECT 1")
+    start = time.perf_counter()
+    with pytest.raises(ConnectionError):
+        read_sql_source(settings)
+    assert time.perf_counter() - start < 5.0
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database connection cannot be established")
