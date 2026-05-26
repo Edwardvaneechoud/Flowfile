@@ -4,6 +4,7 @@ import inspect
 import os
 import re
 from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin
 
 import polars as pl
@@ -18,6 +19,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas import input_schema, transform_schema
+from flowfile_core.schemas.schemas import GroupColor
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
 from flowfile_frame.config import logger
 from flowfile_frame.expr import Column, Expr, col, lit
@@ -2211,6 +2213,43 @@ class FlowFrame:
             maintain_order=maintain_order,
             description=description,
         )
+
+    @contextmanager
+    def group(self, name: str, *, color: GroupColor | None = None) -> Iterator[FlowFrame]:
+        """Group every node created inside this block into a labeled visual container.
+
+        Organizational only: groups affect the canvas overview/layout, never execution
+        or results. This is unrelated to :meth:`group_by` (which performs aggregation).
+
+        Example:
+            >>> with df.group("Clean customer data"):
+            ...     df = df.filter(col("age") > 18).select(["id", "name"])
+        """
+        before = set(self.flow_graph._node_db.keys())
+        try:
+            yield self
+        finally:
+            # Group only nodes that are new in this block AND not already grouped
+            # (so an inner `with df.group(...)` keeps its own membership).
+            new_node_ids = [
+                node_id
+                for node_id, node in self.flow_graph._node_db.items()
+                if node_id not in before and getattr(node.setting_input, "group_id", None) is None
+            ]
+            if new_node_ids:
+                self.flow_graph.create_group(name, new_node_ids, color=color)
+
+    def set_group(self, name: str, *, color: GroupColor | None = None) -> FlowFrame:
+        """Assign this frame's current node to a (new or existing) named visual group.
+
+        Returns ``self`` for chaining. Organizational only; see :meth:`group` for the
+        block form. Unrelated to :meth:`group_by` (aggregation).
+
+        Example:
+            >>> df = df.filter(col("age") > 18).set_group("Clean customer data")
+        """
+        self.flow_graph.assign_node_to_named_group(self.node_id, name, color=color)
+        return self
 
     def to_graph(self):
         """Get the underlying ETL graph."""

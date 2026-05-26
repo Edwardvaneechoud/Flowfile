@@ -372,27 +372,43 @@ const executionLocationOptions = ref<ExecutionLocationOption[]>([
 
 const emit = defineEmits(["openFlow", "refreshFlow", "flowSaved", "logs-start", "logs-stop"]);
 
-const loadFlowSettings = async () => {
-  if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;
+// Collapse the concurrent watcher-triggered + explicit loadFlowSettings calls fired on
+// flow load (setFlowId fires the flow_id watcher while initialSetup also calls explicitly)
+// into one getFlowSettings + one run_status. Keyed by flow_id; cleared once settled.
+let settingsLoad: { id: number; promise: Promise<void> } | null = null;
 
-  flowSettings.value = await getFlowSettings(nodeStore.flow_id);
-  if (!flowSettings.value) return;
+const loadFlowSettings = async (): Promise<void> => {
+  const flowId = nodeStore.flow_id;
+  if (!(flowId && flowId > 0)) return;
+  if (settingsLoad && settingsLoad.id === flowId) return settingsLoad.promise;
 
-  flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
-  flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? false;
-  flowSettings.value.parameters = flowSettings.value.parameters ?? [];
-  editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
-  editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
+  const promise = (async () => {
+    flowSettings.value = await getFlowSettings(flowId);
+    if (!flowSettings.value) return;
 
-  if (!runButton.value) return;
+    flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
+    flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? false;
+    flowSettings.value.parameters = flowSettings.value.parameters ?? [];
+    editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
+    editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
 
-  if (flowSettings.value.is_running) {
-    editorStore.isRunning = true;
-    runButton.value.startPolling(runButton.value.checkRunStatus);
-  } else {
-    editorStore.isRunning = false;
-    runButton.value.stopPolling();
-    updateRunStatus(nodeStore.flow_id, nodeStore);
+    if (!runButton.value) return;
+
+    if (flowSettings.value.is_running) {
+      editorStore.isRunning = true;
+      runButton.value.startPolling(runButton.value.checkRunStatus);
+    } else {
+      editorStore.isRunning = false;
+      runButton.value.stopPolling();
+      updateRunStatus(flowId, nodeStore);
+    }
+  })();
+
+  settingsLoad = { id: flowId, promise };
+  try {
+    await promise;
+  } finally {
+    if (settingsLoad?.id === flowId) settingsLoad = null;
   }
 };
 
