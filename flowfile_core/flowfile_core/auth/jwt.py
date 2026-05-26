@@ -283,25 +283,54 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
 async def get_user_or_internal_service(
     token: str = Depends(oauth2_scheme),
     x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
+    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
     db: Session = Depends(get_db),
 ) -> User:
     """Auth dependency that accepts either JWT or internal service token.
 
     Used for endpoints that need to be accessible from both:
     - External clients (using JWT authentication)
-    - Internal services like kernel (using X-Internal-Token header)
+    - Internal services like kernel (using X-Internal-Token + X-Kernel-Id)
 
-    For internal service auth, returns a synthetic "service" user.
-    For JWT auth, delegates to get_current_user to avoid code duplication.
+    When the internal token authenticates and X-Kernel-Id is provided, returns
+    the kernel's actual owner so artifact / catalog ownership lands on the
+    right user in multi-user deployments. Falls back to a synthetic
+    ``_internal_service`` user when no kernel id is supplied (legacy callers).
     """
     # First, try internal service token
     if x_internal_token:
         try:
             if verify_internal_token(x_internal_token):
-                # Return synthetic service user for artifact ownership
-                # The user ID is configurable via FLOWFILE_INTERNAL_SERVICE_USER_ID
-                # In production, ensure this user exists in the database
-                # Default is 1, which is typically the first/admin user
+                # When the kernel identifies itself, route ownership to the
+                # kernel's actual owner. The X-Kernel-Id header is not a secret:
+                # the internal token gates access, and the kernel container is
+                # started by Core with this id baked in as an env var.
+                if x_kernel_id:
+                    kernel_row = (
+                        db.query(db_models.Kernel)
+                        .filter(db_models.Kernel.id == x_kernel_id)
+                        .first()
+                    )
+                    if kernel_row is not None:
+                        owner = (
+                            db.query(db_models.User)
+                            .filter(db_models.User.id == kernel_row.user_id)
+                            .first()
+                        )
+                        if owner is not None and not owner.disabled:
+                            return User(
+                                username=owner.username,
+                                id=owner.id,
+                                email=owner.email,
+                                full_name=owner.full_name,
+                                disabled=owner.disabled,
+                                is_admin=owner.is_admin,
+                                must_change_password=owner.must_change_password,
+                            )
+
+                # Fall through to synthetic service user. ID is configurable
+                # via FLOWFILE_INTERNAL_SERVICE_USER_ID; default 1 (typically
+                # the first/admin user).
                 service_user_id = int(os.environ.get("FLOWFILE_INTERNAL_SERVICE_USER_ID", "1"))
                 return User(
                     username="_internal_service",

@@ -26,11 +26,19 @@ def _make_manager(shared_volume: str) -> KernelManager:
         mgr._docker = MagicMock()
         mgr._kernels = {}
         mgr._kernel_owners = {}
+        mgr._scratch_flow_ids = {}
         mgr._shared_volume = shared_volume
+        # Catalog tables dir is irrelevant for resolve_node_paths tests but
+        # ``to_kernel_path`` references it; point at a sentinel outside the
+        # shared tree so the prefix-match branch never accidentally fires.
+        mgr._catalog_tables_dir = "/__catalog_tables_unused__"
         mgr._docker_network = None
         mgr._kernel_volume = None
         mgr._kernel_volume_type = None
         mgr._kernel_mount_target = None
+        mgr._catalog_volume = None
+        mgr._catalog_volume_type = None
+        mgr._catalog_mount_target = None
     return mgr
 
 

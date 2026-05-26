@@ -23,6 +23,8 @@ import type {
   OperationResponse,
 } from "../types";
 import { FlowApi, NodeApi } from "../api";
+import { buildGroupNode, groupNodeId, useNodeGroups } from "./useNodeGroups";
+import { fetchNodeTemplates } from "./useNodes";
 import { useEditorStore } from "../stores/editor-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
 import { DEFAULT_OUTPUT_HANDLE, outputHandle, outputLabel } from "../utils/outputHandle";
@@ -160,9 +162,7 @@ const componentCache: Map<string, Promise<any>> = new Map();
  */
 export async function getNodeTemplateByItem(item: string): Promise<NodeTemplate | undefined> {
   try {
-    const { default: axios } = await import("axios");
-    const response = await axios.get("/node_list");
-    const allNodes = response.data as NodeTemplate[];
+    const allNodes = await fetchNodeTemplates();
     return allNodes.find((node) => node.item === item);
   } catch (error) {
     console.error("Failed to get node template for item:", item, error);
@@ -298,6 +298,8 @@ export default function useDragAndDrop() {
     findEdge,
     fromObject,
   } = useVueFlow();
+
+  const { addGroupProxyEdges } = useNodeGroups();
 
   watch(isDragging, (dragging) => {
     document.body.style.userSelect = dragging ? "none" : "";
@@ -438,16 +440,77 @@ export default function useDragAndDrop() {
 
   async function importFlow(flowData: VueFlowInput) {
     await createEmptyFlow();
-    const allNodes = await Promise.all(flowData.node_inputs.map((node) => getNodeToAdd(node)));
+    const childNodes = await Promise.all(flowData.node_inputs.map((node) => getNodeToAdd(node)));
 
-    addNodes(allNodes);
+    // Build group container nodes, then reparent member nodes — converting each
+    // member's absolute position to be relative to its group origin (VueFlow stores
+    // child positions relative to the parent).
+    const groups = flowData.groups ?? [];
+    const groupById = new Map(groups.map((group) => [group.id, group]));
+    const groupDepth = (group: (typeof groups)[number]): number => {
+      let depth = 0;
+      let current: (typeof groups)[number] | undefined = group;
+      const seen = new Set<number>();
+      while (current?.parent_group_id != null && !seen.has(current.id)) {
+        seen.add(current.id);
+        depth += 1;
+        current = groupById.get(current.parent_group_id);
+      }
+      return depth;
+    };
+    // Hidden if the group itself or any ancestor is collapsed.
+    const anyCollapsedFrom = (groupId: number): boolean => {
+      let current = groupById.get(groupId);
+      const seen = new Set<number>();
+      while (current && !seen.has(current.id)) {
+        if (current.collapsed) return true;
+        seen.add(current.id);
+        current =
+          current.parent_group_id != null ? groupById.get(current.parent_group_id) : undefined;
+      }
+      return false;
+    };
+
+    // Parents before children so a nested group's parent exists first; nested groups get a
+    // parent-relative position and a depth-based z-index (deeper above shallower, below nodes).
+    const groupNodes: Node[] = [...groups]
+      .sort((a, b) => groupDepth(a) - groupDepth(b))
+      .map((group) => {
+        const node = buildGroupNode(group, groupDepth(group));
+        if (group.parent_group_id != null) {
+          const parent = groupById.get(group.parent_group_id);
+          if (parent) {
+            node.parentNode = groupNodeId(group.parent_group_id);
+            node.position = {
+              x: group.x_position - parent.x_position,
+              y: group.y_position - parent.y_position,
+            };
+          }
+          if (anyCollapsedFrom(group.parent_group_id)) node.hidden = true;
+        }
+        return node;
+      });
+    flowData.node_inputs.forEach((input, index) => {
+      if (input.group_id == null) return;
+      const group = groupById.get(input.group_id);
+      if (!group) return;
+      childNodes[index].parentNode = groupNodeId(group.id);
+      childNodes[index].position = {
+        x: input.pos_x - group.x_position,
+        y: input.pos_y - group.y_position,
+      };
+      if (anyCollapsedFrom(group.id)) childNodes[index].hidden = true;
+    });
+
+    // Groups first so a parent exists before its children reference it.
+    addNodes([...groupNodes, ...childNodes]);
     id = getMaxDataId(flowData.node_inputs);
 
     // Add labels to edges from source node output handles, node_reference, or df_{nodeId} default
     const editorStore = useEditorStore();
     const edgesWithLabels = flowData.node_edges.map((edge) => {
       if (!editorStore.showEdgeLabels) return edge;
-      const sourceNode = allNodes.find((n) => n.id === edge.source);
+      const sourceNode = childNodes.find((n) => n.id === edge.source);
       if (sourceNode?.data?.outputs) {
         const output = (sourceNode.data.outputs as NodeHandle[]).find(
           (o) => o.id === edge.sourceHandle,
@@ -463,6 +526,20 @@ export default function useDragAndDrop() {
     });
 
     addEdges(edgesWithLabels);
+
+    // Re-create proxy edges for groups that load collapsed and are not themselves hidden
+    // inside a collapsed ancestor.
+    const collapsedGroups = groups.filter(
+      (group) =>
+        group.collapsed &&
+        (group.parent_group_id == null || !anyCollapsedFrom(group.parent_group_id)),
+    );
+    if (collapsedGroups.length > 0) {
+      await nextTick();
+      for (const group of collapsedGroups) {
+        addGroupProxyEdges(groupNodeId(group.id));
+      }
+    }
   }
 
   async function onDrop(event: DragEvent, flowId: number): Promise<OperationResponse | undefined> {

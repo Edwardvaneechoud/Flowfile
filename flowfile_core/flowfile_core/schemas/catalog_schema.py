@@ -202,6 +202,43 @@ class CatalogTableUpdate(BaseModel):
     namespace_id: int | None = None
 
 
+class CatalogTableFromDataCreate(BaseModel):
+    """Register a new catalog table from already-materialized data.
+
+    Used by the kernel runtime's ``flowfile_ctx.write_catalog_table`` to record
+    a table whose Delta directory the kernel has just written. Unlike
+    ``CatalogTableCreate``, no worker-side materialization is performed —
+    Core only persists the metadata record.
+    """
+
+    name: str
+    table_path: str
+    namespace_id: int | None = None
+    description: str | None = None
+    storage_format: str = "delta"
+    schema_columns: list[dict[str, str]] | None = None
+    row_count: int | None = None
+    column_count: int | None = None
+    size_bytes: int | None = None
+
+
+class CatalogTableRefreshRequest(BaseModel):
+    """Refresh the metadata of an existing catalog table after an in-place data write.
+
+    Used by the kernel runtime after append / upsert / update / delete writes
+    that mutate an existing Delta directory: the kernel sends back the new
+    row_count / size_bytes / schema so Core's record stays consistent.
+    """
+
+    table_path: str | None = None
+    storage_format: str | None = None
+    schema_columns: list[dict[str, str]] | None = None
+    row_count: int | None = None
+    column_count: int | None = None
+    size_bytes: int | None = None
+    description: str | None = None
+
+
 class VirtualFlowTableCreate(BaseModel):
     name: str
     namespace_id: int | None = None
@@ -256,6 +293,11 @@ class CatalogTableOut(BaseModel):
     row_count: int | None = None
     column_count: int | None = None
     size_bytes: int | None = None
+    # Absolute path of the table's storage (Delta directory or parquet file).
+    # Needed by the kernel runtime so ``flowfile_ctx.read_catalog_table`` can
+    # open the Delta directory locally; tolerated as ``None`` for legacy rows
+    # or virtual tables that don't materialise to disk.
+    file_path: str | None = None
     source_registration_id: int | None = None
     source_registration_name: str | None = None
     source_run_id: int | None = None

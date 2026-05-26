@@ -5,7 +5,10 @@ Run custom Python code in isolated Docker containers with full access to your fl
 !!! warning "Beta Feature"
     Kernel execution is currently in **beta**. The core functionality is working, but some features are still under active development and optimization. See [Known Limitations](#known-limitations) for details.
 
-Kernels provide a sandboxed execution environment for Python Script nodes. Each kernel runs inside its own Docker container with configurable resources (CPU, memory, GPU), persistent namespaces across executions, and access to the `flowfile` API for reading inputs, writing outputs, and managing artifacts.
+Kernels provide a sandboxed execution environment for Python Script nodes. Each kernel runs inside its own Docker container with configurable resources (CPU, memory, GPU), persistent namespaces across executions, and access to the `flowfile_ctx` API for reading inputs, writing outputs, and managing artifacts.
+
+!!! info "Renamed from `flowfile`"
+    The kernel-context global was previously called `flowfile`. It has been renamed to `flowfile_ctx` to avoid colliding with the `flowfile` PyPI package, which you may want to `import` inside a cell. The old name still works (it forwards to `flowfile_ctx` and emits a `DeprecationWarning` on first use) but will be removed in a future release.
 
 ---
 
@@ -134,7 +137,7 @@ Output types rendered:
 - **Charts** — matplotlib and plotly figures rendered inline
 - **Images** — PIL images displayed as PNG
 - **HTML** — rendered in a sandboxed iframe
-- **Text** — plain text from `print()` statements or `flowfile.display()`
+- **Text** — plain text from `print()` statements or `flowfile_ctx.display()`
 - **Errors** — tracebacks displayed in a red block
 
 ### Expanded Editor
@@ -167,7 +170,7 @@ When multiple nodes are connected to a Python Script node, each input gets a **n
 
 *Edge labels on the canvas showing the names of each connection into the Python Script node*
 
-The Python Script node settings panel displays an **Available Inputs** section that lists all connected inputs by name and source node type. Use these names with `flowfile.read_input("name")` to read a specific input.
+The Python Script node settings panel displays an **Available Inputs** section that lists all connected inputs by name and source node type. Use these names with `flowfile_ctx.read_input("name")` to read a specific input.
 
 ![Available Inputs panel](../../assets/images/guides/kernels/available-inputs-panel.png)
 
@@ -175,14 +178,14 @@ The Python Script node settings panel displays an **Available Inputs** section t
 
 ```python
 # Read the main input as a Polars LazyFrame
-df = flowfile.read_input()
+df = flowfile_ctx.read_input()
 
 # Read a named input (when multiple inputs are connected)
-orders = flowfile.read_input("orders")
-customers = flowfile.read_input("customers")
+orders = flowfile_ctx.read_input("orders")
+customers = flowfile_ctx.read_input("customers")
 
 # Read all inputs at once
-all_inputs = flowfile.read_inputs()
+all_inputs = flowfile_ctx.read_inputs()
 # Returns: {"main": [LazyFrame, ...], "orders": [LazyFrame, ...]}
 ```
 
@@ -197,7 +200,7 @@ all_inputs = flowfile.read_inputs()
 A Python Script node can publish multiple named outputs, each flowing to a different downstream node. To set this up:
 
 1. In the node settings panel, add output names under **Output Names** (e.g. `total_sales`, `sales_per_city`)
-2. In your code, use `flowfile.publish_output(df, "name")` to publish data to each named output
+2. In your code, use `flowfile_ctx.publish_output(df, "name")` to publish data to each named output
 
 ![Named output configuration](../../assets/images/guides/kernels/named-output-connections.png)
 
@@ -206,18 +209,18 @@ A Python Script node can publish multiple named outputs, each flowing to a diffe
 ```python
 # Publish a single (default) output
 result = df.filter(pl.col("amount") > 100).select("id", "amount", "date")
-flowfile.publish_output(result)
+flowfile_ctx.publish_output(result)
 
 # Publish multiple named outputs
-flowfile.publish_output(sales_df, "total_sales")
-flowfile.publish_output(unique_output, "sales_per_city")
+flowfile_ctx.publish_output(sales_df, "total_sales")
+flowfile_ctx.publish_output(unique_output, "sales_per_city")
 ```
 
 Both `pl.LazyFrame` and `pl.DataFrame` are accepted by `publish_output`.
 
 ### Displaying Results
 
-Use `flowfile.display()` to render rich output in the node's output panel:
+Use `flowfile_ctx.display()` to render rich output in the node's output panel:
 
 ```python
 # Display a matplotlib chart
@@ -226,7 +229,7 @@ import matplotlib.pyplot as plt
 fig, ax = plt.subplots()
 ax.bar(["A", "B", "C"], [10, 20, 15])
 ax.set_title("Sales by Category")
-flowfile.display(fig, title="Sales Chart")
+flowfile_ctx.display(fig, title="Sales Chart")
 ```
 
 Supported display types:
@@ -247,10 +250,10 @@ Supported display types:
 Send real-time log messages to the flow viewer:
 
 ```python
-flowfile.log("Processing started")
-flowfile.log_info("Loaded 1,234 rows")
-flowfile.log_warning("Column 'price' has 5 null values")
-flowfile.log_error("Failed to parse date column")
+flowfile_ctx.log("Processing started")
+flowfile_ctx.log_info("Loaded 1,234 rows")
+flowfile_ctx.log_warning("Column 'price' has 5 null values")
+flowfile_ctx.log_error("Failed to parse date column")
 ```
 
 ---
@@ -266,19 +269,19 @@ Artifacts let you persist Python objects (models, arrays, DataFrames) across exe
 from sklearn.ensemble import RandomForestClassifier
 
 model = RandomForestClassifier().fit(X_train, y_train)
-flowfile.publish_artifact("rf_model", model)
+flowfile_ctx.publish_artifact("rf_model", model)
 
 # In a later execution or different node in the same flow:
-model = flowfile.read_artifact("rf_model")
+model = flowfile_ctx.read_artifact("rf_model")
 predictions = model.predict(X_test)
 
 # List all artifacts in this flow
-artifacts = flowfile.list_artifacts()
+artifacts = flowfile_ctx.list_artifacts()
 for a in artifacts:
     print(f"{a.name} (node {a.node_id})")
 
 # Delete an artifact
-flowfile.delete_artifact("rf_model")
+flowfile_ctx.delete_artifact("rf_model")
 ```
 
 Artifacts are automatically serialized using the best format for the object type:
@@ -295,7 +298,7 @@ Global artifacts are stored in the Flowfile catalog and persist beyond the curre
 
 ```python
 # Publish to the global catalog
-artifact_id = flowfile.publish_global(
+artifact_id = flowfile_ctx.publish_global(
     "sales_model_v2",
     model,
     description="Random Forest trained on Q4 data",
@@ -303,18 +306,18 @@ artifact_id = flowfile.publish_global(
 )
 
 # Retrieve from the global catalog
-model = flowfile.get_global("sales_model_v2")
+model = flowfile_ctx.get_global("sales_model_v2")
 
 # Get a specific version
-model_v1 = flowfile.get_global("sales_model_v2", version=1)
+model_v1 = flowfile_ctx.get_global("sales_model_v2", version=1)
 
 # List all global artifacts
-artifacts = flowfile.list_global_artifacts(tags=["ml"])
+artifacts = flowfile_ctx.list_global_artifacts(tags=["ml"])
 for a in artifacts:
     print(f"{a.name} v{a.version} — {a.python_type}")
 
 # Delete a global artifact
-flowfile.delete_global_artifact("sales_model_v2")
+flowfile_ctx.delete_global_artifact("sales_model_v2")
 ```
 
 !!! note "Registered Flows Required"
@@ -323,15 +326,79 @@ flowfile.delete_global_artifact("sales_model_v2")
 !!! tip "Artifact Persistence"
     Local artifacts are automatically saved to disk and recovered if the kernel restarts — no configuration needed.
 
+### Catalog Tables
+
+Kernel cells can read and write Delta-format catalog tables directly, mirroring the ``flowfile_frame.read_catalog_table`` / ``write_catalog_table`` API. The kernel performs the Delta write locally (it has direct access to the catalog storage) and reports the resulting metadata to Core — Core never materialises the dataset.
+
+The kernel exposes three typed handles — `CatalogRef`, `SchemaRef`, `TableRef` — for path-style navigation. The top-level `read_catalog_table` / `write_catalog_table` still accept plain strings for one-shot scripts.
+
+```python
+import polars as pl
+
+# Navigate the hierarchy
+cat = flowfile_ctx.get_catalog("General")           # CatalogRef
+sch = cat.get_schema("default")                     # SchemaRef
+orders = sch.get_table_ref("orders")                # TableRef (may not exist yet)
+
+# Shortcut from a catalog ref
+orders = cat.get_table_ref(schema_name="default", table_name="orders")
+
+# Or grab the seeded default schema directly
+sch = flowfile_ctx.default_schema()
+
+# Discover everything available
+for cat in flowfile_ctx.list_catalogs():
+    print(cat.name)
+    for sch in cat.list_schemas():
+        for tbl in sch.list_tables():
+            print(f"  {sch.name}.{tbl.name} ({tbl.row_count} rows)")
+
+# Read via a ref — equivalent to flowfile_ctx.read_catalog_table(orders)
+df = orders.read()
+df_v3 = orders.read(delta_version=3)   # time travel
+
+# Write via the ref — creates the table if it doesn't exist yet
+new_data = pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
+orders = orders.write(new_data, write_mode="overwrite")  # returns refreshed ref
+
+# Per-mode writes
+orders.write(new_data, write_mode="append")
+orders.write(new_data, write_mode="upsert", merge_keys=["id"])
+orders.write(new_data, write_mode="update", merge_keys=["id"])
+orders.write(new_data.select("id"), write_mode="delete", merge_keys=["id"])
+orders.write(new_data, write_mode="error")   # raises if table already exists
+
+# Schema-level convenience: same effect, no intermediate ref
+sch.write_table(new_data, "customers", write_mode="overwrite")
+sch.read_table("customers")
+
+# String form still works for one-shot usage
+lf = flowfile_ctx.read_catalog_table("orders")              # default schema
+lf = flowfile_ctx.read_catalog_table("orders", schema="sales")
+flowfile_ctx.write_catalog_table(new_data, "customers", write_mode="overwrite")
+```
+
+| `write_mode` | Behaviour | Requires `merge_keys` |
+|--------------|-----------|------------------------|
+| `overwrite`  | Replace the table's data (Delta version increments). | No |
+| `append`     | Add rows; schema_mode="merge" so new columns are tolerated. | No |
+| `upsert`     | Insert new rows, update existing rows matched by merge keys. | Yes |
+| `update`     | Update only existing rows that match merge keys. | Yes |
+| `delete`     | Remove rows matching merge keys. | Yes |
+| `error`      | Fail if the table already exists. | No |
+
+!!! note "No `virtual` mode in the kernel"
+    `flowfile_frame.write_catalog_table` also supports a `"virtual"` mode that backs a table by a registered flow. The kernel intentionally does not expose flow registration or virtual writes — author those flows from the visual editor or `flowfile_frame` instead.
+
 ---
 
 ## Shared Files
 
-Use `flowfile.get_shared_location()` to write files that are accessible across all Flowfile services and survive container restarts:
+Use `flowfile_ctx.get_shared_location()` to write files that are accessible across all Flowfile services and survive container restarts:
 
 ```python
 # Write a CSV to the shared directory
-output_path = flowfile.get_shared_location("reports/monthly.csv")
+output_path = flowfile_ctx.get_shared_location("reports/monthly.csv")
 df.collect().write_csv(output_path)
 
 # The file is now accessible from other nodes and services
@@ -358,9 +425,9 @@ When a user drops your kernel-enabled custom node into a flow, the node settings
 Your `process` method code stays the same — the `self.settings_schema` access pattern works identically. Behind the scenes, the Node Designer generates a self-contained kernel script that:
 
 1. Creates proxy classes replicating `self.settings_schema.section.component.value`
-2. Reads inputs via `flowfile.read_input()`
+2. Reads inputs via `flowfile_ctx.read_input()`
 3. Runs your process method body
-4. Publishes outputs via `flowfile.publish_output()` for each named output
+4. Publishes outputs via `flowfile_ctx.publish_output()` for each named output
 
 The full `flowfile` API (artifacts, display, logging) is available inside kernel-enabled custom nodes.
 
@@ -373,7 +440,7 @@ For details on building custom nodes, see [Node Designer](node-designer.md#kerne
 Kernel execution is in beta. The following limitations are known and being worked on:
 
 - **Flow-to-code export** — Python Script nodes that use kernel execution are not yet included in the [Export to Python](tutorials/code-generator.md) code generator. Kernel nodes will be skipped in the generated code.
-- **Artifact state visibility** — There is currently no UI to browse or inspect the contents of stored artifacts. You can list artifacts via `flowfile.list_artifacts()` in code, but there is no visual artifact explorer yet.
+- **Artifact state visibility** — There is currently no UI to browse or inspect the contents of stored artifacts. You can list artifacts via `flowfile_ctx.list_artifacts()` in code, but there is no visual artifact explorer yet.
 - **Python package versioning** — Packages specified during kernel creation are installed via `pip install` at container startup without version pinning. There is no lock file or reproducible environment mechanism yet. To pin versions, specify them explicitly in the packages field (e.g. `scikit-learn==1.4.0, pandas==2.1.0`).
 
 ---

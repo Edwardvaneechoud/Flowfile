@@ -1,7 +1,14 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import type { Ref } from "vue";
 import { KernelApi } from "../../api/kernel.api";
-import type { DockerStatus, KernelInfo, KernelConfig, KernelMemoryInfo } from "../../types";
+import type {
+  DockerStatus,
+  FlavourInfo,
+  ImageFlavour,
+  KernelConfig,
+  KernelInfo,
+  KernelMemoryInfo,
+} from "../../types";
 
 const POLL_INTERVAL_MS = 5000;
 const MEMORY_POLL_INTERVAL_MS = 3000;
@@ -13,11 +20,18 @@ export function useKernelManager() {
   const dockerStatus: Ref<DockerStatus | null> = ref(null);
   const actionInProgress: Ref<Record<string, boolean>> = ref({});
   const memoryStats: Ref<Record<string, KernelMemoryInfo | null>> = ref({});
+  // Locked package versions per flavour, fetched once on mount.
+  const flavourInfo: Ref<Map<ImageFlavour, FlavourInfo>> = ref(new Map());
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let memoryPollTimer: ReturnType<typeof setInterval> | null = null;
 
   const checkDockerStatus = async () => {
     dockerStatus.value = await KernelApi.getDockerStatus();
+  };
+
+  const loadFlavours = async () => {
+    const list = await KernelApi.listFlavours();
+    flavourInfo.value = new Map(list.map((f) => [f.flavour, f]));
   };
 
   const loadKernels = async () => {
@@ -59,6 +73,16 @@ export function useKernelManager() {
     }
   };
 
+  const updateKernel = async (kernelId: string, update: { packages: string[] }) => {
+    actionInProgress.value[kernelId] = true;
+    try {
+      await KernelApi.update(kernelId, update);
+      await loadKernels();
+    } finally {
+      actionInProgress.value[kernelId] = false;
+    }
+  };
+
   const deleteKernel = async (kernelId: string) => {
     actionInProgress.value[kernelId] = true;
     try {
@@ -74,9 +98,7 @@ export function useKernelManager() {
   };
 
   const loadMemoryStats = async () => {
-    const running = kernels.value.filter(
-      (k) => k.state === "idle" || k.state === "executing",
-    );
+    const running = kernels.value.filter((k) => k.state === "idle" || k.state === "executing");
     const results: Record<string, KernelMemoryInfo | null> = {};
     await Promise.all(
       running.map(async (k) => {
@@ -111,7 +133,7 @@ export function useKernelManager() {
   };
 
   onMounted(async () => {
-    await checkDockerStatus();
+    await Promise.all([checkDockerStatus(), loadFlavours()]);
     try {
       await loadKernels();
       loadMemoryStats();
@@ -132,8 +154,11 @@ export function useKernelManager() {
     dockerStatus,
     actionInProgress,
     memoryStats,
+    flavourInfo,
     loadKernels,
+    checkDockerStatus,
     createKernel,
+    updateKernel,
     startKernel,
     stopKernel,
     deleteKernel,

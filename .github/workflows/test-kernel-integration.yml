@@ -53,10 +53,15 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi
 
-      - name: Build kernel Docker image
+      - name: Build kernel base Docker image
         run: |
-          docker build -t flowfile-kernel -f kernel_runtime/Dockerfile kernel_runtime/
-          docker images | grep flowfile-kernel
+          docker build -t flowfile-kernel-base:test -f kernel_runtime/Dockerfile kernel_runtime/
+          docker images | grep flowfile-kernel-base
+
+      - name: Build kernel ml Docker image
+        run: |
+          docker build --build-arg EXTRAS=ml -t flowfile-kernel-ml:test -f kernel_runtime/Dockerfile kernel_runtime/
+          docker images | grep flowfile-kernel-ml
 
       - name: Run kernel integration tests
         run: |
@@ -67,14 +72,17 @@ jobs:
           TEST_MODE: "1"
           # Generate internal token for kernel <-> Core auth
           FLOWFILE_INTERNAL_TOKEN: ${{ github.run_id }}-test-token
+          # Point core's KernelManager at the locally-built base image
+          FLOWFILE_KERNEL_IMAGE: flowfile-kernel-base:test
 
       - name: Clean up Docker resources
         if: always()
         run: |
           # Remove kernel containers
           docker ps -a --filter "name=flowfile-kernel" -q | xargs -r docker rm -f
-          # Remove kernel image
-          docker images --filter "reference=flowfile-kernel" -q | xargs -r docker rmi -f || true
+          # Remove kernel images (both flavours)
+          docker images --filter "reference=flowfile-kernel-base" -q | xargs -r docker rmi -f || true
+          docker images --filter "reference=flowfile-kernel-ml" -q | xargs -r docker rmi -f || true
           # Prune
           docker system prune -f
 

@@ -98,12 +98,13 @@ class TestExecuteEndpoint:
         assert data["success"] is True
         assert data["execution_time_ms"] > 0
 
-    def test_flowfile_module_available(self, client: TestClient):
+    def test_flowfile_ctx_module_available(self, client: TestClient):
+        """``flowfile_ctx`` is injected as the canonical kernel-context module."""
         resp = client.post(
             "/execute",
             json={
                 "node_id": 6,
-                "code": "print(type(flowfile).__name__)",
+                "code": "print(type(flowfile_ctx).__name__)",
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -127,9 +128,9 @@ class TestExecuteWithParquet:
 
         code = (
             "import polars as pl\n"
-            "df = flowfile.read_input()\n"
+            "df = flowfile_ctx.read_input()\n"
             "df = df.collect().with_columns((pl.col('x') * pl.col('y')).alias('product'))\n"
-            "flowfile.publish_output(df)\n"
+            "flowfile_ctx.publish_output(df)\n"
         )
 
         resp = client.post(
@@ -162,11 +163,11 @@ class TestExecuteWithParquet:
         pl.DataFrame({"id": [1, 2], "score": [90, 80]}).write_parquet(str(input_dir / "right.parquet"))
 
         code = (
-            "inputs = flowfile.read_inputs()\n"
+            "inputs = flowfile_ctx.read_inputs()\n"
             "left = inputs['left'][0].collect()\n"
             "right = inputs['right'][0].collect()\n"
             "merged = left.join(right, on='id')\n"
-            "flowfile.publish_output(merged)\n"
+            "flowfile_ctx.publish_output(merged)\n"
         )
 
         resp = client.post(
@@ -199,7 +200,7 @@ class TestExecuteWithParquet:
         pl.DataFrame({"v": [1, 2]}).write_parquet(str(input_dir / "main_0.parquet"))
         pl.DataFrame({"v": [3, 4]}).write_parquet(str(input_dir / "main_1.parquet"))
 
-        code = "df = flowfile.read_input().collect()\n" "flowfile.publish_output(df)\n"
+        code = "df = flowfile_ctx.read_input().collect()\n" "flowfile_ctx.publish_output(df)\n"
 
         resp = client.post(
             "/execute",
@@ -232,7 +233,7 @@ class TestExecuteWithParquet:
         pl.DataFrame({"v": [10, 20]}).write_parquet(str(input_dir / "a.parquet"))
         pl.DataFrame({"v": [30, 40]}).write_parquet(str(input_dir / "b.parquet"))
 
-        code = "df = flowfile.read_first().collect()\n" "flowfile.publish_output(df)\n"
+        code = "df = flowfile_ctx.read_first().collect()\n" "flowfile_ctx.publish_output(df)\n"
 
         resp = client.post(
             "/execute",
@@ -263,7 +264,7 @@ class TestExecuteWithParquet:
 
         pl.DataFrame({"v": [10, 20]}).write_parquet(str(input_dir / "main.parquet"))
 
-        code = "lf = flowfile.read_input()\n" "flowfile.publish_output(lf)\n"
+        code = "lf = flowfile_ctx.read_input()\n" "flowfile_ctx.publish_output(lf)\n"
 
         resp = client.post(
             "/execute",
@@ -280,6 +281,40 @@ class TestExecuteWithParquet:
         df_out = pl.read_parquet(str(output_dir / "main.parquet"))
         assert df_out["v"].to_list() == [10, 20]
 
+    def test_legacy_flowfile_alias_still_works_with_warning(self, client: TestClient, tmp_dir: Path):
+        """Legacy ``flowfile.foo()`` continues to forward to ``flowfile_ctx`` but
+        emits a ``DeprecationWarning`` so users migrate. Pins both halves of the
+        backward-compat contract: forwarding works AND warning fires.
+
+        (We assert via ``pytest.warns`` because pytest's warning subsystem
+        intercepts the warning before it reaches the kernel's ``stderr_buf``
+        redirect. In production there is no pytest interception, so the message
+        does reach the user-visible stderr panel.)"""
+        input_dir = tmp_dir / "inputs"
+        output_dir = tmp_dir / "outputs"
+        input_dir.mkdir()
+        output_dir.mkdir()
+
+        pl.DataFrame({"v": [1, 2, 3]}).write_parquet(str(input_dir / "main.parquet"))
+
+        code = "df = flowfile.read_input().collect()\nflowfile.publish_output(df)\n"
+
+        with pytest.warns(DeprecationWarning, match=r"flowfile_ctx"):
+            resp = client.post(
+                "/execute",
+                json={
+                    "node_id": 99,
+                    "code": code,
+                    "flow_id": 42,
+                    "input_paths": {"main": [str(input_dir / "main.parquet")]},
+                    "output_dir": str(output_dir),
+                },
+            )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        df_out = pl.read_parquet(str(output_dir / "main.parquet"))
+        assert df_out["v"].to_list() == [1, 2, 3]
+
 
 class TestArtifactEndpoints:
     def test_publish_artifact_via_execute(self, client: TestClient):
@@ -287,7 +322,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 20,
-                "code": 'flowfile.publish_artifact("my_dict", {"a": 1})',
+                "code": 'flowfile_ctx.publish_artifact("my_dict", {"a": 1})',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -304,7 +339,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 21,
                 "code": (
-                    'flowfile.publish_artifact("item_a", [1, 2])\n' 'flowfile.publish_artifact("item_b", "hello")\n'
+                    'flowfile_ctx.publish_artifact("item_a", [1, 2])\n' 'flowfile_ctx.publish_artifact("item_b", "hello")\n'
                 ),
                 "flow_id": 1,
                 "input_paths": {},
@@ -325,7 +360,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 22,
-                "code": 'flowfile.publish_artifact("tmp", 42)',
+                "code": 'flowfile_ctx.publish_artifact("tmp", 42)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -344,7 +379,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 23,
-                "code": 'flowfile.publish_artifact("x", 1)',
+                "code": 'flowfile_ctx.publish_artifact("x", 1)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -359,7 +394,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 24,
-                "code": 'flowfile.publish_artifact("model", 1)',
+                "code": 'flowfile_ctx.publish_artifact("model", 1)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -371,7 +406,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 25,
-                "code": 'flowfile.publish_artifact("model", 2)',
+                "code": 'flowfile_ctx.publish_artifact("model", 2)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -387,7 +422,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 26,
-                "code": 'flowfile.publish_artifact("temp", 99)',
+                "code": 'flowfile_ctx.publish_artifact("temp", 99)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -397,7 +432,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 27,
-                "code": 'flowfile.delete_artifact("temp")',
+                "code": 'flowfile_ctx.delete_artifact("temp")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -417,7 +452,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 24,
-                "code": 'flowfile.publish_artifact("model", "v1")',
+                "code": 'flowfile_ctx.publish_artifact("model", "v1")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -431,7 +466,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 24,
-                "code": 'flowfile.publish_artifact("model", "v2")',
+                "code": 'flowfile_ctx.publish_artifact("model", "v2")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -445,7 +480,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 99,
-                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "code": 'v = flowfile_ctx.read_artifact("model"); print(v)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -460,7 +495,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 28,
-                "code": 'flowfile.publish_artifact("model", "v1")',
+                "code": 'flowfile_ctx.publish_artifact("model", "v1")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -470,7 +505,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 29,
-                "code": ('flowfile.delete_artifact("model")\n' 'flowfile.publish_artifact("model", "v2")\n'),
+                "code": ('flowfile_ctx.delete_artifact("model")\n' 'flowfile_ctx.publish_artifact("model", "v2")\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -490,7 +525,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 30,
-                "code": ('v = flowfile.read_artifact("model")\n' "print(v)\n"),
+                "code": ('v = flowfile_ctx.read_artifact("model")\n' "print(v)\n"),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -508,7 +543,7 @@ class TestClearNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 40,
-                "code": 'flowfile.publish_artifact("model", {"v": 1})',
+                "code": 'flowfile_ctx.publish_artifact("model", {"v": 1})',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -518,7 +553,7 @@ class TestClearNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 41,
-                "code": 'flowfile.publish_artifact("scaler", {"v": 2})',
+                "code": 'flowfile_ctx.publish_artifact("scaler", {"v": 2})',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -543,7 +578,7 @@ class TestClearNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 42,
-                "code": 'flowfile.publish_artifact("keep_me", 42)',
+                "code": 'flowfile_ctx.publish_artifact("keep_me", 42)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -560,7 +595,7 @@ class TestClearNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 43,
-                "code": 'flowfile.publish_artifact("reuse", "v1")',
+                "code": 'flowfile_ctx.publish_artifact("reuse", "v1")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -571,7 +606,7 @@ class TestClearNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 43,
-                "code": 'flowfile.publish_artifact("reuse", "v2")',
+                "code": 'flowfile_ctx.publish_artifact("reuse", "v2")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -587,7 +622,7 @@ class TestNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 50,
-                "code": ('flowfile.publish_artifact("a", 1)\n' 'flowfile.publish_artifact("b", 2)\n'),
+                "code": ('flowfile_ctx.publish_artifact("a", 1)\n' 'flowfile_ctx.publish_artifact("b", 2)\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -597,7 +632,7 @@ class TestNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 51,
-                "code": 'flowfile.publish_artifact("c", 3)',
+                "code": 'flowfile_ctx.publish_artifact("c", 3)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -636,12 +671,12 @@ class TestDisplayOutputs:
         assert data["display_outputs"] == []
 
     def test_display_output_explicit(self, client: TestClient):
-        """Execute flowfile.display() should return a display output."""
+        """Execute flowfile_ctx.display() should return a display output."""
         resp = client.post(
             "/execute",
             json={
                 "node_id": 61,
-                "code": 'flowfile.display("hello")',
+                "code": 'flowfile_ctx.display("hello")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -654,12 +689,12 @@ class TestDisplayOutputs:
         assert data["display_outputs"][0]["data"] == "hello"
 
     def test_display_output_html(self, client: TestClient):
-        """Execute flowfile.display() with HTML should return HTML mime type."""
+        """Execute flowfile_ctx.display() with HTML should return HTML mime type."""
         resp = client.post(
             "/execute",
             json={
                 "node_id": 62,
-                "code": 'flowfile.display("<b>bold</b>")',
+                "code": 'flowfile_ctx.display("<b>bold</b>")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -677,7 +712,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 63,
-                "code": 'flowfile.display("data", title="My Chart")',
+                "code": 'flowfile_ctx.display("data", title="My Chart")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -694,7 +729,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 64,
-                "code": ('flowfile.display("first")\n' 'flowfile.display("second")\n' 'flowfile.display("third")\n'),
+                "code": ('flowfile_ctx.display("first")\n' 'flowfile_ctx.display("second")\n' 'flowfile_ctx.display("third")\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -714,7 +749,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 65,
-                "code": 'flowfile.display("from first call")',
+                "code": 'flowfile_ctx.display("from first call")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -726,7 +761,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 66,
-                "code": 'flowfile.display("from second call")',
+                "code": 'flowfile_ctx.display("from second call")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -743,7 +778,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 67,
-                "code": ('flowfile.display("before error")\n' 'raise ValueError("oops")\n'),
+                "code": ('flowfile_ctx.display("before error")\n' 'raise ValueError("oops")\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -813,8 +848,9 @@ class TestPublishGlobalInteractiveExecution:
     """publish_global should be silently skipped when running interactively."""
 
     def test_publish_global_skipped_in_interactive_mode(self, client: TestClient):
-        """Calling publish_global in interactive mode should succeed without error."""
-        code = 'result = flowfile.publish_global("my_model", {"key": "value"})\nprint(result)'
+        """Calling publish_global without a source_registration_id should
+        succeed but degrade gracefully (warn + return -1)."""
+        code = 'result = flowfile_ctx.publish_global("my_model", {"key": "value"})\nprint(result)'
         resp = client.post(
             "/execute",
             json={
@@ -829,12 +865,16 @@ class TestPublishGlobalInteractiveExecution:
         )
         data = resp.json()
         assert data["success"] is True, f"Execution failed: {data['error']}"
-        assert "not available in interactive mode" in data["stdout"]
+        assert "without a source_registration_id" in data["stdout"]
         assert "-1" in data["stdout"]
 
-    def test_publish_global_still_works_in_flow_mode_with_registration(self, client: TestClient):
-        """publish_global in non-interactive mode without source_registration_id should still raise."""
-        code = 'flowfile.publish_global("my_model", {"key": "value"})'
+    def test_publish_global_warns_in_flow_mode_without_registration(self, client: TestClient):
+        """Flow mode without a source_registration_id mirrors interactive mode:
+        publish_global warns + returns -1 instead of raising. Core normally
+        provisions a scratch FlowRegistration so this fallback only fires
+        when talking to an older Core.
+        """
+        code = 'result = flowfile_ctx.publish_global("my_model", {"key": "value"})\nprint(result)'
         resp = client.post(
             "/execute",
             json={
@@ -848,8 +888,9 @@ class TestPublishGlobalInteractiveExecution:
             },
         )
         data = resp.json()
-        assert data["success"] is False
-        assert "source_registration_id is required" in data["error"]
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        assert "without a source_registration_id" in data["stdout"]
+        assert "-1" in data["stdout"]
 
 
 class TestContextCleanup:
@@ -915,7 +956,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 1,
-                "code": 'flowfile.publish_artifact("model", "flow1_model")',
+                "code": 'flowfile_ctx.publish_artifact("model", "flow1_model")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -927,7 +968,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 1,
-                "code": 'flowfile.publish_artifact("model", "flow2_model")',
+                "code": 'flowfile_ctx.publish_artifact("model", "flow2_model")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -940,7 +981,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 99,
-                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "code": 'v = flowfile_ctx.read_artifact("model"); print(v)',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -953,7 +994,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 99,
-                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "code": 'v = flowfile_ctx.read_artifact("model"); print(v)',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -968,7 +1009,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 1,
-                "code": 'flowfile.publish_artifact("secret", "hidden")',
+                "code": 'flowfile_ctx.publish_artifact("secret", "hidden")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -979,7 +1020,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 2,
-                "code": 'flowfile.read_artifact("secret")',
+                "code": 'flowfile_ctx.read_artifact("secret")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -996,7 +1037,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 5,
-                "code": 'flowfile.publish_artifact("model", "f1v1")',
+                "code": 'flowfile_ctx.publish_artifact("model", "f1v1")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -1007,7 +1048,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 5,
-                "code": 'flowfile.publish_artifact("model", "f2v1")',
+                "code": 'flowfile_ctx.publish_artifact("model", "f2v1")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -1019,7 +1060,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 5,
-                "code": 'flowfile.publish_artifact("model", "f1v2")',
+                "code": 'flowfile_ctx.publish_artifact("model", "f1v2")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -1032,7 +1073,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 99,
-                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "code": 'v = flowfile_ctx.read_artifact("model"); print(v)',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -1047,7 +1088,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 1,
-                "code": 'flowfile.publish_artifact("a", 1)',
+                "code": 'flowfile_ctx.publish_artifact("a", 1)',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 10,
@@ -1057,7 +1098,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 2,
-                "code": 'flowfile.publish_artifact("b", 2)',
+                "code": 'flowfile_ctx.publish_artifact("b", 2)',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 20,
@@ -1080,7 +1121,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 5,
-                "code": 'flowfile.publish_artifact("model", "f1")',
+                "code": 'flowfile_ctx.publish_artifact("model", "f1")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -1090,7 +1131,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 5,
-                "code": 'flowfile.publish_artifact("model", "f2")',
+                "code": 'flowfile_ctx.publish_artifact("model", "f2")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -1208,7 +1249,7 @@ class TestDisplayOutputStore:
 
     def test_display_outputs_persisted_after_execution(self, client: TestClient):
         """Display outputs should be retrievable via GET after execution."""
-        self._execute(client, 'flowfile.display("hello")', flow_id=1, node_id=10)
+        self._execute(client, 'flowfile_ctx.display("hello")', flow_id=1, node_id=10)
 
         resp = client.get("/display_outputs", params={"flow_id": 1, "node_id": 10})
         assert resp.status_code == 200
@@ -1218,11 +1259,11 @@ class TestDisplayOutputStore:
         assert data[0]["data"] == "hello"
 
     def test_multiple_displays_persisted(self, client: TestClient):
-        """Multiple flowfile.display() calls should all be retrievable."""
+        """Multiple flowfile_ctx.display() calls should all be retrievable."""
         code = (
-            'flowfile.display("first")\n'
-            'flowfile.display("<b>second</b>")\n'
-            'flowfile.display("third", title="Chart")\n'
+            'flowfile_ctx.display("first")\n'
+            'flowfile_ctx.display("<b>second</b>")\n'
+            'flowfile_ctx.display("third", title="Chart")\n'
         )
         self._execute(client, code, flow_id=2, node_id=20)
 
@@ -1237,8 +1278,8 @@ class TestDisplayOutputStore:
 
     def test_re_execution_overwrites_previous(self, client: TestClient):
         """Re-executing the same node should replace its stored outputs."""
-        self._execute(client, 'flowfile.display("old")', flow_id=1, node_id=30)
-        self._execute(client, 'flowfile.display("new")', flow_id=1, node_id=30)
+        self._execute(client, 'flowfile_ctx.display("old")', flow_id=1, node_id=30)
+        self._execute(client, 'flowfile_ctx.display("new")', flow_id=1, node_id=30)
 
         resp = client.get("/display_outputs", params={"flow_id": 1, "node_id": 30})
         data = resp.json()
@@ -1247,9 +1288,9 @@ class TestDisplayOutputStore:
 
     def test_scoped_by_flow_and_node(self, client: TestClient):
         """Display outputs are keyed by (flow_id, node_id) independently."""
-        self._execute(client, 'flowfile.display("flow1-node1")', flow_id=1, node_id=1)
-        self._execute(client, 'flowfile.display("flow1-node2")', flow_id=1, node_id=2)
-        self._execute(client, 'flowfile.display("flow2-node1")', flow_id=2, node_id=1)
+        self._execute(client, 'flowfile_ctx.display("flow1-node1")', flow_id=1, node_id=1)
+        self._execute(client, 'flowfile_ctx.display("flow1-node2")', flow_id=1, node_id=2)
+        self._execute(client, 'flowfile_ctx.display("flow2-node1")', flow_id=2, node_id=1)
 
         r1 = client.get("/display_outputs", params={"flow_id": 1, "node_id": 1}).json()
         r2 = client.get("/display_outputs", params={"flow_id": 1, "node_id": 2}).json()
@@ -1261,7 +1302,7 @@ class TestDisplayOutputStore:
 
     def test_display_outputs_persisted_on_error(self, client: TestClient):
         """Outputs generated before an error should still be stored."""
-        code = 'flowfile.display("before crash")\nraise RuntimeError("boom")\n'
+        code = 'flowfile_ctx.display("before crash")\nraise RuntimeError("boom")\n'
         resp = self._execute(client, code, flow_id=3, node_id=40)
         assert resp.json()["success"] is False
 

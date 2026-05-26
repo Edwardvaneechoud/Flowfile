@@ -659,11 +659,15 @@ class TestPublishGlobalInteractiveMode:
         _clear_context()
 
     def test_publish_global_skips_in_interactive_mode(self, capsys):
-        """Should skip publish_global and return -1 in interactive mode."""
+        """Without a source_registration_id, publish_global degrades gracefully
+        (warns and returns -1) rather than raising. Core normally injects a
+        scratch FlowRegistration id, so this path is the backwards-compat
+        fallback for older Core versions / unset contexts.
+        """
         result = publish_global("test", {"key": "value"})
         assert result == -1
         captured = capsys.readouterr()
-        assert "not available in interactive mode" in captured.out
+        assert "without a source_registration_id" in captured.out
 
     def test_publish_global_no_http_calls_in_interactive_mode(self, mock_httpx_client):
         """Should not make any HTTP calls when skipping in interactive mode."""

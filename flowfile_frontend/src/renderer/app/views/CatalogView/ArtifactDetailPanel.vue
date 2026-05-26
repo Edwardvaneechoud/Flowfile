@@ -119,10 +119,10 @@
     <div class="section">
       <h3>Usage</h3>
       <div class="code-block">
-        <code>obj = flowfile.get_global("{{ artifact.name }}")</code>
+        <code>obj = flowfile_ctx.get_global("{{ artifact.name }}")</code>
       </div>
       <div v-if="versions.length > 1" class="code-block" style="margin-top: 8px">
-        <code>obj_v1 = flowfile.get_global("{{ artifact.name }}", version=1)</code>
+        <code>obj_v1 = flowfile_ctx.get_global("{{ artifact.name }}", version=1)</code>
       </div>
     </div>
   </div>

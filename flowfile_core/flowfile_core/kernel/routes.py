@@ -12,9 +12,14 @@ from flowfile_core.kernel.models import (
     DockerStatus,
     ExecuteRequest,
     ExecuteResult,
+    FlavourInfo,
+    FlavourPackage,
+    ImageFlavour,
     KernelConfig,
+    KernelImageStatus,
     KernelInfo,
     KernelMemoryInfo,
+    KernelUpdate,
     RecoveryStatus,
 )
 
@@ -50,9 +55,27 @@ async def create_kernel(config: KernelConfig, current_user=Depends(get_current_a
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get("/flavours", response_model=list[FlavourInfo])
+async def list_flavours():
+    """Return the locked package versions baked into each kernel image flavour."""
+    from flowfile_core.kernel.flavours import get_flavour_packages
+    from flowfile_core.kernel.manager import _flavour_images
+
+    packages_by_flavour = get_flavour_packages()
+    images = _flavour_images()
+    return [
+        FlavourInfo(
+            flavour=flavour,
+            image=images.get(flavour),
+            packages=[FlavourPackage(name=n, version=v) for n, v in pkgs],
+        )
+        for flavour, pkgs in packages_by_flavour.items()
+    ]
+
+
 @router.get("/docker-status", response_model=DockerStatus)
 async def docker_status():
-    """Check if Docker is reachable and the kernel image is available."""
+    """Check if Docker is reachable and which kernel images are pulled."""
     import docker as _docker
 
     try:
@@ -61,17 +84,72 @@ async def docker_status():
     except Exception as exc:
         return DockerStatus(available=False, image_available=False, error=str(exc))
 
-    from flowfile_core.kernel.manager import _KERNEL_IMAGE
+    from flowfile_core.kernel.manager import _flavour_images
 
+    # Manager may be unavailable (Docker not initialised yet); degrade
+    # gracefully — resolved_image / pull_state stay None, fallback discovery
+    # turns into "registry default only" until the manager comes up.
     try:
-        client.images.get(_KERNEL_IMAGE)
-        image_available = True
-    except _docker.errors.ImageNotFound:
-        image_available = False
-    except Exception:
-        image_available = False
+        manager = _get_manager()
+    except HTTPException:
+        manager = None
 
-    return DockerStatus(available=True, image_available=image_available)
+    flavour_images = _flavour_images()
+    images: list[KernelImageStatus] = []
+    for flavour, image_tag in flavour_images.items():
+        resolved: str | None = None
+        if manager is not None:
+            resolved = manager.resolve_local_image(flavour)
+        available = resolved is not None
+        if not available:
+            # Fall back to a direct check so the field still reflects reality
+            # when the manager helper is unavailable.
+            try:
+                client.images.get(image_tag)
+                available = True
+            except _docker.errors.ImageNotFound:
+                available = False
+            except Exception:
+                available = False
+
+        # Only expose ``resolved_image`` when it differs from the registry
+        # default — keeps the UI logic simple ("set => show 'Found locally'").
+        resolved_image = resolved if resolved and resolved != image_tag else None
+        pull_state = manager.get_pull_state(image_tag) if manager is not None else None
+
+        images.append(
+            KernelImageStatus(
+                flavour=flavour,
+                image=image_tag,
+                available=available,
+                resolved_image=resolved_image,
+                pull_state=pull_state,
+            )
+        )
+
+    base_available = any(i.available for i in images if i.flavour == ImageFlavour.BASE)
+
+    return DockerStatus(
+        available=True,
+        image_available=base_available,
+        images=images,
+    )
+
+
+@router.post("/images/{flavour}/pull", status_code=202)
+async def pull_kernel_image(flavour: ImageFlavour):
+    """Start a background pull for the given flavour's registry-default image.
+
+    Returns immediately (202). The UI polls ``/docker-status`` to track
+    progress via the ``pull_state`` field — ``"pulling"`` while in flight,
+    ``"error:<msg>"`` on failure, cleared once the image is available.
+    """
+    manager = _get_manager()
+    try:
+        state = manager.start_image_pull(flavour)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"flavour": flavour.value, "pull_state": state}
 
 
 @router.get("/{kernel_id}", response_model=KernelInfo)
@@ -83,6 +161,30 @@ async def get_kernel(kernel_id: str, current_user=Depends(get_current_active_use
     if manager.get_kernel_owner(kernel_id) != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
     return kernel
+
+
+@router.patch("/{kernel_id}", response_model=KernelInfo)
+async def update_kernel(
+    kernel_id: str,
+    update: KernelUpdate,
+    current_user=Depends(get_current_active_user),
+):
+    """Update a kernel's editable fields. Currently: ``packages``.
+
+    The kernel must be stopped (rebuild of the derived image happens here).
+    """
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        return await manager.update_kernel(kernel_id, update.packages)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.delete("/{kernel_id}")
