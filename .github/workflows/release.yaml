@@ -92,6 +92,12 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         run: echo "/usr/bin" >> "$GITHUB_PATH"
 
+      - name: Sign bundled sidecars (macOS)
+        if: ${{ startsWith(matrix.platform, 'macos') && env.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: bash tools/sign_macos_sidecars.sh
+
       - name: Build Tauri app
         working-directory: flowfile_frontend
         env:

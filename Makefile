@@ -22,7 +22,7 @@ else
 endif
 
 # Default target: install dependencies, build Python services, stage sidecars, build Tauri app, generate key
-all: install_python_deps build_python_services rename_sidecars build_tauri_app generate_key
+all: install_python_deps build_python_services rename_sidecars sign_sidecars build_tauri_app generate_key
 
 # Update Poetry lock file
 update_lock:
@@ -61,6 +61,15 @@ rename_sidecars:
 # diagnostics (test_built_services, measure_bundle, --triple overrides).
 services: build_python_services rename_sidecars
 
+# Sign bundled sidecars for macOS notarization. No-op off macOS or when
+# APPLE_SIGNING_IDENTITY is unset, so it's safe on every platform/build.
+sign_sidecars:
+ifeq ($(OS),Windows_NT)
+	@echo "sign_sidecars: skipped (Windows)"
+else
+	@bash tools/sign_macos_sidecars.sh
+endif
+
 # Detach stale Flowfile DMG volumes + temp images left by a previous (failed)
 # build. Tauri's bundle_dmg.sh mounts the new image at /Volumes/Flowfile; if a
 # leftover already occupies that name macOS remaps the mount and the script
@@ -74,7 +83,7 @@ ifeq ($(shell uname),Darwin)
 endif
 
 # Build Tauri app
-build_tauri_app: clean_dmg_mounts
+build_tauri_app: clean_dmg_mounts sign_sidecars
 	@echo "Building Tauri app..."
 	$(CD) "$(FRONTEND_DIR)" && npm install
 	$(CD) "$(FRONTEND_DIR)" && npm run build
@@ -84,13 +93,13 @@ build_tauri_app: clean_dmg_mounts
 build_tauri_win:
 	$(CD) "$(FRONTEND_DIR)" && npx tauri build --target x86_64-pc-windows-msvc
 
-build_tauri_mac: clean_dmg_mounts
+build_tauri_mac: clean_dmg_mounts sign_sidecars
 	$(CD) "$(FRONTEND_DIR)" && npx tauri build
 
-build_tauri_mac_arm: clean_dmg_mounts
+build_tauri_mac_arm: clean_dmg_mounts sign_sidecars
 	$(CD) "$(FRONTEND_DIR)" && npx tauri build --target aarch64-apple-darwin
 
-build_tauri_mac_intel: clean_dmg_mounts
+build_tauri_mac_intel: clean_dmg_mounts sign_sidecars
 	$(CD) "$(FRONTEND_DIR)" && npx tauri build --target x86_64-apple-darwin
 
 build_tauri_linux:
@@ -266,4 +275,4 @@ check_stubs: stubs
 	@echo "Stubs are in sync."
 
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test test_coverage stubs check_stubs
+.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test test_coverage stubs check_stubs
