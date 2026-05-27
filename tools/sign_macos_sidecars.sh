@@ -4,9 +4,10 @@
 # Mach-O needs Developer ID + secure timestamp + hardened runtime.
 #
 # CI (actions/setup-python) ships a FRAMEWORK build of CPython, so PyInstaller bundles
-# a Python.framework into _internal/. A framework must be signed as a bundle, not by
-# pointing codesign at a framework-internal Mach-O — that makes codesign classify the
-# enclosing bundle and fail with "bundle format is ambiguous (could be app or framework)".
+# a Python.framework into _internal/. PyInstaller stages it as plain real-file copies
+# (top-level Python binary + a real Versions/Current dir, no symlinks), which codesign
+# cannot classify -> "bundle format is ambiguous (could be app or framework)". We
+# rebuild the canonical symlink layout, then sign the binary and the bundle.
 #
 # No-op unless on macOS with APPLE_SIGNING_IDENTITY set.
 set -euo pipefail
@@ -50,29 +51,76 @@ sign_one() {
   return 0
 }
 
-# Defensive + idempotent. PyInstaller 6.x usually already produces a canonical
-# framework (Versions/Current + top-level symlinks); only repair if missing.
+# Rebuild a framework into the canonical symlink layout codesign requires:
+#   <fw>/<Name>            -> Versions/Current/<Name>
+#   <fw>/Resources         -> Versions/Current/Resources
+#   <fw>/Versions/Current  -> <ver>
+#   <fw>/Versions/<ver>/{<Name>,Resources/Info.plist}   (real)
+# PyInstaller stages these as real copies; we replace the duplicates with symlinks
+# so the bundle is unambiguously a framework. Idempotent (no-op once canonical).
 normalize_framework() {
-  local fw="$1" name
+  local fw="$1" name ver d
   name="$(basename "$fw")"; name="${name%.framework}"
+
   if [ ! -d "$fw/Versions" ]; then
     echo "  NOTE: $fw has no Versions/ (flattened); signing as-is" >&2
     return 0
   fi
-  if [ ! -e "$fw/Versions/Current" ]; then
-    local versions=() d
-    for d in "$fw"/Versions/*; do
-      if [ -d "$d" ] && [ ! -L "$d" ]; then versions+=("$(basename "$d")"); fi
-    done
-    if [ "${#versions[@]}" -eq 1 ]; then
-      ( cd "$fw/Versions" && ln -snf "${versions[0]}" Current )
-    fi
+
+  # Real version dir (e.g. 3.11): a non-symlink dir under Versions/ other than Current.
+  ver=""
+  for d in "$fw"/Versions/*; do
+    [ -d "$d" ] && [ ! -L "$d" ] || continue
+    [ "$(basename "$d")" = "Current" ] && continue
+    ver="$(basename "$d")"
+    break
+  done
+  if [ -z "$ver" ]; then
+    echo "  WARN: $fw has no real version dir under Versions/; signing as-is" >&2
+    return 0
   fi
-  if [ -e "$fw/Versions/Current/$name" ] && [ ! -e "$fw/$name" ]; then
-    ( cd "$fw" && ln -snf "Versions/Current/$name" "$name" )
+
+  # Versions/Current -> <ver> (replace a real dir; the binary lives in <ver>).
+  if [ ! -L "$fw/Versions/Current" ] && [ -e "$fw/Versions/$ver/$name" ]; then
+    rm -rf "$fw/Versions/Current"
+    ( cd "$fw/Versions" && ln -s "$ver" Current )
+    echo "  normalized: Versions/Current -> $ver"
   fi
-  if [ -d "$fw/Versions/Current/Resources" ] && [ ! -e "$fw/Resources" ]; then
-    ( cd "$fw" && ln -snf "Versions/Current/Resources" Resources )
+
+  # Top-level <Name> -> Versions/Current/<Name> (replace the duplicate real binary
+  # that triggers "bundle format is ambiguous").
+  if [ ! -L "$fw/$name" ] && [ -e "$fw/Versions/Current/$name" ]; then
+    rm -f "$fw/$name"
+    ( cd "$fw" && ln -s "Versions/Current/$name" "$name" )
+    echo "  normalized: $name -> Versions/Current/$name"
+  fi
+
+  # Top-level Resources -> Versions/Current/Resources.
+  if [ ! -L "$fw/Resources" ] && [ -d "$fw/Versions/Current/Resources" ]; then
+    rm -rf "$fw/Resources"
+    ( cd "$fw" && ln -s "Versions/Current/Resources" Resources )
+    echo "  normalized: Resources -> Versions/Current/Resources"
+  fi
+
+  # A framework needs Versions/Current/Resources/Info.plist (CFBundlePackageType=FMWK)
+  # for codesign to classify it. Synthesize a minimal one only if missing.
+  if [ ! -f "$fw/Versions/Current/Resources/Info.plist" ]; then
+    mkdir -p "$fw/Versions/Current/Resources"
+    cat > "$fw/Versions/Current/Resources/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key><string>$name</string>
+  <key>CFBundleIdentifier</key><string>org.python.$name</string>
+  <key>CFBundleName</key><string>$name</string>
+  <key>CFBundlePackageType</key><string>FMWK</string>
+  <key>CFBundleVersion</key><string>$ver</string>
+  <key>CFBundleShortVersionString</key><string>$ver</string>
+</dict>
+</plist>
+PLIST
+    echo "  normalized: wrote minimal Versions/Current/Resources/Info.plist"
   fi
   return 0
 }
@@ -88,7 +136,12 @@ done < <(find "$BIN_DIR" -type f ! -type l -print0)
 # Phase 2 — frameworks/apps as bundles, deepest-first.
 while IFS= read -r -d '' bundle; do
   echo "Signing bundle: ${bundle#"$BIN_DIR"/}"
-  case "$bundle" in *.framework) normalize_framework "$bundle" ;; esac
+  if [ "${bundle%.framework}" != "$bundle" ]; then
+    echo "  [diag] raw layout (pre-normalize):"
+    ls -la "$bundle" 2>/dev/null | sed 's/^/    /' || true
+    ls -la "$bundle/Versions" 2>/dev/null | sed 's/^/    /' || true
+    normalize_framework "$bundle"
+  fi
   while IFS= read -r -d '' inner; do
     if is_macho "$inner"; then sign_one "$inner" || true; fi
   done < <(find "$bundle" -type f ! -type l -print0)
