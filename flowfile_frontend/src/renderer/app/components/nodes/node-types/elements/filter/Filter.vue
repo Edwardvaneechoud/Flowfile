@@ -379,7 +379,7 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .split-mode-row {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px dashed #e4e7ed;
+  border-top: 1px solid var(--el-border-color-lighter, #e4e7ed);
 }
 
 .split-mode-hint {

@@ -83,3 +83,14 @@
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
 }
+
+/* ========== Mono Code Chip ========== */
+/* Inline code chip for URLs, keys, paths, etc. Shared across detail panels. */
+.code-chip {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  background: var(--color-background-secondary);
+  padding: 2px 6px;
+  border-radius: var(--border-radius-sm);
+  word-break: break-all;
+}

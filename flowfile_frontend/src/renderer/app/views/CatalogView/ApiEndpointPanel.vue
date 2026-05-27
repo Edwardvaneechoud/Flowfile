@@ -1,18 +1,15 @@
 <template>
-  <div class="section">
-    <div class="section-header">
-      <h3><i class="fa-solid fa-plug section-icon"></i> Expose as API</h3>
-      <el-button
-        v-if="endpoint"
-        size="small"
-        type="danger"
-        plain
-        :loading="busy"
-        @click="unpublish"
-      >
-        <i class="fa-solid fa-xmark" /> Unpublish
+  <CollapsibleSection
+    title="Expose as API"
+    icon="fa-solid fa-plug"
+    persist-key="flow.api"
+    :summary="endpoint ? 'Published' : 'Not published'"
+  >
+    <template v-if="endpoint" #actions>
+      <el-button size="small" type="danger" plain :loading="busy" @click="unpublish">
+        <i class="fa-solid fa-xmark btn-icon" /> Unpublish
       </el-button>
-    </div>
+    </template>
 
     <div v-if="loading" class="api-loading">Loading…</div>
 
@@ -37,7 +34,7 @@
           :disabled="!flow.file_exists || !flow.is_api_compatible || !slug"
           @click="publish"
         >
-          <i class="fa-solid fa-plus" /> Publish
+          <i class="fa-solid fa-plus btn-icon" /> Publish
         </el-button>
       </div>
       <p v-if="!flow.file_exists" class="api-warning">
@@ -51,10 +48,10 @@
     <!-- Published -->
     <div v-else class="api-config">
       <div class="api-row api-status-row">
-        <el-switch v-model="enabled" :loading="busy" @change="saveEndpoint" />
+        <el-switch v-model="enabled" :loading="busy" size="small" @change="saveEndpoint" />
         <span class="status-label">{{ enabled ? "Enabled" : "Disabled" }}</span>
         <span class="endpoint-method">GET</span>
-        <code class="endpoint-url">{{ fullUrl }}</code>
+        <code class="code-chip">{{ fullUrl }}</code>
         <el-button size="small" text @click="copy(fullUrl)">
           <i class="fa-solid fa-copy" />
         </el-button>
@@ -66,11 +63,17 @@
       </details>
 
       <!-- Parameters -->
-      <div class="api-subsection">
-        <div class="subsection-header">
-          <h4>Query parameters</h4>
-          <el-button size="small" @click="addParam"><i class="fa-solid fa-plus" /> Add</el-button>
-        </div>
+      <CollapsibleSection
+        nested
+        title="Query parameters"
+        persist-key="flow.api.params"
+        :count="params.length"
+      >
+        <template #actions>
+          <el-button size="small" @click="addParam"
+            ><i class="fa-solid fa-plus btn-icon" /> Add</el-button
+          >
+        </template>
         <p class="api-hint">
           Each parameter name must match a <code>${name}</code> reference in the flow. Values are
           validated by type before being substituted.
@@ -108,9 +111,16 @@
               />
             </template>
           </el-table-column>
-          <el-table-column width="50">
+          <el-table-column width="56" align="center">
             <template #default="{ $index }">
-              <el-button size="small" text type="danger" @click="params.splice($index, 1)">
+              <el-button
+                class="param-delete-btn"
+                size="small"
+                text
+                type="danger"
+                title="Remove parameter"
+                @click="params.splice($index, 1)"
+              >
                 <i class="fa-solid fa-trash" />
               </el-button>
             </template>
@@ -125,16 +135,21 @@
         >
           Save changes
         </el-button>
-      </div>
+      </CollapsibleSection>
 
       <!-- API keys -->
-      <div class="api-subsection">
-        <div class="subsection-header">
-          <h4>API keys</h4>
+      <CollapsibleSection
+        nested
+        title="API keys"
+        persist-key="flow.api.keys"
+        :default-open="false"
+        :count="keys.length"
+      >
+        <template #actions>
           <el-button size="small" :loading="busy" @click="createKey">
-            <i class="fa-solid fa-key" /> Create key
+            <i class="fa-solid fa-key btn-icon" /> Create key
           </el-button>
-        </div>
+        </template>
 
         <div v-if="newKey" class="new-key-box">
           <p>
@@ -142,7 +157,7 @@
             <code>X-API-Key</code> header.
           </p>
           <div class="api-row">
-            <code class="new-key-value">{{ newKey }}</code>
+            <code class="code-chip">{{ newKey }}</code>
             <el-button size="small" @click="copy(newKey)"><i class="fa-solid fa-copy" /></el-button>
             <el-button size="small" text @click="newKey = null">Dismiss</el-button>
           </div>
@@ -157,24 +172,28 @@
               {{ row.last_used_at ? formatDate(row.last_used_at) : "Never" }}
             </template>
           </el-table-column>
-          <el-table-column width="80">
+          <el-table-column width="96" align="center">
             <template #default="{ row }">
-              <el-button size="small" text type="danger" @click="revokeKey(row.id)"
+              <el-button
+                class="key-revoke-btn"
+                size="small"
+                text
+                type="danger"
+                @click="revokeKey(row.id)"
                 >Revoke</el-button
               >
             </template>
           </el-table-column>
         </el-table>
-      </div>
+      </CollapsibleSection>
 
       <!-- Try it -->
-      <div class="api-subsection">
-        <div class="subsection-header">
-          <h4>Try it</h4>
+      <CollapsibleSection nested title="Try it" persist-key="flow.api.tryit" :default-open="false">
+        <template #actions>
           <el-button size="small" type="primary" :loading="testing" @click="runTest">
-            <i class="fa-solid fa-play" /> Run test
+            <i class="fa-solid fa-play btn-icon" /> Run test
           </el-button>
-        </div>
+        </template>
         <p class="api-hint">
           Runs the flow as you (no key needed) with the values below, exactly as the public endpoint
           would.
@@ -190,7 +209,7 @@
         </div>
         <div class="test-request">
           <span class="test-request-label">Request</span>
-          <code class="test-request-url">{{ testRequestUrl }}</code>
+          <code class="code-chip">{{ testRequestUrl }}</code>
           <el-button size="small" text @click="copy(testRequestUrl.replace(/^GET /, ''))">
             <i class="fa-solid fa-copy" />
           </el-button>
@@ -200,9 +219,9 @@
           <span class="test-result-meta">{{ testResult.row_count }} rows</span>
           <pre>{{ JSON.stringify(testResult.data, null, 2) }}</pre>
         </div>
-      </div>
+      </CollapsibleSection>
     </div>
-  </div>
+  </CollapsibleSection>
 </template>
 
 <script setup lang="ts">
@@ -219,7 +238,7 @@ import {
 } from "../../api/flowApi.api";
 import type { FlowRegistration } from "../../types";
 import { formatDate } from "./catalog-formatters";
-import { EmptyState } from "../../components/common";
+import { CollapsibleSection, EmptyState } from "../../components/common";
 
 interface ParamRow {
   name: string;
@@ -486,11 +505,6 @@ watch(() => props.flow.id, load, { immediate: true });
 </script>
 
 <style scoped>
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
 .api-loading {
   color: var(--color-text-secondary);
   font-size: 13px;
@@ -528,13 +542,6 @@ watch(() => props.flow.id, load, { immediate: true });
   border-radius: 4px;
   padding: 1px 6px;
 }
-.endpoint-url {
-  font-family: var(--font-mono, monospace);
-  background-color: var(--color-background-secondary);
-  padding: 2px 6px;
-  border-radius: 4px;
-  word-break: break-all;
-}
 .curl-example {
   margin: 8px 0;
   font-size: 12px;
@@ -545,23 +552,25 @@ watch(() => props.flow.id, load, { immediate: true });
   border-radius: 4px;
   overflow-x: auto;
 }
-.api-subsection {
-  margin-top: 16px;
-}
-.subsection-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.subsection-header h4 {
-  margin: 0;
-  font-size: 14px;
-}
 .save-btn {
   margin-top: 10px;
 }
 .param-table {
   margin-top: 8px;
+}
+/* Compact table action buttons: drop the global small-button padding so they
+   don't overflow/clip inside their narrow action columns. */
+.param-delete-btn.el-button--small {
+  padding: 4px;
+  min-width: 0;
+}
+.key-revoke-btn.el-button--small {
+  padding: 4px 6px;
+  min-width: 0;
+}
+/* Spacing between a leading icon and its button label. */
+.btn-icon {
+  margin-right: 6px;
 }
 .new-key-box {
   background-color: var(--color-background-secondary);
@@ -570,10 +579,6 @@ watch(() => props.flow.id, load, { immediate: true });
   padding: 10px 12px;
   margin: 8px 0;
   font-size: 12px;
-}
-.new-key-value {
-  font-family: var(--font-mono, monospace);
-  word-break: break-all;
 }
 .test-param-row {
   margin-top: 6px;
@@ -601,14 +606,6 @@ watch(() => props.flow.id, load, { immediate: true });
 .test-request-label {
   font-size: 12px;
   color: var(--color-text-secondary);
-}
-.test-request-url {
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
-  background-color: var(--color-background-secondary);
-  padding: 2px 6px;
-  border-radius: 4px;
-  word-break: break-all;
 }
 .test-result pre {
   background-color: var(--color-background-secondary);

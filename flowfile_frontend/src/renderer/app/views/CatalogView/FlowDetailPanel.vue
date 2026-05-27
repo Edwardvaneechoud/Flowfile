@@ -192,14 +192,17 @@
     <ApiEndpointPanel :flow="flow" />
 
     <!-- Data Lineage -->
-    <div
+    <CollapsibleSection
       v-if="
         (flow.tables_produced && flow.tables_produced.length > 0) ||
         (flow.tables_read && flow.tables_read.length > 0)
       "
-      class="section"
+      title="Data Lineage"
+      icon="fa-solid fa-diagram-project"
+      persist-key="flow.lineage"
+      :default-open="false"
+      :count="(flow.tables_read?.length ?? 0) + (flow.tables_produced?.length ?? 0)"
     >
-      <h3><i class="fa-solid fa-diagram-project section-icon"></i> Data Lineage</h3>
       <div class="lineage-grid">
         <!-- Tables Read -->
         <div v-if="flow.tables_read && flow.tables_read.length > 0" class="lineage-group">
@@ -244,11 +247,16 @@
           </div>
         </div>
       </div>
-    </div>
+    </CollapsibleSection>
 
     <!-- Artifacts Section -->
-    <div class="section">
-      <h3><i class="fa-solid fa-cube section-icon"></i> Global Artifacts</h3>
+    <CollapsibleSection
+      title="Global Artifacts"
+      icon="fa-solid fa-cube"
+      persist-key="flow.artifacts"
+      :default-open="false"
+      :count="artifacts.length"
+    >
       <div v-if="artifacts.length === 0" class="empty-state">
         <i class="fa-solid fa-cube empty-state-icon"></i>
         <span>No artifacts published yet</span>
@@ -283,7 +291,7 @@
           </tr>
         </tbody>
       </table>
-    </div>
+    </CollapsibleSection>
   </div>
 </template>
 
@@ -298,7 +306,7 @@ import { CatalogApi } from "../../api/catalog.api";
 import type { FlowRegistration, FlowSchedule, GlobalArtifact } from "../../types";
 import { formatDate, formatSize, formatType } from "./catalog-formatters";
 import RunHistoryTable from "./RunHistoryTable.vue";
-import { EmptyState } from "../../components/common";
+import { CollapsibleSection, EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
 import ApiEndpointPanel from "./ApiEndpointPanel.vue";
 
