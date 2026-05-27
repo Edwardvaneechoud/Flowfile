@@ -28,7 +28,13 @@
       </el-table-column>
       <el-table-column label="URL" min-width="240">
         <template #default="{ row }">
-          <code class="api-url">{{ baseUrl }}{{ row.path }}</code>
+          <!-- Stop propagation so selecting/copying the URL doesn't trigger the row's navigation. -->
+          <div class="api-url-cell" @click.stop>
+            <code class="api-url">{{ baseUrl }}{{ row.path }}</code>
+            <el-button size="small" text title="Copy URL" @click.stop="copyUrl(baseUrl + row.path)">
+              <i class="fa-solid fa-copy" />
+            </el-button>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="Status" width="110">
@@ -81,6 +87,15 @@ async function load() {
   }
 }
 
+async function copyUrl(url: string) {
+  try {
+    await navigator.clipboard.writeText(url);
+    ElMessage.success("URL copied");
+  } catch {
+    ElMessage.error("Copy failed");
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -98,10 +113,17 @@ onMounted(load);
   color: var(--color-text-secondary);
   margin: 4px 0 16px;
 }
+.api-url-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .api-url {
   font-family: var(--font-mono, monospace);
   font-size: 12px;
   word-break: break-all;
+  cursor: text;
+  user-select: text;
 }
 .status-pill {
   font-size: 12px;
