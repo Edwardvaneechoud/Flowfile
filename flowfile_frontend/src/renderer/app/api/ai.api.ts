@@ -217,6 +217,56 @@ export const fetchJoinKeySuggestions = async (
   }
 };
 
+// Cron generation — POST /ai/generate_cron. Plain-English → validated cron.
+
+export interface GenerateCronRequest {
+  description: string;
+  provider?: string;
+  model?: string | null;
+  timeout?: number;
+}
+
+export interface CronGenerationResponse {
+  cronExpression: string | null;
+  explanation: string | null;
+  degraded: boolean;
+  reason: string | null;
+}
+
+interface PyCronGenerationResponse {
+  cron_expression: string | null;
+  explanation: string | null;
+  degraded: boolean;
+  reason: string | null;
+}
+
+export const generateCronExpression = async (
+  body: GenerateCronRequest,
+  signal?: AbortSignal,
+): Promise<CronGenerationResponse> => {
+  const payload: Record<string, unknown> = {
+    description: body.description,
+  };
+  if (body.provider !== undefined) payload.provider = body.provider;
+  if (body.model !== undefined && body.model !== null) payload.model = body.model;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<PyCronGenerationResponse>("/ai/generate_cron", payload, {
+      signal,
+    });
+    return {
+      cronExpression: response.data.cron_expression,
+      explanation: response.data.explanation,
+      degraded: response.data.degraded,
+      reason: response.data.reason,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
 // --------------------------------------------------------------------------
 // Edge ghost-node suggestions — non-streaming JSON wrapper around
 // /ai/suggest_next_node. Matches the autocomplete shape: a hover-fast

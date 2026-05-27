@@ -45,6 +45,7 @@ from flowfile_core.catalog import (
     VisualizationExistsError,
     VisualizationNotFoundError,
 )
+from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
@@ -60,6 +61,8 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableRefreshRequest,
     CatalogTableUpdate,
     ColumnStatsResponse,
+    CronValidationRequest,
+    CronValidationResult,
     DashboardCreate,
     DashboardOut,
     DashboardUpdate,
@@ -1096,12 +1099,32 @@ def create_schedule(
         owner_id=current_user.id,
         schedule_type=body.schedule_type,
         interval_seconds=body.interval_seconds,
+        cron_expression=body.cron_expression,
+        cron_timezone=body.cron_timezone,
         trigger_table_id=body.trigger_table_id,
         trigger_table_ids=body.trigger_table_ids,
         enabled=body.enabled,
         name=body.name,
         description=body.description,
     )
+
+
+@router.post("/schedules/validate-cron", response_model=CronValidationResult)
+def validate_cron_schedule(
+    body: CronValidationRequest,
+    current_user=Depends(get_current_active_user),
+):
+    """Validate a cron expression (+ optional timezone) against the same croniter
+    rules ``create_schedule`` enforces, returning a flag instead of raising so the
+    schedule builder can gate its submit button on the backend's verdict — keeping
+    croniter the single source of truth for cron validity (the UI preview uses a
+    different parser, cronstrue, which accepts a slightly different grammar)."""
+    try:
+        validate_cron_expression(body.cron_expression)
+        validate_cron_timezone(body.cron_timezone)
+    except ValueError as exc:
+        return CronValidationResult(valid=False, error=str(exc))
+    return CronValidationResult(valid=True, error=None)
 
 
 @router.get("/schedules/{schedule_id}", response_model=FlowScheduleOut)
@@ -1124,6 +1147,8 @@ def update_schedule(
         schedule_id=schedule_id,
         enabled=body.enabled,
         interval_seconds=body.interval_seconds,
+        cron_expression=body.cron_expression,
+        cron_timezone=body.cron_timezone,
         name=body.name,
         description=body.description,
     )

@@ -251,8 +251,10 @@ export interface FlowSchedule {
   enabled: boolean;
   name: string | null;
   description: string | null;
-  schedule_type: "interval" | "table_trigger" | "table_set_trigger";
+  schedule_type: "interval" | "cron" | "table_trigger" | "table_set_trigger";
   interval_seconds: number | null;
+  cron_expression: string | null;
+  cron_timezone: string | null;
   trigger_table_id: number | null;
   trigger_table_name: string | null;
   trigger_namespace_id: number | null;
@@ -269,8 +271,10 @@ export interface FlowSchedule {
 
 export interface FlowScheduleCreate {
   registration_id: number;
-  schedule_type: "interval" | "table_trigger" | "table_set_trigger";
+  schedule_type: "interval" | "cron" | "table_trigger" | "table_set_trigger";
   interval_seconds?: number | null;
+  cron_expression?: string | null;
+  cron_timezone?: string | null;
   trigger_table_id?: number | null;
   trigger_table_ids?: number[] | null;
   enabled?: boolean;
@@ -281,8 +285,20 @@ export interface FlowScheduleCreate {
 export interface FlowScheduleUpdate {
   enabled?: boolean;
   interval_seconds?: number | null;
+  cron_expression?: string | null;
+  cron_timezone?: string | null;
   name?: string | null;
   description?: string | null;
+}
+
+export interface CronValidationRequest {
+  cron_expression?: string | null;
+  cron_timezone?: string | null;
+}
+
+export interface CronValidationResult {
+  valid: boolean;
+  error: string | null;
 }
 
 // ============================================================================

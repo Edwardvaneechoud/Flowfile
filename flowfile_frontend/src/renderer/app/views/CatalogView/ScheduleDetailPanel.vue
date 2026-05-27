@@ -94,6 +94,15 @@
         <span class="meta-label">Interval</span>
         <span class="meta-value">{{ formatScheduleType(schedule) }}</span>
       </div>
+      <div v-if="schedule.schedule_type === 'cron'" class="meta-card">
+        <span class="meta-label">Schedule</span>
+        <span class="meta-value">
+          {{ formatScheduleType(schedule) }}
+          <button class="btn-icon-inline" title="Edit schedule" @click="showEdit = true">
+            <i class="fa-solid fa-pen"></i>
+          </button>
+        </span>
+      </div>
       <div v-if="schedule.schedule_type === 'table_trigger'" class="meta-card">
         <span class="meta-label">Trigger Table</span>
         <span class="meta-value">{{
@@ -156,6 +165,16 @@
         @open-snapshot="$emit('openSnapshot', $event)"
       />
     </div>
+
+    <CreateScheduleModal
+      mode="edit"
+      :visible="showEdit"
+      :edit-schedule="schedule"
+      :flows="catalogStore.allFlows"
+      :tables="catalogStore.allTables"
+      @update="handleUpdateSchedule"
+      @close="showEdit = false"
+    />
   </div>
 </template>
 
@@ -164,7 +183,7 @@ import { computed, nextTick, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
-import type { FlowSchedule } from "../../types";
+import type { FlowSchedule, FlowScheduleUpdate } from "../../types";
 import {
   formatDate,
   formatScheduleType,
@@ -172,6 +191,7 @@ import {
   scheduleIcon,
 } from "./catalog-formatters";
 import RunHistoryTable from "./RunHistoryTable.vue";
+import CreateScheduleModal from "./CreateScheduleModal.vue";
 
 const catalogStore = useCatalogStore();
 
@@ -199,6 +219,8 @@ const isEditingDescription = ref(false);
 const editDescription = ref("");
 const descriptionInput = ref<HTMLInputElement | null>(null);
 
+const showEdit = ref(false);
+
 const displayName = computed(() => getScheduleDisplayName(props.schedule, props.schedule.id));
 
 const flowName = computed(() => {
@@ -208,6 +230,7 @@ const flowName = computed(() => {
 
 const scheduleTypeName = computed(() => {
   if (props.schedule.schedule_type === "interval") return "Interval";
+  if (props.schedule.schedule_type === "cron") return "Schedule";
   if (props.schedule.schedule_type === "table_trigger") return "Table Trigger";
   if (props.schedule.schedule_type === "table_set_trigger") return "Table Set Trigger";
   return props.schedule.schedule_type;
@@ -279,6 +302,19 @@ async function saveDescription() {
     } catch (e: any) {
       ElMessage.error(e?.response?.data?.detail ?? "Failed to update description");
     }
+  }
+}
+
+async function handleUpdateSchedule(payload: FlowScheduleUpdate) {
+  try {
+    await CatalogApi.updateSchedule(props.schedule.id, payload);
+    showEdit.value = false;
+    await Promise.all([
+      catalogStore.loadScheduleDetail(props.schedule.id),
+      catalogStore.loadSchedules(),
+    ]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to update schedule");
   }
 }
 </script>
