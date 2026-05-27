@@ -119,6 +119,16 @@ def test_run_flow_as_api_uses_flow_default_when_param_omitted(tmp_path):
     assert out["data"] == [{"region": "EU", "v": 1}]
 
 
+def test_params_inherited_from_flow_without_config(tmp_path):
+    """Flow ${name} params are accepted even when the endpoint declares no param specs."""
+    flow_path = tmp_path / "flow.yaml"
+    _build_and_save_flow(flow_path, "records")
+
+    # No param_specs at all — the runner must still inherit `region` from the flow.
+    out = api_runner.run_flow_as_api(str(flow_path), owner_id=1, param_specs=[], query={"region": "US"})
+    assert out["data"] == [{"region": "US", "v": 2}]
+
+
 def test_run_flow_as_api_columns(tmp_path):
     flow_path = tmp_path / "flow.yaml"
     _build_and_save_flow(flow_path, "columns")
@@ -206,23 +216,24 @@ def test_verify_api_key_valid(db_session):
     assert resolved is not None
 
 
-@pytest.mark.parametrize("bad", ["missing", "wrong_token", "wrong_slug", "disabled_key", "disabled_endpoint"])
+@pytest.mark.parametrize("bad", ["missing", "wrong_token", "wrong_slug", "disabled_key"])
 def test_verify_api_key_rejections(db_session, bad):
-    import datetime
-
-    expires = datetime.datetime(2000, 1, 1) if bad == "expired" else None
-    ep, raw = _make_endpoint_with_key(
-        db_session,
-        enabled=(bad != "disabled_endpoint"),
-        key_enabled=(bad != "disabled_key"),
-        expires_at=expires,
-    )
+    ep, raw = _make_endpoint_with_key(db_session, key_enabled=(bad != "disabled_key"))
     token = None if bad == "missing" else ("ffk_definitely_wrong" if bad == "wrong_token" else raw)
     slug = "other" if bad == "wrong_slug" else "sales"
 
     with pytest.raises(HTTPException) as exc:
         api_key_mod.verify_api_key(slug=slug, x_api_key=token, db=db_session)
     assert exc.value.status_code == 401
+
+
+def test_verify_api_key_disabled_endpoint_is_403(db_session):
+    """A valid key for a disabled endpoint gets a clear 403, not a misleading 401."""
+    ep, raw = _make_endpoint_with_key(db_session, enabled=False)
+    with pytest.raises(HTTPException) as exc:
+        api_key_mod.verify_api_key(slug="sales", x_api_key=raw, db=db_session)
+    assert exc.value.status_code == 403
+    assert "disabled" in exc.value.detail.lower()
 
 
 def test_verify_api_key_expired(db_session):

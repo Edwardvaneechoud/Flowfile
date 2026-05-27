@@ -71,8 +71,16 @@ def verify_api_key(
         raise unauthorized
 
     endpoint = db.get(db_models.FlowApiEndpoint, key.endpoint_id)
-    if endpoint is None or not endpoint.enabled or endpoint.slug != slug:
+    # Wrong/unknown slug stays a 401 so we don't confirm endpoint existence to a
+    # key that isn't scoped to it. A disabled endpoint is reported clearly, since
+    # the caller already proved they hold a valid key for it.
+    if endpoint is None or endpoint.slug != slug:
         raise unauthorized
+    if not endpoint.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API endpoint is disabled",
+        )
 
     key.last_used_at = datetime.datetime.now(datetime.timezone.utc)
     db.commit()

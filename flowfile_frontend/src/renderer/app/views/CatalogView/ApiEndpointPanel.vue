@@ -69,72 +69,64 @@
         persist-key="flow.api.params"
         :count="params.length"
       >
-        <template #actions>
-          <el-button size="small" @click="addParam"
-            ><i class="fa-solid fa-plus btn-icon" /> Add</el-button
-          >
-        </template>
         <p class="api-hint">
-          Each parameter name must match a <code>${name}</code> reference in the flow. Values are
-          validated by type before being substituted.
+          Parameters are inherited automatically from the flow's <code>${name}</code> references.
+          Set a type to validate incoming values (defaults to string).
         </p>
-        <el-table v-if="params.length" :data="params" size="small" class="param-table">
-          <el-table-column label="Name" min-width="120">
-            <template #default="{ row }">
-              <el-input v-model="row.name" size="small" placeholder="region" />
-            </template>
-          </el-table-column>
-          <el-table-column label="Type" width="120">
-            <template #default="{ row }">
-              <el-select v-model="row.type" size="small">
-                <el-option v-for="t in PARAM_TYPES" :key="t" :label="t" :value="t" />
-              </el-select>
-            </template>
-          </el-table-column>
-          <el-table-column label="Required" width="90">
-            <template #default="{ row }">
-              <el-switch v-model="row.required" size="small" />
-            </template>
-          </el-table-column>
-          <el-table-column label="Default" min-width="110">
-            <template #default="{ row }">
-              <el-input v-model="row.default" size="small" placeholder="(none)" />
-            </template>
-          </el-table-column>
-          <el-table-column label="Enum values (comma-sep)" min-width="160">
-            <template #default="{ row }">
-              <el-input
-                v-model="row.enum_values_text"
-                size="small"
-                :disabled="row.type !== 'enum'"
-                placeholder="a,b,c"
-              />
-            </template>
-          </el-table-column>
-          <el-table-column width="56" align="center">
-            <template #default="{ $index }">
-              <el-button
-                class="param-delete-btn"
-                size="small"
-                text
-                type="danger"
-                title="Remove parameter"
-                @click="params.splice($index, 1)"
-              >
-                <i class="fa-solid fa-trash" />
-              </el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-button
-          type="primary"
-          size="small"
-          :loading="busy"
-          class="save-btn"
-          @click="saveEndpoint"
-        >
-          Save changes
-        </el-button>
+        <EmptyState
+          v-if="params.length === 0"
+          icon="fa-solid fa-sliders"
+          description="This flow has no ${parameters}. Add one in the flow to expose it here."
+        />
+        <template v-else>
+          <el-table :data="params" size="small" class="param-table">
+            <el-table-column label="Name" min-width="120">
+              <template #default="{ row }">
+                <code class="param-name">{{ row.name }}</code>
+              </template>
+            </el-table-column>
+            <el-table-column label="Type" width="120">
+              <template #default="{ row }">
+                <el-select v-model="row.type" size="small">
+                  <el-option v-for="t in PARAM_TYPES" :key="t" :label="t" :value="t" />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="Required" width="90">
+              <template #default="{ row }">
+                <el-switch v-model="row.required" size="small" />
+              </template>
+            </el-table-column>
+            <el-table-column label="Default override" min-width="120">
+              <template #default="{ row }">
+                <el-input
+                  v-model="row.default"
+                  size="small"
+                  :placeholder="row.flow_default || '(flow default)'"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="Enum values (comma-sep)" min-width="160">
+              <template #default="{ row }">
+                <el-input
+                  v-model="row.enum_values_text"
+                  size="small"
+                  :disabled="row.type !== 'enum'"
+                  placeholder="a,b,c"
+                />
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-button
+            type="primary"
+            size="small"
+            :loading="busy"
+            class="save-btn"
+            @click="saveEndpoint"
+          >
+            Save changes
+          </el-button>
+        </template>
       </CollapsibleSection>
 
       <!-- API keys -->
@@ -198,12 +190,12 @@
           Runs the flow as you (no key needed) with the values below, exactly as the public endpoint
           would.
         </p>
-        <div v-for="p in endpoint.parameters" :key="p.name" class="api-row test-param-row">
+        <div v-for="p in params" :key="p.name" class="api-row test-param-row">
           <label class="test-param-label">{{ p.name }}<span v-if="p.required"> *</span></label>
           <el-input
             v-model="testValues[p.name]"
             size="small"
-            :placeholder="p.default ?? p.type"
+            :placeholder="p.flow_default || p.type"
             class="test-param-input"
           />
         </div>
@@ -232,6 +224,7 @@ import {
   FlowApiApi,
   type ApiEndpoint,
   type ApiKey,
+  type ApiParamSpec,
   type ApiParamType,
   type ApiTestResult,
   type FlowParamInfo,
@@ -242,6 +235,7 @@ import { CollapsibleSection, EmptyState } from "../../components/common";
 
 interface ParamRow {
   name: string;
+  flow_default: string;
   type: ApiParamType;
   required: boolean;
   default: string;
@@ -259,6 +253,7 @@ const keys = ref<ApiKey[]>([]);
 const slug = ref("");
 const enabled = ref(true);
 const params = ref<ParamRow[]>([]);
+const flowParams = ref<FlowParamInfo[]>([]);
 const newKey = ref<string | null>(null);
 
 const testValues = ref<Record<string, string>>({});
@@ -272,7 +267,7 @@ const curlExample = computed(() => `curl -H "X-API-Key: <your-key>" "${fullUrl.v
 // The equivalent public GET request for the current "Try it" values.
 const testRequestUrl = computed(() => {
   const qs = new URLSearchParams();
-  for (const p of endpoint.value?.parameters ?? []) {
+  for (const p of params.value) {
     const v = testValues.value[p.name];
     if (v !== undefined && v !== "") qs.append(p.name, v);
   }
@@ -280,29 +275,20 @@ const testRequestUrl = computed(() => {
   return `GET ${fullUrl.value}${query ? `?${query}` : ""}`;
 });
 
-/** Ensure every flow ${name} parameter appears as a row, preserving existing edits. */
-function mergeFlowParams(rows: ParamRow[], flowParams: FlowParamInfo[]): ParamRow[] {
-  const existing = new Set(rows.map((r) => r.name));
-  const added: ParamRow[] = flowParams
-    .filter((p) => !existing.has(p.name))
-    .map((p) => ({
-      name: p.name,
-      type: "string" as ApiParamType,
-      required: false,
-      default: p.default ?? "",
-      enum_values_text: "",
-    }));
-  return [...rows, ...added];
-}
-
-function toRows(ep: ApiEndpoint): ParamRow[] {
-  return ep.parameters.map((p) => ({
-    name: p.name,
-    type: p.type,
-    required: p.required,
-    default: p.default ?? "",
-    enum_values_text: (p.enum_values ?? []).join(","),
-  }));
+/** Build one row per flow ${name} parameter, applying any saved type overrides by name. */
+function rebuildParamRows(saved: ApiParamSpec[] | null) {
+  const byName = new Map((saved ?? []).map((p) => [p.name, p]));
+  params.value = flowParams.value.map((fp) => {
+    const o = byName.get(fp.name);
+    return {
+      name: fp.name,
+      flow_default: fp.default ?? "",
+      type: o?.type ?? "string",
+      required: o?.required ?? false,
+      default: o?.default ?? "",
+      enum_values_text: (o?.enum_values ?? []).join(","),
+    };
+  });
 }
 
 function fromRows(rows: ParamRow[]) {
@@ -328,7 +314,6 @@ function syncFromEndpoint(ep: ApiEndpoint | null) {
   if (ep) {
     slug.value = ep.slug;
     enabled.value = ep.enabled;
-    params.value = toRows(ep);
   }
 }
 
@@ -338,20 +323,21 @@ async function load() {
   testResult.value = null;
   testError.value = null;
   try {
-    const [ep, flowParams] = await Promise.all([
+    const [ep, fParams] = await Promise.all([
       FlowApiApi.getEndpointForFlow(props.flow.id),
       FlowApiApi.getFlowParameters(props.flow.id).catch(() => [] as FlowParamInfo[]),
     ]);
+    flowParams.value = fParams;
     syncFromEndpoint(ep);
     if (ep) {
       keys.value = await FlowApiApi.listKeys(ep.id);
     } else {
       keys.value = [];
       slug.value = "";
-      params.value = [];
     }
-    // Pre-populate any flow ${name} parameter that isn't already configured.
-    params.value = mergeFlowParams(params.value, flowParams);
+    // Parameters are inherited from the flow's ${name} references; saved config
+    // only refines their types.
+    rebuildParamRows(ep?.parameters ?? null);
   } catch {
     ElMessage.error("Failed to load API endpoint");
   } finally {
@@ -369,6 +355,7 @@ async function publish() {
       parameters: fromRows(params.value),
     });
     syncFromEndpoint(ep);
+    rebuildParamRows(ep.parameters);
     keys.value = [];
     ElMessage.success("Flow published as API");
   } catch (e: any) {
@@ -388,6 +375,7 @@ async function saveEndpoint() {
       parameters: fromRows(params.value),
     });
     syncFromEndpoint(ep);
+    rebuildParamRows(ep.parameters);
     ElMessage.success("Saved");
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to save");
@@ -420,16 +408,6 @@ async function unpublish() {
   } finally {
     busy.value = false;
   }
-}
-
-function addParam() {
-  params.value.push({
-    name: "",
-    type: "string",
-    required: false,
-    default: "",
-    enum_values_text: "",
-  });
 }
 
 async function createKey() {
@@ -554,6 +532,10 @@ watch(() => props.flow.id, load, { immediate: true });
 }
 .save-btn {
   margin-top: 10px;
+}
+.param-name {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
 }
 .param-table {
   margin-top: 8px;

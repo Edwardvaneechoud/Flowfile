@@ -97,6 +97,24 @@ def _serialize(data: Any, settings: Any) -> dict[str, Any]:
     return {"data": records, "row_count": len(records), "orientation": "records"}
 
 
+def _effective_specs(flow, overrides: list[ApiParamSpec]) -> list[ApiParamSpec]:
+    """Derive the endpoint's parameter set from the flow's own ${name} parameters.
+
+    Parameters are *inherited* from the flow: every flow parameter is accepted (as a
+    string by default). The stored ``overrides`` only refine type/required/enum per
+    name; stale overrides for params no longer in the flow are ignored.
+    """
+    by_name = {spec.name: spec for spec in overrides}
+    specs: list[ApiParamSpec] = []
+    for param in flow.flow_settings.parameters:
+        override = by_name.get(param.name)
+        if override is not None:
+            specs.append(override)
+        else:
+            specs.append(ApiParamSpec(name=param.name, type="string", required=False))
+    return specs
+
+
 def run_flow_as_api(
     flow_path: str,
     owner_id: int,
@@ -108,7 +126,8 @@ def run_flow_as_api(
     Args:
         flow_path: Filesystem path to the registered flow.
         owner_id: User id the flow runs as (the endpoint owner).
-        param_specs: Typed parameter specs declared on the endpoint.
+        param_specs: Stored type overrides for the endpoint (parameters themselves
+            are inherited from the flow's ${name} references).
         query: Raw query parameters from the request.
 
     Raises:
@@ -125,7 +144,7 @@ def run_flow_as_api(
         raise ApiConfigError("flow has more than one API response node")
     api_node = api_nodes[0]
 
-    resolved = resolve_params(param_specs, query)
+    resolved = resolve_params(_effective_specs(flow, param_specs), query)
     for param in flow.flow_settings.parameters:
         if param.name in resolved:
             param.default_value = resolved[param.name]
