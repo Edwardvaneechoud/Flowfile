@@ -4,8 +4,8 @@ Backs the "host flows as HTTP APIs" feature. A ``FlowApiEndpoint`` publishes a
 registered flow under a URL slug; ``FlowApiKey`` rows authenticate callers and
 are stored hashed (never recoverable). See ``routes/flow_api.py``.
 
-Revision ID: 015
-Revises: 014
+Revision ID: 016
+Revises: 015
 Create Date: 2026-05-23
 """
 
@@ -15,8 +15,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision: str = "015"
-down_revision: str | None = "014"
+revision: str = "016"
+down_revision: str | None = "015"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
