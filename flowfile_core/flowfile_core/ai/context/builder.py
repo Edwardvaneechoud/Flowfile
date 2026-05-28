@@ -71,6 +71,7 @@ SurfaceLiteral = Literal[
     "settings_autocomplete",
     "lineage",
     "intent_classifier",
+    "cron",
 ]
 
 SamplesMode = Literal["off", "regex"]
@@ -109,6 +110,12 @@ SURFACE_TO_LEVEL: dict[str, PromptLevel] = {
     # SurfaceLiteral; ``assemble_system_prompt`` is never called for
     # this surface.
     "intent_classifier": "copilot",
+    # Cron NL→expression — single-shot JSON judgement. The cron module
+    # injects its own tight system prompt rather than the layered prompt,
+    # so ``assemble_system_prompt`` is never called for this surface. Mapped
+    # to ``copilot`` only to keep SURFACE_TO_LEVEL exhaustive over
+    # SurfaceLiteral (same posture as ``intent_classifier``).
+    "cron": "copilot",
 }
 
 

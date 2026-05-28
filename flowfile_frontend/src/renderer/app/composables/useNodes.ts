@@ -44,7 +44,7 @@ const componentCache: Map<string, Promise<DefineComponent>> = new Map();
  * Fetches node templates with caching to minimize API calls
  * Returns cached data if available, otherwise fetches from API
  */
-async function fetchNodeTemplates(): Promise<NodeTemplate[]> {
+export async function fetchNodeTemplates(): Promise<NodeTemplate[]> {
   // If we already have cached data, return it immediately
   if (nodeTemplatesCache !== null) {
     return nodeTemplatesCache;
@@ -60,9 +60,9 @@ async function fetchNodeTemplates(): Promise<NodeTemplate[]> {
   cachePromise = axios
     .get("/node_list")
     .then((response) => {
-      const allNodes = response.data as NodeTemplate[];
-      // Apply production filter if needed
-      nodeTemplatesCache = ENV.isProduction ? allNodes.filter((node) => node.prod_ready) : allNodes;
+      // Cache the full list; the production filter is applied per-consumer (palette
+      // in useNodes()) so by-item lookups still resolve nodes saved flows reference.
+      nodeTemplatesCache = response.data as NodeTemplate[];
       return nodeTemplatesCache;
     })
     .catch((error) => {
@@ -196,7 +196,8 @@ export const useNodes = () => {
     error.value = null;
 
     try {
-      nodes.value = await fetchNodeTemplates();
+      const all = await fetchNodeTemplates();
+      nodes.value = ENV.isProduction ? all.filter((node) => node.prod_ready) : all;
     } catch (err) {
       error.value = err as Error;
       nodes.value = [];

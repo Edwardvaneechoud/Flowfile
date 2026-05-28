@@ -331,7 +331,6 @@ class TestFlowfileAPI:
                                                automatically_open_browser=False)
         # Assertions
         assert success is True, "open_graph_in_editor should return True on success"
-        # The rest of your test logic to verify execution
         flow_id = _get_flow_id_on_flow_location(df.flow_graph.flow_settings.path)
         assert flow_id is not None, "Could not find the active flow ID"
 
@@ -340,7 +339,6 @@ class TestFlowfileAPI:
         assert execution_complete, "Flow execution did not complete successfully"
         ensure_folder_empty("supporting_files")
         stop_flowfile_server_process()
-
 
 
 if __name__ == "__main__":
