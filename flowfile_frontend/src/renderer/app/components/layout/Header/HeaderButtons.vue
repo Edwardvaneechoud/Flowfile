@@ -1,10 +1,37 @@
 <template>
   <div class="action-buttons">
     <div v-if="hasOpenFlow" class="action-btn-split" data-tutorial="save-btn">
-      <button class="action-btn action-btn--split-main" @click="openSaveModal">
-        <span class="material-icons btn-icon">save</span>
-        <span class="btn-text">Save</span>
-      </button>
+      <el-popover
+        placement="bottom"
+        :width="240"
+        trigger="hover"
+        :show-after="200"
+        popper-class="header-action-popover"
+        :show-arrow="true"
+      >
+        <template #reference>
+          <button class="action-btn action-btn--split-main" @click="openSaveModal">
+            <span class="material-icons btn-icon">save</span>
+            <span class="btn-text">Save</span>
+          </button>
+        </template>
+        <div class="header-action-popover-body">
+          <div class="header-action-popover-title">
+            <span class="material-icons header-action-popover-icon">save</span>
+            <span>Save</span>
+          </div>
+          <p class="header-action-popover-desc">
+            Save changes to this flow. Use the ▼ for Save As…
+          </p>
+          <p class="header-action-popover-shortcut-hint">
+            <span class="header-action-popover-shortcut">
+              <kbd>{{ MODIFIER_LABEL }}</kbd>
+              <kbd>S</kbd>
+            </span>
+            to save.
+          </p>
+        </div>
+      </el-popover>
       <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
         <button class="action-btn action-btn--split-caret" aria-label="More save options">
           <span class="material-icons btn-icon">arrow_drop_down</span>
@@ -19,15 +46,67 @@
         </template>
       </el-dropdown>
     </div>
-    <button class="action-btn" data-tutorial="open-btn" @click="modalVisibleForOpen = true">
-      <span class="material-icons btn-icon">folder_open</span>
-      <span class="btn-text">Open</span>
-    </button>
+    <el-popover
+      placement="bottom"
+      :width="240"
+      trigger="hover"
+      :show-after="200"
+      popper-class="header-action-popover"
+      :show-arrow="true"
+    >
+      <template #reference>
+        <button class="action-btn" data-tutorial="open-btn" @click="modalVisibleForOpen = true">
+          <span class="material-icons btn-icon">folder_open</span>
+          <span class="btn-text">Open</span>
+        </button>
+      </template>
+      <div class="header-action-popover-body">
+        <div class="header-action-popover-title">
+          <span class="material-icons header-action-popover-icon">folder_open</span>
+          <span>Open</span>
+        </div>
+        <p class="header-action-popover-desc">Open an existing flow.</p>
+        <p class="header-action-popover-shortcut-hint">
+          <span class="header-action-popover-shortcut">
+            <kbd>{{ MODIFIER_LABEL }}</kbd>
+            <kbd>O</kbd>
+          </span>
+          to open the picker.
+        </p>
+      </div>
+    </el-popover>
     <div class="action-btn-split" data-tutorial="quick-create-btn">
-      <button class="action-btn action-btn--split-main" @click="handleQuickCreate">
-        <span class="material-icons btn-icon">add_circle_outline</span>
-        <span class="btn-text">Create</span>
-      </button>
+      <el-popover
+        placement="bottom"
+        :width="240"
+        trigger="hover"
+        :show-after="200"
+        popper-class="header-action-popover"
+        :show-arrow="true"
+      >
+        <template #reference>
+          <button class="action-btn action-btn--split-main" @click="handleQuickCreate">
+            <span class="material-icons btn-icon">add_circle_outline</span>
+            <span class="btn-text">Create</span>
+          </button>
+        </template>
+        <div class="header-action-popover-body">
+          <div class="header-action-popover-title">
+            <span class="material-icons header-action-popover-icon">add_circle_outline</span>
+            <span>Create</span>
+          </div>
+          <p class="header-action-popover-desc">
+            Start a new flow at the default location. Use the ▼ to pick a folder.
+          </p>
+          <p class="header-action-popover-shortcut-hint">
+            <span class="header-action-popover-shortcut">
+              <kbd>{{ MODIFIER_LABEL }}</kbd>
+              <kbd>N</kbd>
+            </span>
+            to create.
+          </p>
+        </div>
+      </el-popover>
       <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
         <button class="action-btn action-btn--split-caret" aria-label="More create options">
           <span class="material-icons btn-icon">arrow_drop_down</span>
@@ -42,31 +121,15 @@
         </template>
       </el-dropdown>
     </div>
-    <button class="action-btn" data-tutorial="settings-btn" @click="openSettingsModal">
-      <span class="material-icons btn-icon">settings</span>
-      <span class="btn-text">Settings</span>
-    </button>
-    <run-button ref="runButton" :flow-id="nodeStore.flow_id" data-tutorial="run-btn" />
-    <el-tooltip content="Generate code (Ctrl+G)" placement="bottom" :show-after="400">
-      <button
-        class="action-btn action-btn--icon-only"
-        :class="{ active: nodeStore.showCodeGenerator }"
-        data-tutorial="generate-code-btn"
-        @click="toggleCodeGenerator"
-      >
-        <span class="material-icons btn-icon">code</span>
-      </button>
-    </el-tooltip>
-    <el-tooltip content="Flow Parameters" placement="bottom" :show-after="400">
-      <button
-        class="action-btn action-btn--icon-only"
-        :class="{ active: editorStore.showParametersPanel }"
-        @click="editorStore.toggleParametersPanel()"
-      >
-        <span class="material-icons btn-icon">tune</span>
-      </button>
-    </el-tooltip>
   </div>
+
+  <!-- Hidden run-button instance kept solely to back loadFlowSettings()'s
+       polling-restoration path. The user-visible run-button now lives in
+       RightActionCluster; this off-screen instance preserves the existing
+       runButton.value.startPolling()/stopPolling() calls below without
+       refactoring the polling restore. v-show:false stays in the layout
+       tree so the ref resolves. -->
+  <run-button v-show="false" ref="runButton" :flow-id="nodeStore.flow_id" aria-hidden="true" />
 
   <open-dialog
     ref="openDialogRef"
@@ -211,6 +274,11 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~692 LOC. Plan to extract:
+//   - SettingsModal.vue: 4-section settings modal (~lines 90-209)
+//   - ExecutionSettings.vue (~lines 99-151), DisplaySettings.vue (~153-164),
+//     ParameterSettings.vue (~166-207) as children of SettingsModal
+//   - Parameter CRUD logic (~lines 431-448) goes with ParameterSettings
 import { ref, onMounted, watch, computed } from "vue";
 import { ElMessage } from "element-plus";
 
@@ -232,6 +300,7 @@ import {
   updateRunStatus,
 } from "../../nodes/nodeLogic";
 import type { FlowParameter } from "../../../types/flow.types";
+import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
@@ -303,27 +372,43 @@ const executionLocationOptions = ref<ExecutionLocationOption[]>([
 
 const emit = defineEmits(["openFlow", "refreshFlow", "flowSaved", "logs-start", "logs-stop"]);
 
-const loadFlowSettings = async () => {
-  if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;
+// Collapse the concurrent watcher-triggered + explicit loadFlowSettings calls fired on
+// flow load (setFlowId fires the flow_id watcher while initialSetup also calls explicitly)
+// into one getFlowSettings + one run_status. Keyed by flow_id; cleared once settled.
+let settingsLoad: { id: number; promise: Promise<void> } | null = null;
 
-  flowSettings.value = await getFlowSettings(nodeStore.flow_id);
-  if (!flowSettings.value) return;
+const loadFlowSettings = async (): Promise<void> => {
+  const flowId = nodeStore.flow_id;
+  if (!(flowId && flowId > 0)) return;
+  if (settingsLoad && settingsLoad.id === flowId) return settingsLoad.promise;
 
-  flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
-  flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? false;
-  flowSettings.value.parameters = flowSettings.value.parameters ?? [];
-  editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
-  editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
+  const promise = (async () => {
+    flowSettings.value = await getFlowSettings(flowId);
+    if (!flowSettings.value) return;
 
-  if (!runButton.value) return;
+    flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
+    flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? false;
+    flowSettings.value.parameters = flowSettings.value.parameters ?? [];
+    editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
+    editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
 
-  if (flowSettings.value.is_running) {
-    editorStore.isRunning = true;
-    runButton.value.startPolling(runButton.value.checkRunStatus);
-  } else {
-    editorStore.isRunning = false;
-    runButton.value.stopPolling();
-    updateRunStatus(nodeStore.flow_id, nodeStore);
+    if (!runButton.value) return;
+
+    if (flowSettings.value.is_running) {
+      editorStore.isRunning = true;
+      runButton.value.startPolling(runButton.value.checkRunStatus);
+    } else {
+      editorStore.isRunning = false;
+      runButton.value.stopPolling();
+      updateRunStatus(flowId, nodeStore);
+    }
+  })();
+
+  settingsLoad = { id: flowId, promise };
+  try {
+    await promise;
+  } finally {
+    if (settingsLoad?.id === flowId) settingsLoad = null;
   }
 };
 
@@ -418,16 +503,6 @@ const runFlow = () => {
   }
 };
 
-const toggleCodeGenerator = () => {
-  nodeStore.toggleCodeGenerator();
-  // Advance tutorial if we're on the "generate-code" step
-  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "generate-code") {
-    setTimeout(() => {
-      tutorialStore.nextStep();
-    }, 300);
-  }
-};
-
 const addParameter = () => {
   if (!flowSettings.value) return;
   if (!flowSettings.value.parameters) {
@@ -467,6 +542,7 @@ defineExpose({
   openOpenDialog: () => (modalVisibleForOpen.value = true),
   openSaveModal,
   runFlow,
+  openSettings: openSettingsModal,
 });
 
 onMounted(async () => {

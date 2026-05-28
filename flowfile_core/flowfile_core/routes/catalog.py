@@ -16,14 +16,15 @@ from functools import wraps
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
-from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
 from flowfile_core.catalog import (
     AmbiguousTableError,
     CatalogService,
+    DashboardNotFoundError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
     FlowHasArtifactsError,
@@ -40,9 +41,13 @@ from flowfile_core.catalog import (
     TableExistsError,
     TableFavoriteNotFoundError,
     TableNotFoundError,
+    VisualizationComputeError,
+    VisualizationExistsError,
+    VisualizationNotFoundError,
 )
+from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
 from flowfile_core.database.connection import get_db
-from flowfile_core.database.models import SchedulerLock
+from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
@@ -50,9 +55,17 @@ from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
     CatalogStats,
     CatalogTableCreate,
+    CatalogTableFromDataCreate,
     CatalogTableOut,
     CatalogTablePreview,
+    CatalogTableRefreshRequest,
     CatalogTableUpdate,
+    ColumnStatsResponse,
+    CronValidationRequest,
+    CronValidationResult,
+    DashboardCreate,
+    DashboardOut,
+    DashboardUpdate,
     DeltaTableHistory,
     FavoriteOut,
     FlowRegistrationCreate,
@@ -80,6 +93,14 @@ from flowfile_core.schemas.catalog_schema import (
     TableFavoriteOut,
     VirtualFlowTableCreate,
     VirtualFlowTableUpdate,
+    VisualizationAdHocComputeRequest,
+    VisualizationComputeResponse,
+    VisualizationCreate,
+    VisualizationFieldsRequest,
+    VisualizationFieldsResponse,
+    VisualizationOut,
+    VisualizationSavedComputeRequest,
+    VisualizationUpdate,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
 from shared.storage_config import storage
@@ -87,7 +108,13 @@ from shared.storage_config import storage
 router = APIRouter(
     prefix="/catalog",
     tags=["catalog"],
-    dependencies=[Depends(get_current_active_user)],
+    # Router-level auth accepts either JWT or the kernel's ``X-Internal-Token``.
+    # Endpoints that should remain JWT-only keep ``current_user=Depends(get_current_active_user)``
+    # which re-checks at the endpoint level and rejects internal tokens. Endpoints that
+    # the kernel needs to call (table resolve / register / update / fetch) use
+    # ``get_user_or_internal_service`` for their ``current_user`` so the internal
+    # token is accepted there.
+    dependencies=[Depends(get_user_or_internal_service)],
 )
 
 
@@ -118,6 +145,10 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     FollowNotFoundError: (404, "Follow not found"),
     TableFavoriteNotFoundError: (404, "Table favorite not found"),
     NoSnapshotError: (422, "No flow snapshot available for this run"),
+    VisualizationNotFoundError: (404, None),
+    VisualizationExistsError: (409, None),
+    VisualizationComputeError: (502, None),
+    DashboardNotFoundError: (404, None),
     ValueError: (422, None),
 }
 
@@ -313,7 +344,7 @@ def list_flow_artifacts(
 def list_runs(
     registration_id: int | None = None,
     schedule_id: int | None = None,
-    run_type: str | None = None,
+    run_type: RunType | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     service: CatalogService = Depends(get_catalog_service),
@@ -476,10 +507,14 @@ def remove_follow(
 @router.get("/tables", response_model=list[CatalogTableOut])
 def list_tables(
     namespace_id: int | None = None,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """List catalog tables, optionally filtered by namespace."""
+    """List catalog tables, optionally filtered by namespace.
+
+    Accepts the kernel's internal token so ``flowfile_ctx.list_catalog_tables``
+    can enumerate available tables.
+    """
     return service.list_tables(namespace_id=namespace_id, user_id=current_user.id)
 
 
@@ -487,10 +522,14 @@ def list_tables(
 @handle_catalog_exceptions()
 def register_table(
     body: CatalogTableCreate,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Register a new table by materializing a source file as Parquet."""
+    """Register a new table by materializing a source file as Parquet.
+
+    Accepts the kernel's internal token so ``flowfile_ctx.write_catalog_table``
+    can register tables it produced.
+    """
     validated_path = validate_path_under_cwd(body.file_path)
     return service.register_table(
         name=body.name,
@@ -501,13 +540,67 @@ def register_table(
     )
 
 
+@router.post("/tables/from-data", response_model=CatalogTableOut, status_code=201)
+@handle_catalog_exceptions()
+def register_table_from_data(
+    body: CatalogTableFromDataCreate,
+    current_user=Depends(get_user_or_internal_service),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Register a new catalog table from already-materialized data.
+
+    Used by ``flowfile_ctx.write_catalog_table`` once the kernel has written
+    the Delta directory locally — Core only persists the metadata record (no
+    worker-side materialization).
+    """
+    return service.register_table_from_data(
+        name=body.name,
+        table_path=body.table_path,
+        owner_id=current_user.id,
+        namespace_id=body.namespace_id,
+        description=body.description,
+        storage_format=body.storage_format,
+        schema=body.schema_columns,
+        row_count=body.row_count,
+        column_count=body.column_count,
+        size_bytes=body.size_bytes,
+    )
+
+
+@router.post("/tables/{table_id}/refresh", response_model=CatalogTableOut)
+@handle_catalog_exceptions()
+def refresh_table_metadata(
+    table_id: int,
+    body: CatalogTableRefreshRequest,
+    current_user=Depends(get_user_or_internal_service),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Refresh an existing catalog table's metadata after an in-place data write.
+
+    Used by ``flowfile_ctx.write_catalog_table`` for append / upsert / update /
+    delete modes — the kernel writes new data to the existing Delta directory
+    and then reports back the new row_count / size_bytes / schema so Core's
+    record stays consistent.
+    """
+    return service.overwrite_table_data(
+        table_id=table_id,
+        table_path=body.table_path,
+        description=body.description,
+        storage_format=body.storage_format,
+        schema=body.schema_columns,
+        row_count=body.row_count,
+        column_count=body.column_count,
+        size_bytes=body.size_bytes,
+    )
+
+
 @router.get("/tables/resolve", response_model=ResolveTableResult)
 @handle_catalog_exceptions()
 def resolve_table(
     q: str,
     namespace_id: int | None = None,
     strict: bool = False,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Resolve a catalog table by ``"namespace.table"`` or bare ``"table"`` reference.
@@ -528,7 +621,7 @@ def resolve_table(
 @handle_catalog_exceptions()
 def get_table(
     table_id: int,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.get_table(table_id, user_id=current_user.id)
@@ -539,7 +632,7 @@ def get_table(
 def update_table(
     table_id: int,
     body: CatalogTableUpdate,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.update_table(
@@ -575,6 +668,26 @@ def get_table_preview(
     data from that specific historical version.
     """
     return service.get_table_preview(table_id, limit=limit, version=version, user_id=current_user.id)
+
+
+@router.get(
+    "/tables/{table_id}/columns/{column_name}/stats",
+    response_model=ColumnStatsResponse,
+)
+@handle_catalog_exceptions()
+def get_table_column_stats(
+    table_id: int,
+    column_name: str,
+    limit: int = Query(100, ge=1, le=1000),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Distinct values + min/max for a column on a catalog table.
+
+    Used by the dashboard filter UI to pre-populate categorical option
+    lists and pre-fill numeric / date range inputs.
+    """
+    return service.get_table_column_stats(table_id, column_name, limit=limit, user_id=current_user.id)
 
 
 @router.get("/tables/{table_id}/history", response_model=DeltaTableHistory)
@@ -620,6 +733,194 @@ def remove_table_favorite(
     service: CatalogService = Depends(get_catalog_service),
 ):
     service.remove_table_favorite(user_id=current_user.id, table_id=table_id)
+
+
+# ---------------------------------------------------------------------------
+# Catalog Visualizations
+# ---------------------------------------------------------------------------
+
+
+@router.get("/visualizations", response_model=list[VisualizationOut])
+@handle_catalog_exceptions()
+def list_visualization_library(
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return every saved visualization across the catalog."""
+    return service.list_visualization_library(user_id=current_user.id)
+
+
+@router.post("/visualizations", response_model=VisualizationOut, status_code=201)
+@handle_catalog_exceptions()
+def create_visualization(
+    body: VisualizationCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Create a saved viz. Source is either a catalog table or an inline SQL query."""
+    return service.create_visualization(body, user_id=current_user.id)
+
+
+@router.get("/visualizations/{viz_id}", response_model=VisualizationOut)
+@handle_catalog_exceptions()
+def get_visualization(
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.get_visualization(viz_id, user_id=current_user.id)
+
+
+@router.put("/visualizations/{viz_id}", response_model=VisualizationOut)
+@handle_catalog_exceptions()
+def update_visualization(
+    viz_id: int,
+    body: VisualizationUpdate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.update_visualization(viz_id, body, user_id=current_user.id)
+
+
+@router.delete("/visualizations/{viz_id}", status_code=204)
+@handle_catalog_exceptions()
+def delete_visualization(
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    service.delete_visualization(viz_id, user_id=current_user.id)
+
+
+@router.post(
+    "/visualizations/{viz_id}/compute",
+    response_model=VisualizationComputeResponse,
+)
+@handle_catalog_exceptions()
+def compute_saved_visualization(
+    viz_id: int,
+    body: VisualizationSavedComputeRequest = Body(default_factory=VisualizationSavedComputeRequest),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Compute chart rows for a saved viz.
+
+    GraphicWalker's ``computation`` callback POSTs the IDataQueryPayload
+    here on every aggregation; the worker session cache keeps the source
+    LazyFrame warm so successive calls skip the load.
+    """
+    return service.compute_saved_visualization_rows(
+        viz_id,
+        body.max_rows,
+        user_id=current_user.id,
+        payload=body.payload,
+    )
+
+
+@router.post("/visualizations/{viz_id}/fields", response_model=VisualizationFieldsResponse)
+@handle_catalog_exceptions()
+def get_saved_visualization_fields(
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return the GW field schema for a saved viz's source."""
+    return service.get_visualization_fields_for_viz(viz_id, user_id=current_user.id)
+
+
+@router.post("/visualizations/compute", response_model=VisualizationComputeResponse)
+@handle_catalog_exceptions()
+def compute_ad_hoc_visualization(
+    body: VisualizationAdHocComputeRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Compute a chart from a transient source (ad-hoc SQL or a catalog table)."""
+    return service.compute_ad_hoc_visualization(
+        source=body.source,
+        payload=body.payload,
+        max_rows=body.max_rows,
+        user_id=current_user.id,
+    )
+
+
+@router.post("/visualizations/fields", response_model=VisualizationFieldsResponse)
+@handle_catalog_exceptions()
+def get_visualization_fields(
+    body: VisualizationFieldsRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return the Graphic Walker field schema for a viz source descriptor."""
+    return service.get_visualization_fields(body.source, user_id=current_user.id)
+
+
+@router.get("/tables/{table_id}/visualizations", response_model=list[VisualizationOut])
+@handle_catalog_exceptions()
+def list_visualizations_for_table(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Filtered listing — viz that reference this table."""
+    return service.list_visualizations_for_table(table_id, user_id=current_user.id)
+
+
+# ---------------------------------------------------------------------------
+# Catalog Dashboards
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboards", response_model=list[DashboardOut])
+@handle_catalog_exceptions()
+def list_dashboards(
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return every saved dashboard."""
+    return service.list_dashboards(user_id=current_user.id)
+
+
+@router.post("/dashboards", response_model=DashboardOut, status_code=201)
+@handle_catalog_exceptions()
+def create_dashboard(
+    body: DashboardCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Create a new dashboard. The layout may be empty; tiles can be added later."""
+    return service.create_dashboard(body, user_id=current_user.id)
+
+
+@router.get("/dashboards/{dashboard_id}", response_model=DashboardOut)
+@handle_catalog_exceptions()
+def get_dashboard(
+    dashboard_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.get_dashboard(dashboard_id, user_id=current_user.id)
+
+
+@router.put("/dashboards/{dashboard_id}", response_model=DashboardOut)
+@handle_catalog_exceptions()
+def update_dashboard(
+    dashboard_id: int,
+    body: DashboardUpdate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.update_dashboard(dashboard_id, body, user_id=current_user.id)
+
+
+@router.delete("/dashboards/{dashboard_id}", status_code=204)
+@handle_catalog_exceptions()
+def delete_dashboard(
+    dashboard_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    service.delete_dashboard(dashboard_id, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -670,23 +971,16 @@ def update_virtual_flow_table(
     )
 
 
-@router.post("/virtual-tables/{table_id}/resolve")
+@router.post("/virtual-tables/{table_id}/resolve", response_model=CatalogTablePreview)
 @handle_catalog_exceptions(TableNotFoundError="Virtual table not found", FlowNotFoundError="Producer flow not found")
 def resolve_virtual_flow_table(
     table_id: int,
     limit: int = Query(100, ge=1, le=10000),
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
-):
+) -> CatalogTablePreview:
     """Resolve a virtual flow table and return a preview of the result."""
-    lf = service.resolve_virtual_flow_table(table_id, user_id=current_user.id)
-    df = lf.head(limit).collect()
-    return {
-        "columns": df.columns,
-        "dtypes": [str(dt) for dt in df.dtypes],
-        "rows": df.rows(),
-        "total_rows": df.height,
-    }
+    return service.resolve_virtual_flow_table_preview(table_id, limit, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -805,12 +1099,32 @@ def create_schedule(
         owner_id=current_user.id,
         schedule_type=body.schedule_type,
         interval_seconds=body.interval_seconds,
+        cron_expression=body.cron_expression,
+        cron_timezone=body.cron_timezone,
         trigger_table_id=body.trigger_table_id,
         trigger_table_ids=body.trigger_table_ids,
         enabled=body.enabled,
         name=body.name,
         description=body.description,
     )
+
+
+@router.post("/schedules/validate-cron", response_model=CronValidationResult)
+def validate_cron_schedule(
+    body: CronValidationRequest,
+    current_user=Depends(get_current_active_user),
+):
+    """Validate a cron expression (+ optional timezone) against the same croniter
+    rules ``create_schedule`` enforces, returning a flag instead of raising so the
+    schedule builder can gate its submit button on the backend's verdict — keeping
+    croniter the single source of truth for cron validity (the UI preview uses a
+    different parser, cronstrue, which accepts a slightly different grammar)."""
+    try:
+        validate_cron_expression(body.cron_expression)
+        validate_cron_timezone(body.cron_timezone)
+    except ValueError as exc:
+        return CronValidationResult(valid=False, error=str(exc))
+    return CronValidationResult(valid=True, error=None)
 
 
 @router.get("/schedules/{schedule_id}", response_model=FlowScheduleOut)
@@ -833,6 +1147,8 @@ def update_schedule(
         schedule_id=schedule_id,
         enabled=body.enabled,
         interval_seconds=body.interval_seconds,
+        cron_expression=body.cron_expression,
+        cron_timezone=body.cron_timezone,
         name=body.name,
         description=body.description,
     )

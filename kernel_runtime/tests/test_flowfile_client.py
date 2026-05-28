@@ -404,7 +404,7 @@ class TestDisplayTypeDetection:
 
 
 class TestSharedLocation:
-    """Tests for flowfile.shared_location()."""
+    """Tests for flowfile_ctx.get_shared_location()."""
 
     def test_returns_path_under_user_files(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
         shared_dir = str(tmp_dir / "shared")

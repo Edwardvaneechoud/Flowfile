@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field
 
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup
+
 
 class NodeResult(BaseModel):
     """Represents the execution result of a single node in a FlowGraph run."""
@@ -54,6 +56,7 @@ class FileColumn(BaseModel):
 
     name: str
     data_type: str
+    data_type_group: ReadableDataTypeGroup = "Other"
     is_unique: bool
     max_value: str
     min_value: str

@@ -361,6 +361,10 @@ return lf.group_by(group_col).agg(
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~724 LOC. Plan to extract:
+//   - FeatureCard.vue: reusable card (~lines 39-60), shareable with DashboardTile/AdminView
+//   - HelpTabPanel.vue: per-tab content wrappers
+//   - ComponentReferenceItem.vue: component ref item (~lines 124-212)
 import { ref } from "vue";
 
 defineProps<{

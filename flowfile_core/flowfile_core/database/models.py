@@ -1,3 +1,4 @@
+import uuid
 from typing import Literal
 
 from sqlalchemy import (
@@ -117,9 +118,26 @@ class Kernel(Base):
     name = Column(String, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     packages = Column(Text, default="[]")  # JSON-serialized list of package names
+    # JSON-serialized list of {name, version} for packages actually installed in
+    # the derived image. Populated after bake; empty for legacy kernels until they
+    # are next edited.
+    resolved_packages = Column(Text, default="[]")
     cpu_cores = Column(Float, default=2.0)
     memory_gb = Column(Float, default=4.0)
     gpu = Column(Boolean, default=False)
+    image_flavour = Column(String, nullable=False, default="base")
+    custom_image = Column(String, nullable=True)
+    # Auto-created FlowRegistration that artifacts published from this kernel's
+    # interactive cells are attributed to. Lives and dies with the kernel; see
+    # ``KernelManager._provision_scratch_flow`` in
+    # ``flowfile_core/kernel/manager.py``. ``ON DELETE SET NULL`` so a
+    # manually-removed registration leaves the kernel record intact (the
+    # manager will lazily re-create on the next publish).
+    scratch_flow_registration_id = Column(
+        Integer,
+        ForeignKey("flow_registrations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
 
@@ -153,6 +171,9 @@ class FlowRegistration(Base):
     __tablename__ = "flow_registrations"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Stable identity that survives delete+recreate. Run history is keyed against this so
+    # SQLite reusing a deleted FlowRegistration.id can never pull another flow's runs in.
+    flow_uuid = Column(String(36), nullable=False, unique=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
     flow_path = Column(String, nullable=False)
@@ -169,6 +190,10 @@ class FlowRun(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
+    # Copied from FlowRegistration.flow_uuid at run-record creation. Survives the
+    # registration being deleted (registration_id is nulled) so historical runs stay
+    # attributable to the original flow without leaking under a new registration.
+    flow_uuid = Column(String(36), nullable=True, index=True)
     flow_name = Column(String, nullable=False)
     flow_path = Column(String, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -224,10 +249,13 @@ class FlowSchedule(Base):
     enabled = Column(Boolean, default=True, nullable=False)
     name = Column(String, nullable=True)
     description = Column(String, nullable=True)
-    schedule_type = Column(String, nullable=False)  # "interval" | "table_trigger" | "table_set_trigger"
+    schedule_type = Column(String, nullable=False)  # "interval" | "cron" | "table_trigger" | "table_set_trigger"
     interval_seconds = Column(Integer, nullable=True)
+    cron_expression = Column(String, nullable=True)  # 5-field cron string, used when schedule_type == "cron"
+    cron_timezone = Column(String, nullable=True)  # IANA tz name (e.g. "Europe/Amsterdam") the cron runs in
     trigger_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True)
     last_triggered_at = Column(DateTime, nullable=True)
+    last_cron_slot = Column(DateTime, nullable=True)  # naive LOCAL wall-clock cron cursor (NOT UTC); DST-safe
     last_trigger_table_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
@@ -383,6 +411,66 @@ class CatalogTableReadLink(Base):
     __table_args__ = (UniqueConstraint("table_id", "registration_id", name="uq_table_read_link"),)
 
 
+class CatalogVisualization(Base):
+    """A saved GraphicWalker chart spec.
+
+    Visualizations are first-class catalog entities. A viz may reference a
+    catalog table (``source_type="table"``, ``catalog_table_id`` set), or
+    embed a SQL query that runs against the catalog (``source_type="sql"``,
+    ``sql_query`` set). ``namespace_id`` controls where the viz lives in
+    the catalog hierarchy independently of any source table.
+    """
+
+    __tablename__ = "catalog_visualizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    chart_type = Column(String, nullable=True)
+    spec_json = Column(Text, nullable=False)
+    spec_gw_version = Column(String, nullable=True)
+
+    source_type = Column(String, nullable=False, default="table")
+    catalog_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True, index=True)
+    sql_query = Column(Text, nullable=True)
+
+    # Base64 PNG data URL captured client-side via GraphicWalker's
+    # exportChart('data-url'). Used as a static thumbnail in catalog grids
+    # so we don't have to re-mount the chart per card.
+    thumbnail_data_url = Column(Text, nullable=True)
+
+    namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
+
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CatalogDashboard(Base):
+    """A saved canvas of catalog visualizations.
+
+    A dashboard is a 2D layout of tiles, each referencing an existing
+    ``CatalogVisualization`` by id. The full layout (tiles, grid metadata,
+    optional dashboard-level filters) is serialised into ``layout_json``;
+    no FK to visualizations because tiles are decoupled (deleted-viz tiles
+    surface a placeholder at view time rather than cascading).
+    """
+
+    __tablename__ = "catalog_dashboards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    layout_json = Column(Text, nullable=False)
+    layout_version = Column(Integer, nullable=False, default=1)
+
+    namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
+
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class SchedulerLock(Base):
     """Advisory lock row to ensure only one scheduler instance is active.
 
@@ -398,6 +486,26 @@ class SchedulerLock(Base):
     holder_id = Column(String, nullable=False)
     started_at = Column(DateTime, default=func.now(), nullable=False)
     heartbeat_at = Column(DateTime, default=func.now(), nullable=False)
+
+
+class GoogleAnalyticsConnection(Base):
+    """A Google Analytics 4 connection. The OAuth refresh token is stored as
+    a single encrypted Secret, referenced by ``credential_secret_id``.
+    """
+
+    __tablename__ = "google_analytics_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_name = Column(String, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    default_property_id = Column(String, nullable=True)
+    oauth_user_email = Column(String, nullable=True)
+    credential_secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    credential_secret = relationship("Secret", foreign_keys=[credential_secret_id], lazy="joined")
 
 
 class KafkaConnection(Base):
@@ -433,3 +541,76 @@ class DbInfo(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
 
+# ==================== AI Audit Log ====================
+
+
+class AiAuditEvent(Base):
+    """One row per AI-driven action (plan §9.4).
+
+    Records what the agent did on the user's behalf so the user can inspect
+    after the fact. Source for the §13 success metrics (tool-call validation
+    pass rate, diff accept rate, cost-per-flow). ``flow_id`` is the in-memory
+    runtime id — kept as a plain integer rather than an FK because draft flows
+    don't always have a ``FlowRegistration``. ``tool_args`` is a JSON blob
+    truncated to ``ai.audit.MAX_ARGS_BYTES`` before persistence.
+    """
+
+    __tablename__ = "ai_audit_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, nullable=False, index=True)
+    flow_id = Column(Integer, nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    tool_name = Column(String, nullable=False, index=True)
+    tool_args = Column(Text, nullable=True)
+    result_status = Column(String, nullable=False)  # "success" | "error" | "rejected"
+    error = Column(Text, nullable=True)
+    provider = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    prompt_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    completion_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    total_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    diff_action = Column(String, nullable=True)  # "accepted" | "rejected" | None
+    created_at = Column(DateTime, default=func.now(), nullable=False, index=True)
+
+
+# ==================== AI BYOK Credentials ====================
+
+
+class AiProviderCredential(Base):
+    """One row per (user, provider) BYOK credential (plan §6.5, §8).
+
+    Mirrors ``cloud_storage_connections``: plaintext metadata in the row,
+    encrypted ``api_key`` blob via FK to the ``secrets`` table. Deletion of a
+    referenced ``Secret`` row sets ``api_key_secret_id`` to NULL rather than
+    cascading — a safety net so an accidental secret-row delete doesn't lose
+    the user's BYOK metadata. ``delete_provider_credential`` deletes both
+    rows explicitly inside a transaction.
+    """
+
+    __tablename__ = "ai_provider_credentials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False, index=True)  # 'anthropic', 'openai', ...
+    api_key_secret_id = Column(
+        Integer,
+        ForeignKey("secrets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    api_base = Column(String, nullable=True)
+    default_model = Column(String, nullable=True)
+    # JSON-encoded list[str] of models the user has curated for this credential
+    #. Decoded at the schema layer in flowfile_core.ai.credentials. Null
+    # or an empty list both mean "no curated list — fall through to the
+    # resolution order".
+    models = Column(Text, nullable=True)
+    last_tested_at = Column(DateTime, nullable=True)
+    last_test_status = Column(String, nullable=True)  # "ok" | "error"
+    last_test_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    api_key_secret = relationship("Secret", foreign_keys=[api_key_secret_id], lazy="joined")
+
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_ai_provider_per_user"),)

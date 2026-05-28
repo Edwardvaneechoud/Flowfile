@@ -124,6 +124,104 @@ def test_filter():
     assert result["name"][0] == "Eve"
 
 
+def test_filter_split_predicate():
+    """filter_split returns (pass, fail) frames partitioned by the predicate."""
+    data = {
+        "id": [1, 2, 3, 4, 5],
+        "name": ["Alice", "Bob", "Charlie", "David", "Eve"],
+        "age": [25, 30, 35, 40, 45],
+    }
+    df = FlowFrame(data)
+    pass_df, fail_df = df.filter_split(col("age") > 30)
+
+    pass_result = pass_df.collect()
+    fail_result = fail_df.collect()
+    assert pass_result["name"].to_list() == ["Charlie", "David", "Eve"]
+    assert fail_result["name"].to_list() == ["Alice", "Bob"]
+    # Both frames wrap the same filter node but at different output handles.
+    assert pass_df.node_id == fail_df.node_id
+    assert pass_df.output_handle == "output-0"
+    assert fail_df.output_handle == "output-1"
+
+
+def test_filter_split_flowfile_formula():
+    """filter_split accepts flowfile_formula just like filter()."""
+    df = FlowFrame({"age": [25, 30, 35, 40, 45]})
+    pass_df, fail_df = df.filter_split(flowfile_formula="[age] > 40")
+    assert pass_df.collect()["age"].to_list() == [45]
+    assert fail_df.collect()["age"].to_list() == [25, 30, 35, 40]
+
+
+def test_filter_split_downstream_chain():
+    """Ops chained off pass/fail frames connect to the correct source handle."""
+    df = FlowFrame({"id": list(range(6)), "name": list("abcdef")})
+    pass_df, fail_df = df.filter_split(col("id") >= 3)
+
+    pass_chained = pass_df.select(col("name"))
+    fail_chained = fail_df.select(col("name"))
+
+    filter_node_id = pass_df.node_id
+    pass_node = pass_chained.flow_graph.get_node(pass_chained.node_id)
+    fail_node = fail_chained.flow_graph.get_node(fail_chained.node_id)
+    assert pass_node._input_output_handles[filter_node_id] == "output-0"
+    assert fail_node._input_output_handles[filter_node_id] == "output-1"
+
+    assert pass_chained.collect()["name"].to_list() == ["d", "e", "f"]
+    assert fail_chained.collect()["name"].to_list() == ["a", "b", "c"]
+
+
+def test_filter_split_requires_predicate():
+    """filter_split with no predicate/formula/constraint raises ValueError."""
+    df = FlowFrame({"id": [1, 2, 3]})
+    with pytest.raises(ValueError):
+        df.filter_split()
+
+
+def test_random_split_two_splits_seeded():
+    """random_split returns FlowFrames in declared order; with seed the partitioning is deterministic."""
+    df = FlowFrame({"id": list(range(10))})
+    train_df, test_df = df.random_split({"train": 70.0, "test": 30.0}, seed=42)
+
+    train_rows = train_df.collect()["id"].to_list()
+    test_rows = test_df.collect()["id"].to_list()
+    assert len(train_rows) + len(test_rows) == 10
+    assert set(train_rows).isdisjoint(set(test_rows))
+    assert set(train_rows) | set(test_rows) == set(range(10))
+    assert train_df.node_id == test_df.node_id
+    assert train_df.output_handle == "output-0"
+    assert test_df.output_handle == "output-1"
+
+
+def test_random_split_accepts_typed_groups():
+    """random_split also accepts a typed list[RandomSplitGroup] for fully-validated input."""
+    from flowfile_core.schemas.input_schema import RandomSplitGroup
+
+    df = FlowFrame({"id": list(range(10))})
+    train_df, test_df = df.random_split(
+        [RandomSplitGroup(name="train", percentage=70.0),
+         RandomSplitGroup(name="test", percentage=30.0)],
+        seed=42,
+    )
+    assert len(train_df.collect()) + len(test_df.collect()) == 10
+
+
+def test_random_split_three_splits_downstream_chain():
+    """Ops chained off each split connect to the correct source handle."""
+    df = FlowFrame({"id": list(range(20))})
+    train_df, val_df, test_df = df.random_split(
+        {"train": 60.0, "val": 30.0, "test": 10.0}, seed=11
+    )
+
+    chained = [s.select(col("id")) for s in (train_df, val_df, test_df)]
+    split_node_id = train_df.node_id
+    for i, c in enumerate(chained):
+        node = c.flow_graph.get_node(c.node_id)
+        assert node._input_output_handles[split_node_id] == f"output-{i}"
+
+    counts = [c.collect().shape[0] for c in chained]
+    assert sum(counts) == 20
+
+
 def test_sort():
     """Test sorting a FlowFrame."""
     from flowfile_core.schemas.input_schema import NodeSort

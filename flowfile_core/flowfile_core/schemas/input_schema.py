@@ -359,6 +359,7 @@ class NodeBase(BaseModel):
     cache_results: bool | None = False
     pos_x: float | None = 0
     pos_y: float | None = 0
+    group_id: int | None = None  # Visual group membership (organizational only; no execution impact)
     is_setup: bool | None = True
     description: str | None = ""
     node_reference: str | None = None  # Unique reference identifier for code generation (lowercase, no spaces)
@@ -467,6 +468,10 @@ class NodeFilter(NodeSingleInput):
     """Settings for a node that filters rows based on a condition."""
 
     filter_input: transform_schema.FilterInput
+    # When True the node emits two outputs: "pass" (output-0, matching rows)
+    # and "fail" (output-1, non-matching rows). Default preserves
+    # single-output behaviour for existing flows.
+    split_mode: bool = False
 
     def get_default_description(self) -> str:
         """Describes the filter condition."""
@@ -741,8 +746,20 @@ class NodeDatasource(NodeBase):
 class RawData(BaseModel):
     """Represents data in a raw, columnar format for manual input."""
 
-    columns: list[MinimalFieldInfo] = None
-    data: list[list]
+    columns: list[MinimalFieldInfo] = Field(
+        ...,
+        description=("Schema in column order. The i-th MinimalFieldInfo describes the values " "in data[i]."),
+    )
+    data: list[list] = Field(
+        ...,
+        description=(
+            "Columnar layout: data[i] is the list of values for columns[i], in column "
+            "order. len(data) must equal len(columns); each inner list has the same "
+            "length (one entry per row). For two rows of {name, age}, emit "
+            '[["Alice", "Bob"], [30, 25]] — NOT [["Alice", 30], ["Bob", 25]]. '
+            "Reading rows back is data[col_idx][row_idx]."
+        ),
+    )
 
     @classmethod
     def from_pylist(cls, pylist: list[dict]):
@@ -773,7 +790,14 @@ class RawData(BaseModel):
 class NodeManualInput(NodeBase):
     """Settings for a node that allows direct data entry in the UI."""
 
-    raw_data_format: RawData | None = None
+    raw_data_format: RawData
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_none_raw_data_format(cls, values):
+        if isinstance(values, dict) and values.get("raw_data_format") is None:
+            return {**values, "raw_data_format": {"columns": [], "data": []}}
+        return values
 
     def get_default_description(self) -> str:
         """Describes the manual input columns."""
@@ -988,6 +1012,94 @@ class NodeExternalSource(NodeBase):
     def get_default_description(self) -> str:
         """Describes the external source."""
         return self.identifier
+
+
+class GoogleAnalyticsFilter(BaseModel):
+    """A single filter applied to a GA4 dimension or metric.
+
+    ``field`` must match one of the selected dimensions or metrics; the worker
+    auto-routes the filter into either the request's ``dimension_filter`` (for
+    string-typed dimensions) or ``metric_filter`` (for numeric-typed metrics).
+
+    Supported operators — strings (dimensions):
+      - ``equals``, ``not_equals``
+      - ``contains``, ``begins_with``, ``ends_with``
+      - ``regex``  (full regex match)
+      - ``in_list``, ``not_in_list``  (comma-separated ``value``)
+
+    Supported operators — numeric (metrics):
+      - ``equals``, ``not_equals``
+      - ``less_than``, ``less_equal``, ``greater_than``, ``greater_equal``
+      - ``between``  (comma-separated ``"low,high"``)
+
+    Multiple filters on the same kind are AND-combined. String matching is
+    case-insensitive by default (``case_sensitive=False`` below).
+    """
+
+    field: str
+    operator: str
+    value: str = ""
+    case_sensitive: bool = False
+
+
+class GoogleAnalyticsOrderBy(BaseModel):
+    """A single sort entry applied to the GA4 report.
+
+    ``field`` must match one of the selected dimensions or metrics; the worker
+    routes it into a ``DimensionOrderBy`` or ``MetricOrderBy`` accordingly.
+    ``descending=True`` produces a descending sort. Sort entries are applied in
+    list order.
+    """
+
+    field: str
+    descending: bool = False
+
+
+class GoogleAnalyticsSettings(BaseModel):
+    """UI settings for a Google Analytics 4 reader node.
+
+    Credentials are NOT stored inline: ``ga_connection_name`` is a reference to
+    a Google Analytics connection managed under ``/ga_connections`` (whose
+    service-account JSON is encrypted at rest).
+    """
+
+    ga_connection_name: str
+    property_id: str
+    start_date: str = "7daysAgo"
+    end_date: str = "yesterday"
+    metrics: list[str] = Field(default_factory=list)
+    dimensions: list[str] = Field(default_factory=list)
+    # ``None`` means "fetch everything the report returns".
+    limit: int | None = None
+    # Row-level filters. See ``GoogleAnalyticsFilter`` for the operator list.
+    # Multiple filters across the same category (dimension vs metric) are AND-combined.
+    filters: list[GoogleAnalyticsFilter] = Field(default_factory=list)
+    # Sort entries applied in list order. Each ``field`` must be one of the
+    # selected metrics or dimensions; the worker raises a clear ``ValueError``
+    # otherwise.
+    order_bys: list[GoogleAnalyticsOrderBy] = Field(default_factory=list)
+
+
+class NodeGoogleAnalyticsReader(NodeBase):
+    """Settings for a node that reads from a Google Analytics 4 property."""
+
+    google_analytics_settings: GoogleAnalyticsSettings
+    fields: list[MinimalFieldInfo] | None = None
+
+    def get_default_description(self) -> str:
+        """Describes the GA4 query."""
+        s = self.google_analytics_settings
+        pieces = []
+        if s.property_id:
+            pieces.append(f"property {s.property_id}")
+        if s.metrics:
+            metrics_preview = ", ".join(s.metrics[:3])
+            if len(s.metrics) > 3:
+                metrics_preview += f" (+{len(s.metrics) - 3} more)"
+            pieces.append(f"metrics: {metrics_preview}")
+        if s.start_date and s.end_date:
+            pieces.append(f"{s.start_date} .. {s.end_date}")
+        return " | ".join(pieces)
 
 
 class NodeFormula(NodeSingleInput):
@@ -1258,7 +1370,13 @@ class NodeConnection(BaseModel):
     output_connection: NodeOutputConnection
 
     @classmethod
-    def create_from_simple_input(cls, from_id: int, to_id: int, input_type: InputType = "input-0"):
+    def create_from_simple_input(
+        cls,
+        from_id: int,
+        to_id: int,
+        input_type: InputType = "input-0",
+        output_handle: OutputConnectionClass = "output-0",
+    ):
         """Creates a standard connection between two nodes."""
         match input_type:
             case "main":
@@ -1270,7 +1388,7 @@ class NodeConnection(BaseModel):
             case _:
                 connection_class: InputConnectionClass = "input-0"
         node_input = NodeInputConnection(node_id=to_id, connection_class=connection_class)
-        node_output = NodeOutputConnection(node_id=from_id, connection_class="output-0")
+        node_output = NodeOutputConnection(node_id=from_id, connection_class=output_handle)
         return cls(input_connection=node_input, output_connection=node_output)
 
 
@@ -1317,6 +1435,35 @@ class NodeRecordCount(NodeSingleInput):
     """Settings for a node that counts the number of records."""
 
     pass
+
+
+class NodeDynamicRename(NodeSingleInput):
+    """Settings for a node that renames many columns at once via a single rule."""
+
+    dynamic_rename_input: transform_schema.DynamicRenameInput = Field(
+        default_factory=transform_schema.DynamicRenameInput
+    )
+
+    def get_default_description(self) -> str:
+        """Describes the dynamic rename rule."""
+        s = self.dynamic_rename_input
+        if s.rename_mode == "prefix" and s.prefix:
+            rule = f"prefix '{s.prefix}'"
+        elif s.rename_mode == "suffix" and s.suffix:
+            rule = f"suffix '{s.suffix}'"
+        elif s.rename_mode == "formula" and s.formula:
+            rule = f"formula {s.formula}"
+        elif s.rename_mode == "first_row":
+            rule = "promote first row to headers"
+        else:
+            return ""
+        if s.selection_mode == "all":
+            scope = "all columns"
+        elif s.selection_mode == "list":
+            scope = f"{len(s.selected_columns)} column(s)"
+        else:
+            scope = f"{s.selected_data_type or '(none)'} columns"
+        return f"{rule} on {scope}"
 
 
 class NodePolarsCode(NodeMultiInput):
@@ -1402,3 +1549,137 @@ class UserDefinedNode(NodeMultiInput):
     @classmethod
     def validate_output_names(cls, v: list[str]) -> list[str]:
         return _validate_output_names(v)
+
+
+class TrainModelSettings(BaseModel):
+    """Settings payload for the Train Model node.
+
+    ``params`` is a flat dict so the form-driven hyperparameter UI doesn't need
+    a discriminated union — the worker validates against the algorithm-specific
+    Pydantic class via ``shared.ml.trainers.get_trainer(model_type).params_class``.
+
+    The trained model is always written to a flow-scoped path keyed off this
+    node's id so downstream Apply Model nodes in the same flow can read it
+    without first publishing to the catalog. Set ``publish_to_catalog=True``
+    to additionally store the artifact in the catalog (with a stable
+    cross-run name + version).
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    target_column: str = ""
+    feature_columns: list[str] = Field(default_factory=list)
+    model_type: str = "linear_regression"
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    # Catalog publishing — opt-in.
+    publish_to_catalog: bool = False
+    model_name: str = ""  # required when publish_to_catalog=True
+    namespace_id: int | None = None
+    catalog_description: str | None = None
+    catalog_tags: list[str] = Field(default_factory=list)
+
+
+class NodeTrainModel(NodeSingleInput):
+    """Train an ML model (regression or classification) and optionally publish it to the catalog."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    train_input: TrainModelSettings = Field(default_factory=TrainModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.train_input
+        if s.model_name and s.target_column:
+            return f"Train {s.model_type} '{s.model_name}' on {s.target_column}"
+        return "Train Model"
+
+
+class ApplyModelSettings(BaseModel):
+    """Settings payload for the Apply Model node.
+
+    Two model sources are supported:
+
+    - ``"upstream"`` (default): pick a Train Model node from somewhere in this
+      flow's upstream chain. The model file is read from the flow's cache
+      directory using the train node's id — works at design time, no catalog
+      round-trip needed.
+    - ``"catalog"``: fall back to the existing catalog lookup by name/version.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    source: Literal["upstream", "catalog"] = "upstream"
+
+    # source="upstream" — id of an upstream Train Model node in the same flow.
+    upstream_node_id: int | None = None
+
+    # source="catalog"
+    model_name: str = ""
+    model_version: int | None = None
+    namespace_id: int | None = None
+
+    output_column: str = "prediction"
+
+
+class NodeApplyModel(NodeSingleInput):
+    """Score data using a previously trained model artifact."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    apply_input: ApplyModelSettings = Field(default_factory=ApplyModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.apply_input
+        if s.model_name:
+            ver = f" v{s.model_version}" if s.model_version is not None else ""
+            return f"Apply '{s.model_name}'{ver} -> {s.output_column}"
+        return "Apply Model"
+
+
+class NodeWaitFor(NodeMultiInput):
+    """Pass-through node that enforces ordering on extra dependency inputs.
+
+    The first input flows through unchanged; the others have to complete before
+    this node runs but their data is discarded. Useful for enforcing "Apply
+    Model must wait for Train Model" without otherwise coupling their data.
+    """
+
+    def get_default_description(self) -> str:
+        n = len(self.depending_on_ids or [])
+        if n <= 1:
+            return "Wait For"
+        return f"Wait For ({n - 1} dep{'s' if n > 2 else ''})"
+
+
+class EvaluateModelSettings(BaseModel):
+    """Settings payload for the Evaluate Model node.
+
+    Decoupled from any specific Train/Apply pair: takes a dataframe that
+    already contains both the actual target column and a prediction column
+    and emits a long-form ``(metric, value)`` frame. Reusable on training,
+    test, or hold-out splits.
+
+    ``task_type="auto"`` resolves the metric set from an upstream Train
+    Model node when one is configured; otherwise defaults to ``regression``.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    actual_column: str = ""
+    predicted_column: str = "prediction"
+    task_type: Literal["auto", "regression", "classification"] = "auto"
+    upstream_train_node_id: int | None = None
+
+
+class NodeEvaluateModel(NodeSingleInput):
+    """Compute model-quality metrics by comparing actual and predicted columns."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    evaluate_input: EvaluateModelSettings = Field(default_factory=EvaluateModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.evaluate_input
+        if s.actual_column and s.predicted_column:
+            return f"Evaluate {s.predicted_column} vs {s.actual_column}"
+        return "Evaluate Model"

@@ -18,7 +18,7 @@ def output_handle(index: int) -> str:
 def output_handle_index(handle: str) -> int:
     if not handle.startswith(_HANDLE_PREFIX):
         raise ValueError(f"Invalid output handle: {handle!r}")
-    return int(handle[len(_HANDLE_PREFIX):])
+    return int(handle[len(_HANDLE_PREFIX) :])
 
 
 class NamedOutputs:

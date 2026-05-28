@@ -170,6 +170,85 @@ def start_generic_process(
     )
 
 
+def start_train_model_process(
+    polars_serializable_object: bytes,
+    task_id: str,
+    file_ref: str,
+    model_type: str,
+    target_column: str,
+    feature_columns: list[str],
+    params: dict,
+    staging_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: flowfile_node_id_type,
+) -> None:
+    """Spawn the training subprocess.
+
+    Mirrors :func:`start_fuzzy_process`. The trained-model bytes are written to
+    *staging_path*; ``handle_task`` will surface ``{sha256, size_bytes, model_type}``
+    via the queue so core can finalise the artifact upload.
+    """
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    q = mp_context.Queue(maxsize=1)
+
+    kwargs = {
+        "polars_serializable_object": polars_serializable_object,
+        "progress": progress,
+        "error_message": error_message,
+        "queue": q,
+        "file_path": file_ref,
+        "model_type": model_type,
+        "target_column": target_column,
+        "feature_columns": feature_columns,
+        "params": params or {},
+        "staging_path": staging_path,
+        "flowfile_flow_id": flowfile_flow_id,
+        "flowfile_node_id": flowfile_node_id,
+    }
+
+    p: Process = mp_context.Process(target=funcs.train_model_task, kwargs=kwargs)
+    p.start()
+    process_manager.add_process(task_id, p)
+    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
+
+
+def start_apply_model_process(
+    polars_serializable_object: bytes,
+    task_id: str,
+    file_ref: str,
+    model_path: str,
+    output_column: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: flowfile_node_id_type,
+) -> None:
+    """Spawn the apply-model subprocess.
+
+    Writes the scored data to *file_ref* (IPC). ``handle_task`` will surface the
+    serialised LazyFrame via the queue so core can deserialise it.
+    """
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    q = mp_context.Queue(maxsize=1)
+
+    kwargs = {
+        "polars_serializable_object": polars_serializable_object,
+        "progress": progress,
+        "error_message": error_message,
+        "queue": q,
+        "file_path": file_ref,
+        "model_path": model_path,
+        "output_column": output_column,
+        "flowfile_flow_id": flowfile_flow_id,
+        "flowfile_node_id": flowfile_node_id,
+    }
+
+    p: Process = mp_context.Process(target=funcs.apply_model_task, kwargs=kwargs)
+    p.start()
+    process_manager.add_process(task_id, p)
+    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
+
+
 def start_fuzzy_process(
     left_serializable_object: bytes,
     right_serializable_object: bytes,

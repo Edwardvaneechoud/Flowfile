@@ -91,6 +91,11 @@ const view = shallowRef<EditorView | null>(null);
 const extensions: Extension[] = [
   python(),
   oneDark,
+  EditorView.theme({
+    "&": { fontSize: "12px" },
+    ".cm-content": { fontSize: "12px" },
+    ".cm-gutters": { fontSize: "12px" },
+  }),
   EditorState.tabSize.of(4),
   autocompletion({
     override: [polarsCompletions],

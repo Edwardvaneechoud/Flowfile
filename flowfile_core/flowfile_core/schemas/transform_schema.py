@@ -121,6 +121,23 @@ def string_concat(*column: str):
 
 SideLit = Literal["left", "right"]
 JoinStrategy = Literal["inner", "left", "right", "full", "semi", "anti", "cross", "outer"]
+"""Polars join-strategy enum — broad superset retained for backward
+compat with code-generator / flow-data-engine plumbing that still
+threads ``"cross"`` through ``DataFrame.join(how="cross")`` directly.
+The ``join`` node itself uses :data:`JoinKeyStrategy` (below) which
+excludes ``"cross"`` so cross/Cartesian joins route through the
+dedicated ``cross_join`` node type — making the choice unambiguous
+for the AI agent and preventing the ``join + how="cross"`` shape
+that bypasses the dedicated cross_join node.
+"""
+
+JoinKeyStrategy = Literal["inner", "left", "right", "full", "semi", "anti", "outer"]
+"""Key-based join strategies — every option requires ``join_mapping``
+to specify the equality keys. Used by :class:`JoinInput.how` so the
+LLM (and the Pydantic validator) cannot pick ``"cross"`` on a
+``join`` node — Cartesian joins are the dedicated ``cross_join``
+node type's job.
+"""
 FuzzyTypeLiteral = Literal["levenshtein", "jaro", "jaro_winkler", "hamming", "damerau_levenshtein", "indel"]
 
 
@@ -622,7 +639,7 @@ class JoinInput(BaseModel):
     join_mapping: list[JoinMap]
     left_select: JoinInputs
     right_select: JoinInputs
-    how: JoinStrategy = "inner"
+    how: JoinKeyStrategy = "inner"
 
     @model_validator(mode="before")
     @classmethod
@@ -706,7 +723,7 @@ class JoinInput(BaseModel):
         join_mapping: list[JoinMap] | JoinMap | tuple[str, str] | str | list[tuple] | list[str] = None,
         left_select: JoinInputs | list[SelectInput] | list[str] = None,
         right_select: JoinInputs | list[SelectInput] | list[str] = None,
-        how: JoinStrategy = "inner",
+        how: JoinKeyStrategy = "inner",
         **data,
     ):
         """Custom init for backward compatibility with positional arguments."""
@@ -1135,6 +1152,37 @@ class GraphSolverInput(BaseModel):
     output_column_name: str | None = "graph_group"
 
 
+RenameMode = Literal["prefix", "suffix", "formula", "first_row"]
+ColumnSelectionMode = Literal["all", "list", "data_type"]
+ReadableDataTypeGroup = Literal["Numeric", "String", "Date", "Other", "Boolean", "Binary", "Complex"]
+
+
+class DynamicRenameInput(BaseModel):
+    """Defines settings for a dynamic rename operation.
+
+    Applies a single rule (prefix / suffix / formula / first_row) to a set of selected
+    columns, rather than requiring the user to rename columns one-by-one.
+
+    In formula mode, the flowfile formula syntax is evaluated with `[column_name]`
+    bound to each target column's current name; for example `uppercase([column_name])`
+    or `"v2_" + [column_name]`.
+
+    In first_row mode, the first row of the incoming table is promoted to column
+    headers and then dropped from the data. Non-string values are coerced to `str`;
+    null or empty values raise an error. Selection filters still apply — only selected
+    columns are renamed, but the first row is always dropped.
+    """
+
+    rename_mode: RenameMode = "prefix"
+    prefix: str = ""
+    suffix: str = ""
+    formula: str = ""
+
+    selection_mode: ColumnSelectionMode = "all"
+    selected_columns: list[str] = Field(default_factory=list)
+    selected_data_type: ReadableDataTypeGroup | None = None
+
+
 class PolarsCodeInput(BaseModel):
     """A simple container for a string of user-provided Polars code to be executed."""
 
@@ -1142,7 +1190,15 @@ class PolarsCodeInput(BaseModel):
 
 
 class SqlQueryInput(BaseModel):
-    """A container for a SQL query to execute against connected data sources."""
+    """A container for a SQL query to execute against connected data sources.
+
+    Note: ``sql_code`` is *not* validated at schema-construction time. Construction
+    is a passive shape-check; the unsafe-SQL gate lives at the executor seam in
+    ``execute_sql_query`` (and is also enforced by the underlying
+    ``validate_sql_query`` utility callers can use directly). Validating here too
+    would block legitimate non-AI callers from drafting/testing SQL before
+    execution.
+    """
 
     sql_code: str
 
@@ -1423,7 +1479,7 @@ class JoinInputManager(JoinSelectManagerMixin):
         join_mapping: list[JoinMap] | tuple[str, str] | str,
         left_select: list[SelectInput] | list[str],
         right_select: list[SelectInput] | list[str],
-        how: JoinStrategy = "inner",
+        how: JoinKeyStrategy = "inner",
     ) -> "JoinInputManager":
         """Factory method to create JoinInput from various input formats."""
         # Use JoinInput's own create method for parsing

@@ -4,7 +4,6 @@ Organize, track, and govern your data flows and tables in a central catalog.
 
 The Catalog is your single pane of glass for managing flows, tracking execution history, registering data tables (physical and [virtual](virtual-tables.md)), querying data with [SQL](sql-editor.md), sharing artifacts across flows, and automating pipelines with [schedules](schedules.md).
 
-<!-- PLACEHOLDER: Screenshot of the full Catalog view showing the sidebar tree and stats panel -->
 ![Catalog overview](../../../assets/images/guides/catalog/catalog-overview.png)
 
 *The Catalog page with namespace tree, tabs, and dashboard statistics*
@@ -82,7 +81,6 @@ Register a flow to enable run tracking, artifact lineage, catalog table producti
 4. Enter a name and optional description
 5. Click **Register**
 
-<!-- PLACEHOLDER: Screenshot of the Register Flow dialog -->
 ![Register flow](../../../assets/images/guides/catalog/register-flow.png)
 
 *Registering a flow file under a catalog schema*
@@ -101,7 +99,6 @@ Click a registered flow to see its detail panel:
 - **Schedules** section — manage schedules for this flow (see [Schedules](schedules.md))
 - **Produced Artifacts** list
 
-<!-- PLACEHOLDER: Screenshot of the Flow Detail Panel -->
 ![Flow detail](../../../assets/images/guides/catalog/flow-detail.png)
 
 *Flow detail panel showing metrics, recent runs, and actions*
@@ -134,7 +131,6 @@ Click a run to see its full detail:
 - **Flow Snapshot**: the exact flow version that was executed
 - **Open Snapshot in Designer** button to recreate the flow as it was
 
-<!-- PLACEHOLDER: Screenshot of the Run Detail Panel -->
 ![Run detail](../../../assets/images/guides/catalog/run-detail.png)
 
 *Run detail showing node results and snapshot*
@@ -282,7 +278,7 @@ Query catalog tables directly using SQL. See the dedicated [SQL Editor](sql-edit
 
 ## Global Artifacts
 
-Global artifacts are Python objects (ML models, DataFrames, configs) persisted in the catalog and accessible from any flow. They are published from [Kernel code](../kernels.md#global-artifacts-catalog) using `flowfile.publish_global()`.
+Global artifacts are Python objects (ML models, DataFrames, configs) persisted in the catalog and accessible from any flow. They are published from [Kernel code](../kernels.md#global-artifacts-catalog) using `flowfile_ctx.publish_global()`.
 
 Click an artifact in the tree to view its versions, metadata, and producing flow.
 
@@ -291,6 +287,7 @@ Click an artifact in the tree to view its versions, metadata, and producing flow
 ## Related Documentation
 
 - [Virtual Flow Tables](virtual-tables.md) — Non-materialized tables with on-demand resolution
+- [Visualizations](visualizations.md) — Save Graphic Walker charts on top of catalog tables and SQL queries
 - [Schedules](schedules.md) — Automating flow execution with schedules and table triggers
 - [SQL Editor](sql-editor.md) — Ad-hoc SQL queries against catalog tables
 - [Kernel Execution](../kernels.md) — Publishing global artifacts from Python code

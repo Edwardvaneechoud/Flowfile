@@ -19,6 +19,22 @@ from shared.storage_config import get_database_url
 logger = logging.getLogger("flowfile.run_completion")
 
 
+def get_run_user_id(run_id: int) -> int | None:
+    """Return the FlowRun's ``user_id``, or ``None`` if the run row is missing.
+
+    Used by subprocess CLI entrypoints to resolve the owning user for a
+    pre-created run record, so the flow is loaded against the right
+    user's connections/secrets.
+    """
+    url = get_database_url()
+    connect_args = {"check_same_thread": False} if "sqlite" in url else {}
+    engine = create_engine(url, connect_args=connect_args)
+
+    with Session(engine) as session:
+        run = session.get(FlowRun, run_id)
+        return run.user_id if run else None
+
+
 def complete_run(
     run_id: int,
     success: bool,

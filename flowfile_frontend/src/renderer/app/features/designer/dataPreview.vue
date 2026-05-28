@@ -62,12 +62,15 @@
 
       <!-- AG Grid -->
       <ag-grid-vue
+        ref="gridComponentRef"
         :default-col-def="defaultColDef"
         :column-defs="columnDefs"
         class="ag-theme-balham"
         :row-data="rowData"
         :style="{ width: '100%', height: gridHeightComputed }"
         :overlay-no-rows-template="overlayNoRowsTemplate"
+        row-selection="multiple"
+        :rows-multi-select-with-click="true"
         @grid-ready="onGridReady"
       />
 
@@ -157,6 +160,10 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~906 LOC. Plan to extract:
+//   - DataTabs.vue (~lines 10-28), OutputSelector.vue (~33-46)
+//   - OutdatedDataBanner.vue (~49-61), ArtifactsPanel.vue (~84-155)
+//   - useTableData composable: AG Grid setup + refresh (~lines 316-378)
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { TableExample } from "../../components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "../../stores/column-store";
@@ -184,6 +191,10 @@ const dataAvailable = ref(false);
 const dataLength = ref(0);
 const columnLength = ref(0);
 const gridApi = ref<GridApi | null>(null);
+// Component ref on <ag-grid-vue> — `.value.$el` gives us this grid's root DOM
+// node so the window-level Cmd+C/A handler can scope itself to *this* grid
+// instead of any element matching `.ag-theme-balham`.
+const gridComponentRef = ref<{ $el?: HTMLElement } | null>(null);
 const columnDefs = ref([{}]);
 const showFetchButton = ref(false);
 const currentNodeId = ref<number | null>(null);
@@ -222,9 +233,11 @@ const props = withDefaults(defineProps<Props>(), {
   flowId: undefined,
 });
 
-// Use the flow execution composable with persistent polling for node fetches
+// Use the flow execution composable with persistent polling for node fetches.
+// Getter form so Save As re-keying nodeStore.flow_id doesn't leave us polling
+// the old (template) id.
 const { triggerNodeFetch, isPollingActive } = useFlowExecution(
-  props.flowId || nodeStore.flow_id,
+  () => props.flowId || nodeStore.flow_id,
   { interval: 2000, enabled: true },
   {
     persistPolling: true, // Keep polling even when component unmounts
@@ -284,6 +297,31 @@ const defaultColDef = {
   filter: true,
   sortable: true,
   resizable: true,
+};
+
+// Cells with tab/newline/carriage-return/quote chars need Excel-style quoting,
+// otherwise they corrupt the TSV (a tab inside a value becomes a column break,
+// a newline becomes a row break). Wrap in double-quotes and double any existing
+// quotes — matches what Excel and Google Sheets emit when copying.
+const serializeCell = (v: unknown): string => {
+  if (v === null || v === undefined) return "";
+  const raw = typeof v === "object" ? JSON.stringify(v) : String(v);
+  if (/[\t\n\r"]/.test(raw)) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
+};
+
+const buildTsvFromRows = (rows: Record<string, any>[]): string => {
+  const cols = (columnDefs.value as Array<{ field?: string; headerName?: string }>).filter(
+    (c) => c && c.field,
+  );
+  if (!cols.length || !rows.length) return "";
+  const headerLine = cols.map((c) => serializeCell(c.headerName ?? c.field ?? "")).join("\t");
+  const dataLines = rows.map((row) =>
+    cols.map((c) => serializeCell(row[c.field as string])).join("\t"),
+  );
+  return [headerLine, ...dataLines].join("\n");
 };
 
 const onGridReady = (params: { api: GridApi }) => {
@@ -417,13 +455,59 @@ function removeData() {
   currentNodeId.value = null;
 }
 
+const windowKeyHandler = async (e: KeyboardEvent) => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (!mod) return;
+
+  const key = e.key.toLowerCase();
+  if (key !== "c" && key !== "a") return;
+
+  const target = e.target as HTMLElement | null;
+  // Don't fight the browser when the user is in a text input or editor.
+  if (
+    target &&
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+  ) {
+    return;
+  }
+  // Only act when focus is inside *this* grid — scope by component-rooted DOM
+  // node, not by theme class, so a second AG Grid mounted elsewhere doesn't
+  // co-fire. If the API isn't ready yet, the grid isn't usable; bail rather
+  // than swallow the user's keystroke.
+  if (!gridApi.value) return;
+  const gridRoot = gridComponentRef.value?.$el;
+  if (!gridRoot || !target || !gridRoot.contains(target)) return;
+
+  if (key === "a") {
+    gridApi.value.selectAll();
+    e.preventDefault();
+    return;
+  }
+
+  // Cmd/Ctrl+C → copy selected rows as TSV.
+  const selected = gridApi.value.getSelectedRows();
+  if (!selected.length) return;
+
+  const tsv = buildTsvFromRows(selected);
+  if (!tsv) return;
+
+  try {
+    await navigator.clipboard.writeText(tsv);
+    e.preventDefault();
+  } catch {
+    // Clipboard write rejected (permissions, insecure context); leave default behavior.
+  }
+};
+
 onMounted(() => {
   calculateGridHeight();
   window.addEventListener("resize", calculateGridHeight);
+  window.addEventListener("keydown", windowKeyHandler);
 });
 
 onUnmounted(() => {
   window.removeEventListener("resize", calculateGridHeight);
+  window.removeEventListener("keydown", windowKeyHandler);
 });
 
 defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });

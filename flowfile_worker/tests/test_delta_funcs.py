@@ -129,19 +129,13 @@ class TestFormatDeltaTimestamp:
 
 class TestReadTableMetadata:
     def test_delta_metadata(self, delta_path):
-        result = read_table_metadata("test_delta", "delta")
+        result = read_table_metadata("test_delta")
         assert result["row_count"] == 3
         assert result["column_count"] == 2
         assert result["size_bytes"] > 0
         assert len(result["schema"]) == 2
         names = {s["name"] for s in result["schema"]}
         assert names == {"id", "value"}
-
-    def test_parquet_metadata(self, parquet_path):
-        result = read_table_metadata("test.parquet", "parquet")
-        assert result["row_count"] == 2
-        assert result["column_count"] == 2
-        assert result["size_bytes"] > 0
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +210,6 @@ class TestWriteDelta:
         assert progress.value == 100
         result = queue.get(timeout=5)
         assert result["table_path"] == output_path
-        assert result["storage_format"] == "delta"
         assert result["row_count"] == 3
         assert result["column_count"] == 2
         assert result["size_bytes"] > 0
@@ -271,7 +264,6 @@ class TestMaterializeCatalogTableTask:
         assert progress.value == 100
         result = queue.get(timeout=5)
         assert result["table_path"] == dest
-        assert result["storage_format"] == "delta"
         assert result["row_count"] == 3
         assert Path(dest, "_delta_log").is_dir()
 
@@ -292,7 +284,6 @@ class TestMaterializeCatalogTableTask:
         assert progress.value == 100
         result = queue.get(timeout=5)
         assert result["row_count"] == 2
-        assert result["storage_format"] == "delta"
 
     def test_unsupported_extension(self, tmp_path):
         bad_file = tmp_path / "data.json"
@@ -333,33 +324,21 @@ class TestWorkerRoutes:
         data = resp.json()
 
         assert "table_path" in data
-        assert data["storage_format"] == "delta"
         assert data["row_count"] == 2
         assert data["column_count"] == 2
         assert Path(data["table_path"], "_delta_log").is_dir()
-        # Backward compat: parquet_path should also be set
-        assert data.get("parquet_path") is not None
 
     def test_table_metadata_delta(self, worker_client, delta_path):
         resp = worker_client.post(
             "/catalog/table_metadata",
-            json={"table_path": "test_delta", "storage_format": "delta"},
+            json={"table_path": "test_delta"},
         )
         assert resp.status_code == 200
         data = resp.json()
         assert data["row_count"] == 3
         assert data["column_count"] == 2
         assert data["size_bytes"] > 0
-        assert len(data["schema"]) == 2
-
-    def test_table_metadata_parquet(self, worker_client, parquet_path):
-        resp = worker_client.post(
-            "/catalog/table_metadata",
-            json={"table_path": "test.parquet", "storage_format": "parquet"},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["row_count"] == 2
+        assert len(data["column_schema"]) == 2
 
     def test_delta_history(self, worker_client, versioned_delta):
         resp = worker_client.post(
@@ -413,7 +392,7 @@ class TestWorkerRoutes:
         """Path with separators should be rejected as 400."""
         resp = worker_client.post(
             "/catalog/table_metadata",
-            json={"table_path": "../etc/passwd", "storage_format": "delta"},
+            json={"table_path": "../etc/passwd"},
         )
         assert resp.status_code == 400
 
@@ -421,6 +400,6 @@ class TestWorkerRoutes:
         """Absolute path should be rejected as 400."""
         resp = worker_client.post(
             "/catalog/table_metadata",
-            json={"table_path": "/nonexistent/path", "storage_format": "delta"},
+            json={"table_path": "/nonexistent/path"},
         )
         assert resp.status_code == 400

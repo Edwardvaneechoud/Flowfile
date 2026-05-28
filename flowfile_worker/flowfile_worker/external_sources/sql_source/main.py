@@ -1,8 +1,45 @@
+import socket
 from io import BytesIO
 
 import polars as pl
 
-from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings, DatabaseWriteSettings
+from flowfile_worker.external_sources.sql_source.models import (
+    DataBaseConnection,
+    DatabaseReadSettings,
+    DatabaseWriteSettings,
+)
+
+# Default ports per database type for the pre-flight connectivity check.
+_DEFAULT_DB_PORTS = {
+    "postgresql": 5432,
+    "postgres": 5432,
+    "redshift": 5439,
+    "mysql": 3306,
+    "mariadb": 3306,
+    "mssql": 1433,
+    "sqlserver": 1433,
+    "oracle": 1521,
+}
+
+
+def verify_database_reachable(connection: DataBaseConnection, timeout: float = 3.0) -> None:
+    """Fail fast if the database host:port can't be reached.
+
+    connectorx/r2d2 retries a refused or unreachable connection for ~30s before
+    giving up; a short TCP pre-check surfaces the failure immediately. Best-effort:
+    skips file-based (sqlite) and url-based connections where host/port is unknown.
+    """
+    if connection.url or connection.database_type.lower() == "sqlite":
+        return
+    host = connection.host
+    port = connection.port or _DEFAULT_DB_PORTS.get(connection.database_type.lower())
+    if not host or not port:
+        return
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            pass
+    except OSError as e:
+        raise ConnectionError(f"Cannot connect to database at {host}:{port}: {e}") from e
 
 
 def write_df_to_database(df: pl.DataFrame, database_write_settings: DatabaseWriteSettings):
@@ -54,6 +91,7 @@ def read_sql_source(database_read_settings: DatabaseReadSettings):
     Returns:
         pl.DataFrame: The resulting Polars DataFrame.
     """
+    verify_database_reachable(database_read_settings.connection)
     # Read the query into a DataFrame
     df = read_query_as_pd_df(database_read_settings.query, database_read_settings.connection.create_uri())
     return df

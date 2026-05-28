@@ -513,6 +513,7 @@ class FlowNode:
         node_information.is_setup = self.is_setup
         node_information.x_position = self.setting_input.pos_x
         node_information.y_position = self.setting_input.pos_y
+        node_information.group_id = getattr(self.setting_input, "group_id", None)
         node_information.type = self.node_type
 
     def get_node_information(self) -> schemas.NodeInformation:
@@ -802,7 +803,9 @@ class FlowNode:
             The FlowDataEngine from the appropriate output handle.
         """
         handle = self._input_output_handles.get(input_node.node_id, DEFAULT_OUTPUT_HANDLE)
-        if handle != DEFAULT_OUTPUT_HANDLE and input_node._named_outputs:
+        if handle != DEFAULT_OUTPUT_HANDLE:
+            # get_output triggers execution first, then routes by handle. Required
+            # for the first-call case where _named_outputs is still empty.
             return input_node.get_output(handle)
         return input_node.get_resulting_data()
 
@@ -824,6 +827,8 @@ class FlowNode:
                 if self.results.resulting_data is None and self.results.errors is None:
                     self.print("getting resulting data")
                     try:
+                        if self._execution_state.is_canceled:
+                            raise Exception("Node execution canceled")
                         if isinstance(self.function, FlowDataEngine):
                             fl: FlowDataEngine = self.function
                         elif self.node_type == "external_source":
@@ -909,9 +914,7 @@ class FlowNode:
         try:
             fl = self._function(
                 *[
-                    v.get_predicted_resulting_data(
-                        self._input_output_handles.get(v.node_id, DEFAULT_OUTPUT_HANDLE)
-                    )
+                    v.get_predicted_resulting_data(self._input_output_handles.get(v.node_id, DEFAULT_OUTPUT_HANDLE))
                     for v in self.all_inputs
                 ]
             )
@@ -1356,14 +1359,20 @@ class FlowNode:
             # Reset execution state but preserve source file info for change detection
             self._execution_state.has_run_with_current_setup = False
             self._execution_state.has_completed_last_run = False
+            self._execution_state.is_canceled = False
             self._execution_state.result_schema = None
             self._execution_state.predicted_schema = None
             self._execution_state.execution_hash = None
             # Note: source_file_info NOT reset - needed for change detection
 
             if self.is_correct:
-                self._schema_callback = None  # Ensure the schema callback is reset
-                if self.schema_callback:
+                self._schema_callback = None
+                # Eagerly prefetch only for source/start nodes — they have no
+                # upstream dependencies, so a background fetch is safe and
+                # masks I/O latency. Downstream nodes' callbacks read upstream
+                # node state, so eagerly starting them races with the cascade
+                # of resets that graph.reset() is currently performing.
+                if self.is_start and self.schema_callback:
                     logger.info(f"{self.node_id}: Resetting the schema callback")
                     self.schema_callback.start()
             self.evaluate_nodes()
@@ -1664,12 +1673,11 @@ class FlowNode:
         output_names = getattr(self.setting_input, "output_names", None)
         node_reference = getattr(self.setting_input, "node_reference", None)
         template_fields = {**self.node_template.__dict__}
-        template_fields["output_names"] = (
-            output_names if output_names and len(output_names) > 1 else None
-        )
+        template_fields["output_names"] = output_names if output_names and len(output_names) > 1 else None
         return schemas.NodeInput(
             pos_y=self.setting_input.pos_y,
             pos_x=self.setting_input.pos_x,
+            group_id=getattr(self.setting_input, "group_id", None),
             id=self.node_id,
             node_reference=node_reference,
             **template_fields,

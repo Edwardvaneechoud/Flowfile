@@ -1,21 +1,74 @@
 <template>
   <div class="undo-redo-controls">
-    <button
-      class="control-btn"
-      :disabled="!flowStore.canUndo"
-      :title="flowStore.undoDescription ? `Undo: ${flowStore.undoDescription}` : 'Nothing to undo'"
-      @click="handleUndo"
+    <el-popover
+      placement="bottom"
+      :width="240"
+      trigger="hover"
+      :show-after="200"
+      popper-class="header-action-popover"
+      :show-arrow="true"
     >
-      <span class="material-icons">undo</span>
-    </button>
-    <button
-      class="control-btn"
-      :disabled="!flowStore.canRedo"
-      :title="flowStore.redoDescription ? `Redo: ${flowStore.redoDescription}` : 'Nothing to redo'"
-      @click="handleRedo"
+      <template #reference>
+        <button class="control-btn" :disabled="!flowStore.canUndo" @click="handleUndo">
+          <span class="material-icons">undo</span>
+        </button>
+      </template>
+      <div class="header-action-popover-body">
+        <div class="header-action-popover-title">
+          <span class="material-icons header-action-popover-icon">undo</span>
+          <span>Undo</span>
+        </div>
+        <p class="header-action-popover-desc">
+          {{
+            flowStore.canUndo && flowStore.undoDescription
+              ? `Undo: ${flowStore.undoDescription}`
+              : "Nothing to undo yet."
+          }}
+        </p>
+        <p class="header-action-popover-shortcut-hint">
+          <span class="header-action-popover-shortcut">
+            <kbd>{{ MODIFIER_LABEL }}</kbd>
+            <kbd>Z</kbd>
+          </span>
+          to undo.
+        </p>
+      </div>
+    </el-popover>
+    <el-popover
+      placement="bottom"
+      :width="240"
+      trigger="hover"
+      :show-after="200"
+      popper-class="header-action-popover"
+      :show-arrow="true"
     >
-      <span class="material-icons">redo</span>
-    </button>
+      <template #reference>
+        <button class="control-btn" :disabled="!flowStore.canRedo" @click="handleRedo">
+          <span class="material-icons">redo</span>
+        </button>
+      </template>
+      <div class="header-action-popover-body">
+        <div class="header-action-popover-title">
+          <span class="material-icons header-action-popover-icon">redo</span>
+          <span>Redo</span>
+        </div>
+        <p class="header-action-popover-desc">
+          {{
+            flowStore.canRedo && flowStore.redoDescription
+              ? `Redo: ${flowStore.redoDescription}`
+              : "Nothing to redo."
+          }}
+        </p>
+        <p class="header-action-popover-shortcut-hint">
+          <span class="header-action-popover-shortcut">
+            <kbd>{{ MODIFIER_LABEL }}</kbd>
+            <kbd>{{ SHIFT_LABEL }}</kbd>
+            <kbd>Z</kbd>
+          </span>
+          to redo.
+        </p>
+      </div>
+    </el-popover>
   </div>
 </template>
 
@@ -25,6 +78,7 @@ import { FlowApi } from "../../api";
 import { useFlowStore } from "../../stores/flow-store";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { IS_MAC, MODIFIER_LABEL, SHIFT_LABEL } from "../../utils/shortcuts";
 
 const flowStore = useFlowStore();
 const nodeStore = useNodeStore();
@@ -93,8 +147,7 @@ const handleKeyDown = (event: KeyboardEvent) => {
   if (isInputElement || isInCodeMirror) return;
 
   // Check for Ctrl+Z (Windows/Linux) or Cmd+Z (Mac)
-  const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
-  const ctrlOrCmd = isMac ? event.metaKey : event.ctrlKey;
+  const ctrlOrCmd = IS_MAC ? event.metaKey : event.ctrlKey;
 
   if (ctrlOrCmd && event.key.toLowerCase() === "z") {
     if (event.shiftKey) {
@@ -136,49 +189,54 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* Sits inside the page header alongside HeaderButtons. Matches the same
+   .action-btn--icon-only visual language so undo/redo read as part of the
+   same toolbar group. */
 .undo-redo-controls {
-  position: absolute;
-  top: 12px;
-  left: 192px; /* Position after the node list panel */
-  display: flex;
-  gap: 4px;
-  z-index: 1000;
-  background: var(--color-background-primary);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-lg);
-  padding: 4px;
-  box-shadow: var(--shadow-md);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  margin-left: var(--spacing-2);
+  font-family: var(--font-family-base);
 }
 
 .control-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: transparent;
-  border: none;
-  border-radius: var(--border-radius-md);
+  width: 34px;
+  height: 34px;
+  padding: var(--spacing-2);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
   cursor: pointer;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   transition: all var(--transition-fast);
+  box-shadow: var(--shadow-xs);
 }
 
 .control-btn:hover:not(:disabled) {
-  background: var(--color-background-tertiary);
-  color: var(--color-text-primary);
+  background-color: var(--color-background-tertiary);
+  border-color: var(--color-border-secondary);
 }
 
 .control-btn:active:not(:disabled) {
-  transform: scale(0.95);
+  transform: translateY(1px);
+  box-shadow: none;
 }
 
 .control-btn:disabled {
-  opacity: 0.3;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .control-btn .material-icons {
-  font-size: 20px;
+  font-size: 18px;
+  color: var(--color-text-secondary);
+}
+
+.control-btn:hover:not(:disabled) .material-icons {
+  color: var(--color-text-primary);
 }
 </style>

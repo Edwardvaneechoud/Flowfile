@@ -12,6 +12,8 @@ import uvicorn
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from flowfile_core.ai import router as ai_router
+from flowfile_core.ai.admin_routes import router as ai_admin_router
 from flowfile_core.artifacts import router as artifacts_router
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.configs.settings import (
@@ -22,10 +24,12 @@ from flowfile_core.configs.settings import (
     WORKER_URL,
 )
 from flowfile_core.kernel import router as kernel_router
+from flowfile_core.ml import router as ml_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
 from flowfile_core.routes.file_manager import router as file_manager_router
+from flowfile_core.routes.ga_connections import router as ga_connections_router
 from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.public import router as public_router
@@ -126,14 +130,21 @@ app.include_router(public_router)
 app.include_router(router)
 app.include_router(catalog_router)
 app.include_router(artifacts_router)
+app.include_router(ml_router)
 app.include_router(logs_router, tags=["logs"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
+app.include_router(ga_connections_router, prefix="/ga_connections", tags=["ga_connections"])
 app.include_router(kafka_router)
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
+app.include_router(ai_router, prefix="/ai", tags=["ai"])
+# AI feature-flag admin endpoint. Mounted on /system (NOT /ai) so admins
+# can flip the AI gate from the UI without first satisfying the gate they're
+# trying to flip.
+app.include_router(ai_admin_router, prefix="/system", tags=["system"])
 
 
 @app.post("/shutdown")
@@ -248,8 +259,12 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
     _cli_logger.debug("Loading flow from: %s", flow_path)
     try:
         from flowfile_core.auth.utils import get_local_user_id
+        from shared.run_completion import get_run_user_id
 
-        flow = open_flow(path, user_id=get_local_user_id())
+        user_id = get_run_user_id(run_id) if run_id is not None else None
+        if user_id is None:
+            user_id = get_local_user_id()
+        flow = open_flow(path, user_id=user_id)
     except Exception as e:
         _cli_logger.exception("Error loading flow: %s", e)
         _complete_run(run_id, success=False, nodes_completed=0)
@@ -310,8 +325,13 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
 
 def _complete_run(run_id: int, success: bool, nodes_completed: int, number_of_nodes: int = 0) -> None:
     """Report results back to a pre-created run record."""
-    _cli_logger.debug("Completing run %d: success=%s, nodes_completed=%d, number_of_nodes=%d",
-                      run_id, success, nodes_completed, number_of_nodes)
+    _cli_logger.debug(
+        "Completing run %d: success=%s, nodes_completed=%d, number_of_nodes=%d",
+        run_id,
+        success,
+        nodes_completed,
+        number_of_nodes,
+    )
     try:
         from shared.run_completion import complete_run
 

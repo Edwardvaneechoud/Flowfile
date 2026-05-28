@@ -21,8 +21,13 @@ Access at `http://localhost:8080`. The setup wizard will guide you through maste
 | `edwardvaneechoud/flowfile-frontend` | Web UI |
 | `edwardvaneechoud/flowfile-core` | API server |
 | `edwardvaneechoud/flowfile-worker` | Data processing |
+| `edwardvaneechoud/flowfile-kernel-base` | Python-script kernel (base) |
+| `edwardvaneechoud/flowfile-kernel-ml` | Python-script kernel with sklearn / xgboost / lightgbm / statsmodels |
 
-Tags: `latest`, `0.6.3`, or specific version
+Application images (`flowfile-frontend`, `flowfile-core`, `flowfile-worker`) share
+the project version (`latest`, `0.9.3`, `sha-...`). The kernel images carry their
+own version (currently `0.3.0`) so the kernel runtime can evolve independently of
+the rest of the application.
 
 ## docker-compose.yml
 
@@ -90,6 +95,7 @@ volumes:
 | `FLOWFILE_SCHEDULER_ENABLED` | Auto-start the flow scheduler | `false` |
 | `WORKER_HOST` | Worker hostname | `flowfile-worker` |
 | `CORE_HOST` | Core hostname | `flowfile-core` |
+| `FLOWFILE_KERNEL_IMAGE` | Kernel image to launch for Python-script nodes | `edwardvaneechoud/flowfile-kernel-base:0.3.0` |
 
 ## .env Example
 
@@ -125,6 +131,46 @@ docker compose logs -f    # View logs
 | Worker | `http://localhost:63579/health` |
 | Frontend | `http://localhost:8080` |
 
+## Python Script (Kernel) Nodes
+
+Python-script nodes run inside short-lived kernel containers spawned by `flowfile-core` via the host Docker socket. To enable them, mount the Docker socket into `flowfile-core` and pull the kernel image you want to use.
+
+### 1. Pull the kernel image
+
+```bash
+docker pull edwardvaneechoud/flowfile-kernel-base:0.3.0
+# Or, for ML workloads (sklearn, xgboost, lightgbm, statsmodels pre-baked):
+docker pull edwardvaneechoud/flowfile-kernel-ml:0.3.0
+```
+
+### 2. Mount the Docker socket and set the image
+
+In your `docker-compose.yml`, on the `flowfile-core` service:
+
+```yaml
+flowfile-core:
+  # ... existing config ...
+  environment:
+    # ... existing env vars ...
+    - FLOWFILE_KERNEL_IMAGE=${FLOWFILE_KERNEL_IMAGE:-edwardvaneechoud/flowfile-kernel-base:0.3.0}
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    # ... existing volumes ...
+```
+
+Switch flavours by setting `FLOWFILE_KERNEL_IMAGE` (no rebuild required), e.g.:
+
+```bash
+export FLOWFILE_KERNEL_IMAGE=edwardvaneechoud/flowfile-kernel-ml:0.3.0
+docker compose up -d
+```
+
+### Adding Extra Packages
+
+When you create a kernel from the UI, packages listed in the **Extra Python packages** field are baked into a per-kernel Docker image at creation time (a `FROM <flavour> + RUN pip install` layer pinned against the flavour's constraints file). Creation takes ~30 s; subsequent kernel starts reuse the image and boot in seconds. The derived image is removed automatically when you delete the kernel.
+
+If you instead run the kernel container directly (no `flowfile-core` orchestration), the legacy `KERNEL_PACKAGES` env var still works as a runtime install — it is overridden to empty when launched by core.
+
 ---
 
 ## File Manager
@@ -133,7 +179,6 @@ docker compose logs -f    # View logs
 
 The File Manager provides a web-based interface for uploading and downloading data files when running Flowfile in Docker (where users cannot browse the host filesystem).
 
-<!-- PLACEHOLDER: Screenshot of the File Manager page -->
 ![File Manager](../../assets/images/guides/docker-deployment/file-manager.png)
 
 *The File Manager showing uploaded files*

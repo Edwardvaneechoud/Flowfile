@@ -119,12 +119,12 @@ sequenceDiagram
     Runtime->>Runtime: Get/create namespace for flow
     Runtime->>Runtime: Clear previous node artifacts
     Runtime->>Code: exec(code, namespace)
-    Code->>Runtime: flowfile.read_input()
+    Code->>Runtime: flowfile_ctx.read_input()
     Runtime-->>Code: pl.LazyFrame
     Code->>Code: Transform data
-    Code->>Runtime: flowfile.publish_output(df)
-    Code->>Runtime: flowfile.display(fig)
-    Code->>Core: flowfile.log("message") [HTTP callback]
+    Code->>Runtime: flowfile_ctx.publish_output(df)
+    Code->>Runtime: flowfile_ctx.display(fig)
+    Code->>Core: flowfile_ctx.log("message") [HTTP callback]
     Runtime-->>Manager: ExecuteResult
     Manager-->>Core: ExecuteResult
 ```

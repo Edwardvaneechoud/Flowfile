@@ -91,7 +91,7 @@
               'is-directory': file.is_directory,
             }"
             @click.stop="handleSingleClick(file)"
-            @dblclick="handleDoubleClick(file)"
+            @dblclick.stop="handleDoubleClick(file)"
           >
             <div class="file-item-content">
               <div class="file-icon-wrapper">
@@ -224,6 +224,10 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~1020 LOC. Plan to extract:
+//   - useFileBrowserSort composable: sort/filter (~lines 555-604)
+//   - FileBrowserToolbar.vue (~lines 13-65), FileBrowserGrid.vue (~84-135)
+//   - FileCreateDialog.vue (~192-222), useFileBrowserNavigation composable (~344-377)
 import { ref, computed, onMounted, onActivated, watch } from "vue";
 import { FileInfo } from "./types";
 import { useFileBrowserStore, type FileBrowserContext } from "../../../stores/fileBrowserStore";

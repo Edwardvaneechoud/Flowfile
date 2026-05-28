@@ -21,6 +21,7 @@ export interface NamespaceTree extends CatalogNamespace {
   flows: FlowRegistration[];
   artifacts: GlobalArtifact[];
   tables: CatalogTable[];
+  visualizations: CatalogVisualization[];
 }
 
 export interface NamespaceCreate {
@@ -250,8 +251,10 @@ export interface FlowSchedule {
   enabled: boolean;
   name: string | null;
   description: string | null;
-  schedule_type: "interval" | "table_trigger" | "table_set_trigger";
+  schedule_type: "interval" | "cron" | "table_trigger" | "table_set_trigger";
   interval_seconds: number | null;
+  cron_expression: string | null;
+  cron_timezone: string | null;
   trigger_table_id: number | null;
   trigger_table_name: string | null;
   trigger_namespace_id: number | null;
@@ -268,8 +271,10 @@ export interface FlowSchedule {
 
 export interface FlowScheduleCreate {
   registration_id: number;
-  schedule_type: "interval" | "table_trigger" | "table_set_trigger";
+  schedule_type: "interval" | "cron" | "table_trigger" | "table_set_trigger";
   interval_seconds?: number | null;
+  cron_expression?: string | null;
+  cron_timezone?: string | null;
   trigger_table_id?: number | null;
   trigger_table_ids?: number[] | null;
   enabled?: boolean;
@@ -280,8 +285,20 @@ export interface FlowScheduleCreate {
 export interface FlowScheduleUpdate {
   enabled?: boolean;
   interval_seconds?: number | null;
+  cron_expression?: string | null;
+  cron_timezone?: string | null;
   name?: string | null;
   description?: string | null;
+}
+
+export interface CronValidationRequest {
+  cron_expression?: string | null;
+  cron_timezone?: string | null;
+}
+
+export interface CronValidationResult {
+  valid: boolean;
+  error: string | null;
 }
 
 // ============================================================================
@@ -336,7 +353,14 @@ export interface SchedulerStatus {
 // View state helpers
 // ============================================================================
 
-export type CatalogTab = "catalog" | "favorites" | "following" | "runs" | "schedules" | "sql";
+export type CatalogTab =
+  | "catalog"
+  | "favorites"
+  | "following"
+  | "runs"
+  | "schedules"
+  | "sql"
+  | "visuals";
 
 // ============================================================================
 // SQL Query types
@@ -350,5 +374,95 @@ export interface SqlQueryResult {
   truncated: boolean;
   execution_time_ms: number;
   used_tables: string[];
+  error: string | null;
+}
+
+// ============================================================================
+// Visualizations
+// ============================================================================
+
+export type VizSourceKind = "table" | "sql";
+
+export interface CatalogVisualization {
+  id: number;
+  name: string;
+  description: string | null;
+  chart_type: string | null;
+  /** GraphicWalker IChart[] — one entry per chart tab. */
+  spec: Record<string, any>[];
+  spec_gw_version: string | null;
+  source_type: VizSourceKind;
+  catalog_table_id: number | null;
+  sql_query: string | null;
+  namespace_id: number | null;
+  /** Base64 PNG data URL captured on save by GraphicWalker's exportChart. */
+  thumbnail_data_url: string | null;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+  /** Parent table info (resolved server-side) so the viewer can render
+   * "namespace.tablename" without a second API call. */
+  table_name?: string | null;
+  table_namespace_name?: string | null;
+  table_full_name?: string | null;
+  table_type?: string | null;
+  namespace_name?: string | null;
+}
+
+export interface VisualizationCreatePayload {
+  name: string;
+  description?: string | null;
+  chart_type?: string | null;
+  spec: Record<string, any>[];
+  spec_gw_version?: string | null;
+  source_type: VizSourceKind;
+  catalog_table_id?: number | null;
+  sql_query?: string | null;
+  namespace_id?: number | null;
+  thumbnail_data_url?: string | null;
+}
+
+export interface VisualizationUpdatePayload {
+  name?: string;
+  description?: string | null;
+  chart_type?: string | null;
+  spec?: Record<string, any>[];
+  spec_gw_version?: string | null;
+  namespace_id?: number | null;
+  sql_query?: string | null;
+  catalog_table_id?: number | null;
+  thumbnail_data_url?: string | null;
+}
+
+/** Source descriptor sent to the ad-hoc compute and fields endpoints. */
+export interface VizSourceDescriptor {
+  source_type: VizSourceKind;
+  table_id?: number | null;
+  sql_query?: string | null;
+}
+
+export interface VisualizationComputeResponse {
+  rows: Record<string, any>[];
+  total_rows: number;
+  truncated: boolean;
+  elapsed_ms: number;
+  cache_hit: boolean;
+  error: string | null;
+}
+
+export interface VisualizationFieldsResponse {
+  fields: Record<string, any>[];
+  cache_hit: boolean;
+  error: string | null;
+}
+
+export interface ColumnStatsResponse {
+  dtype: string;
+  values: unknown[];
+  truncated: boolean;
+  distinct_count: number | null;
+  min: unknown | null;
+  max: unknown | null;
+  cache_hit: boolean;
   error: string | null;
 }

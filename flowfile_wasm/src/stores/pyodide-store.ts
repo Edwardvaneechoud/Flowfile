@@ -1039,6 +1039,161 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
     except Exception as e:
         return {"success": False, "error": format_error_lf("explore_data", node_id, e, input_lf)}
 
+
+# =============================================================================
+# Graphic Walker: semantic/analytic type conversion + materialisation
+# Ported from flowfile_core/flowfile/analytics/graphic_walker.py using Polars
+# dtypes directly (no FlowfileColumn dependency).
+# =============================================================================
+
+# Cap for in-browser Graphic Walker rendering. Pyodide has a tight memory
+# budget and Graphic Walker needs the full dataset in RAM.
+GW_MAX_ROWS = 100_000
+
+_GW_QUANTITATIVE = {
+    "Int8", "Int16", "Int32", "Int64", "Int128",
+    "UInt8", "UInt16", "UInt32", "UInt64",
+    "Float32", "Float64", "Decimal",
+}
+_GW_TEMPORAL = {"Date", "Datetime", "Time", "Duration"}
+
+
+def _gw_semantic_type(pl_dtype) -> str:
+    """Map a Polars DataType to a Graphic Walker semanticType."""
+    try:
+        base = pl_dtype.base_type().__name__
+    except Exception:
+        base = str(pl_dtype)
+    if base in _GW_QUANTITATIVE:
+        return "quantitative"
+    if base in _GW_TEMPORAL:
+        return "temporal"
+    return "nominal"
+
+
+def _gw_analytic_type(semantic_type: str) -> str:
+    return "measure" if semantic_type == "quantitative" else "dimension"
+
+
+def _gw_build_fields(schema) -> List[Dict[str, Any]]:
+    """Build a MutField list from a Polars schema (OrderedDict[str, DataType])."""
+    fields: List[Dict[str, Any]] = []
+    for name, dtype in schema.items():
+        sem = _gw_semantic_type(dtype)
+        fields.append({
+            "fid": name,
+            "key": name,
+            "name": name,
+            "basename": name,
+            "semanticType": sem,
+            "analyticType": _gw_analytic_type(sem),
+            "disable": False,
+        })
+    return fields
+
+
+def _gw_prepare_row(row_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Make a row JSON-safe for the JS side.
+
+    Polars temporal/bytes values don't survive Pyodide's default dict
+    conversion; coerce them to primitive strings/numbers.
+    """
+    import datetime as _dt
+    out: Dict[str, Any] = {}
+    for k, v in row_dict.items():
+        if v is None:
+            out[k] = None
+        elif isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+            out[k] = v.isoformat()
+        elif isinstance(v, _dt.timedelta):
+            out[k] = v.total_seconds()
+        elif isinstance(v, (bytes, bytearray)):
+            try:
+                out[k] = v.decode("utf-8", errors="replace")
+            except Exception:
+                out[k] = str(v)
+        else:
+            out[k] = v
+    return out
+
+
+def execute_explore_data(node_id: int, input_id: int, settings: Dict) -> Dict:
+    """Execute explore_data node: materialise up to GW_MAX_ROWS rows from the
+    upstream LazyFrame and return a Graphic Walker input payload plus any
+    persisted specList from the node settings.
+    """
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
+        return {
+            "success": False,
+            "error": (
+                f"Explore error on node #{node_id}: No input data from "
+                f"node #{input_id}. Make sure the upstream node executed successfully."
+            ),
+        }
+
+    df = None
+    try:
+        # Build field metadata from the schema (cheap, no collect).
+        schema = input_lf.collect_schema()
+        fields = _gw_build_fields(schema)
+
+        # Count rows cheaply for truncation metadata.
+        try:
+            total_rows = input_lf.select(pl.len()).collect().item()
+        except Exception:
+            total_rows = None
+
+        truncated = bool(total_rows is not None and total_rows > GW_MAX_ROWS)
+        df = input_lf.head(GW_MAX_ROWS).collect()
+
+        # Convert rows to JSON-safe dicts (IRow[] for Graphic Walker).
+        rows = [_gw_prepare_row(r) for r in df.to_dicts()]
+
+        # Keep the upstream LazyFrame registered so downstream nodes still work.
+        store_lazyframe(node_id, input_lf)
+
+        # Rehydrate any saved chart specs from the node settings.
+        spec_list: List[Any] = []
+        try:
+            gw_input = (settings or {}).get("graphic_walker_input") or {}
+            spec_list = gw_input.get("specList") or []
+            if not isinstance(spec_list, list):
+                spec_list = []
+        except Exception:
+            spec_list = []
+
+        is_initial = len(spec_list) == 0
+
+        return {
+            "success": True,
+            "schema": get_schema(node_id),
+            "has_data": True,
+            "graphic_walker_input": {
+                "is_initial": is_initial,
+                "dataModel": {
+                    "fields": fields,
+                    "data": rows,
+                },
+                "specList": spec_list,
+            },
+            "row_info": {
+                "total_rows": total_rows,
+                "loaded_rows": len(rows),
+                "truncated": truncated,
+                "max_rows": GW_MAX_ROWS,
+            },
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": format_error_lf("explore_data", node_id, e, input_lf),
+        }
+    finally:
+        if df is not None:
+            del df
+            gc.collect()
+
 def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute pivot node - converts data from long to wide format
     Note: Pivot requires collecting data due to dynamic column creation.

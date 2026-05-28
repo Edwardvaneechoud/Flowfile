@@ -261,6 +261,46 @@ def test_connect_node(raw_data):
     assert graph.get_node(2).node_inputs.main_inputs[0] == graph.get_node(1), 'Node 2 should have node 1 as input'
 
 
+def test_running_dynamic_rename_prefix(raw_data, execution_location):
+    graph = create_graph(execution_location=execution_location)
+    graph = add_manual_input(graph, data=raw_data)
+    add_node_promise_on_type(graph, 'dynamic_rename', 2)
+    settings = input_schema.NodeDynamicRename(
+        flow_id=1,
+        node_id=2,
+        dynamic_rename_input=transform_schema.DynamicRenameInput(
+            rename_mode='prefix',
+            prefix='src_',
+        ),
+    )
+    graph.add_dynamic_rename(settings)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    df = graph.get_node(2).results.resulting_data.collect()
+    assert df.columns == ['src_name', 'src_city']
+
+
+def test_running_dynamic_rename_formula(raw_data, execution_location):
+    graph = create_graph(execution_location=execution_location)
+    graph = add_manual_input(graph, data=raw_data)
+    add_node_promise_on_type(graph, 'dynamic_rename', 2)
+    settings = input_schema.NodeDynamicRename(
+        flow_id=1,
+        node_id=2,
+        dynamic_rename_input=transform_schema.DynamicRenameInput(
+            rename_mode='formula',
+            formula='uppercase([column_name])',
+        ),
+    )
+    graph.add_dynamic_rename(settings)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    df = graph.get_node(2).results.resulting_data.collect()
+    assert df.columns == ['NAME', 'CITY']
+
+
 def test_running_unique(raw_data, execution_location):
     graph = create_graph(execution_location=execution_location)
     graph = add_manual_input(graph, data=raw_data)
@@ -1050,6 +1090,95 @@ def get_join_data(how: str = 'inner'):
                  'join_key': False, 'is_altered': False, 'position': None, 'is_available': True, 'keep': True}]},
                                                      'how': how}, 'auto_keep_all': True, 'auto_keep_right': True,
             'auto_keep_left': True}
+
+
+def test_join_schema_auto_pass_through_after_upstream_rename(execution_location):
+    """Upstream changes must flow through a join without the user re-opening the join node.
+
+    Scenario:
+      manual_input(left) -> select(identity) -> join <- manual_input(right)
+
+    The join's stored left_select only references the join key. With the auto
+    pass-through behaviour, upstream columns absent from left_select should
+    still appear in both the predicted schema and the actual output.
+
+    Then we modify the select to rename a column (name -> customer_name) and
+    verify that the rename propagates all the way through the join without
+    touching the join settings.
+    """
+    graph = create_graph(execution_location=execution_location)
+    add_manual_input(graph, data=[{'id': 1, 'name': 'alice'}, {'id': 2, 'name': 'bob'}], node_id=1)
+    add_manual_input(graph, data=[{'id': 1, 'city': 'NY'}, {'id': 2, 'city': 'LA'}], node_id=2)
+
+    identity_select = [
+        transform_schema.SelectInput(old_name='id', new_name='id', keep=True),
+        transform_schema.SelectInput(old_name='name', new_name='name', keep=True),
+    ]
+    add_node_promise_on_type(graph, 'select', 3)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
+    graph.add_select(input_schema.NodeSelect(flow_id=1, node_id=3, select_input=identity_select, keep_missing=False))
+
+    add_node_promise_on_type(graph, 'join', 4)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(3, 4)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 4)
+    right_connection.input_connection.connection_class = 'input-1'
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+
+    # Stored join config intentionally omits `name` — it must still pass through.
+    graph.add_join(input_schema.NodeJoin(
+        flow_id=1,
+        node_id=4,
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap(left_col='id', right_col='id')],
+            left_select=[transform_schema.SelectInput(old_name='id', new_name='id', keep=True, join_key=True)],
+            right_select=[
+                transform_schema.SelectInput(old_name='id', new_name='id', keep=False, join_key=True),
+                transform_schema.SelectInput(old_name='city', new_name='city', keep=True),
+            ],
+            how='inner',
+        ),
+        auto_generate_selection=True,
+        depending_on_ids=[3, 2],
+    ))
+
+    join_node = graph.get_node(4)
+    predicted = join_node.get_predicted_schema(force=True)
+    predicted_cols = [c.name for c in predicted]
+    assert set(predicted_cols) == {'id', 'name', 'city'}, (
+        f"Expected `name` to pass through to the join predicted schema, got {predicted_cols}"
+    )
+
+    handle_run_info(graph.run_graph())
+    actual_cols = join_node.get_resulting_data().columns
+    assert set(actual_cols) == {'id', 'name', 'city'}, (
+        f"Expected `name` to pass through to the join output, got {actual_cols}"
+    )
+
+    # Now rename `name -> customer_name` on the select node. The join config is untouched.
+    graph.reset()
+    graph.add_select(input_schema.NodeSelect(
+        flow_id=1,
+        node_id=3,
+        select_input=[
+            transform_schema.SelectInput(old_name='id', new_name='id', keep=True),
+            transform_schema.SelectInput(old_name='name', new_name='customer_name', keep=True),
+        ],
+        keep_missing=False,
+    ))
+
+    join_node = graph.get_node(4)
+    predicted_after = join_node.get_predicted_schema(force=True)
+    predicted_cols_after = [c.name for c in predicted_after]
+    assert set(predicted_cols_after) == {'id', 'customer_name', 'city'}, (
+        f"Rename on select did not propagate to join predicted schema: {predicted_cols_after}"
+    )
+
+    handle_run_info(graph.run_graph())
+    actual_cols_after = graph.get_node(4).get_resulting_data().columns
+    assert set(actual_cols_after) == {'id', 'customer_name', 'city'}, (
+        f"Rename on select did not propagate to join output: {actual_cols_after}"
+    )
 
 
 def test_add_join(execution_location):
@@ -2320,6 +2449,36 @@ def test_random_split_returns_named_outputs():
     assert result.labels == ["train", "test"]
 
 
+def test_random_split_remote_offloads_to_worker():
+    """remote dispatch must hit random_split_external (worker), not random_split (in-core).
+
+    Both paths must produce identical partition counts for the same seed.
+    """
+    rows = [{"id": i} for i in range(500)]
+    seed = 7
+
+    def _run(loc: Literal["local", "remote"]) -> tuple[int, int]:
+        graph = create_graph(execution_location=loc)
+        add_manual_input(graph, rows, node_id=1)
+        _add_random_split_to_graph(
+            graph,
+            [
+                input_schema.RandomSplitGroup(name="train", percentage=70.0),
+                input_schema.RandomSplitGroup(name="test", percentage=30.0),
+            ],
+            seed=seed,
+        )
+        graph.run_graph()
+        node = graph.get_node(2)
+        return (
+            len(node.get_output("output-0").collect()),
+            len(node.get_output("output-1").collect()),
+        )
+
+    assert _run("local") == (350, 150)
+    assert _run("remote") == (350, 150)
+
+
 def _install_heterogeneous_multi_output(node):
     """Replace a node's function with one that returns two different schemas per handle.
 
@@ -2450,3 +2609,76 @@ def test_downstream_predicted_data_uses_correct_upstream_handle():
     # Sample is a passthrough on schema — the downstream sees output-1's columns.
     assert [c.name for c in predicted.schema] == ["name_col"]
 
+
+# ============================================================================
+# Filter node: split_mode (dual pass/fail outputs)
+# ============================================================================
+
+
+def _add_filter_to_graph(
+    graph: FlowGraph,
+    advanced_filter: str,
+    *,
+    split_mode: bool = False,
+    node_id: int = 2,
+    depends_on: int = 1,
+) -> None:
+    """Helper: attach a filter node to ``depends_on`` with an advanced predicate."""
+    add_node_promise_on_type(graph, "filter", node_id)
+    add_connection(
+        graph,
+        input_schema.NodeConnection.create_from_simple_input(depends_on, node_id),
+    )
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            depending_on_id=depends_on,
+            filter_input=transform_schema.FilterInput(
+                advanced_filter=advanced_filter,
+                filter_type="advanced",
+            ),
+            split_mode=split_mode,
+        )
+    )
+
+
+def test_filter_split_mode_partitions_rows():
+    """With split_mode on, output-0 has matching rows and output-1 has the rest."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(10)], node_id=1)
+    _add_filter_to_graph(graph, 'pl.col("id") >= 5', split_mode=True)
+    graph.run_graph()
+
+    node = graph.get_node(2)
+    pass_rows = node.get_output("output-0").collect()
+    fail_rows = node.get_output("output-1").collect()
+    assert pass_rows["id"].to_list() == [5, 6, 7, 8, 9]
+    assert fail_rows["id"].to_list() == [0, 1, 2, 3, 4]
+    # Default (handle-less) consumers see the first output (backwards-compat).
+    assert node.get_resulting_data().collect()["id"].to_list() == [5, 6, 7, 8, 9]
+
+
+def test_filter_split_mode_off_is_backwards_compatible():
+    """With split_mode off, the filter node behaves as before: single output."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(10)], node_id=1)
+    _add_filter_to_graph(graph, 'pl.col("id") >= 5', split_mode=False)
+    graph.run_graph()
+
+    node = graph.get_node(2)
+    assert node.get_resulting_data().collect()["id"].to_list() == [5, 6, 7, 8, 9]
+    # No named outputs populated on the single-output path.
+    assert node._named_outputs == {}
+
+
+def test_filter_split_mode_default_is_false():
+    """NodeFilter constructed without split_mode defaults to single-output."""
+    settings = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        filter_input=transform_schema.FilterInput(
+            advanced_filter='pl.col("id") > 0', filter_type="advanced"
+        ),
+    )
+    assert settings.split_mode is False

@@ -20,8 +20,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 
 logger = logging.getLogger(__name__)
 
-# Run Alembic-based migrations (replaces the old manual run_migrations + create_all)
-run_startup_migration()
+# Run Alembic-based migrations (replaces the old manual run_migrations + create_all).
+# Skipped when FLOWFILE_SKIP_STARTUP_MIGRATION is set so the alembic CLI can import
+# our metadata without recursively re-entering migration machinery.
+if not os.environ.get("FLOWFILE_SKIP_STARTUP_MIGRATION"):
+    run_startup_migration()
 
 
 def create_default_local_user(db: Session):
@@ -126,9 +129,7 @@ def create_default_catalog_namespace(db: Session):
         db.commit()
 
     # Dedicated schema for quick-created / unnamed flows so they don't clutter 'default'
-    unnamed_schema = (
-        db.query(db_models.CatalogNamespace).filter_by(name="Unnamed Flows", parent_id=general.id).first()
-    )
+    unnamed_schema = db.query(db_models.CatalogNamespace).filter_by(name="Unnamed Flows", parent_id=general.id).first()
     if not unnamed_schema:
         unnamed_schema = db_models.CatalogNamespace(
             name="Unnamed Flows",
@@ -142,9 +143,7 @@ def create_default_catalog_namespace(db: Session):
 
     # Dedicated schema for flows saved to arbitrary disk locations, distinct from
     # catalog-managed flows so users can tell disk-backed and catalog flows apart.
-    local_schema = (
-        db.query(db_models.CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
-    )
+    local_schema = db.query(db_models.CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
     if not local_schema:
         local_schema = db_models.CatalogNamespace(
             name="Local Flows",

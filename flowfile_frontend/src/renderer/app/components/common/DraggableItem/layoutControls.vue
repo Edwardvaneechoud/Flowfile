@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="wrapperRef"
     class="layout-widget-wrapper"
     :style="{
       left: position.x + 'px',
@@ -47,7 +48,7 @@
 
 <script setup lang="ts">
 // UPDATED: Added 'computed' and defineEmits
-import { ref, onMounted, onBeforeUnmount, computed } from "vue";
+import { ref, onMounted, onBeforeUnmount, computed, useTemplateRef } from "vue";
 import { useItemStore } from "./stateStore";
 
 // Define emits for parent component communication
@@ -58,29 +59,69 @@ const emit = defineEmits<{
 const itemStore = useItemStore();
 const isOpen = ref(false);
 
-// Position state
-const position = ref({ x: window.innerWidth - 80, y: window.innerHeight - 80 });
+const wrapperRef = useTemplateRef<HTMLElement>("wrapperRef");
+
+// The widget now lives inside the canvas <main> element. Bounds (and the
+// pinned bottom-right anchor) come from <main>, not the viewport — otherwise
+// the button would always sit at the absolute bottom of the screen, possibly
+// behind toolbars or off-canvas.
+const getCanvasBounds = () => {
+  const main = wrapperRef.value?.closest("main") as HTMLElement | null;
+  if (main) {
+    return { width: main.clientWidth, height: main.clientHeight };
+  }
+  return { width: window.innerWidth, height: window.innerHeight };
+};
+
+// Default-position constants. Anchor is "just right of the Data Actions
+// panel" (`Canvas.vue` mounts it at `initial-width="230"`), bottom-aligned
+// so the button doesn't compete vertically with the right-docked node
+// settings / AI assistant drawers. ``LAYOUT_CONTROLS_DEFAULT_X`` is
+// clamped against the canvas width below so a narrow window can't push
+// the button off-screen.
+const DATA_ACTIONS_PANEL_WIDTH = 230;
+const LAYOUT_CONTROLS_GAP = 10;
+const LAYOUT_CONTROLS_DEFAULT_X = DATA_ACTIONS_PANEL_WIDTH + LAYOUT_CONTROLS_GAP;
+
+// localStorage key. Bumped from ``layoutControlsPosition`` (V1) when the
+// default moved from bottom-right to bottom-left next to the Data Actions
+// panel — existing users would otherwise see their old saved bottom-right
+// position and miss the new default. V1 entries are left orphaned in
+// localStorage; harmless and reversible if the default is ever changed back.
+const LAYOUT_CONTROLS_STORAGE_KEY = "layoutControlsPositionV2";
+
+// Position state — initialised in onMounted from saved storage or the
+// computed bottom-left default; the inline value below is a safe
+// pre-mount placeholder that ``handleViewportResize`` / ``onMounted``
+// override before paint.
+const position = ref({ x: LAYOUT_CONTROLS_DEFAULT_X, y: window.innerHeight - 80 });
 const isDragging = ref(false);
 const hasDragged = ref(false);
 const dragStart = ref({ x: 0, y: 0 });
 const initialPosition = ref({ x: 0, y: 0 });
 
 // --- Function to handle window resizing ---
-// Always reset to bottom-right corner on resize to ensure it's always accessible
+// Always reset to bottom-left (next to Data Actions) on resize so the
+// button stays accessible even when the canvas shrinks below the
+// previously-saved coordinate.
 const handleViewportResize = () => {
   const buttonSize = 45;
   const boundaryMargin = 10;
-  // Always position in bottom-right corner on resize for consistent UX
-  position.value.x = window.innerWidth - buttonSize - boundaryMargin;
-  position.value.y = window.innerHeight - buttonSize - boundaryMargin;
+  const bounds = getCanvasBounds();
+  // Clamp against the canvas width so a very narrow window doesn't put
+  // the button beyond the right edge.
+  const maxX = Math.max(boundaryMargin, bounds.width - buttonSize - boundaryMargin);
+  position.value.x = Math.min(LAYOUT_CONTROLS_DEFAULT_X, maxX);
+  position.value.y = bounds.height - buttonSize - boundaryMargin;
   savePosition();
 };
 
 // --- NEW: Computed property for dynamic panel positioning ---
 const panelStyle = computed(() => {
   const style: { [key: string]: string } = {};
-  const isRightHalf = position.value.x > window.innerWidth / 2;
-  const isBottomHalf = position.value.y > window.innerHeight / 2;
+  const bounds = getCanvasBounds();
+  const isRightHalf = position.value.x > bounds.width / 2;
+  const isBottomHalf = position.value.y > bounds.height / 2;
 
   // Position horizontally
   if (isRightHalf) {
@@ -103,13 +144,16 @@ const panelStyle = computed(() => {
 onMounted(() => {
   const buttonSize = 45;
   const boundaryMargin = 10;
-  const savedPosition = localStorage.getItem("layoutControlsPosition");
+  const savedPosition = localStorage.getItem(LAYOUT_CONTROLS_STORAGE_KEY);
+  const bounds = getCanvasBounds();
+  const maxX = bounds.width - buttonSize - boundaryMargin;
+  const maxY = bounds.height - buttonSize - boundaryMargin;
+  // Default anchor: bottom-left next to Data Actions, clamped if the
+  // canvas is narrower than the panel + gap.
+  const defaultX = Math.min(LAYOUT_CONTROLS_DEFAULT_X, Math.max(boundaryMargin, maxX));
 
   if (savedPosition) {
     const parsed = JSON.parse(savedPosition);
-    // Validate the saved position is within current viewport bounds
-    const maxX = window.innerWidth - buttonSize - boundaryMargin;
-    const maxY = window.innerHeight - buttonSize - boundaryMargin;
 
     if (
       parsed.x <= maxX &&
@@ -119,15 +163,15 @@ onMounted(() => {
     ) {
       position.value = parsed;
     } else {
-      // Reset to bottom-right corner if saved position is out of bounds
-      position.value.x = maxX;
+      // Reset to default if saved position is out of bounds
+      position.value.x = defaultX;
       position.value.y = maxY;
       savePosition();
     }
   } else {
-    // Default to bottom-right corner
-    position.value.x = window.innerWidth - buttonSize - boundaryMargin;
-    position.value.y = window.innerHeight - buttonSize - boundaryMargin;
+    // Default to bottom-left corner of the canvas, next to Data Actions.
+    position.value.x = defaultX;
+    position.value.y = maxY;
   }
 
   window.addEventListener("resize", handleViewportResize);
@@ -135,7 +179,7 @@ onMounted(() => {
 
 // Save position to localStorage
 const savePosition = () => {
-  localStorage.setItem("layoutControlsPosition", JSON.stringify(position.value));
+  localStorage.setItem(LAYOUT_CONTROLS_STORAGE_KEY, JSON.stringify(position.value));
 };
 
 // Handle mouse down - prepare for potential drag
@@ -185,19 +229,13 @@ const onDrag = (e: MouseEvent) => {
     let newX = initialPosition.value.x + deltaX;
     let newY = initialPosition.value.y + deltaY;
 
-    // Keep within viewport bounds
+    // Keep within canvas bounds (the <main> element, not the viewport).
     const buttonSize = 45;
-    const boundaryMargin = 10; // UPDATED: Margin from edge
+    const boundaryMargin = 10;
+    const bounds = getCanvasBounds();
 
-    // UPDATED: Clamping logic now includes the margin
-    newX = Math.max(
-      boundaryMargin,
-      Math.min(window.innerWidth - buttonSize - boundaryMargin, newX),
-    );
-    newY = Math.max(
-      boundaryMargin,
-      Math.min(window.innerHeight - buttonSize - boundaryMargin, newY),
-    );
+    newX = Math.max(boundaryMargin, Math.min(bounds.width - buttonSize - boundaryMargin, newX));
+    newY = Math.max(boundaryMargin, Math.min(bounds.height - buttonSize - boundaryMargin, newY));
 
     position.value = { x: newX, y: newY };
   }
@@ -246,8 +284,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .layout-widget-wrapper {
-  position: fixed;
-  z-index: 20000;
+  position: absolute;
+  /* See zIndex.ts: FLOATING_WIDGET (200) — above panels, below fullscreen. */
+  z-index: 200;
 }
 
 .trigger-btn {

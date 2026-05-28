@@ -50,8 +50,8 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     intro: 'Write custom Polars code for advanced transformations. Access input_df and return a DataFrame. Supports full Python/Polars syntax.'
   },
   explore_data: {
-    title: 'Preview',
-    intro: 'Preview your data at this point in the flow. Does not modify the data.'
+    title: 'Explore Data',
+    intro: 'Interactively explore and visualize your data with Graphic Walker. Drag fields to build charts; saved chart specifications persist on the node.'
   },
   pivot: {
     title: 'Pivot',

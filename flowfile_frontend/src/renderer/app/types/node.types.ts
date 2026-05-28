@@ -8,7 +8,7 @@ import type { DisplayOutput } from "./kernel.types";
 // Data Type Definitions
 // ============================================================================
 
-type DataTypeGroup = "String" | "Date" | "Numeric";
+type DataTypeGroup = "Numeric" | "String" | "Date" | "Other" | "Boolean" | "Binary" | "Complex";
 
 // ============================================================================
 // Column and Table Types
@@ -561,6 +561,31 @@ export interface RecordIdInput {
 }
 
 // ============================================================================
+// Dynamic Rename Types
+// ============================================================================
+
+export type RenameMode = "prefix" | "suffix" | "formula" | "first_row";
+export type ColumnSelectionMode = "all" | "list" | "data_type";
+export type ReadableDataTypeGroup =
+  | "Numeric"
+  | "String"
+  | "Date"
+  | "Other"
+  | "Boolean"
+  | "Binary"
+  | "Complex";
+
+export interface DynamicRenameInput {
+  rename_mode: RenameMode;
+  prefix: string;
+  suffix: string;
+  formula: string;
+  selection_mode: ColumnSelectionMode;
+  selected_columns: string[];
+  selected_data_type: ReadableDataTypeGroup | null;
+}
+
+// ============================================================================
 // Graph Solver Types
 // ============================================================================
 
@@ -783,7 +808,14 @@ export interface NodeOutput extends NodeBase {
   output_settings: OutputSettings;
 }
 
-export type CatalogWriteMode = "overwrite" | "error" | "append" | "upsert" | "update" | "delete" | "virtual";
+export type CatalogWriteMode =
+  | "overwrite"
+  | "error"
+  | "append"
+  | "upsert"
+  | "update"
+  | "delete"
+  | "virtual";
 
 export interface CatalogWriteSettings {
   table_name: string;
@@ -822,6 +854,7 @@ export interface NodeSelect extends NodeSingleInput {
 
 export interface NodeFilter extends NodeSingleInput {
   filter_input: FilterInput;
+  split_mode?: boolean;
 }
 
 export interface NodeGroupBy extends NodeSingleInput {
@@ -861,6 +894,10 @@ export interface NodeTextToRows extends NodeSingleInput {
 
 export interface NodeRecordId extends NodeSingleInput {
   record_id_input: RecordIdInput;
+}
+
+export interface NodeDynamicRename extends NodeSingleInput {
+  dynamic_rename_input: DynamicRenameInput;
 }
 
 export interface NodeSample extends NodeBase {
@@ -953,4 +990,144 @@ export interface KafkaSourceSettings {
 export interface NodeKafkaSource extends NodeBase {
   kafka_settings: KafkaSourceSettings;
   fields?: MinimalFieldInput[] | null;
+}
+
+export interface GoogleAnalyticsFilter {
+  field: string;
+  // Dimensions: equals, not_equals, contains, begins_with, ends_with, regex, in_list, not_in_list
+  // Metrics: equals, not_equals, less_than, less_equal, greater_than, greater_equal, between
+  operator: string;
+  value: string;
+  case_sensitive: boolean;
+}
+
+export interface GoogleAnalyticsOrderBy {
+  field: string;
+  descending: boolean;
+}
+
+export interface GoogleAnalyticsSettings {
+  ga_connection_name: string;
+  property_id: string;
+  start_date: string;
+  end_date: string;
+  metrics: string[];
+  dimensions: string[];
+  limit: number | null;
+  filters: GoogleAnalyticsFilter[];
+  order_bys: GoogleAnalyticsOrderBy[];
+}
+
+export interface NodeGoogleAnalyticsReader extends NodeBase {
+  google_analytics_settings: GoogleAnalyticsSettings;
+  fields?: MinimalFieldInput[] | null;
+}
+
+// ============================================================================
+// ML Nodes
+// ============================================================================
+
+export type MLParamType = "boolean" | "number" | "integer" | "select";
+
+export interface MLParamSpec {
+  name: string;
+  type: MLParamType;
+  label: string;
+  default: boolean | number | string;
+  description?: string | null;
+  min?: number | null;
+  max?: number | null;
+  step?: number | null;
+  options?: string[] | null;
+}
+
+export interface MLAlgorithmSpec {
+  model_type: string;
+  label: string;
+  task_type: "regression" | "classification";
+  output_dtype: string;
+  params: MLParamSpec[];
+  description?: string | null;
+}
+
+export interface TrainModelSettings {
+  target_column: string;
+  feature_columns: string[];
+  model_type: string;
+  params: Record<string, unknown>;
+  publish_to_catalog: boolean;
+  model_name: string;
+  namespace_id?: number | null;
+  catalog_description?: string | null;
+  catalog_tags: string[];
+}
+
+export interface NodeTrainModel extends NodeSingleInput {
+  train_input: TrainModelSettings;
+}
+
+export type ApplyModelSource = "upstream" | "catalog";
+
+export interface ApplyModelSettings {
+  source: ApplyModelSource;
+  upstream_node_id: number | null;
+  model_name: string;
+  model_version: number | null;
+  namespace_id?: number | null;
+  output_column: string;
+}
+
+export interface UpstreamTrainModelOption {
+  node_id: number;
+  description: string;
+  target_column: string;
+  feature_columns: string[];
+  model_type: string;
+  publish_to_catalog: boolean;
+  model_name: string;
+}
+
+export interface CatalogNamespaceOut {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  level: number;
+  description?: string | null;
+}
+
+export interface CatalogNamespaceTree extends CatalogNamespaceOut {
+  children?: CatalogNamespaceTree[];
+}
+
+export interface NamespaceOption {
+  id: number;
+  label: string;
+}
+
+export interface NodeApplyModel extends NodeSingleInput {
+  apply_input: ApplyModelSettings;
+}
+
+export type EvaluateModelTaskType = "auto" | "regression" | "classification";
+
+export interface EvaluateModelSettings {
+  actual_column: string;
+  predicted_column: string;
+  task_type: EvaluateModelTaskType;
+  upstream_train_node_id: number | null;
+}
+
+export interface NodeEvaluateModel extends NodeSingleInput {
+  evaluate_input: EvaluateModelSettings;
+}
+
+export interface MLArtifactListItem {
+  id: number;
+  name: string;
+  namespace_id?: number | null;
+  version: number;
+  python_type?: string | null;
+  size_bytes?: number | null;
+  created_at: string;
+  tags: string[];
 }

@@ -22,12 +22,17 @@ class HistoryActionType(str, Enum):
     ADD_NODE = "add_node"
     DELETE_NODE = "delete_node"
     MOVE_NODE = "move_node"
+    MOVE_NODES = "move_nodes"
     ADD_CONNECTION = "add_connection"
     DELETE_CONNECTION = "delete_connection"
     UPDATE_SETTINGS = "update_settings"
     COPY_NODE = "copy_node"
     PASTE_NODES = "paste_nodes"
     APPLY_LAYOUT = "apply_layout"
+    CREATE_GROUP = "create_group"
+    UPDATE_GROUP = "update_group"
+    DELETE_GROUP = "delete_group"
+    UPDATE_GROUP_MEMBERSHIP = "update_group_membership"
     BATCH = "batch"
 
 
@@ -89,21 +94,42 @@ class CompressedSnapshot:
                 tuple(n.get("outputs") or []),
                 n.get("x_position"),
                 n.get("y_position"),
+                n.get("group_id"),
                 # Include a hash of setting_input for change detection
                 hash(str(n.get("setting_input"))) if n.get("setting_input") else None,
             )
             node_signatures.append(sig)
 
+        # Group boxes are visual-only but must register here so group edits flip the
+        # dirty flag and aren't deduplicated away by capture_snapshot/capture_if_changed.
+        groups = snapshot_dict.get("groups", []) or []
+        group_signatures = tuple(
+            (
+                g.get("id"),
+                g.get("name"),
+                g.get("color"),
+                g.get("x_position"),
+                g.get("y_position"),
+                g.get("width"),
+                g.get("height"),
+                g.get("collapsed"),
+                g.get("parent_group_id"),
+            )
+            for g in sorted(groups, key=lambda x: x.get("id", 0))
+        )
+
         settings = snapshot_dict.get("flowfile_settings", {})
         # Convert to a stable string so lists/dicts inside settings (e.g. parameters) are hashable
-        settings_tuple = str(sorted(((k, str(v)) for k, v in settings.items()))) \
-            if isinstance(settings, dict) else str(settings)
+        settings_tuple = (
+            str(sorted(((k, str(v)) for k, v in settings.items()))) if isinstance(settings, dict) else str(settings)
+        )
 
         return hash(
             (
                 snapshot_dict.get("flowfile_id"),
                 settings_tuple,
                 tuple(node_signatures),
+                group_signatures,
             )
         )
 

@@ -12,15 +12,18 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from flowfile_core.database.models import (
+    CatalogDashboard,
     CatalogNamespace,
     CatalogTable,
     CatalogTableReadLink,
+    CatalogVisualization,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
     FlowRun,
     FlowSchedule,
     GlobalArtifact,
+    RunType,
     ScheduleTriggerTable,
     TableFavorite,
 )
@@ -72,6 +75,8 @@ class CatalogRepository(Protocol):
         owner_id: int | None = None,
     ) -> list[FlowRegistration]: ...
 
+    def list_flows_by_ids(self, registration_ids: list[int]) -> list[FlowRegistration]: ...
+
     def create_flow(self, reg: FlowRegistration) -> FlowRegistration: ...
 
     def update_flow(self, reg: FlowRegistration) -> FlowRegistration: ...
@@ -100,7 +105,7 @@ class CatalogRepository(Protocol):
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[FlowRun]: ...
@@ -113,14 +118,14 @@ class CatalogRepository(Protocol):
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
     ) -> int: ...
 
     def count_runs_by_status(
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
     ) -> dict[str, int]: ...
 
     # -- Favorites -----------------------------------------------------------
@@ -249,6 +254,34 @@ class CatalogRepository(Protocol):
 
     def list_due_interval_schedules(self) -> list[FlowSchedule]: ...
 
+    # -- Visualizations ------------------------------------------------------
+
+    def list_visualizations(self, catalog_table_id: int) -> list[CatalogVisualization]: ...
+
+    def list_all_visualizations(self) -> list[CatalogVisualization]: ...
+
+    def get_visualization(self, viz_id: int) -> CatalogVisualization | None: ...
+
+    def get_visualization_by_name(self, catalog_table_id: int, name: str) -> CatalogVisualization | None: ...
+
+    def create_visualization(self, viz: CatalogVisualization) -> CatalogVisualization: ...
+
+    def update_visualization(self, viz: CatalogVisualization) -> CatalogVisualization: ...
+
+    def delete_visualization(self, viz_id: int) -> None: ...
+
+    # -- Dashboards ----------------------------------------------------------
+
+    def list_dashboards(self) -> list[CatalogDashboard]: ...
+
+    def get_dashboard(self, dashboard_id: int) -> CatalogDashboard | None: ...
+
+    def create_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard: ...
+
+    def update_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard: ...
+
+    def delete_dashboard(self, dashboard_id: int) -> None: ...
+
     def list_table_trigger_schedules(self) -> list[FlowSchedule]: ...
 
     def list_table_trigger_schedules_for_table(self, table_id: int) -> list[FlowSchedule]: ...
@@ -341,6 +374,11 @@ class SQLAlchemyCatalogRepository:
             q = q.filter_by(owner_id=owner_id)
         return q.order_by(FlowRegistration.name).all()
 
+    def list_flows_by_ids(self, registration_ids: list[int]) -> list[FlowRegistration]:
+        if not registration_ids:
+            return []
+        return self._db.query(FlowRegistration).filter(FlowRegistration.id.in_(registration_ids)).all()
+
     def create_flow(self, reg: FlowRegistration) -> FlowRegistration:
         self._db.add(reg)
         self._db.commit()
@@ -360,10 +398,48 @@ class SQLAlchemyCatalogRepository:
         self._db.query(GlobalArtifact).filter_by(
             source_registration_id=registration_id,
         ).filter(GlobalArtifact.status == "deleted").delete()
+        # Detach historical runs from this registration so a future registration
+        # that happens to reuse the same SQLite-assigned id cannot pull these
+        # runs into its own per-flow history. The runs keep their flow_uuid for
+        # global-history attribution.
+        self._db.query(FlowRun).filter_by(registration_id=registration_id).update(
+            {"registration_id": None}, synchronize_session=False
+        )
         flow = self._db.get(FlowRegistration, registration_id)
         if flow is not None:
             self._db.delete(flow)
             self._db.commit()
+
+    def _runs_of_registration(self, registration_id: int):
+        """Return a filter clause matching FlowRuns belonging to a registration.
+
+        Resolves to ``FlowRun.flow_uuid`` so a deleted+recreated registration with
+        the same SQLite-assigned id can never surface the previous flow's runs.
+        If the registration doesn't exist the scalar subquery yields NULL, which
+        makes the equality unsatisfiable — no rows match, no explicit guard
+        needed at call sites.
+        """
+        uuid_subq = (
+            self._db.query(FlowRegistration.flow_uuid).filter_by(id=registration_id).scalar_subquery()
+        )
+        return FlowRun.flow_uuid == uuid_subq
+
+    def _apply_run_filters(
+        self,
+        q,
+        *,
+        registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: RunType | None = None,
+    ):
+        """Apply the standard run filters to a FlowRun query."""
+        if registration_id is not None:
+            q = q.filter(self._runs_of_registration(registration_id))
+        if schedule_id is not None:
+            q = q.filter(FlowRun.schedule_id == schedule_id)
+        if run_type is not None:
+            q = q.filter(FlowRun.run_type == run_type)
+        return q
 
     def count_flows_in_namespace(self, namespace_id: int) -> int:
         return self._db.query(FlowRegistration).filter_by(namespace_id=namespace_id).count()
@@ -433,17 +509,16 @@ class SQLAlchemyCatalogRepository:
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[FlowRun]:
-        q = self._db.query(FlowRun)
-        if registration_id is not None:
-            q = q.filter_by(registration_id=registration_id)
-        if schedule_id is not None:
-            q = q.filter(FlowRun.schedule_id == schedule_id)
-        if run_type is not None:
-            q = q.filter(FlowRun.run_type == run_type)
+        q = self._apply_run_filters(
+            self._db.query(FlowRun),
+            registration_id=registration_id,
+            schedule_id=schedule_id,
+            run_type=run_type,
+        )
         return q.order_by(FlowRun.started_at.desc()).offset(offset).limit(limit).all()
 
     def create_run(self, run: FlowRun) -> FlowRun:
@@ -461,37 +536,34 @@ class SQLAlchemyCatalogRepository:
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
     ) -> int:
-        q = self._db.query(FlowRun)
-        if registration_id is not None:
-            q = q.filter_by(registration_id=registration_id)
-        if schedule_id is not None:
-            q = q.filter(FlowRun.schedule_id == schedule_id)
-        if run_type is not None:
-            q = q.filter(FlowRun.run_type == run_type)
-        return q.count()
+        return self._apply_run_filters(
+            self._db.query(FlowRun),
+            registration_id=registration_id,
+            schedule_id=schedule_id,
+            run_type=run_type,
+        ).count()
 
     def count_runs_by_status(
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
     ) -> dict[str, int]:
         from sqlalchemy import case, func
 
-        q = self._db.query(
-            func.count().label("total"),
-            func.count(case((FlowRun.success.is_(True), 1))).label("success"),
-            func.count(case((FlowRun.success.is_(False), 1))).label("failed"),
-            func.count(case((FlowRun.success.is_(None), 1))).label("running"),
+        q = self._apply_run_filters(
+            self._db.query(
+                func.count().label("total"),
+                func.count(case((FlowRun.success.is_(True), 1))).label("success"),
+                func.count(case((FlowRun.success.is_(False), 1))).label("failed"),
+                func.count(case((FlowRun.success.is_(None), 1))).label("running"),
+            ),
+            registration_id=registration_id,
+            schedule_id=schedule_id,
+            run_type=run_type,
         )
-        if registration_id is not None:
-            q = q.filter(FlowRun.registration_id == registration_id)
-        if schedule_id is not None:
-            q = q.filter(FlowRun.schedule_id == schedule_id)
-        if run_type is not None:
-            q = q.filter(FlowRun.run_type == run_type)
         row = q.one()
         return {"total": row.total, "success": row.success, "failed": row.failed, "running": row.running}
 
@@ -541,12 +613,12 @@ class SQLAlchemyCatalogRepository:
     # -- Aggregate helpers ---------------------------------------------------
 
     def count_run_for_flow(self, registration_id: int) -> int:
-        return self._db.query(FlowRun).filter_by(registration_id=registration_id).count()
+        return self._db.query(FlowRun).filter(self._runs_of_registration(registration_id)).count()
 
     def last_run_for_flow(self, registration_id: int) -> FlowRun | None:
         return (
             self._db.query(FlowRun)
-            .filter_by(registration_id=registration_id)
+            .filter(self._runs_of_registration(registration_id))
             .order_by(FlowRun.started_at.desc())
             .first()
         )
@@ -596,6 +668,7 @@ class SQLAlchemyCatalogRepository:
     def delete_table(self, table_id: int) -> None:
         self._db.query(CatalogTableReadLink).filter_by(table_id=table_id).delete()
         self._db.query(TableFavorite).filter_by(table_id=table_id).delete()
+        self._db.query(CatalogVisualization).filter_by(catalog_table_id=table_id).delete()
         table = self._db.get(CatalogTable, table_id)
         if table is not None:
             self._db.delete(table)
@@ -643,9 +716,7 @@ class SQLAlchemyCatalogRepository:
             self._db.commit()
 
     def list_table_favorites(self, user_id: int) -> list[TableFavorite]:
-        return (
-            self._db.query(TableFavorite).filter_by(user_id=user_id).order_by(TableFavorite.created_at.desc()).all()
-        )
+        return self._db.query(TableFavorite).filter_by(user_id=user_id).order_by(TableFavorite.created_at.desc()).all()
 
     def count_table_favorites(self, user_id: int) -> int:
         return self._db.query(TableFavorite).filter_by(user_id=user_id).count()
@@ -697,47 +768,57 @@ class SQLAlchemyCatalogRepository:
     def bulk_get_run_stats(self, flow_ids: list[int]) -> dict[int, tuple[int, FlowRun | None]]:
         """Return run_count and last_run for each flow_id in one query batch.
 
-        Returns a dict: flow_id -> (run_count, last_run_or_none)
+        Grouping is by ``flow_uuid`` (resolved from ``flow_registrations``) so
+        history that survived a registration delete+recreate stays attached to
+        the original flow only.
         """
         if not flow_ids:
             return {}
 
-        # Query 1: counts per registration_id
-        count_rows = (
-            self._db.query(
-                FlowRun.registration_id,
-                func.count(FlowRun.id).label("cnt"),
-            )
-            .filter(FlowRun.registration_id.in_(flow_ids))
-            .group_by(FlowRun.registration_id)
+        # registration_id -> flow_uuid (skip ids that no longer exist)
+        uuid_rows = (
+            self._db.query(FlowRegistration.id, FlowRegistration.flow_uuid)
+            .filter(FlowRegistration.id.in_(flow_ids))
             .all()
         )
-        counts = {r[0]: r[1] for r in count_rows}
+        id_to_uuid = {rid: uuid for rid, uuid in uuid_rows}
+        uuids = list(id_to_uuid.values())
+        if not uuids:
+            return {fid: (0, None) for fid in flow_ids}
 
-        # Query 2: last run per registration_id using a subquery for max started_at
+        # Query 1: counts per flow_uuid
+        count_rows = (
+            self._db.query(FlowRun.flow_uuid, func.count(FlowRun.id).label("cnt"))
+            .filter(FlowRun.flow_uuid.in_(uuids))
+            .group_by(FlowRun.flow_uuid)
+            .all()
+        )
+        counts = {uuid: cnt for uuid, cnt in count_rows}
+
+        # Query 2: last run per flow_uuid using a subquery for max started_at
         subq = (
             self._db.query(
-                FlowRun.registration_id,
+                FlowRun.flow_uuid,
                 func.max(FlowRun.started_at).label("max_started"),
             )
-            .filter(FlowRun.registration_id.in_(flow_ids))
-            .group_by(FlowRun.registration_id)
+            .filter(FlowRun.flow_uuid.in_(uuids))
+            .group_by(FlowRun.flow_uuid)
             .subquery()
         )
         last_runs_rows = (
             self._db.query(FlowRun)
             .join(
                 subq,
-                (FlowRun.registration_id == subq.c.registration_id) & (FlowRun.started_at == subq.c.max_started),
+                (FlowRun.flow_uuid == subq.c.flow_uuid) & (FlowRun.started_at == subq.c.max_started),
             )
             .all()
         )
-        last_runs = {r.registration_id: r for r in last_runs_rows}
+        last_runs = {r.flow_uuid: r for r in last_runs_rows}
 
-        # Build result dict
         result: dict[int, tuple[int, FlowRun | None]] = {}
         for fid in flow_ids:
-            result[fid] = (counts.get(fid, 0), last_runs.get(fid))
+            uuid_ = id_to_uuid.get(fid)
+            result[fid] = (counts.get(uuid_, 0), last_runs.get(uuid_)) if uuid_ else (0, None)
         return result
 
     def list_tables_for_flow(self, registration_id: int) -> list[CatalogTable]:
@@ -866,18 +947,13 @@ class SQLAlchemyCatalogRepository:
 
     def list_active_runs(self) -> list[FlowRun]:
         """Return runs that have not yet ended (ended_at IS NULL)."""
-        return (
-            self._db.query(FlowRun)
-            .filter(FlowRun.ended_at.is_(None))
-            .order_by(FlowRun.started_at.desc())
-            .all()
-        )
+        return self._db.query(FlowRun).filter(FlowRun.ended_at.is_(None)).order_by(FlowRun.started_at.desc()).all()
 
     def has_active_run(self, registration_id: int) -> bool:
         """Check if a flow already has an active (unfinished) run."""
         return (
             self._db.query(FlowRun)
-            .filter(FlowRun.registration_id == registration_id, FlowRun.ended_at.is_(None))
+            .filter(self._runs_of_registration(registration_id), FlowRun.ended_at.is_(None))
             .first()
             is not None
         )
@@ -913,9 +989,7 @@ class SQLAlchemyCatalogRepository:
     def get_trigger_table_ids(self, schedule_id: int) -> list[int]:
         """Return table IDs linked to a table_set_trigger schedule."""
         rows = (
-            self._db.query(ScheduleTriggerTable.table_id)
-            .filter(ScheduleTriggerTable.schedule_id == schedule_id)
-            .all()
+            self._db.query(ScheduleTriggerTable.table_id).filter(ScheduleTriggerTable.schedule_id == schedule_id).all()
         )
         return [r[0] for r in rows]
 
@@ -930,3 +1004,64 @@ class SQLAlchemyCatalogRepository:
         """Remove all trigger table links for a schedule."""
         self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
         self._db.commit()
+
+    # -- Visualizations ------------------------------------------------------
+
+    def list_visualizations(self, catalog_table_id: int) -> list[CatalogVisualization]:
+        return (
+            self._db.query(CatalogVisualization)
+            .filter_by(catalog_table_id=catalog_table_id)
+            .order_by(CatalogVisualization.created_at.desc())
+            .all()
+        )
+
+    def list_all_visualizations(self) -> list[CatalogVisualization]:
+        return self._db.query(CatalogVisualization).order_by(CatalogVisualization.created_at.desc()).all()
+
+    def get_visualization(self, viz_id: int) -> CatalogVisualization | None:
+        return self._db.get(CatalogVisualization, viz_id)
+
+    def get_visualization_by_name(self, catalog_table_id: int, name: str) -> CatalogVisualization | None:
+        return self._db.query(CatalogVisualization).filter_by(catalog_table_id=catalog_table_id, name=name).first()
+
+    def create_visualization(self, viz: CatalogVisualization) -> CatalogVisualization:
+        self._db.add(viz)
+        self._db.commit()
+        self._db.refresh(viz)
+        return viz
+
+    def update_visualization(self, viz: CatalogVisualization) -> CatalogVisualization:
+        self._db.commit()
+        self._db.refresh(viz)
+        return viz
+
+    def delete_visualization(self, viz_id: int) -> None:
+        viz = self._db.get(CatalogVisualization, viz_id)
+        if viz is not None:
+            self._db.delete(viz)
+            self._db.commit()
+
+    # -- Dashboards ----------------------------------------------------------
+
+    def list_dashboards(self) -> list[CatalogDashboard]:
+        return self._db.query(CatalogDashboard).order_by(CatalogDashboard.updated_at.desc()).all()
+
+    def get_dashboard(self, dashboard_id: int) -> CatalogDashboard | None:
+        return self._db.get(CatalogDashboard, dashboard_id)
+
+    def create_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard:
+        self._db.add(dashboard)
+        self._db.commit()
+        self._db.refresh(dashboard)
+        return dashboard
+
+    def update_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard:
+        self._db.commit()
+        self._db.refresh(dashboard)
+        return dashboard
+
+    def delete_dashboard(self, dashboard_id: int) -> None:
+        dashboard = self._db.get(CatalogDashboard, dashboard_id)
+        if dashboard is not None:
+            self._db.delete(dashboard)
+            self._db.commit()

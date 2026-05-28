@@ -15,6 +15,8 @@
         class="prism-editor-ref"
         :editor-string="code"
         :columns="nodeStore.nodeData?.main_input?.columns"
+        :flow-id="nodeStore.flow_id"
+        :node-id="nodeStore.node_id"
         @update-editor-string="handleCodeChange"
       />
     </div>

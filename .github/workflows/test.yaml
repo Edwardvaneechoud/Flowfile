@@ -389,6 +389,35 @@ jobs:
         run: |
           poetry run pytest flowfile_core/tests -m kernel -v --disable-warnings
 
+  # Type-stub drift check — runs when flowfile_frame source changes.
+  # Regenerates the .pyi stubs and fails if they don't match what's committed.
+  check-stubs:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.backend_frame == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.poetry/bin" >> $GITHUB_PATH
+
+      - name: Install Dependencies
+        run: poetry install --no-interaction --no-ansi --with dev
+
+      - name: Check stub drift
+        run: make check_stubs
+
   # Frontend web build test - runs when frontend changes or test workflow changes
   test-web:
     needs: detect-changes
@@ -412,6 +441,9 @@ jobs:
 
       - name: Install Node Dependencies
         run: npm ci
+
+      - name: Run frontend unit tests (vitest)
+        run: npm run test:unit
 
       - name: Build Web Version
         run: npm run build:web
@@ -562,7 +594,7 @@ jobs:
 
   # Summary job - always runs to provide status
   test-summary:
-    needs: [detect-changes, backend-tests, backend-tests-windows, kernel-tests, test-web, electron-tests-macos, electron-tests-windows, docs-test]
+    needs: [detect-changes, backend-tests, backend-tests-windows, kernel-tests, check-stubs, test-web, electron-tests-macos, electron-tests-windows, docs-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -585,6 +617,7 @@ jobs:
           echo "  - Backend Tests: ${{ needs.backend-tests.result }}"
           echo "  - Backend Tests (Windows): ${{ needs.backend-tests-windows.result }}"
           echo "  - Kernel Tests: ${{ needs.kernel-tests.result }}"
+          echo "  - Stub Drift: ${{ needs.check-stubs.result }}"
           echo "  - Web Tests: ${{ needs.test-web.result }}"
           echo "  - Electron Tests (macOS): ${{ needs.electron-tests-macos.result }}"
           echo "  - Electron Tests (Windows): ${{ needs.electron-tests-windows.result }}"
@@ -594,6 +627,7 @@ jobs:
           if [[ "${{ needs.backend-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.backend-tests-windows.result }}" == "failure" ]] || \
              [[ "${{ needs.kernel-tests.result }}" == "failure" ]] || \
+             [[ "${{ needs.check-stubs.result }}" == "failure" ]] || \
              [[ "${{ needs.test-web.result }}" == "failure" ]] || \
              [[ "${{ needs.electron-tests-macos.result }}" == "failure" ]] || \
              [[ "${{ needs.electron-tests-windows.result }}" == "failure" ]] || \

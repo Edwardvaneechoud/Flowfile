@@ -2,7 +2,6 @@
 
 Automate flow execution with schedules — run flows on a timer or trigger them when catalog tables are refreshed.
 
-<!-- PLACEHOLDER: Screenshot of the Schedules tab showing the overview with summary cards and schedule list -->
 ![Schedules overview](../../../assets/images/guides/schedules/schedules-overview.png)
 
 *The Schedules tab with scheduler status, summary cards, and schedule list*
@@ -43,7 +42,6 @@ Click the **Schedules** tab in the Catalog to see the schedule overview. The tab
 3. Optionally add a **description** (e.g., "Nightly sales data refresh")
 4. Choose a **schedule type**:
 
-<!-- PLACEHOLDER: Screenshot of the Create Schedule modal showing flow selector, type options, and interval configuration -->
 ![Create schedule modal](../../../assets/images/guides/schedules/create-schedule.png)
 
 *The Create Schedule modal with flow selection and schedule type configuration*
@@ -78,7 +76,6 @@ Run a flow when **all** tables in a set have been refreshed:
 
 Each schedule in the list provides inline actions:
 
-<!-- PLACEHOLDER: Screenshot of schedule row actions showing run now button, enable/disable toggle, and delete button -->
 ![Schedule actions](../../../assets/images/guides/schedules/schedule-actions.png)
 
 *Schedule actions: run now, enable/disable toggle, and delete*
@@ -100,7 +97,6 @@ Each schedule in the list provides inline actions:
 
 Schedules for a specific flow are also shown in the flow detail panel within the Catalog:
 
-<!-- PLACEHOLDER: Screenshot of the Flow Detail Panel showing the Schedules section with summary cards and schedule list -->
 ![Flow schedules section](../../../assets/images/guides/schedules/flow-schedules.png)
 
 *Schedules section in the flow detail panel*

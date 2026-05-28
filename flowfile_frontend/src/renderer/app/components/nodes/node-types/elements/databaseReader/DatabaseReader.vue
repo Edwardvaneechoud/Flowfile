@@ -173,6 +173,11 @@
 </template>
 
 <script lang="ts" setup>
+// TODO(refactor): ~655 LOC, paired with DatabaseWriter (~516 LOC). Plan:
+//   - Apply same pattern as cloudStorageReader/Writer: extract DatabaseConnectionPicker.vue
+//     and a databaseConnectionFormatters.ts util
+//   - Schema/table fetch logic (~lines 321-348) → useDatabaseSchema composable
+//   - Inline connection mode toggle + watcher (~lines 199-241, 375-398) is duplicated in Writer
 import { CodeLoader } from "vue-content-loader";
 import { ref, onMounted, watch } from "vue";
 import {

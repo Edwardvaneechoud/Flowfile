@@ -3,7 +3,7 @@
 Flowfile allows you to create data pipelines visually by connecting nodes that represent different data operations. This guide will walk you through the process of creating and running flows.
 
 !!! info "Looking for a quickstart overview?"
-    Check out our [Quick Start Guide](../../quickstart.md#quick-start-for-non-technical-users-non-technical-quickstart) to get up and running in minutes.
+    Check out our [Quick Start Guide](../../quickstart.md#non-technical-quickstart) to get up and running in minutes.
 
 ## Interface Overview
 
@@ -98,14 +98,14 @@ When enabled, each connection on the canvas displays its **connection name** as 
 
 *Edge labels displayed on connections, showing the name of each data stream*
 
-This is especially useful when working with **Python Script** (kernel) nodes, where edge labels tell you the exact name to pass to `flowfile.read_input()`. For example, if two nodes with references `total_sales` and `sales_per_city` are connected to a Python Script node, you read them like this:
+This is especially useful when working with **Python Script** (kernel) nodes, where edge labels tell you the exact name to pass to `flowfile_ctx.read_input()`. For example, if two nodes with references `total_sales` and `sales_per_city` are connected to a Python Script node, you read them like this:
 
 ```python
-total_sales = flowfile.read_input("total_sales")
-sales_per_city = flowfile.read_input("sales_per_city")
+total_sales = flowfile_ctx.read_input("total_sales")
+sales_per_city = flowfile_ctx.read_input("sales_per_city")
 ```
 
-Similarly, Python Script nodes can publish **multiple named outputs** using `flowfile.publish_output(df, "name")`, with output names configured visually in the node settings. See [Kernel Execution — Writing Output Data](kernels.md#writing-output-data) for details.
+Similarly, Python Script nodes can publish **multiple named outputs** using `flowfile_ctx.publish_output(df, "name")`, with output names configured visually in the node settings. See [Kernel Execution — Writing Output Data](kernels.md#writing-output-data) for details.
 
 #### Show Detailed Progress
 
@@ -222,7 +222,7 @@ Here's a typical flow that demonstrates common operations:
 
 ---
 ## Want to see another example? 
-Checkout the [quickstart guide](../../quickstart.md#quick-start-for-non-technical-users-non-technical-quickstart)!
+Checkout the [quickstart guide](../../quickstart.md#non-technical-quickstart)!
 
 ## Next Steps
 

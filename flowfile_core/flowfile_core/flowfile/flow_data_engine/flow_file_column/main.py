@@ -176,6 +176,7 @@ class FlowfileColumn:
             name=self.name,
             size=self.size,
             data_type=str(self.data_type),
+            data_type_group=self.data_type_group,
             has_values=self.has_values,
             is_unique=self.is_unique,
             max_value=str(self.max_value),

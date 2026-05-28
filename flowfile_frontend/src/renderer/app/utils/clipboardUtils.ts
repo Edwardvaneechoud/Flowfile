@@ -1,4 +1,17 @@
 /**
+ * Snapshots the current OS clipboard text into localStorage so paste handlers
+ * can detect whether the user copied something externally after copying a node.
+ */
+export const snapshotClipboard = async (): Promise<void> => {
+  try {
+    const text = await navigator.clipboard.readText();
+    localStorage.setItem("clipboardAtNodeCopy", text);
+  } catch {
+    localStorage.setItem("clipboardAtNodeCopy", "");
+  }
+};
+
+/**
  * Parses clipboard text to detect tabular data (TSV from Excel/Sheets, or multi-line single-column).
  * Returns a 2D string array (rows × cols) or null if the text is a single value.
  */

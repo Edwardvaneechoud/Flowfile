@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, Response
 
 # External dependencies
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -41,7 +42,6 @@ from flowfile_core.fileExplorer.funcs import (
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
-from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.catalog_helpers import (
     FlowNameNamespaceCollision,
     FlowPathNamespaceCollision,
@@ -65,13 +65,15 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_database_connection,
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     create_engine_from_db_settings,
     create_sql_source_from_db_settings,
 )
 from flowfile_core.run_lock import get_flow_run_lock
-from flowfile_core.schemas import input_schema, output_model, schemas
+from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
@@ -224,7 +226,19 @@ async def get_active_flow_file_sessions(
 ) -> list[schemas.FlowSettingsResponse]:
     """Retrieves a list of all currently active flow sessions for the current user."""
     user_id = current_user.id if current_user else None
-    return [flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)]
+    sessions = [
+        flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)
+    ]
+    paths = {s.path or s.save_location for s in sessions if s.path or s.save_location}
+    if paths:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            name_by_path = {p: reg.name for p in paths if (reg := repo.get_flow_by_path(p)) is not None}
+        for s in sessions:
+            p = s.path or s.save_location
+            if p and p in name_by_path:
+                s.display_name = name_by_path[p]
+    return sessions
 
 
 @router.post("/node/trigger_fetch_data", tags=["editor"])
@@ -245,6 +259,26 @@ async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: 
     )
 
 
+def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
+    """Return ``(registration_id, display_name, flow_path)`` for run-tracking.
+
+    Prefers the catalog registration's user-typed ``name`` over
+    ``flow.flow_settings.name``, which after a save is the file stem
+    (``9_house_price`` for ``9_house_price.yaml``) — that prefix is a filename
+    collision-avoidance trick that should never reach the run-history UI.
+    """
+    fallback_name = getattr(flow.flow_settings, "name", None) or getattr(flow, "__name__", "unknown")
+    flow_path = flow.flow_settings.path or flow.flow_settings.save_location
+    reg_id = getattr(flow.flow_settings, "source_registration_id", None)
+    display_name = fallback_name
+    if reg_id is not None:
+        with get_db_context() as db:
+            reg = SQLAlchemyCatalogRepository(db).get_flow(reg_id)
+            if reg is not None and reg.name:
+                display_name = reg.name
+    return reg_id, display_name, flow_path
+
+
 def _run_and_track(flow, user_id: int | None):
     """Wrapper that runs a flow and persists the run record to the database.
 
@@ -256,14 +290,11 @@ def _run_and_track(flow, user_id: int | None):
     completed but won't appear in the run history. Failures are logged at
     ERROR level so they're visible in logs.
     """
-    flow_name = getattr(flow.flow_settings, "name", None) or getattr(flow, "__name__", "unknown")
-
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
     resolve_source_registration_id(flow)
-    logger.debug(
-        f"source_registration_id for flow '{flow_name}': {getattr(flow.flow_settings, 'source_registration_id', None)}"
-    )
+    reg_id, flow_name, flow_path = _resolve_run_identity(flow)
+    logger.debug(f"source_registration_id for flow '{flow_name}': {reg_id}")
 
     # Phase 1: Create run record before execution
     run_id = None
@@ -277,8 +308,6 @@ def _run_and_track(flow, user_id: int | None):
             logger.warning(f"Flow '{flow_name}': snapshot serialization failed: {snap_err}")
 
         with get_db_context() as db:
-            reg_id = getattr(flow.flow_settings, "source_registration_id", None)
-            flow_path = flow.flow_settings.path or flow.flow_settings.save_location
             service = CatalogService(SQLAlchemyCatalogRepository(db))
             db_run = service.start_run(
                 registration_id=reg_id,
@@ -328,8 +357,6 @@ def _run_and_track(flow, user_id: int | None):
         else:
             # Fallback: create the full record if phase 1 failed
             with get_db_context() as db:
-                reg_id = getattr(flow.flow_settings, "source_registration_id", None)
-                flow_path = flow.flow_settings.path or flow.flow_settings.save_location
                 service = CatalogService(SQLAlchemyCatalogRepository(db))
                 service.create_completed_run(
                     registration_id=reg_id,
@@ -341,7 +368,7 @@ def _run_and_track(flow, user_id: int | None):
                     success=run_info.success,
                     nodes_completed=run_info.nodes_completed,
                     number_of_nodes=run_info.number_of_nodes,
-                    run_type=run_info.run_type,
+                    run_type="in_designer_run",
                     node_results_json=node_results,
                     flow_snapshot=snapshot_yaml,
                 )
@@ -369,6 +396,14 @@ async def run_flow(
     """
     logger.info("starting to run...")
     flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        # Frontend's flow_id has drifted from the in-memory handler — typically
+        # after a Save As or backend restart. Surface a 404 so the UI can prompt
+        # a reload instead of falling through to an AttributeError 500.
+        raise HTTPException(
+            status_code=404,
+            detail=f"Flow {flow_id} is no longer in memory. Reload the flow and try again.",
+        )
     lock = get_flow_run_lock(flow_id)
     user_id = current_user.id if current_user else None
     async with lock:
@@ -685,6 +720,112 @@ def connect_node(flow_id: int, node_connection: input_schema.NodeConnection) -> 
     return OperationResponse(success=True, history=flow.get_history_state())
 
 
+# ============================================================================
+# Node-group editor endpoints (visual containers; organizational only)
+# ============================================================================
+
+
+class GroupOperationResponse(OperationResponse):
+    """OperationResponse that also returns the affected group (for server-assigned ids)."""
+
+    group: schemas.FlowfileGroup | None = None
+
+
+def _group_to_schema(group: schemas.GroupInformation) -> schemas.FlowfileGroup:
+    return schemas.FlowfileGroup(**group.model_dump())
+
+
+def _bounds_from_request(req: schemas.CreateGroupRequest | schemas.UpdateGroupRequest) -> schemas.GroupBounds | None:
+    """Build explicit bounds only when the frontend supplied all four values."""
+    values = (req.x_position, req.y_position, req.width, req.height)
+    if all(value is not None for value in values):
+        return schemas.GroupBounds(*values)
+    return None
+
+
+def _get_running_flow(flow_id: int):
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "could not find the flow")
+    if flow.flow_settings.is_running:
+        raise HTTPException(422, "Flow is running")
+    return flow
+
+
+@router.post("/editor/create_group/", tags=["editor"], response_model=GroupOperationResponse)
+def create_group(flow_id: int, request: schemas.CreateGroupRequest) -> GroupOperationResponse:
+    """Create a visual group around a set of nodes. Returns the new server-assigned group."""
+    flow = _get_running_flow(flow_id)
+    group = flow.create_group(
+        request.name,
+        request.node_ids,
+        color=request.color,
+        bounds=_bounds_from_request(request),
+        parent_group_id=request.parent_group_id,
+        child_group_ids=request.child_group_ids,
+    )
+    return GroupOperationResponse(success=True, history=flow.get_history_state(), group=_group_to_schema(group))
+
+
+@router.post("/editor/update_group/", tags=["editor"], response_model=GroupOperationResponse)
+def update_group(flow_id: int, group_id: int, request: schemas.UpdateGroupRequest) -> GroupOperationResponse:
+    """Rename / recolor / move / resize / collapse a group box."""
+    flow = _get_running_flow(flow_id)
+    try:
+        group = flow.update_group(
+            group_id,
+            name=request.name,
+            color=request.color,
+            bounds=_bounds_from_request(request),
+            collapsed=request.collapsed,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return GroupOperationResponse(success=True, history=flow.get_history_state(), group=_group_to_schema(group))
+
+
+@router.post("/editor/delete_group/", tags=["editor"], response_model=OperationResponse)
+def delete_group(flow_id: int, group_id: int) -> OperationResponse:
+    """Delete a group box (ungroup). Member nodes are kept."""
+    flow = _get_running_flow(flow_id)
+    flow.delete_group(group_id)
+    return OperationResponse(success=True, history=flow.get_history_state())
+
+
+@router.post("/editor/group/add_nodes/", tags=["editor"], response_model=GroupOperationResponse)
+def add_nodes_to_group(flow_id: int, group_id: int, request: schemas.GroupMembershipRequest) -> GroupOperationResponse:
+    """Add nodes to an existing group."""
+    flow = _get_running_flow(flow_id)
+    try:
+        group = flow.add_nodes_to_group(group_id, request.node_ids)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return GroupOperationResponse(success=True, history=flow.get_history_state(), group=_group_to_schema(group))
+
+
+@router.post("/editor/group/remove_nodes/", tags=["editor"], response_model=OperationResponse)
+def remove_nodes_from_group(flow_id: int, request: schemas.GroupMembershipRequest) -> OperationResponse:
+    """Remove nodes from their group; a group emptied this way is pruned."""
+    flow = _get_running_flow(flow_id)
+    flow.remove_nodes_from_group(request.node_ids)
+    return OperationResponse(success=True, history=flow.get_history_state())
+
+
+@router.post("/editor/update_layout/", tags=["editor"], response_model=OperationResponse)
+def update_layout(flow_id: int, request: schemas.UpdateLayoutRequest) -> OperationResponse:
+    """Persist dragged node positions and/or group bounds (one drag-end -> one call).
+
+    Also closes the long-standing gap where dragged node positions were never persisted.
+    """
+    flow = _get_running_flow(flow_id)
+    if request.node_positions or request.group_bounds:
+        if request.record_history:
+            flow.capture_history_snapshot(HistoryActionType.MOVE_NODES, "Update layout")
+        flow.set_node_positions(request.node_positions)
+        flow.set_group_bounds(request.group_bounds)
+    return OperationResponse(success=True, history=flow.get_history_state())
+
+
 @router.get("/editor/expression_doc", tags=["editor"], response_model=list[output_model.ExpressionsOverview])
 def get_expression_doc() -> list[output_model.ExpressionsOverview]:
     """Retrieves documentation for available Polars expressions."""
@@ -915,6 +1056,50 @@ def get_list_of_saved_flows(path: str):
 def get_node_list() -> list[schemas.NodeTemplate]:
     """Retrieves the list of all available node types and their templates."""
     return nodes_list
+
+
+class _DynamicRenameColumn(BaseModel):
+    name: str
+    data_type_group: str = ""
+
+
+class DynamicRenamePreviewRequest(BaseModel):
+    """Request body for `/dynamic_rename/preview`."""
+
+    settings: transform_schema.DynamicRenameInput
+    incoming_columns: list[_DynamicRenameColumn] = Field(default_factory=list)
+
+
+class DynamicRenamePreviewResponse(BaseModel):
+    """Response body for `/dynamic_rename/preview`."""
+
+    rename_map: dict[str, str]
+    error: str | None = None
+
+
+@router.post("/dynamic_rename/preview", response_model=DynamicRenamePreviewResponse, tags=["editor"])
+def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenamePreviewResponse:
+    """Resolves a dynamic-rename rule against a given schema without mutating any flow.
+
+    The frontend calls this to render the live old-to-new preview pane inside the
+    node's settings panel. Returns either the fully-resolved rename map (possibly
+    empty) or an `error` describing a parse failure or duplicate-name collision.
+
+    `first_row` mode is intentionally not previewed here: its new names depend on
+    actual row data, and we don't want to trigger upstream computation from a
+    settings panel. The frontend renders a runtime-only placeholder for that mode.
+    """
+    columns = [(c.name, c.data_type_group) for c in request.incoming_columns]
+    try:
+        rename_map = FlowDataEngine.resolve_dynamic_rename_map(columns, request.settings)
+    except ValueError as exc:
+        return DynamicRenamePreviewResponse(rename_map={}, error=str(exc))
+    except Exception as exc:  # noqa: BLE001 - formula parse errors bubble up as various types
+        # Log the full traceback so real bugs don't get silently reported as
+        # "Formula error" to the user.
+        logger.exception("Unexpected error while resolving dynamic rename preview")
+        return DynamicRenamePreviewResponse(rename_map={}, error=f"Formula error: {exc}")
+    return DynamicRenamePreviewResponse(rename_map=rename_map)
 
 
 @router.get("/node", response_model=output_model.NodeData, tags=["editor"])
@@ -1270,10 +1455,7 @@ def save_flow_to_catalog(
     if existing_reg is None and os.path.exists(flow_path):
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"Target file {flow_path} exists but is not catalog-registered; "
-                "refusing to overwrite"
-            ),
+            detail=(f"Target file {flow_path} exists but is not catalog-registered; " "refusing to overwrite"),
         )
 
     user_id = current_user.id if current_user else None
@@ -1381,11 +1563,7 @@ def overwrite_flow_in_catalog(
     # unlink the abandoned file so we don't leak orphaned YAML.  We only clean
     # up files under the managed root; user-owned paths elsewhere are left
     # alone since we don't want to silently delete files the user manages.
-    if (
-        normalized_current
-        and normalized_current != target_path
-        and normalized_current.startswith(managed_root)
-    ):
+    if normalized_current and normalized_current != target_path and normalized_current.startswith(managed_root):
         try:
             os.unlink(normalized_current)
         except OSError:

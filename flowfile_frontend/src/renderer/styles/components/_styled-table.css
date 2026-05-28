@@ -22,20 +22,10 @@
   vertical-align: middle;
 }
 
-/* Column Widths */
-.styled-table th:first-child,
-.styled-table td:first-child {
-  width: 35%;
-}
-
-.styled-table th:nth-child(2),
-.styled-table td:nth-child(2) {
-  width: 30%;
-}
-
+/* Last-cell border reset (column widths intentionally not set here — let
+ * table-layout: fixed distribute evenly, or each table override per-column) */
 .styled-table th:last-child,
 .styled-table td:last-child {
-  width: 35%;
   border-right: none;
 }
 

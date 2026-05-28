@@ -333,10 +333,10 @@ def kernel_manager_with_core():
     - Tears everything down afterwards
 
     Use this fixture for tests that call:
-    - flowfile.publish_global()
-    - flowfile.get_global()
-    - flowfile.list_global_artifacts()
-    - flowfile.delete_global_artifact()
+    - flowfile_ctx.publish_global()
+    - flowfile_ctx.get_global()
+    - flowfile_ctx.list_global_artifacts()
+    - flowfile_ctx.delete_global_artifact()
 
     Yields a (KernelManager, kernel_id) tuple.
     """

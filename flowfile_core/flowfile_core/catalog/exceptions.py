@@ -174,9 +174,7 @@ class AmbiguousTableError(CatalogError):
     def __init__(self, name: str, candidates: list[dict]):
         self.name = name
         self.candidates = candidates
-        rendered = ", ".join(
-            f"{c.get('namespace_name') or '<root>'}.{c['name']} (id={c['id']})" for c in candidates
-        )
+        rendered = ", ".join(f"{c.get('namespace_name') or '<root>'}.{c['name']} (id={c['id']})" for c in candidates)
         super().__init__(f"Table name '{name}' is ambiguous; candidates: {rendered}")
 
 
@@ -212,3 +210,52 @@ class ScheduleConflictError(CatalogError):
         self.registration_id = registration_id
         self.schedule_type = schedule_type
         super().__init__(f"A '{schedule_type}' schedule already exists for flow {registration_id}")
+
+
+class VisualizationNotFoundError(CatalogError):
+    """Raised when a saved catalog visualization lookup fails."""
+
+    def __init__(self, viz_id: int | None = None, table_id: int | None = None, name: str | None = None):
+        self.viz_id = viz_id
+        self.table_id = table_id
+        self.name = name
+        if viz_id is not None and table_id is not None:
+            detail = f"Visualization id={viz_id} not found on table id={table_id}"
+        elif viz_id is not None:
+            detail = f"Visualization id={viz_id} not found"
+        elif name is not None:
+            detail = f"Visualization '{name}' not found"
+        else:
+            detail = "Visualization not found"
+        super().__init__(detail)
+
+
+class VisualizationExistsError(CatalogError):
+    """Raised when a duplicate visualization name is created on the same table."""
+
+    def __init__(self, name: str, table_id: int):
+        self.name = name
+        self.table_id = table_id
+        super().__init__(f"Visualization '{name}' already exists on table id={table_id}")
+
+
+class VisualizationComputeError(CatalogError):
+    """Raised when the worker fails to compute a visualization."""
+
+    def __init__(self, message: str):
+        super().__init__(f"Worker compute failed: {message}")
+
+
+class DashboardNotFoundError(CatalogError):
+    """Raised when a saved dashboard lookup fails."""
+
+    def __init__(self, dashboard_id: int | None = None, name: str | None = None):
+        self.dashboard_id = dashboard_id
+        self.name = name
+        if dashboard_id is not None:
+            detail = f"Dashboard id={dashboard_id} not found"
+        elif name is not None:
+            detail = f"Dashboard '{name}' not found"
+        else:
+            detail = "Dashboard not found"
+        super().__init__(detail)

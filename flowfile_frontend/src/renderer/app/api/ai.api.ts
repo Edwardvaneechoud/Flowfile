@@ -1,0 +1,690 @@
+// Frontend API surface for the AI subsystem.
+//
+// This is a re-export shim around five seams:
+//   - `streamChat` for the read-only chat stream.
+//   - `streamRunFailureExplanation` for "Fix with AI" on a failed node.
+//   - `streamGenerateDocumentation` for the canvas-level "Generate
+//     documentation" action.
+//   - `fetchFormulaSuggestions` / `fetchJoinKeySuggestions` for
+//     settings autocomplete — fast non-streaming JSON.
+//   - the BYOK provider listing reused so the chat panel can pick a
+//     configured provider without forcing the user back to the
+//     settings tab.
+
+import axios from "../services/axios.config";
+import { fetchAiProviders } from "../views/AiProvidersView/api";
+import { AiDisabledError, AI_DISABLED_DETAIL } from "../views/AiProvidersView/api";
+import {
+  routeMessage,
+  streamChat,
+  streamGenerateDocumentation,
+  streamInlineAction,
+  streamLineageQuestion,
+  streamRunFailureExplanation,
+} from "../services/aiStreamClient";
+
+export type {
+  ChatMessageBody,
+  ChatStreamRequest,
+  ChatStreamHandlers,
+  ExplainRunFailureRequest,
+  GenerateDocumentationRequest,
+  InlineActionRequest,
+  InlineActionType,
+  LineageQuestionRequest,
+  RouteHistoryEntry,
+  RouteKind,
+  RouteRequestBody as RouteRequest,
+  RouteResponseBody as RouteResponse,
+  RouteVerdict,
+} from "../services/aiStreamClient";
+export { AiStreamHttpError } from "../services/aiStreamClient";
+export {
+  routeMessage,
+  streamChat,
+  streamGenerateDocumentation,
+  streamInlineAction,
+  streamLineageQuestion,
+  streamRunFailureExplanation,
+  fetchAiProviders,
+};
+export { AiDisabledError, AI_DISABLED_DETAIL };
+
+// --------------------------------------------------------------------------
+// Settings autocomplete — non-streaming JSON wrappers around
+// /ai/autocomplete/{formula,join_keys}.
+// --------------------------------------------------------------------------
+
+export interface FormulaSuggestion {
+  insertText: string;
+  label: string;
+  description: string | null;
+  verified: boolean;
+}
+
+export interface FormulaSuggestionsResponse {
+  suggestions: FormulaSuggestion[];
+  degraded: boolean;
+  reason: string | null;
+}
+
+export interface JoinKeyPair {
+  leftCol: string;
+  rightCol: string;
+  confidence: number;
+  rationale: string | null;
+}
+
+export interface JoinKeySuggestionsResponse {
+  keyPairs: JoinKeyPair[];
+  degraded: boolean;
+  reason: string | null;
+}
+
+export interface FormulaAutocompleteRequest {
+  flowId: number;
+  nodeId: number | string;
+  partialText: string;
+  intent?: string | null;
+  provider?: string;
+  model?: string | null;
+  maxSuggestions?: number;
+  timeout?: number;
+}
+
+export interface JoinKeyAutocompleteRequest {
+  flowId: number;
+  leftNodeId: number | string;
+  rightNodeId: number | string;
+  how?: string;
+  provider?: string;
+  model?: string | null;
+  maxPairs?: number;
+  timeout?: number;
+}
+
+interface PyFormulaSuggestion {
+  insert_text: string;
+  label: string;
+  description: string | null;
+  verified: boolean;
+}
+
+interface PyFormulaSuggestionsResponse {
+  suggestions: PyFormulaSuggestion[];
+  degraded: boolean;
+  reason: string | null;
+}
+
+interface PyJoinKeyPair {
+  left_col: string;
+  right_col: string;
+  confidence: number;
+  rationale: string | null;
+}
+
+interface PyJoinKeySuggestionsResponse {
+  key_pairs: PyJoinKeyPair[];
+  degraded: boolean;
+  reason: string | null;
+}
+
+const fromPyFormulaSuggestion = (raw: PyFormulaSuggestion): FormulaSuggestion => ({
+  insertText: raw.insert_text,
+  label: raw.label,
+  description: raw.description,
+  verified: raw.verified,
+});
+
+const fromPyJoinKeyPair = (raw: PyJoinKeyPair): JoinKeyPair => ({
+  leftCol: raw.left_col,
+  rightCol: raw.right_col,
+  confidence: raw.confidence,
+  rationale: raw.rationale,
+});
+
+// 503 with the disabled-detail marker becomes AiDisabledError so
+// callers can render a dedicated empty-state without sniffing axios
+// error shapes.
+const isAiDisabledError = (error: unknown): boolean => {
+  const detail = (error as { response?: { data?: { detail?: unknown }; status?: number } })
+    ?.response?.data?.detail;
+  const status = (error as { response?: { status?: number } })?.response?.status;
+  return status === 503 && typeof detail === "string" && detail === AI_DISABLED_DETAIL;
+};
+
+export const fetchFormulaSuggestions = async (
+  body: FormulaAutocompleteRequest,
+  signal?: AbortSignal,
+): Promise<FormulaSuggestionsResponse> => {
+  const payload: Record<string, unknown> = {
+    flow_id: body.flowId,
+    node_id: body.nodeId,
+    partial_text: body.partialText,
+  };
+  if (body.intent !== undefined && body.intent !== null) payload.intent = body.intent;
+  if (body.provider !== undefined) payload.provider = body.provider;
+  if (body.model !== undefined && body.model !== null) payload.model = body.model;
+  if (body.maxSuggestions !== undefined) payload.max_suggestions = body.maxSuggestions;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<PyFormulaSuggestionsResponse>(
+      "/ai/autocomplete/formula",
+      payload,
+      { signal },
+    );
+    return {
+      suggestions: response.data.suggestions.map(fromPyFormulaSuggestion),
+      degraded: response.data.degraded,
+      reason: response.data.reason,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+export const fetchJoinKeySuggestions = async (
+  body: JoinKeyAutocompleteRequest,
+  signal?: AbortSignal,
+): Promise<JoinKeySuggestionsResponse> => {
+  const payload: Record<string, unknown> = {
+    flow_id: body.flowId,
+    left_node_id: body.leftNodeId,
+    right_node_id: body.rightNodeId,
+  };
+  if (body.how !== undefined) payload.how = body.how;
+  if (body.provider !== undefined) payload.provider = body.provider;
+  if (body.model !== undefined && body.model !== null) payload.model = body.model;
+  if (body.maxPairs !== undefined) payload.max_pairs = body.maxPairs;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<PyJoinKeySuggestionsResponse>(
+      "/ai/autocomplete/join_keys",
+      payload,
+      { signal },
+    );
+    return {
+      keyPairs: response.data.key_pairs.map(fromPyJoinKeyPair),
+      degraded: response.data.degraded,
+      reason: response.data.reason,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+// Cron generation — POST /ai/generate_cron. Plain-English → validated cron.
+
+export interface GenerateCronRequest {
+  description: string;
+  provider?: string;
+  model?: string | null;
+  timeout?: number;
+}
+
+export interface CronGenerationResponse {
+  cronExpression: string | null;
+  explanation: string | null;
+  degraded: boolean;
+  reason: string | null;
+}
+
+interface PyCronGenerationResponse {
+  cron_expression: string | null;
+  explanation: string | null;
+  degraded: boolean;
+  reason: string | null;
+}
+
+export const generateCronExpression = async (
+  body: GenerateCronRequest,
+  signal?: AbortSignal,
+): Promise<CronGenerationResponse> => {
+  const payload: Record<string, unknown> = {
+    description: body.description,
+  };
+  if (body.provider !== undefined) payload.provider = body.provider;
+  if (body.model !== undefined && body.model !== null) payload.model = body.model;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<PyCronGenerationResponse>("/ai/generate_cron", payload, {
+      signal,
+    });
+    return {
+      cronExpression: response.data.cron_expression,
+      explanation: response.data.explanation,
+      degraded: response.data.degraded,
+      reason: response.data.reason,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+// --------------------------------------------------------------------------
+// Edge ghost-node suggestions — non-streaming JSON wrapper around
+// /ai/suggest_next_node. Matches the autocomplete shape: a hover-fast
+// synchronous call with a degraded fallback when the LLM can't produce
+// a schema-grounded result.
+// --------------------------------------------------------------------------
+
+export interface SchemaColumn {
+  name: string;
+  dataType: string | null;
+  nullable: boolean | null;
+}
+
+export interface NextNodeSuggestion {
+  nodeType: string;
+  settings: Record<string, unknown>;
+  label: string;
+  description: string | null;
+  predictedOutputSchema: SchemaColumn[] | null;
+  rationale: string | null;
+}
+
+export interface NextNodeSuggestionsResponse {
+  suggestions: NextNodeSuggestion[];
+  degraded: boolean;
+  reason: string | null;
+}
+
+export interface SuggestNextNodeRequest {
+  flowId: number;
+  upstreamNodeId: number | string;
+  provider?: string;
+  model?: string | null;
+  intent?: string | null;
+  maxSuggestions?: number;
+  timeout?: number;
+}
+
+interface PySchemaColumn {
+  name: string;
+  data_type: string | null;
+  nullable: boolean | null;
+}
+
+interface PyNextNodeSuggestion {
+  node_type: string;
+  settings: Record<string, unknown>;
+  label: string;
+  description: string | null;
+  predicted_output_schema: PySchemaColumn[] | null;
+  rationale: string | null;
+}
+
+interface PyNextNodeSuggestionsResponse {
+  suggestions: PyNextNodeSuggestion[];
+  degraded: boolean;
+  reason: string | null;
+}
+
+const fromPySchemaColumn = (raw: PySchemaColumn): SchemaColumn => ({
+  name: raw.name,
+  dataType: raw.data_type,
+  nullable: raw.nullable,
+});
+
+const fromPyNextNodeSuggestion = (raw: PyNextNodeSuggestion): NextNodeSuggestion => ({
+  nodeType: raw.node_type,
+  settings: raw.settings,
+  label: raw.label,
+  description: raw.description,
+  predictedOutputSchema: raw.predicted_output_schema
+    ? raw.predicted_output_schema.map(fromPySchemaColumn)
+    : null,
+  rationale: raw.rationale,
+});
+
+export const fetchNextNodeSuggestions = async (
+  body: SuggestNextNodeRequest,
+  signal?: AbortSignal,
+): Promise<NextNodeSuggestionsResponse> => {
+  const payload: Record<string, unknown> = {
+    flow_id: body.flowId,
+    upstream_node_id: body.upstreamNodeId,
+  };
+  if (body.provider !== undefined) payload.provider = body.provider;
+  if (body.model !== undefined && body.model !== null) payload.model = body.model;
+  if (body.intent !== undefined && body.intent !== null) payload.intent = body.intent;
+  if (body.maxSuggestions !== undefined) payload.max_suggestions = body.maxSuggestions;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<PyNextNodeSuggestionsResponse>(
+      "/ai/suggest_next_node",
+      payload,
+      { signal },
+    );
+    return {
+      suggestions: response.data.suggestions.map(fromPyNextNodeSuggestion),
+      degraded: response.data.degraded,
+      reason: response.data.reason,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+// --------------------------------------------------------------------------
+// Cmd+K command palette — non-streaming JSON wrapper around
+// /ai/command_palette. Returns the staged GraphDiff in the same shape
+// `useAiDiffStore.setCurrentDiff(...)` expects, so the frontend
+// composes the existing diff panel without a follow-up GET.
+// --------------------------------------------------------------------------
+
+import type { GraphDiffPayload } from "../features/ai/aiDiffTypes";
+
+export interface CommandPaletteInsertionContext {
+  upstreamNodeIds: number[];
+  rightInputNodeId?: number | null;
+  posX?: number;
+  posY?: number;
+}
+
+export interface CommandPaletteRequest {
+  flowId: number;
+  prompt: string;
+  provider: string;
+  model?: string | null;
+  selectedNodeIds?: number[];
+  insertionContext?: CommandPaletteInsertionContext | null;
+  maxTokens?: number;
+  sessionId?: string;
+  timeout?: number;
+}
+
+export interface CommandPaletteRefusal {
+  toolName: string;
+  refusalReason: string | null;
+  refusalDetail: string | null;
+  warnings: string[];
+}
+
+export type CommandPaletteDegradedReason =
+  | "timeout"
+  | "no_tool_calls"
+  | "provider_error"
+  | "all_refused"
+  | "empty_catalog";
+
+export interface CommandPaletteResponse {
+  diffId: string | null;
+  opCount: number;
+  rationale: string | null;
+  degraded: boolean;
+  reason: CommandPaletteDegradedReason | null;
+  diff: GraphDiffPayload | null;
+  refused: CommandPaletteRefusal[];
+}
+
+interface PyCommandPaletteRefusal {
+  tool_name: string;
+  refusal_reason: string | null;
+  refusal_detail: string | null;
+  warnings: string[];
+}
+
+interface PyCommandPaletteResponse {
+  diff_id: string | null;
+  op_count: number;
+  rationale: string | null;
+  degraded: boolean;
+  reason: CommandPaletteDegradedReason | null;
+  diff: GraphDiffPayload | null;
+  refused: PyCommandPaletteRefusal[];
+}
+
+const fromPyRefusal = (raw: PyCommandPaletteRefusal): CommandPaletteRefusal => ({
+  toolName: raw.tool_name,
+  refusalReason: raw.refusal_reason,
+  refusalDetail: raw.refusal_detail,
+  warnings: raw.warnings ?? [],
+});
+
+export const submitCommandPalette = async (
+  body: CommandPaletteRequest,
+  signal?: AbortSignal,
+): Promise<CommandPaletteResponse> => {
+  const payload: Record<string, unknown> = {
+    flow_id: body.flowId,
+    prompt: body.prompt,
+    provider: body.provider,
+  };
+  if (body.model !== undefined && body.model !== null) payload.model = body.model;
+  if (body.selectedNodeIds !== undefined) payload.selected_node_ids = body.selectedNodeIds;
+  if (body.insertionContext !== undefined && body.insertionContext !== null) {
+    payload.insertion_context = {
+      upstream_node_ids: body.insertionContext.upstreamNodeIds,
+      right_input_node_id: body.insertionContext.rightInputNodeId ?? null,
+      pos_x: body.insertionContext.posX ?? 0.0,
+      pos_y: body.insertionContext.posY ?? 0.0,
+    };
+  }
+  if (body.maxTokens !== undefined) payload.max_tokens = body.maxTokens;
+  if (body.sessionId !== undefined) payload.session_id = body.sessionId;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<PyCommandPaletteResponse>("/ai/command_palette", payload, {
+      signal,
+    });
+    const data = response.data;
+    return {
+      diffId: data.diff_id,
+      opCount: data.op_count,
+      rationale: data.rationale,
+      degraded: data.degraded,
+      reason: data.reason,
+      diff: data.diff,
+      refused: (data.refused ?? []).map(fromPyRefusal),
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+// --------------------------------------------------------------------------
+// Multi-turn planner agent — non-streaming sibling endpoints. The SSE
+// start + resume-continue paths live in services/aiStreamClient.ts;
+// this file owns the JSON-only abort / discard-resume / status-snapshot
+// fetches.
+// --------------------------------------------------------------------------
+
+export interface AgentDriftDetail {
+  missingNodeIds: number[];
+  externalAddedNodeIds: number[];
+  /** Snapshot-time ``node_type`` for each id appearing in either
+   * bucket. Frontend renders typed messages — *"Filter node 6 was
+   * deleted"*. Optional: falls back to bare ids when an id is
+   * missing. */
+  nodeTypes: Record<number, string>;
+}
+
+export type AgentSurface = "agent_complex" | "agent_staged" | "agent_live";
+
+export type AgentStage =
+  | "classify"
+  | "pick_type"
+  | "pick_upstream"
+  | "fill_settings"
+  | "single_stage_op";
+
+export type AgentOpKind =
+  | "add"
+  | "modify"
+  | "delete"
+  | "connect"
+  | "disconnect"
+  | "other";
+
+export interface AgentSessionState {
+  sessionId: string;
+  flowId: number;
+  status:
+    | "running"
+    | "paused_drift"
+    | "paused_user_action"
+    | "awaiting_user"
+    | "awaiting_user_input"
+    | "completed"
+    | "aborted"
+    | "failed";
+  surface: AgentSurface;
+  samplesMode: "off" | "regex";
+  stepCount: number;
+  maxSteps: number;
+  stagedCount: number;
+  diffId: string | null;
+  rationale: string | null;
+  pauseReason: string | null;
+  driftDetail: AgentDriftDetail | null;
+  // agent_staged state-machine fields. Always present on the wire
+  // (Pydantic defaults stage="classify"); legacy surfaces stay at
+  // "classify" + null and the UI hides the stage badge.
+  stage: AgentStage;
+  pickedOpKind: AgentOpKind | null;
+  pickedNodeType: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentAbortResponse {
+  status: "aborted";
+  sessionId: string;
+  partialDiffId: string | null;
+}
+
+export interface AgentDiscardResponse {
+  status: "discarded";
+  sessionId: string;
+}
+
+interface PyAgentDriftDetail {
+  missing_node_ids: number[];
+  external_added_node_ids: number[];
+  /** Server-side dict[int, str] serialises with string keys in JSON; coerce in mapper. */
+  node_types?: Record<string, string> | null;
+}
+
+interface PyAgentSessionState {
+  session_id: string;
+  flow_id: number;
+  status: AgentSessionState["status"];
+  surface: AgentSessionState["surface"];
+  samples_mode: AgentSessionState["samplesMode"];
+  step_count: number;
+  max_steps: number;
+  staged_count: number;
+  diff_id: string | null;
+  rationale: string | null;
+  pause_reason: string | null;
+  drift_detail: PyAgentDriftDetail | null;
+  stage: AgentStage;
+  picked_op_kind: AgentOpKind | null;
+  picked_node_type: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const fromPyDriftDetail = (raw: PyAgentDriftDetail): AgentDriftDetail => {
+  const nodeTypes: Record<number, string> = {};
+  if (raw.node_types) {
+    for (const [k, v] of Object.entries(raw.node_types)) {
+      const id = Number(k);
+      if (Number.isFinite(id) && typeof v === "string") {
+        nodeTypes[id] = v;
+      }
+    }
+  }
+  return {
+    missingNodeIds: raw.missing_node_ids,
+    externalAddedNodeIds: raw.external_added_node_ids,
+    nodeTypes,
+  };
+};
+
+export const getAgentSession = async (
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<AgentSessionState> => {
+  try {
+    const response = await axios.get<PyAgentSessionState>(
+      `/ai/agent/${encodeURIComponent(sessionId)}`,
+      { signal },
+    );
+    const data = response.data;
+    return {
+      sessionId: data.session_id,
+      flowId: data.flow_id,
+      status: data.status,
+      surface: data.surface,
+      samplesMode: data.samples_mode,
+      stepCount: data.step_count,
+      maxSteps: data.max_steps,
+      stagedCount: data.staged_count,
+      diffId: data.diff_id,
+      rationale: data.rationale,
+      pauseReason: data.pause_reason,
+      driftDetail: data.drift_detail ? fromPyDriftDetail(data.drift_detail) : null,
+      stage: data.stage,
+      pickedOpKind: data.picked_op_kind,
+      pickedNodeType: data.picked_node_type,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+export const abortAgentSession = async (
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<AgentAbortResponse> => {
+  try {
+    const response = await axios.post<{
+      status: "aborted";
+      session_id: string;
+      partial_diff_id: string | null;
+    }>(`/ai/agent/${encodeURIComponent(sessionId)}/abort`, {}, { signal });
+    return {
+      status: response.data.status,
+      sessionId: response.data.session_id,
+      partialDiffId: response.data.partial_diff_id,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+export const discardAgentSession = async (
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<AgentDiscardResponse> => {
+  try {
+    const response = await axios.post<{ status: "discarded"; session_id: string }>(
+      `/ai/agent/${encodeURIComponent(sessionId)}/resume`,
+      { action: "discard" },
+      { signal },
+    );
+    return {
+      status: response.data.status,
+      sessionId: response.data.session_id,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};

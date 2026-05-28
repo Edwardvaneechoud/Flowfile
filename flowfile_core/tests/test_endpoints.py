@@ -431,6 +431,14 @@ def test_run_invalid_flow():
     assert response.status_code == 200, "Flow should just start as normal"
 
 
+def test_run_flow_returns_404_for_unknown_id():
+    """Stale flow_ids (e.g. after Save As re-keying) must surface as a clean 404
+    so the frontend can prompt a reload — not crash with AttributeError 500."""
+    response = client.post("/flow/run/", params={"flow_id": 999_999_999})
+    assert response.status_code == 404
+    assert "no longer in memory" in response.json()["detail"].lower()
+
+
 def test_save_flow():
     flow_id = create_flow_with_manual_input_and_select()
     imported_flow = flow_file_handler.get_flow(flow_id)
@@ -1077,7 +1085,7 @@ def test_python_script_node_data_before_run():
         pos_y=0,
         depending_on_ids=[1],
         python_script_input=input_schema.PythonScriptInput(
-            code="df = flowfile.read_input()\nflowfile.publish_output(df)",
+            code="df = flowfile_ctx.read_input()\nflowfile_ctx.publish_output(df)",
             kernel_id="some-kernel",
         ),
     )

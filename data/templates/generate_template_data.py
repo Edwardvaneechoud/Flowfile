@@ -8,6 +8,7 @@ Usage:
 """
 
 import csv
+import math
 import random
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -355,6 +356,83 @@ def generate_fuzzy_match_data():
     write_csv("supplier_products.csv", ["supplier_id", "product_name", "supplier"], rows_supplier)
 
 
+def generate_house_prices():
+    """~500 rows of synthetic housing data for the regression ML template.
+
+    Each row's price is generated from a known linear formula plus noise so
+    a regression model can recover meaningful coefficients in the demo.
+    """
+    rows = []
+    for i in range(1, 501):
+        sqft = round(random.uniform(700, 4500), 1)
+        bedrooms = random.randint(1, 5)
+        bathrooms = round(random.choice([1.0, 1.5, 2.0, 2.5, 3.0, 3.5]), 1)
+        age_years = random.randint(0, 80)
+        garage_spaces = random.choice([0, 1, 2, 3])
+        # Ground-truth formula: price = 50000 + 180*sqft + 8000*bedrooms +
+        # 12000*bathrooms - 1500*age + 6000*garage + N(0, 25000) noise.
+        price = (
+            50_000
+            + 180 * sqft
+            + 8_000 * bedrooms
+            + 12_000 * bathrooms
+            - 1_500 * age_years
+            + 6_000 * garage_spaces
+            + random.gauss(0, 25_000)
+        )
+        rows.append([i, sqft, bedrooms, bathrooms, age_years, garage_spaces, round(price, 2)])
+    write_csv(
+        "house_prices.csv",
+        ["house_id", "sqft", "bedrooms", "bathrooms", "age_years", "garage_spaces", "price"],
+        rows,
+    )
+
+
+def generate_customer_churn():
+    """~500 rows of synthetic churn data for the binary classification ML template.
+
+    Each row's ``churned`` label is a Bernoulli draw from a sigmoid of the
+    feature vector + Gaussian noise on the logit, so logistic regression can
+    recover the true coefficients while leaving non-trivial irreducible noise.
+    """
+    rows = []
+    for i in range(1, 501):
+        tenure_months = random.randint(1, 72)
+        monthly_charges = round(random.uniform(20.0, 150.0), 2)
+        support_calls = random.randint(0, 10)
+        has_contract = random.choice([0, 1])
+        # Ground-truth logit:
+        #   - longer tenure         -> less churn
+        #   - higher monthly charge -> more churn
+        #   - more support calls    -> more churn
+        #   - has contract          -> less churn
+        logit = (
+            -1.5
+            - 0.05 * tenure_months
+            + 0.02 * monthly_charges
+            + 0.4 * support_calls
+            - 1.2 * has_contract
+            + random.gauss(0.0, 0.5)
+        )
+        prob = 1.0 / (1.0 + math.exp(-logit))
+        churned = 1 if random.random() < prob else 0
+        rows.append(
+            [i, tenure_months, monthly_charges, support_calls, has_contract, churned]
+        )
+    write_csv(
+        "customer_churn.csv",
+        [
+            "customer_id",
+            "tenure_months",
+            "monthly_charges",
+            "support_calls",
+            "has_contract",
+            "churned",
+        ],
+        rows,
+    )
+
+
 if __name__ == "__main__":
     print("Generating template data files...")
     generate_sales_data()
@@ -366,4 +444,6 @@ if __name__ == "__main__":
     generate_page_views()
     generate_support_tickets()
     generate_fuzzy_match_data()
+    generate_house_prices()
+    generate_customer_churn()
     print("Done!")

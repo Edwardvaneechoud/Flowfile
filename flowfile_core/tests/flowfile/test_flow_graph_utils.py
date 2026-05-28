@@ -1,6 +1,8 @@
 
 import pytest
 
+from fastapi import HTTPException
+
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import _create_node_id_mapping, _validate_input, combine_flow_graphs
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -491,3 +493,55 @@ def test_non_working_filter_error():
     result_filter_node = next(_node for _node in run_info.node_step_result if _node.node_id == 2)
     assert not result_filter_node.success
     assert 'unable to find column "age2"' in result_filter_node.error
+
+
+def _build_chain_for_cycle_tests() -> FlowGraph:
+    """Build a 1 -> 2 -> 3 chain of manual_input/record_id nodes for cycle tests."""
+    graph = create_graph(flow_id=99)
+    add_manual_input(graph, [{"name": "a"}], node_id=1)
+    add_node_promise_on_type(graph, "record_id", 2)
+    graph.add_record_id(input_schema.NodeRecordId(
+        flow_id=99, node_id=2, depending_on_id=1,
+        record_id_input=transform_schema.RecordIdInput(),
+    ))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    add_node_promise_on_type(graph, "record_id", 3)
+    graph.add_record_id(input_schema.NodeRecordId(
+        flow_id=99, node_id=3, depending_on_id=2,
+        record_id_input=transform_schema.RecordIdInput(),
+    ))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    return graph
+
+
+def test_add_connection_rejects_self_loop():
+    graph = _build_chain_for_cycle_tests()
+    with pytest.raises(HTTPException) as exc:
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 2))
+    assert exc.value.status_code == 422
+    assert "cycle" in exc.value.detail.lower()
+
+
+def test_add_connection_rejects_direct_back_edge():
+    graph = _build_chain_for_cycle_tests()
+    # 1 -> 2 exists; adding 2 -> 1 closes a 2-cycle.
+    with pytest.raises(HTTPException) as exc:
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 1))
+    assert exc.value.status_code == 422
+
+
+def test_add_connection_rejects_transitive_back_edge():
+    graph = _build_chain_for_cycle_tests()
+    # Chain is 1 -> 2 -> 3; closing 3 -> 1 would form a 3-cycle.
+    with pytest.raises(HTTPException) as exc:
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 1))
+    assert exc.value.status_code == 422
+
+
+def test_add_connection_allows_valid_downstream_edge():
+    """Adding a parallel feed-forward edge (skip-connection) must still be permitted."""
+    graph = _build_chain_for_cycle_tests()
+    # 1 -> 3 adds a skip connection, no cycle.
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
+    # Sanity: the topological ordering still works.
+    graph.run_graph()

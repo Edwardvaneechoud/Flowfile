@@ -2,23 +2,18 @@ import type { NodePythonScript, PythonScriptInput } from "../../../../../types/n
 
 export const DEFAULT_PYTHON_SCRIPT_CODE = `import polars as pl
 
-df = flowfile.read_input()
+df = flowfile_ctx.read_input()
 
 # Your transformation here
 
-flowfile.publish_output(df)
+flowfile_ctx.publish_output(df)
 `;
 
-export const createPythonScriptNode = (
-  flowId: number,
-  nodeId: number,
-): NodePythonScript => {
+export const createPythonScriptNode = (flowId: number, nodeId: number): NodePythonScript => {
   const pythonScriptInput: PythonScriptInput = {
     code: DEFAULT_PYTHON_SCRIPT_CODE,
     kernel_id: null,
-    cells: [
-      { id: crypto.randomUUID(), code: DEFAULT_PYTHON_SCRIPT_CODE },
-    ],
+    cells: [{ id: crypto.randomUUID(), code: DEFAULT_PYTHON_SCRIPT_CODE }],
   };
 
   return {

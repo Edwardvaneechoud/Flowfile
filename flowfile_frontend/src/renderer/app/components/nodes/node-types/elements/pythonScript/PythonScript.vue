@@ -6,73 +6,171 @@
       @request-save="saveSettings"
     >
       <div class="python-script-settings">
-        <!-- Kernel Selection -->
-        <div class="setting-block">
-          <label class="setting-label">Kernel</label>
-          <div class="kernel-row">
-            <el-select
-              v-model="selectedKernelId"
-              placeholder="Select a kernel..."
-              class="kernel-select"
-              size="small"
-              :loading="kernelsLoading"
-              @change="handleKernelChange"
-            >
-              <el-option
-                v-for="kernel in kernels"
-                :key="kernel.id"
-                :value="kernel.id"
-                :label="`${kernel.name} (${kernel.state})`"
-              >
-                <span class="kernel-option">
-                  <span
-                    class="kernel-state-dot"
-                    :class="`kernel-state-dot--${kernel.state}`"
-                  ></span>
-                  <span>{{ kernel.name }}</span>
-                  <span class="kernel-state-label">({{ kernel.state }})</span>
+        <el-collapse v-model="collapseActiveNames" class="ps-collapse">
+          <!-- Kernel Selection -->
+          <el-collapse-item name="kernel">
+            <template #title>
+              <div class="ps-collapse__title">
+                <span class="ps-collapse__label">Kernel</span>
+                <span
+                  class="ps-collapse__summary"
+                  :class="`ps-collapse__summary--${kernelSummaryLevel}`"
+                >
+                  {{ kernelSummary }}
                 </span>
-              </el-option>
-            </el-select>
-            <router-link :to="{ name: 'kernelManager' }" class="manage-kernels-link">
-              Manage Kernels
-            </router-link>
-          </div>
+              </div>
+            </template>
+            <div class="kernel-row">
+              <el-select
+                v-model="selectedKernelId"
+                placeholder="Select a kernel..."
+                class="kernel-select"
+                size="small"
+                :loading="kernelsLoading"
+                @change="handleKernelChange"
+              >
+                <el-option
+                  v-for="kernel in kernels"
+                  :key="kernel.id"
+                  :value="kernel.id"
+                  :label="`${kernel.name} (${kernel.state})`"
+                >
+                  <span class="kernel-option">
+                    <span
+                      class="kernel-state-dot"
+                      :class="`kernel-state-dot--${kernel.state}`"
+                    ></span>
+                    <span>{{ kernel.name }}</span>
+                    <span class="kernel-state-label">({{ kernel.state }})</span>
+                  </span>
+                </el-option>
+              </el-select>
+              <router-link :to="{ name: 'kernelManager' }" class="manage-kernels-link">
+                Manage Kernels
+              </router-link>
+            </div>
 
-          <!-- Memory usage -->
-          <div v-if="memoryDisplay" class="kernel-memory" :class="`kernel-memory--${memoryLevel}`">
-            <i class="fa-solid fa-memory"></i>
-            <span class="kernel-memory__text">{{ memoryDisplay }}</span>
-            <span class="kernel-memory__percent">({{ memoryInfo!.usage_percent }}%)</span>
-          </div>
+            <!-- Memory usage -->
+            <div
+              v-if="memoryDisplay"
+              class="kernel-memory"
+              :class="`kernel-memory--${memoryLevel}`"
+            >
+              <i class="fa-solid fa-memory"></i>
+              <span class="kernel-memory__text">{{ memoryDisplay }}</span>
+              <span class="kernel-memory__percent">({{ memoryInfo!.usage_percent }}%)</span>
+            </div>
 
-          <!-- Kernel warnings -->
-          <div v-if="!selectedKernelId" class="kernel-warning">
-            <i class="fa-solid fa-triangle-exclamation"></i>
-            No kernel selected. A kernel is required to run Python code.
-          </div>
-          <div
-            v-else-if="selectedKernelState && selectedKernelState !== 'idle'"
-            class="kernel-warning"
-          >
-            <i class="fa-solid fa-triangle-exclamation"></i>
-            Kernel is {{ selectedKernelState }}.
-            <template v-if="selectedKernelState === 'stopped'"
-              >Start it from the Kernel Manager to execute code.</template
+            <!-- Kernel warnings -->
+            <div v-if="!selectedKernelId" class="kernel-warning">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              No kernel selected. A kernel is required to run Python code.
+            </div>
+            <div
+              v-else-if="selectedKernelState && selectedKernelState !== 'idle'"
+              class="kernel-warning"
             >
-            <template v-else-if="selectedKernelState === 'error'"
-              >Check the Kernel Manager for details.</template
-            >
-            <template v-else-if="selectedKernelState === 'starting'"
-              >Please wait for it to become idle.</template
-            >
-            <template v-else-if="selectedKernelState === 'executing'"
-              >Please wait for the current execution to finish.</template
-            >
-          </div>
-        </div>
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              Kernel is {{ selectedKernelState }}.
+              <template v-if="selectedKernelState === 'stopped'"
+                >Start it from the Kernel Manager to execute code.</template
+              >
+              <template v-else-if="selectedKernelState === 'error'"
+                >Check the Kernel Manager for details.</template
+              >
+              <template v-else-if="selectedKernelState === 'starting'"
+                >Please wait for it to become idle.</template
+              >
+              <template v-else-if="selectedKernelState === 'executing'"
+                >Please wait for the current execution to finish.</template
+              >
+            </div>
+          </el-collapse-item>
 
-        <!-- Available Inputs (read-only, derived from connections) -->
+          <!-- Output Names -->
+          <el-collapse-item name="outputs">
+            <template #title>
+              <div class="ps-collapse__title">
+                <span class="ps-collapse__label">Outputs</span>
+                <span class="ps-collapse__summary">{{ outputsSummary }}</span>
+              </div>
+            </template>
+            <div class="output-names-editor">
+              <div v-for="(name, index) in outputNames" :key="index" class="output-name-row">
+                <el-input
+                  v-model="outputNames[index]"
+                  size="small"
+                  placeholder="output name"
+                  @blur="handleOutputNamesChange"
+                />
+                <button
+                  v-if="outputNames.length > 1"
+                  class="icon-button icon-button--danger"
+                  title="Remove output"
+                  @click="removeOutputName(index)"
+                >
+                  <i class="fa-solid fa-minus"></i>
+                </button>
+              </div>
+              <button class="add-output-button" @click="addOutputName">
+                <i class="fa-solid fa-plus"></i> Add Output
+              </button>
+            </div>
+          </el-collapse-item>
+
+          <!-- Artifacts Panel -->
+          <el-collapse-item name="artifacts">
+            <template #title>
+              <div class="ps-collapse__title">
+                <span class="ps-collapse__label">Artifacts</span>
+                <span class="ps-collapse__summary">{{ artifactsSummary }}</span>
+              </div>
+            </template>
+            <div class="artifacts-panel">
+              <div v-if="artifactsLoading" class="artifacts-loading">
+                <i class="fas fa-spinner fa-spin"></i> Loading artifacts...
+              </div>
+              <template v-else>
+                <div class="artifact-group">
+                  <span class="artifact-group-label">Available:</span>
+                  <template v-if="availableArtifacts.length > 0">
+                    <span
+                      v-for="artifact in availableArtifacts"
+                      :key="artifact.name"
+                      class="artifact-tag"
+                    >
+                      {{ artifact.name }}
+                      <span v-if="artifact.type_name" class="artifact-type"
+                        >({{ artifact.type_name }})</span
+                      >
+                    </span>
+                  </template>
+                  <span v-else class="artifacts-empty">None</span>
+                </div>
+                <div class="artifact-group">
+                  <span class="artifact-group-label">Published:</span>
+                  <template v-if="publishedArtifacts.length > 0">
+                    <span
+                      v-for="artifact in publishedArtifacts"
+                      :key="artifact.name"
+                      class="artifact-tag artifact-tag--published"
+                    >
+                      {{ artifact.name }}
+                      <span v-if="artifact.type_name" class="artifact-type"
+                        >({{ artifact.type_name }})</span
+                      >
+                    </span>
+                  </template>
+                  <span v-else class="artifacts-empty"
+                    >Run the flow to see published artifacts</span
+                  >
+                </div>
+              </template>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+
+        <!-- Available Inputs (always visible — useful while coding) -->
         <div v-if="inputNames.length > 0" class="setting-block">
           <label class="setting-label">Available Inputs</label>
           <div class="input-names-display">
@@ -83,76 +181,6 @@
             <span class="input-names-hint">
               Use flowfile.read_input("name") to read a specific input
             </span>
-          </div>
-        </div>
-
-        <!-- Output Names -->
-        <div class="setting-block">
-          <label class="setting-label">Output Names</label>
-          <div class="output-names-editor">
-            <div v-for="(name, index) in outputNames" :key="index" class="output-name-row">
-              <el-input
-                v-model="outputNames[index]"
-                size="small"
-                placeholder="output name"
-                @blur="handleOutputNamesChange"
-              />
-              <button
-                v-if="outputNames.length > 1"
-                class="icon-button icon-button--danger"
-                title="Remove output"
-                @click="removeOutputName(index)"
-              >
-                <i class="fa-solid fa-minus"></i>
-              </button>
-            </div>
-            <button class="add-output-button" @click="addOutputName">
-              <i class="fa-solid fa-plus"></i> Add Output
-            </button>
-          </div>
-        </div>
-
-        <!-- Artifacts Panel — moved ABOVE code, it's reference info -->
-        <div class="setting-block">
-          <label class="setting-label">Artifacts</label>
-          <div class="artifacts-panel">
-            <div v-if="artifactsLoading" class="artifacts-loading">
-              <i class="fas fa-spinner fa-spin"></i> Loading artifacts...
-            </div>
-            <template v-else>
-              <div class="artifact-group">
-                <span class="artifact-group-label">Available:</span>
-                <template v-if="availableArtifacts.length > 0">
-                  <span
-                    v-for="artifact in availableArtifacts"
-                    :key="artifact.name"
-                    class="artifact-tag"
-                  >
-                    {{ artifact.name }}
-                    <span v-if="artifact.type_name" class="artifact-type"
-                      >({{ artifact.type_name }})</span
-                    >
-                  </span>
-                </template>
-                <span v-else class="artifacts-empty">None</span>
-              </div>
-              <div class="artifact-group">
-                <span class="artifact-group-label">Published:</span>
-                <template v-if="publishedArtifacts.length > 0">
-                  <span
-                    v-for="artifact in publishedArtifacts"
-                    :key="artifact.name"
-                    class="artifact-tag artifact-tag--published"
-                  >
-                    {{ artifact.name }}
-                    <span v-if="artifact.type_name" class="artifact-type"
-                      >({{ artifact.type_name }})</span
-                    >
-                  </span>
-                </template>
-                <span v-else class="artifacts-empty">Run the flow to see published artifacts</span>
-              </div>
-            </template>
           </div>
         </div>
 
@@ -176,6 +204,8 @@
             :flow-id="nodePythonScript!.flow_id as number"
             :node-id="nodePythonScript!.node_id"
             :depending-on-ids="nodePythonScript!.depending_on_ids ?? []"
+            :input-names="inputNamesList"
+            :upstream-columns="upstreamColumns"
             @update:cells="handleCellsUpdate"
           />
         </div>
@@ -225,6 +255,8 @@
           :flow-id="nodePythonScript!.flow_id as number"
           :node-id="nodePythonScript!.node_id"
           :depending-on-ids="nodePythonScript!.depending_on_ids ?? []"
+          :input-names="inputNamesList"
+          :upstream-columns="upstreamColumns"
           @update:cells="handleCellsUpdate"
         />
       </div>
@@ -235,6 +267,8 @@
 </template>
 
 <script lang="ts" setup>
+// TODO(refactor): ~995 LOC. Cohesive but long; defer unless touched.
+//   - Kernel control logic (~lines 570-700) is the obvious extraction target → useKernelControl composable
 import { ref, computed, watch, onUnmounted } from "vue";
 import { CodeLoader } from "vue-content-loader";
 
@@ -254,6 +288,8 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import FlowfileApiHelp from "./FlowfileApiHelp.vue";
 import NotebookEditor from "./NotebookEditor.vue";
 import { createPythonScriptNode, DEFAULT_PYTHON_SCRIPT_CODE } from "./utils";
+import { useCollapsedSections } from "./useCollapsedSections";
+import { useUpstreamColumns } from "./useUpstreamColumns";
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -294,6 +330,22 @@ const availableArtifacts = ref<ArtifactInfo[]>([]);
 const publishedArtifacts = ref<ArtifactInfo[]>([]);
 const artifactsLoading = ref(false);
 
+// ─── Collapsible-section state ──────────────────────────────────────────────
+
+const { activeNames: collapseActiveNames } = useCollapsedSections();
+
+// ─── Upstream columns (powers pl.col("…") autocomplete) ─────────────────────
+
+const flowIdRef = computed<number | null>(() => {
+  const fid = nodePythonScript.value?.flow_id;
+  return fid != null ? Number(fid) : null;
+});
+const { columns: upstreamColumns, reload: reloadUpstreamColumns } = useUpstreamColumns(
+  flowIdRef,
+  inputNames,
+);
+const inputNamesList = computed(() => inputNames.value.map((i) => i.name));
+
 // ─── Kernel helpers ─────────────────────────────────────────────────────────
 
 const selectedKernelState = computed(() => {
@@ -319,6 +371,37 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
   if (memoryInfo.value.usage_percent >= 95) return "critical";
   if (memoryInfo.value.usage_percent >= 80) return "warning";
   return "normal";
+});
+
+// ─── Section summaries (shown in collapse headers) ──────────────────────────
+
+const kernelSummary = computed(() => {
+  if (!selectedKernelId.value) return "No kernel selected";
+  const kernel = kernels.value.find((k) => k.id === selectedKernelId.value);
+  const name = kernel?.name ?? "Unknown";
+  const state = selectedKernelState.value ?? "?";
+  const mem = memoryDisplay.value ? ` · ${memoryDisplay.value}` : "";
+  return `${name} (${state})${mem}`;
+});
+
+const kernelSummaryLevel = computed<"normal" | "warning" | "critical">(() => {
+  if (!selectedKernelId.value) return "warning";
+  const state = selectedKernelState.value;
+  if (state && state !== "idle" && state !== "executing") return "warning";
+  return memoryLevel.value;
+});
+
+const outputsSummary = computed(() => {
+  const joined = outputNames.value.filter(Boolean).join(", ");
+  if (!joined) return "—";
+  return joined.length > 40 ? joined.slice(0, 40) + "…" : joined;
+});
+
+const artifactsSummary = computed(() => {
+  if (artifactsLoading.value) return "Loading…";
+  const a = availableArtifacts.value.length;
+  const p = publishedArtifacts.value.length;
+  return `${a} available · ${p} published`;
 });
 
 const loadMemoryStats = async () => {
@@ -537,6 +620,8 @@ watch(
     if (wasRunning && !running && dataLoaded.value) {
       loadFlowRunDisplayOutputs();
       loadArtifacts();
+      // Upstream schemas may have been populated by this run — refresh column completions
+      reloadUpstreamColumns();
     }
   },
 );
@@ -818,6 +903,77 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 
 .kernel-warning i {
   flex-shrink: 0;
+}
+
+/* ─── Collapsible sections ───────────────────────────────────────────────── */
+
+.ps-collapse {
+  --el-collapse-header-bg-color: transparent;
+  --el-collapse-content-bg-color: transparent;
+  --el-collapse-header-height: auto;
+  border: none;
+}
+
+.ps-collapse :deep(.el-collapse-item__header) {
+  background-color: transparent;
+  border: none;
+  padding: 0.25rem 0;
+  height: auto;
+  line-height: 1.4;
+  font-size: 0.8rem;
+}
+
+.ps-collapse :deep(.el-collapse-item__wrap) {
+  background-color: transparent;
+  border: none;
+}
+
+.ps-collapse :deep(.el-collapse-item__content) {
+  background-color: transparent;
+  padding: 0.35rem 0 0.65rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.ps-collapse :deep(.el-collapse-item) {
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.ps-collapse :deep(.el-collapse-item:last-child) {
+  border-bottom: none;
+}
+
+.ps-collapse__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.ps-collapse__label {
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  flex-shrink: 0;
+}
+
+.ps-collapse__summary {
+  font-size: 0.75rem;
+  color: var(--el-text-color-secondary);
+  font-family: var(--el-font-family, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ps-collapse__summary--warning {
+  color: var(--el-color-warning-dark-2, #b88230);
+}
+
+.ps-collapse__summary--critical {
+  color: var(--el-color-danger-dark-2, #c45656);
 }
 
 /* ─── Artifacts panel ────────────────────────────────────────────────────── */

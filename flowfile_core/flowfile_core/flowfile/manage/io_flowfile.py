@@ -172,6 +172,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             setting_data["node_id"] = node.id
             setting_data["pos_x"] = float(node.x_position or 0)
             setting_data["pos_y"] = float(node.y_position or 0)
+            setting_data["group_id"] = node.group_id
             setting_data["description"] = node.description or ""
             setting_data["node_reference"] = node.node_reference
             setting_data["is_setup"] = True
@@ -213,6 +214,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             node_reference=node.node_reference,
             x_position=node.x_position,
             y_position=node.y_position,
+            group_id=node.group_id,
             left_input_id=node.left_input_id,
             right_input_id=node.right_input_id,
             input_ids=node.input_ids,
@@ -246,6 +248,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         data=nodes_dict,
         node_starts=node_starts,
         node_connections=connections,
+        groups=[schemas.GroupInformation(**group.model_dump()) for group in flowfile_data.groups],
     )
 
 
@@ -384,6 +387,10 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
             from_node = new_flow.get_node(missing_connection[0])
             if from_node:
                 to_node.add_node_connection(from_node)
+
+    # Restore visual groups. Member group_ids were re-applied above via
+    # add_<type>(setting_input); legacy pickles may lack the field entirely.
+    new_flow.restore_groups(getattr(flow_storage_obj, "groups", None) or [])
 
     new_flow.mark_as_saved()
     return new_flow

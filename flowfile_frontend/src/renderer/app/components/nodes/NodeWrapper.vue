@@ -165,6 +165,10 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~709 LOC. Plan to extract:
+//   - NodeContextMenu.vue (~lines 92-161, with positioning at ~263-283)
+//   - NodeDescriptionEditor.vue (~lines 11-48)
+//   - NodeHandles.vue: handle rendering loops (~lines 64-89)
 import { Handle } from "@vue-flow/core";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
 import { useNodeStore } from "../../stores/column-store";
@@ -172,6 +176,7 @@ import { useFlowStore } from "../../stores/flow-store";
 import { VueFlowStore } from "@vue-flow/core";
 import { NodeCopyValue } from "../../views/DesignerView/types";
 import { toSnakeCase } from "../../views/DesignerView/utils";
+import { snapshotClipboard } from "../../utils/clipboardUtils";
 import { useFlowExecution } from "../../composables/useFlowExecution";
 import GenericNode from "./GenericNode.vue";
 import ArtifactBadge from "./ArtifactBadge.vue";
@@ -182,9 +187,11 @@ const flowStore = useFlowStore();
 const nodeEl = ref<HTMLElement | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
 
-// Use the flow execution composable with persistent polling
+// Use the flow execution composable with persistent polling.
+// Getter form (not a snapshot number) so Save As doesn't leave the node
+// polling against the old flow id.
 const { triggerNodeFetch, isPollingActive } = useFlowExecution(
-  flowStore.flowId,
+  () => flowStore.flowId,
   { interval: 2000, enabled: true },
   {
     persistPolling: true,
@@ -308,6 +315,7 @@ const copyNode = () => {
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
   localStorage.removeItem("copiedMultiNodes");
+  snapshotClipboard();
   closeContextMenu();
 };
 
