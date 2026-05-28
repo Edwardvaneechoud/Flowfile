@@ -786,23 +786,27 @@ class CatalogService:
         owner_id: int,
         schedule_type: str,
         interval_seconds: int | None = None,
+        cron_expression: str | None = None,
+        cron_timezone: str | None = None,
         trigger_table_id: int | None = None,
         trigger_table_ids: list[int] | None = None,
         enabled: bool = True,
         name: str | None = None,
         description: str | None = None,
     ) -> FlowScheduleOut:
-        """Create a new schedule (interval, table_trigger or table_set_trigger) for a flow."""
+        """Create a new schedule (interval, cron, table_trigger or table_set_trigger) for a flow."""
         return self._schedules.create_schedule(
-            registration_id,
-            owner_id,
-            schedule_type,
-            interval_seconds,
-            trigger_table_id,
-            trigger_table_ids,
-            enabled,
-            name,
-            description,
+            registration_id=registration_id,
+            owner_id=owner_id,
+            schedule_type=schedule_type,
+            interval_seconds=interval_seconds,
+            cron_expression=cron_expression,
+            cron_timezone=cron_timezone,
+            trigger_table_id=trigger_table_id,
+            trigger_table_ids=trigger_table_ids,
+            enabled=enabled,
+            name=name,
+            description=description,
         )
 
     def update_schedule(
@@ -810,11 +814,21 @@ class CatalogService:
         schedule_id: int,
         enabled: bool | None = None,
         interval_seconds: int | None = None,
+        cron_expression: str | None = None,
+        cron_timezone: str | None = None,
         name: str | None = None,
         description: str | None = None,
     ) -> FlowScheduleOut:
-        """Update a schedule's enabled flag, interval, name or description."""
-        return self._schedules.update_schedule(schedule_id, enabled, interval_seconds, name, description)
+        """Update a schedule's enabled flag, interval, cron expression/timezone, name or description."""
+        return self._schedules.update_schedule(
+            schedule_id=schedule_id,
+            enabled=enabled,
+            interval_seconds=interval_seconds,
+            cron_expression=cron_expression,
+            cron_timezone=cron_timezone,
+            name=name,
+            description=description,
+        )
 
     def delete_schedule(self, schedule_id: int) -> None:
         """Delete a schedule and its associated trigger table links."""

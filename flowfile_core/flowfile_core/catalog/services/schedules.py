@@ -82,6 +82,8 @@ class ScheduleService:
             description=schedule.description,
             schedule_type=schedule.schedule_type,
             interval_seconds=schedule.interval_seconds,
+            cron_expression=schedule.cron_expression,
+            cron_timezone=schedule.cron_timezone,
             trigger_table_id=schedule.trigger_table_id,
             trigger_table_name=trigger_table_name,
             trigger_namespace_id=trigger_namespace_id,
@@ -102,6 +104,8 @@ class ScheduleService:
         owner_id: int,
         schedule_type: str,
         interval_seconds: int | None = None,
+        cron_expression: str | None = None,
+        cron_timezone: str | None = None,
         trigger_table_id: int | None = None,
         trigger_table_ids: list[int] | None = None,
         enabled: bool = True,
@@ -119,6 +123,8 @@ class ScheduleService:
             trigger_table_id=trigger_table_id,
             trigger_table_ids=trigger_table_ids,
             table_exists=lambda table_id: self.repo.get_table(table_id) is not None,
+            cron_expression=cron_expression,
+            cron_timezone=cron_timezone,
         )
 
         schedule = FlowSchedule(
@@ -129,6 +135,8 @@ class ScheduleService:
             description=description,
             schedule_type=schedule_type,
             interval_seconds=interval_seconds,
+            cron_expression=cron_expression,
+            cron_timezone=cron_timezone,
             trigger_table_id=trigger_table_id,
         )
         schedule = self.repo.create_schedule(schedule)
@@ -143,6 +151,8 @@ class ScheduleService:
         schedule_id: int,
         enabled: bool | None = None,
         interval_seconds: int | None = None,
+        cron_expression: str | None = None,
+        cron_timezone: str | None = None,
         name: str | None = None,
         description: str | None = None,
     ) -> FlowScheduleOut:
@@ -150,11 +160,19 @@ class ScheduleService:
         schedule = self.repo.get_schedule(schedule_id)
         if schedule is None:
             raise ScheduleNotFoundError(schedule_id=schedule_id)
+        # Cron fields only make sense on a cron schedule; reject them otherwise so we never
+        # store a cron_expression on an interval/table-trigger schedule (where it is ignored).
+        if (cron_expression is not None or cron_timezone is not None) and schedule.schedule_type != "cron":
+            raise ValueError("cron_expression/cron_timezone can only be set on cron schedules")
+        validate_schedule_update(interval_seconds, cron_expression, cron_timezone)
         if enabled is not None:
             schedule.enabled = enabled
         if interval_seconds is not None:
-            validate_schedule_update(interval_seconds)
             schedule.interval_seconds = interval_seconds
+        if cron_expression is not None:
+            schedule.cron_expression = cron_expression
+        if cron_timezone is not None:
+            schedule.cron_timezone = cron_timezone
         if name is not None:
             schedule.name = name
         if description is not None:
