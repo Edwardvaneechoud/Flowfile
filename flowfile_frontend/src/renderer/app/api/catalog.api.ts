@@ -22,6 +22,8 @@ import type {
   FlowSchedule,
   FlowScheduleCreate,
   FlowScheduleUpdate,
+  CronValidationRequest,
+  CronValidationResult,
   GlobalArtifact,
   NamespaceCreate,
   NamespaceTree,
@@ -265,18 +267,12 @@ export class CatalogApi {
     return response.data;
   }
 
-  static async updateVirtualTable(
-    id: number,
-    body: VirtualFlowTableUpdate,
-  ): Promise<CatalogTable> {
+  static async updateVirtualTable(id: number, body: VirtualFlowTableUpdate): Promise<CatalogTable> {
     const response = await axios.put<CatalogTable>(`/catalog/virtual-tables/${id}`, body);
     return response.data;
   }
 
-  static async resolveVirtualTable(
-    tableId: number,
-    limit = 100,
-  ): Promise<CatalogTablePreview> {
+  static async resolveVirtualTable(tableId: number, limit = 100): Promise<CatalogTablePreview> {
     const response = await axios.post<CatalogTablePreview>(
       `/catalog/virtual-tables/${tableId}/resolve`,
       null,
@@ -309,6 +305,16 @@ export class CatalogApi {
 
   static async createSchedule(body: FlowScheduleCreate): Promise<FlowSchedule> {
     const response = await axios.post<FlowSchedule>("/catalog/schedules", body);
+    return response.data;
+  }
+
+  /** Validate a cron expression against the backend's croniter rules (single
+   * source of truth for the builder's Custom-mode submit gate). */
+  static async validateCron(body: CronValidationRequest): Promise<CronValidationResult> {
+    const response = await axios.post<CronValidationResult>(
+      "/catalog/schedules/validate-cron",
+      body,
+    );
     return response.data;
   }
 
@@ -450,9 +456,7 @@ export class CatalogApi {
   }
 
   /** Get the field schema for a saved viz's source (worker-cached). */
-  static async getSavedVisualizationFields(
-    vizId: number,
-  ): Promise<VisualizationFieldsResponse> {
+  static async getSavedVisualizationFields(vizId: number): Promise<VisualizationFieldsResponse> {
     const response = await axios.post<VisualizationFieldsResponse>(
       `/catalog/visualizations/${vizId}/fields`,
     );

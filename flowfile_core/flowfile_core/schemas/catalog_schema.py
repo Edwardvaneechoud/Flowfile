@@ -637,8 +637,10 @@ class TableFavoriteOut(BaseModel):
 
 class FlowScheduleCreate(BaseModel):
     registration_id: int
-    schedule_type: Literal["interval", "table_trigger", "table_set_trigger"]
+    schedule_type: Literal["interval", "cron", "table_trigger", "table_set_trigger"]
     interval_seconds: int | None = None
+    cron_expression: str | None = None
+    cron_timezone: str | None = None
     trigger_table_id: int | None = None
     trigger_table_ids: list[int] | None = None
     enabled: bool = True
@@ -649,6 +651,8 @@ class FlowScheduleCreate(BaseModel):
 class FlowScheduleUpdate(BaseModel):
     enabled: bool | None = None
     interval_seconds: int | None = None
+    cron_expression: str | None = None
+    cron_timezone: str | None = None
     name: str | None = None
     description: str | None = None
 
@@ -660,8 +664,10 @@ class FlowScheduleOut(BaseModel):
     enabled: bool
     name: str | None = None
     description: str | None = None
-    schedule_type: Literal["interval", "table_trigger", "table_set_trigger"]
+    schedule_type: Literal["interval", "cron", "table_trigger", "table_set_trigger"]
     interval_seconds: int | None = None
+    cron_expression: str | None = None
+    cron_timezone: str | None = None
     trigger_table_id: int | None = None
     trigger_table_name: str | None = None
     trigger_namespace_id: int | None = None
@@ -676,6 +682,20 @@ class FlowScheduleOut(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CronValidationRequest(BaseModel):
+    cron_expression: str | None = None
+    cron_timezone: str | None = None
+
+
+class CronValidationResult(BaseModel):
+    """Result of validating a cron expression (+ optional timezone) against the
+    same croniter rules the create/update path enforces. ``valid`` drives the
+    builder's submit gate; ``error`` is the backend's message when invalid."""
+
+    valid: bool
+    error: str | None = None
 
 
 # ==================== Active Run Schemas ====================

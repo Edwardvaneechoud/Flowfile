@@ -57,7 +57,7 @@ export interface CursorPosition {
 
 export interface ContextMenuAction {
   actionId: string;
-  targetType: "node" | "edge" | "pane";
+  targetType: "node" | "edge" | "pane" | "selection";
   targetId: string;
   position: CursorPosition;
 }

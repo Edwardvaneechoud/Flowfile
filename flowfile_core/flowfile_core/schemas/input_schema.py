@@ -359,6 +359,7 @@ class NodeBase(BaseModel):
     cache_results: bool | None = False
     pos_x: float | None = 0
     pos_y: float | None = 0
+    group_id: int | None = None  # Visual group membership (organizational only; no execution impact)
     is_setup: bool | None = True
     description: str | None = ""
     node_reference: str | None = None  # Unique reference identifier for code generation (lowercase, no spaces)

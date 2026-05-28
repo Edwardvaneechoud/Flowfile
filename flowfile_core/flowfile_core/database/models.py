@@ -298,10 +298,13 @@ class FlowSchedule(Base):
     enabled = Column(Boolean, default=True, nullable=False)
     name = Column(String, nullable=True)
     description = Column(String, nullable=True)
-    schedule_type = Column(String, nullable=False)  # "interval" | "table_trigger" | "table_set_trigger"
+    schedule_type = Column(String, nullable=False)  # "interval" | "cron" | "table_trigger" | "table_set_trigger"
     interval_seconds = Column(Integer, nullable=True)
+    cron_expression = Column(String, nullable=True)  # 5-field cron string, used when schedule_type == "cron"
+    cron_timezone = Column(String, nullable=True)  # IANA tz name (e.g. "Europe/Amsterdam") the cron runs in
     trigger_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True)
     last_triggered_at = Column(DateTime, nullable=True)
+    last_cron_slot = Column(DateTime, nullable=True)  # naive LOCAL wall-clock cron cursor (NOT UTC); DST-safe
     last_trigger_table_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
