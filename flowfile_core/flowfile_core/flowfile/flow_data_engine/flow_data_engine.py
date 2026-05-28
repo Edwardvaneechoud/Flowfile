@@ -58,7 +58,6 @@ from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalCreateFetcher,
     ExternalDfFetcher,
-    ExternalExecutorTracker,
     ExternalFuzzyMatchFetcher,
     fetch_unique_values,
 )
@@ -2569,49 +2568,35 @@ class FlowDataEngine:
         return FlowDataEngine(df, number_of_records=self.number_of_records)
 
     def output(
-        self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str, execute_remote: bool = True
+        self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str, execute_remote: bool = False
     ) -> FlowDataEngine:
-        """Writes the DataFrame to an output file.
+        """Writes the DataFrame to a local output file.
 
-        Can execute the write operation locally or in a remote worker process.
+        For remote-worker writes the caller (``add_output._func``) uses
+        ``ExternalOutputWriter`` directly so the fetcher can be exposed on
+        the node for cancellation; this method only handles the local path.
 
         Args:
             output_fs: An `OutputSettings` object with details about the output file.
             flow_id: The flow ID for tracking.
             node_id: The node ID for tracking.
-            execute_remote: If True, executes the write in a worker process.
+            execute_remote: Retained for signature compatibility; ignored.
 
         Returns:
             The same `FlowDataEngine` instance for chaining.
         """
-        logger.info("Starting to write output")
-        if execute_remote:
-            status = utils.write_output(
-                self.data_frame,
-                data_type=output_fs.file_type,
-                path=output_fs.abs_file_path,
-                write_mode=output_fs.write_mode,
-                sheet_name=output_fs.sheet_name,
-                delimiter=output_fs.delimiter,
-                flow_id=flow_id,
-                node_id=node_id,
-            )
-            tracker = ExternalExecutorTracker(status)
-            tracker.get_result()
-            logger.info("Finished writing output")
-        else:
-            logger.info("Starting to write results locally")
-            utils.local_write_output(
-                self.data_frame,
-                data_type=output_fs.file_type,
-                path=output_fs.abs_file_path,
-                write_mode=output_fs.write_mode,
-                sheet_name=output_fs.sheet_name,
-                delimiter=output_fs.delimiter,
-                flow_id=flow_id,
-                node_id=node_id,
-            )
-            logger.info("Finished writing output")
+        logger.info("Starting to write results locally")
+        utils.local_write_output(
+            self.data_frame,
+            data_type=output_fs.file_type,
+            path=output_fs.abs_file_path,
+            write_mode=output_fs.write_mode,
+            sheet_name=output_fs.sheet_name,
+            delimiter=output_fs.delimiter,
+            flow_id=flow_id,
+            node_id=node_id,
+        )
+        logger.info("Finished writing output")
         return self
 
     def make_unique(self, unique_input: transform_schemas.UniqueInput = None) -> FlowDataEngine:

@@ -20,10 +20,10 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDfFetcher as ExternalDfFetcher,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalExecutorTracker as ExternalExecutorTracker,
+    ExternalFuzzyMatchFetcher as ExternalFuzzyMatchFetcher,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalFuzzyMatchFetcher as ExternalFuzzyMatchFetcher,
+    ExternalOutputWriter as ExternalOutputWriter,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalSampler as ExternalSampler,
@@ -78,6 +78,9 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_sample_operation as trigger_sample_operation,
+)
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    trigger_write_output as trigger_write_output,
 )
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
     DatabaseExternalReadSettings as DatabaseExternalReadSettings,
