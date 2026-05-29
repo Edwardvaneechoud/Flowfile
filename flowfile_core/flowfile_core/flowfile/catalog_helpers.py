@@ -13,7 +13,7 @@ from pathlib import Path
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import FlowRegistration
+from flowfile_core.database.models import FlowApiEndpoint, FlowRegistration
 from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
@@ -148,8 +148,23 @@ def sync_api_compatibility(flow) -> None:
     try:
         with get_db_context() as db:
             reg = SQLAlchemyCatalogRepository(db).get_flow_by_path(flow_path)
-            if reg is not None and bool(reg.is_api_compatible) != is_compatible:
+            if reg is None:
+                return
+            changed = False
+            if bool(reg.is_api_compatible) != is_compatible:
                 reg.is_api_compatible = is_compatible
+                changed = True
+            # A flow that just lost (or duplicated) its api_response node can no
+            # longer serve requests. Disable any already-published endpoint so the
+            # public route returns a clean 403 instead of 500ing on an invalid graph.
+            if not is_compatible:
+                disabled = (
+                    db.query(FlowApiEndpoint)
+                    .filter(FlowApiEndpoint.registration_id == reg.id, FlowApiEndpoint.enabled.is_(True))
+                    .update({"enabled": False}, synchronize_session=False)
+                )
+                changed = changed or bool(disabled)
+            if changed:
                 db.commit()
     except Exception:
         logger.info(f"Failed to sync API compatibility for '{flow_path}' (non-critical)", exc_info=True)

@@ -8,12 +8,14 @@ Covers:
 - the publish / key-management endpoints (called directly with an in-memory DB).
 """
 
+import asyncio
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from flowfile_core.auth import api_key as api_key_mod
@@ -26,6 +28,7 @@ from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.flow_api_schema import (
     ApiEndpointCreate,
     ApiKeyCreate,
+    ApiKeyUpdate,
     ApiParamSpec,
 )
 from flowfile_core.schemas.schemas import FlowParameter
@@ -268,7 +271,6 @@ def test_publish_endpoint_and_keys(db_session, tmp_path):
     )
     assert out.slug == "sales"  # normalized
     assert out.path == "/api/data/sales"
-    assert out.response_node_id == 3
     assert [p.name for p in out.parameters] == ["region"]
 
     # one endpoint per flow
@@ -289,7 +291,8 @@ def test_publish_endpoint_and_keys(db_session, tmp_path):
     assert not hasattr(keys[0], "api_key")
 
 
-def test_owner_test_run(db_session, tmp_path):
+@pytest.mark.asyncio
+async def test_owner_test_run(db_session, tmp_path):
     from flowfile_core.schemas.flow_api_schema import ApiTestRequest
 
     flow_path = tmp_path / "flow.yaml"
@@ -311,7 +314,7 @@ def test_owner_test_run(db_session, tmp_path):
     )
     assert out.flow_name == "api_flow"
 
-    result = flow_api.test_endpoint(
+    result = await flow_api.test_endpoint(
         out.id, body=ApiTestRequest(params={"region": "US"}), current_user=user, db=db_session
     )
     assert result["row_count"] == 1
@@ -342,3 +345,165 @@ def test_publish_requires_api_response_node(db_session, tmp_path):
             ApiEndpointCreate(registration_id=reg.id, slug="noapi"), current_user=SimpleNamespace(id=1), db=db_session
         )
     assert exc.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Public-endpoint hardening (error hiding, concurrency cap, key toggle, races)
+# ---------------------------------------------------------------------------
+
+
+def _publish_via_db(db_session, tmp_path, slug="sales"):
+    """Build + save a real flow, register it, and publish it. Returns (reg, endpoint, user)."""
+    flow_path = tmp_path / "flow.yaml"
+    _build_and_save_flow(flow_path, "records")
+    reg = db_models.FlowRegistration(flow_uuid=str(uuid4()), name="api_flow", flow_path=str(flow_path), owner_id=1)
+    db_session.add(reg)
+    db_session.commit()
+    db_session.refresh(reg)
+    user = SimpleNamespace(id=1)
+    out = flow_api.publish_endpoint(
+        ApiEndpointCreate(registration_id=reg.id, slug=slug, parameters=[ApiParamSpec(name="region", type="string")]),
+        current_user=user,
+        db=db_session,
+    )
+    ep = db_session.get(db_models.FlowApiEndpoint, out.id)
+    return reg, ep, user
+
+
+@pytest.mark.asyncio
+async def test_public_route_hides_internal_error_detail(db_session, tmp_path, monkeypatch):
+    """#2: the public route must not echo node-level error text (paths, SQL, columns)."""
+    _reg, ep, _user = _publish_via_db(db_session, tmp_path)
+    secret = "node 3: failed reading /etc/passwd via SELECT * FROM secrets (column ssn)"
+
+    def _boom(*_a, **_k):
+        raise api_runner.ApiExecutionError(secret)
+
+    monkeypatch.setattr(flow_api, "run_flow_as_api", _boom)
+    request = SimpleNamespace(query_params={})
+
+    with pytest.raises(HTTPException) as exc:
+        await flow_api.run_published_flow(slug=ep.slug, request=request, endpoint=ep, db=db_session)
+    assert exc.value.status_code == 500
+    assert exc.value.detail == "Flow execution failed"
+    assert secret not in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_owner_test_run_keeps_verbose_error_detail(db_session, tmp_path, monkeypatch):
+    """#2 counterpart: the owner-only test path *does* surface the detailed error."""
+    from flowfile_core.schemas.flow_api_schema import ApiTestRequest
+
+    _reg, ep, user = _publish_via_db(db_session, tmp_path)
+    secret = "node 3: detailed owner-facing failure"
+
+    def _boom(*_a, **_k):
+        raise api_runner.ApiExecutionError(secret)
+
+    monkeypatch.setattr(flow_api, "run_flow_as_api", _boom)
+
+    with pytest.raises(HTTPException) as exc:
+        await flow_api.test_endpoint(ep.id, body=ApiTestRequest(params={}), current_user=user, db=db_session)
+    assert exc.value.status_code == 500
+    assert secret in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_public_route_503_when_saturated(db_session, tmp_path, monkeypatch):
+    """#3: a fully saturated concurrency semaphore yields a fast 503, not a queued run."""
+    _reg, ep, _user = _publish_via_db(db_session, tmp_path)
+    # No free slots -> the guard must reject before running the graph.
+    monkeypatch.setattr(flow_api, "_API_RUN_SEMAPHORE", asyncio.Semaphore(0))
+    request = SimpleNamespace(query_params={})
+
+    with pytest.raises(HTTPException) as exc:
+        await flow_api.run_published_flow(slug=ep.slug, request=request, endpoint=ep, db=db_session)
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_public_route_releases_semaphore_slot(db_session, tmp_path):
+    """The slot is released after a run so the endpoint isn't permanently saturated."""
+    _reg, ep, _user = _publish_via_db(db_session, tmp_path)
+    request = SimpleNamespace(query_params={"region": "US"})
+
+    out = await flow_api.run_published_flow(slug=ep.slug, request=request, endpoint=ep, db=db_session)
+    assert out["data"] == [{"region": "US", "v": 2}]
+    # The module-level semaphore is back to its full count (nothing leaked).
+    assert not flow_api._API_RUN_SEMAPHORE.locked()
+
+
+def test_concurrent_publish_returns_409(db_session, tmp_path, monkeypatch):
+    """#21: a UNIQUE-constraint race at commit surfaces as 409, not a raw 500."""
+    flow_path = tmp_path / "flow.yaml"
+    _build_and_save_flow(flow_path, "records")
+    reg = db_models.FlowRegistration(flow_uuid=str(uuid4()), name="api_flow", flow_path=str(flow_path), owner_id=1)
+    db_session.add(reg)
+    db_session.commit()
+    db_session.refresh(reg)
+    user = SimpleNamespace(id=1)
+
+    # Simulate a racing publisher that wins the slug between our pre-check and our
+    # commit: the UNIQUE constraint then raises IntegrityError on commit.
+    def _racing_commit():
+        raise IntegrityError("INSERT", {}, Exception("UNIQUE constraint failed: flow_api_endpoints.slug"))
+
+    monkeypatch.setattr(db_session, "commit", _racing_commit)
+
+    with pytest.raises(HTTPException) as exc:
+        flow_api.publish_endpoint(
+            ApiEndpointCreate(registration_id=reg.id, slug="sales"), current_user=user, db=db_session
+        )
+    assert exc.value.status_code == 409
+
+
+def test_key_enable_disable_toggle(db_session, tmp_path):
+    """#9: PATCH toggles FlowApiKey.enabled, and a disabled key stops authenticating."""
+    _reg, ep, user = _publish_via_db(db_session, tmp_path)
+    created = flow_api.create_key(ep.id, ApiKeyCreate(name="prod"), current_user=user, db=db_session)
+    raw = created.api_key
+
+    # A fresh key authenticates.
+    assert api_key_mod.verify_api_key(slug=ep.slug, x_api_key=raw, db=db_session).id == ep.id
+
+    # Disable it in place (revoke without deleting).
+    updated = flow_api.update_key(ep.id, created.id, ApiKeyUpdate(enabled=False), current_user=user, db=db_session)
+    assert updated.enabled is False
+    with pytest.raises(HTTPException) as exc:
+        api_key_mod.verify_api_key(slug=ep.slug, x_api_key=raw, db=db_session)
+    assert exc.value.status_code == 401  # disabled key is rejected
+
+    # Re-enable it and it works again.
+    updated = flow_api.update_key(ep.id, created.id, ApiKeyUpdate(enabled=True), current_user=user, db=db_session)
+    assert updated.enabled is True
+    assert api_key_mod.verify_api_key(slug=ep.slug, x_api_key=raw, db=db_session).id == ep.id
+
+
+def test_update_key_rejects_foreign_key(db_session, tmp_path):
+    """A key belonging to another endpoint can't be toggled via this endpoint's path."""
+    _reg, ep, user = _publish_via_db(db_session, tmp_path)
+    # A key row scoped to a different endpoint id.
+    other = db_models.FlowApiKey(
+        endpoint_id=ep.id + 999, owner_id=1, name="other", key_hash="x", key_prefix="ffk_x"
+    )
+    db_session.add(other)
+    db_session.commit()
+    db_session.refresh(other)
+    with pytest.raises(HTTPException) as exc:
+        flow_api.update_key(ep.id, other.id, ApiKeyUpdate(enabled=False), current_user=user, db=db_session)
+    assert exc.value.status_code == 404
+
+
+def test_get_endpoint_advertises_effective_specs(db_session, tmp_path):
+    """#11: get_endpoint advertises the runtime-effective params, dropping stale overrides."""
+    _reg, ep, user = _publish_via_db(db_session, tmp_path)
+    # Inject a stale stored override for a param the flow no longer has ("ghost").
+    ep.param_schema_json = flow_api._dump_param_schema(
+        [ApiParamSpec(name="region", type="string"), ApiParamSpec(name="ghost", type="string")]
+    )
+    db_session.commit()
+
+    out = flow_api.get_endpoint(ep.id, current_user=user, db=db_session)
+    # Only the flow's real ${region} param is advertised; "ghost" is dropped, matching
+    # what the runner enforces.
+    assert [p.name for p in out.parameters] == ["region"]

@@ -48,7 +48,7 @@
     <!-- Published -->
     <div v-else class="api-config">
       <div class="api-row api-status-row">
-        <el-switch v-model="enabled" :loading="busy" size="small" @change="saveEndpoint" />
+        <el-switch v-model="enabled" :loading="busy" size="small" @change="toggleEnabled" />
         <span class="status-label">{{ enabled ? "Enabled" : "Disabled" }}</span>
         <span class="endpoint-method">GET</span>
         <code class="code-chip">{{ fullUrl }}</code>
@@ -322,6 +322,7 @@ async function load() {
   newKey.value = null;
   testResult.value = null;
   testError.value = null;
+  testValues.value = {};
   try {
     const [ep, fParams] = await Promise.all([
       FlowApiApi.getEndpointForFlow(props.flow.id),
@@ -378,6 +379,31 @@ async function saveEndpoint() {
     rebuildParamRows(ep.parameters);
     ElMessage.success("Saved");
   } catch (e: any) {
+    // The save failed, so the server state is unchanged. Element Plus has already
+    // mutated the bound model (notably the Enabled switch flips before @change),
+    // so restore slug/enabled from the last known server endpoint to avoid showing
+    // a state the server never persisted.
+    syncFromEndpoint(endpoint.value);
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to save");
+  } finally {
+    busy.value = false;
+  }
+}
+
+// The Enabled switch saves itself with a parameters-free payload, so flipping it
+// never persists unsaved param-table edits — those are committed only by the
+// explicit "Save changes" button.
+async function toggleEnabled() {
+  if (!endpoint.value) return;
+  busy.value = true;
+  try {
+    const ep = await FlowApiApi.updateEndpoint(endpoint.value.id, { enabled: enabled.value });
+    syncFromEndpoint(ep);
+    ElMessage.success(enabled.value ? "Enabled" : "Disabled");
+  } catch (e: any) {
+    // Element Plus flips enabled.value before @change fires; on failure restore the
+    // last known server state so the toggle can't show something unpersisted.
+    syncFromEndpoint(endpoint.value);
     ElMessage.error(e?.response?.data?.detail ?? "Failed to save");
   } finally {
     busy.value = false;
@@ -457,8 +483,10 @@ async function runTest() {
   testError.value = null;
   testResult.value = null;
   try {
+    // Iterate the live param rows (same source as testRequestUrl) so the executed
+    // test matches the displayed Request URL even when params are edited but unsaved.
     const sent: Record<string, string> = {};
-    for (const p of endpoint.value.parameters) {
+    for (const p of params.value) {
       const v = testValues.value[p.name];
       if (v !== undefined && v !== "") sent[p.name] = v;
     }
@@ -540,12 +568,8 @@ watch(() => props.flow.id, load, { immediate: true });
 .param-table {
   margin-top: 8px;
 }
-/* Compact table action buttons: drop the global small-button padding so they
-   don't overflow/clip inside their narrow action columns. */
-.param-delete-btn.el-button--small {
-  padding: 4px;
-  min-width: 0;
-}
+/* Compact the revoke button: drop the global small-button padding so it
+   doesn't overflow/clip inside its narrow action column. */
 .key-revoke-btn.el-button--small {
   padding: 4px 6px;
   min-width: 0;

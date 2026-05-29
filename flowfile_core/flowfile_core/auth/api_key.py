@@ -67,7 +67,10 @@ def verify_api_key(
         )
         .first()
     )
-    if key is None or not _secrets.compare_digest(key.key_hash, key_hash) or _is_expired(key.expires_at):
+    # Security rests on the high-entropy token plus the hashed-column lookup: the
+    # WHERE clause above already requires an exact key_hash match, so a further
+    # constant-time compare here would always be True and adds nothing.
+    if key is None or _is_expired(key.expires_at):
         raise unauthorized
 
     endpoint = db.get(db_models.FlowApiEndpoint, key.endpoint_id)

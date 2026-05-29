@@ -16,16 +16,19 @@ from pathlib import Path
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.api_key import generate_api_key, verify_api_key
 from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.configs import logger
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 from flowfile_core.flowfile.api_runner import (
     ApiConfigError,
     ApiExecutionError,
     ApiParamError,
+    _effective_specs,
     run_flow_as_api,
 )
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
@@ -36,12 +39,20 @@ from flowfile_core.schemas.flow_api_schema import (
     ApiKeyCreate,
     ApiKeyCreated,
     ApiKeyOut,
+    ApiKeyUpdate,
     ApiParamSpec,
     ApiTestRequest,
     FlowParamInfo,
 )
 
 _API_RUN_TIMEOUT = float(os.environ.get("FLOWFILE_API_RUN_TIMEOUT_SECONDS", "120"))
+
+# Global cap on concurrent public API runs. Each request executes a full graph
+# synchronously on a worker thread, so an unbounded fan-in could exhaust the
+# threadpool and memory. Requests beyond the cap get a fast 503 instead of
+# queueing. (Per-flow serialization is handled separately, in the runner.)
+_API_MAX_CONCURRENT_RUNS = int(os.environ.get("FLOWFILE_API_MAX_CONCURRENT_RUNS", "4"))
+_API_RUN_SEMAPHORE = asyncio.Semaphore(_API_MAX_CONCURRENT_RUNS)
 
 data_router = APIRouter(tags=["flow_api"])
 management_router = APIRouter(prefix="/flow-api", tags=["flow_api"])
@@ -62,16 +73,25 @@ def _dump_param_schema(specs: list[ApiParamSpec]) -> str:
     return json.dumps([spec.model_dump() for spec in specs])
 
 
-def _endpoint_out(ep: db_models.FlowApiEndpoint, db: Session) -> ApiEndpointOut:
-    registration = db.get(db_models.FlowRegistration, ep.registration_id)
+def _endpoint_out(
+    ep: db_models.FlowApiEndpoint,
+    registration: db_models.FlowRegistration | None,
+    parameters: list[ApiParamSpec] | None = None,
+) -> ApiEndpointOut:
+    """Serialize an endpoint for the API.
+
+    ``registration`` supplies ``flow_name`` (pass the looked-up row, or None if it
+    is gone); callers fetch it so a list response can batch the lookup. When
+    ``parameters`` is omitted the stored ``param_schema_json`` is used verbatim;
+    pass an explicit list to advertise the runtime-effective specs instead.
+    """
     return ApiEndpointOut(
         id=ep.id,
         registration_id=ep.registration_id,
         owner_id=ep.owner_id,
         slug=ep.slug,
         enabled=ep.enabled,
-        response_node_id=ep.response_node_id,
-        parameters=_parse_param_schema(ep.param_schema_json),
+        parameters=parameters if parameters is not None else _parse_param_schema(ep.param_schema_json),
         path=f"/api/data/{ep.slug}",
         flow_name=registration.name if registration else None,
         created_at=ep.created_at,
@@ -137,17 +157,33 @@ async def run_published_flow(
     flow_path = registration.flow_path
     owner_id = endpoint.owner_id
 
+    # Reject fast with 503 when every run slot is busy rather than queueing
+    # unbounded synchronous graph runs onto the threadpool. Checked-then-acquired
+    # without an await in between, so the acquire never blocks (single event loop).
+    if _API_RUN_SEMAPHORE.locked():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Server is busy handling other API requests; please retry shortly.",
+        )
+
     def _run():
         return run_flow_as_api(flow_path, owner_id, specs, query)
 
+    await _API_RUN_SEMAPHORE.acquire()
     try:
         return await asyncio.wait_for(anyio.to_thread.run_sync(_run), timeout=_API_RUN_TIMEOUT)
     except ApiParamError as exc:
+        # Parameter errors describe the caller's own input and are safe to return.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (ApiConfigError, ApiExecutionError) as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # Don't leak node-level detail (file paths, SQL, column names) to the public
+        # caller; log it server-side for the owner/operator to inspect instead.
+        logger.error("Published flow '%s' failed: %s", slug, exc)
+        raise HTTPException(status_code=500, detail="Flow execution failed") from exc
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="Flow execution timed out") from exc
+    finally:
+        _API_RUN_SEMAPHORE.release()
 
 
 # ---------------------------------------------------------------------------
@@ -170,19 +206,27 @@ def publish_endpoint(
     if db.query(db_models.FlowApiEndpoint).filter_by(slug=body.slug).first() is not None:
         raise HTTPException(status_code=409, detail="Slug already in use")
 
-    response_node_id = _resolve_api_node_id(registration.flow_path, current_user.id)
+    # Validate the flow has exactly one api_response node (raises 400 otherwise).
+    # The node id is intentionally not persisted: the runner re-scans the flow at
+    # request time, so a stored id could only go stale against an edited flow.
+    _resolve_api_node_id(registration.flow_path, current_user.id)
     ep = db_models.FlowApiEndpoint(
         registration_id=body.registration_id,
         owner_id=current_user.id,
         slug=body.slug,
         enabled=body.enabled,
-        response_node_id=response_node_id,
         param_schema_json=_dump_param_schema(body.parameters),
     )
     db.add(ep)
-    db.commit()
+    # The pre-checks above aren't atomic with the UNIQUE constraints (slug,
+    # registration_id); a concurrent publisher can still win the race to commit.
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Flow is already published or the slug is in use") from exc
     db.refresh(ep)
-    return _endpoint_out(ep, db)
+    return _endpoint_out(ep, registration)
 
 
 @management_router.get("/endpoints", response_model=list[ApiEndpointOut])
@@ -195,7 +239,18 @@ def list_endpoints(
     query = db.query(db_models.FlowApiEndpoint).filter(db_models.FlowApiEndpoint.owner_id == current_user.id)
     if registration_id is not None:
         query = query.filter(db_models.FlowApiEndpoint.registration_id == registration_id)
-    return [_endpoint_out(ep, db) for ep in query.all()]
+    endpoints = query.all()
+    # Batch-fetch the registrations (for flow_name) in one query to avoid N+1.
+    reg_ids = {ep.registration_id for ep in endpoints}
+    reg_by_id = (
+        {
+            reg.id: reg
+            for reg in db.query(db_models.FlowRegistration).filter(db_models.FlowRegistration.id.in_(reg_ids)).all()
+        }
+        if reg_ids
+        else {}
+    )
+    return [_endpoint_out(ep, reg_by_id.get(ep.registration_id)) for ep in endpoints]
 
 
 @management_router.get("/flows/{registration_id}/parameters", response_model=list[FlowParamInfo])
@@ -226,7 +281,20 @@ def get_endpoint(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    return _endpoint_out(_get_owned_endpoint(db, endpoint_id, current_user.id), db)
+    ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
+    registration = db.get(db_models.FlowRegistration, ep.registration_id)
+    # Advertise the parameters the runner will actually enforce: the flow's own
+    # ${name} params refined by the stored type overrides (api_runner._effective_specs).
+    # Overrides for params no longer in the flow are dropped, matching runtime
+    # behavior. Falls back to the stored specs if the flow file can't be opened.
+    parameters = _parse_param_schema(ep.param_schema_json)
+    if registration and registration.flow_path:
+        try:
+            flow = open_flow(Path(registration.flow_path), user_id=current_user.id)
+            parameters = _effective_specs(flow, parameters)
+        except Exception:  # noqa: BLE001 - degrade to stored specs on load failure
+            pass
+    return _endpoint_out(ep, registration, parameters=parameters)
 
 
 @management_router.put("/endpoints/{endpoint_id}", response_model=ApiEndpointOut)
@@ -250,13 +318,20 @@ def update_endpoint(
         ep.enabled = body.enabled
     if body.parameters is not None:
         ep.param_schema_json = _dump_param_schema(body.parameters)
-    db.commit()
+    # The slug pre-check above isn't atomic with the UNIQUE constraint; surface a
+    # racing committer as 409 rather than a raw 500.
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Slug already in use") from exc
     db.refresh(ep)
-    return _endpoint_out(ep, db)
+    registration = db.get(db_models.FlowRegistration, ep.registration_id)
+    return _endpoint_out(ep, registration)
 
 
 @management_router.post("/endpoints/{endpoint_id}/test")
-def test_endpoint(
+async def test_endpoint(
     endpoint_id: int,
     body: ApiTestRequest | None = None,
     current_user=Depends(get_current_active_user),
@@ -265,7 +340,9 @@ def test_endpoint(
     """Owner-only 'try it': run the published flow with the given params and return the JSON.
 
     Runs as the endpoint owner without requiring an API key, so the owner can test
-    the endpoint from the catalog UI. Mirrors the public endpoint's behavior.
+    the endpoint from the catalog UI. Mirrors the public endpoint's execution and
+    timeout behavior; unlike the public route it returns verbose error detail, since
+    the caller is the authenticated owner.
     """
     ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
     registration = db.get(db_models.FlowRegistration, ep.registration_id)
@@ -273,12 +350,20 @@ def test_endpoint(
         raise HTTPException(status_code=404, detail="Flow not found")
     specs = _parse_param_schema(ep.param_schema_json)
     params = dict(body.params) if body else {}
+    flow_path = registration.flow_path
+    owner_id = ep.owner_id
+
+    def _run():
+        return run_flow_as_api(flow_path, owner_id, specs, params)
+
     try:
-        return run_flow_as_api(registration.flow_path, ep.owner_id, specs, params)
+        return await asyncio.wait_for(anyio.to_thread.run_sync(_run), timeout=_API_RUN_TIMEOUT)
     except ApiParamError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (ApiConfigError, ApiExecutionError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Flow execution timed out") from exc
 
 
 @management_router.delete("/endpoints/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -328,6 +413,26 @@ def list_keys(
     ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
     keys = db.query(db_models.FlowApiKey).filter(db_models.FlowApiKey.endpoint_id == ep.id).all()
     return [_key_out(k) for k in keys]
+
+
+@management_router.patch("/endpoints/{endpoint_id}/keys/{key_id}", response_model=ApiKeyOut)
+def update_key(
+    endpoint_id: int,
+    key_id: int,
+    body: ApiKeyUpdate,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Enable or disable an API key in place (revoke without deleting it)."""
+    ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
+    key = db.get(db_models.FlowApiKey, key_id)
+    if key is None or key.endpoint_id != ep.id:
+        raise HTTPException(status_code=404, detail="Key not found")
+    if body.enabled is not None:
+        key.enabled = body.enabled
+    db.commit()
+    db.refresh(key)
+    return _key_out(key)
 
 
 @management_router.delete("/endpoints/{endpoint_id}/keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)

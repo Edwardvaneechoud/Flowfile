@@ -17,6 +17,8 @@ from flowfile_core.database.models import (
     CatalogTable,
     CatalogTableReadLink,
     CatalogVisualization,
+    FlowApiEndpoint,
+    FlowApiKey,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -394,6 +396,23 @@ class SQLAlchemyCatalogRepository:
         # Clean up related records first
         self._db.query(FlowFavorite).filter_by(registration_id=registration_id).delete()
         self._db.query(FlowFollow).filter_by(registration_id=registration_id).delete()
+        # Remove published API endpoints and their keys. SQLite FK enforcement is
+        # off so these don't cascade: a leftover key would stay enabled (a real
+        # revocation gap) and the unique slug would stay occupied, blocking
+        # republish. Delete keys first (they reference the endpoint), then endpoints.
+        endpoint_ids = [
+            row[0]
+            for row in self._db.query(FlowApiEndpoint.id)
+            .filter(FlowApiEndpoint.registration_id == registration_id)
+            .all()
+        ]
+        if endpoint_ids:
+            self._db.query(FlowApiKey).filter(FlowApiKey.endpoint_id.in_(endpoint_ids)).delete(
+                synchronize_session=False
+            )
+            self._db.query(FlowApiEndpoint).filter(FlowApiEndpoint.id.in_(endpoint_ids)).delete(
+                synchronize_session=False
+            )
         # Hard-delete any soft-deleted artifacts referencing this flow
         self._db.query(GlobalArtifact).filter_by(
             source_registration_id=registration_id,
