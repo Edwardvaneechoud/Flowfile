@@ -140,12 +140,35 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: npx tauri build --target ${{ matrix.target }} ${{ matrix.tauri_args }}
 
+      # Tauri names the macOS updater bundle `Flowfile.app.tar.gz(.sig)` with NO
+      # architecture in the filename, so the arm64 and x86_64 builds produce
+      # identically-named files that collide as GitHub release assets (the
+      # symptom is a misleading 404 from action-gh-release on the 2nd upload).
+      # Rename them per-arch; the signature signs the archive *contents*, not the
+      # filename, so renaming is safe.
+      - name: Disambiguate macOS updater artifacts per arch
+        if: startsWith(matrix.platform, 'macos')
+        working-directory: flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/macos
+        run: |
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin) arch=aarch64 ;;
+            x86_64-apple-darwin)  arch=x64 ;;
+            *) echo "unexpected target ${{ matrix.target }}"; exit 1 ;;
+          esac
+          for ext in "" ".sig"; do
+            src="Flowfile.app.tar.gz${ext}"
+            dst="Flowfile_${arch}.app.tar.gz${ext}"
+            if [ -f "$src" ]; then mv "$src" "$dst"; echo "renamed $src -> $dst"; fi
+          done
+          ls -la
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: bundle-${{ matrix.target }}
           path: |
             flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/Flowfile_*.dmg
+            flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Flowfile_*.app.tar.gz
             flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/Flowfile_*-setup.exe
             flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/deb/Flowfile_*.deb
           if-no-files-found: error
@@ -176,6 +199,9 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"
+          # Tags with a suffix (v0.10.1-rc.1, -test, -beta) are flagged as
+          # GitHub pre-releases so test builds never become the public "Latest".
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             artifacts/bundle-*/**/Flowfile_*
             artifacts/signature-*/**/*.sig
