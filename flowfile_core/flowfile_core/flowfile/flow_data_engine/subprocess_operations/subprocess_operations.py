@@ -3,7 +3,6 @@ import io
 import json
 import threading
 from base64 import b64decode
-from time import sleep
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -230,6 +229,37 @@ def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWr
     if not f.ok:
         raise Exception(f"trigger_cloud_storage_write: Could not cache the data, {f.text}")
     return Status(**f.json())
+
+
+def trigger_write_output(
+    lf: pl.LazyFrame,
+    data_type: str,
+    path: str,
+    write_mode: str,
+    flow_id: int,
+    node_id: int | str,
+    sheet_name: str | None = None,
+    delimiter: str | None = None,
+) -> Status:
+    from base64 import encodebytes
+
+    serializable_df = lf.serialize()
+    r = requests.post(
+        f"{WORKER_URL}/write_results/",
+        json={
+            "operation": encodebytes(serializable_df).decode(),
+            "data_type": data_type,
+            "path": path,
+            "write_mode": write_mode,
+            "sheet_name": sheet_name,
+            "delimiter": delimiter,
+            "flowfile_node_id": node_id,
+            "flowfile_flow_id": flow_id,
+        },
+    )
+    if not r.ok:
+        raise Exception(f"trigger_write_output: Could not write the data, {r.text}")
+    return Status(**r.json())
 
 
 def trigger_catalog_materialize(
@@ -843,8 +873,8 @@ class BaseFetcher:
                 self._result = result
                 self._running = False
                 self._ws = None
+                self.status = status
                 self._condition.notify_all()
-            self.status = status
         except Exception as e:
             logger.exception("Error in WebSocket receive thread")
             with self._condition:
@@ -1107,96 +1137,40 @@ class ExternalCloudWriter(BaseFetcher):
             _ = self.get_result()
 
 
-class ExternalExecutorTracker:
-    result: pl.LazyFrame | None
-    started: bool = False
-    running: bool = False
-    error_code: int = 0
-    error_description: str | None = None
-    file_ref: str = None
+class ExternalOutputWriter(BaseFetcher):
+    """Writes output to disk via the worker's /write_results/ endpoint.
 
-    def __init__(self, initial_response: Status, wait_on_completion: bool = True):
-        self.file_ref = initial_response.background_task_id
-        self.stop_event = threading.Event()
-        self.thread = threading.Thread(target=self._fetch_cached_df)
-        self.result = None
-        self.error_description = None
-        self.running = initial_response.status == "Processing"
-        self.condition = threading.Condition()
+    Inherits BaseFetcher.cancel(), so a flow cancel propagates to the worker
+    as a POST /cancel_task/{task_id} and terminates the running sink process.
+    """
+
+    def __init__(
+        self,
+        lf: pl.LazyFrame | pl.DataFrame,
+        data_type: str,
+        path: str,
+        write_mode: str,
+        flow_id: int,
+        node_id: int | str,
+        sheet_name: str | None = None,
+        delimiter: str | None = None,
+        wait_on_completion: bool = True,
+    ):
+        lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
+        r = trigger_write_output(
+            lf=lf,
+            data_type=data_type,
+            path=path,
+            write_mode=write_mode,
+            sheet_name=sheet_name,
+            delimiter=delimiter,
+            flow_id=flow_id,
+            node_id=node_id,
+        )
+        super().__init__(file_ref=r.background_task_id)
+        self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
-
-    def _fetch_cached_df(self):
-        with self.condition:
-            if self.running:
-                logger.info("Already running the fetching")
-                return
-            sleep_time = 1
-            self.running = True
-            while not self.stop_event.is_set():
-                try:
-                    r = requests.get(f"{WORKER_URL}/status/{self.file_ref}")
-                    if r.status_code == 200:
-                        status = Status(**r.json())
-                        if status.status == "Completed":
-                            self.running = False
-                            self.condition.notify_all()  # Notify all waiting threads
-                            if status.result_type == "polars":
-                                self.result = get_df_result(status.results)
-                            else:
-                                self.result = status.results
-                            return
-                        elif status.status == "Error":
-                            self.error_code = 1
-                            self.error_description = status.error_message
-                            break
-                        elif status.status == "Unknown Error":
-                            self.error_code = -1
-                            self.error_description = (
-                                "There was an unknown error with the process, and the process got killed by the server"
-                            )
-                            break
-                    else:
-                        self.error_description = r.text
-                        self.error_code = 2
-                        break
-                except requests.RequestException as e:
-                    self.error_code = 2
-                    self.error_description = f"Request failed: {e}"
-                    break
-
-                sleep(sleep_time)
-                # logger.info('Fetching the data')
-
-            logger.warning("Fetch operation cancelled")
-            if self.error_description is not None:
-                self.running = False
-                logger.warning(self.error_description)
-                self.condition.notify_all()
-                return
-
-    def start(self):
-        self.started = True
-        if self.running:
-            logger.info("Already running the fetching")
-            return
-        self.thread.start()
-
-    def cancel(self):
-        logger.warning("Cancelling the operation")
-        self.thread.join()
-
-        self.running = False
-
-    def get_result(self) -> pl.LazyFrame | Any | None:
-        if not self.started:
-            self.start()
-        with self.condition:
-            while self.running and self.result is None:
-                self.condition.wait()  # Wait until notified
-        if self.error_description is not None:
-            raise Exception(self.error_description)
-        return self.result
 
 
 def fetch_unique_values(lf: pl.LazyFrame) -> list[str]:
