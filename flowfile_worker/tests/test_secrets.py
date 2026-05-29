@@ -78,6 +78,18 @@ class TestGetDockerSecretKey:
         with pytest.raises(RuntimeError, match="not a valid Fernet key"):
             get_docker_secret_key()
 
+    def test_quoted_env_key_is_normalized(self, monkeypatch):
+        from cryptography.fernet import Fernet
+        valid_key = Fernet.generate_key().decode()
+        monkeypatch.setenv("FLOWFILE_MASTER_KEY", f'"{valid_key}"')
+        assert get_docker_secret_key() == valid_key
+
+    def test_whitespace_env_key_is_normalized(self, monkeypatch):
+        from cryptography.fernet import Fernet
+        valid_key = Fernet.generate_key().decode()
+        monkeypatch.setenv("FLOWFILE_MASTER_KEY", f"  {valid_key}\n")
+        assert get_docker_secret_key() == valid_key
+
 
 class TestDeriveUserKey:
     """Test derive_user_key function."""

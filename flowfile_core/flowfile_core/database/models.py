@@ -614,3 +614,37 @@ class AiProviderCredential(Base):
     api_key_secret = relationship("Secret", foreign_keys=[api_key_secret_id], lazy="joined")
 
     __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_ai_provider_per_user"),)
+
+
+# ==================== Secret Access Audit ====================
+
+
+class SecretAccessEvent(Base):
+    """One row per attempted access to a user's secret.
+
+    Captures CRUD activity routed through the secrets API (create/list/read/
+    delete). The intent is operator-visible forensics ("who touched what,
+    when, from where") rather than per-decrypt accounting — deep-stack decrypt
+    calls during flow execution are deliberately *not* logged here to keep the
+    audit table from being dominated by routine flow runs.
+
+    ``secret_id`` is FK-with-SET-NULL so deleting a secret retains the audit
+    trail; ``secret_name`` is duplicated as plain text for the same reason.
+    """
+
+    __tablename__ = "secret_access_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    secret_id = Column(
+        Integer,
+        ForeignKey("secrets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    secret_name = Column(String, nullable=True, index=True)
+    action = Column(String, nullable=False, index=True)  # 'create' | 'list' | 'read' | 'delete'
+    result_status = Column(String, nullable=False)  # 'success' | 'error'
+    error = Column(Text, nullable=True)
+    source = Column(String, nullable=False, default="api", server_default="api")
+    ip_address = Column(String, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False, index=True)

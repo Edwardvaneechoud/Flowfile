@@ -149,6 +149,7 @@ nav:
     - Core Internals: for-developers/flowfile-core.md
     - Internal API Reference: for-developers/python-api-reference.md
     - Kernel Architecture: for-developers/kernel-architecture.md
+    - Secret Storage: for-developers/secret-storage.md
     - AI Integration Architecture: for-developers/ai-architecture.md
     - Visualizations & Graphic Walker: for-developers/visualizations.md
     - Create Custom Nodes: for-developers/creating-custom-nodes.md

@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from flowfile_core.auth.secrets import generate_master_key, is_master_key_configured
+from flowfile_core.auth.secrets import _key_fingerprint, generate_master_key, is_master_key_configured
 
 router = APIRouter()
 
@@ -21,6 +21,7 @@ class GeneratedKey(BaseModel):
     """Response model for the generate key endpoint."""
 
     key: str
+    fingerprint: str
     instructions: str
 
 
@@ -46,8 +47,13 @@ async def get_setup_status():
 async def generate_key():
     """Generate a new master encryption key."""
     key = generate_master_key()
+    fingerprint = _key_fingerprint(key)
     instructions = (
+        "BACK UP THIS KEY. If you lose it, every secret encrypted by this "
+        "Flowfile instance becomes permanently unrecoverable — there is no "
+        "recovery path.\n\n"
+        f"Key fingerprint (for verifying backups): {fingerprint}\n\n"
         f'Add to your .env file:\n  FLOWFILE_MASTER_KEY="{key}"\n\n'
         "Then restart: docker-compose down && docker-compose up"
     )
-    return GeneratedKey(key=key, instructions=instructions)
+    return GeneratedKey(key=key, fingerprint=fingerprint, instructions=instructions)
