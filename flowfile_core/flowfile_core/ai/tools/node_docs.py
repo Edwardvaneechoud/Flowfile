@@ -395,6 +395,18 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         '"/tmp/outputs", "output_csv_table": null}}. '
         "Often the last node in a flow."
     ),
+    "api_response": (
+        "Mark the upstream output as the body of an HTTP API response. Use as the "
+        "terminal node of a flow you intend to publish as an API endpoint — the "
+        "data reaching this node is serialized and returned to the caller. During "
+        "interactive runs it is a pass-through (output equals input), so previews "
+        "keep working. Don't use to write a file — use 'output'; don't use to "
+        "persist to a database — use 'database_writer'. Settings: orientation "
+        "('records' = a list of row objects, the default; 'columns' = "
+        "column-oriented arrays) and an optional max_rows cap on the payload. "
+        'Example: {"orientation": "records", "max_rows": 100}. '
+        "Often the last node in a flow that is published as an endpoint."
+    ),
     "read": (
         "Read a local file (csv, parquet, excel, json) into the flow. Use as the "
         "first step when the data lives on disk. Schema is inferred (csv) or "
@@ -794,6 +806,19 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "the Parquet tab. Pitfall: 'Write data' is for local files. "
         "For S3 / GCS / Azure use 'Write to cloud provider'; for a "
         "database use 'Write to Database'."
+    ),
+    "api_response": (
+        "Settings panel: an 'Orientation' choice (Records — a list of "
+        "row objects, the default; or Columns — column-oriented arrays) "
+        "and an optional 'Max rows' cap on the returned payload. Worked "
+        "example: 'expose the cleaned orders as a JSON API' → drag 'API "
+        "response' from Output Operations onto the final node, leave "
+        "orientation=Records, optionally set Max rows=1000, then publish "
+        "the flow as an endpoint. Pitfall: this is for flows served over "
+        "HTTP — it does not save anything to disk. To write a file use "
+        "'Write data'; to persist to a database use 'Write to Database'. "
+        "In normal interactive runs it just passes its input through, so "
+        "previews still work."
     ),
     "read": (
         "Settings panel: a 'File Specs' section where the user picks a "

@@ -58,6 +58,7 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "explore_data": "static",
     "union": "static",
     "output": "static",
+    "api_response": "static",
     "read": "source",
     "database_reader": "source",
     "database_writer": "static",
