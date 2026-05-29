@@ -52,6 +52,13 @@ pub fn run() {
             let handle = app.handle().clone();
 
             tauri::async_runtime::spawn(async move {
+                // TODO(I): no stale-process sweep on launch. If a previous Tauri
+                // shell was hard-killed (SIGKILL/crash), its sidecar groups have
+                // no reaper and keep running; the port-pair scan just steps over
+                // them onto the next free pair, so they linger forever. Consider
+                // a per-instance PID file (the port-pair design means several
+                // instances can run, so a single global sweep would be wrong)
+                // checked here to reap leftovers from a crashed predecessor.
                 {
                     let state: Arc<AppState> = handle.state::<Arc<AppState>>().inner().clone();
                     let mut s = state.services_status.lock();
@@ -67,6 +74,11 @@ pub fn run() {
                     Ok(ports) => {
                         if let Err(err) = create_main_window(&handle, ports) {
                             log::error!("failed to create main window: {}", err);
+                            // Services came up (readiness passed) but we have no window to
+                            // host them. They're healthy and listening on the allocated
+                            // ports, so reap them gracefully (HTTP /shutdown → signal)
+                            // rather than leaving them dangling.
+                            sidecar::shutdown::shutdown_all(&handle).await;
                             window::show_error(&handle, format!("Failed to create main window: {err}"));
                             return;
                         }
@@ -75,6 +87,17 @@ pub fn run() {
                     }
                     Err(err) => {
                         log::error!("services failed to start: {}", err);
+                        // start_services spawns core+worker *before* awaiting readiness
+                        // (see sidecar/mod.rs), so a readiness timeout — or a worker spawn
+                        // failure after core already started — can leave live sidecars
+                        // here. Reap them before showing the error: otherwise each
+                        // sidecar's wait-task sees is_shutting_down == false and respawns
+                        // it up to MAX_RESTARTS, leaving self-restarting orphans behind the
+                        // error window (the dangling-process symptom). We kill by PID
+                        // instead of POSTing /shutdown because the ports may be unresponsive
+                        // (often *why* readiness failed) and, in the NoFreePortPair case,
+                        // were never ours — they may belong to another Flowfile instance.
+                        sidecar::shutdown::kill_spawned(&handle);
                         {
                             let state: Arc<AppState> =
                                 handle.state::<Arc<AppState>>().inner().clone();
@@ -90,6 +113,13 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // TODO(D): startup-phase exit race. If the user quits (closing this
+            // window or the loading window → RunEvent::ExitRequested below) while
+            // the setup task is still inside start_services, shutdown can run
+            // before the sidecar PIDs are stored, so the spawn that lands after
+            // shutdown is never reaped. Fix 1 + the is_shutting_down guard cover
+            // the common cases; closing the gap fully needs start_services to
+            // check is_shutting_down before each spawn (and abort cleanly).
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { .. } = event {
                     let app = window.app_handle().clone();

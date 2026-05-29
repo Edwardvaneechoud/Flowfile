@@ -878,6 +878,10 @@ export default function useDragAndDrop() {
       try {
         text = await navigator.clipboard.readText();
       } catch {
+        // TODO(G): same Tauri-WebView clipboard risk as Canvas.vue's
+        // handleCanvasPaste — async readText() may reject in the desktop shell,
+        // so context-menu tabular paste silently does nothing. Verify in a
+        // packaged build; surface feedback or use a Tauri clipboard read.
         return undefined;
       }
     }

@@ -33,6 +33,11 @@ function resolveCorePort(): number {
 // The base must be absolute because callers that use `new URL(path, base)`
 // (aiStreamClient / aiDiffClient) reject relative bases — `new URL(path, "/api/")`
 // throws "Invalid base URL".
+// TODO(H): verify dev-mode CORS. Under `tauri dev` the page origin is
+// http://localhost:8080 while this baseURL targets http://127.0.0.1:<port>/ —
+// a cross-origin request. Confirm flowfile_core's CORS allows the Tauri origin
+// (and tauri://localhost in a packaged build). Likely fine since the app runs,
+// but it's unverified; dev-only breakage would surface as blocked API calls.
 export const flowfileCorebaseURL = isDesktop
   ? `http://127.0.0.1:${resolveCorePort()}/`
   : `${window.location.origin}/api/`;

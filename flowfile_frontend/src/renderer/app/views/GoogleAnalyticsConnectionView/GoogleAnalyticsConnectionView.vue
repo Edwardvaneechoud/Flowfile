@@ -305,6 +305,11 @@ const pollForGaOauthCompletion = (connectionName: string, wasLinkedBefore: boole
     } catch (error) {
       console.error("Error polling GA connections:", error);
     }
+    // TODO(E): silent failure. The desktop system-browser OAuth flow can't
+    // postMessage back, so we poll here. If the backend callback never completes,
+    // this just stops after 3 min with no user feedback (and the caught poll
+    // error above is console-only). Surface an ElMessage on timeout — and on
+    // repeated poll errors — so the user knows the connection didn't link.
     if (Date.now() > deadline) {
       isConnecting.value = false;
       return;

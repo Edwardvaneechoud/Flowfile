@@ -1,3 +1,11 @@
+// TODO(F): desktop E2E coverage gap. The Electron suites tests/app.spec.ts and
+// tests/complex-flow.spec.ts (service startup, window lifecycle, multi-node
+// flows) were deleted in the Tauri migration and not replaced — only this
+// web-mode spec and canvas-overlays.spec.ts remain. The area that regressed in
+// the migration (sidecar startup / port allocation / SHUTDOWN) is now untested.
+// Add a tauri-driver smoke test that launches the packaged shell, quits it both
+// ways (window close + Cmd+Q), and asserts no flowfile_core/flowfile_worker/viz-
+// processes survive. (CLAUDE.md already notes tauri-driver E2E as a follow-up.)
 import { test, expect, APIRequestContext } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';

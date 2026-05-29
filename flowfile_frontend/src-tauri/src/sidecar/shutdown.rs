@@ -44,6 +44,36 @@ pub async fn shutdown_all(app: &AppHandle) {
     kill_pid(worker_pid, "flowfile_worker");
 }
 
+/// Reap any sidecars we already spawned, **without** any network I/O. Used on
+/// the startup-failure path (`lib.rs`), where calling the full `shutdown_all`
+/// would be wrong: the ports may be unresponsive (often *why* startup failed),
+/// and in the `NoFreePortPair` case `state.ports` still holds the defaults —
+/// which may belong to another Flowfile instance, so POSTing `/shutdown` there
+/// could kill an unrelated app.
+///
+/// Sets `is_shutting_down` first so the supervisor's restart loop
+/// (`handle_termination` / its backoff sleep) won't respawn what we kill.
+pub fn kill_spawned(app: &AppHandle) {
+    let state: Arc<AppState> = app.state::<Arc<AppState>>().inner().clone();
+
+    {
+        let mut guard = state.is_shutting_down.lock();
+        if *guard {
+            return;
+        }
+        *guard = true;
+    }
+
+    let core_pid = state.core_pid.lock().take();
+    let worker_pid = state.worker_pid.lock().take();
+
+    if core_pid.is_some() || worker_pid.is_some() {
+        log::info!("startup failed — reaping spawned sidecars");
+    }
+    kill_pid(core_pid, "flowfile_core");
+    kill_pid(worker_pid, "flowfile_worker");
+}
+
 async fn http_shutdown(port: u16) {
     let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_millis(SHUTDOWN_TIMEOUT_MS))
@@ -76,6 +106,12 @@ fn kill_pid(pid: Option<u32>, name: &str) {
     log::info!("sent SIGTERM to {} (pid {})", name, pid);
 
     // Give the process a moment to exit cleanly, then SIGKILL if still alive.
+    // TODO(B): 500 ms is too short for a graceful drain. The worker's
+    // viz_session_registry.shutdown() can take up to ~10s to join its children
+    // (flowfile_worker/main.py + viz_sessions.py). The process-group SIGKILL
+    // below now reaps those children regardless, but to let them shut down
+    // *gracefully* we should poll `process_alive` in a short loop (a few
+    // seconds) before escalating to SIGKILL, instead of a fixed 500 ms sleep.
     std::thread::sleep(Duration::from_millis(500));
     if process_alive(pid) {
         if send_sigkill(pid) {
@@ -86,16 +122,23 @@ fn kill_pid(pid: Option<u32>, name: &str) {
 
 #[cfg(unix)]
 fn send_sigterm(pid: u32) -> bool {
-    use nix::sys::signal::{kill, Signal};
+    use nix::sys::signal::{killpg, Signal};
     use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), Signal::SIGTERM).is_ok()
+    // Signal the whole process group, not just the leader. Each sidecar is
+    // spawned with `process_group(0)` (see sidecar/mod.rs), so its pgid equals
+    // its own pid — `killpg(pid, …)` therefore reaps the worker AND the
+    // multiprocessing viz-session children it forked into the same group. A
+    // bare `kill(pid, …)` would leave those grandchildren orphaned on Unix.
+    // (Core's scheduled-flow runs use start_new_session=True and live in their
+    // own session, so they are intentionally outside this group and survive.)
+    killpg(Pid::from_raw(pid as i32), Signal::SIGTERM).is_ok()
 }
 
 #[cfg(unix)]
 fn send_sigkill(pid: u32) -> bool {
-    use nix::sys::signal::{kill, Signal};
+    use nix::sys::signal::{killpg, Signal};
     use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), Signal::SIGKILL).is_ok()
+    killpg(Pid::from_raw(pid as i32), Signal::SIGKILL).is_ok()
 }
 
 #[cfg(unix)]

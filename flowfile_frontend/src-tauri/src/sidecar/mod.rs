@@ -212,6 +212,16 @@ pub(crate) fn spawn_service(
         .stderr(Stdio::piped())
         .kill_on_drop(false);
 
+    // Put each sidecar in its own process group (pgid == this child's pid) so
+    // shutdown can signal the whole subtree in one call. The worker forks
+    // multiprocessing viz-session children that inherit this group, so the
+    // group SIGTERM/SIGKILL in shutdown.rs reaps them too — a plain kill(pid)
+    // on Unix would orphan those grandchildren. (Core's scheduled-flow runs use
+    // start_new_session=True to escape into their own session, so they are
+    // deliberately NOT in this group and survive app exit.)
+    #[cfg(unix)]
+    cmd.process_group(0);
+
     // The PyInstaller sidecars are console-subsystem binaries. Without this flag
     // Windows allocates a visible console window for each one when spawned from
     // the GUI shell. CREATE_NO_WINDOW suppresses those terminals; stdout/stderr
@@ -310,6 +320,11 @@ async fn handle_termination(
 
     if *state.is_shutting_down.lock() {
         log::debug!("{} terminated during shutdown, not restarting", kind.name());
+        // TODO(C): this early return leaves the stale pid in state, so
+        // shutdown.rs's `.take()` + killpg may target a process/group whose PID
+        // has been recycled. Clear the pid here too (as the restart path does
+        // just below) so shutdown skips the kill entirely once the process is
+        // known dead.
         return;
     }
 
@@ -363,6 +378,12 @@ async fn handle_termination(
 
     tokio::time::sleep(backoff).await;
 
+    // TODO(A): restart↔shutdown TOCTOU. This check and the pid-store inside
+    // spawn_service below are not atomic: shutdown_all/kill_spawned can set
+    // is_shutting_down and `.take()` the (currently None) pid in the gap
+    // between here and spawn_service writing the new pid — orphaning the
+    // freshly respawned sidecar. Fix: re-check is_shutting_down *after* spawn
+    // (and kill the new pid if set), or hold a guard across spawn + pid-store.
     if *state.is_shutting_down.lock() {
         return;
     }

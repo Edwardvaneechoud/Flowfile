@@ -835,6 +835,11 @@ const handleCanvasPaste = async (x: number, y: number, clipboardText?: string | 
     try {
       currentClipboard = await navigator.clipboard.readText();
     } catch {
+      // TODO(G): navigator.clipboard.readText() can reject in the Tauri WebView
+      // (permissions / secure-context differ from Electron). On the context-menu
+      // "paste-node" path there is no ClipboardEvent text to fall back on, so
+      // paste silently no-ops here. Verify in a packaged desktop build and, if it
+      // fails, surface a notice (or wire a Tauri clipboard-plugin read).
       currentClipboard = null;
     }
   }
