@@ -33,7 +33,7 @@ def create_spec_file(directory, script_name, output_name, hidden_imports):
     spec_content = f'''
 import sys
 import os
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
 
 # Add hook to fix connectorx metadata
 def get_connectorx_metadata():
@@ -172,6 +172,20 @@ for _pkg in _polars_plugins:
     except Exception as _e:
         print(f"WARN: could not collect plugin {{_pkg}}: {{_e}}")
 
+# litellm ships JSON data files (model_prices_and_context_window_backup.json,
+# policy_templates_backup.json, ...) read during `import litellm` via
+# importlib.resources.files("litellm"). collect_data_files grabs them;
+# collect_submodules covers litellm's dynamic provider imports; copy_metadata
+# satisfies importlib.metadata.version("litellm") lookups.
+litellm_hiddenimports = []
+litellm_datas = []
+try:
+    litellm_hiddenimports += collect_submodules('litellm')
+    litellm_datas += collect_data_files('litellm')
+    litellm_datas += copy_metadata('litellm')
+except Exception as _e:
+    print(f"WARN: could not collect litellm: {{_e}}")
+
 # Create runtime hook file
 with open('connectorx_hook.py', 'w') as f:
     f.write(create_runtime_hook())
@@ -179,8 +193,8 @@ with open('connectorx_hook.py', 'w') as f:
 a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
     binaries=plugin_binaries,
-    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + plugin_datas,
-    hiddenimports={hidden_imports} + plugin_hiddenimports + [
+    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + plugin_datas + litellm_datas,
+    hiddenimports={hidden_imports} + plugin_hiddenimports + litellm_hiddenimports + [
         'numpy',
         'numpy.core._dtype_ctypes',
         'numpy.core._methods',

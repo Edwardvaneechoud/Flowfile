@@ -121,6 +121,20 @@ export const desktop = {
     await invoke<void>("plugin:opener|open_url", { url });
   },
 
+  /**
+   * Read the OS clipboard as text. On desktop this goes through the native
+   * clipboard-manager plugin (NSPasteboard on macOS, granted via
+   * `clipboard-manager:allow-read-text` in capabilities/main.json) rather than
+   * the WebKit async Clipboard API — the latter pops macOS's native "Paste"
+   * confirmation pill on every programmatic read. In web mode we fall back to
+   * navigator.clipboard, where the browser's own permission model applies.
+   */
+  async readClipboardText(): Promise<string> {
+    if (!isDesktop) return navigator.clipboard.readText();
+    const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
+    return (await readText()) ?? "";
+  },
+
   onServicesStatus(handler: (status: ServicesStatus) => void): Promise<() => void> {
     return listen<ServicesStatus>("services-status", handler);
   },

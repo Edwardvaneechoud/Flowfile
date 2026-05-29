@@ -19,6 +19,7 @@
     "os:default",
     "opener:default",
     "updater:default",
-    "window-state:default"
+    "window-state:default",
+    "clipboard-manager:allow-read-text"
   ]
 }

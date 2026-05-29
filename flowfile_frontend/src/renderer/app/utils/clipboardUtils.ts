@@ -1,10 +1,15 @@
+import { desktop } from "../../lib/desktop";
+
 /**
  * Snapshots the current OS clipboard text into localStorage so paste handlers
  * can detect whether the user copied something externally after copying a node.
+ *
+ * Reads via desktop.readClipboardText() so the desktop shell uses the native
+ * clipboard plugin — the WebKit async read API would pop macOS's "Paste" pill.
  */
 export const snapshotClipboard = async (): Promise<void> => {
   try {
-    const text = await navigator.clipboard.readText();
+    const text = await desktop.readClipboardText();
     localStorage.setItem("clipboardAtNodeCopy", text);
   } catch {
     localStorage.setItem("clipboardAtNodeCopy", "");

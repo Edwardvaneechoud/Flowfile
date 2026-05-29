@@ -28,6 +28,7 @@ import { fetchNodeTemplates } from "./useNodes";
 import { useEditorStore } from "../stores/editor-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
 import { DEFAULT_OUTPUT_HANDLE, outputHandle, outputLabel } from "../utils/outputHandle";
+import { desktop } from "../../lib/desktop";
 
 const EDGE_DROP_CLASS = "edge-drop-target";
 let hoveredEdgeId: string | null = null;
@@ -870,18 +871,16 @@ export default function useDragAndDrop() {
     y: number,
     clipboardText?: string | null,
   ): Promise<OperationResponse | undefined> {
-    // Callers on the ClipboardEvent path pass the already-read text (reliable in
-    // the Tauri WebView). Otherwise fall back to the async Clipboard API, which
-    // can reject inside the desktop shell — bail if it does.
+    // Callers on the ClipboardEvent path pass the already-read text. Otherwise
+    // read the OS clipboard via desktop.readClipboardText() (native plugin on
+    // desktop, navigator.clipboard on web) — bail if it rejects.
     let text = clipboardText ?? null;
     if (text === null) {
       try {
-        text = await navigator.clipboard.readText();
+        // Desktop reads go through the native clipboard-manager plugin (no macOS
+        // "Paste" pill); web mode falls back to navigator.clipboard.
+        text = await desktop.readClipboardText();
       } catch {
-        // TODO(G): same Tauri-WebView clipboard risk as Canvas.vue's
-        // handleCanvasPaste — async readText() may reject in the desktop shell,
-        // so context-menu tabular paste silently does nothing. Verify in a
-        // packaged build; surface feedback or use a Tauri clipboard read.
         return undefined;
       }
     }

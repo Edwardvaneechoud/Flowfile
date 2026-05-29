@@ -827,19 +827,16 @@ const handleCanvasPaste = async (x: number, y: number, clipboardText?: string | 
   const hasCopiedNode =
     localStorage.getItem("copiedMultiNodes") || localStorage.getItem("copiedNode");
 
-  // Resolve the current system clipboard. The ClipboardEvent path passes it in
-  // (reliable in the Tauri WebView); the context-menu "paste-node" action leaves
-  // it undefined and we fall back to the async Clipboard API.
+  // Resolve the current system clipboard. The ClipboardEvent path passes it in;
+  // the context-menu "paste-node" action leaves it undefined and we read it via
+  // desktop.readClipboardText() (native plugin on desktop, navigator on web).
   let currentClipboard: string | null = clipboardText ?? null;
   if (currentClipboard === null) {
     try {
-      currentClipboard = await navigator.clipboard.readText();
+      // Desktop reads go through the native clipboard-manager plugin (no macOS
+      // "Paste" pill); web mode falls back to navigator.clipboard.
+      currentClipboard = await desktop.readClipboardText();
     } catch {
-      // TODO(G): navigator.clipboard.readText() can reject in the Tauri WebView
-      // (permissions / secure-context differ from Electron). On the context-menu
-      // "paste-node" path there is no ClipboardEvent text to fall back on, so
-      // paste silently no-ops here. Verify in a packaged desktop build and, if it
-      // fails, surface a notice (or wire a Tauri clipboard-plugin read).
       currentClipboard = null;
     }
   }
