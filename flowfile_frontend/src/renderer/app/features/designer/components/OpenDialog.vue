@@ -120,11 +120,28 @@ const emit = defineEmits<{
   (e: "open-cancelled"): void;
 }>();
 
+// Persist the last-used source (file vs catalog) and namespace so the dialog
+// reopens where the user left off, instead of always defaulting to the local
+// file system.
+const OPEN_MODE_STORAGE_KEY = "openDialog_mode";
+const NAMESPACE_STORAGE_KEY = "openDialog_namespaceId";
+
+function loadOpenMode(): "file" | "catalog" {
+  return localStorage.getItem(OPEN_MODE_STORAGE_KEY) === "catalog" ? "catalog" : "file";
+}
+
+function loadNamespaceId(): number | null {
+  const stored = localStorage.getItem(NAMESPACE_STORAGE_KEY);
+  if (!stored) return null;
+  const n = Number(stored);
+  return Number.isNaN(n) ? null : n;
+}
+
 const isVisible = ref(props.visible);
-const openMode = ref<"file" | "catalog">("file");
+const openMode = ref<"file" | "catalog">(loadOpenMode());
 
 // Catalog tab state
-const selectedNamespaceId = ref<number | null>(null);
+const selectedNamespaceId = ref<number | null>(loadNamespaceId());
 const flows = ref<FlowRegistration[]>([]);
 const loadingFlows = ref(false);
 const selectedFlowId = ref<number | null>(null);
@@ -148,6 +165,13 @@ watch(
 watch(isVisible, (v) => {
   if (v !== props.visible) emit("update:visible", v);
   if (!v) emit("open-cancelled");
+});
+
+// Remember the last-used source and namespace across sessions.
+watch(openMode, (m) => localStorage.setItem(OPEN_MODE_STORAGE_KEY, m));
+watch(selectedNamespaceId, (nsId) => {
+  if (nsId === null) localStorage.removeItem(NAMESPACE_STORAGE_KEY);
+  else localStorage.setItem(NAMESPACE_STORAGE_KEY, String(nsId));
 });
 
 // Reload flow list when the selected namespace changes
