@@ -1,4 +1,6 @@
-use crate::state::{AppState, FORCE_KILL_TIMEOUT_MS, SHUTDOWN_TIMEOUT_MS};
+use crate::state::{
+    AppState, FORCE_KILL_TIMEOUT_MS, KILL_POLL_INTERVAL_MS, SHUTDOWN_TIMEOUT_MS, SIGTERM_GRACE_MS,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -105,18 +107,33 @@ fn kill_pid(pid: Option<u32>, name: &str) {
     }
     log::info!("sent SIGTERM to {} (pid {})", name, pid);
 
-    // Give the process a moment to exit cleanly, then SIGKILL if still alive.
-    // TODO(B): 500 ms is too short for a graceful drain. The worker's
-    // viz_session_registry.shutdown() can take up to ~10s to join its children
-    // (flowfile_worker/main.py + viz_sessions.py). The process-group SIGKILL
-    // below now reaps those children regardless, but to let them shut down
-    // *gracefully* we should poll `process_alive` in a short loop (a few
-    // seconds) before escalating to SIGKILL, instead of a fixed 500 ms sleep.
-    std::thread::sleep(Duration::from_millis(500));
-    if process_alive(pid) {
-        if send_sigkill(pid) {
-            log::warn!("force-killed {} (pid {})", name, pid);
+    // Poll for a graceful exit rather than sleeping a fixed interval. The worker
+    // stays alive until its lifespan `finally` has joined every viz-session
+    // child (flowfile_worker/viz_sessions.py), which can take several seconds, so
+    // `process_alive` going false is our signal the whole group drained cleanly.
+    // We give it up to SIGTERM_GRACE_MS, checking every KILL_POLL_INTERVAL_MS, and
+    // return the instant it exits (the common, session-free case is sub-second).
+    // If it never exits, the process-group SIGKILL below is the backstop — it
+    // reaps the children too, so nothing leaks; it's just not graceful.
+    let mut waited = Duration::ZERO;
+    let grace = Duration::from_millis(SIGTERM_GRACE_MS);
+    let interval = Duration::from_millis(KILL_POLL_INTERVAL_MS);
+    while waited < grace {
+        if !process_alive(pid) {
+            log::info!("{} (pid {}) exited gracefully", name, pid);
+            return;
         }
+        std::thread::sleep(interval);
+        waited += interval;
+    }
+
+    if process_alive(pid) && send_sigkill(pid) {
+        log::warn!(
+            "force-killed {} (pid {}) after {} ms grace",
+            name,
+            pid,
+            SIGTERM_GRACE_MS
+        );
     }
 }
 

@@ -20,6 +20,15 @@ pub const SERVICE_START_TIMEOUT_MS: u64 = 120_000;
 pub const SHUTDOWN_TIMEOUT_MS: u64 = 3_000;
 pub const FORCE_KILL_TIMEOUT_MS: u64 = 2_000;
 
+/// After SIGTERM, how long to wait for a graceful exit before escalating to
+/// SIGKILL, polled every KILL_POLL_INTERVAL_MS. Sized to cover a typical worker
+/// viz-session drain (flowfile_worker/viz_sessions.py uses SHUTDOWN_GRACE_SECONDS
+/// = 10 internally) without a long UI hang on quit. The process-group SIGKILL in
+/// shutdown.rs is the backstop, so escalating early still leaks nothing — the
+/// grace only governs *graceful* vs forced teardown.
+pub const SIGTERM_GRACE_MS: u64 = 5_000;
+pub const KILL_POLL_INTERVAL_MS: u64 = 100;
+
 /// Supervisor: how many restarts before we give up and mark the service dead.
 /// The window resets after RESTART_WINDOW_SECS of continuous uptime, so a
 /// service that crashes once per hour will keep being restarted forever.

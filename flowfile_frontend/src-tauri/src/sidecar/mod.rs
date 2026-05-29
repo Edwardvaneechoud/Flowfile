@@ -378,22 +378,30 @@ async fn handle_termination(
 
     tokio::time::sleep(backoff).await;
 
-    // TODO(A): restart↔shutdown TOCTOU. This check and the pid-store inside
-    // spawn_service below are not atomic: shutdown_all/kill_spawned can set
-    // is_shutting_down and `.take()` the (currently None) pid in the gap
-    // between here and spawn_service writing the new pid — orphaning the
-    // freshly respawned sidecar. Fix: re-check is_shutting_down *after* spawn
-    // (and kill the new pid if set), or hold a guard across spawn + pid-store.
-    if *state.is_shutting_down.lock() {
-        return;
-    }
-
     let port = match kind {
         SidecarKind::Core => core_port,
         SidecarKind::Worker => worker_port,
     };
 
-    if let Err(err) = spawn_service(app, &state, kind, core_port, worker_port) {
+    // Re-check is_shutting_down and respawn while *holding* the lock, closing the
+    // restart↔shutdown race. shutdown_all/kill_spawned flip the flag to true under
+    // this same lock and only `.take()` the pid afterwards, so holding the lock
+    // across the spawn serializes the two: either we see the flag already set and
+    // bail, or we win the lock and store the new pid (inside spawn_service) before
+    // releasing — so shutdown, which can't set the flag until we release, then
+    // observes that pid when it takes it, and kills the respawn. No orphan in the
+    // gap. spawn_service is synchronous, so holding the parking_lot guard across it
+    // is safe; we must NOT hold it across the async readiness wait, hence the guard
+    // is scoped to this block.
+    let respawn = {
+        let shutting_down = state.is_shutting_down.lock();
+        if *shutting_down {
+            return;
+        }
+        spawn_service(app, &state, kind, core_port, worker_port)
+    };
+
+    if let Err(err) = respawn {
         log::error!("failed to respawn {}: {}", kind.name(), err);
         let _ = app.emit(
             "services-status",
