@@ -80,6 +80,38 @@ Entitlements are in `entitlements.mac.plist`. They mirror what the Electron
 app needed (Docker socket, JIT, network) — adjust only if you actually need
 new capabilities.
 
+### Build the sidecars against a non-framework CPython
+
+The Python sidecars **must** be built with a non-framework CPython, otherwise
+notarization fails on `…/_internal/Python.framework/Python` with
+"The signature of the binary is invalid."
+
+Why: a framework CPython (e.g. `actions/setup-python`, Homebrew, the macOS
+system Python) makes PyInstaller bundle a `Python.framework` with a
+symlink-based layout. We deep-sign it, but `tauri build` drops symlinks when it
+copies `binaries/**/*` into the `.app` (tauri-apps/tauri#13219), which breaks
+the framework's `_CodeSignature` seal after signing. A non-framework CPython
+makes PyInstaller bundle a plain `libpython3.x.dylib` instead — its signature is
+embedded in the Mach-O and survives Tauri's file copy intact.
+
+The release workflow handles this on macOS via
+[`uv`](https://docs.astral.sh/uv/) (python-build-standalone). To reproduce a
+notarizable build locally:
+
+```bash
+# only-managed forces uv's python-build-standalone install rather than any
+# framework / conda 3.11 that happens to be active on your machine.
+export UV_PYTHON_PREFERENCE=only-managed
+uv python install 3.11
+poetry env use "$(uv python find 3.11)"
+# confirm it's a non-framework interpreter (PYTHONFRAMEWORK must be empty):
+python -c "import sysconfig; print(repr(sysconfig.get_config_var('PYTHONFRAMEWORK')))"
+poetry install --with build
+make build_python_services
+# sanity check — must be empty:
+find services_dist/_internal -name 'Python.framework' -maxdepth 2
+```
+
 ## Windows Authenticode signing
 
 **For releases (production EV cert):**

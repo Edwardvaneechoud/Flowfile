@@ -68,6 +68,33 @@ jobs:
       - name: Install Poetry
         run: pip install poetry
 
+      # macOS release sidecars MUST be built against a non-framework CPython.
+      # actions/setup-python ships a framework build (PYTHONFRAMEWORK set), which
+      # makes PyInstaller bundle a Python.framework whose symlink-based
+      # _CodeSignature seal is broken when Tauri copies resources into the .app
+      # (Tauri drops symlinks — tauri-apps/tauri#13219), failing notarization.
+      # python-build-standalone (via uv) leaves PYTHONFRAMEWORK empty, so
+      # PyInstaller bundles a plain libpython*.dylib that survives the copy.
+      - name: Set up uv (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        uses: astral-sh/setup-uv@v5
+
+      - name: Use non-framework Python for PyInstaller (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        env:
+          # only-managed => uv resolves its own python-build-standalone install,
+          # never the framework build that actions/setup-python put on PATH.
+          UV_PYTHON_PREFERENCE: only-managed
+        run: |
+          uv python install 3.11
+          PYBIN="$(uv python find 3.11)"
+          echo "Selected interpreter: $PYBIN"
+          # Fail fast: a framework CPython (non-empty PYTHONFRAMEWORK) makes
+          # PyInstaller bundle a Python.framework whose symlink seal Tauri breaks,
+          # failing notarization. Abort loudly rather than ship a broken bundle.
+          "$PYBIN" -c "import sys, sysconfig; fw = sysconfig.get_config_var('PYTHONFRAMEWORK'); sys.exit('Refusing to build: framework CPython (PYTHONFRAMEWORK=%r)' % fw) if fw else print('OK non-framework CPython, LDLIBRARY=', sysconfig.get_config_var('LDLIBRARY'))"
+          poetry env use "$PYBIN"
+
       - name: Install Python deps
         run: poetry install --with build --no-interaction --no-ansi
 
