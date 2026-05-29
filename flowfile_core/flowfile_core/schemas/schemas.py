@@ -26,6 +26,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "random_split": input_schema.NodeRandomSplit,
     "unique": input_schema.NodeUnique,
     "group_by": input_schema.NodeGroupBy,
+    "window_functions": input_schema.NodeWindowFunctions,
     "pivot": input_schema.NodePivot,
     "unpivot": input_schema.NodeUnpivot,
     "text_to_rows": input_schema.NodeTextToRows,
