@@ -134,6 +134,106 @@
       </div>
     </div>
 
+    <!-- Local model: install an offline llama.cpp runtime + small GGUF on
+         demand. Nothing downloads until the user clicks Install. -->
+    <div v-if="!isDisabled" class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Local model (offline)</h3>
+      </div>
+      <div class="card-content">
+        <div v-if="localLoading" class="loading-state">
+          <div class="loading-spinner"></div>
+          <p>Checking local model…</p>
+        </div>
+
+        <div v-else-if="localModel && !localModel.available" class="info-box">
+          <i class="fa-solid fa-circle-info"></i>
+          <div class="info-body">
+            <p><strong>Not available on this platform</strong></p>
+            <p>No prebuilt local-model runtime exists for your OS / architecture.</p>
+          </div>
+        </div>
+
+        <template v-else-if="localModel">
+          <div class="connection-item">
+            <div class="connection-info">
+              <div class="connection-name">
+                <i class="fa-solid fa-microchip"></i>
+                <span>{{ localModel.modelName }}</span>
+                <span class="badge" :class="localBadgeClass">{{ localBadgeLabel }}</span>
+              </div>
+              <div class="connection-details">
+                <span>Runs fully offline on your CPU — no API key, no cloud.</span>
+                <span class="separator">•</span>
+                <span class="muted">~{{ localModel.approxDownloadMb }} MB download</span>
+              </div>
+            </div>
+            <div class="connection-actions">
+              <button
+                v-if="!localModel.installed"
+                type="button"
+                class="btn btn-secondary"
+                :disabled="localBusy"
+                @click="handleLocalInstall"
+              >
+                <i class="fa-solid fa-download"></i>
+                <span>Install</span>
+              </button>
+              <button
+                v-if="localModel.installed && !localModel.running"
+                type="button"
+                class="btn btn-secondary"
+                :disabled="localBusy"
+                @click="handleLocalStart"
+              >
+                <i class="fa-solid fa-play"></i>
+                <span>Start</span>
+              </button>
+              <button
+                v-if="localModel.running"
+                type="button"
+                class="btn btn-secondary"
+                :disabled="localBusy"
+                @click="handleLocalStop"
+              >
+                <i class="fa-solid fa-stop"></i>
+                <span>Stop</span>
+              </button>
+              <button
+                v-if="localModel.installed"
+                type="button"
+                class="btn btn-danger"
+                :disabled="localBusy"
+                @click="handleLocalDelete"
+              >
+                <i class="fa-solid fa-trash-alt"></i>
+                <span>Delete</span>
+              </button>
+            </div>
+          </div>
+
+          <div v-if="installing" class="local-progress">
+            <div class="local-progress__label">
+              <span>{{ installPhaseLabel }}</span>
+              <span v-if="installPct !== null">{{ installPct }}%</span>
+            </div>
+            <div class="local-progress__track">
+              <div
+                class="local-progress__bar"
+                :class="{ 'is-indeterminate': installPct === null }"
+                :style="installPct !== null ? { width: installPct + '%' } : undefined"
+              ></div>
+            </div>
+          </div>
+
+          <p v-if="!localModel.installed && !installing" class="hint-text">
+            Installs Qwen 2.5 Coder 1.5B via llama.cpp into your Flowfile data directory. Only
+            downloaded when you click Install.
+          </p>
+        </template>
+      </div>
+    </div>
+
     <el-dialog
       v-model="dialogVisible"
       :title="`Configure ${editingProvider?.provider ?? ''}`"
@@ -286,6 +386,14 @@ import {
   upsertAiProvider,
 } from "./api";
 import type { AiProvider, AiProviderCredentialInput, AiProviderStatus } from "./aiProviderTypes";
+import {
+  deleteLocalModel,
+  fetchLocalModelStatus,
+  startLocalModel,
+  stopLocalModel,
+  streamLocalModelInstall,
+} from "./localModelApi";
+import type { LocalModelStatus } from "./localModelApi";
 
 const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.isAdmin);
@@ -521,12 +629,137 @@ const handleCloseDeleteDialog = (done: () => void) => {
   done();
 };
 
+// --- Local model (offline llama.cpp + small GGUF) ---
+const localModel = ref<LocalModelStatus | null>(null);
+const localLoading = ref(true);
+const localBusy = ref(false);
+const installing = ref(false);
+const installPhase = ref("");
+const installPct = ref<number | null>(null);
+
+const localBadgeLabel = computed(() => {
+  if (!localModel.value) return "";
+  if (localModel.value.running) return "running";
+  if (localModel.value.installed) return "installed";
+  return "not installed";
+});
+
+const localBadgeClass = computed(() => {
+  if (localModel.value?.running) return "badge--configured";
+  if (localModel.value?.installed) return "badge--env_fallback";
+  return "badge--unconfigured";
+});
+
+const installPhaseLabel = computed(() => {
+  switch (installPhase.value) {
+    case "downloading_binary":
+      return "Downloading runtime…";
+    case "extracting":
+      return "Extracting…";
+    case "downloading_model":
+      return "Downloading model (~1 GB)…";
+    case "verifying":
+      return "Verifying…";
+    case "done":
+      return "Done";
+    default:
+      return "Installing…";
+  }
+});
+
+const loadLocalModel = async () => {
+  localLoading.value = true;
+  try {
+    localModel.value = await fetchLocalModelStatus();
+  } catch (error) {
+    if (error instanceof AiDisabledError) {
+      isDisabled.value = true;
+    }
+    // Otherwise leave the card hidden — a missing local-model status is non-fatal.
+  } finally {
+    localLoading.value = false;
+  }
+};
+
+const handleLocalInstall = async () => {
+  installing.value = true;
+  localBusy.value = true;
+  installPhase.value = "";
+  installPct.value = null;
+  let failed: string | null = null;
+  try {
+    await streamLocalModelInstall({
+      onProgress: (ev) => {
+        installPhase.value = ev.phase;
+        if (typeof ev.received === "number" && typeof ev.total === "number" && ev.total > 0) {
+          installPct.value = Math.min(100, Math.round((ev.received / ev.total) * 100));
+        } else {
+          installPct.value = null;
+        }
+      },
+      onError: (msg) => {
+        failed = msg;
+      },
+    });
+  } catch (error) {
+    failed = (error as Error).message || "Install failed";
+  } finally {
+    installing.value = false;
+    localBusy.value = false;
+    await loadLocalModel();
+  }
+  if (failed) {
+    ElMessage.error(`Install failed: ${failed}`);
+  } else if (localModel.value?.installed) {
+    ElMessage.success("Local model installed");
+  }
+};
+
+const handleLocalStart = async () => {
+  localBusy.value = true;
+  try {
+    localModel.value = await startLocalModel();
+    ElMessage.success("Local model started");
+  } catch (error) {
+    ElMessage.error((error as Error).message || "Failed to start local model");
+  } finally {
+    localBusy.value = false;
+  }
+};
+
+const handleLocalStop = async () => {
+  localBusy.value = true;
+  try {
+    localModel.value = await stopLocalModel();
+    ElMessage.success("Local model stopped");
+  } catch {
+    ElMessage.error("Failed to stop local model");
+  } finally {
+    localBusy.value = false;
+  }
+};
+
+const handleLocalDelete = async () => {
+  localBusy.value = true;
+  try {
+    localModel.value = await deleteLocalModel();
+    ElMessage.success("Local model removed");
+  } catch {
+    ElMessage.error("Failed to remove local model");
+  } finally {
+    localBusy.value = false;
+  }
+};
+
 // Render-time use to avoid the "unused" complaint when we expose AI_DISABLED_DETAIL
 // only through the template.
 const _ai_disabled_detail = computed(() => AI_DISABLED_DETAIL);
 void _ai_disabled_detail.value;
 
-onMounted(loadProviders);
+onMounted(() => {
+  void loadProviders();
+  void loadLocalModel();
+});
 </script>
 
 <style scoped>
@@ -764,5 +997,45 @@ onMounted(loadProviders);
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
   font-weight: normal;
+}
+
+.local-progress {
+  margin-top: var(--spacing-3);
+}
+
+.local-progress__label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-1);
+}
+
+.local-progress__track {
+  height: 6px;
+  background-color: var(--color-background-muted);
+  border-radius: var(--border-radius-full);
+  overflow: hidden;
+}
+
+.local-progress__bar {
+  height: 100%;
+  background-color: var(--color-accent);
+  border-radius: var(--border-radius-full);
+  transition: width 0.2s ease;
+}
+
+.local-progress__bar.is-indeterminate {
+  width: 40%;
+  animation: local-progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes local-progress-slide {
+  0% {
+    margin-left: -40%;
+  }
+  100% {
+    margin-left: 100%;
+  }
 }
 </style>
