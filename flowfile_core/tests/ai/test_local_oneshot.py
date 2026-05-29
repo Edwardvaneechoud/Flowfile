@@ -51,9 +51,33 @@ def test_extract_flow_json_fenced():
     assert spec["nodes"][0]["type"] == "filter"
 
 
+def test_extract_flow_json_fenced_yaml():
+    text = "```yaml\nnodes:\n  - id: a\n    type: read\nedges: []\n```"
+    spec = oneshot.extract_flow_json(text)
+    assert spec["nodes"][0]["type"] == "read"
+
+
+def test_extract_flow_json_prose_wrapped_braces():
+    # No fence, object embedded in prose — brace-span scan peels it out.
+    text = 'Sure, here it is: {"nodes":[{"id":"a","type":"read"}],"edges":[]} — enjoy!'
+    spec = oneshot.extract_flow_json(text)
+    assert spec["nodes"][0]["type"] == "read"
+
+
+def test_extract_flow_json_raw_yaml():
+    text = "nodes:\n  - {id: a, type: read}\nedges: []"
+    spec = oneshot.extract_flow_json(text)
+    assert spec["nodes"][0]["type"] == "read"
+
+
 def test_extract_flow_json_rejects_garbage():
     with pytest.raises(oneshot.OneShotError):
         oneshot.extract_flow_json("sorry, I cannot help with that")
+
+
+def test_extract_flow_json_rejects_empty():
+    with pytest.raises(oneshot.OneShotError):
+        oneshot.extract_flow_json("")
 
 
 # --------------------------------------------------------------------------- #
@@ -131,6 +155,12 @@ def test_stage_flow_builds_diff():
     graph_diff = diff.get_diff(result["diff_id"])
     assert graph_diff is not None
     assert [a.node_type for a in graph_diff.additions] == ["manual_input", "filter", "sort"]
+    # The full diff payload rides along so the frontend can drive its
+    # existing diff-review panel without a separate GET.
+    payload = result["diff_payload"]
+    assert payload["diff_id"] == result["diff_id"]
+    assert payload["flow_id"] == 1
+    assert [a["node_type"] for a in payload["additions"]] == ["manual_input", "filter", "sort"]
 
 
 def test_stage_flow_skips_writer_nodes():
@@ -165,3 +195,73 @@ def test_stage_flow_skips_writer_nodes():
     assert "manual_input" in created_types
     assert "output" not in created_types
     assert any("output" in w for w in result["warnings"])
+
+
+# --------------------------------------------------------------------------- #
+# _build_simple_diff (light path — no executor / no validation at build)      #
+# --------------------------------------------------------------------------- #
+
+
+def test_build_simple_diff_applies_to_real_flow():
+    flow = _empty_flow()
+    spec = {
+        "nodes": [
+            {
+                "id": "a",
+                "type": "manual_input",
+                "settings": {
+                    "raw_data_format": {"columns": [{"name": "x", "data_type": "Int64"}], "data": [[1, 2, 3]]}
+                },
+            },
+            {
+                "id": "b",
+                "type": "filter",
+                "settings": {"filter_input": {"mode": "advanced", "advanced_filter": "[x] > 1"}},
+            },
+        ],
+        "edges": [{"source": "a", "target": "b"}],
+    }
+    result = oneshot._build_simple_diff(flow=flow, flow_id=1, spec=spec)
+    assert result["op_count"] == 2, result["warnings"]
+    assert result["rationale"] == "Generated flow (simple mode)"
+    graph_diff = diff.get_diff(result["diff_id"])
+    assert graph_diff is not None
+    # Wiring rides on insertion_context (no separate connection ops).
+    assert graph_diff.connections_added == []
+    assert graph_diff.additions[1].insertion_context.upstream_node_ids == [
+        graph_diff.additions[0].settings["node_id"]
+    ]
+    # The diff applies cleanly onto a real FlowGraph (no kernel/dry-run).
+    applied = diff.apply_diff(flow, graph_diff)
+    assert sorted(applied.applied_node_ids) == sorted(int(n.node_id) for n in flow.nodes)
+    assert len(flow.nodes) == 2
+
+
+def test_build_simple_diff_drops_writers_and_unknowns():
+    flow = _empty_flow()
+    spec = {
+        "nodes": [
+            {
+                "id": "a",
+                "type": "manual_input",
+                "settings": {
+                    "raw_data_format": {"columns": [{"name": "x", "data_type": "Int64"}], "data": [[1]]}
+                },
+            },
+            {"id": "z", "type": "output", "settings": {}},
+            {"id": "q", "type": "not_a_real_node", "settings": {}},
+        ],
+        "edges": [{"source": "a", "target": "z"}, {"source": "a", "target": "q"}],
+    }
+    result = oneshot._build_simple_diff(flow=flow, flow_id=1, spec=spec)
+    created = [c["type"] for c in result["created"]]
+    assert created == ["manual_input"]
+    assert any("output" in w for w in result["warnings"])
+    assert any("not_a_real_node" in w for w in result["warnings"])
+
+
+def test_build_simple_diff_no_usable_nodes_raises():
+    flow = _empty_flow()
+    spec = {"nodes": [{"id": "z", "type": "output", "settings": {}}], "edges": []}
+    with pytest.raises(oneshot.OneShotError):
+        oneshot._build_simple_diff(flow=flow, flow_id=1, spec=spec)

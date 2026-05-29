@@ -236,11 +236,37 @@ const handleModelChange = (event: Event): void => {
   aiStore.setSelectedModel(target.value || null);
 };
 
+// --- Local model (offline) UI ---
+// The local 1.5B model can't drive the tool-calling agent, so when it's the
+// selected provider we replace the Chat/Auto-agent/Agent dropdown with a
+// simpler Chat / Generate toggle. "Generate" runs one-shot flow generation
+// (→ diff-review panel); "Chat" is plain offline Q&A.
+const isLocalSelected = computed(() => aiStore.isLocalSelected);
+
+// Apply a Simple-build result onto the canvas (inline "Add to canvas" button).
+const handleAddBuild = (messageId: number): void => {
+  void aiStore.addBuiltFlow(messageId);
+};
+
 const handleSend = async (): Promise<void> => {
   if (!canSend.value) return;
   const text = composerText.value;
   composerText.value = "";
   exitRecallMode();
+
+  // Simple build is a universal mode (local or cloud): generate a whole flow
+  // in one response, surfaced with an inline "Add to canvas" button.
+  if (aiStore.mode === "simple") {
+    await aiStore.generateFlowFromComposer(text);
+    return;
+  }
+
+  // The local model can't drive the tool-calling agent, so its only other mode
+  // is plain chat (the mode dropdown hides auto/agent for local).
+  if (isLocalSelected.value) {
+    await aiStore.sendMessage(text);
+    return;
+  }
 
   if (aiStore.mode === "agent") {
     if (flowStore.flowId === null) {
@@ -356,11 +382,26 @@ const modeTooltip = computed<string>(() => {
       return "Chat mode — every message stays in chat. The AI answers but never proposes graph changes.";
     case "agent":
       return "Agent mode — every Send runs the agent and proposes a GraphDiff for review.";
+    case "simple":
+      return "Simple build — generate a whole flow in one shot (no validation); add it to the canvas with one click.";
     case "auto":
     default:
       return "Auto-agent — chat by default; the classifier auto-promotes to agent when a build intent is detected.";
   }
 });
+
+// Local can't run auto/agent (no tool-calling). If those modes were active
+// when the user switches to local, fall back to chat so the dropdown shows a
+// valid selection. Watcher (not computed) so it can call the store setter.
+watch(
+  isLocalSelected,
+  (local) => {
+    if (local && (aiStore.mode === "auto" || aiStore.mode === "agent")) {
+      aiStore.setMode("chat");
+    }
+  },
+  { immediate: true },
+);
 
 const toggleSettings = (): void => {
   settingsOpen.value = !settingsOpen.value;
@@ -822,7 +863,10 @@ const showStandaloneThinking = computed<boolean>(() => {
               </option>
             </select>
           </div>
-          <div class="ai-assistant__settings-section">
+          <!-- Agent variant + verification are agent-only — hidden for the
+               local model, which can't tool-call (its modes are Chat /
+               Simple build). -->
+          <div v-if="!isLocalSelected" class="ai-assistant__settings-section">
             <span class="ai-assistant__settings-label">Agent variant</span>
             <p class="ai-assistant__settings-hint">
               How the agent plans and executes changes. Used when Send dispatches an agent run
@@ -1122,7 +1166,11 @@ const showStandaloneThinking = computed<boolean>(() => {
           </div>
         </div>
         <template v-for="(item, idx) in timelineItems" :key="`${item.kind}-${item.at}-${idx}`">
-          <AiMessage v-if="item.kind === 'message'" :message="item.data" />
+          <AiMessage
+            v-if="item.kind === 'message'"
+            :message="item.data"
+            @add-build="handleAddBuild"
+          />
           <AiAgentRun
             v-else
             :events="item.events"
@@ -1170,6 +1218,8 @@ const showStandaloneThinking = computed<boolean>(() => {
         />
       </div>
       <div class="ai-assistant__actions">
+        <!-- Unified send-mode dropdown. Local hides Auto-agent/Agent (the local
+             model can't tool-call); both surfaces get Simple build. -->
         <select
           class="ai-assistant__mode-select"
           :value="aiStore.mode"
@@ -1178,8 +1228,9 @@ const showStandaloneThinking = computed<boolean>(() => {
           @change="handleModeChange"
         >
           <option value="chat">Chat</option>
-          <option value="auto">Auto-agent</option>
-          <option value="agent">Agent</option>
+          <option v-if="!isLocalSelected" value="auto">Auto-agent</option>
+          <option v-if="!isLocalSelected" value="agent">Agent</option>
+          <option value="simple">Simple build</option>
         </select>
         <span v-if="kbdHint" class="ai-assistant__kbd-hint" aria-hidden="true">
           {{ kbdHint }}
@@ -1199,7 +1250,7 @@ const showStandaloneThinking = computed<boolean>(() => {
           :disabled="!canSend"
           @click="handleSend"
         >
-          Send
+          {{ aiStore.mode === "simple" ? "Build" : "Send" }}
         </button>
       </div>
     </footer>

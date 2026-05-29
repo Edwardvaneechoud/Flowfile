@@ -24,6 +24,7 @@ from flowfile_core.ai.cron_routes import router as cron_router
 from flowfile_core.ai.diff_routes import router as diff_router
 from flowfile_core.ai.docgen_routes import router as docgen_router
 from flowfile_core.ai.feature_flag import require_ai_enabled
+from flowfile_core.ai.generate_routes import router as generate_router
 from flowfile_core.ai.inline_action_routes import router as inline_action_router
 from flowfile_core.ai.intent_router_routes import router as intent_router
 from flowfile_core.ai.lineage_routes import router as lineage_router
@@ -46,6 +47,7 @@ router.include_router(command_palette_router)
 router.include_router(agent_router)
 router.include_router(intent_router)
 router.include_router(local_model_router)
+router.include_router(generate_router)
 
 
 @router.get("/health")

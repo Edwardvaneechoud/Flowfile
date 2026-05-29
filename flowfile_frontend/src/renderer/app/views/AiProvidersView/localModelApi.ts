@@ -9,40 +9,84 @@ import authService from "../../services/auth.service";
 import axios from "../../services/axios.config";
 import { AI_DISABLED_DETAIL, AiDisabledError } from "./api";
 
+// One installable model in the catalog (mirrors manager.MODELS + status()).
+export interface LocalModelEntry {
+  id: string;
+  name: string;
+  approxDownloadMb: number;
+  description: string;
+  installed: boolean;
+}
+
 export interface LocalModelStatus {
   available: boolean;
-  installed: boolean;
   binaryInstalled: boolean;
+  // ``installed`` = binary + the *selected* model present (back-compat flag the
+  // chat-drawer provider injection reads to decide whether to offer "local").
+  installed: boolean;
   modelInstalled: boolean;
   running: boolean;
+  runningModelId: string | null;
+  selectedModelId: string;
   modelName: string;
-  modelFile: string;
   approxDownloadMb: number;
+  anyModelInstalled: boolean;
+  models: LocalModelEntry[];
   installDir: string;
+  // Context window (tokens) the next server boot uses, plus the allowed range.
+  ctxSize: number;
+  ctxSizeMin: number;
+  ctxSizeMax: number;
+}
+
+interface PyLocalModelEntry {
+  id: string;
+  name: string;
+  approx_download_mb: number;
+  description: string;
+  installed: boolean;
 }
 
 interface PyLocalModelStatus {
   available: boolean;
-  installed: boolean;
   binary_installed: boolean;
+  installed: boolean;
   model_installed: boolean;
   running: boolean;
+  running_model_id: string | null;
+  selected_model_id: string;
   model_name: string;
-  model_file: string;
   approx_download_mb: number;
+  any_model_installed: boolean;
+  models: PyLocalModelEntry[];
   install_dir: string;
+  ctx_size: number;
+  ctx_size_min: number;
+  ctx_size_max: number;
 }
 
 const fromPyStatus = (raw: PyLocalModelStatus): LocalModelStatus => ({
   available: raw.available,
-  installed: raw.installed,
   binaryInstalled: raw.binary_installed,
+  installed: raw.installed,
   modelInstalled: raw.model_installed,
   running: raw.running,
+  runningModelId: raw.running_model_id,
+  selectedModelId: raw.selected_model_id,
   modelName: raw.model_name,
-  modelFile: raw.model_file,
   approxDownloadMb: raw.approx_download_mb,
+  anyModelInstalled: raw.any_model_installed,
+  models: (raw.models ?? []).map((m) => ({
+    id: m.id,
+    name: m.name,
+    approxDownloadMb: m.approx_download_mb,
+    description: m.description,
+    installed: m.installed,
+  })),
   installDir: raw.install_dir,
+  ctxSize: raw.ctx_size,
+  ctxSizeMin: raw.ctx_size_min,
+  ctxSizeMax: raw.ctx_size_max,
 });
 
 const LOCAL_BASE = "/ai/local-model";
@@ -73,9 +117,93 @@ export const stopLocalModel = async (): Promise<LocalModelStatus> => {
   return fromPyStatus(response.data);
 };
 
-export const deleteLocalModel = async (): Promise<LocalModelStatus> => {
-  const response = await axios.delete<PyLocalModelStatus>(LOCAL_BASE);
+// Delete one model's GGUF (modelId) or, when omitted, the whole runtime
+// (binary + every model).
+export const deleteLocalModel = async (modelId?: string): Promise<LocalModelStatus> => {
+  const response = await axios.delete<PyLocalModelStatus>(LOCAL_BASE, {
+    params: modelId ? { model_id: modelId } : undefined,
+  });
   return fromPyStatus(response.data);
+};
+
+// Make an already-installed model the active one (recycles a running server).
+export const selectLocalModel = async (modelId: string): Promise<LocalModelStatus> => {
+  const response = await axios.post<PyLocalModelStatus>(`${LOCAL_BASE}/select`, {
+    model_id: modelId,
+  });
+  return fromPyStatus(response.data);
+};
+
+// Set the context-window size (tokens). Backend clamps to its range and stops
+// any running server so the next use boots with the new size.
+export const setLocalCtxSize = async (ctxSize: number): Promise<LocalModelStatus> => {
+  const response = await axios.post<PyLocalModelStatus>(`${LOCAL_BASE}/ctx-size`, {
+    ctx_size: ctxSize,
+  });
+  return fromPyStatus(response.data);
+};
+
+// Stable provider id used to surface the local model in the chat drawer's
+// provider picker. NOT a BYOK provider (it isn't in the backend PROVIDERS
+// map) — the store special-cases it to route chat / generate through the
+// /ai/local-model/* endpoints instead of the BYOK chat path.
+export const LOCAL_PROVIDER_ID = "local";
+
+// NOTE: local chat is NOT a separate path. The backend exposes "local" as a
+// resolvable provider on /ai/chat/stream (and every read-only surface), so the
+// frontend drives it through the shared streamChat client — that's what gives
+// it the flow context (subgraph + schemas) cloud providers get.
+
+export interface GenerateFlowResult {
+  diffId: string;
+  opCount: number;
+  created: Array<{ id: string; type: string; node_id: number }>;
+  warnings: string[];
+  rationale: string;
+  // Full GraphDiff (snake_case wire shape) for the diff-review panel.
+  diffPayload: Record<string, unknown> | null;
+}
+
+interface PyGenerateFlowResult {
+  diff_id: string;
+  op_count: number;
+  created: Array<{ id: string; type: string; node_id: number }>;
+  warnings: string[];
+  rationale: string;
+  diff_payload: Record<string, unknown> | null;
+}
+
+// POST /ai/generate — provider-agnostic whole-flow generation (the "Simple
+// build" surface). Works for any provider (local or cloud). ``mode="simple"``
+// builds the diff with no validation until apply; ``"one_shot"`` validates each
+// node through the executor (for bigger models). Returns the staged diff id +
+// the full diff payload so the caller can apply it via the existing diff-accept
+// route.
+export const generateFlow = async (
+  flowId: number,
+  userRequest: string,
+  provider: string,
+  model: string | null = null,
+  mode: "simple" | "one_shot" = "simple",
+  maxTokens?: number | null,
+): Promise<GenerateFlowResult> => {
+  const response = await axios.post<PyGenerateFlowResult>("/ai/generate", {
+    flow_id: flowId,
+    user_request: userRequest,
+    provider,
+    model,
+    mode,
+    max_tokens: maxTokens ?? null,
+  });
+  const raw = response.data;
+  return {
+    diffId: raw.diff_id,
+    opCount: raw.op_count,
+    created: raw.created,
+    warnings: raw.warnings,
+    rationale: raw.rationale,
+    diffPayload: raw.diff_payload,
+  };
 };
 
 export interface LocalInstallProgress {
@@ -97,13 +225,15 @@ export interface LocalInstallHandlers {
 export const streamLocalModelInstall = async (
   handlers: LocalInstallHandlers,
   signal?: AbortSignal,
+  modelId?: string,
 ): Promise<void> => {
   const token = await authService.getToken();
   if (!token) {
     handlers.onError?.("Not authenticated. Please log in again.");
     return;
   }
-  const url = new URL("ai/local-model/install", flowfileCorebaseURL).toString();
+  const url = new URL("ai/local-model/install", flowfileCorebaseURL);
+  if (modelId) url.searchParams.set("model_id", modelId);
   const response = await fetch(url, {
     method: "POST",
     headers: {

@@ -24,9 +24,9 @@ from sqlalchemy.orm import Session
 from flowfile_core import flow_file_handler
 from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_provider
 from flowfile_core.ai.providers import (
-    PROVIDERS,
     UnknownProviderError,
-    list_supported_providers,
+    is_resolvable_provider,
+    resolvable_provider_names,
 )
 from flowfile_core.ai.suggest_next_node import (
     DEFAULT_TIMEOUT_SECONDS,
@@ -62,10 +62,10 @@ class SuggestNextNodeRequest(BaseModel):
 
 
 def _ensure_known_provider(name: str) -> None:
-    if name not in PROVIDERS:
+    if not is_resolvable_provider(name):
         raise HTTPException(
             status_code=404,
-            detail=f"Unknown provider {name!r}; supported: {list_supported_providers()}",
+            detail=f"Unknown provider {name!r}; supported: {resolvable_provider_names()}",
         )
 
 

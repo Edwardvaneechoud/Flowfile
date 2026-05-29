@@ -17,36 +17,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from flowfile_core import flow_file_handler
-from flowfile_core.ai.local_model import manager, oneshot
-from flowfile_core.ai.providers import Message
-from flowfile_core.ai.providers.local import LocalProvider
+from flowfile_core.ai.local_model import manager
 from flowfile_core.ai.streaming import (
     SSEEvent,
     format_sse_error,
     make_streaming_response,
-    sse_stream,
 )
 from flowfile_core.auth.jwt import get_current_active_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# llama-server ignores the key; litellm's openai route requires a non-empty string.
-_LOCAL_API_KEY = "sk-local"
-
-_CHAT_SYSTEM_PROMPT = (
-    "You are Flowfile's built-in local assistant, running fully offline on the "
-    "user's machine. Answer questions about building data pipelines in Flowfile "
-    "concisely and accurately. You cannot change the flow from chat; to build a "
-    "flow, the user uses the 'Generate flow' action."
-)
 
 
 @router.get("/local-model/status", tags=["ai"])
@@ -56,16 +41,25 @@ def local_model_status(current_user=Depends(get_current_active_user)) -> dict:
 
 
 @router.post("/local-model/install", tags=["ai"])
-async def local_model_install(current_user=Depends(get_current_active_user)):
-    """Download + install the binary and model, streaming progress as SSE.
+async def local_model_install(
+    model_id: str | None = None,
+    current_user=Depends(get_current_active_user),
+):
+    """Download + install the shared binary and one catalog model, streaming SSE.
 
-    Events: ``event: progress`` (``{phase, received, total}``) per chunk,
-    then a terminal progress event ``{phase: "done"}``; ``event: error`` on
-    failure. The blocking install runs in a worker thread; a thread-safe queue
-    bridges its progress callback to this async generator.
+    ``model_id`` (query param) selects the model; omitted = catalog default.
+    The installed model becomes the active selection. Events: ``event: progress``
+    (``{phase, received, total, model_id}``) per chunk, terminal
+    ``{phase: "done"}``; ``event: error`` on failure. The blocking install runs
+    in a worker thread; a thread-safe queue bridges its progress callback here.
     """
     if not manager.is_available():
         raise HTTPException(status_code=422, detail=manager.unsupported_platform_detail())
+    if model_id is not None and model_id not in manager.MODELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown model id {model_id!r}. Known: {sorted(manager.MODELS)}.",
+        )
 
     async def gen():
         loop = asyncio.get_running_loop()
@@ -77,7 +71,7 @@ async def local_model_install(current_user=Depends(get_current_active_user)):
 
         def run() -> None:
             try:
-                manager.install(on_progress=on_progress)
+                manager.install(model_id=model_id, on_progress=on_progress)
             except Exception as exc:  # noqa: BLE001 — surfaced to the client as event:error
                 logger.warning("local model install failed: %s", exc)
                 loop.call_soon_threadsafe(queue.put_nowait, {"phase": "error", "message": str(exc)})
@@ -100,9 +94,46 @@ async def local_model_install(current_user=Depends(get_current_active_user)):
     return make_streaming_response(gen())
 
 
+class LocalSelectRequest(BaseModel):
+    model_id: str = Field(min_length=1)
+
+
+@router.post("/local-model/select", tags=["ai"])
+async def local_model_select(
+    body: LocalSelectRequest,
+    current_user=Depends(get_current_active_user),
+) -> dict:
+    """Make an already-installed model the active one (recycles a running
+    server onto it). 409 if the model isn't installed yet."""
+    try:
+        await asyncio.to_thread(manager.set_active_model, body.model_id)
+    except manager.LocalModelNotInstalled as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except manager.LocalModelError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return manager.status()
+
+
+class LocalCtxSizeRequest(BaseModel):
+    ctx_size: int = Field(ge=1)
+
+
+@router.post("/local-model/ctx-size", tags=["ai"])
+async def local_model_set_ctx_size(
+    body: LocalCtxSizeRequest,
+    current_user=Depends(get_current_active_user),
+) -> dict:
+    """Set the llama-server context window (clamped to the allowed range). If a
+    server is running, it's stopped so the next use boots with the new size."""
+    await asyncio.to_thread(manager.set_ctx_size, body.ctx_size)
+    # Recycle so the change takes effect — the server only reads ctx-size at boot.
+    await asyncio.to_thread(manager.stop)
+    return manager.status()
+
+
 @router.post("/local-model/start", tags=["ai"])
 async def local_model_start(current_user=Depends(get_current_active_user)) -> dict:
-    """Boot the local server (idempotent). Returns the updated status."""
+    """Boot the selected model's server (idempotent). Returns the updated status."""
     try:
         await asyncio.to_thread(manager.ensure_running)
     except manager.LocalModelNotInstalled as exc:
@@ -120,84 +151,19 @@ async def local_model_stop(current_user=Depends(get_current_active_user)) -> dic
 
 
 @router.delete("/local-model", tags=["ai"])
-async def local_model_delete(current_user=Depends(get_current_active_user)) -> dict:
-    """Stop the server and remove the binary + model from disk."""
-    await asyncio.to_thread(manager.uninstall)
-    return manager.status()
-
-
-class LocalChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str = Field(min_length=1)
-
-
-class LocalChatRequest(BaseModel):
-    messages: list[LocalChatMessage] = Field(min_length=1)
-    max_tokens: int | None = Field(default=None, gt=0)
-
-
-@router.post("/local-model/chat", tags=["ai"])
-async def local_model_chat(body: LocalChatRequest, current_user=Depends(get_current_active_user)):
-    """Stream a plain (tool-free) chat completion from the local model as SSE.
-
-    Lazy-boots the server if needed. Same SSE wire format as
-    ``/ai/chat/stream`` (``event: chunk`` / ``event: done`` / ``event: error``).
-    """
-    try:
-        base_url = await asyncio.to_thread(manager.ensure_running)
-    except manager.LocalModelNotInstalled as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except manager.LocalModelError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    provider = LocalProvider(api_base=base_url, api_key=_LOCAL_API_KEY)
-    messages = [Message(role="system", content=_CHAT_SYSTEM_PROMPT)]
-    messages += [Message(role=m.role, content=m.content) for m in body.messages]
-    stream = provider.stream(messages=messages, tools=None, max_tokens=body.max_tokens)
-    return make_streaming_response(sse_stream(stream))
-
-
-class LocalGenerateRequest(BaseModel):
-    user_request: str = Field(min_length=1)
-    flow_id: int
-    max_tokens: int | None = Field(default=None, gt=0)
-
-
-@router.post("/local-model/generate", tags=["ai"])
-async def local_model_generate(
-    body: LocalGenerateRequest,
+async def local_model_delete(
+    model_id: str | None = None,
     current_user=Depends(get_current_active_user),
 ) -> dict:
-    """Generate a whole flow from one prompt (non-agentic) and stage it as a diff.
-
-    Returns ``{diff_id, op_count, created, warnings, rationale}``; the existing
-    diff-accept UI inserts the staged nodes onto the canvas. Writer / sink nodes
-    are never created (the executor blocks them) — the user attaches the
-    destination after inserting.
-    """
-    flow = flow_file_handler.get_flow(body.flow_id)
-    if flow is None:
-        raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
-
-    try:
-        base_url = await asyncio.to_thread(manager.ensure_running)
-    except manager.LocalModelNotInstalled as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except manager.LocalModelError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    provider = LocalProvider(api_base=base_url, api_key=_LOCAL_API_KEY)
-    try:
-        return await oneshot.generate_flow(
-            provider=provider,
-            flow=flow,
-            flow_id=body.flow_id,
-            user_id=current_user.id,
-            user_request=body.user_request,
-            max_tokens=body.max_tokens,
+    """Remove one model's GGUF (``model_id`` query param) or, when omitted, the
+    whole runtime (binary + every model)."""
+    if model_id is not None and model_id not in manager.MODELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown model id {model_id!r}. Known: {sorted(manager.MODELS)}.",
         )
-    except oneshot.OneShotError as exc:
-        raise HTTPException(status_code=422, detail=f"Could not generate a flow: {exc}") from exc
+    await asyncio.to_thread(manager.uninstall, model_id)
+    return manager.status()
 
 
 __all__ = ["router"]

@@ -64,10 +64,47 @@ def test_asset_for_unsupported_platform(monkeypatch):  # type: ignore[no-untyped
 
 def test_status_not_installed(_tmp_storage):  # type: ignore[no-untyped-def]
     st = manager.status()
-    assert st["model_name"] == "qwen2.5-coder-1.5b"
+    assert st["selected_model_id"] == manager.DEFAULT_MODEL_ID
     assert st["installed"] is False
     assert st["running"] is False
+    assert st["any_model_installed"] is False
     assert st["install_dir"].endswith("local_model")
+    # The catalog is surfaced for the UI picker; nothing installed yet.
+    ids = {m["id"] for m in st["models"]}
+    assert ids == set(manager.MODELS)
+    assert all(m["installed"] is False for m in st["models"])
+
+
+def test_extract_archive_preserves_symlinks(tmp_path):  # type: ignore[no-untyped-def]
+    """Regression: llama.cpp tarballs ship version-alias symlinks the binary
+    dlopens via @rpath. The extractor must recreate them (flattened to basename
+    targets), not drop them — dropping caused 'llama-server exited during
+    startup' (dyld: Library not loaded)."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        real = b"\x00" * 32
+        info = tarfile.TarInfo(name="build/bin/libllama.0.0.9305.dylib")
+        info.size = len(real)
+        tf.addfile(info, io.BytesIO(real))
+        # Version-alias symlink (target is a sibling, possibly path-qualified).
+        link = tarfile.TarInfo(name="build/bin/libllama.0.dylib")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "libllama.0.0.9305.dylib"
+        tf.addfile(link)
+
+    manager._extract_archive("llama-bxxxx-bin-macos-arm64.tar.gz", buf.getvalue(), tmp_path)
+
+    alias = tmp_path / "libllama.0.dylib"
+    assert alias.is_symlink(), "version-alias symlink was not recreated"
+    assert (tmp_path / "libllama.0.0.9305.dylib").exists()
+    # Flattened to basename so it resolves as a sibling.
+    import os
+
+    assert os.readlink(alias) == "libllama.0.0.9305.dylib"
+    assert alias.resolve().exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -136,7 +173,7 @@ def test_install_rejects_bad_gguf_header(_tmp_storage, monkeypatch):  # type: ig
     monkeypatch.setattr(manager, "_download_to_file", bad_model)
     with pytest.raises(manager.LocalModelError, match="GGUF"):
         manager.install()
-    assert manager._model_path().exists() is False
+    assert manager._model_path(manager.DEFAULT_MODEL_ID).exists() is False
 
 
 # --------------------------------------------------------------------------- #
@@ -154,6 +191,38 @@ def test_local_provider_config():
 
 
 # --------------------------------------------------------------------------- #
+# Provider unification — local resolvable on read-only surfaces               #
+# --------------------------------------------------------------------------- #
+
+
+def test_is_resolvable_provider():
+    from flowfile_core.ai.providers import is_resolvable_provider
+
+    assert is_resolvable_provider("local") is True
+    assert is_resolvable_provider("anthropic") is True
+    assert is_resolvable_provider("nope") is False
+    assert is_resolvable_provider(None) is False
+
+
+def test_local_not_in_byok_providers():
+    # Local must stay OUT of the BYOK registry so it never pollutes the
+    # credential list / upsert / test routes.
+    from flowfile_core.ai.providers import PROVIDERS
+
+    assert "local" not in PROVIDERS
+
+
+def test_get_configured_provider_returns_local_without_db():
+    # The local branch returns before any DB / credential access, so a None db
+    # is fine — proving local needs no BYOK row, key, or env var.
+    from flowfile_core.ai.byok import get_configured_provider
+
+    p = get_configured_provider(None, 0, "local", surface="explain")  # type: ignore[arg-type]
+    assert isinstance(p, LocalProvider)
+    assert p.supports_tools is False
+
+
+# --------------------------------------------------------------------------- #
 # Route registration                                                          #
 # --------------------------------------------------------------------------- #
 
@@ -165,10 +234,15 @@ def test_local_model_routes_registered():
     for expected in (
         "/local-model/status",
         "/local-model/install",
+        "/local-model/select",
         "/local-model/start",
         "/local-model/stop",
-        "/local-model/chat",
-        "/local-model/generate",
         "/local-model",
+        # Flow generation is now a provider-agnostic surface, not local-only.
+        "/generate",
     ):
         assert expected in paths, f"{expected} not registered ({sorted(paths)})"
+    # Local chat + local-only generate are gone — local rides /ai/chat/stream
+    # and /ai/generate like any other provider.
+    assert "/local-model/chat" not in paths
+    assert "/local-model/generate" not in paths
