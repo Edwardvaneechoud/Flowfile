@@ -3,8 +3,8 @@
 True when a flow contains exactly one ``api_response`` node and can be published
 as an HTTP data API. Recomputed from the flow graph on save.
 
-Revision ID: 016
-Revises: 015
+Revision ID: 017
+Revises: 016
 Create Date: 2026-05-23
 """
 
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision: str = "016"
-down_revision: str | None = "015"
+revision: str = "017"
+down_revision: str | None = "016"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
