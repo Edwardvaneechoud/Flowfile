@@ -7,6 +7,7 @@ object type.
 Supported formats:
 - parquet: For Polars and Pandas DataFrames
 - joblib: For scikit-learn models and numpy arrays
+- json: For JSON-serializable objects (e.g. ML model envelopes)
 - pickle: For general Python objects
 """
 
@@ -163,6 +164,8 @@ def serialize_to_file(obj: Any, path: str, format: str | None = None) -> str:
         _serialize_parquet(obj, path)
     elif format == "joblib":
         _serialize_joblib(obj, path)
+    elif format == "json":
+        _serialize_json(obj, path)
     else:
         _serialize_pickle(obj, path)
 
@@ -188,6 +191,10 @@ def serialize_to_bytes(obj: Any, format: str | None = None) -> tuple[bytes, str]
         import joblib
 
         joblib.dump(obj, buf)
+    elif format == "json":
+        import json
+
+        buf.write(json.dumps(obj).encode("utf-8"))
     else:
         cloudpickle.dump(obj, buf)
 
@@ -222,6 +229,11 @@ def deserialize_from_file(path: str, format: str) -> Any:
         import joblib
 
         return joblib.load(path)
+    elif format == "json":
+        import json
+
+        with open(path, "rb") as f:
+            return json.load(f)
     else:
         import pickle  # cloudpickle files are compatible with standard pickle.load
 
@@ -249,6 +261,10 @@ def deserialize_from_bytes(blob: bytes, format: str) -> Any:
         import joblib
 
         return joblib.load(buf)
+    elif format == "json":
+        import json
+
+        return json.loads(blob)
     else:
         import pickle  # cloudpickle files are compatible with standard pickle.load
 
@@ -343,6 +359,14 @@ def _serialize_joblib(obj: Any, path: Path) -> None:
     import joblib
 
     joblib.dump(obj, path)
+
+
+def _serialize_json(obj: Any, path: Path) -> None:
+    """Serialize a JSON-serializable object to a UTF-8 JSON file."""
+    import json
+
+    with open(path, "wb") as f:
+        f.write(json.dumps(obj).encode("utf-8"))
 
 
 def _serialize_pickle(obj: Any, path: Path) -> None:
