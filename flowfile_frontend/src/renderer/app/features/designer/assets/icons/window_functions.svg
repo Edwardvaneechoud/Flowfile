@@ -4,30 +4,26 @@
       --ff-icon-bg: #EEF2FF;
       --ff-icon-primary: #4338CA;
       --ff-icon-secondary: #818CF8;
-      --ff-icon-accent: #F59E0B;
     }
     @media (prefers-color-scheme: dark) {
       svg {
         --ff-icon-bg: #1E1B4B;
         --ff-icon-primary: #C7D2FE;
         --ff-icon-secondary: #A5B4FC;
-        --ff-icon-accent: #FBBF24;
       }
     }
   </style>
   <circle cx="50" cy="50" r="46" fill="var(--ff-icon-bg)"/>
 
-  <!-- Context rows (outside the window) -->
-  <rect x="24" y="18" width="44" height="8" rx="4" fill="var(--ff-icon-secondary)"/>
-  <rect x="24" y="74" width="32" height="8" rx="4" fill="var(--ff-icon-secondary)"/>
-
-  <!-- Active rows (inside the window) -->
-  <rect x="24" y="32" width="56" height="8" rx="4" fill="var(--ff-icon-primary)"/>
-  <rect x="24" y="46" width="38" height="8" rx="4" fill="var(--ff-icon-primary)"/>
-  <rect x="24" y="60" width="50" height="8" rx="4" fill="var(--ff-icon-primary)"/>
-
   <!-- Sliding window frame -->
-  <rect x="18" y="27" width="68" height="46" rx="9" fill="var(--ff-icon-accent)" fill-opacity="0.12" stroke="var(--ff-icon-accent)" stroke-width="3"/>
-  <circle cx="18" cy="50" r="3.5" fill="var(--ff-icon-accent)"/>
-  <circle cx="86" cy="50" r="3.5" fill="var(--ff-icon-accent)"/>
+  <rect x="35" y="28" width="36" height="50" rx="8" fill="var(--ff-icon-primary)" fill-opacity="0.12" stroke="var(--ff-icon-primary)" stroke-width="2.5"/>
+
+  <!-- Data series; bars inside the window highlighted -->
+  <rect x="18.5" y="56" width="6" height="18" rx="2" fill="var(--ff-icon-secondary)"/>
+  <rect x="29" y="48" width="6" height="26" rx="2" fill="var(--ff-icon-secondary)"/>
+  <rect x="39.5" y="52" width="6" height="22" rx="2" fill="var(--ff-icon-primary)"/>
+  <rect x="50" y="40" width="6" height="34" rx="2" fill="var(--ff-icon-primary)"/>
+  <rect x="60.5" y="46" width="6" height="28" rx="2" fill="var(--ff-icon-primary)"/>
+  <rect x="71" y="36" width="6" height="38" rx="2" fill="var(--ff-icon-secondary)"/>
+  <rect x="81.5" y="50" width="6" height="24" rx="2" fill="var(--ff-icon-secondary)"/>
 </svg>
