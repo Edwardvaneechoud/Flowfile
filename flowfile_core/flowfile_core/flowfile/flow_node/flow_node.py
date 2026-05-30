@@ -14,6 +14,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     ExternalDatabaseFetcher,
     ExternalDatabaseWriter,
     ExternalDfFetcher,
+    ExternalOutputWriter,
     ExternalSampler,
     clear_task_from_worker,
     get_external_df_result,
@@ -71,10 +72,20 @@ class FlowNode:
     _schema_callback: SingleExecutionFuture | None = None  # Function that calculates the schema without executing
     _state_needs_reset: bool = False
     _fetch_cached_df: (
-        ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter | None
+        ExternalDfFetcher
+        | ExternalDatabaseFetcher
+        | ExternalDatabaseWriter
+        | ExternalCloudWriter
+        | ExternalOutputWriter
+        | None
     ) = None
     _cache_progress: (
-        ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter | None
+        ExternalDfFetcher
+        | ExternalDatabaseFetcher
+        | ExternalDatabaseWriter
+        | ExternalCloudWriter
+        | ExternalOutputWriter
+        | None
     ) = None
     _execution_state: NodeExecutionState = None
     _executor: NodeExecutor | None = None  # Lazy-initialized

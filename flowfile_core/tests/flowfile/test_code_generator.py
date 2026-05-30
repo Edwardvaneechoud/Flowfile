@@ -1146,6 +1146,84 @@ def test_join_operation_left_rename(join_input_dataset, export_func):
 
 
 @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_window_functions_rolling_and_cumulative(export_func):
+    """Test window-functions node generating rolling + cumulative columns."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+
+    window_node = input_schema.NodeWindowFunctions(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        window_input=transform_schema.WindowFunctionsInput(
+            partition_by=["region"],
+            order_by=[transform_schema.SortByInput(column="date", how="asc")],
+            window_functions=[
+                transform_schema.WindowFunctionInput(
+                    column="quantity",
+                    function="rolling_sum",
+                    new_column_name="qty_rolling_sum",
+                    window_size=2,
+                    min_periods=1,
+                ),
+                transform_schema.WindowFunctionInput(
+                    column="price",
+                    function="cum_sum",
+                    new_column_name="price_cum",
+                ),
+            ],
+        ),
+    )
+    flow.add_window_functions(window_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    if export_func is export_flow_to_polars:
+        verify_code_contains(
+            code,
+            'rolling_sum(window_size=2, min_samples=1)',
+            'cum_sum()',
+            ".over(['region'])",
+        )
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False, check_column_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_window_functions_tile(export_func):
+    """Test window-functions node generating a tile column."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+
+    window_node = input_schema.NodeWindowFunctions(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        window_input=transform_schema.WindowFunctionsInput(
+            partition_by=[],
+            order_by=[transform_schema.SortByInput(column="quantity", how="asc")],
+            window_functions=[
+                transform_schema.WindowFunctionInput(
+                    function="tile",
+                    new_column_name="qty_quartile",
+                    number_of_groups=3,
+                )
+            ],
+        ),
+    )
+    flow.add_window_functions(window_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False, check_column_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
 def test_group_by_aggregation(export_func):
     """Test group by with multiple aggregations"""
     flow = create_basic_flow()
