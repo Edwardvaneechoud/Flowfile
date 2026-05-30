@@ -17,7 +17,7 @@ the node type:
   ``derive_schema``). The executor does NOT do its own ``pl.scan_*``
   calls — that would bypass the worker.
 
-The 21+1 explicit ``static`` set covers everything in
+The 22+1 explicit ``static`` set covers everything in
 ``NODE_TYPE_TO_SETTINGS_CLASS`` whose schema is derivable from
 ``(settings, upstream_schema)`` without code execution. The 8-entry ``dynamic``
 set names the nodes whose schema callback either reads the upstream lazy frame
@@ -44,6 +44,7 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "random_split": "static",
     "unique": "static",
     "group_by": "static",
+    "window_functions": "static",
     "pivot": "dynamic",
     "unpivot": "dynamic",
     "text_to_rows": "dynamic",

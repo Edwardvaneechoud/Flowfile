@@ -115,6 +115,7 @@
         :viz-id="active.id"
         :appearance="appearance"
         @close="closeViewer"
+        @updated="onVizUpdated"
         @deleted="onDeletedFromViewer"
       />
     </el-dialog>
@@ -241,6 +242,10 @@ async function onDelete(item: CatalogVisualization) {
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
   }
+}
+
+function onVizUpdated(viz: CatalogVisualization) {
+  active.value = viz;
 }
 
 function onDeletedFromViewer() {

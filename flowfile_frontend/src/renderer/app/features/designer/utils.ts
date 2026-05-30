@@ -47,6 +47,7 @@ const BUILTIN_ICONS = new Set([
   "unpivot.png",
   "user-defined-icon.png",
   "view.png",
+  "window_functions.svg",
   "train_model.svg",
   "apply_model.svg",
   "evaluate_model.svg",

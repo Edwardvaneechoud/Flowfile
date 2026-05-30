@@ -30,4 +30,5 @@ class OpenAIProvider(LiteLLMProvider):
         "settings_autocomplete": "gpt-4.1-mini",
         "lineage": "gpt-4.1",
         "intent_classifier": "gpt-4.1-mini",
+        "cron": "gpt-4.1-mini",
     }

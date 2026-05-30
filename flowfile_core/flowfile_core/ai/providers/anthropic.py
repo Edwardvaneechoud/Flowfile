@@ -39,4 +39,5 @@ class AnthropicProvider(LiteLLMProvider):
         "settings_autocomplete": "claude-haiku-4-5",
         "lineage": "claude-sonnet-4-6",
         "intent_classifier": "claude-haiku-4-5",
+        "cron": "claude-haiku-4-5",
     }

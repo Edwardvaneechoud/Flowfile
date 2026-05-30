@@ -37,6 +37,7 @@ from flowfile_core.routes.routes import router
 from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
+from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
 storage.cleanup_directories()
@@ -106,12 +107,19 @@ app = FastAPI(
 )
 
 # Configure CORS
+#
+# The Tauri 2 desktop shell loads the renderer from a custom protocol — the
+# exact origin differs per OS (`tauri://localhost` on macOS/iOS, `http://tauri.localhost`
+# on Linux, `https://tauri.localhost` on Windows/Android). A regex covers all
+# of them without us having to enumerate. The explicit list below stays for
+# the web/Docker/dev flows that hit the backend over plain HTTP.
 origins = [
     "http://localhost",
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:8080",
     "http://localhost:8081",
+    "http://localhost:8082",
     "http://localhost:4173",
     "http://localhost:4174",
     "http://localhost:63578",
@@ -121,6 +129,7 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"^(tauri|http|https)://(tauri\.localhost|localhost(:\d+)?)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -210,6 +219,9 @@ def run(host: str = None, port: int = None):
     )
     server = uvicorn.Server(config)
     server_instance = server  # Store server instance globally
+
+    # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.
+    start_parent_death_watcher(lambda: setattr(server, "should_exit", True))
 
     print("Starting core server...")
     print("Core server started")

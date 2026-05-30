@@ -28,8 +28,11 @@ class FlowSchedule(Base):
     description = Column(String, nullable=True)
     schedule_type = Column(String, nullable=False)
     interval_seconds = Column(Integer, nullable=True)
+    cron_expression = Column(String, nullable=True)  # 5-field cron string, used when schedule_type == "cron"
+    cron_timezone = Column(String, nullable=True)  # IANA tz name the cron runs in
     trigger_table_id = Column(Integer, nullable=True)
     last_triggered_at = Column(DateTime, nullable=True)
+    last_cron_slot = Column(DateTime, nullable=True)  # naive LOCAL wall-clock cron cursor (NOT UTC); DST-safe
     last_trigger_table_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)

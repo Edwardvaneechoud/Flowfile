@@ -460,114 +460,6 @@ jobs:
             exit 1
           fi
 
-  # Electron tests macOS - runs in parallel with backend tests for faster CI
-  electron-tests-macos:
-    needs: [detect-changes]
-    if: |
-      needs.detect-changes.outputs.frontend == 'true' ||
-      needs.detect-changes.outputs.any_backend == 'true' ||
-      needs.detect-changes.outputs.test_workflow == 'true' ||
-      github.event.inputs.run_all_tests == 'true'
-    runs-on: macos-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: 'flowfile_frontend/package-lock.json'
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Poetry
-        shell: bash
-        run: |
-          curl -sSL https://install.python-poetry.org | python -
-          echo "${HOME}/.local/bin" >> $GITHUB_PATH
-
-      - name: Install Python dependencies
-        run: |
-          poetry install --with dev,build
-
-      - name: Build Python services
-        run: |
-          poetry run build_backends
-
-      - name: Build Electron app for testing
-        working-directory: flowfile_frontend
-        run: |
-          npm install
-          npm run build:test
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-
-      - name: Run integration tests
-        working-directory: flowfile_frontend
-        run: |
-          npm run test
-
-  # Electron tests Windows - runs in parallel with backend tests for faster CI
-  electron-tests-windows:
-    needs: [detect-changes]
-    if: |
-      needs.detect-changes.outputs.frontend == 'true' ||
-      needs.detect-changes.outputs.any_backend == 'true' ||
-      needs.detect-changes.outputs.test_workflow == 'true' ||
-      github.event.inputs.run_all_tests == 'true'
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: 'flowfile_frontend/package-lock.json'
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Poetry
-        shell: pwsh
-        run: |
-          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
-          echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Install Python dependencies
-        shell: pwsh
-        run: |
-          poetry install --with build
-
-      - name: Build Python services
-        shell: pwsh
-        run: |
-          poetry run build_backends
-
-      - name: Build Electron app for testing
-        shell: pwsh
-        working-directory: flowfile_frontend
-        run: |
-          npm install
-          npm run build:test
-
-      - name: Run integration tests
-        shell: pwsh
-        working-directory: flowfile_frontend
-        run: |
-          npm run test
-
   # Documentation build test - runs when docs change or test workflow changes
   docs-test:
     needs: detect-changes
@@ -594,7 +486,7 @@ jobs:
 
   # Summary job - always runs to provide status
   test-summary:
-    needs: [detect-changes, backend-tests, backend-tests-windows, kernel-tests, check-stubs, test-web, electron-tests-macos, electron-tests-windows, docs-test]
+    needs: [detect-changes, backend-tests, backend-tests-windows, kernel-tests, check-stubs, test-web, docs-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -619,8 +511,6 @@ jobs:
           echo "  - Kernel Tests: ${{ needs.kernel-tests.result }}"
           echo "  - Stub Drift: ${{ needs.check-stubs.result }}"
           echo "  - Web Tests: ${{ needs.test-web.result }}"
-          echo "  - Electron Tests (macOS): ${{ needs.electron-tests-macos.result }}"
-          echo "  - Electron Tests (Windows): ${{ needs.electron-tests-windows.result }}"
           echo "  - Docs Test: ${{ needs.docs-test.result }}"
 
           # Fail if any non-skipped job failed
@@ -629,8 +519,6 @@ jobs:
              [[ "${{ needs.kernel-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.check-stubs.result }}" == "failure" ]] || \
              [[ "${{ needs.test-web.result }}" == "failure" ]] || \
-             [[ "${{ needs.electron-tests-macos.result }}" == "failure" ]] || \
-             [[ "${{ needs.electron-tests-windows.result }}" == "failure" ]] || \
              [[ "${{ needs.docs-test.result }}" == "failure" ]]; then
             echo ""
             echo "ERROR: One or more tests failed!"

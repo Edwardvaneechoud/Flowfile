@@ -24,6 +24,24 @@ export interface NamespaceTree extends CatalogNamespace {
   visualizations: CatalogVisualization[];
 }
 
+// System-managed schemas under "General" that users never pick as a store target.
+export const SYSTEM_NAMESPACE_NAMES = new Set([
+  "Unnamed Flows",
+  "Local Flows",
+  "Python Editor",
+  "sync",
+]);
+
+// Shallow copy of the tree with system schemas removed from the "General" root.
+// Scoped to "General" so a user-created schema sharing a name elsewhere is kept.
+export function filterSelectableNamespaces(tree: NamespaceTree[]): NamespaceTree[] {
+  return tree.map((node) =>
+    node.name === "General" && node.parent_id === null
+      ? { ...node, children: node.children.filter((c) => !SYSTEM_NAMESPACE_NAMES.has(c.name)) }
+      : node,
+  );
+}
+
 export interface NamespaceCreate {
   name: string;
   parent_id?: number | null;
@@ -251,8 +269,10 @@ export interface FlowSchedule {
   enabled: boolean;
   name: string | null;
   description: string | null;
-  schedule_type: "interval" | "table_trigger" | "table_set_trigger";
+  schedule_type: "interval" | "cron" | "table_trigger" | "table_set_trigger";
   interval_seconds: number | null;
+  cron_expression: string | null;
+  cron_timezone: string | null;
   trigger_table_id: number | null;
   trigger_table_name: string | null;
   trigger_namespace_id: number | null;
@@ -269,8 +289,10 @@ export interface FlowSchedule {
 
 export interface FlowScheduleCreate {
   registration_id: number;
-  schedule_type: "interval" | "table_trigger" | "table_set_trigger";
+  schedule_type: "interval" | "cron" | "table_trigger" | "table_set_trigger";
   interval_seconds?: number | null;
+  cron_expression?: string | null;
+  cron_timezone?: string | null;
   trigger_table_id?: number | null;
   trigger_table_ids?: number[] | null;
   enabled?: boolean;
@@ -281,8 +303,20 @@ export interface FlowScheduleCreate {
 export interface FlowScheduleUpdate {
   enabled?: boolean;
   interval_seconds?: number | null;
+  cron_expression?: string | null;
+  cron_timezone?: string | null;
   name?: string | null;
   description?: string | null;
+}
+
+export interface CronValidationRequest {
+  cron_expression?: string | null;
+  cron_timezone?: string | null;
+}
+
+export interface CronValidationResult {
+  valid: boolean;
+  error: string | null;
 }
 
 // ============================================================================

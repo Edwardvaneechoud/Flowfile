@@ -8,9 +8,9 @@ import type {
   IChart,
   IGWProps,
   IGWHandler,
-} from "@kanaries/graphic-walker/dist/interfaces";
-import { ISegmentKey } from "@kanaries/graphic-walker/dist/interfaces";
-import type { VizSpecStore } from "@kanaries/graphic-walker/dist/store/visualSpecStore";
+} from "@kanaries/graphic-walker/interfaces";
+import { ISegmentKey } from "@kanaries/graphic-walker/interfaces";
+import type { VizSpecStore } from "@kanaries/graphic-walker/store/visualSpecStore";
 
 interface VueGWProps {
   data?: IRow[];

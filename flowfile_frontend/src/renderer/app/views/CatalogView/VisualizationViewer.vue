@@ -2,6 +2,19 @@
   <div class="viz-viewer">
     <div class="viz-viewer-toolbar">
       <div class="viz-viewer-meta">
+        <div class="viz-name-field">
+          <label class="viz-name-label">
+            Name
+            <span class="viz-name-required">*</span>
+          </label>
+          <el-input
+            v-model="name"
+            placeholder="e.g. Revenue by region"
+            size="small"
+            class="viz-name-input"
+            :disabled="loadingMeta || loadingData || saving"
+          />
+        </div>
         <div class="viz-viewer-source">
           <i
             :class="
@@ -45,7 +58,7 @@
         <el-button
           type="primary"
           size="small"
-          :disabled="loadingData"
+          :disabled="loadingData || !name.trim()"
           :loading="saving"
           @click="onSave"
         >
@@ -92,7 +105,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
-import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/dist/interfaces";
+import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/interfaces";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
@@ -106,15 +119,17 @@ const props = defineProps<{
   appearance?: IDarkMode;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: "close"): void;
   (e: "deleted", vizId: number): void;
+  (e: "updated", viz: CatalogVisualization): void;
 }>();
 
 const store = useCatalogStore();
 const gwRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
 const viz = ref<CatalogVisualization | null>(null);
+const name = ref("");
 const fields = ref<IMutField[]>([]);
 const loadingMeta = ref(true);
 const loadingData = ref(true);
@@ -173,6 +188,7 @@ async function load() {
   loadingMeta.value = true;
   try {
     viz.value = await CatalogApi.getVisualization(props.vizId);
+    name.value = viz.value?.name ?? "";
     namespaceDraft.value = viz.value?.namespace_id ?? null;
   } catch (err: any) {
     errorMessage.value = err?.response?.data?.detail ?? err?.message ?? String(err);
@@ -210,6 +226,10 @@ async function reload() {
 
 async function onSave() {
   if (!gwRef.value || !viz.value) return;
+  if (!name.value.trim()) {
+    ElMessage.warning("Enter a name to save the visualization.");
+    return;
+  }
   const charts = await gwRef.value.exportCode();
   if (!charts || !charts.length) {
     ElMessage.error("No chart to save — build one in the editor first.");
@@ -219,13 +239,16 @@ async function onSave() {
   saving.value = true;
   try {
     const updatePayload: VisualizationUpdatePayload = {
+      name: name.value.trim(),
       spec: charts as Record<string, any>[],
       namespace_id: namespaceDraft.value,
     };
     if (thumbnail_data_url) updatePayload.thumbnail_data_url = thumbnail_data_url;
     const updated = await store.updateVisualization(props.vizId, updatePayload);
     viz.value = updated;
+    name.value = updated.name ?? "";
     namespaceDraft.value = updated.namespace_id ?? null;
+    emit("updated", updated);
     ElMessage.success("Saved chart updates");
     store.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
   } catch (err: any) {
@@ -248,6 +271,7 @@ async function onNamespaceChange(value: number | null | undefined) {
     });
     viz.value = updated;
     namespaceDraft.value = updated.namespace_id ?? null;
+    emit("updated", updated);
     store.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
   } catch (err: any) {
     // Roll the picker back if the update failed.
@@ -294,6 +318,23 @@ onMounted(load);
   gap: 4px;
   min-width: 0;
   flex: 1;
+}
+.viz-name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 360px;
+}
+.viz-name-label {
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+}
+.viz-name-required {
+  color: var(--el-color-danger);
+  margin-left: 2px;
+}
+.viz-name-input {
+  width: 100%;
 }
 .viz-viewer-source {
   display: flex;

@@ -49,10 +49,14 @@
 import { ref, watch, onMounted } from "vue";
 import NamespaceTreeItem from "./NamespaceTreeItem.vue";
 import { CatalogApi } from "../../../api";
+import { filterSelectableNamespaces } from "../../../types";
 import type { FlowRegistration, NamespaceTree } from "../../../types";
 
 const props = defineProps<{
   modelValue: number | null;
+  // When true, hide system-managed schemas so only "default" + user-created
+  // namespaces are offered as a store target.
+  hideSystemNamespaces?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -103,7 +107,8 @@ const loadTree = async () => {
   treeLoading.value = true;
   treeError.value = null;
   try {
-    tree.value = await CatalogApi.getNamespaceTree();
+    const fetched = await CatalogApi.getNamespaceTree();
+    tree.value = props.hideSystemNamespaces ? filterSelectableNamespaces(fetched) : fetched;
     if (selectedNamespaceId.value === null) {
       const defaultNs = findDefaultNamespace(tree.value);
       if (defaultNs) {

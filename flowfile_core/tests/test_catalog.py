@@ -1653,3 +1653,115 @@ class TestCrossNamespaceResolution:
             assert out.trigger_namespace_id == schema_a_id
             assert out.trigger_namespace_name == "ns_a"
             assert out.trigger_full_table_name == "ns_a.foo"
+
+
+class TestCronSchedules:
+    """Cron schedule create/read/update via the catalog API."""
+
+    @staticmethod
+    def _register_flow() -> int:
+        with get_db_context() as db:
+            flow = FlowRegistration(name="cron_flow", flow_path="/tmp/cron_flow.flowfile", owner_id=1)
+            db.add(flow)
+            db.commit()
+            db.refresh(flow)
+            return flow.id
+
+    def test_create_cron_schedule(self):
+        flow_id = self._register_flow()
+        resp = client.post(
+            "/catalog/schedules",
+            json={
+                "registration_id": flow_id,
+                "schedule_type": "cron",
+                "cron_expression": "0 9 * * 1-5",
+                "cron_timezone": "Europe/Amsterdam",
+                "name": "Weekday morning",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["schedule_type"] == "cron"
+        assert data["cron_expression"] == "0 9 * * 1-5"
+        assert data["cron_timezone"] == "Europe/Amsterdam"
+
+        got = client.get(f"/catalog/schedules/{data['id']}")
+        assert got.status_code == 200
+        assert got.json()["cron_expression"] == "0 9 * * 1-5"
+
+    def test_create_cron_invalid_expression_rejected(self):
+        flow_id = self._register_flow()
+        resp = client.post(
+            "/catalog/schedules",
+            json={
+                "registration_id": flow_id,
+                "schedule_type": "cron",
+                "cron_expression": "not a cron",
+                "cron_timezone": "UTC",
+            },
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_update_cron_expression(self):
+        flow_id = self._register_flow()
+        created = client.post(
+            "/catalog/schedules",
+            json={
+                "registration_id": flow_id,
+                "schedule_type": "cron",
+                "cron_expression": "0 9 * * *",
+                "cron_timezone": "UTC",
+            },
+        ).json()
+        resp = client.put(
+            f"/catalog/schedules/{created['id']}",
+            json={"cron_expression": "0 18 * * *"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cron_expression"] == "0 18 * * *"
+
+    def test_update_cron_on_non_cron_schedule_rejected(self):
+        # Cron fields must not be stored on a non-cron schedule (they'd be silently ignored).
+        flow_id = self._register_flow()
+        with get_db_context() as db:
+            sched = FlowSchedule(
+                registration_id=flow_id,
+                owner_id=1,
+                schedule_type="interval",
+                interval_seconds=3600,
+                enabled=True,
+            )
+            db.add(sched)
+            db.commit()
+            db.refresh(sched)
+            sched_id = sched.id
+        resp = client.put(
+            f"/catalog/schedules/{sched_id}",
+            json={"cron_expression": "0 9 * * *"},
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_validate_cron_endpoint(self):
+        # Same croniter rules as create, but returns a flag (200) instead of 422
+        # so the builder can gate its submit button on the backend's verdict.
+        ok = client.post(
+            "/catalog/schedules/validate-cron",
+            json={"cron_expression": "0 9 * * 1-5", "cron_timezone": "Europe/Amsterdam"},
+        )
+        assert ok.status_code == 200, ok.text
+        assert ok.json() == {"valid": True, "error": None}
+
+        bad_expr = client.post(
+            "/catalog/schedules/validate-cron",
+            json={"cron_expression": "not a cron", "cron_timezone": "UTC"},
+        )
+        assert bad_expr.status_code == 200, bad_expr.text
+        assert bad_expr.json()["valid"] is False
+        assert bad_expr.json()["error"]  # carries the backend's reason
+
+        bad_tz = client.post(
+            "/catalog/schedules/validate-cron",
+            json={"cron_expression": "0 9 * * *", "cron_timezone": "Not/AZone"},
+        )
+        assert bad_tz.status_code == 200, bad_tz.text
+        assert bad_tz.json()["valid"] is False
