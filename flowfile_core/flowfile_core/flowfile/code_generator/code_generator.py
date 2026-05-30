@@ -1363,6 +1363,101 @@ class FlowGraphCodeConverter:
         self._add_code(f"{var_name} = {input_df}")
         self._add_code("")
 
+    def _handle_rest_api_reader(
+        self, settings: input_schema.NodeRestApiReader, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        self.imports.add("import flowfile as ff")
+        s = settings.rest_api_settings
+        suffix = ".data" if self.framework == "pl" else ""
+
+        self._add_code(f"# Read from REST API: {s.method} {s.url}")
+        self._add_code(f"{var_name} = ff.read_api(")
+        self._add_code(f"    {s.url!r},")
+        if s.method != "GET":
+            self._add_code(f'    method="{s.method}",')
+        if s.headers:
+            self._add_code(f"    headers={s.headers!r},")
+        if s.query_params:
+            self._add_code(f"    params={s.query_params!r},")
+        if s.json_body is not None:
+            self._add_code(f"    json_body={s.json_body!r},")
+        auth_arg = self._build_rest_api_auth_arg(s.auth)
+        if auth_arg:
+            self._add_code(f"    auth={auth_arg},")
+        pagination_arg = self._build_rest_api_pagination_arg(s.pagination)
+        if pagination_arg:
+            self._add_code(f"    pagination={pagination_arg},")
+        if s.record_path:
+            self._add_code(f"    record_path={s.record_path!r},")
+        if s.timeout_seconds != 30.0:
+            self._add_code(f"    timeout_seconds={s.timeout_seconds},")
+        if s.max_retries != 3:
+            self._add_code(f"    max_retries={s.max_retries},")
+        self._add_code(f"){suffix}")
+        self._add_code("")
+
+    @staticmethod
+    def _build_rest_api_auth_arg(auth: input_schema.RestApiAuthSettings | None) -> str | None:
+        """Build the ``auth=`` dict literal for ``read_api``, or None when no auth.
+
+        The inline plaintext ``secret`` is never emitted: it is not persisted and
+        would leak a credential into the generated script. Code references the
+        stored ``secret_name`` instead, mirroring the database reader's reliance
+        on a named connection.
+        """
+        if auth is None or auth.auth_type == "none":
+            return None
+        auth_dict: dict[str, typing.Any] = {"auth_type": auth.auth_type}
+        if auth.auth_type == "api_key":
+            if auth.api_key_name != "X-API-Key":
+                auth_dict["api_key_name"] = auth.api_key_name
+            if auth.api_key_location != "header":
+                auth_dict["api_key_location"] = auth.api_key_location
+        elif auth.auth_type == "basic" and auth.basic_username:
+            auth_dict["basic_username"] = auth.basic_username
+        if auth.secret_name:
+            auth_dict["secret_name"] = auth.secret_name
+        return repr(auth_dict)
+
+    @staticmethod
+    def _build_rest_api_pagination_arg(
+        pagination: input_schema.RestApiPaginationSettings | None,
+    ) -> str | None:
+        """Build the ``pagination=`` dict literal for ``read_api``, or None when unpaginated."""
+        if pagination is None or pagination.pagination_type == "none":
+            return None
+        p: dict[str, typing.Any] = {"pagination_type": pagination.pagination_type}
+        if pagination.pagination_type == "offset":
+            if pagination.offset_param != "offset":
+                p["offset_param"] = pagination.offset_param
+            if pagination.limit_param != "limit":
+                p["limit_param"] = pagination.limit_param
+            if pagination.page_size != 100:
+                p["page_size"] = pagination.page_size
+        elif pagination.pagination_type == "page":
+            if pagination.page_param != "page":
+                p["page_param"] = pagination.page_param
+            if pagination.start_page != 1:
+                p["start_page"] = pagination.start_page
+            if pagination.page_size != 100:
+                p["page_size"] = pagination.page_size
+        elif pagination.pagination_type == "cursor":
+            if pagination.cursor_param != "cursor":
+                p["cursor_param"] = pagination.cursor_param
+            if pagination.cursor_location != "body":
+                p["cursor_location"] = pagination.cursor_location
+            if pagination.cursor_response_path:
+                p["cursor_response_path"] = pagination.cursor_response_path
+            if pagination.initial_cursor:
+                p["initial_cursor"] = pagination.initial_cursor
+        if pagination.max_pages != 1000:
+            p["max_pages"] = pagination.max_pages
+        if pagination.max_records is not None:
+            p["max_records"] = pagination.max_records
+        if pagination.page_delay_seconds:
+            p["page_delay_seconds"] = pagination.page_delay_seconds
+        return repr(p)
+
     def _handle_catalog_reader(
         self, settings: input_schema.NodeCatalogReader, var_name: str, input_vars: dict[str, str]
     ) -> None:

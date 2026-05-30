@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <!-- Background circle, consistent with the other source-node icons -->
+  <circle cx="100" cy="100" r="85" fill="#16a34a" />
+
+  <!-- Globe suggesting a web/HTTP source -->
+  <circle cx="100" cy="90" r="40" fill="none" stroke="#FFFFFF" stroke-width="3" />
+  <ellipse cx="100" cy="90" rx="18" ry="40" fill="none" stroke="#FFFFFF" stroke-width="2" />
+  <line x1="60" y1="90" x2="140" y2="90" stroke="#FFFFFF" stroke-width="2" />
+  <path d="M68 68 C82 80 118 80 132 68" fill="none" stroke="#FFFFFF" stroke-width="2" />
+  <path d="M68 112 C82 100 118 100 132 112" fill="none" stroke="#FFFFFF" stroke-width="2" />
+
+  <!-- JSON braces flanking the globe -->
+  <text x="52" y="100" font-family="Arial" font-size="34" font-weight="bold" text-anchor="middle" fill="#FFFFFF">{</text>
+  <text x="148" y="100" font-family="Arial" font-size="34" font-weight="bold" text-anchor="middle" fill="#FFFFFF">}</text>
+
+  <!-- Label -->
+  <text x="100" y="168" font-family="Arial" font-size="22" font-weight="bold" text-anchor="middle" fill="#FFFFFF">API</text>
+</svg>

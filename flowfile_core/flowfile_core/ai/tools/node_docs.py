@@ -484,6 +484,12 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "wants GA4 metrics / dimensions inside the flow. Don't use for ad-platform "
         "data — those need their own connectors / 'external_source'."
     ),
+    "rest_api_reader": (
+        "Read JSON from a REST API (optionally paginated) into the flow. Not for "
+        "streaming (use 'kafka_source') or a source with a typed node (database / "
+        "cloud). Auth uses a Secrets-manager secret the agent can't create, so beyond "
+        "a public endpoint let the user finish auth, pagination and 'Fetch sample'."
+    ),
     "external_source": (
         "Generic plug-in source: invokes a registered external connector. Use "
         "for data sources that don't have a first-class node yet. Schema and "
@@ -936,6 +942,14 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "metric=sessions, dimension=country. Pitfall: GA4 has hard rate "
         "limits — large date ranges with high-cardinality dimensions "
         "may be sampled."
+    ),
+    "rest_api_reader": (
+        "Settings: a Request ('Method', 'URL', optional 'Record path' to the records "
+        "array), 'Headers' / 'Query parameters', an 'Authentication' type (None / API "
+        "key / Bearer / Basic) backed by a reusable secret from the Secrets manager, "
+        "and a 'Pagination' strategy (Offset / Page / Cursor); 'Fetch sample' previews "
+        "the columns. Pitfalls: the credential is a named secret (not typed inline), "
+        "JSON only, and set 'Record path' (e.g. data.items) for nested payloads."
     ),
     "external_source": (
         "Settings panel: depends on the connector — each external "

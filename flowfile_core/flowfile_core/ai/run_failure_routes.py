@@ -37,10 +37,11 @@ from flowfile_core import flow_file_handler
 from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_provider
 from flowfile_core.ai.context import render_prompt_context
 from flowfile_core.ai.providers import (
-    PROVIDERS,
+    LOCAL_PROVIDER_ID,
     Message,
     UnknownProviderError,
-    list_supported_providers,
+    is_resolvable_provider,
+    resolvable_provider_names,
 )
 from flowfile_core.ai.streaming import make_streaming_response, sse_stream
 from flowfile_core.auth.jwt import get_current_active_user
@@ -76,10 +77,10 @@ class ExplainRunFailureRequest(BaseModel):
 
 
 def _ensure_known_provider(name: str) -> None:
-    if name not in PROVIDERS:
+    if not is_resolvable_provider(name):
         raise HTTPException(
             status_code=404,
-            detail=f"Unknown provider {name!r}; supported: {list_supported_providers()}",
+            detail=f"Unknown provider {name!r}; supported: {resolvable_provider_names()}",
         )
 
 
@@ -195,6 +196,9 @@ async def explain_run_failure(
         [body.node_id],
         surface="explain",
         samples_mode=body.samples_mode,
+        # Local model: shrink verbose settings + cap columns to fit its window.
+        compact_settings=body.provider == LOCAL_PROVIDER_ID,
+        max_columns_per_node=12 if body.provider == LOCAL_PROVIDER_ID else None,
     )
 
     node_label = getattr(node, "name", None) or getattr(node, "node_type", None) or f"node-{body.node_id}"

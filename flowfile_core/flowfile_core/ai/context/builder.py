@@ -222,6 +222,7 @@ def render_prompt_context(
     resolve_schemas: bool = True,
     stage: str | None = None,
     picked_node_type: str | None = None,
+    compact_settings: bool = False,
 ) -> PromptContext:
     """Build a budget-bounded :class:`PromptContext` for ``surface``.
 
@@ -255,7 +256,7 @@ def render_prompt_context(
     snapshot = _attach_samples(snapshot, graph, samples_mode=samples_mode, sample_rows=sample_rows)
     snapshot.samples_mode = samples_mode
 
-    rendered_user = render_user_message(snapshot, user_text=raw_text)
+    rendered_user = render_user_message(snapshot, user_text=raw_text, compact_settings=compact_settings)
     snapshot, report = apply_budget(
         snapshot,
         surface,
@@ -263,7 +264,7 @@ def render_prompt_context(
         rendered_size_hint=estimate_tokens(rendered_user),
         max_columns_per_node=max_columns_per_node,
     )
-    rendered_user = render_user_message(snapshot, user_text=raw_text)
+    rendered_user = render_user_message(snapshot, user_text=raw_text, compact_settings=compact_settings)
     report.estimated_input_tokens = estimate_tokens(rendered_user)
 
     system = assemble_system_prompt(surface, stage=stage, picked_node_type=picked_node_type)
@@ -917,12 +918,76 @@ def _render_node_reference(tools: list[Any]) -> str:
     return "\n".join(lines).rstrip()
 
 
-def render_user_message(snapshot: SubgraphSnapshot, *, user_text: str | None = None) -> str:
+# Settings keys that are verbose AND render-redundant: the predicted output
+# schema is already emitted separately as ``schema_columns`` and sample data
+# under ``samples_mode``, so a node's full column/field list, inline raw data,
+# and long code bodies add tokens without adding signal. Stripped only when
+# ``compact_settings`` is on (small-window local model). Applied recursively so
+# nested envelopes (e.g. ``received_file.fields``) are caught.
+_VERBOSE_SETTINGS_KEYS: frozenset[str] = frozenset(
+    {
+        "fields",
+        "columns",
+        "raw_data",
+        "data",
+        "code",
+        "polars_code",
+        "sql_code",
+        "function",
+        "advanced_filter",
+    }
+)
+
+_COMPACT_STR_CAP = 200
+
+
+def _shrink_node_settings(value: Any) -> Any:
+    """Recursively drop verbose/redundant keys and cap long strings.
+
+    Keeps the structural/config knobs the model needs (file_type, how, mode,
+    delimiter, aggregations, …) while removing the megabyte-scale column lists
+    and code bodies that overflow a small context window. Pure — returns a new
+    structure, never mutates the input.
+    """
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if k in _VERBOSE_SETTINGS_KEYS:
+                # Replace with a compact marker so the model knows the node has
+                # columns/code without seeing all of it.
+                if isinstance(v, list):
+                    out[k] = f"<{len(v)} items omitted>"
+                elif isinstance(v, str) and len(v) > _COMPACT_STR_CAP:
+                    out[k] = v[: _COMPACT_STR_CAP - 3] + "..."
+                else:
+                    out[k] = v
+                continue
+            out[k] = _shrink_node_settings(v)
+        return out
+    if isinstance(value, list):
+        return [_shrink_node_settings(v) for v in value]
+    if isinstance(value, str) and len(value) > _COMPACT_STR_CAP:
+        return value[: _COMPACT_STR_CAP - 3] + "..."
+    return value
+
+
+def render_user_message(
+    snapshot: SubgraphSnapshot,
+    *,
+    user_text: str | None = None,
+    compact_settings: bool = False,
+) -> str:
     """Render the user prompt body from a :class:`SubgraphSnapshot`.
 
     The format is markdown-flavoured but stable enough for the prompt
     cache to hash. Pinned nodes are flagged inline; unknown schemas
     surface a clear marker so the model knows to refuse column refs.
+
+    ``compact_settings`` strips verbose, render-redundant settings keys
+    (column/field lists, inline data, code bodies) before serialising — used
+    for small-context-window models (local) so a wide node doesn't blow the
+    window. The predicted schema + samples are rendered separately, so no
+    signal is lost.
     """
 
     lines: list[str] = []
@@ -945,7 +1010,8 @@ def render_user_message(snapshot: SubgraphSnapshot, *, user_text: str | None = N
         marker = " (pinned)" if node.is_pinned else ""
         lines.append(f"### {node.name} (id={node.node_id}, type={node.node_type}){marker}")
         if node.settings:
-            lines.append(f"settings: {_compact_json(node.settings)}")
+            rendered_settings = _shrink_node_settings(node.settings) if compact_settings else node.settings
+            lines.append(f"settings: {_compact_json(rendered_settings)}")
         if node.schema_status == "unknown" or node.schema_columns is None:
             lines.append("schema: unknown — upstream node has no predicted schema")
         else:

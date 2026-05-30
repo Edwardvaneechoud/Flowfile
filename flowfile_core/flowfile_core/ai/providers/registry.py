@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from flowfile_core.ai.providers.anthropic import AnthropicProvider
 from flowfile_core.ai.providers.google import GoogleProvider
 from flowfile_core.ai.providers.groq import GroqProvider
+from flowfile_core.ai.providers.local import LOCAL_PROVIDER_ID
 from flowfile_core.ai.providers.ollama import OllamaProvider
 from flowfile_core.ai.providers.openai import OpenAIProvider
 from flowfile_core.ai.providers.openrouter import OpenRouterProvider
@@ -78,3 +79,21 @@ def provider_factory(
 def list_supported_providers() -> list[str]:
     """Names of all wired providers (in registration order)."""
     return list(PROVIDERS.keys())
+
+
+def is_resolvable_provider(name: str | None) -> bool:
+    """True if ``name`` can be resolved to a Provider on a read-only surface.
+
+    This is BYOK ``PROVIDERS`` **plus** the local pseudo-provider. The local
+    model is deliberately kept out of ``PROVIDERS`` (so it never pollutes the
+    BYOK credential list / upsert / test routes), but every read-only route's
+    ``_ensure_known_provider`` guard should accept it — hence this shared
+    check. The tool-calling agent route does NOT use this; it rejects local
+    explicitly.
+    """
+    return name in PROVIDERS or name == LOCAL_PROVIDER_ID
+
+
+def resolvable_provider_names() -> list[str]:
+    """``list_supported_providers()`` + the local pseudo-provider, for error text."""
+    return [*PROVIDERS.keys(), LOCAL_PROVIDER_ID]
