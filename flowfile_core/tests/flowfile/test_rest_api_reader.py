@@ -211,3 +211,64 @@ def test_rest_api_node_yaml_round_trip(tmp_path):
     assert s.record_path == "data"
     assert s.auth.secret_name == "my_token"
     assert s.pagination.pagination_type == "offset"
+
+
+def test_build_worker_settings_routes_bearer_and_basic():
+    """The encrypted token lands in the auth field matching ``auth_type``."""
+    node_b = _make_node(url="https://x/api", auth=input_schema.RestApiAuthSettings(auth_type="bearer"))
+    ws_b = build_rest_api_worker_settings(node_b, "ENC")
+    assert ws_b.auth.bearer_token_encrypted == "ENC"
+    assert ws_b.auth.api_key_encrypted is None
+    assert ws_b.auth.basic_password_encrypted is None
+
+    node_basic = _make_node(
+        url="https://x/api", auth=input_schema.RestApiAuthSettings(auth_type="basic", basic_username="u")
+    )
+    ws_basic = build_rest_api_worker_settings(node_basic, "ENC")
+    assert ws_basic.auth.basic_password_encrypted == "ENC"
+    assert ws_basic.auth.basic_username == "u"
+    assert ws_basic.auth.bearer_token_encrypted is None
+
+
+def test_execution_aligns_fetched_frame_to_cached_schema(monkeypatch):
+    """When the node has sampled fields, the fetched frame is aligned to them:
+    a missing column is added as a typed null and column order follows the schema."""
+    monkeypatch.setattr(flow_graph_module, "ExternalRestApiFetcher", _FakeFetcher)
+    _FakeFetcher.result = pl.LazyFrame({"id": [1, 2], "name": ["a", "b"]})
+
+    graph = _graph(execution_location="local")
+    node = _make_node(url="https://x/api")
+    node.fields = [
+        input_schema.MinimalFieldInfo(name="id", data_type="Int64"),
+        input_schema.MinimalFieldInfo(name="name", data_type="String"),
+        input_schema.MinimalFieldInfo(name="extra", data_type="String"),
+    ]
+    _add_reader(graph, node)
+
+    df = graph.get_node(1).get_resulting_data().data_frame.collect()
+    assert df.columns == ["id", "name", "extra"]  # cached schema order, missing col added
+    assert df["extra"].null_count() == 2
+
+
+def test_read_api_builds_graph_and_executes_via_worker(monkeypatch):
+    """``flowfile_frame.read_api`` coerces auth/pagination, builds the node, and
+    materialises through the (faked) worker fetcher — no real HTTP, no live worker."""
+    import flowfile_frame as ff
+
+    monkeypatch.setattr(flow_graph_module, "ExternalRestApiFetcher", _FakeFetcher)
+    _FakeFetcher.result = pl.LazyFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
+
+    frame = ff.read_api(
+        "https://x/api",
+        auth={"auth_type": "bearer", "secret": "tok"},
+        pagination={"pagination_type": "offset", "page_size": 2},
+    )
+    df = frame.collect()
+
+    assert df.height == 3
+    assert sorted(df["id"].to_list()) == [1, 2, 3]
+    # auth dict coerced + secret encrypted + routed by auth_type to the worker settings
+    settings = _FakeFetcher.last["settings"]
+    assert settings.url == "https://x/api"
+    assert settings.auth.bearer_token_encrypted is not None
+    assert settings.pagination.pagination_type.value == "offset"

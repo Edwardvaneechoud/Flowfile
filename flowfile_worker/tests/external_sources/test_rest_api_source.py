@@ -8,6 +8,7 @@ worker-side credential decryption path.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 
 import httpx
@@ -17,7 +18,7 @@ import pytest
 from flowfile_worker.external_sources.rest_api_source.main import read_rest_api
 from flowfile_worker.external_sources.rest_api_source.models import RestApiReadSettings as WorkerRestApiReadSettings
 from flowfile_worker.secrets import encrypt_secret
-from shared.rest_api.fetch import fetch_rest_api
+from shared.rest_api.fetch import _parse_retry_after, fetch_rest_api
 from shared.rest_api.models import (
     AuthConfig,
     PaginationConfig,
@@ -335,3 +336,116 @@ def test_read_rest_api_decrypts_bearer_token():
         df = read_rest_api(settings)
     assert seen["auth"] == "Bearer supersecret"
     assert df.height == 1
+
+
+def test_read_rest_api_decrypts_api_key():
+    """The worker wrapper decrypts an API key and places it in the header."""
+    seen = {}
+
+    def handler(req):
+        seen["key"] = req.headers.get("X-Key")
+        return httpx.Response(200, json=[{"id": 1}])
+
+    encrypted = encrypt_secret("apikeyval")
+    settings = WorkerRestApiReadSettings(
+        url="https://x/api",
+        auth=AuthConfig(
+            auth_type="api_key", api_key_name="X-Key", api_key_location="header", api_key_encrypted=encrypted
+        ),
+    )
+    with mock_transport(handler):
+        df = read_rest_api(settings)
+    assert seen["key"] == "apikeyval"
+    assert df.height == 1
+
+
+def test_read_rest_api_decrypts_basic_password():
+    """The worker wrapper decrypts the basic-auth password into the Authorization header."""
+    seen = {}
+
+    def handler(req):
+        seen["auth"] = req.headers.get("Authorization")
+        return httpx.Response(200, json=[{"id": 1}])
+
+    encrypted = encrypt_secret("pw123")
+    settings = WorkerRestApiReadSettings(
+        url="https://x/api",
+        auth=AuthConfig(auth_type="basic", basic_username="user", basic_password_encrypted=encrypted),
+    )
+    with mock_transport(handler):
+        df = read_rest_api(settings)
+    assert seen["auth"].startswith("Basic ")
+    assert base64.b64decode(seen["auth"].split(" ", 1)[1]).decode() == "user:pw123"
+    assert df.height == 1
+
+
+# --- retry-after parsing + network-error retry --------------------------------
+
+
+def test_parse_retry_after_numeric_and_invalid():
+    assert _parse_retry_after("5") == 5.0
+    assert _parse_retry_after("not-a-date") is None
+    assert _parse_retry_after(None) is None
+
+
+def test_parse_retry_after_http_date_in_past_clamps_to_zero():
+    # A fixed HTTP-date in the past exercises the parsedate_to_datetime branch
+    # without depending on the wall clock; elapsed time clamps to 0.
+    assert _parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT") == 0.0
+
+
+def test_network_error_then_success(monkeypatch):
+    monkeypatch.setattr("shared.rest_api.fetch.time.sleep", lambda *_: None)
+    calls = {"n": 0}
+
+    def handler(_req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("boom")
+        return httpx.Response(200, json=[{"id": 1}])
+
+    df = _run(handler, RestApiReadSettings(url="https://x/api", max_retries=2))
+    assert calls["n"] == 2
+    assert df.height == 1
+
+
+# --- misc fetch branches ------------------------------------------------------
+
+
+def test_initial_cursor_sent_on_first_request():
+    seen = []
+
+    def handler(req):
+        seen.append(req.url.params.get("cursor"))
+        return httpx.Response(200, json={"rows": [{"id": 1}], "next": None})
+
+    settings = RestApiReadSettings(
+        url="https://x/api",
+        record_path="rows",
+        pagination=PaginationConfig(
+            pagination_type="cursor", cursor_param="cursor", initial_cursor="seed", cursor_response_path="next"
+        ),
+    )
+    df = _run(handler, settings)
+    assert seen[0] == "seed"
+    assert df.height == 1
+
+
+def test_get_ignores_json_body():
+    seen = {}
+
+    def handler(req):
+        seen["content"] = req.content
+        return httpx.Response(200, json=[{"id": 1}])
+
+    _run(handler, RestApiReadSettings(url="https://x/api", method="GET", json_body={"q": "x"}))
+    assert seen["content"] == b""
+
+
+def test_scalar_list_wrapped_as_value_column():
+    def handler(_req):
+        return httpx.Response(200, json={"items": [1, 2, 3]})
+
+    df = _run(handler, RestApiReadSettings(url="https://x/api", record_path="items"))
+    assert df.columns == ["value"]
+    assert df["value"].to_list() == [1, 2, 3]
