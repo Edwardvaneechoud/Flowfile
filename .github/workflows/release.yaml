@@ -1,4 +1,4 @@
-name: Build and Release on macOS and Windows
+name: Build and Release Desktop (Tauri)
 
 permissions:
   contents: write
@@ -6,12 +6,26 @@ permissions:
 on:
   push:
     tags:
-      - 'v*'  # triggers on tags like v1.0.0 or v1.0.0-beta
+      - 'v*'
   workflow_dispatch:
 
 jobs:
-  build-macos:
-    runs-on: macos-latest
+  build:
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            target: aarch64-apple-darwin
+          - platform: macos-15-intel
+            target: x86_64-apple-darwin
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,100 +33,187 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install Poetry
-        shell: bash
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: flowfile_frontend/src-tauri
+
+      - name: Install Linux WebKit dependencies
+        if: matrix.platform == 'ubuntu-22.04'
         run: |
-          curl -sSL https://install.python-poetry.org | python -
-          echo "${HOME}/.local/bin" >> $GITHUB_PATH
-
-      - name: Build project
-        shell: bash
-        run: make
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-
-      - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flowfile-mac-dmg
-          path: flowfile_frontend/dist/Flowfile-*-arm64.dmg
-
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
       - name: Install Poetry
-        shell: pwsh
-        run: |
-          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
-          echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        run: pip install poetry
 
-      - name: Install Python dependencies
-        shell: pwsh
-        run: |
-          poetry install --with build
+      # macOS release sidecars MUST be built against a non-framework CPython.
+      # actions/setup-python ships a framework build (PYTHONFRAMEWORK set), which
+      # makes PyInstaller bundle a Python.framework whose symlink-based
+      # _CodeSignature seal is broken when Tauri copies resources into the .app
+      # (Tauri drops symlinks — tauri-apps/tauri#13219), failing notarization.
+      # python-build-standalone (via uv) leaves PYTHONFRAMEWORK empty, so
+      # PyInstaller bundles a plain libpython*.dylib that survives the copy.
+      - name: Set up uv (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        uses: astral-sh/setup-uv@v5
 
-      - name: Build Python services
-        shell: pwsh
-        run: |
-          poetry run build_backends
-
-      - name: Build Electron app
-        shell: pwsh
-        run: |
-          cd flowfile_frontend
-          npm install
-          npm run build
+      - name: Use non-framework Python for PyInstaller (macOS)
+        if: startsWith(matrix.platform, 'macos')
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          # only-managed => uv resolves its own python-build-standalone install,
+          # never the framework build that actions/setup-python put on PATH.
+          UV_PYTHON_PREFERENCE: only-managed
+        run: |
+          uv python install 3.11
+          PYBIN="$(uv python find 3.11)"
+          echo "Selected interpreter: $PYBIN"
+          # Fail fast: a framework CPython (non-empty PYTHONFRAMEWORK) makes
+          # PyInstaller bundle a Python.framework whose symlink seal Tauri breaks,
+          # failing notarization. Abort loudly rather than ship a broken bundle.
+          "$PYBIN" -c "import sys, sysconfig; fw = sysconfig.get_config_var('PYTHONFRAMEWORK'); sys.exit('Refusing to build: framework CPython (PYTHONFRAMEWORK=%r)' % fw) if fw else print('OK non-framework CPython, LDLIBRARY=', sysconfig.get_config_var('LDLIBRARY'))"
+          poetry env use "$PYBIN"
 
-      - name: Upload EXE artifact
+      - name: Install Python deps
+        run: poetry install --with build --no-interaction --no-ansi
+
+      - name: Build Python services (PyInstaller)
+        run: poetry run build_backends
+
+      - name: Stage sidecars for Tauri
+        run: poetry run python tools/rename_sidecar.py --triple ${{ matrix.target }}
+
+      - name: Install frontend deps
+        working-directory: flowfile_frontend
+        run: npm ci
+
+      - name: Import Apple certs (macOS)
+        if: ${{ startsWith(matrix.platform, 'macos') && env.APPLE_CERTIFICATE != '' }}
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Prefer system xattr over the PyPI/Homebrew one (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        run: echo "/usr/bin" >> "$GITHUB_PATH"
+
+      - name: Sign bundled sidecars (macOS)
+        if: ${{ startsWith(matrix.platform, 'macos') && env.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: bash tools/sign_macos_sidecars.sh
+
+      - name: Build Tauri app
+        working-directory: flowfile_frontend
+        env:
+          # Updater signing (all platforms)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing + notarization
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # The repo's master_key for embedded Fernet auth
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: npx tauri build --target ${{ matrix.target }} ${{ matrix.tauri_args }}
+
+      # Tauri names the macOS updater bundle `Flowfile.app.tar.gz(.sig)` with NO
+      # architecture in the filename, so the arm64 and x86_64 builds produce
+      # identically-named files that collide as GitHub release assets (the
+      # symptom is a misleading 404 from action-gh-release on the 2nd upload).
+      # Rename them per-arch; the signature signs the archive *contents*, not the
+      # filename, so renaming is safe.
+      - name: Disambiguate macOS updater artifacts per arch
+        if: startsWith(matrix.platform, 'macos')
+        working-directory: flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/macos
+        run: |
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin) arch=aarch64 ;;
+            x86_64-apple-darwin)  arch=x64 ;;
+            *) echo "unexpected target ${{ matrix.target }}"; exit 1 ;;
+          esac
+          for ext in "" ".sig"; do
+            src="Flowfile.app.tar.gz${ext}"
+            dst="Flowfile_${arch}.app.tar.gz${ext}"
+            if [ -f "$src" ]; then mv "$src" "$dst"; echo "renamed $src -> $dst"; fi
+          done
+          ls -la
+
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Flowfile-windows-exe
-          path: flowfile_frontend/dist/Flowfile*.exe
+          name: bundle-${{ matrix.target }}
+          path: |
+            flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/Flowfile_*.dmg
+            flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Flowfile_*.app.tar.gz
+            flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/Flowfile_*-setup.exe
+            flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/deb/Flowfile_*.deb
+          if-no-files-found: error
+
+      - name: Upload signature artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: signature-${{ matrix.target }}
+          path: flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
+          if-no-files-found: warn
 
   release:
-    needs: [build-macos, build-windows]
+    needs: build
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Inspect artifacts
+        run: |
+          ls -R artifacts || true
 
       - name: Create GitHub Release
-        id: create_release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"
+          # Tags with a suffix (v0.10.1-rc.1, -test, -beta) are flagged as
+          # GitHub pre-releases so test builds never become the public "Latest".
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            Flowfile-mac-dmg/Flowfile-*-arm64.dmg
-            Flowfile-windows-exe/Flowfile*.exe
+            artifacts/bundle-*/**/Flowfile_*
+            artifacts/signature-*/**/*.sig
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
-      - name: Log release information
+      # Operators must run `tools/make_latest_json.py` (or equivalent) to
+      # assemble `latest.json` from the .sig files and attach it to the
+      # release. We do not automate that here yet — Tauri's updater only
+      # activates once both files are present and signed.
+      - name: Reminder — manual latest.json upload required
         run: |
-          echo "GitHub Release created."
-          echo "Tag: ${{ github.ref_name }}"
-          echo "Release ID: ${{ steps.create_release.outputs.id }}"
-          echo "Assets have been uploaded to the GitHub Release."
+          echo "::notice::Attach latest.json to the release after this workflow"
+          echo "completes. See flowfile_frontend/src-tauri/SIGNING.md for the schema."

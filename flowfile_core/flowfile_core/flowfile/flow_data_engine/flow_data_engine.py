@@ -58,7 +58,6 @@ from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalCreateFetcher,
     ExternalDfFetcher,
-    ExternalExecutorTracker,
     ExternalFuzzyMatchFetcher,
     fetch_unique_values,
 )
@@ -158,6 +157,63 @@ def get_select_columns(full_select_input: list[transform_schemas.SelectInput]) -
         A list of column names to be selected.
     """
     return [v.old_name for v in full_select_input if (v.keep or v.join_key) and v.is_available]
+
+
+def _build_window_expr(
+    w: transform_schemas.WindowFunctionInput, partition_by: list[str]
+) -> pl.Expr:
+    """Builds a Polars expression for a single window-function operation.
+
+    Expected to be applied after any ``order_by`` sort has been performed on
+    the frame; tile and cumulative operations rely on row position rather
+    than on ``order_by`` inside ``over()``.
+    """
+
+    def over(expr: pl.Expr) -> pl.Expr:
+        return expr.over(partition_by) if partition_by else expr
+
+    func = w.function
+
+    if func.startswith("rolling_"):
+        behavior = w.edge_behavior or "require_full"
+        kwargs: dict[str, Any] = {"window_size": w.window_size}
+        if behavior in ("partial", "fill_zero"):
+            kwargs["min_samples"] = 1
+        elif w.min_periods is not None:
+            kwargs["min_samples"] = w.min_periods
+        expr = getattr(pl.col(w.column), func)(**kwargs)
+        if behavior == "fill_zero":
+            expr = expr.fill_null(0)
+        return over(expr).alias(w.new_column_name)
+
+    if func.startswith("cum_"):
+        expr = getattr(pl.col(w.column), func)()
+        return over(expr).alias(w.new_column_name)
+
+    if func == "rank":
+        expr = pl.col(w.column).rank(method=w.rank_method or "ordinal")
+        return over(expr).alias(w.new_column_name)
+
+    if func == "tile":
+        n = int(w.number_of_groups)
+        if partition_by:
+            group_len = pl.len().over(partition_by)
+            pos = pl.int_range(pl.len()).over(partition_by)
+        else:
+            group_len = pl.len()
+            pos = pl.int_range(pl.len())
+        big_size = (group_len + n - 1) // n  # ceil(N/n)
+        threshold = (group_len % n) * big_size
+        small_size = pl.max_horizontal(group_len // n, pl.lit(1))
+        tile = (
+            pl.when(pos < threshold)
+            .then(pos // big_size + 1)
+            .otherwise((pos - threshold) // small_size + (group_len % n) + 1)
+            .cast(pl.Int64)
+        )
+        return tile.alias(w.new_column_name)
+
+    raise ValueError(f"Unsupported window function: {func!r}")
 
 
 @dataclass
@@ -1001,6 +1057,30 @@ class FlowDataEngine:
             result_df,
             calculate_schema_stats=calculate_schema_stats,
         )
+
+    def do_window_functions(
+        self, settings: transform_schemas.WindowFunctionsInput, calculate_schema_stats: bool = False
+    ) -> FlowDataEngine:
+        """Applies window functions (rolling, cumulative, rank, tile) to the data.
+
+        When ``settings.order_by`` is provided, rows are sorted first so that
+        rolling and tile operations have a deterministic order; the sort is
+        preserved in the output. Partitioning (``partition_by``) is applied via
+        ``.over(...)`` so operations reset for each group.
+        """
+        if not settings.window_functions:
+            return self
+
+        df = self.data_frame
+        if settings.order_by:
+            descending = [s.how == "desc" or (s.how or "").lower() == "descending" for s in settings.order_by]
+            df = df.sort([s.column for s in settings.order_by], descending=descending)
+
+        exprs = [
+            _build_window_expr(w, settings.partition_by) for w in settings.window_functions
+        ]
+        df = df.with_columns(exprs)
+        return FlowDataEngine(df, calculate_schema_stats=calculate_schema_stats)
 
     def do_sort(self, sorts: list[transform_schemas.SortByInput]) -> FlowDataEngine:
         """Sorts the DataFrame by one or more columns.
@@ -2569,49 +2649,35 @@ class FlowDataEngine:
         return FlowDataEngine(df, number_of_records=self.number_of_records)
 
     def output(
-        self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str, execute_remote: bool = True
+        self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str, execute_remote: bool = False
     ) -> FlowDataEngine:
-        """Writes the DataFrame to an output file.
+        """Writes the DataFrame to a local output file.
 
-        Can execute the write operation locally or in a remote worker process.
+        For remote-worker writes the caller (``add_output._func``) uses
+        ``ExternalOutputWriter`` directly so the fetcher can be exposed on
+        the node for cancellation; this method only handles the local path.
 
         Args:
             output_fs: An `OutputSettings` object with details about the output file.
             flow_id: The flow ID for tracking.
             node_id: The node ID for tracking.
-            execute_remote: If True, executes the write in a worker process.
+            execute_remote: Retained for signature compatibility; ignored.
 
         Returns:
             The same `FlowDataEngine` instance for chaining.
         """
-        logger.info("Starting to write output")
-        if execute_remote:
-            status = utils.write_output(
-                self.data_frame,
-                data_type=output_fs.file_type,
-                path=output_fs.abs_file_path,
-                write_mode=output_fs.write_mode,
-                sheet_name=output_fs.sheet_name,
-                delimiter=output_fs.delimiter,
-                flow_id=flow_id,
-                node_id=node_id,
-            )
-            tracker = ExternalExecutorTracker(status)
-            tracker.get_result()
-            logger.info("Finished writing output")
-        else:
-            logger.info("Starting to write results locally")
-            utils.local_write_output(
-                self.data_frame,
-                data_type=output_fs.file_type,
-                path=output_fs.abs_file_path,
-                write_mode=output_fs.write_mode,
-                sheet_name=output_fs.sheet_name,
-                delimiter=output_fs.delimiter,
-                flow_id=flow_id,
-                node_id=node_id,
-            )
-            logger.info("Finished writing output")
+        logger.info("Starting to write results locally")
+        utils.local_write_output(
+            self.data_frame,
+            data_type=output_fs.file_type,
+            path=output_fs.abs_file_path,
+            write_mode=output_fs.write_mode,
+            sheet_name=output_fs.sheet_name,
+            delimiter=output_fs.delimiter,
+            flow_id=flow_id,
+            node_id=node_id,
+        )
+        logger.info("Finished writing output")
         return self
 
     def make_unique(self, unique_input: transform_schemas.UniqueInput = None) -> FlowDataEngine:

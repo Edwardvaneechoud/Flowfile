@@ -17,7 +17,7 @@ This is a monorepo managed by Poetry (Python) and npm (frontend):
 - `flowfile_core/` — FastAPI backend (ETL engine, flow execution, auth, catalog) — port `63578`
 - `flowfile_worker/` — FastAPI compute worker for heavy data processing — port `63579`
 - `flowfile_frame/` — Python API library (Polars-like interface for programmatic flows)
-- `flowfile_frontend/` — Electron + Vue 3 UI (VueFlow graph editor)
+- `flowfile_frontend/` — Tauri 2 (Rust shell) + Vue 3 UI (VueFlow graph editor)
 - `flowfile_wasm/` — Browser-only WASM version (Pyodide)
 - `flowfile/` — CLI entry point
 - `kernel_runtime/` — Docker-based sandbox for user Python code
@@ -30,7 +30,9 @@ This is a monorepo managed by Poetry (Python) and npm (frontend):
 - Python `>=3.10, <3.14`
 - Node.js `20+`
 - [Poetry](https://python-poetry.org/)
+- [Rust](https://rustup.rs) stable toolchain (required only for the Tauri desktop shell — `npm run dev:web` works without it)
 - Docker (only required for the `kernel` test marker)
+- Linux only: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`
 
 ### Backend
 
@@ -47,8 +49,10 @@ poetry run flowfile_core     # :63578
 ```bash
 cd flowfile_frontend
 npm install
-npm run dev:web              # web dev server, :5173 → backend on :63578
-# or: npm run dev            # full Electron dev mode
+npm run dev:web              # web dev server, :8080 → backend on :63578 (no Rust needed)
+# or, for the full Tauri desktop shell (requires Rust + staged sidecars):
+#   1. From repo root: make build_python_services && make rename_sidecars
+#   2. cd flowfile_frontend && npm run dev
 ```
 
 ### Full stack via Docker
@@ -112,15 +116,16 @@ Markers: `worker`, `core`, `kernel`.
 cd flowfile_frontend
 npx playwright install --with-deps chromium
 npm run test:web         # needs backend + preview server running
-npm run test:electron    # needs built app
 ```
 
 Or via Make:
 
 ```bash
 make test_e2e            # web E2E, builds frontend and starts servers
-make test_e2e_electron   # full Electron E2E
 ```
+
+> Tauri-shell E2E (via `tauri-driver`) is a follow-up. The web Playwright suite
+> exercises the same renderer code path.
 
 ### WASM (Vitest)
 

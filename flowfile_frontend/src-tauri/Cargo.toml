@@ -1,0 +1,48 @@
+[package]
+name = "flowfile"
+version = "0.10.1"
+description = "Flowfile — visual ETL platform"
+authors = ["Edwardvaneechoud"]
+license = "MIT"
+repository = "https://github.com/Edwardvaneechoud/Flowfile"
+edition = "2021"
+rust-version = "1.78"
+
+[lib]
+name = "flowfile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+tauri-plugin-log = "2"
+tauri-plugin-os = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-clipboard-manager = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+log = "0.4"
+parking_lot = "0.12"
+dirs = "5"
+thiserror = "1"
+url = "2"
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+nix = { version = "0.29", features = ["signal"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

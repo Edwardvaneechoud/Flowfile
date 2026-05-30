@@ -1,8 +1,13 @@
+import fnmatch
 import os
 import platform
 import shutil
 import subprocess
 from pathlib import Path
+
+# Locale subdirectories we keep inside _internal/. Everything else under any
+# `locale/` directory is pruned to save ~10–30 MB across polars / pyarrow / numpy.
+KEEP_LOCALES = {"C", "en", "en_US", "en_US.UTF-8", "en_US.utf8"}
 
 
 def merge_directories(directories: list[str], target_dir: str, cleanup_after_merge: bool = True):
@@ -28,7 +33,7 @@ def create_spec_file(directory, script_name, output_name, hidden_imports):
     spec_content = f'''
 import sys
 import os
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
 
 # Add hook to fix connectorx metadata
 def get_connectorx_metadata():
@@ -125,17 +130,6 @@ importlib.metadata.version = patched_version
 print("Applied connectorx metadata patch")
 """
 
-# Collect minimal snowflake dependencies
-snowflake_imports = collect_submodules('snowflake.connector',
-    filter=lambda name: any(x in name for x in [
-        'connection',
-        'errors',
-        'snow_logging',
-        'auth',
-        'network'
-    ])
-)
-
 # Collect Alembic migration files for runtime access
 def get_alembic_datas():
     \"\"\"Collect Alembic migration files for PyInstaller bundling.\"\"\"
@@ -155,30 +149,134 @@ pyarrow_datas = collect_data_files('pyarrow')
 connectorx_datas = get_connectorx_metadata()
 alembic_datas = get_alembic_datas()
 
+# Polars plugins that have subpackages or compiled extensions. The plain
+# `hiddenimports=['polars_ds']` directive only adds the top-level — it does
+# NOT recurse into subpackages (polars_ds.exprs, polars_ds.eda, ...) and it
+# does not necessarily bundle the .abi3.so binary. Use collect_submodules +
+# collect_data_files + collect_dynamic_libs to grab everything.
+_polars_plugins = [
+    'polars_ds',
+    'polars_expr_transformer',
+    'polars_grouper',
+    'polars_simed',
+    'polars_distance',
+]
+plugin_hiddenimports = []
+plugin_datas = []
+plugin_binaries = []
+for _pkg in _polars_plugins:
+    try:
+        plugin_hiddenimports += collect_submodules(_pkg)
+        plugin_datas += collect_data_files(_pkg)
+        plugin_binaries += collect_dynamic_libs(_pkg)
+    except Exception as _e:
+        print(f"WARN: could not collect plugin {{_pkg}}: {{_e}}")
+
+# litellm ships JSON data files (model_prices_and_context_window_backup.json,
+# policy_templates_backup.json, ...) read during `import litellm` via
+# importlib.resources.files("litellm"). collect_data_files grabs them;
+# collect_submodules covers litellm's dynamic provider imports; copy_metadata
+# satisfies importlib.metadata.version("litellm") lookups.
+litellm_hiddenimports = []
+litellm_datas = []
+try:
+    litellm_hiddenimports += collect_submodules('litellm')
+    litellm_datas += collect_data_files('litellm')
+    litellm_datas += copy_metadata('litellm')
+except Exception as _e:
+    print(f"WARN: could not collect litellm: {{_e}}")
+
+# tokenizers (Rust extension litellm imports at load) + tiktoken and its
+# tiktoken_ext PEP 420 namespace plugins. Same pattern as the polars plugins
+# above; the tiktoken_ext namespace plugins are also listed explicitly because
+# static analysis misses PEP 420 packages.
+ai_hiddenimports = []
+ai_datas = []
+ai_binaries = []
+for _pkg in ('tokenizers', 'tiktoken', 'tiktoken_ext'):
+    try:
+        ai_hiddenimports += collect_submodules(_pkg)
+        ai_datas += collect_data_files(_pkg)
+        ai_binaries += collect_dynamic_libs(_pkg)
+    except Exception as _e:
+        print(f"WARN: could not collect {{_pkg}}: {{_e}}")
+for _pkg in ('tokenizers', 'tiktoken'):
+    try:
+        ai_datas += copy_metadata(_pkg)
+    except Exception as _e:
+        print(f"WARN: could not copy metadata {{_pkg}}: {{_e}}")
+ai_hiddenimports += ['tiktoken_ext', 'tiktoken_ext.openai_public']
+
 # Create runtime hook file
 with open('connectorx_hook.py', 'w') as f:
     f.write(create_runtime_hook())
 
 a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
-    binaries=[],
-    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas,
-    hiddenimports={hidden_imports} + snowflake_imports + [
+    binaries=plugin_binaries + ai_binaries,
+    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + plugin_datas + litellm_datas + ai_datas,
+    hiddenimports={hidden_imports} + plugin_hiddenimports + litellm_hiddenimports + ai_hiddenimports + [
         'numpy',
         'numpy.core._dtype_ctypes',
         'numpy.core._methods',
-        'numpy._pyarray_api',
         'pyarrow',
         'pyarrow.lib',
         'fastexcel',
         'importlib.metadata',
     ],
     excludes=[
+        # Standard library bloat we never use.
         'tkinter',
         'PIL',
         'pytest',
         'unittest',
         'pkg_resources',
+        'pdb',
+        'doctest',
+        'turtle',
+        'IPython',
+        # ML stack — NOT a project dependency. Lives in some dev/conda envs
+        # (e.g. via sentence-transformers) and gets pulled in by PyInstaller's
+        # contrib hooks. ~530 MB of nothing we use. If a future feature
+        # genuinely needs torch/sklearn, add it to pyproject.toml first and
+        # remove the relevant line from here.
+        'torch',
+        'torchvision',
+        'torchaudio',
+        'torchao',
+        'torchgen',
+        'transformers',
+        'sentence_transformers',
+        'huggingface_hub',
+        'datasets',
+        'accelerate',
+        # tokenizers + tiktoken are litellm runtime deps (litellm does
+        # `from tokenizers import Tokenizer` at import) — collected below, not excluded.
+        'sentencepiece',
+        'tensorboard',
+        'sklearn',
+        'scikit-learn',
+        'scipy',
+        'tensorflow',
+        # PyArrow optional subsystems we don't use (we use parquet/csv/ipc).
+        'pyarrow.tests',
+        'pyarrow.flight',
+        'pyarrow.cuda',
+        'pyarrow.gandiva',
+        'pyarrow.orc',
+        'pyarrow.parquet.encryption',
+        # NumPy testing / build tooling.
+        'numpy.testing',
+        'numpy.f2py',
+        'numpy.distutils',
+        # Polars testing helpers — we never ship tests in production.
+        'polars.testing',
+        # Pandas is intentionally not a dependency — make sure it never sneaks in.
+        'pandas',
+        # matplotlib is installed in the dev env but no production code imports
+        # it (only test files). PyInstaller's hooks pull it in as a transitive,
+        # ~12 MB. If a future feature needs it, add to pyproject.toml first.
+        'matplotlib',
     ],
     runtime_hooks=['connectorx_hook.py'],
     noarchive=False,
@@ -197,7 +295,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=True,
-    optimize=1
+    optimize=1,
 )
 
 coll = COLLECT(
@@ -208,7 +306,7 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='{output_name}'
+    name='{output_name}',
 )
 '''
     spec_path = f"{output_name}.spec"
@@ -250,7 +348,13 @@ def build_backend(directory, script_name, output_name, hidden_imports=None):
 
 
 def combine_packages():
-    """Reorganize the services_dist directory to have shared dependencies"""
+    """Reorganize the services_dist directory to have shared dependencies.
+
+    PyInstaller onedir emits services_dist/<name>/{<name>,_internal/}. We move
+    each <name> executable up to services_dist/<name> and merge the two
+    `_internal/` directories into one shared services_dist/_internal/ so that
+    polars/pyarrow/numpy/etc. are only stored once.
+    """
     dist_dir = "services_dist"
     shared_internal = os.path.join(dist_dir, "_internal")
     core_internal = os.path.join(dist_dir, "flowfile_core", "_internal")
@@ -284,15 +388,30 @@ def main():
         "numpy",
         "numpy.core._methods",
         "pyarrow",
-        "snowflake.connector",
-        "snowflake.connector.snow_logging",
-        "snowflake.connector.errors",
         "multiprocessing",
         "uvicorn.protocols.http",
         "uvicorn.protocols.websockets",
         "passlib.handlers.bcrypt",
         "connectorx",
         "alembic",
+        # certifi ships cacert.pem; ssl uses it via certifi.where(). The
+        # data_downloader builds its SSL context against this so urllib calls
+        # in the bundled Python can verify TLS.
+        "certifi",
+        # Polars plugins. Most are imported at module level elsewhere and get
+        # picked up automatically — `polars_ds` is the exception, lazily
+        # imported inside ML training functions in shared/ml/trainers.py, so
+        # PyInstaller's static scan misses it. List all of them explicitly so
+        # future moves to lazy-import don't silently break the bundle.
+        # NOTE: polars_simed and polars_distance look unused from a quick grep,
+        # but they're imported transitively by pl_fuzzy_frame_match (the fuzzy-
+        # join engine — see flowfile_core/schemas/transform_schema.py:8).
+        # Removing them breaks startup.
+        "polars_ds",
+        "polars_distance",
+        "polars_grouper",
+        "polars_simed",
+        "polars_expr_transformer",
     ]
 
     # Build both projects
@@ -321,7 +440,72 @@ def main():
     if builds_successful:
         print("Reorganizing services_dist directory...")
         combine_packages()
+        prune_locales(Path("services_dist/_internal"))
+        prune_unused_data(Path("services_dist/_internal"))
         print("Build complete! Final structure created in services_dist/")
+
+
+def prune_locales(root: Path) -> None:
+    """Remove non-English locale data inside _internal/.
+
+    Polars, pyarrow and a few stdlib helpers ship locale dirs we never use.
+    We keep C / en / en_US variants and delete the rest.
+    """
+    if not root.exists():
+        return
+    removed_files = 0
+    removed_bytes = 0
+    for dirpath, _dirnames, filenames in os.walk(root, topdown=False):
+        dp = Path(dirpath)
+        if dp.name != "locale":
+            continue
+        for child in dp.iterdir():
+            if child.is_dir() and child.name in KEEP_LOCALES:
+                continue
+            if child.is_dir():
+                for f in child.rglob("*"):
+                    if f.is_file():
+                        removed_bytes += f.stat().st_size
+                        removed_files += 1
+                shutil.rmtree(child, ignore_errors=True)
+            elif child.is_file() and child.suffix == ".mo":
+                removed_bytes += child.stat().st_size
+                removed_files += 1
+                child.unlink(missing_ok=True)
+        # Also drop stray .mo files under non-locale dirs that match common
+        # translation patterns.
+        for f in filenames:
+            if fnmatch.fnmatch(f, "*.mo") and not any(k in dirpath for k in KEEP_LOCALES):
+                # Be conservative: only touch files literally under .../locale/<lang>/...
+                full = dp / f
+                if "locale" in full.parts:
+                    parent_lang = full.parent.name
+                    if parent_lang not in KEEP_LOCALES and parent_lang != "LC_MESSAGES":
+                        removed_bytes += full.stat().st_size
+                        removed_files += 1
+                        full.unlink(missing_ok=True)
+    print(f"  pruned {removed_files} locale files ({removed_bytes / (1024 * 1024):.1f} MB)")
+
+
+def prune_unused_data(root: Path) -> None:
+    """Delete data files bundled by transitive deps that we never use.
+
+    googleapiclient ships 568 pre-cached API discovery JSONs (~91 MB) under
+    discovery_cache/documents/. The library downloads fresh ones on demand
+    when missing, so removing the cache keeps it functional. None of our
+    code imports googleapiclient directly — it gets pulled in transitively
+    by a google.* dep.
+    """
+    targets = [root / "googleapiclient" / "discovery_cache" / "documents"]
+    removed_bytes = 0
+    for target in targets:
+        if not target.exists():
+            continue
+        for f in target.rglob("*"):
+            if f.is_file():
+                removed_bytes += f.stat().st_size
+        shutil.rmtree(target, ignore_errors=True)
+        print(f"  removed {target} ({removed_bytes / (1024 * 1024):.1f} MB)")
 
 
 # if __name__ == "__main__":

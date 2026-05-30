@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Flowfile is a visual ETL (Extract, Transform, Load) platform built with a Python backend and Vue.js/Electron frontend. It provides both a visual flow designer and a programmatic Python API for building data pipelines powered by Polars.
+Flowfile is a visual ETL (Extract, Transform, Load) platform built with a Python backend and Vue.js/Tauri frontend. It provides both a visual flow designer and a programmatic Python API for building data pipelines powered by Polars.
 
 **Version:** 0.9.1 | **License:** MIT | **Python:** >=3.10, <3.14 | **Node.js:** 20+
 
@@ -14,7 +14,7 @@ This is a **monorepo** managed by Poetry (Python) and npm (frontend):
 flowfile_core/       # FastAPI backend - ETL engine, flow execution, auth, catalog (port 63578)
 flowfile_worker/     # FastAPI compute worker - heavy data processing offload (port 63579)
 flowfile_frame/      # Python API library - Polars-like interface for programmatic flow building
-flowfile_frontend/   # Electron + Vue 3 desktop/web UI with VueFlow graph editor
+flowfile_frontend/   # Tauri 2 (Rust shell) + Vue 3 desktop/web UI with VueFlow graph editor
 flowfile_scheduler/  # Embedded scheduler for recurring flow runs
 flowfile_wasm/       # Browser-only WASM version using Pyodide (lightweight, 14 nodes)
 flowfile/            # CLI entry point and web UI launcher
@@ -29,8 +29,8 @@ docs/                # MkDocs documentation site (Material theme)
 ## Architecture
 
 ```
-Frontend (Electron/Web/WASM) → flowfile_core (port 63578) → flowfile_worker (port 63579)
-                                                           → kernel_runtime (Docker, port 9999)
+Frontend (Tauri/Web/WASM) → flowfile_core (port 63578) → flowfile_worker (port 63579)
+                                                       → kernel_runtime (Docker, port 9999)
 ```
 
 - **flowfile_core**: Central FastAPI app managing flows as DAGs, auth (JWT), catalog, secrets, cloud connections
@@ -63,10 +63,11 @@ poetry run flowfile_worker
 cd flowfile_frontend
 npm install
 
-# Development server (web mode, hot reload)
+# Development server (web mode, hot reload — no desktop shell)
 npm run dev:web
 
-# Full Electron dev mode
+# Full Tauri dev mode (requires Rust toolchain + the Python sidecars staged via
+# `make build_python_services && make rename_sidecars` from the repo root)
 npm run dev
 ```
 
@@ -82,12 +83,15 @@ docker compose up -d
 
 | Command | Description |
 |---------|-------------|
-| `make all` | Full build: Python deps + services + Electron app + master key |
+| `make all` | Full build: Python deps + services + sidecar staging + Tauri app + master key |
 | `make build_python_services` | Build Python backend with PyInstaller |
-| `make build_electron_app` | Build Electron desktop app |
-| `make build_electron_win/mac/linux` | Platform-specific Electron builds |
+| `make rename_sidecars` | Stage PyInstaller outputs into `flowfile_frontend/src-tauri/binaries/<name>-<triple>` |
+| `make build_tauri_app` | Build Tauri desktop app (current host target) |
+| `make build_tauri_win/mac/linux` | Platform-specific Tauri builds |
+| `make measure_bundle` | Print sizes of `services_dist/` and `src-tauri/binaries/` |
+| `make test_built_services` | Smoke-test the PyInstaller binaries against `/docs` |
 | `make generate_key` | Generate Fernet encryption master key |
-| `make clean` | Remove all build artifacts |
+| `make clean` | Remove all build artifacts including `src-tauri/target` and `src-tauri/binaries` |
 | `npm run build:web` (in flowfile_frontend/) | Build web-only frontend |
 
 ## Testing
@@ -126,9 +130,6 @@ npx playwright install --with-deps chromium
 # Web E2E tests (requires backend + preview server running)
 npm run test:web
 
-# Electron E2E tests (requires built app)
-npm run test:electron
-
 # All tests
 npm run test:all
 ```
@@ -136,8 +137,11 @@ npm run test:all
 **E2E via Makefile:**
 ```bash
 make test_e2e          # Build frontend, start servers, run web tests
-make test_e2e_electron  # Full Electron E2E (builds everything first)
 ```
+
+> Note: Tauri-shell E2E tests via `tauri-driver` are a follow-up. The Playwright
+> suite currently covers renderer behavior in web mode, which is shared with
+> the desktop shell.
 
 ### WASM Tests (Vitest)
 
@@ -245,7 +249,13 @@ Key variables (see `.env.example`):
 - `flowfile_core/flowfile_core/main.py` - Core FastAPI app with all routers
 - `flowfile_worker/flowfile_worker/main.py` - Worker FastAPI app
 - `flowfile/flowfile/__main__.py` - CLI entry point (run flows, launch web UI)
-- `flowfile_frontend/src/main/main.ts` - Electron main process
+- `flowfile_frontend/src-tauri/src/lib.rs` - Tauri shell entry (plugins, sidecar boot, menu, window lifecycle)
+- `flowfile_frontend/src-tauri/src/sidecar/mod.rs` - Python sidecar spawn + readiness probe
+- `flowfile_frontend/src-tauri/src/sidecar/shutdown.rs` - Graceful shutdown ladder (HTTP /shutdown → SIGTERM → SIGKILL)
+- `flowfile_frontend/src-tauri/tauri.conf.json` - Tauri config (windows, CSP, bundle, updater endpoints)
+- `flowfile_frontend/src-tauri/SIGNING.md` - Operator notes for updater keys + macOS/Windows code signing
+- `flowfile_frontend/src/renderer/lib/desktop.ts` - Bridge between Vue renderer and Tauri runtime
+- `tools/rename_sidecar.py` - Stages `services_dist/` into Tauri's per-triple sidecar layout
 - `flowfile_frontend/src/renderer/app/App.vue` - Vue root component
 - `CONTRIBUTING.md` - Contributor guide (dev setup, style, tests, PR process)
 - `docs/community.md` - Community hub (Discussions, Issues, release feedback)

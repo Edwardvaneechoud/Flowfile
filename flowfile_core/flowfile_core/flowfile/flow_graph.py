@@ -54,6 +54,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDfFetcher,
     ExternalGoogleAnalyticsFetcher,
     ExternalKafkaFetcher,
+    ExternalOutputWriter,
     MLApplyFetcher,
     MLTrainFetcher,
     fetch_kafka_offsets,
@@ -512,7 +513,7 @@ def _write_catalog_delta_local(
 
 def _write_catalog_delta_remote(
     flow_id: int,
-    node_id: int | str,
+    node: FlowNode,
     df: FlowDataEngine,
     op_type: str,
     op_kwargs: dict,
@@ -521,19 +522,22 @@ def _write_catalog_delta_remote(
     """Write a Delta table via the worker service. Returns metadata dict, or ``None`` when skipped."""
     fetcher = ExternalDfFetcher(
         flow_id=flow_id,
-        node_id=node_id,
+        node_id=node.node_id,
         lf=df.data_frame,
-        wait_on_completion=True,
+        wait_on_completion=False,
         operation_type=op_type,
         kwargs=op_kwargs,
     )
-    if fetcher.has_error:
-        raise RuntimeError(f"Worker failed to write delta table '{table_name}': {fetcher.error_description}")
-    if isinstance(fetcher.result, dict) and fetcher.result.get("skipped"):
+    node._fetch_cached_df = fetcher
+    try:
+        result = fetcher.get_result()
+    except Exception as e:
+        raise RuntimeError(f"Worker failed to write delta table '{table_name}': {e}") from e
+    if isinstance(result, dict) and result.get("skipped"):
         return None
     meta: TableWriteMetadata = {}
-    if isinstance(fetcher.result, dict):
-        meta = {k: fetcher.result.get(k) for k in ("schema", "row_count", "column_count", "size_bytes")}
+    if isinstance(result, dict):
+        meta = {k: result.get(k) for k in ("schema", "row_count", "column_count", "size_bytes")}
     return meta
 
 
@@ -779,7 +783,7 @@ def _handle_physical_table_write(
     else:
         meta_kwargs = _write_catalog_delta_remote(
             flow_id=graph.flow_id,
-            node_id=node_catalog_writer.node_id,
+            node=graph.get_node(node_catalog_writer.node_id),
             df=df,
             op_type=op_type,
             op_kwargs=op_kwargs,
@@ -1952,10 +1956,12 @@ class FlowGraph:
                 external_sampler = ExternalDfFetcher(
                     lf=flowfile_table.data_frame,
                     file_ref="__gf_walker" + node.hash,
-                    wait_on_completion=True,
+                    wait_on_completion=False,
                     node_id=node.node_id,
                     flow_id=self.flow_id,
                 )
+                node._fetch_cached_df = external_sampler
+                external_sampler.get_result()
                 node.results.analysis_data_generator = get_read_top_n(
                     external_sampler.status.file_ref, n=min(sample_size, number_of_records)
                 )
@@ -2878,6 +2884,48 @@ class FlowGraph:
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_window_functions(self, settings: input_schema.NodeWindowFunctions) -> "FlowGraph":
+        """Adds a window-functions node (rolling, cumulative, rank, tile).
+
+        Args:
+            settings: The settings for the window-functions operation.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
+            return fl.do_window_functions(settings.window_input, False)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="window_functions",
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+
+        node = self.get_node(settings.node_id)
+
+        def schema_callback():
+            depends_on = node.node_inputs.main_inputs[0]
+            input_schema_list = list(depends_on.schema)
+            input_types = {s.name: s.data_type for s in depends_on.schema}
+            output_schema = list(input_schema_list)
+            for w in settings.window_input.window_functions:
+                src_type = input_types.get(w.column) if w.column else None
+                out_type = w.output_type or transform_schema.get_window_output_type(w.function, src_type)
+                if out_type is None:
+                    out_type = src_type or "Float64"
+                output_schema.append(
+                    FlowfileColumn.from_input(data_type=out_type, column_name=w.new_column_name)
+                )
+            return output_schema
+
+        node.schema_callback = schema_callback
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_sort(self, sort_settings: input_schema.NodeSort) -> "FlowGraph":
         """Adds a node to sort the data based on one or more columns.
 
@@ -3257,13 +3305,29 @@ class FlowGraph:
         """
 
         def _func(df: FlowDataEngine):
-            execute_remote = self.execution_location != "local"
-            df.output(
-                output_fs=output_file.output_settings,
+            if self.execution_location == "local":
+                df.output(
+                    output_fs=output_file.output_settings,
+                    flow_id=self.flow_id,
+                    node_id=output_file.node_id,
+                    execute_remote=False,
+                )
+                return df
+            output_fs = output_file.output_settings
+            node = self.get_node(output_file.node_id)
+            writer = ExternalOutputWriter(
+                lf=df.data_frame,
+                data_type=output_fs.file_type,
+                path=output_fs.abs_file_path,
+                write_mode=output_fs.write_mode,
+                sheet_name=output_fs.sheet_name,
+                delimiter=output_fs.delimiter,
                 flow_id=self.flow_id,
                 node_id=output_file.node_id,
-                execute_remote=execute_remote,
+                wait_on_completion=False,
             )
+            node._fetch_cached_df = writer
+            writer.get_result()
             return df
 
         def schema_callback():

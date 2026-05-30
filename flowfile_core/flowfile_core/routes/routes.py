@@ -1828,24 +1828,51 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     Downloads required CSV data files from GitHub if not already cached locally,
     then creates a flow from the template definition.
     """
+    import logging as _logging
     import yaml
 
     from flowfile_core.templates import get_template_flowfile_data, get_template_required_files
     from flowfile_core.templates.data_downloader import ensure_template_data
 
+    _tpl_logger = _logging.getLogger("flowfile_core.templates.create")
+    _tpl_logger.info("create_from_template START: template_id=%s user_id=%s",
+                     template_id, getattr(current_user, "id", None))
+
     try:
         required_files = get_template_required_files(template_id)
+        _tpl_logger.info("required_files for %s: %s", template_id, required_files)
     except ValueError as e:
+        _tpl_logger.warning("template not found: %s (%s)", template_id, e)
         raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        _tpl_logger.exception("unexpected error resolving required_files for %s", template_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"get_template_required_files({template_id}) failed: {type(e).__name__}: {e}",
+        ) from e
 
     try:
         resolved_files = ensure_template_data(required_files)
+        _tpl_logger.info("resolved_files: %s", {k: str(v) for k, v in resolved_files.items()})
     except RuntimeError as e:
+        _tpl_logger.exception("ensure_template_data raised RuntimeError for %s", template_id)
         raise HTTPException(status_code=502, detail=str(e)) from e
+    except Exception as e:
+        _tpl_logger.exception("ensure_template_data raised unexpected for %s", template_id)
+        raise HTTPException(
+            status_code=502,
+            detail=f"ensure_template_data failed: {type(e).__name__}: {e}",
+        ) from e
 
-    # Use the directory where the data files actually live
-    data_dir = next(iter(resolved_files.values())).parent
-    flowfile_data = get_template_flowfile_data(template_id, data_dir)
+    try:
+        data_dir = next(iter(resolved_files.values())).parent
+        flowfile_data = get_template_flowfile_data(template_id, data_dir)
+    except Exception as e:
+        _tpl_logger.exception("get_template_flowfile_data failed for %s", template_id)
+        raise HTTPException(
+            status_code=502,
+            detail=f"get_template_flowfile_data({template_id}) failed: {type(e).__name__}: {e}",
+        ) from e
 
     # Write to a unique temp YAML and import via existing flow import path
     import uuid
@@ -1858,13 +1885,21 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     flow_stem = flowfile_data.flowfile_name.replace(" ", "_").lower()
     temp_path = flows_dir / f"{flow_stem}_{uuid.uuid4().hex[:8]}.yaml"
     try:
-        with open(temp_path, "w", encoding="utf-8") as f:
-            yaml.dump(flowfile_data.model_dump(), f, default_flow_style=False, allow_unicode=True)
-        flow_id = flow_file_handler.import_flow(temp_path, user_id=user_id)
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                yaml.dump(flowfile_data.model_dump(), f, default_flow_style=False, allow_unicode=True)
+            flow_id = flow_file_handler.import_flow(temp_path, user_id=user_id)
+        except Exception as e:
+            _tpl_logger.exception("import_flow failed for template %s (temp=%s)", template_id, temp_path)
+            raise HTTPException(
+                status_code=502,
+                detail=f"import_flow failed: {type(e).__name__}: {e}",
+            ) from e
     finally:
         temp_path.unlink(missing_ok=True)
 
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
         auto_register_flow(str(flows_dir / f"{flow_stem}.yaml"), flow.flow_settings.name, user_id)
+    _tpl_logger.info("create_from_template OK: template_id=%s flow_id=%s", template_id, flow_id)
     return flow_id

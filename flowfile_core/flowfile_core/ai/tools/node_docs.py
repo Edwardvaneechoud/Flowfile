@@ -215,6 +215,21 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "Often paired downstream of 'filter' (then aggregate) and upstream of "
         "'sort' (rank by aggregate)."
     ),
+    "window_functions": (
+        "Add rolling, cumulative, rank, or tile columns over ordered rows, "
+        "optionally reset per partition (Polars `.over(...)`). Use for running "
+        "totals, moving averages, row ranks within a group, or N-tile buckets. "
+        "Don't use for plain group aggregation (one row per group) — that's "
+        "'group_by'; window functions keep every input row and add columns. "
+        "Rolling and tile functions REQUIRE at least one order_by column; "
+        "rolling needs window_size; each op needs a unique new_column_name. "
+        "Example: "
+        '{"window_input": {"partition_by": ["region"], '
+        '"order_by": [{"column": "date", "how": "asc"}], '
+        '"window_functions": [{"column": "amount", "function": "rolling_mean", '
+        '"new_column_name": "amount_7d_avg", "window_size": 7}]}}. '
+        "Often paired downstream of 'sort'/'filter' and upstream of 'select'."
+    ),
     "pivot": (
         "Long-to-wide reshape: turn distinct values of one column into new columns "
         "with an aggregate per cell. Use for cross-tabs, monthly summaries (rows "
@@ -627,6 +642,21 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "customer_count. Pitfall: the count action still needs a Field — "
         "the value doesn't matter for count, but the panel won't validate "
         "without one. Pick any non-null column (the id is fine)."
+    ),
+    "window_functions": (
+        "Settings panel: 'Partition by' columns (optional — leave empty for a "
+        "single window over all rows), 'Order by' columns (sort key applied "
+        "before windowing), and a 'Window functions' list. Each row picks a "
+        "Function (rolling_mean, rolling_sum, cum_sum, rank, tile, …), a source "
+        "Column, an output column name, and function-specific options (window "
+        "size, rank method, number of tiles). Worked example: '7-day moving "
+        "average of sales per region' → drag 'Window functions' from the "
+        "Aggregations section, set Partition by=[region], Order by=[date], add a "
+        "row: Function=rolling_mean, Column=sales, output=sales_7d_avg, window "
+        "size=7. Pitfall 1: rolling and tile functions need an Order by column — "
+        "the panel won't compute a meaningful window without one. Pitfall 2: for "
+        "a single total/count per group (collapsing rows) use 'Group by' instead; "
+        "window functions keep every row and just add columns."
     ),
     "pivot": (
         "Settings panel: 'Index columns' (the rows to keep as-is), a "

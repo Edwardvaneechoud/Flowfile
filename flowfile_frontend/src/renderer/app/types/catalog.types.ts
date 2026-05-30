@@ -24,6 +24,24 @@ export interface NamespaceTree extends CatalogNamespace {
   visualizations: CatalogVisualization[];
 }
 
+// System-managed schemas under "General" that users never pick as a store target.
+export const SYSTEM_NAMESPACE_NAMES = new Set([
+  "Unnamed Flows",
+  "Local Flows",
+  "Python Editor",
+  "sync",
+]);
+
+// Shallow copy of the tree with system schemas removed from the "General" root.
+// Scoped to "General" so a user-created schema sharing a name elsewhere is kept.
+export function filterSelectableNamespaces(tree: NamespaceTree[]): NamespaceTree[] {
+  return tree.map((node) =>
+    node.name === "General" && node.parent_id === null
+      ? { ...node, children: node.children.filter((c) => !SYSTEM_NAMESPACE_NAMES.has(c.name)) }
+      : node,
+  );
+}
+
 export interface NamespaceCreate {
   name: string;
   parent_id?: number | null;
