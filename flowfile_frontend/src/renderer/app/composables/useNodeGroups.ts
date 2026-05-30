@@ -126,7 +126,7 @@ export function useNodeGroups() {
   /** Reroute the collapsed group's boundary edges to the pill as UI-only proxy edges. */
   const addGroupProxyEdges = (groupVueId: string): void => {
     const groupId = groupBackendId(groupVueId);
-    const memberIds = new Set(childNodesOf(groupVueId).map((node) => node.id));
+    const memberIds = new Set(descendantsOf(groupVueId).map((node) => node.id));
     if (memberIds.size === 0) return;
     const prefix = `${GROUP_PROXY_EDGE_PREFIX}${groupId}-`;
     const proxies: Edge[] = [];
