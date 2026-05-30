@@ -123,22 +123,22 @@ watch(
   },
 );
 
-// Filter routes based on admin status and Electron mode
+// Filter routes based on admin status and desktop-shell mode
 const items = computed(() => {
   const isAdmin = authStore.isAdmin;
-  const isElectron = authService.isInElectronMode();
+  const isDesktopShell = authService.isInDesktopMode();
   return NavigationRoutes.routes.filter((route) => {
-    // Hide routes marked as hideInElectron when in Electron mode
-    if (route.hideInElectron && isElectron) return false;
-    // Hide routes marked as dockerOnly when in Electron mode
-    if (route.dockerOnly && isElectron) return false;
+    // Hide routes marked as hideInElectron when in desktop mode
+    if (route.hideInElectron && isDesktopShell) return false;
+    // Hide routes marked as dockerOnly when in desktop mode
+    if (route.dockerOnly && isDesktopShell) return false;
     // Show route if it doesn't require admin, or if user is admin
     return !route.requiresAdmin || isAdmin;
   });
 });
 
 // Only show logout button in Docker/web mode
-const showLogout = computed(() => !authService.isInElectronMode());
+const showLogout = computed(() => !authService.isInDesktopMode());
 
 const handleStartTutorial = async () => {
   if (router.currentRoute.value.name !== "designer") {
