@@ -1,4 +1,3 @@
-
 import { setActivePinia, createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -120,6 +119,25 @@ vi.mock("./ai-store-persistence", () => ({
   loadPersistedAiState: mockSymbols.loadPersistedAiState,
   persistAiState: mockSymbols.persistAiState,
   clearPersistedAiState: mockSymbols.clearPersistedAiState,
+}));
+
+// localModelApi imports config/constants, which reads ``window`` at module
+// load — mock it (like every other sibling) so the store imports cleanly in
+// the jsdom-free unit env. Default ``fetchLocalModelStatus`` → null so no
+// synthetic "local" provider is injected, preserving the BYOK-only
+// expectations in the loadProviders specs below.
+vi.mock("../views/AiProvidersView/localModelApi", () => ({
+  LOCAL_PROVIDER_ID: "local",
+  fetchLocalModelStatus: vi.fn(async () => null),
+  generateFlow: vi.fn(),
+  selectLocalModel: vi.fn(),
+  streamLocalModelInstall: vi.fn(),
+}));
+
+// Simple-build applies via the diff client (acceptDiff); mock it so the store
+// imports cleanly without the fetch layer.
+vi.mock("../services/aiDiffClient", () => ({
+  acceptDiff: vi.fn(),
 }));
 
 import { useAiStore } from "./ai-store";

@@ -190,6 +190,18 @@ class FlowfileStorage:
         return self.base_directory / "template_data"
 
     @property
+    def local_model_directory(self) -> Path:
+        """Directory for the optional on-demand local LLM (llama.cpp binary + GGUF).
+
+        Internal engine artifact kept under ``base_directory`` (``~/.flowfile/
+        local_model`` locally). Deliberately NOT created eagerly in
+        ``_ensure_directories`` — the local-model manager creates it only when
+        the user opts into the install, so users who never want it pay nothing.
+        Mirrors Duckle's app-data ``engines/`` location.
+        """
+        return self.base_directory / "local_model"
+
+    @property
     def ai_sessions_directory(self) -> Path:
         """Directory for W42 disk-persisted AI agent sessions (per-user, sidecar).
 

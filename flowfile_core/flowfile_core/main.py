@@ -86,6 +86,7 @@ async def shutdown_handler(app: FastAPI):
 
         print("Cleaning up core service resources...")
         _shutdown_kernels()
+        _shutdown_local_model()
         clear_all_flow_logs()
         await asyncio.sleep(0.1)  # Give a moment for cleanup
 
@@ -99,6 +100,16 @@ def _shutdown_kernels():
         manager.shutdown_all()
     except Exception as exc:
         print(f"Error shutting down kernels: {exc}")
+
+
+def _shutdown_local_model():
+    """Stop the optional local LLM server (if running) during shutdown."""
+    try:
+        from flowfile_core.ai.local_model import manager as local_model_manager
+
+        local_model_manager.stop()
+    except Exception as exc:
+        print(f"Error stopping local model: {exc}")
 
 
 # Initialize FastAPI with metadata

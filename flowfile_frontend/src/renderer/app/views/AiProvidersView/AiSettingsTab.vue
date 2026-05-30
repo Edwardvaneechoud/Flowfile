@@ -134,6 +134,228 @@
       </div>
     </div>
 
+    <!-- Local model: install an offline llama.cpp runtime + small GGUF on
+         demand. Nothing downloads until the user clicks Install. -->
+    <div v-if="!isDisabled" class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">On-device AI</h3>
+      </div>
+      <div class="card-content">
+        <div v-if="localLoading" class="loading-state">
+          <div class="loading-spinner"></div>
+          <p>Checking on-device AI…</p>
+        </div>
+
+        <div v-else-if="localError" class="info-box">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <div class="info-body">
+            <p><strong>On-device AI unavailable</strong></p>
+            <p>{{ localError }}</p>
+            <div class="info-actions">
+              <el-button :loading="localLoading" @click="loadLocalModel">Retry</el-button>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="localModel && !localModel.available" class="info-box">
+          <i class="fa-solid fa-circle-info"></i>
+          <div class="info-body">
+            <p><strong>Not available on this platform</strong></p>
+            <p>No prebuilt on-device AI runtime exists for your OS / architecture.</p>
+          </div>
+        </div>
+
+        <template v-else-if="localModel">
+          <!-- Nothing installed yet → one-click setup of the recommended model.
+               No need to know the catalog; advanced users can expand below. -->
+          <template v-if="!localModel.anyModelInstalled">
+            <p class="description-text" style="margin-top: 0">
+              For simple AI use-cases only. We'll download
+              <strong>{{ recommendedModelName }}</strong> (~{{ recommendedDownloadLabel }}) into
+              your Flowfile data directory. For larger, more capable models, connect a provider
+              above — e.g. Ollama or OpenRouter.
+            </p>
+            <button
+              type="button"
+              class="btn local-setup-btn"
+              :disabled="localBusy || installing"
+              @click="handleLocalSetup"
+            >
+              <i class="fa-solid fa-download"></i>
+              <span>Set up On-device AI (~{{ recommendedDownloadLabel }})</span>
+            </button>
+          </template>
+
+          <!-- Installed → show the one active model + its Start/Stop. Switching,
+               adding, and removing models lives under Advanced. -->
+          <template v-else>
+            <div class="local-active">
+              <div class="local-active__info">
+                <i class="fa-solid fa-microchip"></i>
+                <span class="local-active__name">{{ localModel.modelName }}</span>
+                <span
+                  class="badge"
+                  :class="localModel.running ? 'badge--configured' : 'badge--env_fallback'"
+                >
+                  {{ localModel.running ? "running" : "ready" }}
+                </span>
+              </div>
+              <div class="connection-actions">
+                <button
+                  v-if="!localModel.running"
+                  type="button"
+                  class="btn btn-secondary"
+                  :disabled="localBusy"
+                  @click="handleLocalStart"
+                >
+                  <i class="fa-solid fa-play"></i>
+                  <span>Start</span>
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="btn btn-secondary"
+                  :disabled="localBusy"
+                  @click="handleLocalStop"
+                >
+                  <i class="fa-solid fa-stop"></i>
+                  <span>Stop</span>
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <div v-if="installing" class="local-progress">
+            <div class="local-progress__label">
+              <span
+                >{{ installPhaseLabel
+                }}<template v-if="installingModelName"> · {{ installingModelName }}</template></span
+              >
+              <span v-if="installPct !== null">{{ installPct }}%</span>
+            </div>
+            <div class="local-progress__track">
+              <div
+                class="local-progress__bar"
+                :class="{ 'is-indeterminate': installPct === null }"
+                :style="installPct !== null ? { width: installPct + '%' } : undefined"
+              ></div>
+            </div>
+          </div>
+
+          <!-- Advanced: the full catalog — install other sizes, switch the active
+               one (Use), or delete. Collapsed by default so new users ignore it. -->
+          <details class="local-advanced">
+            <summary class="local-advanced__summary">Advanced — choose or manage models</summary>
+            <div class="connections-list">
+              <div
+                v-for="m in localModel.models"
+                :key="m.id"
+                class="connection-item"
+                :class="{ 'connection-item--active': m.id === localModel.selectedModelId }"
+              >
+                <div class="connection-info">
+                  <div class="connection-name">
+                    <i class="fa-solid fa-microchip"></i>
+                    <span>{{ m.name }}</span>
+                    <span class="badge" :class="modelBadgeClass(m)">{{ modelBadgeLabel(m) }}</span>
+                  </div>
+                  <div class="connection-details">
+                    <span>{{ m.description }}</span>
+                    <span class="separator">•</span>
+                    <span class="muted">~{{ m.approxDownloadMb }} MB download</span>
+                  </div>
+                </div>
+                <div class="connection-actions">
+                  <button
+                    v-if="!m.installed"
+                    type="button"
+                    class="btn btn-secondary"
+                    :disabled="localBusy || installing"
+                    @click="handleLocalInstall(m.id)"
+                  >
+                    <i class="fa-solid fa-download"></i>
+                    <span>Install</span>
+                  </button>
+                  <button
+                    v-if="m.installed && m.id !== localModel.selectedModelId"
+                    type="button"
+                    class="btn btn-secondary"
+                    :disabled="localBusy || installing"
+                    @click="handleLocalSelect(m.id)"
+                  >
+                    <i class="fa-solid fa-circle-check"></i>
+                    <span>Use</span>
+                  </button>
+                  <button
+                    v-if="m.installed && m.id === localModel.selectedModelId && !localModel.running"
+                    type="button"
+                    class="btn btn-secondary"
+                    :disabled="localBusy"
+                    @click="handleLocalStart"
+                  >
+                    <i class="fa-solid fa-play"></i>
+                    <span>Start</span>
+                  </button>
+                  <button
+                    v-if="m.installed && m.id === localModel.selectedModelId && localModel.running"
+                    type="button"
+                    class="btn btn-secondary"
+                    :disabled="localBusy"
+                    @click="handleLocalStop"
+                  >
+                    <i class="fa-solid fa-stop"></i>
+                    <span>Stop</span>
+                  </button>
+                  <button
+                    v-if="m.installed"
+                    type="button"
+                    class="btn btn-danger"
+                    :disabled="localBusy || installing"
+                    @click="handleLocalDelete(m.id)"
+                  >
+                    <i class="fa-solid fa-trash-alt"></i>
+                    <span>Delete</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- Context window: tokens the model can hold. Bigger = more flow
+               context fits, but more RAM. Applies on the next model start. -->
+          <div v-if="localModel.anyModelInstalled" class="local-ctx">
+            <label class="local-ctx__label" for="local-ctx-size">Context window (tokens)</label>
+            <div class="local-ctx__row">
+              <input
+                id="local-ctx-size"
+                v-model.number="ctxSizeInput"
+                type="number"
+                class="form-input local-ctx__input"
+                :min="localModel.ctxSizeMin"
+                :max="localModel.ctxSizeMax"
+                step="1024"
+                :disabled="localBusy"
+                @keyup.enter="handleSetCtxSize"
+              />
+              <button
+                type="button"
+                class="btn btn-secondary"
+                :disabled="localBusy || ctxSizeInput === localModel.ctxSize"
+                @click="handleSetCtxSize"
+              >
+                Apply
+              </button>
+            </div>
+            <p class="hint-text">
+              {{ localModel.ctxSizeMin }}–{{ localModel.ctxSizeMax }}. Larger fits more flow context
+              but uses more RAM.
+              <template v-if="localModel.running"> Applying restarts the local server.</template>
+            </p>
+          </div>
+        </template>
+      </div>
+    </div>
+
     <el-dialog
       v-model="dialogVisible"
       :title="`Configure ${editingProvider?.provider ?? ''}`"
@@ -273,7 +495,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { ElButton, ElDialog, ElMessage, ElTag } from "element-plus";
 import { useAuthStore } from "../../stores/auth-store";
 import {
@@ -286,6 +508,16 @@ import {
   upsertAiProvider,
 } from "./api";
 import type { AiProvider, AiProviderCredentialInput, AiProviderStatus } from "./aiProviderTypes";
+import {
+  deleteLocalModel,
+  fetchLocalModelStatus,
+  selectLocalModel,
+  setLocalCtxSize,
+  startLocalModel,
+  stopLocalModel,
+  streamLocalModelInstall,
+} from "./localModelApi";
+import type { LocalModelEntry, LocalModelStatus } from "./localModelApi";
 
 const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.isAdmin);
@@ -521,12 +753,240 @@ const handleCloseDeleteDialog = (done: () => void) => {
   done();
 };
 
+// --- Local model (offline llama.cpp + small GGUF) ---
+const localModel = ref<LocalModelStatus | null>(null);
+const localLoading = ref(true);
+const localBusy = ref(false);
+const localError = ref<string | null>(null);
+const installing = ref(false);
+const installPhase = ref("");
+const installPct = ref<number | null>(null);
+// Which model is mid-install, so the progress bar can name it.
+const installingModelId = ref<string | null>(null);
+// Editable copy of the context-window size; synced from status on each load
+// and applied via handleSetCtxSize.
+const ctxSizeInput = ref<number>(16384);
+
+const installingModelName = computed(() => {
+  const id = installingModelId.value;
+  if (!id || !localModel.value) return "";
+  return localModel.value.models.find((m) => m.id === id)?.name ?? "";
+});
+
+// "~1960 MB" → "2.0 GB", "~1100 MB" → "1.1 GB", small values stay in MB.
+const formatDownloadMb = (mb: number | null | undefined): string => {
+  if (!mb || mb <= 0) return "";
+  return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`;
+};
+
+const installingModel = computed(
+  () => localModel.value?.models.find((m) => m.id === installingModelId.value) ?? null,
+);
+
+// The model the one-click "Set up local AI" installs: the backend's selected
+// default (Qwen2.5-Coder 3B) before anything is installed.
+const recommendedModel = computed(
+  () =>
+    localModel.value?.models.find((m) => m.id === localModel.value?.selectedModelId) ??
+    localModel.value?.models[0] ??
+    null,
+);
+const recommendedModelName = computed(() => recommendedModel.value?.name ?? "a small model");
+const recommendedDownloadLabel = computed(
+  () => formatDownloadMb(recommendedModel.value?.approxDownloadMb) || "small download",
+);
+
+// Per-model badge: running > selected > installed > not installed. Only the
+// selected model can be "running" (one server at a time).
+const modelBadgeLabel = (m: LocalModelEntry): string => {
+  const st = localModel.value;
+  if (!st) return "";
+  if (m.id === st.selectedModelId && st.running) return "running";
+  if (m.id === st.selectedModelId && m.installed) return "active";
+  if (m.installed) return "installed";
+  return "not installed";
+};
+
+const modelBadgeClass = (m: LocalModelEntry): string => {
+  const st = localModel.value;
+  if (st && m.id === st.selectedModelId && st.running) return "badge--configured";
+  if (st && m.id === st.selectedModelId && m.installed) return "badge--env_fallback";
+  if (m.installed) return "badge--test badge--ok";
+  return "badge--unconfigured";
+};
+
+const installPhaseLabel = computed(() => {
+  switch (installPhase.value) {
+    case "downloading_binary":
+      return "Downloading runtime…";
+    case "extracting":
+      return "Extracting…";
+    case "downloading_model": {
+      const size = formatDownloadMb(installingModel.value?.approxDownloadMb);
+      return size ? `Downloading model (~${size})…` : "Downloading model…";
+    }
+    case "verifying":
+      return "Verifying…";
+    case "done":
+      return "Done";
+    default:
+      return "Installing…";
+  }
+});
+
+// Mirror the backend's ctx size into the editable input whenever status
+// changes (load, select, install, apply) so the field always reflects truth.
+watch(
+  () => localModel.value?.ctxSize,
+  (size) => {
+    if (typeof size === "number") ctxSizeInput.value = size;
+  },
+);
+
+const handleSetCtxSize = async () => {
+  const st = localModel.value;
+  if (!st) return;
+  const want = Math.round(Number(ctxSizeInput.value));
+  if (!Number.isFinite(want) || want === st.ctxSize) return;
+  localBusy.value = true;
+  try {
+    localModel.value = await setLocalCtxSize(want);
+    ElMessage.success("Context window updated");
+  } catch (error) {
+    ElMessage.error((error as Error).message || "Failed to update context window");
+  } finally {
+    localBusy.value = false;
+  }
+};
+
+const loadLocalModel = async () => {
+  localLoading.value = true;
+  localError.value = null;
+  try {
+    localModel.value = await fetchLocalModelStatus();
+  } catch (error) {
+    if (error instanceof AiDisabledError) {
+      isDisabled.value = true;
+    } else {
+      // Most commonly: the running backend predates the local-model routes
+      // (needs a restart) or is unreachable. Surface it with a Retry rather
+      // than rendering an empty card.
+      localModel.value = null;
+      localError.value =
+        (error as { response?: { status?: number } })?.response?.status === 404
+          ? "On-device AI endpoints not found. Restart flowfile_core to pick up this feature, then Retry."
+          : (error as Error)?.message || "Couldn't reach the on-device AI service.";
+    }
+  } finally {
+    localLoading.value = false;
+  }
+};
+
+// One-click onboarding: install the recommended default. The user never has to
+// know the catalog exists — Advanced is there if they want a different size.
+const handleLocalSetup = async () => {
+  const id = recommendedModel.value?.id ?? localModel.value?.selectedModelId;
+  if (!id) return;
+  await handleLocalInstall(id);
+};
+
+const handleLocalInstall = async (modelId: string) => {
+  installing.value = true;
+  localBusy.value = true;
+  installingModelId.value = modelId;
+  installPhase.value = "";
+  installPct.value = null;
+  let failed: string | null = null;
+  try {
+    await streamLocalModelInstall(
+      {
+        onProgress: (ev) => {
+          installPhase.value = ev.phase;
+          if (typeof ev.received === "number" && typeof ev.total === "number" && ev.total > 0) {
+            installPct.value = Math.min(100, Math.round((ev.received / ev.total) * 100));
+          } else {
+            installPct.value = null;
+          }
+        },
+        onError: (msg) => {
+          failed = msg;
+        },
+      },
+      undefined,
+      modelId,
+    );
+  } catch (error) {
+    failed = (error as Error).message || "Install failed";
+  } finally {
+    installing.value = false;
+    localBusy.value = false;
+    installingModelId.value = null;
+    await loadLocalModel();
+  }
+  if (failed) {
+    ElMessage.error(`Install failed: ${failed}`);
+  } else {
+    ElMessage.success("Model installed");
+  }
+};
+
+const handleLocalSelect = async (modelId: string) => {
+  localBusy.value = true;
+  try {
+    localModel.value = await selectLocalModel(modelId);
+    ElMessage.success("Model selected");
+  } catch (error) {
+    ElMessage.error((error as Error).message || "Failed to select model");
+  } finally {
+    localBusy.value = false;
+  }
+};
+
+const handleLocalStart = async () => {
+  localBusy.value = true;
+  try {
+    localModel.value = await startLocalModel();
+    ElMessage.success("On-device AI started");
+  } catch (error) {
+    ElMessage.error((error as Error).message || "Failed to start on-device AI");
+  } finally {
+    localBusy.value = false;
+  }
+};
+
+const handleLocalStop = async () => {
+  localBusy.value = true;
+  try {
+    localModel.value = await stopLocalModel();
+    ElMessage.success("On-device AI stopped");
+  } catch {
+    ElMessage.error("Failed to stop on-device AI");
+  } finally {
+    localBusy.value = false;
+  }
+};
+
+const handleLocalDelete = async (modelId: string) => {
+  localBusy.value = true;
+  try {
+    localModel.value = await deleteLocalModel(modelId);
+    ElMessage.success("Model removed");
+  } catch {
+    ElMessage.error("Failed to remove model");
+  } finally {
+    localBusy.value = false;
+  }
+};
+
 // Render-time use to avoid the "unused" complaint when we expose AI_DISABLED_DETAIL
 // only through the template.
 const _ai_disabled_detail = computed(() => AI_DISABLED_DETAIL);
 void _ai_disabled_detail.value;
 
-onMounted(loadProviders);
+onMounted(() => {
+  void loadProviders();
+  void loadLocalModel();
+});
 </script>
 
 <style scoped>
@@ -554,6 +1014,12 @@ onMounted(loadProviders);
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   gap: var(--spacing-4);
+}
+
+/* The selected local model — accent its left edge so the active pick reads
+   at a glance among the catalog rows. */
+.connection-item--active {
+  border-left: 3px solid var(--color-accent);
 }
 
 .connection-info {
@@ -764,5 +1230,130 @@ onMounted(loadProviders);
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
   font-weight: normal;
+}
+
+.local-progress {
+  margin-top: var(--spacing-3);
+}
+
+/* Primary one-click onboarding button (accent-filled, like the chat Build CTA). */
+.local-setup-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-2);
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--border-radius-md, 6px);
+  background-color: var(--color-accent);
+  color: #fff;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.local-setup-btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.local-setup-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Active-model summary row shown once something is installed. */
+.local-active {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-1);
+}
+
+.local-active__info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  min-width: 0;
+}
+
+.local-active__name {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+/* Advanced (collapsed) catalog. */
+.local-advanced {
+  margin-top: var(--spacing-3);
+}
+
+.local-advanced__summary {
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+.local-advanced .connections-list {
+  margin-top: var(--spacing-2);
+}
+
+.local-ctx {
+  margin-top: var(--spacing-3);
+  padding-top: var(--spacing-3);
+  border-top: 1px solid var(--color-border-light);
+}
+
+.local-ctx__label {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-1);
+}
+
+.local-ctx__row {
+  display: flex;
+  gap: var(--spacing-2);
+  align-items: center;
+}
+
+.local-ctx__input {
+  max-width: 140px;
+}
+
+.local-progress__label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-1);
+}
+
+.local-progress__track {
+  height: 6px;
+  background-color: var(--color-background-muted);
+  border-radius: var(--border-radius-full);
+  overflow: hidden;
+}
+
+.local-progress__bar {
+  height: 100%;
+  background-color: var(--color-accent);
+  border-radius: var(--border-radius-full);
+  transition: width 0.2s ease;
+}
+
+.local-progress__bar.is-indeterminate {
+  width: 40%;
+  animation: local-progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes local-progress-slide {
+  0% {
+    margin-left: -40%;
+  }
+  100% {
+    margin-left: 100%;
+  }
 }
 </style>
