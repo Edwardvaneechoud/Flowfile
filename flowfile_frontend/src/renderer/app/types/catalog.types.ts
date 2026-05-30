@@ -378,7 +378,8 @@ export type CatalogTab =
   | "runs"
   | "schedules"
   | "sql"
-  | "visuals";
+  | "visuals"
+  | "notebooks";
 
 // ============================================================================
 // SQL Query types

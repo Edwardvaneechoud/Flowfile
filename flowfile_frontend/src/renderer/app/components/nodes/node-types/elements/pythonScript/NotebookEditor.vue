@@ -48,9 +48,10 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { KernelApi } from "../../../../../api/kernel.api";
 import type { NotebookCell } from "../../../../../types/node.types";
+import { loadApiSchema } from "./apiSchema";
 import NotebookCellComponent from "./NotebookCell.vue";
 import type { UpstreamColumn } from "./useUpstreamColumns";
 
@@ -75,6 +76,16 @@ const emit = defineEmits<{
 const executingCellId = ref<string | null>(null);
 const executionCounter = ref(1);
 const isAnyExecuting = computed(() => executingCellId.value !== null);
+
+// Fetch the kernel's introspected API schema so the editor can show real
+// signatures / docstrings and hover hints (falls back to static completions).
+watch(
+  () => props.kernelId,
+  (kernelId) => {
+    if (kernelId) void loadApiSchema(kernelId);
+  },
+  { immediate: true },
+);
 
 // ─── Cell Operations ──────────────────────────────────────────────────────────
 

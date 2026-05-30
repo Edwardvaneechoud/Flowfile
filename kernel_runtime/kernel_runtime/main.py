@@ -742,3 +742,27 @@ async def health():
         "persistence": persistence_status,
         "recovery_mode": _recovery_mode.value,
     }
+
+
+class ApiSymbol(BaseModel):
+    """A single introspected symbol exposed to the editor for type hints."""
+
+    name: str
+    kind: str  # "function" | "class" | "property" | "variable"
+    namespace: str  # "flowfile_ctx" | "pl" | "LazyFrame" | "Expr" | ...
+    signature: str = ""
+    return_type: str = ""
+    doc: str = ""
+
+
+@app.get("/api_schema", response_model=list[ApiSymbol])
+async def api_schema():
+    """Introspected schema of the kernel's public API (flowfile_ctx + polars).
+
+    Powers signature-aware completions and hover docs in the code editor. The
+    schema reflects the libraries actually baked into this kernel image, so it
+    stays accurate across image flavours.
+    """
+    from kernel_runtime.api_schema import get_api_schema
+
+    return get_api_schema()

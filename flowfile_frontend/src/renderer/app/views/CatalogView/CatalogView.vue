@@ -232,6 +232,8 @@
           v-else-if="catalogStore.activeTab === 'visuals'"
           @view-table="selectTable($event)"
         />
+        <!-- Notebooks (standalone, kernel-backed) -->
+        <NotebookView v-else-if="catalogStore.activeTab === 'notebooks'" />
         <!-- Stats overview -->
         <StatsPanel
           v-else
@@ -415,6 +417,7 @@ import CreateSyncModal from "./CreateSyncModal.vue";
 import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
 import VisualsPanel from "./VisualsPanel.vue";
+import NotebookView from "../NotebookView/NotebookView.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
@@ -466,6 +469,12 @@ const tabs = computed(() => [
     key: "visuals" as CatalogTab,
     label: "Visuals",
     icon: "fa-solid fa-chart-pie",
+    badge: null,
+  },
+  {
+    key: "notebooks" as CatalogTab,
+    label: "Notebooks",
+    icon: "fa-solid fa-book",
     badge: null,
   },
 ]);

@@ -132,3 +132,13 @@ export interface KernelMemoryInfo {
   limit_bytes: number;
   usage_percent: number;
 }
+
+/** A single introspected symbol from the kernel API, used for editor type hints. */
+export interface ApiSymbol {
+  name: string;
+  kind: string; // "function" | "class" | "property" | "variable"
+  namespace: string; // "flowfile_ctx" | "pl" | "LazyFrame" | "Expr" | ...
+  signature: string;
+  return_type: string;
+  doc: string;
+}

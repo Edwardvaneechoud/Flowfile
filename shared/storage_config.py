@@ -16,6 +16,7 @@ DirectoryOptions = Literal[
     "cache_directory",
     "flows_directory",
     "user_defined_nodes_directory",
+    "notebooks_directory",
     "global_artifacts_directory",
     "artifact_staging_directory",
     "catalog_tables_directory",
@@ -102,6 +103,17 @@ class FlowfileStorage:
     def python_editor_flows_directory(self) -> Path:
         """Directory for Python-built flows registered via the FlowFrame API."""
         return self.flows_directory / "python_editor_flows"
+
+    @property
+    def notebooks_directory(self) -> Path:
+        """Directory for standalone Python notebooks (user-accessible).
+
+        Standalone notebooks are flow-independent ``.ipynb`` files authored in
+        the dedicated Notebook view and executed against a kernel.
+        """
+        if _is_docker_mode():
+            return self.user_data_directory / "notebooks"
+        return self.base_directory / "notebooks"
 
     @property
     def uploads_directory(self) -> Path:
@@ -251,6 +263,7 @@ class FlowfileStorage:
             self.flows_directory,
             self.unnamed_flows_directory,
             self.python_editor_flows_directory,
+            self.notebooks_directory,
             self.uploads_directory,
             self.outputs_directory,
             self.user_defined_nodes_directory,
