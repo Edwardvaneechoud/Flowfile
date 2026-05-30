@@ -147,7 +147,7 @@ router.beforeEach(async (to, _from, next) => {
     try {
       const status = await setupService.getSetupStatus(isSetupPage);
       // Update auth service with backend mode - this handles "flowfile run ui"
-      // where electronAPI doesn't exist but backend is in electron mode
+      // where the desktop runtime isn't present but the backend is in desktop mode
       authService.setModeFromBackend(status.mode);
       setupRequired = status.setup_required;
       setupChecked = status.mode !== "unknown";
@@ -157,7 +157,7 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
-  if (!authService.isInElectronMode()) {
+  if (!authService.isInDesktopMode()) {
     if (setupRequired && !isSetupPage) {
       next({ name: "setup" });
       return;
@@ -178,19 +178,19 @@ router.beforeEach(async (to, _from, next) => {
     await authStore.initialize();
   }
 
-  if (hideInElectron && authService.isInElectronMode()) {
+  if (hideInElectron && authService.isInDesktopMode()) {
     next({ name: "designer" });
     return;
   }
 
   const dockerOnly = to.matched.some((record) => record.meta.dockerOnly);
-  if (dockerOnly && authService.isInElectronMode()) {
+  if (dockerOnly && authService.isInDesktopMode()) {
     next({ name: "designer" });
     return;
   }
 
   if (requiresAuth) {
-    if (authService.isInElectronMode()) {
+    if (authService.isInDesktopMode()) {
       next();
       return;
     }
@@ -200,7 +200,7 @@ router.beforeEach(async (to, _from, next) => {
       next({ name: "login" });
     }
   } else {
-    if (to.name === "login" && (authService.isInElectronMode() || authService.isAuthenticated())) {
+    if (to.name === "login" && (authService.isInDesktopMode() || authService.isAuthenticated())) {
       next({ name: "designer" });
     } else {
       next();

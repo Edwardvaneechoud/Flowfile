@@ -1,6 +1,7 @@
 /mysql
 /mysql/*
 .idea
+.build-logs
 files/*
 .env
 /.env
@@ -99,3 +100,6 @@ error-linux
 # Repo-root local Claude state only — leave subtree configs
 # (e.g. plugin/agent dirs nested under packages) tracked.
 /.claude/
+
+# Signing checklist holds real cert/notarization secrets — never commit
+flowfile_frontend/src-tauri/SIGNING_CHECKLIST.md

@@ -174,7 +174,7 @@ npm install && npm run dev:web  # :8080
 
 Three interconnected services:
 
-- **Designer** (Electron + Vue) — visual interface
+- **Designer** (Tauri + Vue) — visual interface
 - **Core** (FastAPI) — ETL engine running Polars (`:63578`)
 - **Worker** (FastAPI) — computation and caching (`:63579`)
 
@@ -208,10 +208,10 @@ Deeper dive: [Architecting a Visual ETL Tool with Polars](https://dev.to/edwardv
 
 ## License
 
-[MIT](LICENSE) — the code is yours.
+[MIT](LICENSE)
 
 ---
 
 ## Acknowledgments
 
-Built on [Polars](https://pola.rs/), [Vue.js](https://vuejs.org/), [FastAPI](https://fastapi.tiangolo.com/), [VueFlow](https://vueflow.dev/), [Delta Lake](https://delta.io/), [Graphic Walker](https://github.com/Kanaries/graphic-walker), and [Electron](https://www.electronjs.org/).
+Built on [Polars](https://pola.rs/), [Vue.js](https://vuejs.org/), [FastAPI](https://fastapi.tiangolo.com/), [VueFlow](https://vueflow.dev/), [Delta Lake](https://delta.io/), [Graphic Walker](https://github.com/Kanaries/graphic-walker), and [Tauri](https://tauri.app/).

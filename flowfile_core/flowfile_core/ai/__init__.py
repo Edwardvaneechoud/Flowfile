@@ -19,6 +19,17 @@ Package layout:
 * ``metrics``     — counters + cost-per-flow tracking.
 """
 
-from flowfile_core.ai.routes import router
+import os
+
+# litellm reads model_prices_and_context_window_backup.json during `import litellm`.
+# Force the bundled local copy and skip the raw.githubusercontent.com fetch of the
+# model cost map: Flowfile only calls litellm.acompletion + reads litellm.exceptions,
+# never its cost/model-info APIs, so the frozen map is functionally irrelevant. This
+# avoids an outbound call (and offline failures) on first AI use. setdefault respects
+# an explicit override (e.g. Docker). All litellm imports are lazy (inside functions),
+# so this module-level set always runs before the first `import litellm`.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
+from flowfile_core.ai.routes import router  # noqa: E402
 
 __all__ = ["router"]
