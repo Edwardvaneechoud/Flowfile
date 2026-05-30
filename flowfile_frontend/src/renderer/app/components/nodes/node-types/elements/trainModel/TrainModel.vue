@@ -37,7 +37,7 @@
         <el-row class="setting-row">
           <el-col :span="10" class="grid-content">Save to catalog</el-col>
           <el-col :span="14" class="grid-content">
-            <el-switch v-model="nodeTrainModel.train_input.publish_to_catalog" />
+            <el-switch v-model="nodeTrainModel.train_input.publish_to_catalog" size="small" />
           </el-col>
         </el-row>
 

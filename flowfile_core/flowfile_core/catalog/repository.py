@@ -12,11 +12,15 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from flowfile_core.database.models import (
+    ApiConsumer,
+    ApiConsumerEndpoint,
     CatalogDashboard,
     CatalogNamespace,
     CatalogTable,
     CatalogTableReadLink,
     CatalogVisualization,
+    FlowApiEndpoint,
+    FlowApiKey,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -394,6 +398,55 @@ class SQLAlchemyCatalogRepository:
         # Clean up related records first
         self._db.query(FlowFavorite).filter_by(registration_id=registration_id).delete()
         self._db.query(FlowFollow).filter_by(registration_id=registration_id).delete()
+        # Remove published API endpoints and their keys. SQLite FK enforcement is
+        # off so these don't cascade: a leftover key would stay enabled (a real
+        # revocation gap) and the unique slug would stay occupied, blocking
+        # republish. Delete keys first (they reference the endpoint), then endpoints.
+        endpoint_ids = [
+            row[0]
+            for row in self._db.query(FlowApiEndpoint.id)
+            .filter(FlowApiEndpoint.registration_id == registration_id)
+            .all()
+        ]
+        if endpoint_ids:
+            # Implicit (per-endpoint) consumers granted only to these endpoints are
+            # garbage-collected; shared consumers just lose the grant (their keys have
+            # a NULL endpoint_id and survive). Same explicit-delete reasoning: SQLite
+            # FK enforcement is off, so grants/keys/consumers don't cascade on their own.
+            granted_consumer_ids = [
+                row[0]
+                for row in self._db.query(ApiConsumerEndpoint.consumer_id)
+                .filter(ApiConsumerEndpoint.endpoint_id.in_(endpoint_ids))
+                .distinct()
+                .all()
+            ]
+            self._db.query(ApiConsumerEndpoint).filter(ApiConsumerEndpoint.endpoint_id.in_(endpoint_ids)).delete(
+                synchronize_session=False
+            )
+            self._db.query(FlowApiKey).filter(FlowApiKey.endpoint_id.in_(endpoint_ids)).delete(
+                synchronize_session=False
+            )
+            self._db.query(FlowApiEndpoint).filter(FlowApiEndpoint.id.in_(endpoint_ids)).delete(
+                synchronize_session=False
+            )
+            if granted_consumer_ids:
+                orphan_implicit_ids = [
+                    row[0]
+                    for row in self._db.query(ApiConsumer.id)
+                    .filter(
+                        ApiConsumer.id.in_(granted_consumer_ids),
+                        ApiConsumer.is_implicit.is_(True),
+                        ~ApiConsumer.id.in_(self._db.query(ApiConsumerEndpoint.consumer_id)),
+                    )
+                    .all()
+                ]
+                if orphan_implicit_ids:
+                    self._db.query(FlowApiKey).filter(FlowApiKey.consumer_id.in_(orphan_implicit_ids)).delete(
+                        synchronize_session=False
+                    )
+                    self._db.query(ApiConsumer).filter(ApiConsumer.id.in_(orphan_implicit_ids)).delete(
+                        synchronize_session=False
+                    )
         # Hard-delete any soft-deleted artifacts referencing this flow
         self._db.query(GlobalArtifact).filter_by(
             source_registration_id=registration_id,

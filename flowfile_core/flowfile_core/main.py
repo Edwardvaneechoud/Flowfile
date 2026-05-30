@@ -25,10 +25,13 @@ from flowfile_core.configs.settings import (
 )
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.ml import router as ml_router
+from flowfile_core.routes.api_consumers import router as api_consumers_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
 from flowfile_core.routes.file_manager import router as file_manager_router
+from flowfile_core.routes.flow_api import data_router as flow_api_data_router
+from flowfile_core.routes.flow_api import management_router as flow_api_management_router
 from flowfile_core.routes.ga_connections import router as ga_connections_router
 from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.logs import router as logs_router
@@ -149,6 +152,10 @@ app.add_middleware(
 app.include_router(public_router)
 app.include_router(router)
 app.include_router(catalog_router)
+# Flow-as-API: public key-authenticated data endpoint + JWT management endpoints.
+app.include_router(flow_api_data_router)
+app.include_router(flow_api_management_router)
+app.include_router(api_consumers_router)
 app.include_router(artifacts_router)
 app.include_router(ml_router)
 app.include_router(logs_router, tags=["logs"])

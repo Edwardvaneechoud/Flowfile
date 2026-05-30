@@ -232,6 +232,11 @@
           v-else-if="catalogStore.activeTab === 'visuals'"
           @view-table="selectTable($event)"
         />
+        <!-- Published APIs -->
+        <ApisPanel
+          v-else-if="catalogStore.activeTab === 'apis'"
+          @view-flow="navigateToFlow($event)"
+        />
         <!-- Stats overview -->
         <StatsPanel
           v-else
@@ -415,6 +420,7 @@ import CreateSyncModal from "./CreateSyncModal.vue";
 import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
 import VisualsPanel from "./VisualsPanel.vue";
+import ApisPanel from "./ApisPanel.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
@@ -466,6 +472,12 @@ const tabs = computed(() => [
     key: "visuals" as CatalogTab,
     label: "Visuals",
     icon: "fa-solid fa-chart-pie",
+    badge: null,
+  },
+  {
+    key: "apis" as CatalogTab,
+    label: "APIs",
+    icon: "fa-solid fa-plug",
     badge: null,
   },
 ]);

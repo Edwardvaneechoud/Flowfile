@@ -3347,6 +3347,37 @@ class FlowGraph:
         )
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_api_response(self, api_response: input_schema.NodeApiResponse):
+        """Adds an API-response sink node.
+
+        The node is a pass-through marker: its result equals its input. When the flow
+        is published as an HTTP API endpoint, the endpoint reads this node's result
+        and serializes it as the response body. Behaves like an output node so its
+        result is always materialized locally.
+
+        Args:
+            api_response: The settings for the API-response node.
+        """
+
+        def _func(df: FlowDataEngine):
+            return df
+
+        def schema_callback():
+            input_node: FlowNode = self.get_node(api_response.node_id).node_inputs.main_inputs[0]
+            return input_node.schema
+
+        input_node_id = api_response.depending_on_id if hasattr(api_response, "depending_on_id") else None
+        self.add_node_step(
+            node_id=api_response.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="api_response",
+            setting_input=api_response,
+            schema_callback=schema_callback,
+            input_node_ids=[input_node_id],
+        )
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_catalog_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
         """Adds a node that reads a table from the catalog.
 

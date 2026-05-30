@@ -81,6 +81,7 @@ class FlowRegistrationService:
             last_run_at=last_run.started_at if last_run else None,
             last_run_success=last_run.success if last_run else None,
             file_exists=file_exists,
+            is_api_compatible=flow.is_api_compatible,
             artifact_count=artifact_count,
             tables_produced=[
                 CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced_tables
@@ -129,6 +130,7 @@ class FlowRegistrationService:
                     last_run_at=last_run.started_at if last_run else None,
                     last_run_success=last_run.success if last_run else None,
                     file_exists=file_exists,
+                    is_api_compatible=flow.is_api_compatible,
                     artifact_count=artifact_counts.get(flow.id, 0),
                     tables_produced=[
                         CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced

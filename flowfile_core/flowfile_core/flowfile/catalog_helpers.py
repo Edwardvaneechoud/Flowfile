@@ -13,7 +13,7 @@ from pathlib import Path
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import FlowRegistration
+from flowfile_core.database.models import FlowApiEndpoint, FlowRegistration
 from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
@@ -130,6 +130,44 @@ def register_flow_in_namespace(
             owner_id=user_id,
         )
         service.repo.create_flow(reg)
+
+
+def sync_api_compatibility(flow) -> None:
+    """Refresh the flow's catalog ``is_api_compatible`` flag from its in-memory graph.
+
+    A flow is API-compatible when it has exactly one ``api_response`` node. No-op if
+    the flow isn't registered yet. Best-effort: failures are logged, never raised, so
+    they cannot break a save.
+    """
+    if flow is None:
+        return
+    flow_path = getattr(flow.flow_settings, "path", None) or getattr(flow.flow_settings, "save_location", None)
+    if not flow_path:
+        return
+    is_compatible = sum(1 for n in flow.nodes if n.node_type == "api_response") == 1
+    try:
+        with get_db_context() as db:
+            reg = SQLAlchemyCatalogRepository(db).get_flow_by_path(flow_path)
+            if reg is None:
+                return
+            changed = False
+            if bool(reg.is_api_compatible) != is_compatible:
+                reg.is_api_compatible = is_compatible
+                changed = True
+            # A flow that just lost (or duplicated) its api_response node can no
+            # longer serve requests. Disable any already-published endpoint so the
+            # public route returns a clean 403 instead of 500ing on an invalid graph.
+            if not is_compatible:
+                disabled = (
+                    db.query(FlowApiEndpoint)
+                    .filter(FlowApiEndpoint.registration_id == reg.id, FlowApiEndpoint.enabled.is_(True))
+                    .update({"enabled": False}, synchronize_session=False)
+                )
+                changed = changed or bool(disabled)
+            if changed:
+                db.commit()
+    except Exception:
+        logger.info(f"Failed to sync API compatibility for '{flow_path}' (non-critical)", exc_info=True)
 
 
 def _snapshot(reg: FlowRegistration | None) -> FlowRegistrationSnapshot | None:

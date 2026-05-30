@@ -162,8 +162,11 @@ button {
   transition: all var(--transition-fast) var(--transition-timing);
 }
 
-/* Primary button - friendly teal/cyan color */
-.el-button--primary {
+/* Primary button - friendly teal/cyan color.
+   Exclude text/link variants: those are meant to be colored text on a
+   transparent background, so forcing a solid accent fill made their
+   (also-accent) label unreadable. */
+.el-button--primary:not(.is-text):not(.is-link) {
   --el-button-bg-color: var(--color-accent) !important;
   --el-button-border-color: var(--color-accent) !important;
   --el-button-hover-bg-color: var(--color-accent-hover) !important;
@@ -174,8 +177,8 @@ button {
   border-color: var(--color-accent) !important;
 }
 
-.el-button--primary:hover,
-.el-button--primary:focus {
+.el-button--primary:not(.is-text):not(.is-link):hover,
+.el-button--primary:not(.is-text):not(.is-link):focus {
   background-color: var(--color-accent-hover) !important;
   border-color: var(--color-accent-hover) !important;
 }
