@@ -1,24 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
   <style>
     svg {
-      --ff-icon-bg: #ECFEFF;
-      --ff-icon-primary: #0E7490;
-      --ff-icon-secondary: #22D3EE;
+      --ff-icon-bg: #EEF2FF;
+      --ff-icon-primary: #4338CA;
+      --ff-icon-secondary: #818CF8;
+      --ff-icon-accent: #F59E0B;
     }
     @media (prefers-color-scheme: dark) {
       svg {
-        --ff-icon-bg: #083344;
-        --ff-icon-primary: #A5F3FC;
-        --ff-icon-secondary: #67E8F9;
+        --ff-icon-bg: #1E1B4B;
+        --ff-icon-primary: #C7D2FE;
+        --ff-icon-secondary: #A5B4FC;
+        --ff-icon-accent: #FBBF24;
       }
     }
   </style>
   <circle cx="50" cy="50" r="46" fill="var(--ff-icon-bg)"/>
-  <rect x="22" y="44" width="18" height="18" fill="none" stroke="var(--ff-icon-primary)" stroke-width="3" rx="2"/>
-  <path d="M18 74 L28 58 L38 66 L50 42 L62 56 L74 32 L84 48" stroke="var(--ff-icon-primary)" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="28" cy="58" r="3.5" fill="var(--ff-icon-secondary)"/>
-  <circle cx="38" cy="66" r="3.5" fill="var(--ff-icon-secondary)"/>
-  <circle cx="50" cy="42" r="3.5" fill="var(--ff-icon-secondary)"/>
-  <circle cx="62" cy="56" r="3.5" fill="var(--ff-icon-secondary)"/>
-  <circle cx="74" cy="32" r="3.5" fill="var(--ff-icon-secondary)"/>
+
+  <!-- Context rows (outside the window) -->
+  <rect x="24" y="18" width="44" height="8" rx="4" fill="var(--ff-icon-secondary)"/>
+  <rect x="24" y="74" width="32" height="8" rx="4" fill="var(--ff-icon-secondary)"/>
+
+  <!-- Active rows (inside the window) -->
+  <rect x="24" y="32" width="56" height="8" rx="4" fill="var(--ff-icon-primary)"/>
+  <rect x="24" y="46" width="38" height="8" rx="4" fill="var(--ff-icon-primary)"/>
+  <rect x="24" y="60" width="50" height="8" rx="4" fill="var(--ff-icon-primary)"/>
+
+  <!-- Sliding window frame -->
+  <rect x="18" y="27" width="68" height="46" rx="9" fill="var(--ff-icon-accent)" fill-opacity="0.12" stroke="var(--ff-icon-accent)" stroke-width="3"/>
+  <circle cx="18" cy="50" r="3.5" fill="var(--ff-icon-accent)"/>
+  <circle cx="86" cy="50" r="3.5" fill="var(--ff-icon-accent)"/>
 </svg>
