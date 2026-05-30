@@ -40,6 +40,7 @@ def test_source_set_includes_all_readers() -> None:
         "catalog_reader",
         "kafka_source",
         "google_analytics_reader",
+        "rest_api_reader",
         "external_source",
     }
     actual_source = {nt for nt in NODE_TYPE_TO_SETTINGS_CLASS if classify_node_type(nt) == "source"}
