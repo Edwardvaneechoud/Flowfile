@@ -51,7 +51,10 @@
             <el-checkbox v-model="registerInCatalog"> Also register in catalog </el-checkbox>
             <div v-if="registerInCatalog" class="namespace-section">
               <label class="namespace-label">Namespace</label>
-              <catalog-namespace-picker v-model="selectedNamespaceId" />
+              <catalog-namespace-picker
+                v-model="selectedNamespaceId"
+                :hide-system-namespaces="true"
+              />
             </div>
           </div>
         </div>
@@ -63,6 +66,7 @@
               <label>Browse the catalog</label>
               <catalog-flow-picker
                 v-model="selectedRegistrationId"
+                :hide-system-namespaces="true"
                 @select-flow="handleOverwriteTargetSelected"
                 @select-namespace="handleNamespaceSelected"
                 @flows-loaded="handleFlowsLoaded"

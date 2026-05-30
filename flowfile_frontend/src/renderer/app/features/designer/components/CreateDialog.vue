@@ -43,7 +43,10 @@
             <el-checkbox v-model="registerInCatalog"> Also register in catalog </el-checkbox>
             <div v-if="registerInCatalog" class="namespace-section">
               <label class="namespace-label">Namespace</label>
-              <catalog-namespace-picker v-model="selectedNamespaceId" />
+              <catalog-namespace-picker
+                v-model="selectedNamespaceId"
+                :hide-system-namespaces="true"
+              />
             </div>
           </div>
         </div>
@@ -64,7 +67,10 @@
             </div>
             <div class="form-group">
               <label>Namespace</label>
-              <catalog-namespace-picker v-model="selectedNamespaceId" />
+              <catalog-namespace-picker
+                v-model="selectedNamespaceId"
+                :hide-system-namespaces="true"
+              />
             </div>
           </div>
         </div>

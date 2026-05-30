@@ -25,10 +25,14 @@
 import { ref, onMounted, watch } from "vue";
 import NamespaceTreeItem from "./NamespaceTreeItem.vue";
 import { CatalogApi } from "../../../api";
+import { filterSelectableNamespaces } from "../../../types";
 import type { NamespaceTree } from "../../../types";
 
 const props = defineProps<{
   modelValue: number | null;
+  // When true, hide system-managed schemas (e.g. Unnamed/Local Flows) so only
+  // "default" + user-created namespaces are offered as a store target.
+  hideSystemNamespaces?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -52,7 +56,8 @@ const loadTree = async () => {
   loading.value = true;
   error.value = null;
   try {
-    tree.value = await CatalogApi.getNamespaceTree();
+    const fetched = await CatalogApi.getNamespaceTree();
+    tree.value = props.hideSystemNamespaces ? filterSelectableNamespaces(fetched) : fetched;
     // Auto-select the most appropriate "General" child when nothing is selected.
     if (selectedId.value === null) {
       const defaultNs = findDefaultNamespace(tree.value);

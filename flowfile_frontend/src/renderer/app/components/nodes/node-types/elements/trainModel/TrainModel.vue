@@ -139,6 +139,7 @@ import type {
   NamespaceOption,
 } from "../../../../../types/node.types";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
+import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -163,7 +164,11 @@ function flattenNamespaceTree(
   for (const node of tree) {
     const label = parentLabel ? `${parentLabel} > ${node.name}` : node.name;
     if (node.level >= 1) {
-      out.push({ id: node.id, label });
+      // Hide system-managed schemas so only "default" + user-created namespaces
+      // are offered as a publish target.
+      if (!(parentLabel === "General" && SYSTEM_NAMESPACE_NAMES.has(node.name))) {
+        out.push({ id: node.id, label });
+      }
     }
     if (node.children && node.children.length) {
       out.push(...flattenNamespaceTree(node.children, label));
