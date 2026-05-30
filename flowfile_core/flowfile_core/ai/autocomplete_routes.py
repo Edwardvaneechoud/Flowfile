@@ -43,7 +43,9 @@ from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_pro
 from flowfile_core.ai.providers import (
     PROVIDERS,
     UnknownProviderError,
+    is_resolvable_provider,
     list_supported_providers,
+    resolvable_provider_names,
 )
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.database.connection import get_db
@@ -106,10 +108,10 @@ def _ensure_known_provider(name: str | None) -> None:
     # fallback in :func:`_resolve_provider` handles selection.
     if name is None:
         return
-    if name not in PROVIDERS:
+    if not is_resolvable_provider(name):
         raise HTTPException(
             status_code=404,
-            detail=f"Unknown provider {name!r}; supported: {list_supported_providers()}",
+            detail=f"Unknown provider {name!r}; supported: {resolvable_provider_names()}",
         )
 
 

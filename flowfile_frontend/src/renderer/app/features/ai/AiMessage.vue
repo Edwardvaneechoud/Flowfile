@@ -17,8 +17,18 @@ import AiThinkingDots from "./AiThinkingDots.vue";
 import { sanitiseMarkdown } from "./markdown";
 
 const props = defineProps<{ message: ChatMessage }>();
+const emit = defineEmits<{ (e: "add-build", messageId: number): void }>();
 
 const isAssistant = computed(() => props.message.role === "assistant");
+
+// Simple-build result: show an inline "Add to canvas" button while the diff is
+// pending; flip to a confirmation once applied.
+const hasBuild = computed(() => isAssistant.value && !!props.message.buildDiffId);
+const buildAdded = computed(() => props.message.buildAdded === true);
+const buildLabel = computed(() => {
+  const n = props.message.buildOpCount ?? 0;
+  return n > 0 ? `Add to canvas (${n} node${n === 1 ? "" : "s"})` : "Add to canvas";
+});
 const isUser = computed(() => props.message.role === "user");
 // Streaming caret only renders once content has started arriving; the
 // pre-content "thinking" state shows the dots animation instead.
@@ -94,6 +104,22 @@ const timeTooltip = computed<string>(() => {
       <span v-if="showEmptyHint" class="ai-message__hint">[no response]</span>
       <span v-if="showCaret" class="ai-message__caret" aria-hidden="true">▍</span>
       <div v-if="message.error" class="ai-message__error">{{ message.error }}</div>
+      <!-- Simple-build: inline apply button (no separate review panel). -->
+      <div v-if="hasBuild" class="ai-message__build">
+        <button
+          v-if="!buildAdded"
+          type="button"
+          class="ai-message__build-btn"
+          @click="emit('add-build', message.id)"
+        >
+          <i class="fa-solid fa-circle-plus"></i>
+          <span>{{ buildLabel }}</span>
+        </button>
+        <span v-else class="ai-message__build-done">
+          <i class="fa-solid fa-circle-check"></i>
+          Added to canvas
+        </span>
+      </div>
     </div>
     <!-- User footer: tiny inline timestamp, right-aligned inside the bubble. -->
     <div v-if="isUser && timeLabel" class="ai-message__user-time" :title="timeTooltip">
@@ -205,6 +231,37 @@ const timeTooltip = computed<string>(() => {
   background-color: var(--color-danger-light, #ffe5e5);
   color: var(--color-danger, #c53030);
   font-size: 12px;
+}
+
+.ai-message__build {
+  margin-top: 8px;
+}
+
+.ai-message__build-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background-color: var(--color-accent, #6b4eff);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-message__build-btn:hover {
+  filter: brightness(1.05);
+}
+
+.ai-message__build-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-success, #16a34a);
 }
 
 /* ------------------------------------------------------------------ */

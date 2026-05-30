@@ -30,6 +30,15 @@ import {
 } from "../api/ai.api";
 import { parseMentions } from "../features/ai/mentionVocabulary";
 import type { AiProvider } from "../views/AiProvidersView/aiProviderTypes";
+import {
+  LOCAL_PROVIDER_ID,
+  fetchLocalModelStatus,
+  generateFlow,
+  selectLocalModel,
+  streamLocalModelInstall,
+  type LocalModelStatus,
+} from "../views/AiProvidersView/localModelApi";
+import { acceptDiff } from "../services/aiDiffClient";
 import { useAiAgentStore } from "./ai-agent-store";
 import {
   highestPersistedMessageId,
@@ -55,6 +64,13 @@ export interface ChatMessage {
   pending?: boolean;
   /** Reason why a message is in an error state, if any. */
   error?: string | null;
+  /** Simple-build result: a registered GraphDiff awaiting the user's
+   * "Add to canvas" click. Carries the diff id + node count so the chat
+   * bubble can render the inline Add button. ``buildAdded`` flips true once
+   * applied so the button becomes a confirmation. */
+  buildDiffId?: string | null;
+  buildOpCount?: number;
+  buildAdded?: boolean;
 }
 
 export type StreamingState = "idle" | "streaming" | "error";
@@ -66,10 +82,13 @@ export type StreamingState = "idle" | "streaming" | "error";
  *     classifier auto-promotes to agent when an editing intent is
  *     detected.
  *   - ``"agent"`` — Send always dispatches the agent path with the
- *     configured surface. Sticky across sends instead of per-send. */
-export type AiMode = "chat" | "auto" | "agent";
+ *     configured surface. Sticky across sends instead of per-send.
+ *   - ``"simple"`` — Send generates a whole flow in one model response
+ *     (no validation/dry-run); the reply carries an inline "Add to canvas"
+ *     button. Universal: works for local and cloud providers. */
+export type AiMode = "chat" | "auto" | "agent" | "simple";
 
-const _AI_MODES: ReadonlyArray<AiMode> = ["chat", "auto", "agent"];
+const _AI_MODES: ReadonlyArray<AiMode> = ["chat", "auto", "agent", "simple"];
 
 /** Per-tab sessionStorage key for the user's send-mode preference.
  * Survives page refresh; resets fresh on tab close. Mirrors
@@ -142,6 +161,26 @@ export const useAiStore = defineStore("ai", () => {
 
   const selectedProvider = ref<string | null>(null);
   const selectedModel = ref<string | null>(null);
+
+  // Local model (offline llama.cpp) status. Surfaced as a synthetic
+  // ``"local"`` entry in ``providers`` so the chat drawer's picker lists it
+  // without it being a BYOK provider — chat + generate special-case the id
+  // to route through the /ai/local-model/* endpoints. Only injected when the
+  // runtime is installed (no point offering a model the user hasn't fetched).
+  const localModelStatus = ref<LocalModelStatus | null>(null);
+
+  const isLocalSelected = computed(() => selectedProvider.value === LOCAL_PROVIDER_ID);
+
+  // First-run onboarding state for the inline chat CTA. ``canSetupLocal`` is
+  // true when the platform supports a local model but the user hasn't fetched
+  // one yet — that's when we offer the one-click "Set up local AI" button so a
+  // brand-new user with no provider can get going without visiting settings.
+  const canSetupLocal = computed(
+    () => localModelStatus.value?.available === true && !localModelStatus.value?.anyModelInstalled,
+  );
+  const localSetupInProgress = ref(false);
+  const localSetupPhase = ref<string | null>(null);
+  const localSetupPct = ref<number | null>(null);
 
   // User-selectable agent surface. Defaults to ``agent_live`` so the
   // REPL-style canvas-mutating surface is what new sessions get; users
@@ -418,14 +457,58 @@ export const useAiStore = defineStore("ai", () => {
     agentModeAccepted.value = false;
   };
 
+  // Build the synthetic "local" provider entry surfaced in the chat picker.
+  // Shaped like an AiProvider so the existing picker template renders it
+  // unchanged. The chat MODEL dropdown reads ``credential.models`` first, so we
+  // list every INSTALLED catalog model there (not just the selected one);
+  // ``defaultModel`` is the currently-selected id so the dropdown opens on it.
+  const _localProviderEntry = (status: LocalModelStatus): AiProvider => {
+    const installedIds = status.models.filter((m) => m.installed).map((m) => m.id);
+    return {
+      provider: LOCAL_PROVIDER_ID,
+      supportsTools: false,
+      supportsStreaming: true,
+      defaultModel: status.selectedModelId,
+      surfaces: {},
+      status: "configured",
+      credential: {
+        provider: LOCAL_PROVIDER_ID,
+        hasKey: false,
+        apiBase: null,
+        defaultModel: status.selectedModelId,
+        models: installedIds,
+        lastTestedAt: null,
+        lastTestStatus: null,
+        lastTestError: null,
+        createdAt: null,
+        updatedAt: null,
+      },
+    };
+  };
+
   const loadProviders = async (): Promise<void> => {
     providersLoading.value = true;
     providersError.value = null;
     try {
-      const list = await fetchAiProviders();
-      providers.value = list;
+      // Fetch BYOK providers and the local-model status concurrently. The
+      // local status is best-effort: a failure (or AI disabled) just omits
+      // the synthetic entry rather than failing the whole picker.
+      const [list, localStatus] = await Promise.all([
+        fetchAiProviders(),
+        fetchLocalModelStatus().catch(() => null),
+      ]);
+      localModelStatus.value = localStatus;
+      const combined = [...list];
+      // Surface local whenever at least one model is installed (not just the
+      // selected one) so the dropdown can offer the others.
+      if (localStatus && localStatus.anyModelInstalled) {
+        combined.push(_localProviderEntry(localStatus));
+      }
+      providers.value = combined;
       if (selectedProvider.value === null) {
-        const first = list.find((p) => p.status === "configured" || p.status === "env_fallback");
+        const first = combined.find(
+          (p) => p.status === "configured" || p.status === "env_fallback",
+        );
         if (first) {
           selectedProvider.value = first.provider;
           selectedModel.value = first.credential?.defaultModel ?? first.defaultModel ?? null;
@@ -449,6 +532,20 @@ export const useAiStore = defineStore("ai", () => {
 
   const setSelectedModel = (model: string | null): void => {
     selectedModel.value = model;
+    // For the local provider, picking a model in the dropdown must flip the
+    // server-side selection (sidecar), so the next chat/generate boots THAT
+    // model. ``manager.ensure_running`` recycles onto the selected id, so a
+    // not-yet-running pick starts on first use — no separate Start needed.
+    // Fire-and-forget; refresh status so the settings card reflects the switch.
+    if (selectedProvider.value === LOCAL_PROVIDER_ID && model) {
+      void selectLocalModel(model)
+        .then((status) => {
+          localModelStatus.value = status;
+        })
+        .catch((err) => {
+          console.warn("ai-store: selectLocalModel failed", err);
+        });
+    }
   };
 
   const setSelectedAgentSurface = (
@@ -498,11 +595,14 @@ export const useAiStore = defineStore("ai", () => {
   // streaming/abort lifecycle.
   interface StreamedSurfaceOptions {
     userVisibleText: string;
-    streamFn: (handlers: {
-      onChunk: (delta: string) => void;
-      onDone: () => void;
-      onError: (message: string) => void;
-    }, signal: AbortSignal) => Promise<void>;
+    streamFn: (
+      handlers: {
+        onChunk: (delta: string) => void;
+        onDone: () => void;
+        onError: (message: string) => void;
+      },
+      signal: AbortSignal,
+    ) => Promise<void>;
     /** Optional post-success side effect; receives the final assistant text. */
     onSuccess?: (finalContent: string) => void;
   }
@@ -656,10 +756,14 @@ export const useAiStore = defineStore("ai", () => {
 
     activeAbort = new AbortController();
     let sawErrorEvent = false;
+    // The local model is a resolvable provider (id "local") on the backend, so
+    // it rides the SAME streamChat path as cloud providers — and therefore gets
+    // the flow context (flow_id / selection / mentions) the backend builds via
+    // render_prompt_context. No local-specific branch here.
     try {
       await streamChat(
         {
-          provider: selectedProvider.value,
+          provider: selectedProvider.value!,
           model: selectedModel.value,
           messages: wireMessages,
           flow_id: activeFlowId,
@@ -864,8 +968,15 @@ export const useAiStore = defineStore("ai", () => {
     // it (force-agent, handled by AiAssistant.vue's handleSend before
     // this store action runs).
     const flowStore = useFlowStore();
+    // The local model can't drive the tool-calling agent (no function
+    // calling on a 1.5B model), so never auto-promote it — local always
+    // routes to plain chat here, and to one-shot generation via the
+    // explicit "Generate flow" action (``generateFlowFromComposer``).
     const wantsClassification =
-      !agentModeAccepted.value && mode.value === "auto" && flowStore.flowId !== null;
+      !agentModeAccepted.value &&
+      mode.value === "auto" &&
+      flowStore.flowId !== null &&
+      !isLocalSelected.value;
     // ``ChatRole`` is already ``"user" | "assistant"`` (no "system" — those
     // come from the server, never the chat trail), so the cast to
     // ``RouteHistoryEntry`` is shape-compatible without a runtime guard.
@@ -888,8 +999,10 @@ export const useAiStore = defineStore("ai", () => {
     // re-classifying. We still gate on a flow being loaded; otherwise
     // dispatching the agent would surface a confusing "Open a flow
     // first" error from ``_dispatchPromotedAgent`` for what looks
-    // like a normal chat.
-    if (agentModeAccepted.value && flowStore.flowId !== null) {
+    // like a normal chat. Never fires for the local model — it can't
+    // drive the agent, so a leftover accept from a prior cloud session
+    // must not hijack a local chat send.
+    if (agentModeAccepted.value && flowStore.flowId !== null && !isLocalSelected.value) {
       await _dispatchPromotedAgent(text, "session set to continue as agent");
       return;
     }
@@ -1206,6 +1319,145 @@ export const useAiStore = defineStore("ai", () => {
     });
   };
 
+  // Simple-build mode (universal — local or cloud). The model emits a whole
+  // flow in one response; the backend registers it as a GraphDiff. We do NOT
+  // open the diff-review panel — instead the assistant bubble carries the diff
+  // id so it can render an inline "Add to canvas" button (``addBuiltFlow``).
+  // Non-streaming, so we push a synthetic user/assistant pair and settle the
+  // assistant message on done/error.
+  const generateFlowFromComposer = async (rawText: string): Promise<void> => {
+    const text = rawText.trim();
+    if (!text) return;
+    if (streamingState.value === "streaming") return;
+    if (selectedProvider.value === null) {
+      streamError.value = "Pick a provider first.";
+      streamingState.value = "error";
+      return;
+    }
+    const flowStore = useFlowStore();
+    if (flowStore.flowId === null || flowStore.flowId === -1) {
+      streamError.value = "Open a flow before generating.";
+      streamingState.value = "error";
+      return;
+    }
+    openAiDrawer();
+
+    const userMessage: ChatMessage = {
+      id: nextMessageId(),
+      createdAt: Date.now(),
+      role: "user",
+      content: `[Build] ${text}`,
+    };
+    const assistantPlaceholder: ChatMessage = {
+      id: nextMessageId(),
+      createdAt: Date.now(),
+      role: "assistant",
+      content: "",
+      pending: true,
+    };
+    messages.value.push(userMessage, assistantPlaceholder);
+    const reactivePlaceholder = messages.value[messages.value.length - 1];
+
+    streamingState.value = "streaming";
+    streamError.value = null;
+    try {
+      const result = await generateFlow(
+        flowStore.flowId,
+        text,
+        selectedProvider.value,
+        selectedModel.value,
+      );
+      reactivePlaceholder.pending = false;
+      streamingState.value = "idle";
+      reactivePlaceholder.buildDiffId = result.diffId;
+      reactivePlaceholder.buildOpCount = result.opCount;
+      const lines = [
+        `Built a flow with ${result.opCount} node(s). Click "Add to canvas" to insert it.`,
+      ];
+      if (result.warnings.length > 0) {
+        lines.push("", "Notes:", ...result.warnings.map((w) => `• ${w}`));
+      }
+      reactivePlaceholder.content = lines.join("\n");
+    } catch (err) {
+      reactivePlaceholder.pending = false;
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err instanceof Error ? err.message : String(err));
+      reactivePlaceholder.error = detail;
+      reactivePlaceholder.content = `Generation failed: ${detail}`;
+      streamingState.value = "error";
+      streamError.value = detail;
+    }
+  };
+
+  // Apply a Simple-build result onto the canvas. Called by the inline
+  // "Add to canvas" button; applies the staged diff via the existing accept
+  // route, then signals the canvas to re-fetch. Idempotent-ish: marks the
+  // message ``buildAdded`` so the button can't double-fire.
+  const addBuiltFlow = async (messageId: number): Promise<void> => {
+    const msg = messages.value.find((m) => m.id === messageId);
+    if (!msg || !msg.buildDiffId || msg.buildAdded) return;
+    const flowStore = useFlowStore();
+    if (flowStore.flowId === null || flowStore.flowId === -1) return;
+    try {
+      await acceptDiff(msg.buildDiffId, { flow_id: flowStore.flowId });
+      msg.buildAdded = true;
+      try {
+        flowStore.requestReload();
+      } catch (reloadErr) {
+        console.warn("ai-store: requestReload after addBuiltFlow failed", reloadErr);
+      }
+    } catch (err) {
+      const detail =
+        (err as { detail?: string })?.detail ?? (err instanceof Error ? err.message : String(err));
+      streamError.value = `Couldn't add the flow: ${detail}`;
+      streamingState.value = "error";
+    }
+  };
+
+  // One-click onboarding from the chat drawer: download the recommended local
+  // model (the backend default), then refresh providers and select "local" so
+  // the user can chat immediately — no settings visit, no model picking.
+  // Progress is mirrored into ``localSetup*`` so the CTA can show a bar.
+  const setupLocalModel = async (): Promise<void> => {
+    if (localSetupInProgress.value) return;
+    localSetupInProgress.value = true;
+    localSetupPhase.value = null;
+    localSetupPct.value = null;
+    let failed: string | null = null;
+    try {
+      await streamLocalModelInstall({
+        onProgress: (ev) => {
+          localSetupPhase.value = ev.phase;
+          if (typeof ev.received === "number" && typeof ev.total === "number" && ev.total > 0) {
+            localSetupPct.value = Math.min(100, Math.round((ev.received / ev.total) * 100));
+          } else {
+            localSetupPct.value = null;
+          }
+        },
+        onError: (msg) => {
+          failed = msg;
+        },
+      });
+    } catch (err) {
+      failed = err instanceof Error ? err.message : String(err);
+    } finally {
+      localSetupInProgress.value = false;
+      // Re-pull providers so the synthetic "local" entry is injected.
+      await loadProviders();
+    }
+    if (failed) {
+      streamError.value = `Local AI setup failed: ${failed}`;
+      streamingState.value = "error";
+      return;
+    }
+    // Auto-select local so the next Send just works.
+    if (localModelStatus.value?.anyModelInstalled) {
+      setSelectedProvider(LOCAL_PROVIDER_ID);
+      setSelectedModel(localModelStatus.value.selectedModelId);
+    }
+  };
+
   return {
     // state
     providers,
@@ -1219,12 +1471,21 @@ export const useAiStore = defineStore("ai", () => {
     mode,
     agentModeAccepted,
     promotionBanner,
+    localModelStatus,
+    localSetupInProgress,
+    localSetupPhase,
+    localSetupPct,
     // computed
     isAiOpen,
     isStreaming,
     configuredProviders,
     hasConfiguredProvider,
+    isLocalSelected,
+    canSetupLocal,
     // actions
+    generateFlowFromComposer,
+    addBuiltFlow,
+    setupLocalModel,
     openAiDrawer,
     closeAiDrawer,
     toggleAiDrawer,
