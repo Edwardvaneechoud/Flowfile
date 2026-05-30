@@ -55,6 +55,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalGoogleAnalyticsFetcher,
     ExternalKafkaFetcher,
     ExternalOutputWriter,
+    ExternalRestApiFetcher,
     MLApplyFetcher,
     MLTrainFetcher,
     fetch_kafka_offsets,
@@ -86,6 +87,10 @@ from flowfile_core.flowfile.schema_callbacks import (
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
+from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
+    build_rest_api_worker_settings,
+    resolve_auth_secret_encrypted,
+)
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
@@ -670,9 +675,7 @@ def _handle_virtual_table_write(
         except Exception:
             import traceback
 
-            graph.flow_logger.warning(
-                f"Auto-registration for virtual catalog write failed:\n{traceback.format_exc()}"
-            )
+            graph.flow_logger.warning(f"Auto-registration for virtual catalog write failed:\n{traceback.format_exc()}")
             reg_id = None
     if not reg_id:
         raise ValueError(
@@ -1270,9 +1273,7 @@ class FlowGraph:
 
         def _do() -> schemas.GroupInformation:
             group_id = self._next_group_id()
-            group = schemas.GroupInformation(
-                id=group_id, name=name, color=color, parent_group_id=parent_group_id
-            )
+            group = schemas.GroupInformation(id=group_id, name=name, color=color, parent_group_id=parent_group_id)
             if bounds is not None:
                 group.x_position, group.y_position, group.width, group.height = bounds
             self._groups[group_id] = group
@@ -3939,6 +3940,76 @@ class FlowGraph:
             self._node_db[node_ga_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_ga_reader.node_id)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_rest_api_reader(self, node_rest_api_reader: input_schema.NodeRestApiReader) -> None:
+        """Adds a node that reads from a REST API.
+
+        All network I/O (HTTP round-trips, pagination, retries) is offloaded to
+        the worker via ``ExternalRestApiFetcher`` — the core never makes the
+        external call. The credential is resolved to an encrypted token here
+        (from the user's secret store, or an inline plaintext) and the worker
+        decrypts it just-in-time. A generic API's columns are unknown until a
+        response is fetched, so ``schema_callback`` returns the columns cached on
+        the node by the "Fetch sample" action — empty until the user samples or
+        runs, in which case the fetched frame defines the schema.
+        """
+        logger.info("Adding rest api reader")
+        node_type = "rest_api_reader"
+        auth = node_rest_api_reader.rest_api_settings.auth
+
+        # Resolve the credential to an encrypted token for the worker (stored
+        # secret by name, or an inline plaintext). Never persist inline plaintext.
+        secret_encrypted = resolve_auth_secret_encrypted(auth, node_rest_api_reader.user_id)
+        auth.secret = None
+
+        def _func() -> FlowDataEngine:
+            # All fetching happens in the worker; the core only orchestrates.
+            fetcher = ExternalRestApiFetcher(
+                build_rest_api_worker_settings(node_rest_api_reader, secret_encrypted),
+                wait_on_completion=False,
+            )
+            node._fetch_cached_df = fetcher
+            # ``get_result()`` returns a ``pl.LazyFrame`` deserialised from the
+            # worker's Arrow IPC file — never collect on the core service.
+            fl = FlowDataEngine(fetcher.get_result())
+            cols = schema_callback()
+            # Align to the sampled schema (if any) so downstream nodes see stable
+            # columns; with no sample yet, the fetched frame defines the schema.
+            if cols:
+                return fl.align_to_schema(cols)
+            node_rest_api_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
+            return fl
+
+        def schema_callback() -> list[FlowfileColumn]:
+            if node_rest_api_reader.fields:
+                return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_rest_api_reader.fields]
+            return []
+
+        node = self.get_node(node_rest_api_reader.node_id)
+        if node:
+            node.schema_callback = schema_callback
+            node.user_provided_schema_callback = schema_callback
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = node_rest_api_reader
+            node.node_settings.cache_results = node_rest_api_reader.cache_results
+            self.add_node_to_starting_list(node)
+        else:
+            node = FlowNode(
+                node_rest_api_reader.node_id,
+                function=_func,
+                setting_input=node_rest_api_reader,
+                name=node_type,
+                node_type=node_type,
+                parent_uuid=self.uuid,
+                schema_callback=schema_callback,
+            )
+            node.user_provided_schema_callback = schema_callback
+            self._node_db[node_rest_api_reader.node_id] = node
+            self.add_node_to_starting_list(node)
+            self._node_ids.append(node_rest_api_reader.node_id)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:

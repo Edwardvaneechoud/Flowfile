@@ -122,6 +122,7 @@ from flowfile_frame.flow_frame_methods import (  # noqa: F401
 # File I/O
 from flowfile_frame.kafka import read_kafka  # noqa: F401
 from flowfile_frame.lazy import fold  # noqa: F401
+from flowfile_frame.rest_api import read_api  # noqa: F401
 
 # Selector utilities
 from flowfile_frame.selectors import (  # noqa: F401

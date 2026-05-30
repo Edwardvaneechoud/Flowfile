@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 from uuid import uuid4
 
@@ -3071,6 +3072,207 @@ def test_database_writer_inline_mode_adds_to_unsupported():
     # Should have added to unsupported nodes
     assert len(converter.unsupported_nodes) == 1
     assert "inline" in converter.unsupported_nodes[0][2].lower()
+
+
+# ==================== REST API Reader Tests ====================
+
+
+def _make_rest_api_reader(node_id: int = 1, **rest_api_settings) -> input_schema.NodeRestApiReader:
+    return input_schema.NodeRestApiReader(
+        flow_id=1,
+        node_id=node_id,
+        rest_api_settings=input_schema.RestApiSettings(**rest_api_settings),
+    )
+
+
+def test_rest_api_reader_basic_polars_code_generation():
+    """A minimal GET reader emits ff.read_api(...).data for the Polars target."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+    reader = _make_rest_api_reader(url="https://api.example.com/users")
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_rest_api_reader(reader, "df_1", {})
+
+    code = "\n".join(converter.code_lines)
+    verify_code_contains(code, "ff.read_api(", "https://api.example.com/users", ").data")
+    assert "import flowfile as ff" in converter.imports
+    ast.parse(code)
+
+
+def test_rest_api_reader_flowframe_has_no_data_suffix():
+    """The FlowFrame target keeps the chain lazy: no .data suffix."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    reader = _make_rest_api_reader(url="https://api.example.com/users")
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_rest_api_reader(reader, "df_1", {})
+
+    code = "\n".join(converter.code_lines)
+    verify_code_contains(code, "ff.read_api(")
+    assert ").data" not in code
+    ast.parse(code)
+
+
+def test_rest_api_reader_defaults_omitted():
+    """Default method/timeout/retries are not emitted as keyword args."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    reader = _make_rest_api_reader(url="https://api.example.com/users")
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_rest_api_reader(reader, "df_1", {})
+
+    code = "\n".join(converter.code_lines)
+    assert "method=" not in code
+    assert "timeout_seconds=" not in code
+    assert "max_retries=" not in code
+    assert "auth=" not in code
+    assert "pagination=" not in code
+
+
+def test_rest_api_reader_post_with_body_and_params():
+    """POST requests emit method, headers, query params and json body."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    reader = _make_rest_api_reader(
+        url="https://api.example.com/search",
+        method="POST",
+        headers={"Accept": "application/json"},
+        query_params={"lang": "en"},
+        json_body={"query": "polars"},
+        record_path="data.items",
+        timeout_seconds=60.0,
+        max_retries=5,
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_rest_api_reader(reader, "df_1", {})
+
+    code = "\n".join(converter.code_lines)
+    verify_code_contains(
+        code,
+        'method="POST"',
+        "headers=",
+        "Accept",
+        "params=",
+        "lang",
+        "json_body=",
+        "query",
+        "record_path=",
+        "data.items",
+        "timeout_seconds=60.0",
+        "max_retries=5",
+    )
+    ast.parse(code)
+
+
+def test_rest_api_reader_emits_secret_name_not_plaintext():
+    """The stored secret is referenced by name; the inline plaintext never leaks."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    reader = _make_rest_api_reader(
+        url="https://api.example.com/users",
+        auth=input_schema.RestApiAuthSettings(
+            auth_type="bearer",
+            secret_name="my_api_token",
+            secret="THIS-MUST-NOT-LEAK",
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_rest_api_reader(reader, "df_1", {})
+
+    code = "\n".join(converter.code_lines)
+    verify_code_contains(code, "auth=", "bearer", "secret_name", "my_api_token")
+    assert "THIS-MUST-NOT-LEAK" not in code
+    ast.parse(code)
+
+
+def test_rest_api_reader_api_key_and_offset_pagination():
+    """API-key auth and offset pagination round-trip into read_api dict literals."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    reader = _make_rest_api_reader(
+        url="https://api.example.com/users",
+        auth=input_schema.RestApiAuthSettings(
+            auth_type="api_key",
+            api_key_name="X-Custom-Key",
+            api_key_location="query",
+            secret_name="key_secret",
+        ),
+        pagination=input_schema.RestApiPaginationSettings(
+            pagination_type="offset",
+            page_size=250,
+            max_records=1000,
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_rest_api_reader(reader, "df_1", {})
+
+    code = "\n".join(converter.code_lines)
+    verify_code_contains(
+        code,
+        "auth=",
+        "api_key",
+        "X-Custom-Key",
+        "query",
+        "key_secret",
+        "pagination=",
+        "offset",
+        "page_size",
+        "250",
+        "max_records",
+        "1000",
+    )
+    ast.parse(code)
+    # The generated auth/pagination dicts are valid and reconstruct the settings.
+    auth_arg = converter._build_rest_api_auth_arg(reader.rest_api_settings.auth)
+    pagination_arg = converter._build_rest_api_pagination_arg(reader.rest_api_settings.pagination)
+    assert input_schema.RestApiAuthSettings(**eval(auth_arg)).auth_type == "api_key"
+    assert input_schema.RestApiPaginationSettings(**eval(pagination_arg)).page_size == 250
+
+
+def test_rest_api_reader_cursor_pagination():
+    """Cursor pagination emits the cursor-specific keys only."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    reader = _make_rest_api_reader(
+        url="https://api.example.com/users",
+        pagination=input_schema.RestApiPaginationSettings(
+            pagination_type="cursor",
+            cursor_param="next_cursor",
+            cursor_response_path="meta.next",
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_rest_api_reader(reader, "df_1", {})
+
+    code = "\n".join(converter.code_lines)
+    verify_code_contains(code, "pagination=", "cursor", "next_cursor", "meta.next")
+    assert "offset_param" not in code
+    assert "page_param" not in code
+    ast.parse(code)
+
+
+def test_rest_api_reader_dispatches_via_node_type():
+    """The dispatcher routes 'rest_api_reader' to the handler (no unsupported node)."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    reader = _make_rest_api_reader(url="https://api.example.com/users")
+    handler = getattr(FlowGraphToFlowFrameConverter(flow), "_handle_rest_api_reader", None)
+    assert handler is not None, "rest_api_reader must have a code generator handler"
 
 
 def test_external_source_adds_to_unsupported():
