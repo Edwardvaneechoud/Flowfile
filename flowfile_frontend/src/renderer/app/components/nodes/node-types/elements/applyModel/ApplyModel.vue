@@ -13,6 +13,7 @@
           inactive-value="upstream"
           active-text="From catalog"
           inactive-text="From upstream node"
+          size="small"
         />
       </div>
 

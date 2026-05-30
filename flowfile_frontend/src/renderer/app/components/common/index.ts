@@ -4,6 +4,7 @@ export { default as DraggableItem } from "./DraggableItem/DraggableItem.vue";
 export { default as LayoutControls } from "./DraggableItem/layoutControls.vue";
 export { default as ContextMenu } from "./ContextMenu/ContextMenu.vue";
 export { default as EmptyState } from "./EmptyState/EmptyState.vue";
+export { default as CollapsibleSection } from "./CollapsibleSection/CollapsibleSection.vue";
 export { default as CloudConnectionPicker } from "./CloudConnectionPicker/CloudConnectionPicker.vue";
 
 export { default as PageHelpModal } from "./PageHelpModal/PageHelpModal.vue";

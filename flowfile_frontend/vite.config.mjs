@@ -9,6 +9,10 @@ import { defineConfig } from 'vite';
 
 const __dirname = Path.dirname(fileURLToPath(import.meta.url));
 
+// flowfile_core dev port. The renderer talks to it via the /api proxy below so
+// requests stay same-origin (mirrors the nginx setup in Docker / web mode).
+const CORE_PORT = 63578;
+
 export default defineConfig({
     root: Path.join(__dirname, 'src', 'renderer'),
     publicDir: 'public',
@@ -24,9 +28,30 @@ export default defineConfig({
         strictPort: true,
         proxy: {
             '/api': {
-                target: 'http://localhost:63578',
+                target: `http://localhost:${CORE_PORT}`,
                 changeOrigin: true,
                 rewrite: (path) => path.replace(/^\/api/, ''),
+                // Replicate nginx's built-in `proxy_redirect default` (see the
+                // comment in flowfile_frontend/nginx.conf). FastAPI normalizes
+                // trailing slashes with an ABSOLUTE 307 redirect
+                configure: (proxy) => {
+                    const backendOrigin = new RegExp(`^https?://(localhost|127\\.0\\.0\\.1):${CORE_PORT}`);
+                    proxy.on('proxyRes', (proxyRes) => {
+                        const location = proxyRes.headers['location'];
+                        if (!location) return;
+                        let path;
+                        if (backendOrigin.test(location)) {
+                            path = location.replace(backendOrigin, ''); // absolute backend redirect
+                        } else if (location.startsWith('/')) {
+                            path = location;                            // already-relative redirect
+                        } else {
+                            return;                                     // external host — leave untouched
+                        }
+                        if (!path.startsWith('/api/')) {
+                            proxyRes.headers['location'] = '/api' + path;
+                        }
+                    });
+                },
             },
         },
     },

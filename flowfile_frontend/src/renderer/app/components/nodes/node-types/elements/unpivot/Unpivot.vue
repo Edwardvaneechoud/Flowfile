@@ -51,6 +51,7 @@
           active-text="Column"
           inactive-text="Data Type"
           inline-prompt
+          size="small"
         />
       </div>
 
