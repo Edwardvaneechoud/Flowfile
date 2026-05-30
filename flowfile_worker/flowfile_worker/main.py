@@ -9,6 +9,7 @@ from flowfile_worker import mp_context
 from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
 from flowfile_worker.routes import router
 from flowfile_worker.streaming import streaming_router
+from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
 should_exit = False
@@ -93,6 +94,9 @@ def run(host: str = None, port: int = None):
     config = uvicorn.Config(app, host=host, port=port, loop="asyncio")
     server = uvicorn.Server(config)
     server_instance = server  # Store server instance globally
+
+    # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.
+    start_parent_death_watcher(lambda: setattr(server, "should_exit", True))
 
     logger.info("Starting server...")
     logger.info("Server started")

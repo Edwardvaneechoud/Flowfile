@@ -186,15 +186,36 @@ try:
 except Exception as _e:
     print(f"WARN: could not collect litellm: {{_e}}")
 
+# tokenizers (Rust extension litellm imports at load) + tiktoken and its
+# tiktoken_ext PEP 420 namespace plugins. Same pattern as the polars plugins
+# above; the tiktoken_ext namespace plugins are also listed explicitly because
+# static analysis misses PEP 420 packages.
+ai_hiddenimports = []
+ai_datas = []
+ai_binaries = []
+for _pkg in ('tokenizers', 'tiktoken', 'tiktoken_ext'):
+    try:
+        ai_hiddenimports += collect_submodules(_pkg)
+        ai_datas += collect_data_files(_pkg)
+        ai_binaries += collect_dynamic_libs(_pkg)
+    except Exception as _e:
+        print(f"WARN: could not collect {{_pkg}}: {{_e}}")
+for _pkg in ('tokenizers', 'tiktoken'):
+    try:
+        ai_datas += copy_metadata(_pkg)
+    except Exception as _e:
+        print(f"WARN: could not copy metadata {{_pkg}}: {{_e}}")
+ai_hiddenimports += ['tiktoken_ext', 'tiktoken_ext.openai_public']
+
 # Create runtime hook file
 with open('connectorx_hook.py', 'w') as f:
     f.write(create_runtime_hook())
 
 a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
-    binaries=plugin_binaries,
-    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + plugin_datas + litellm_datas,
-    hiddenimports={hidden_imports} + plugin_hiddenimports + litellm_hiddenimports + [
+    binaries=plugin_binaries + ai_binaries,
+    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + plugin_datas + litellm_datas + ai_datas,
+    hiddenimports={hidden_imports} + plugin_hiddenimports + litellm_hiddenimports + ai_hiddenimports + [
         'numpy',
         'numpy.core._dtype_ctypes',
         'numpy.core._methods',
@@ -229,7 +250,8 @@ a = Analysis(
         'huggingface_hub',
         'datasets',
         'accelerate',
-        'tokenizers',
+        # tokenizers + tiktoken are litellm runtime deps (litellm does
+        # `from tokenizers import Tokenizer` at import) — collected below, not excluded.
         'sentencepiece',
         'tensorboard',
         'sklearn',

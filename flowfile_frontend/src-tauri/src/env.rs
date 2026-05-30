@@ -51,6 +51,15 @@ pub fn build_child_env(core_port: u16, worker_port: u16) -> HashMap<String, Stri
     // "electron" | "tauri" | "desktop" as synonyms for "desktop mode".
     env_vars.insert("FLOWFILE_MODE".into(), "electron".into());
 
+    // Tell the sidecars who their supervisor is so their parent-death watcher
+    // (shared/parent_watcher.py) can detect a crashed/SIGKILLed shell and exit
+    // on its own. Presence of this var is also what enables the watcher, so it
+    // never fires for standalone/CLI/Docker runs that don't get it.
+    env_vars.insert(
+        "FLOWFILE_SUPERVISOR_PID".into(),
+        std::process::id().to_string(),
+    );
+
     // Mirror the discovered ports into env vars so the Python configs that
     // read them at import time also see the right values (CLI args also pass
     // them, but `flowfile_worker.configs` consults env vars in spawned-child

@@ -37,6 +37,7 @@ from flowfile_core.routes.routes import router
 from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
+from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
 storage.cleanup_directories()
@@ -218,6 +219,9 @@ def run(host: str = None, port: int = None):
     )
     server = uvicorn.Server(config)
     server_instance = server  # Store server instance globally
+
+    # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.
+    start_parent_death_watcher(lambda: setattr(server, "should_exit", True))
 
     print("Starting core server...")
     print("Core server started")

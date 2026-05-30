@@ -53,13 +53,11 @@ pub fn run() {
             let handle = app.handle().clone();
 
             tauri::async_runtime::spawn(async move {
-                // TODO(I): no stale-process sweep on launch. If a previous Tauri
-                // shell was hard-killed (SIGKILL/crash), its sidecar groups have
-                // no reaper and keep running; the port-pair scan just steps over
-                // them onto the next free pair, so they linger forever. Consider
-                // a per-instance PID file (the port-pair design means several
-                // instances can run, so a single global sweep would be wrong)
-                // checked here to reap leftovers from a crashed predecessor.
+                // A hard-killed shell (SIGKILL/crash) can't run shutdown_all, but
+                // the sidecars carry FLOWFILE_SUPERVISOR_PID (set in env.rs) and run
+                // a parent-death watcher (shared/parent_watcher.py) that detects the
+                // reparent and exits gracefully on its own — so crashed-predecessor
+                // sidecars reap themselves rather than lingering until the next launch.
                 {
                     let state: Arc<AppState> = handle.state::<Arc<AppState>>().inner().clone();
                     let mut s = state.services_status.lock();
@@ -133,7 +131,15 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            if let RunEvent::ExitRequested { .. } = event {
+            // Both arms reap the sidecars; the `is_shutting_down` guard in
+            // shutdown_all makes the second call a no-op. We need both because
+            // the two macOS quit paths emit different events:
+            //   - red close button / all-windows-closed / app.exit() → ExitRequested
+            //   - Cmd+Q, app-menu Quit, dock right-click Quit → these go through
+            //     AppKit `terminate:` → applicationWillTerminate → tao LoopDestroyed,
+            //     which tauri surfaces as RunEvent::Exit (NOT ExitRequested). Without
+            //     the Exit arm those paths skip cleanup and orphan the sidecars.
+            if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
                 let app = app_handle.clone();
                 tauri::async_runtime::block_on(async move {
                     sidecar::shutdown::shutdown_all(&app).await;

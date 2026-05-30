@@ -37,7 +37,6 @@
           class="m-2"
           placeholder="Select"
           size="small"
-          :disabled="hasFileExtension"
           @change="handleFileTypeChange"
         >
           <el-option
@@ -99,7 +98,7 @@
   </div>
 </template>
 <script lang="ts" setup>
-import { ref, computed } from "vue";
+import { ref } from "vue";
 import {
   NodeOutput,
   isOutputCsvTable,
@@ -139,10 +138,6 @@ const { saveSettings, pushNodeData } = useNodeSettings({
 const showFileSelectionModal = ref(false);
 const selectedDirectoryExists = ref<boolean | null>(null);
 const localFileInfos = ref<LocalFileInfo[]>([]);
-
-const hasFileExtension = computed(() => {
-  return nodeOutput.value?.output_settings.name?.includes(".") ?? false;
-});
 
 function getWriteOptions(fileType: string): string[] {
   return fileType === "csv" ? ["overwrite", "new file", "append"] : ["overwrite", "new file"];
@@ -220,7 +215,9 @@ function handleFileTypeChange() {
     parquet: ".parquet",
   };
 
-  const baseName = nodeOutput.value.output_settings.name.split(".")[0];
+  const currentName = nodeOutput.value.output_settings.name;
+  const lastDot = currentName.lastIndexOf(".");
+  const baseName = lastDot > 0 ? currentName.slice(0, lastDot) : currentName;
   nodeOutput.value.output_settings.name =
     baseName + (fileExtMap[nodeOutput.value.output_settings.file_type] || "");
 
@@ -314,9 +311,9 @@ defineExpose({
   background-color: var(--color-button-secondary);
   border: 1px solid transparent;
   border-radius: 4px;
-  padding: 10px 20px;
+  padding: 5px 12px;
   color: var(--color-text-inverse);
-  font-size: 16px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.3s ease;
 }
