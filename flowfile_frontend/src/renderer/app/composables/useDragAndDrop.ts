@@ -28,6 +28,7 @@ import { fetchNodeTemplates } from "./useNodes";
 import { useEditorStore } from "../stores/editor-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
 import { DEFAULT_OUTPUT_HANDLE, outputHandle, outputLabel } from "../utils/outputHandle";
+import { desktop } from "../../lib/desktop";
 
 const EDGE_DROP_CLASS = "edge-drop-target";
 let hoveredEdgeId: string | null = null;
@@ -868,15 +869,23 @@ export default function useDragAndDrop() {
     flowId: number,
     x: number,
     y: number,
+    clipboardText?: string | null,
   ): Promise<OperationResponse | undefined> {
-    let clipboardText: string;
-    try {
-      clipboardText = await navigator.clipboard.readText();
-    } catch {
-      return undefined;
+    // Callers on the ClipboardEvent path pass the already-read text. Otherwise
+    // read the OS clipboard via desktop.readClipboardText() (native plugin on
+    // desktop, navigator.clipboard on web) — bail if it rejects.
+    let text = clipboardText ?? null;
+    if (text === null) {
+      try {
+        // Desktop reads go through the native clipboard-manager plugin (no macOS
+        // "Paste" pill); web mode falls back to navigator.clipboard.
+        text = await desktop.readClipboardText();
+      } catch {
+        return undefined;
+      }
     }
 
-    const parsed = parseTabularText(clipboardText);
+    const parsed = parseTabularText(text);
     if (!parsed || parsed.length < 2) return undefined;
 
     // First row is headers, rest is data

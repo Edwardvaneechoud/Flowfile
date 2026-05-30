@@ -122,6 +122,7 @@ import { ref, computed, onMounted, watch } from "vue";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { CatalogApi } from "../../../../../api/catalog.api";
+import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
 import axios from "../../../../../services/axios.config";
 import type {
   CatalogWriteMode,
@@ -213,6 +214,9 @@ onMounted(async () => {
     const tree = await CatalogApi.getNamespaceTree();
     for (const catalog of tree) {
       for (const schema of catalog.children ?? []) {
+        // Hide system-managed schemas so only "default" + user-created
+        // namespaces are offered as a write target.
+        if (catalog.name === "General" && SYSTEM_NAMESPACE_NAMES.has(schema.name)) continue;
         catalogNamespaces.value.push({
           id: schema.id,
           label: `${catalog.name} / ${schema.name}`,

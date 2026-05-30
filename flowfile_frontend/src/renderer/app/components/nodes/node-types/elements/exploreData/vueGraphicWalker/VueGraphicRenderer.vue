@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, defineProps, toRaw, watch } from "vue";
 
-import type { IRow, IMutField, IChart, IGWProps } from "@kanaries/graphic-walker/dist/interfaces";
+import type { IRow, IMutField, IChart, IGWProps } from "@kanaries/graphic-walker/interfaces";
 
 interface VueGRProps {
   chart: IChart;

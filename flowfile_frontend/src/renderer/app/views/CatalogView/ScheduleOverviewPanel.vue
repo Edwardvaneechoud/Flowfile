@@ -138,7 +138,7 @@ import { EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
 
 const catalogStore = useCatalogStore();
-const isDockerMode = computed(() => !authService.isInElectronMode());
+const isDockerMode = computed(() => !authService.isInDesktopMode());
 
 defineEmits([
   "createSchedule",

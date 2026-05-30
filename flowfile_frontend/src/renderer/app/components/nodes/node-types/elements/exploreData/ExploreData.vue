@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import type { IRow, IMutField, IChart } from "@kanaries/graphic-walker/dist/interfaces";
+import type { IRow, IMutField, IChart } from "@kanaries/graphic-walker/interfaces";
 import VueGraphicWalker from "./vueGraphicWalker/VueGraphicWalker.vue";
 import type { NodeGraphicWalker } from "./vueGraphicWalker/interfaces";
 import { fetchGraphicWalkerData } from "./vueGraphicWalker/utils";

@@ -1,3 +1,10 @@
+<script setup lang="ts">
+import { useNativeContextMenuGuard } from "./composables/useNativeContextMenuGuard";
+
+// Suppress WebKit's native right-click menu in the desktop shell (no-op on web).
+useNativeContextMenuGuard();
+</script>
+
 <template>
   <router-view />
 </template>

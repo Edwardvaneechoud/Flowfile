@@ -1,14 +1,12 @@
 import os
-from base64 import encodebytes
 from collections.abc import Callable, Iterable
 from typing import Any
 
 import polars as pl
-import requests
 
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import AVAILABLE_RAM, WORKER_URL
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher, Status
+from flowfile_core.configs.settings import AVAILABLE_RAM
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.utils.utils import standardize_col_dtype
 
 
@@ -109,36 +107,6 @@ def execute_write_method(
     elif data_type == "parquet":
         logger.info("Writing as parquet file")
         write_method(path)
-
-
-def write_output(
-    _df: pl.LazyFrame,
-    data_type: str,
-    path: str,
-    write_mode: str,
-    sheet_name: str = None,
-    delimiter: str = None,
-    flow_id: int = -1,
-    node_id: int | str = -1,
-) -> Status:
-    serializable_df = _df.serialize()
-    r = requests.post(
-        f"{WORKER_URL}/write_results/",
-        json={
-            "operation": encodebytes(serializable_df).decode(),
-            "data_type": data_type,
-            "path": path,
-            "write_mode": write_mode,
-            "sheet_name": sheet_name,
-            "delimiter": delimiter,
-            "flowfile_node_id": node_id,
-            "flowfile_flow_id": flow_id,
-        },
-    )
-    if r.ok:
-        return Status(**r.json())
-    else:
-        raise Exception(f"Could not cache the data, {r.text}")
 
 
 def local_write_output(
