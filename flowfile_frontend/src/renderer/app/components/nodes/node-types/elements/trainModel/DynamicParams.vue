@@ -9,6 +9,7 @@
       <el-switch
         v-if="param.type === 'boolean'"
         :id="`param-${param.name}`"
+        size="small"
         :model-value="(modelValue[param.name] as boolean) ?? (param.default as boolean)"
         @update:model-value="updateValue(param.name, $event)"
       />

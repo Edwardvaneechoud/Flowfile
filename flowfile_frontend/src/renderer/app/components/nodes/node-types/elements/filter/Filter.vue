@@ -10,6 +10,7 @@
           <el-switch
             v-model="isAdvancedFilter"
             class="mb-2"
+            size="small"
             active-text="Advanced filter options"
             inactive-text="Basic filter"
           />
@@ -17,6 +18,7 @@
         <div class="split-mode-row">
           <el-switch
             v-model="splitModeEnabled"
+            size="small"
             active-text="Split into pass/fail outputs"
             inactive-text="Single output"
           />
@@ -379,7 +381,7 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .split-mode-row {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px dashed #e4e7ed;
+  border-top: 1px solid var(--el-border-color-lighter, #e4e7ed);
 }
 
 .split-mode-hint {

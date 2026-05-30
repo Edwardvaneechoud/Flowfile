@@ -179,6 +179,9 @@ class FlowRegistration(Base):
     flow_path = Column(String, nullable=False)
     namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # True when the flow contains exactly one ``api_response`` node, i.e. it can be
+    # published as an HTTP data API. Recomputed from the flow graph on save.
+    is_api_compatible = Column(Boolean, default=False, nullable=False, server_default="0")
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -236,6 +239,102 @@ class FlowFollow(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("user_id", "registration_id", name="uq_user_follow"),)
+
+
+class FlowApiEndpoint(Base):
+    """Publishes a registered flow as an HTTP data API endpoint.
+
+    At most one endpoint per registered flow. A GET to ``/api/data/{slug}``
+    authenticated by a ``FlowApiKey`` runs the flow synchronously and returns the
+    data flowing into the flow's single ``api_response`` node.
+    """
+
+    __tablename__ = "flow_api_endpoints"
+
+    id = Column(Integer, primary_key=True, index=True)
+    registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    slug = Column(String, nullable=False, unique=True, index=True)
+    enabled = Column(Boolean, default=True, nullable=False, server_default="1")
+    # node_id of the flow's api_response node, resolved at publish time.
+    response_node_id = Column(Integer, nullable=True)
+    # JSON list of typed parameter specs (see schemas/flow_api_schema.py:ApiParamSpec).
+    param_schema_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("registration_id", name="uq_api_endpoint_registration"),)
+
+
+class ApiConsumer(Base):
+    """A reusable API client / service account.
+
+    Holds one or more rotatable ``FlowApiKey`` tokens and is granted access to one
+    or more published flow endpoints via ``api_consumer_endpoints``. Owned by the
+    user who created it (in local/Electron mode everything belongs to ``local_user``).
+
+    ``is_implicit`` marks a consumer auto-created to back a single per-flow "Create
+    key" button, so that path shares the one consumer-based auth path. Implicit
+    consumers are hidden from the consumers list and deleted with their endpoint.
+    """
+
+    __tablename__ = "api_consumers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    enabled = Column(Boolean, default=True, nullable=False, server_default="1")
+    is_implicit = Column(Boolean, default=False, nullable=False, server_default="0")
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_api_consumer_owner_name"),)
+
+
+class ApiConsumerEndpoint(Base):
+    """Grant linking an ``ApiConsumer`` to a ``FlowApiEndpoint`` it may call."""
+
+    __tablename__ = "api_consumer_endpoints"
+
+    id = Column(Integer, primary_key=True, index=True)
+    consumer_id = Column(
+        Integer, ForeignKey("api_consumers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    endpoint_id = Column(
+        Integer, ForeignKey("flow_api_endpoints.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("consumer_id", "endpoint_id", name="uq_consumer_endpoint"),)
+
+
+class FlowApiKey(Base):
+    """An API key belonging to an ``ApiConsumer``.
+
+    The raw token is shown once at creation; only its SHA-256 hash is stored
+    (one-way) so it can never be recovered from the database. Access is decided by
+    the consumer's grants (``api_consumer_endpoints``), not by the key itself, so a
+    single key can call every endpoint its consumer is granted.
+    """
+
+    __tablename__ = "flow_api_keys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # The consumer this key authenticates as. Nullable only so migration 018 can
+    # add-then-backfill; every row carries a consumer_id once 018 has run.
+    consumer_id = Column(Integer, ForeignKey("api_consumers.id", ondelete="CASCADE"), nullable=True, index=True)
+    # Retained for display / back-compat. A per-flow key sets it to its single endpoint;
+    # not used for authorization (the grant check is the sole gate). Nullable now.
+    endpoint_id = Column(Integer, ForeignKey("flow_api_endpoints.id"), nullable=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)
+    key_hash = Column(String, nullable=False, unique=True, index=True)
+    key_prefix = Column(String, nullable=False)  # display only, e.g. "ffk_ab12…"
+    enabled = Column(Boolean, default=True, nullable=False, server_default="1")
+    last_used_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
 
 
 class FlowSchedule(Base):

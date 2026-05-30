@@ -51,6 +51,7 @@ from flowfile_core.flowfile.catalog_helpers import (
     find_registration_by_registration_id,
     register_flow_in_namespace,
     resolve_source_registration_id,
+    sync_api_compatibility,
 )
 from flowfile_core.flowfile.code_generator.code_generator import (
     UnsupportedNodeError,
@@ -1340,7 +1341,7 @@ def _save_flow_impl(
             register_flow_in_namespace(fp, n, uid, namespace_id)
 
         try:
-            return flow_file_handler.save_as_flow(
+            new_flow_id = flow_file_handler.save_as_flow(
                 flow_id=flow_id,
                 new_path=flow_path,
                 user_id=user_id,
@@ -1349,6 +1350,8 @@ def _save_flow_impl(
             )
         except FlowPathNamespaceCollision as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
+        sync_api_compatibility(flow_file_handler.get_flow(new_flow_id))
+        return new_flow_id
 
     resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)  # save_flow itself calls mark_as_saved()
@@ -1360,6 +1363,7 @@ def _save_flow_impl(
             register_flow_in_namespace(flow_path, flow.flow_settings.name, user_id, namespace_id)
         except FlowPathNamespaceCollision as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
+    sync_api_compatibility(flow)
     return flow_id
 
 
@@ -1491,6 +1495,7 @@ def save_flow_to_catalog(
                         f"Could not unlink old managed flow file {normalized_current}",
                         exc_info=True,
                     )
+        sync_api_compatibility(flow_file_handler.get_flow(new_flow_id))
         return new_flow_id
 
     resolve_source_registration_id(flow)
@@ -1501,6 +1506,7 @@ def save_flow_to_catalog(
         raise HTTPException(status_code=409, detail=str(err)) from err
     except FlowNameNamespaceCollision as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
+    sync_api_compatibility(flow)
     return flow_id
 
 
