@@ -31,6 +31,16 @@ from flowfile_core.schemas.schemas import FlowParameter
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _force_local_api_execution(monkeypatch):
+    """Keep API runs in-core for hermetic tests (no live worker).
+
+    ``run_flow_as_api`` now defaults to the global, worker-aware execution location;
+    pin it to local so these tests neither need nor reach for a worker.
+    """
+    monkeypatch.setattr(api_runner, "get_global_execution_location", lambda: "local")
+
+
 def _build_and_save_flow(path, flow_id: int = 1, orientation: str = "records") -> None:
     """manual_input -> polars filter on ``'${region}'`` -> api_response, saved to *path*.
 
@@ -237,7 +247,8 @@ def test_columns_orientation_pushes_limit_into_collect():
     capture: dict = {}
     settings = SimpleNamespace(orientation="columns", max_rows=2)
 
-    out = api_runner._serialize(_RecordingData(df, capture), settings)
+    flow = SimpleNamespace(flow_settings=SimpleNamespace(execution_location="local"))
+    out = api_runner._serialize(_RecordingData(df, capture), settings, flow, None)
 
     # The limit was pushed into collect(), not applied by slicing afterwards.
     assert capture["n_records"] == 2
@@ -249,7 +260,8 @@ def test_columns_orientation_without_limit_collects_all():
     capture: dict = {}
     settings = SimpleNamespace(orientation="columns", max_rows=None)
 
-    out = api_runner._serialize(_RecordingData(df, capture), settings)
+    flow = SimpleNamespace(flow_settings=SimpleNamespace(execution_location="local"))
+    out = api_runner._serialize(_RecordingData(df, capture), settings, flow, None)
 
     assert capture["n_records"] is None
     assert out == {"data": {"a": [1, 2, 3]}, "row_count": 3, "orientation": "columns"}

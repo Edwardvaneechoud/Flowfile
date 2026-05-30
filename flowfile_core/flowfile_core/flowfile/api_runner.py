@@ -1,8 +1,9 @@
 """Synchronous in-process execution of a published flow for the HTTP data API.
 
 Loads a registered flow fresh per request, validates and injects typed query
-parameters, runs the graph locally, and serializes the data flowing into the
-flow's single ``api_response`` node.
+parameters, runs the graph in performance mode (offloading the single terminal
+collect to the worker when one is available, falling back to in-core otherwise), and
+serializes the data flowing into the flow's single ``api_response`` node.
 
 A freshly opened flow keeps the ``flow_id`` stored in its file, and that id keys
 *process-wide* scratch state: the singleton ``FlowLogger``, the kernel I/O dirs
@@ -25,9 +26,12 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from flowfile_core.configs import logger
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas.flow_api_schema import ApiParamSpec
 from flowfile_core.schemas.output_model import RunInformation
+from flowfile_core.schemas.schemas import get_global_execution_location
 
 
 class ApiParamError(ValueError):
@@ -147,16 +151,51 @@ def _first_error(run_info: RunInformation | None) -> str | None:
     return None
 
 
-def _serialize(data: Any, settings: Any) -> dict[str, Any]:
+def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
+    """Collect the api_response input, on the worker when one is available.
+
+    The flow runs in performance mode, so the whole pipeline is a single lazy plan and
+    this is the one collect that actually executes it. When ``execution_location`` is
+    remote we ship that collect to the worker (it materializes Arrow IPC; the core only
+    reads it back), so the core process does no heavy compute. The row cap is pushed in
+    first so the worker materializes only what's returned. Degrades to an in-core collect
+    when no worker is reachable (or the worker process was killed), so a request still
+    succeeds rather than 500-ing.
+    """
+    if flow.flow_settings.execution_location == "local":
+        return data.collect(n_records=max_rows)
+
+    lf = data.data_frame
+    if max_rows is not None:
+        lf = lf.head(max_rows)
+    try:
+        fetcher = ExternalDfFetcher(
+            lf=lf,
+            file_ref=f"__api_{api_node.hash}",
+            flow_id=flow.flow_id,
+            node_id=api_node.node_id,
+            wait_on_completion=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - worker unreachable; degrade to in-core
+        logger.warning("API worker offload unavailable (%s); collecting response in core", exc)
+        return data.collect(n_records=max_rows)
+
+    if fetcher.has_error:
+        # error_code -1 = the worker process died (e.g. OOM-killed): degrade rather than
+        # surface a 500. A genuine flow error carries a description and is raised.
+        if fetcher.error_code == -1:
+            logger.warning("API worker collect was killed; collecting response in core")
+            return data.collect(n_records=max_rows)
+        raise ApiExecutionError(fetcher.error_description or "flow execution failed on worker")
+    return fetcher.get_result().collect()
+
+
+def _serialize(data: Any, settings: Any, flow: Any, api_node: Any) -> dict[str, Any]:
     orientation = getattr(settings, "orientation", "records")
     max_rows = getattr(settings, "max_rows", None)
+    df = _materialize(data, max_rows, flow, api_node)
     if orientation == "columns":
-        # Push the row limit into collect() instead of collecting everything and
-        # slicing, so a large result isn't fully materialized just to be truncated.
-        df = data.collect(n_records=max_rows)
-        columns = df.to_dict(as_series=False)
-        return {"data": columns, "row_count": df.height, "orientation": "columns"}
-    df = data.collect(n_records=max_rows)
+        return {"data": df.to_dict(as_series=False), "row_count": df.height, "orientation": "columns"}
     records = df.to_dicts()
     return {"data": records, "row_count": len(records), "orientation": "records"}
 
@@ -184,6 +223,7 @@ def run_flow_as_api(
     owner_id: int,
     param_specs: list[ApiParamSpec],
     query: dict[str, str],
+    execution_location: str | None = None,
 ) -> dict[str, Any]:
     """Run a published flow synchronously and return its serialized API response.
 
@@ -193,6 +233,8 @@ def run_flow_as_api(
         param_specs: Stored type overrides for the endpoint (parameters themselves
             are inherited from the flow's ${name} references).
         query: Raw query parameters from the request.
+        execution_location: Override for where compute runs ("local"/"remote"). Defaults
+            to the global, worker-aware setting; tests pass "local" to stay hermetic.
 
     Raises:
         ApiParamError: A parameter is missing or fails type validation.
@@ -213,8 +255,12 @@ def run_flow_as_api(
         if param.name in resolved:
             param.default_value = resolved[param.name]
 
-    # Force local execution so the response data is materialized in-process.
-    flow.flow_settings.execution_location = "local"
+    # Run in performance mode (one lazy plan; no per-node materialization or example
+    # data) and let compute go to the worker when one is available, so the core process
+    # does no heavy collect (the final collect is offloaded in _materialize). Tests pin
+    # execution_location="local" to stay hermetic.
+    flow.flow_settings.execution_location = execution_location or get_global_execution_location()
+    flow.flow_settings.execution_mode = "Performance"
 
     # Serialize concurrent runs of the same published flow: the freshly opened flow
     # keeps its saved flow_id, which keys process-wide scratch state (FlowLogger,
@@ -228,4 +274,4 @@ def run_flow_as_api(
         data = api_node.get_resulting_data()
         if data is None:
             raise ApiExecutionError("API response node produced no data")
-        return _serialize(data, api_node.setting_input)
+        return _serialize(data, api_node.setting_input, flow, api_node)

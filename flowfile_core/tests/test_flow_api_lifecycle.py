@@ -22,7 +22,7 @@ from sqlalchemy.orm import sessionmaker
 from flowfile_core.auth import api_key as api_key_mod
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database import models as db_models
-from flowfile_core.flowfile import catalog_helpers
+from flowfile_core.flowfile import api_consumer_manager, catalog_helpers
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -71,13 +71,21 @@ def _register_flow(db, *, name="api_flow", flow_path="/tmp/api_flow.yaml", is_ap
 
 
 def _publish_with_key(db, reg, *, slug="sales", enabled=True):
-    """Create a FlowApiEndpoint + a single FlowApiKey; return (endpoint, key, raw_token)."""
+    """Create a FlowApiEndpoint + its implicit consumer + grant + a FlowApiKey.
+
+    Auth resolves key -> consumer -> grant -> endpoint, so the consumer + grant
+    (created via the same helper the per-flow 'Create key' button uses) are what
+    make the key authenticate. Returns (endpoint, key, raw_token).
+    """
     ep = db_models.FlowApiEndpoint(registration_id=reg.id, owner_id=1, slug=slug, enabled=enabled)
     db.add(ep)
     db.commit()
     db.refresh(ep)
+    consumer = api_consumer_manager.get_or_create_implicit_consumer(db, ep)
     raw, key_hash, prefix = api_key_mod.generate_api_key()
-    key = db_models.FlowApiKey(endpoint_id=ep.id, owner_id=1, name="k", key_hash=key_hash, key_prefix=prefix)
+    key = db_models.FlowApiKey(
+        consumer_id=consumer.id, endpoint_id=ep.id, owner_id=1, name="k", key_hash=key_hash, key_prefix=prefix
+    )
     db.add(key)
     db.commit()
     db.refresh(key)

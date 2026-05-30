@@ -59,7 +59,11 @@
                 </span>
               </div>
             </div>
-            <el-switch v-model="localSettings.cache_results" @change="handleSettingChange" />
+            <el-switch
+              v-model="localSettings.cache_results"
+              size="small"
+              @change="handleSettingChange"
+            />
           </div>
 
           <div class="setting-group">
@@ -120,7 +124,11 @@
                 Guarantee data quality with automatic schema enforcement and validation
               </span>
             </div>
-            <el-switch v-model="outputFieldConfig.enabled" @change="handleOutputConfigChange" />
+            <el-switch
+              v-model="outputFieldConfig.enabled"
+              size="small"
+              @change="handleOutputConfigChange"
+            />
           </div>
 
           <template v-if="outputFieldConfig.enabled">
@@ -159,6 +167,7 @@
               </div>
               <el-switch
                 v-model="outputFieldConfig.validate_data_types"
+                size="small"
                 @change="handleOutputConfigChange"
               />
             </div>

@@ -179,6 +179,43 @@
         </el-table>
       </CollapsibleSection>
 
+      <!-- Access (shared consumers granted to this flow) -->
+      <CollapsibleSection
+        nested
+        title="Access"
+        persist-key="flow.api.access"
+        :default-open="false"
+        :count="endpointConsumers.length"
+      >
+        <template #actions>
+          <el-button size="small" text @click="goToApiAccess">
+            Manage consumers <i class="fa-solid fa-arrow-right" />
+          </el-button>
+        </template>
+        <p class="api-hint">
+          The keys above belong to this flow only. To issue a key that works across several flows,
+          create an API consumer in the
+          <a class="api-link" @click="goToApiAccess">APIs → Consumers</a> tab and grant it this
+          flow.
+        </p>
+        <EmptyState
+          v-if="endpointConsumers.length === 0"
+          icon="fa-solid fa-user-shield"
+          description="No shared consumers have access to this flow"
+        />
+        <el-table v-else :data="endpointConsumers" size="small">
+          <el-table-column prop="name" label="Consumer" min-width="140" />
+          <el-table-column label="Status" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
+                {{ row.enabled ? "Enabled" : "Disabled" }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="key_count" label="Keys" width="70" align="center" />
+        </el-table>
+      </CollapsibleSection>
+
       <!-- Try it -->
       <CollapsibleSection nested title="Try it" persist-key="flow.api.tryit" :default-open="false">
         <template #actions>
@@ -218,6 +255,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { flowfileCorebaseURL } from "../../../config/constants";
 import {
@@ -227,6 +265,7 @@ import {
   type ApiParamSpec,
   type ApiParamType,
   type ApiTestResult,
+  type EndpointConsumer,
   type FlowParamInfo,
 } from "../../api/flowApi.api";
 import type { FlowRegistration } from "../../types";
@@ -246,10 +285,13 @@ const PARAM_TYPES: ApiParamType[] = ["string", "integer", "float", "boolean", "e
 
 const props = defineProps<{ flow: FlowRegistration }>();
 
+const router = useRouter();
+
 const loading = ref(false);
 const busy = ref(false);
 const endpoint = ref<ApiEndpoint | null>(null);
 const keys = ref<ApiKey[]>([]);
+const endpointConsumers = ref<EndpointConsumer[]>([]);
 const slug = ref("");
 const enabled = ref(true);
 const params = ref<ParamRow[]>([]);
@@ -331,9 +373,13 @@ async function load() {
     flowParams.value = fParams;
     syncFromEndpoint(ep);
     if (ep) {
-      keys.value = await FlowApiApi.listKeys(ep.id);
+      [keys.value, endpointConsumers.value] = await Promise.all([
+        FlowApiApi.listKeys(ep.id),
+        FlowApiApi.listConsumersForEndpoint(ep.id).catch(() => [] as EndpointConsumer[]),
+      ]);
     } else {
       keys.value = [];
+      endpointConsumers.value = [];
       slug.value = "";
     }
     // Parameters are inherited from the flow's ${name} references; saved config
@@ -498,6 +544,11 @@ async function runTest() {
   }
 }
 
+function goToApiAccess() {
+  // Open the catalog APIs tab on its Consumers sub-view.
+  router.push({ name: "catalog", query: { tab: "apis", apiView: "consumers" } });
+}
+
 async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -524,6 +575,10 @@ watch(() => props.flow.id, load, { immediate: true });
 .api-warning {
   font-size: 12px;
   color: var(--color-danger, #c0392b);
+}
+.api-link {
+  color: #2c7be5;
+  cursor: pointer;
 }
 .api-row {
   display: flex;

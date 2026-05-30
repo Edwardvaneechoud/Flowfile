@@ -24,6 +24,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from flowfile_core.flowfile import api_consumer_manager
 from flowfile_core.flowfile.api_runner import (
     ApiConfigError,
     ApiExecutionError,
@@ -33,6 +34,7 @@ from flowfile_core.flowfile.api_runner import (
 )
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas.flow_api_schema import (
+    ApiConsumerOut,
     ApiEndpointCreate,
     ApiEndpointOut,
     ApiEndpointUpdate,
@@ -43,6 +45,7 @@ from flowfile_core.schemas.flow_api_schema import (
     ApiParamSpec,
     ApiTestRequest,
     FlowParamInfo,
+    PublishableFlow,
 )
 
 _API_RUN_TIMEOUT = float(os.environ.get("FLOWFILE_API_RUN_TIMEOUT_SECONDS", "120"))
@@ -102,6 +105,7 @@ def _endpoint_out(
 def _key_out(key: db_models.FlowApiKey) -> ApiKeyOut:
     return ApiKeyOut(
         id=key.id,
+        consumer_id=key.consumer_id,
         endpoint_id=key.endpoint_id,
         name=key.name,
         key_prefix=key.key_prefix,
@@ -109,6 +113,21 @@ def _key_out(key: db_models.FlowApiKey) -> ApiKeyOut:
         last_used_at=key.last_used_at,
         expires_at=key.expires_at,
         created_at=key.created_at,
+    )
+
+
+def _consumer_out(db: Session, consumer: db_models.ApiConsumer) -> ApiConsumerOut:
+    return ApiConsumerOut(
+        id=consumer.id,
+        name=consumer.name,
+        description=consumer.description,
+        owner_id=consumer.owner_id,
+        enabled=consumer.enabled,
+        is_implicit=consumer.is_implicit,
+        endpoint_count=api_consumer_manager.count_endpoints(db, consumer.id),
+        key_count=api_consumer_manager.count_keys(db, consumer.id),
+        created_at=consumer.created_at,
+        updated_at=consumer.updated_at,
     )
 
 
@@ -253,6 +272,37 @@ def list_endpoints(
     return [_endpoint_out(ep, reg_by_id.get(ep.registration_id)) for ep in endpoints]
 
 
+@management_router.get("/publishable-flows", response_model=list[PublishableFlow])
+def list_publishable_flows(
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """The current user's API-compatible flows that have no endpoint yet.
+
+    Powers the APIs tab's "Create API" picker: a flow qualifies when it has exactly
+    one ``api_response`` node (``is_api_compatible``) and isn't already published.
+    """
+    published = db.query(db_models.FlowApiEndpoint.registration_id)
+    regs = (
+        db.query(db_models.FlowRegistration)
+        .filter(
+            db_models.FlowRegistration.owner_id == current_user.id,
+            db_models.FlowRegistration.is_api_compatible.is_(True),
+            ~db_models.FlowRegistration.id.in_(published),
+        )
+        .order_by(db_models.FlowRegistration.name)
+        .all()
+    )
+    return [
+        PublishableFlow(
+            registration_id=r.id,
+            name=r.name,
+            file_exists=bool(r.flow_path) and Path(r.flow_path).exists(),
+        )
+        for r in regs
+    ]
+
+
 @management_router.get("/flows/{registration_id}/parameters", response_model=list[FlowParamInfo])
 def get_flow_parameters(
     registration_id: int,
@@ -373,7 +423,22 @@ def delete_endpoint(
     db: Session = Depends(get_db),
 ):
     ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
-    db.query(db_models.FlowApiKey).filter(db_models.FlowApiKey.endpoint_id == ep.id).delete()
+    # Implicit (per-endpoint) consumers granted only to this endpoint are garbage-
+    # collected with it; shared consumers just lose this one grant. SQLite FK is off,
+    # so delete grants/keys explicitly rather than relying on a cascade.
+    granted = api_consumer_manager.list_consumers_for_endpoint(db, ep.id, include_implicit=True)
+    implicit_ids = [c.id for c in granted if c.is_implicit]
+    db.query(db_models.FlowApiKey).filter(db_models.FlowApiKey.endpoint_id == ep.id).delete(synchronize_session=False)
+    db.query(db_models.ApiConsumerEndpoint).filter(db_models.ApiConsumerEndpoint.endpoint_id == ep.id).delete(
+        synchronize_session=False
+    )
+    if implicit_ids:
+        db.query(db_models.FlowApiKey).filter(db_models.FlowApiKey.consumer_id.in_(implicit_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(db_models.ApiConsumer).filter(db_models.ApiConsumer.id.in_(implicit_ids)).delete(
+            synchronize_session=False
+        )
     db.delete(ep)
     db.commit()
 
@@ -387,10 +452,17 @@ def create_key(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Mint a new API key. The raw token is returned exactly once."""
+    """Mint a new API key for this one endpoint. The raw token is returned exactly once.
+
+    The key is attached to an implicit, single-endpoint consumer so it authenticates
+    through the same consumer + grant path as keys created from the API Access panel.
+    For access spanning multiple flows, create a consumer there instead.
+    """
     ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
+    consumer = api_consumer_manager.get_or_create_implicit_consumer(db, ep)
     raw_token, key_hash, key_prefix = generate_api_key()
     key = db_models.FlowApiKey(
+        consumer_id=consumer.id,
         endpoint_id=ep.id,
         owner_id=current_user.id,
         name=body.name,
@@ -423,11 +495,13 @@ def update_key(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Enable or disable an API key in place (revoke without deleting it)."""
+    """Rename or enable/disable an API key in place (revoke without deleting it)."""
     ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
     key = db.get(db_models.FlowApiKey, key_id)
     if key is None or key.endpoint_id != ep.id:
         raise HTTPException(status_code=404, detail="Key not found")
+    if body.name is not None:
+        key.name = body.name
     if body.enabled is not None:
         key.enabled = body.enabled
     db.commit()
@@ -448,3 +522,19 @@ def delete_key(
         raise HTTPException(status_code=404, detail="Key not found")
     db.delete(key)
     db.commit()
+
+
+@management_router.get("/endpoints/{endpoint_id}/consumers", response_model=list[ApiConsumerOut])
+def list_endpoint_consumers(
+    endpoint_id: int,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """List the (non-implicit) API consumers granted access to this endpoint.
+
+    Powers the flow API panel's read-only "Access" section; manage grants from the
+    API Access panel. Implicit per-flow consumers are hidden — their keys show up in
+    this endpoint's own key list instead.
+    """
+    ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
+    return [_consumer_out(db, c) for c in api_consumer_manager.list_consumers_for_endpoint(db, ep.id)]

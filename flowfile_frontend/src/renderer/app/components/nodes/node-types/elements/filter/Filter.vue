@@ -10,6 +10,7 @@
           <el-switch
             v-model="isAdvancedFilter"
             class="mb-2"
+            size="small"
             active-text="Advanced filter options"
             inactive-text="Basic filter"
           />
@@ -17,6 +18,7 @@
         <div class="split-mode-row">
           <el-switch
             v-model="splitModeEnabled"
+            size="small"
             active-text="Split into pass/fail outputs"
             inactive-text="Single output"
           />

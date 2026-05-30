@@ -125,17 +125,16 @@ def upgrade() -> None:
         )
 
     # Add consumer_id (nullable) and relax endpoint_id to nullable in one table rebuild.
-    # batch_alter_table is the SQLite-safe way to ALTER (used by 010/013/014/017).
+    # batch_alter_table is the SQLite-safe way to ALTER (used by 010/013/014/017). The
+    # column is added WITHOUT an inline ForeignKey: alembic's SQLite batch mode cannot
+    # emit an unnamed constraint ("Constraint must have a name"), and the app never
+    # relies on a DB-level FK here anyway — SQLite FK enforcement is off and deletes are
+    # explicit (see api_consumer_manager / repository.delete_flow). The ORM model still
+    # declares the relationship for query/ondelete semantics.
+    add_consumer_col = not _has_column("flow_api_keys", "consumer_id")
     with op.batch_alter_table("flow_api_keys") as batch:
-        if not _has_column("flow_api_keys", "consumer_id"):
-            batch.add_column(
-                sa.Column(
-                    "consumer_id",
-                    sa.Integer,
-                    sa.ForeignKey("api_consumers.id", ondelete="CASCADE"),
-                    nullable=True,
-                )
-            )
+        if add_consumer_col:
+            batch.add_column(sa.Column("consumer_id", sa.Integer(), nullable=True))
         batch.alter_column("endpoint_id", existing_type=sa.Integer(), nullable=True)
 
     _backfill_consumers()

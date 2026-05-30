@@ -12,6 +12,7 @@ import asyncio
 from types import SimpleNamespace
 from uuid import uuid4
 
+import polars as pl
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -20,7 +21,7 @@ from sqlalchemy.orm import sessionmaker
 
 from flowfile_core.auth import api_key as api_key_mod
 from flowfile_core.database import models as db_models
-from flowfile_core.flowfile import api_runner
+from flowfile_core.flowfile import api_consumer_manager, api_runner
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.routes import flow_api
@@ -95,6 +96,16 @@ def db_session():
         session.close()
 
 
+@pytest.fixture(autouse=True)
+def _force_local_api_execution(monkeypatch):
+    """Keep API runs in-core for hermetic tests (no live worker).
+
+    ``run_flow_as_api`` now defaults to the global, worker-aware execution location;
+    the worker-offload path is exercised directly in the ``_serialize`` tests below.
+    """
+    monkeypatch.setattr(api_runner, "get_global_execution_location", lambda: "local")
+
+
 # ---------------------------------------------------------------------------
 # Runner: execution + serialization + parameter filtering
 # ---------------------------------------------------------------------------
@@ -145,6 +156,65 @@ def test_run_flow_as_api_columns(tmp_path):
     assert out["row_count"] == 1
 
 
+def test_serialize_offloads_final_collect_to_worker_when_remote(monkeypatch):
+    """With a worker available, the terminal collect is shipped to it (ExternalDfFetcher),
+    not run in core."""
+    df = pl.DataFrame({"region": ["US"], "v": [2]})
+    used = {}
+
+    class _FakeFetcher:
+        has_error = False
+        error_code = 0
+        error_description = None
+
+        def __init__(self, *, lf, **_kwargs):
+            used["called"] = True
+            self._lf = lf  # the (capped) lazy plan; stands in for the worker's IPC result
+
+        def get_result(self):
+            return self._lf
+
+    monkeypatch.setattr(api_runner, "ExternalDfFetcher", _FakeFetcher)
+
+    def _local_collect(n_records=None):
+        used["local"] = True  # must NOT happen on the remote path
+        return df
+
+    data = SimpleNamespace(data_frame=df.lazy(), collect=_local_collect)
+    flow = SimpleNamespace(flow_settings=SimpleNamespace(execution_location="remote"), flow_id=1)
+    api_node = SimpleNamespace(hash="abc", node_id=3)
+    settings = SimpleNamespace(orientation="records", max_rows=None)
+
+    out = api_runner._serialize(data, settings, flow, api_node)
+    assert used.get("called") is True  # offloaded to the worker
+    assert used.get("local") is None  # core did not run the heavy collect
+    assert out == {"data": [{"region": "US", "v": 2}], "row_count": 1, "orientation": "records"}
+
+
+def test_serialize_falls_back_to_local_when_worker_unreachable(monkeypatch):
+    """A worker that can't be reached degrades to an in-core collect, not a 500."""
+    df = pl.DataFrame({"region": ["EU"], "v": [1]})
+
+    def _unreachable(*_a, **_k):
+        raise ConnectionError("worker down")
+
+    monkeypatch.setattr(api_runner, "ExternalDfFetcher", _unreachable)
+    captured = {}
+
+    def _local_collect(n_records=None):
+        captured["local"] = True
+        return df
+
+    data = SimpleNamespace(data_frame=df.lazy(), collect=_local_collect)
+    flow = SimpleNamespace(flow_settings=SimpleNamespace(execution_location="remote"), flow_id=1)
+    api_node = SimpleNamespace(hash="abc", node_id=3)
+    settings = SimpleNamespace(orientation="records", max_rows=None)
+
+    out = api_runner._serialize(data, settings, flow, api_node)
+    assert captured.get("local") is True  # fell back to an in-core collect
+    assert out == {"data": [{"region": "EU", "v": 1}], "row_count": 1, "orientation": "records"}
+
+
 # ---------------------------------------------------------------------------
 # Typed parameter validation
 # ---------------------------------------------------------------------------
@@ -191,13 +261,23 @@ def test_api_key_hash_roundtrip():
     assert raw not in key_hash  # hashed, not reversible
 
 
-def _make_endpoint_with_key(db_session, slug="sales", enabled=True, key_enabled=True, expires_at=None):
+def _make_endpoint_with_key(
+    db_session, slug="sales", enabled=True, key_enabled=True, expires_at=None, consumer_enabled=True
+):
+    """Create an endpoint + its implicit consumer + grant + a key bound to that consumer.
+
+    Auth now resolves key -> consumer -> grant -> endpoint, so a bare endpoint+key is
+    no longer authenticatable; the consumer + grant are what make the key valid.
+    """
     ep = db_models.FlowApiEndpoint(registration_id=1, owner_id=1, slug=slug, enabled=enabled)
     db_session.add(ep)
     db_session.commit()
     db_session.refresh(ep)
+    consumer = api_consumer_manager.get_or_create_implicit_consumer(db_session, ep)
+    consumer.enabled = consumer_enabled
     raw, key_hash, prefix = api_key_mod.generate_api_key()
     key = db_models.FlowApiKey(
+        consumer_id=consumer.id,
         endpoint_id=ep.id,
         owner_id=1,
         name="k",
@@ -507,3 +587,42 @@ def test_get_endpoint_advertises_effective_specs(db_session, tmp_path):
     # Only the flow's real ${region} param is advertised; "ghost" is dropped, matching
     # what the runner enforces.
     assert [p.name for p in out.parameters] == ["region"]
+
+
+def _reg(db_session, *, name, owner_id=1, is_api_compatible=True, flow_path="/tmp/x.yaml"):
+    reg = db_models.FlowRegistration(
+        flow_uuid=str(uuid4()),
+        name=name,
+        flow_path=flow_path,
+        owner_id=owner_id,
+        is_api_compatible=is_api_compatible,
+    )
+    db_session.add(reg)
+    db_session.commit()
+    db_session.refresh(reg)
+    return reg
+
+
+def test_list_publishable_flows(db_session, tmp_path):
+    """The picker lists only api-compatible, unpublished flows owned by the user."""
+    user = SimpleNamespace(id=1)
+
+    real = tmp_path / "alpha.yaml"
+    _build_and_save_flow(real, "records")
+    a = _reg(db_session, name="alpha", flow_path=str(real))  # compatible, unpublished, file exists
+    b = _reg(db_session, name="beta")  # compatible but will be published -> excluded
+    _reg(db_session, name="gamma", is_api_compatible=False)  # not compatible -> excluded
+    _reg(db_session, name="delta", owner_id=2)  # other owner -> excluded
+    _reg(db_session, name="epsilon", flow_path=str(tmp_path / "missing.yaml"))  # file missing -> included
+
+    # Publish beta so it drops out of the publishable list.
+    db_session.add(db_models.FlowApiEndpoint(registration_id=b.id, owner_id=1, slug="beta"))
+    db_session.commit()
+
+    out = flow_api.list_publishable_flows(current_user=user, db=db_session)
+    by_name = {f.name: f for f in out}
+
+    assert [f.name for f in out] == ["alpha", "epsilon"]  # ordered by name; others excluded
+    assert by_name["alpha"].registration_id == a.id
+    assert by_name["alpha"].file_exists is True
+    assert by_name["epsilon"].file_exists is False  # flagged, but still offered

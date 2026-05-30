@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 from flowfile_core.auth.api_key import generate_api_key
 from flowfile_core.database import models as db_models
 
-
 # ---------------------------------------------------------------------------
 # Consumers
 # ---------------------------------------------------------------------------
@@ -96,9 +95,9 @@ def delete_consumer(db: Session, consumer: db_models.ApiConsumer) -> None:
     db.query(db_models.FlowApiKey).filter(db_models.FlowApiKey.consumer_id == consumer.id).delete(
         synchronize_session=False
     )
-    db.query(db_models.ApiConsumerEndpoint).filter(
-        db_models.ApiConsumerEndpoint.consumer_id == consumer.id
-    ).delete(synchronize_session=False)
+    db.query(db_models.ApiConsumerEndpoint).filter(db_models.ApiConsumerEndpoint.consumer_id == consumer.id).delete(
+        synchronize_session=False
+    )
     db.delete(consumer)
     db.commit()
 
@@ -154,9 +153,7 @@ def list_consumers_for_endpoint(
 
 def count_endpoints(db: Session, consumer_id: int) -> int:
     return (
-        db.query(db_models.ApiConsumerEndpoint)
-        .filter(db_models.ApiConsumerEndpoint.consumer_id == consumer_id)
-        .count()
+        db.query(db_models.ApiConsumerEndpoint).filter(db_models.ApiConsumerEndpoint.consumer_id == consumer_id).count()
     )
 
 
@@ -227,9 +224,7 @@ def delete_key(db: Session, key: db_models.FlowApiKey) -> None:
 # ---------------------------------------------------------------------------
 
 
-def get_or_create_implicit_consumer(
-    db: Session, endpoint: db_models.FlowApiEndpoint
-) -> db_models.ApiConsumer:
+def get_or_create_implicit_consumer(db: Session, endpoint: db_models.FlowApiEndpoint) -> db_models.ApiConsumer:
     """Return the implicit, single-endpoint consumer for ``endpoint``, creating it if needed.
 
     A per-flow key created from the flow's API panel belongs to this consumer, so it
@@ -251,9 +246,7 @@ def get_or_create_implicit_consumer(
         return existing
 
     name = f"endpoint:{endpoint.slug}"
-    consumer = (
-        db.query(db_models.ApiConsumer).filter_by(owner_id=endpoint.owner_id, name=name).first()
-    )
+    consumer = db.query(db_models.ApiConsumer).filter_by(owner_id=endpoint.owner_id, name=name).first()
     if consumer is None:
         consumer = db_models.ApiConsumer(
             name=name,
@@ -265,9 +258,7 @@ def get_or_create_implicit_consumer(
         db.add(consumer)
         db.flush()
     if (
-        db.query(db_models.ApiConsumerEndpoint)
-        .filter_by(consumer_id=consumer.id, endpoint_id=endpoint.id)
-        .first()
+        db.query(db_models.ApiConsumerEndpoint).filter_by(consumer_id=consumer.id, endpoint_id=endpoint.id).first()
         is None
     ):
         db.add(db_models.ApiConsumerEndpoint(consumer_id=consumer.id, endpoint_id=endpoint.id))

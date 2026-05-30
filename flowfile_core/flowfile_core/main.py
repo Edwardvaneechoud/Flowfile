@@ -25,6 +25,7 @@ from flowfile_core.configs.settings import (
 )
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.ml import router as ml_router
+from flowfile_core.routes.api_consumers import router as api_consumers_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
@@ -134,6 +135,7 @@ app.include_router(catalog_router)
 # Flow-as-API: public key-authenticated data endpoint + JWT management endpoints.
 app.include_router(flow_api_data_router)
 app.include_router(flow_api_management_router)
+app.include_router(api_consumers_router)
 app.include_router(artifacts_router)
 app.include_router(ml_router)
 app.include_router(logs_router, tags=["logs"])

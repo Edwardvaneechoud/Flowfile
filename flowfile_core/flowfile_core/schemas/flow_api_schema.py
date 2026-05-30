@@ -112,6 +112,17 @@ class FlowParamInfo(BaseModel):
     default: str = ""
 
 
+class PublishableFlow(BaseModel):
+    """A flow that is API-ready (has an api_response node) but not yet published.
+
+    Surfaced by the APIs tab's "Create API" picker.
+    """
+
+    registration_id: int
+    name: str
+    file_exists: bool = True
+
+
 class ApiKeyCreate(BaseModel):
     """Request body to mint a new API key for an endpoint."""
 

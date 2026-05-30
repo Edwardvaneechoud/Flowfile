@@ -46,9 +46,12 @@ def verify_api_key(
 ) -> db_models.FlowApiEndpoint:
     """FastAPI dependency: authenticate a request to ``/api/data/{slug}``.
 
-    Validates the ``X-API-Key`` header against an enabled, unexpired key whose
-    endpoint matches ``slug`` and is itself enabled, updates ``last_used_at`` and
-    returns the resolved endpoint. Raises 401 on any failure.
+    Resolves the ``X-API-Key`` header to an enabled, unexpired key, then to its
+    ``ApiConsumer``, and authorizes the request only if that consumer is enabled and
+    holds a grant for the endpoint named ``slug`` (which must itself be enabled).
+    Updates ``last_used_at`` and returns the resolved endpoint. The grant check is
+    the sole authorization gate — there is no per-key endpoint fallback — so a single
+    key can call every endpoint its consumer is granted. Raises 401 on any failure.
     """
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -70,14 +73,29 @@ def verify_api_key(
     # Security rests on the high-entropy token plus the hashed-column lookup: the
     # WHERE clause above already requires an exact key_hash match, so a further
     # constant-time compare here would always be True and adds nothing.
-    if key is None or _is_expired(key.expires_at):
+    if key is None or _is_expired(key.expires_at) or key.consumer_id is None:
         raise unauthorized
 
-    endpoint = db.get(db_models.FlowApiEndpoint, key.endpoint_id)
-    # Wrong/unknown slug stays a 401 so we don't confirm endpoint existence to a
-    # key that isn't scoped to it. A disabled endpoint is reported clearly, since
-    # the caller already proved they hold a valid key for it.
-    if endpoint is None or endpoint.slug != slug:
+    consumer = db.get(db_models.ApiConsumer, key.consumer_id)
+    if consumer is None or not consumer.enabled:
+        raise unauthorized
+
+    # Resolve the requested endpoint, then require a grant linking this consumer to
+    # it. An unknown slug or a missing grant stays a 401 so we never confirm endpoint
+    # existence to a key that isn't authorized for it. A disabled endpoint is reported
+    # clearly (403), since the caller has proven they hold a granted key for it.
+    endpoint = db.query(db_models.FlowApiEndpoint).filter(db_models.FlowApiEndpoint.slug == slug).first()
+    if endpoint is None:
+        raise unauthorized
+    grant = (
+        db.query(db_models.ApiConsumerEndpoint)
+        .filter(
+            db_models.ApiConsumerEndpoint.consumer_id == consumer.id,
+            db_models.ApiConsumerEndpoint.endpoint_id == endpoint.id,
+        )
+        .first()
+    )
+    if grant is None:
         raise unauthorized
     if not endpoint.enabled:
         raise HTTPException(

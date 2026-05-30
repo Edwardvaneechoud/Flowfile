@@ -30,6 +30,13 @@ export interface FlowParamInfo {
   default: string;
 }
 
+// An API-ready flow (has an api_response node) not yet published, for the "Create API" picker.
+export interface PublishableFlow {
+  registration_id: number;
+  name: string;
+  file_exists: boolean;
+}
+
 export interface ApiTestResult {
   data: Record<string, unknown>[] | Record<string, unknown[]>;
   row_count: number;
@@ -51,7 +58,8 @@ export interface ApiEndpointUpdate {
 
 export interface ApiKey {
   id: number;
-  endpoint_id: number;
+  consumer_id: number | null;
+  endpoint_id: number | null;
   name: string;
   key_prefix: string;
   enabled: boolean;
@@ -64,6 +72,19 @@ export interface ApiKeyCreated extends ApiKey {
   api_key: string;
 }
 
+// A consumer (service account) granted access to an endpoint, as surfaced on the
+// flow's API panel "Access" section. Managed from the API Access panel.
+export interface EndpointConsumer {
+  id: number;
+  name: string;
+  description: string | null;
+  owner_id: number;
+  enabled: boolean;
+  is_implicit: boolean;
+  endpoint_count: number;
+  key_count: number;
+}
+
 export class FlowApiApi {
   static async getEndpointForFlow(registrationId: number): Promise<ApiEndpoint | null> {
     const res = await axios.get<ApiEndpoint[]>("/flow-api/endpoints", {
@@ -74,6 +95,11 @@ export class FlowApiApi {
 
   static async listAllEndpoints(): Promise<ApiEndpoint[]> {
     const res = await axios.get<ApiEndpoint[]>("/flow-api/endpoints");
+    return res.data;
+  }
+
+  static async listPublishableFlows(): Promise<PublishableFlow[]> {
+    const res = await axios.get<PublishableFlow[]>("/flow-api/publishable-flows");
     return res.data;
   }
 
@@ -118,5 +144,10 @@ export class FlowApiApi {
 
   static async deleteKey(endpointId: number, keyId: number): Promise<void> {
     await axios.delete(`/flow-api/endpoints/${endpointId}/keys/${keyId}`);
+  }
+
+  static async listConsumersForEndpoint(endpointId: number): Promise<EndpointConsumer[]> {
+    const res = await axios.get<EndpointConsumer[]>(`/flow-api/endpoints/${endpointId}/consumers`);
+    return res.data;
   }
 }
