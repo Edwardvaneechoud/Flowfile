@@ -4,7 +4,7 @@ use tauri::menu::AboutMetadata;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_opener::OpenerExt;
 
-const DOCS_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile#readme";
+const DOCS_URL: &str = "https://edwardvaneechoud.github.io/Flowfile/";
 const ISSUES_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile/issues";
 const REPO_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile";
 
