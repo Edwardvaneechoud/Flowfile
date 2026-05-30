@@ -184,10 +184,116 @@ def test_install_rejects_bad_gguf_header(_tmp_storage, monkeypatch):  # type: ig
 def test_local_provider_config():
     p = LocalProvider(api_base="http://127.0.0.1:1234/v1", api_key="sk-local")
     assert p.name == "local"
-    assert p.model == "openai/qwen2.5-coder-1.5b"
+    assert p.model == "openai/qwen2.5-coder-3b"
     assert p.api_base == "http://127.0.0.1:1234/v1"
     assert p.supports_tools is False
     assert isinstance(p, Provider)
+
+
+# --------------------------------------------------------------------------- #
+# Catalog                                                                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_catalog_default_is_coder_3b_and_no_llama():
+    # Llama-3.2-3B was dropped (poor flow generation); Qwen2.5-Coder-3B is the
+    # recommended default the one-click setup installs.
+    assert manager.DEFAULT_MODEL_ID == "qwen2.5-coder-3b"
+    assert manager.DEFAULT_MODEL_ID in manager.MODELS
+    assert "llama-3.2-3b" not in manager.MODELS
+    assert all("llama" not in mid for mid in manager.MODELS)
+
+
+# --------------------------------------------------------------------------- #
+# Context-window sidecar                                                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_ctx_size_clamps_and_persists(_tmp_storage):  # type: ignore[no-untyped-def]
+    # Below the floor → clamped up; above the ceiling → clamped down; both
+    # round-trip through the sidecar.
+    assert manager.set_ctx_size(10) == manager._MIN_CTX_SIZE
+    assert manager.get_ctx_size() == manager._MIN_CTX_SIZE
+    assert manager.set_ctx_size(10_000_000) == manager._MAX_CTX_SIZE
+    assert manager.get_ctx_size() == manager._MAX_CTX_SIZE
+    mid = (manager._MIN_CTX_SIZE + manager._MAX_CTX_SIZE) // 2
+    assert manager.set_ctx_size(mid) == mid
+    assert manager.get_ctx_size() == mid
+
+
+def test_ctx_size_garbage_sidecar_falls_back(_tmp_storage):  # type: ignore[no-untyped-def]
+    manager._engine_dir().mkdir(parents=True, exist_ok=True)
+    manager._ctx_path().write_text("not-a-number", encoding="utf-8")
+    assert manager.get_ctx_size() == manager._DEFAULT_CTX_SIZE
+
+
+# --------------------------------------------------------------------------- #
+# Boot-lock: status() must stay responsive during a (blocking) cold boot       #
+# --------------------------------------------------------------------------- #
+
+
+def test_status_responsive_during_boot(_tmp_storage, monkeypatch):  # type: ignore[no-untyped-def]
+    """``ensure_running`` runs the blocking ``_spawn`` OUTSIDE ``_lock`` so a
+    concurrent ``status()`` / ``is_running()`` poll returns immediately instead
+    of hanging for the whole health-check window."""
+    import threading
+    import time
+
+    # Pretend the runtime is installed so ensure_running reaches _spawn.
+    monkeypatch.setattr(manager, "is_installed", lambda *a, **k: True)
+
+    release = threading.Event()
+    spawned: list[bool] = []
+
+    class _FakeProc:
+        def poll(self):  # type: ignore[no-untyped-def]
+            return None  # still alive
+
+    def fake_spawn(binary, model, model_id):  # type: ignore[no-untyped-def]
+        spawned.append(True)
+        release.wait(timeout=5)  # block like a slow health poll would
+        return manager._RunningServer(proc=_FakeProc(), port=12345, model_id=model_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(manager, "_spawn", fake_spawn)
+
+    boot = threading.Thread(target=manager.ensure_running)
+    boot.start()
+    try:
+        # Wait until the boot thread is parked inside _spawn (holding _boot_lock,
+        # NOT _lock).
+        for _ in range(500):
+            if spawned:
+                break
+            time.sleep(0.005)
+        assert spawned, "boot did not reach _spawn"
+
+        # These take _lock; with the fix they must not block on the boot.
+        start = time.monotonic()
+        assert manager.is_running() is False  # _server not assigned until spawn returns
+        manager.status()
+        assert time.monotonic() - start < 1.0, "status() blocked on the cold boot"
+    finally:
+        release.set()
+        boot.join(timeout=5)
+    # After spawn returns the server is recorded.
+    assert manager.running_model_id() == manager.DEFAULT_MODEL_ID
+
+
+def test_set_active_model_recycles_running_server(_tmp_storage, monkeypatch):  # type: ignore[no-untyped-def]
+    """Switching the active model stops a server running a different one."""
+    killed: list[object] = []
+    monkeypatch.setattr(manager, "_model_installed", lambda mid: True)
+    monkeypatch.setattr(manager, "_kill_proc", lambda proc: killed.append(proc))
+
+    other = manager._RunningServer(proc=object(), port=1, model_id="qwen2.5-coder-1.5b")  # type: ignore[arg-type]
+    manager._server = other
+    try:
+        manager.set_active_model("qwen2.5-coder-3b")
+        assert manager.get_selected_model_id() == "qwen2.5-coder-3b"
+        assert killed == [other.proc]
+        assert manager._server is None
+    finally:
+        manager._server = None
 
 
 # --------------------------------------------------------------------------- #
@@ -246,3 +352,21 @@ def test_local_model_routes_registered():
     # and /ai/generate like any other provider.
     assert "/local-model/chat" not in paths
     assert "/local-model/generate" not in paths
+
+
+def test_start_route_maps_boot_failure_to_503(monkeypatch):  # type: ignore[no-untyped-def]
+    """A failed boot (``LocalModelError``) surfaces as 503, matching the
+    mapping in ``generate_routes`` for the same failure (was 500)."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from flowfile_core.ai import local_model_routes
+
+    def boom() -> str:
+        raise manager.LocalModelError("boot failed")
+
+    monkeypatch.setattr(manager, "ensure_running", boom)
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(local_model_routes.local_model_start(current_user=object()))
+    assert ei.value.status_code == 503

@@ -35,7 +35,9 @@ _LOCAL_API_KEY = "sk-local"
 
 class LocalProvider(LiteLLMProvider):
     name: ClassVar[str] = LOCAL_PROVIDER_ID
-    default_model: ClassVar[str] = "qwen2.5-coder-1.5b"
+    # Cosmetic — llama-server serves whichever GGUF is loaded regardless of the
+    # model name in the request. Kept aligned with the catalog default.
+    default_model: ClassVar[str] = "qwen2.5-coder-3b"
     # litellm routes ``openai/<name>`` + ``api_base`` to any OpenAI-compatible
     # server; llama-server speaks exactly that shape.
     model_prefix: ClassVar[str] = "openai/"

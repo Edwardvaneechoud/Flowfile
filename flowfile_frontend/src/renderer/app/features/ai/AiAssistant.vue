@@ -14,6 +14,7 @@ import { useAiAgentStore, type AgentEvent } from "../../stores/ai-agent-store";
 import { useAiStore, type AiMode, type ChatMessage } from "../../stores/ai-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { AiDisabledError } from "../../views/AiProvidersView/api";
+import { LOCAL_PROVIDER_ID, LOCAL_PROVIDER_LABEL } from "../../views/AiProvidersView/localModelApi";
 import AiAgentRun from "./AiAgentRun.vue";
 import AiAvatar from "./AiAvatar.vue";
 import AiDiffPanel from "./AiDiffPanel.vue";
@@ -77,6 +78,10 @@ const selectedProviderMeta = computed(() => {
   if (!name) return null;
   return aiStore.providers.find((p) => p.provider === name) ?? null;
 });
+
+// User-facing provider label: the wire id stays "local"; users see "On-device AI".
+const providerLabel = (id: string): string =>
+  id === LOCAL_PROVIDER_ID ? LOCAL_PROVIDER_LABEL : id;
 
 const availableModels = computed<string[]>(() => {
   const meta = selectedProviderMeta.value;
@@ -476,6 +481,37 @@ const handleManageProviders = (): void => {
   void router.push({ name: "connections", query: { tab: "ai" } });
 };
 
+// --- One-click local-model onboarding (shown when no provider is configured) ---
+// Size of the recommended (selected default) model, e.g. "2.0 GB", for the CTA.
+const localSetupSizeLabel = computed<string>(() => {
+  const st = aiStore.localModelStatus;
+  const rec = st?.models.find((m) => m.id === st?.selectedModelId) ?? st?.models[0];
+  const mb = rec?.approxDownloadMb;
+  if (!mb || mb <= 0) return "small download";
+  return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`;
+});
+
+const localSetupProgressLabel = computed<string>(() => {
+  switch (aiStore.localSetupPhase) {
+    case "downloading_binary":
+      return "Downloading runtime…";
+    case "extracting":
+      return "Extracting…";
+    case "downloading_model":
+      return `Downloading model (~${localSetupSizeLabel.value})…`;
+    case "verifying":
+      return "Verifying…";
+    case "done":
+      return "Finishing…";
+    default:
+      return "Setting up…";
+  }
+});
+
+const handleSetupLocal = (): void => {
+  void aiStore.setupLocalModel();
+};
+
 // Terminal-style ↑/↓ prompt-history recall. Reads from the persisted
 // chat (already capped at 200 messages per flow in localStorage); no
 // new persistence layer. Recall mode is entered when the composer is
@@ -545,13 +581,16 @@ const tryRecall = (direction: 1 | -1): boolean => {
   return true;
 };
 
-// Cycle order matches the dropdown: Chat → Auto-agent → Agent → Chat.
+// Cycle order matches the dropdown. On-device AI can't tool-call, so it only
+// toggles Chat ↔ Simple build; cloud providers cycle Chat → Auto-agent → Agent.
 const _MODE_CYCLE: ReadonlyArray<AiMode> = ["chat", "auto", "agent"];
+const _LOCAL_MODE_CYCLE: ReadonlyArray<AiMode> = ["chat", "simple"];
 
 const cycleMode = (): void => {
   if (aiStore.isStreaming || isAgentRunning.value) return;
-  const idx = _MODE_CYCLE.indexOf(aiStore.mode);
-  const next = _MODE_CYCLE[(idx + 1) % _MODE_CYCLE.length];
+  const cycle = isLocalSelected.value ? _LOCAL_MODE_CYCLE : _MODE_CYCLE;
+  const idx = cycle.indexOf(aiStore.mode);
+  const next = cycle[(idx + 1) % cycle.length];
   aiStore.setMode(next);
 };
 
@@ -746,18 +785,41 @@ const showStandaloneThinking = computed<boolean>(() => {
           </div>
           <div class="ai-assistant__info-section">
             <h4 class="ai-assistant__info-heading">Modes</h4>
-            <ul class="ai-assistant__info-list">
-              <li><strong>Chat</strong> — Q&amp;A only; never modifies the canvas.</li>
-              <li>
-                <strong>Auto-agent</strong> (default) — chats; auto-promotes to the agent when you
-                describe a build.
-              </li>
-              <li>
-                <strong>Agent</strong> — every send runs the agent and proposes graph changes.
-              </li>
-            </ul>
-            <p class="ai-assistant__info-note">
-              Agent variant (Staged / Single-shot / Live) is in <strong>Settings</strong>.
+            <!-- On-device AI can't tool-call, so its modes differ from cloud
+                 providers (Chat / Simple build, no Auto-agent or Agent). -->
+            <template v-if="!isLocalSelected">
+              <ul class="ai-assistant__info-list">
+                <li><strong>Chat</strong> — Q&amp;A only; never modifies the canvas.</li>
+                <li>
+                  <strong>Auto-agent</strong> (default) — chats; auto-promotes to the agent when you
+                  describe a build.
+                </li>
+                <li>
+                  <strong>Agent</strong> — every send runs the agent and proposes graph changes.
+                </li>
+              </ul>
+              <p class="ai-assistant__info-note">
+                Agent variant (Staged / Single-shot / Live) is in <strong>Settings</strong>.
+              </p>
+            </template>
+            <template v-else>
+              <ul class="ai-assistant__info-list">
+                <li><strong>Chat</strong> — Q&amp;A only; never modifies the canvas.</li>
+                <li>
+                  <strong>Simple build</strong> — generates a whole flow from one prompt; review and
+                  add it to the canvas with one click.
+                </li>
+              </ul>
+              <p class="ai-assistant__info-note">
+                On-device AI can't run Auto-agent or Agent (no tool-calling).
+              </p>
+            </template>
+          </div>
+          <div class="ai-assistant__info-section">
+            <h4 class="ai-assistant__info-heading">On-device AI</h4>
+            <p class="ai-assistant__info-paragraph">
+              On-device AI runs offline and is for simple use-cases only. For larger, more capable
+              models, add a provider (e.g. Ollama or OpenRouter) in <strong>Connections</strong>.
             </p>
           </div>
           <div class="ai-assistant__info-section">
@@ -781,9 +843,13 @@ const showStandaloneThinking = computed<boolean>(() => {
             <h4 class="ai-assistant__info-heading">Tips</h4>
             <ul class="ai-assistant__info-list">
               <li><kbd>↑</kbd> in the composer recalls your last prompt.</li>
-              <li>
+              <li v-if="!isLocalSelected">
                 <kbd>{{ modKeyLabel }}</kbd> + <kbd>⇧</kbd> + <kbd>M</kbd> cycles modes (Chat →
                 Auto-agent → Agent).
+              </li>
+              <li v-else>
+                <kbd>{{ modKeyLabel }}</kbd> + <kbd>⇧</kbd> + <kbd>M</kbd> toggles modes (Chat ↔
+                Simple build).
               </li>
               <li>
                 Chat history is per-flow and persists across reloads. Switching flows is automatic —
@@ -840,7 +906,7 @@ const showStandaloneThinking = computed<boolean>(() => {
                 :value="provider.provider"
                 :disabled="provider.status === 'unconfigured'"
               >
-                {{ provider.provider }}
+                {{ providerLabel(provider.provider) }}
                 <template v-if="provider.status === 'env_fallback'"> (env)</template>
                 <template v-else-if="provider.status === 'unconfigured'">
                   (not configured)
@@ -862,6 +928,10 @@ const showStandaloneThinking = computed<boolean>(() => {
                 {{ model }}
               </option>
             </select>
+            <p v-if="isLocalSelected" class="ai-assistant__settings-hint">
+              Best for simple tasks. For more capable models, use a cloud provider (e.g. Ollama or
+              OpenRouter).
+            </p>
           </div>
           <!-- Agent variant + verification are agent-only — hidden for the
                local model, which can't tool-call (its modes are Chat /
@@ -991,8 +1061,42 @@ const showStandaloneThinking = computed<boolean>(() => {
 
     <div v-else-if="!aiStore.hasConfiguredProvider" class="ai-assistant__notice">
       <p>No providers configured yet.</p>
+
+      <!-- Fastest path for a brand-new user: run fully offline, no API key.
+           Shown only when the platform supports a local model and none is
+           installed yet. One click downloads the recommended model and selects
+           it, so the next message just works. -->
+      <div v-if="aiStore.canSetupLocal" class="ai-assistant__local-setup">
+        <button
+          type="button"
+          class="ai-assistant__local-setup-btn"
+          :disabled="aiStore.localSetupInProgress"
+          @click="handleSetupLocal"
+        >
+          <i class="fa-solid fa-download"></i>
+          <span>{{
+            aiStore.localSetupInProgress
+              ? localSetupProgressLabel
+              : `Set up On-device AI (~${localSetupSizeLabel})`
+          }}</span>
+        </button>
+        <div v-if="aiStore.localSetupInProgress" class="ai-assistant__local-setup-track">
+          <div
+            class="ai-assistant__local-setup-bar"
+            :class="{ 'is-indeterminate': aiStore.localSetupPct === null }"
+            :style="
+              aiStore.localSetupPct !== null ? { width: aiStore.localSetupPct + '%' } : undefined
+            "
+          ></div>
+        </div>
+        <p class="ai-assistant__notice-hint">
+          Runs on your machine, no API key — best for simple tasks. For more capable models, add a
+          provider (e.g. Ollama or OpenRouter).
+        </p>
+      </div>
+
       <p class="ai-assistant__notice-hint">
-        Open
+        {{ aiStore.canSetupLocal ? "Or open" : "Open" }}
         <button type="button" class="ai-assistant__notice-link" @click="handleManageProviders">
           Connections → AI Providers
         </button>
@@ -1494,6 +1598,63 @@ const showStandaloneThinking = computed<boolean>(() => {
   margin-top: 6px;
   color: var(--color-text-muted, #6a737d);
   font-size: 12px;
+}
+
+/* Inline one-click local-AI onboarding card inside the no-provider notice. */
+.ai-assistant__local-setup {
+  margin: 10px 0;
+}
+
+.ai-assistant__local-setup-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 6px;
+  background-color: var(--color-accent, #6b4eff);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-assistant__local-setup-btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.ai-assistant__local-setup-btn:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.ai-assistant__local-setup-track {
+  margin-top: 8px;
+  height: 6px;
+  background-color: var(--color-background-muted, #e1e4e8);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.ai-assistant__local-setup-bar {
+  height: 100%;
+  background-color: var(--color-accent, #6b4eff);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.ai-assistant__local-setup-bar.is-indeterminate {
+  width: 40%;
+  animation: ai-local-setup-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes ai-local-setup-slide {
+  0% {
+    margin-left: -40%;
+  }
+  100% {
+    margin-left: 100%;
+  }
 }
 
 .ai-assistant__notice-link {

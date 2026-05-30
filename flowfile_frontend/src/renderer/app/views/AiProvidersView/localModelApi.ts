@@ -149,6 +149,10 @@ export const setLocalCtxSize = async (ctxSize: number): Promise<LocalModelStatus
 // /ai/local-model/* endpoints instead of the BYOK chat path.
 export const LOCAL_PROVIDER_ID = "local";
 
+// User-facing display name for the local provider. The wire id stays "local";
+// only the label users see is "On-device AI".
+export const LOCAL_PROVIDER_LABEL = "On-device AI";
+
 // NOTE: local chat is NOT a separate path. The backend exposes "local" as a
 // resolvable provider on /ai/chat/stream (and every read-only surface), so the
 // frontend drives it through the shared streamChat client — that's what gives

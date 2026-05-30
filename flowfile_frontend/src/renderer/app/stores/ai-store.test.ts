@@ -131,6 +131,7 @@ vi.mock("../views/AiProvidersView/localModelApi", () => ({
   fetchLocalModelStatus: vi.fn(async () => null),
   generateFlow: vi.fn(),
   selectLocalModel: vi.fn(),
+  streamLocalModelInstall: vi.fn(),
 }));
 
 // Simple-build applies via the diff client (acceptDiff); mock it so the store

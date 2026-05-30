@@ -139,7 +139,9 @@ async def local_model_start(current_user=Depends(get_current_active_user)) -> di
     except manager.LocalModelNotInstalled as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except manager.LocalModelError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # 503 (service unavailable) — the server couldn't boot. Matches the
+        # mapping in ``generate_routes`` for the same failure.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return manager.status()
 
 

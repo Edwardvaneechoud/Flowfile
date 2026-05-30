@@ -1,18 +1,20 @@
 """On-demand local LLM runtime (llama.cpp ``llama-server`` + a small GGUF).
 
 Python port of Duckle's ``engine_manager.rs`` + ``llama_chat.rs``: download a
-pre-built ``llama-server`` and a ~1.1 GB Qwen2.5-Coder-1.5B GGUF into the
-Flowfile storage dir, run it as a subprocess exposing an OpenAI-compatible API
-on ``127.0.0.1``, and let the litellm layer (:class:`~flowfile_core.ai.providers.local.LocalProvider`)
-drive it.
+pre-built ``llama-server`` and a small Qwen2.5-Coder GGUF (default ~2 GB
+Qwen2.5-Coder-3B) into the Flowfile storage dir, run it as a subprocess exposing
+an OpenAI-compatible API on ``127.0.0.1``, and let the litellm layer
+(:class:`~flowfile_core.ai.providers.local.LocalProvider`) drive it.
 
 Nothing is downloaded or spawned until the user opts in via the
 ``/ai/local-model/*`` routes — if they never want it, nothing installs. The
 binary + model are fetched at install time (never bundled in the wheel) so
 PyPI / Electron stay small. Targets desktop / server modes; not WASM.
 
-Module-level singleton: at most one server runs at a time, guarded by
-``_lock``; installs are serialised by ``_install_lock``.
+Module-level singleton: at most one server runs at a time. ``_lock`` guards the
+``_server`` global for fast reads/writes, ``_boot_lock`` serialises the blocking
+boot (so ``status()`` stays responsive during a cold start), and installs are
+serialised by ``_install_lock``.
 """
 
 from __future__ import annotations
@@ -61,8 +63,11 @@ class ModelSpec:
     description: str
 
 
-# Curated catalog. ``qwen2.5-coder-1.5b`` stays the default (smallest / fastest,
-# tuned for structured-JSON flow generation). Ordered smallest→largest.
+# Curated catalog. ``qwen2.5-coder-3b`` is the default — the best balance of
+# quality and speed for flow building, and a clear step up from the 1.5B without
+# the RAM/latency cost of the 7B. All entries are Qwen2.5-Coder/Instruct: code-
+# and structured-JSON-tuned, which is what one-shot flow generation needs.
+# Ordered smallest→largest.
 MODELS: dict[str, ModelSpec] = {
     "qwen2.5-coder-1.5b": ModelSpec(
         id="qwen2.5-coder-1.5b",
@@ -70,15 +75,7 @@ MODELS: dict[str, ModelSpec] = {
         repo="Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
         file="qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
         approx_mb=1100,
-        description="Fastest. Tuned for code / structured JSON. Best for simple flows on any CPU.",
-    ),
-    "llama-3.2-3b": ModelSpec(
-        id="llama-3.2-3b",
-        name="Llama 3.2 3B Instruct",
-        repo="bartowski/Llama-3.2-3B-Instruct-GGUF",
-        file="Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-        approx_mb=1880,
-        description="Strong general-purpose chat. Good all-rounder; still snappy on CPU.",
+        description="Fastest and lightest. Good for low-RAM machines, but lower quality on bigger flows.",
     ),
     "qwen2.5-coder-3b": ModelSpec(
         id="qwen2.5-coder-3b",
@@ -86,7 +83,7 @@ MODELS: dict[str, ModelSpec] = {
         repo="Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
         file="qwen2.5-coder-3b-instruct-q4_k_m.gguf",
         approx_mb=1960,
-        description="Better flow structure than 1.5B, still fast. Recommended balance.",
+        description="Recommended. Best balance of quality and speed for flow building; still snappy on CPU.",
     ),
     "qwen2.5-7b": ModelSpec(
         id="qwen2.5-7b",
@@ -94,11 +91,11 @@ MODELS: dict[str, ModelSpec] = {
         repo="bartowski/Qwen2.5-7B-Instruct-GGUF",
         file="Qwen2.5-7B-Instruct-Q4_K_M.gguf",
         approx_mb=4360,
-        description="Best reasoning of the set. Slower on CPU (a few tok/s); needs ~6 GB free RAM.",
+        description="Strongest reasoning, but slow on CPU (a few tok/s) and needs ~6 GB free RAM.",
     ),
 }
 
-DEFAULT_MODEL_ID = "qwen2.5-coder-1.5b"
+DEFAULT_MODEL_ID = "qwen2.5-coder-3b"
 
 _USER_AGENT = "flowfile"
 _CHUNK = 256 * 1024
@@ -117,7 +114,13 @@ _MAX_CTX_SIZE = 32768
 
 ProgressFn = Callable[[dict], None]
 
+# ``_lock`` guards the ``_server`` global for FAST reads/writes only — it must
+# never be held across the blocking ``_spawn`` health-poll, or ``status()`` /
+# ``is_running()`` (which also take it) would hang for the whole cold boot.
+# ``_boot_lock`` serialises the slow boot path instead, so at most one server
+# spawns at a time while status stays responsive.
 _lock = threading.RLock()
+_boot_lock = threading.Lock()
 _install_lock = threading.Lock()
 _server: _RunningServer | None = None
 
@@ -512,11 +515,16 @@ def _spawn(binary: Path, model: Path, model_id: str) -> _RunningServer:
     port = _free_port()
     cmd = [
         str(binary),
-        "--host", "127.0.0.1",
-        "--port", str(port),
-        "--model", str(model),
-        "--ctx-size", str(get_ctx_size()),
-        "--threads", str(_num_threads()),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--model",
+        str(model),
+        "--ctx-size",
+        str(get_ctx_size()),
+        "--threads",
+        str(_num_threads()),
         "--log-disable",
     ]
     creationflags = 0x08000000 if sys.platform.startswith("win") else 0  # CREATE_NO_WINDOW
@@ -604,20 +612,41 @@ def ensure_running() -> str:
     selection, it's stopped and respawned with the selected one (so switching
     models in the UI takes effect). Blocks until ``/health`` passes. Call from a
     worker thread. Raises :class:`LocalModelNotInstalled` if files are missing.
+
+    The blocking ``_spawn`` runs OUTSIDE ``_lock`` (serialised by ``_boot_lock``)
+    so a concurrent ``status()`` / ``is_running()`` poll stays responsive during
+    a cold boot instead of hanging for the whole health-check window.
     """
     global _server
+    # Fast path: already running exactly what we want — no boot needed.
     with _lock:
         wanted = get_selected_model_id()
-        if is_running() and _server is not None:
-            if _server.model_id == wanted:
+        if is_running() and _server is not None and _server.model_id == wanted:
+            return f"http://127.0.0.1:{_server.port}/v1"
+
+    # Slow path: serialise boots so two callers can't spawn at once. ``_lock``
+    # is taken only for the quick re-check + the final ``_server`` swap.
+    with _boot_lock:
+        with _lock:
+            wanted = get_selected_model_id()
+            if is_running() and _server is not None and _server.model_id == wanted:
                 return f"http://127.0.0.1:{_server.port}/v1"
-            # Selection changed — recycle the process onto the new model.
-            _kill_proc(_server.proc)
-            _server = None
+            # A running wrong-model server (or None). Capture, drop the lock,
+            # then recycle it before booting the wanted model.
+            stale = _server
+        if stale is not None:
+            _kill_proc(stale.proc)
+            with _lock:
+                if _server is stale:
+                    _server = None
         if not is_installed(wanted):
             raise LocalModelNotInstalled()
-        _server = _spawn(_binary_path(), _model_path(wanted), wanted)
-        return f"http://127.0.0.1:{_server.port}/v1"
+        # Blocks up to ``_HEALTH_TIMEOUT`` polling /health — deliberately not
+        # under ``_lock``.
+        server = _spawn(_binary_path(), _model_path(wanted), wanted)
+        with _lock:
+            _server = server
+        return f"http://127.0.0.1:{server.port}/v1"
 
 
 def set_active_model(model_id: str) -> None:

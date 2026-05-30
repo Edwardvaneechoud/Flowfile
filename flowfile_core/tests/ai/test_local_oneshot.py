@@ -265,3 +265,45 @@ def test_build_simple_diff_no_usable_nodes_raises():
     spec = {"nodes": [{"id": "z", "type": "output", "settings": {}}], "edges": []}
     with pytest.raises(oneshot.OneShotError):
         oneshot._build_simple_diff(flow=flow, flow_id=1, spec=spec)
+
+
+# --------------------------------------------------------------------------- #
+# generate_flow end-to-end (stub provider — no network, no model)             #
+# --------------------------------------------------------------------------- #
+
+
+def test_generate_flow_simple_with_stub_provider():
+    """``generate_flow(mode="simple")`` parses a provider's JSON response and
+    registers a GraphDiff — exercised with a duck-typed provider so no model or
+    network is involved."""
+    import asyncio
+
+    flow = _empty_flow()
+
+    class _Resp:
+        content = (
+            '{"nodes": [{"id": "a", "type": "manual_input", "settings": '
+            '{"raw_data_format": {"columns": [{"name": "x", "data_type": "Int64"}], '
+            '"data": [[1, 2]]}}}], "edges": []}'
+        )
+
+    class _StubProvider:
+        async def chat(self, messages, **kwargs):  # type: ignore[no-untyped-def]
+            return _Resp()
+
+    result = asyncio.run(
+        oneshot.generate_flow(
+            provider=_StubProvider(),
+            flow=flow,
+            flow_id=1,
+            user_id=1,
+            user_request="make a one-row table",
+            mode="simple",
+        )
+    )
+    assert result["op_count"] == 1
+    assert result["created"][0]["type"] == "manual_input"
+    assert result["rationale"] == "Generated flow (simple mode)"
+    graph_diff = diff.get_diff(result["diff_id"])
+    assert graph_diff is not None
+    assert [a.node_type for a in graph_diff.additions] == ["manual_input"]

@@ -35,6 +35,7 @@ import {
   fetchLocalModelStatus,
   generateFlow,
   selectLocalModel,
+  streamLocalModelInstall,
   type LocalModelStatus,
 } from "../views/AiProvidersView/localModelApi";
 import { acceptDiff } from "../services/aiDiffClient";
@@ -169,6 +170,17 @@ export const useAiStore = defineStore("ai", () => {
   const localModelStatus = ref<LocalModelStatus | null>(null);
 
   const isLocalSelected = computed(() => selectedProvider.value === LOCAL_PROVIDER_ID);
+
+  // First-run onboarding state for the inline chat CTA. ``canSetupLocal`` is
+  // true when the platform supports a local model but the user hasn't fetched
+  // one yet — that's when we offer the one-click "Set up local AI" button so a
+  // brand-new user with no provider can get going without visiting settings.
+  const canSetupLocal = computed(
+    () => localModelStatus.value?.available === true && !localModelStatus.value?.anyModelInstalled,
+  );
+  const localSetupInProgress = ref(false);
+  const localSetupPhase = ref<string | null>(null);
+  const localSetupPct = ref<number | null>(null);
 
   // User-selectable agent surface. Defaults to ``agent_live`` so the
   // REPL-style canvas-mutating surface is what new sessions get; users
@@ -1403,6 +1415,49 @@ export const useAiStore = defineStore("ai", () => {
     }
   };
 
+  // One-click onboarding from the chat drawer: download the recommended local
+  // model (the backend default), then refresh providers and select "local" so
+  // the user can chat immediately — no settings visit, no model picking.
+  // Progress is mirrored into ``localSetup*`` so the CTA can show a bar.
+  const setupLocalModel = async (): Promise<void> => {
+    if (localSetupInProgress.value) return;
+    localSetupInProgress.value = true;
+    localSetupPhase.value = null;
+    localSetupPct.value = null;
+    let failed: string | null = null;
+    try {
+      await streamLocalModelInstall({
+        onProgress: (ev) => {
+          localSetupPhase.value = ev.phase;
+          if (typeof ev.received === "number" && typeof ev.total === "number" && ev.total > 0) {
+            localSetupPct.value = Math.min(100, Math.round((ev.received / ev.total) * 100));
+          } else {
+            localSetupPct.value = null;
+          }
+        },
+        onError: (msg) => {
+          failed = msg;
+        },
+      });
+    } catch (err) {
+      failed = err instanceof Error ? err.message : String(err);
+    } finally {
+      localSetupInProgress.value = false;
+      // Re-pull providers so the synthetic "local" entry is injected.
+      await loadProviders();
+    }
+    if (failed) {
+      streamError.value = `Local AI setup failed: ${failed}`;
+      streamingState.value = "error";
+      return;
+    }
+    // Auto-select local so the next Send just works.
+    if (localModelStatus.value?.anyModelInstalled) {
+      setSelectedProvider(LOCAL_PROVIDER_ID);
+      setSelectedModel(localModelStatus.value.selectedModelId);
+    }
+  };
+
   return {
     // state
     providers,
@@ -1417,15 +1472,20 @@ export const useAiStore = defineStore("ai", () => {
     agentModeAccepted,
     promotionBanner,
     localModelStatus,
+    localSetupInProgress,
+    localSetupPhase,
+    localSetupPct,
     // computed
     isAiOpen,
     isStreaming,
     configuredProviders,
     hasConfiguredProvider,
     isLocalSelected,
+    canSetupLocal,
     // actions
     generateFlowFromComposer,
     addBuiltFlow,
+    setupLocalModel,
     openAiDrawer,
     closeAiDrawer,
     toggleAiDrawer,
