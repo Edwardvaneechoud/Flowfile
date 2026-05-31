@@ -279,30 +279,3 @@ onUnmounted(() => {
   window.removeEventListener("click", handleClickOutside);
 });
 </script>
-
-<style scoped>
-.context-menu {
-  position: fixed;
-  z-index: 1000;
-  border: 1px solid #ccc;
-  background-color: var(--color-background-primary);
-  padding: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-}
-
-.context-menu ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.context-menu li {
-  padding: 8px 16px;
-  cursor: pointer;
-}
-
-.context-menu li:hover {
-  background-color: #f0f0f0;
-}
-</style>
