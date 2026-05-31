@@ -3,6 +3,8 @@
 Column expressions for data transformations. Flowfile follows the Polars expressions API, with additional features for Flowfile-formula syntax.
 
 ## Flowfile formula syntax
+
+### todo: add links to formula syntax here. Investigate pyodide to have an interactive environment in real time in the docs.
 Flowfile supports a simplified formula syntax for expressions, allowing you to use bracket notation for column references. This will render nicely in the Flowfile UI and was implemented to decrease the learning curve for users coming from Excel, PowerBI, Alteryx and Tableau.
 You can try it out here: [Flowfile Formula Playground](https://polars-expr-transformer-playground-whuwbghlymon84t5ciewp3.streamlit.app/).
 
