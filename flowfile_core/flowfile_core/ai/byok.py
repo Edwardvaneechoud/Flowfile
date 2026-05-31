@@ -41,7 +41,13 @@ from flowfile_core.ai.credentials import (
     decrypt_api_key,
     get_provider_credential,
 )
-from flowfile_core.ai.providers import PROVIDERS, Provider, provider_factory
+from flowfile_core.ai.providers import (
+    LOCAL_PROVIDER_ID,
+    PROVIDERS,
+    LocalProvider,
+    Provider,
+    provider_factory,
+)
 
 # Per-provider env-var names that ``litellm`` reads when no api_key is passed.
 # Ollama is always considered "available" (no key required) — surface it as
@@ -99,6 +105,13 @@ def get_configured_provider(
     completely unset — no row, no env var, and not Ollama. The vast
     majority of well-configured calls return cleanly without ever raising.
     """
+    # Local pseudo-provider: no BYOK row, no key, no env var. The base URL is
+    # the live llama-server port, resolved lazily inside ``LocalProvider.stream``
+    # on first call (so this stays sync/non-blocking). Kept out of ``PROVIDERS``
+    # so it never appears in the BYOK credential routes.
+    if provider == LOCAL_PROVIDER_ID:
+        return LocalProvider(model=model)
+
     cred = get_provider_credential(db, user_id, provider)
 
     api_key: str | None = None

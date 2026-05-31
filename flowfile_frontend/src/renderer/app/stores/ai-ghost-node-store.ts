@@ -156,7 +156,7 @@ export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
         flow_id: flowId,
         node_id: newNodeId,
       };
-      await axios.post("update_settings", settingsBody, {
+      await axios.post("update_settings/", settingsBody, {
         params: { node_type: suggestion.nodeType },
         headers: { "Content-Type": "application/json", accept: "application/json" },
       });

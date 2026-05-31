@@ -56,7 +56,11 @@ from flowfile_core.ai.agents.planner import (
     run_planner_session,
 )
 from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_provider
-from flowfile_core.ai.providers.registry import PROVIDERS, UnknownProviderError
+from flowfile_core.ai.providers.registry import (
+    LOCAL_PROVIDER_ID,
+    PROVIDERS,
+    UnknownProviderError,
+)
 from flowfile_core.ai.replay_buffer import default_replay_buffer
 from flowfile_core.ai.streaming import (
     make_streaming_response,
@@ -302,6 +306,19 @@ async def agent_start(
       provider; session_id collision.
     """
 
+    # The local model can't drive the tool-calling planner (no function
+    # calling on a small CPU model). Reject it explicitly with a 422 that
+    # points at the right affordance — the frontend already never sends it,
+    # so this is defense-in-depth + a clear API error.
+    if body.provider == LOCAL_PROVIDER_ID:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The local model can't run the agent (no tool-calling). "
+                "Use 'Generate flow' for one-shot building, or pick a "
+                "cloud provider for the agent."
+            ),
+        )
     _ensure_known_provider(body.provider)
     flow = _resolve_flow(body.flow_id)
 

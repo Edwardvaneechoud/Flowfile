@@ -43,10 +43,11 @@ from flowfile_core.ai.context import (
     render_prompt_context,
 )
 from flowfile_core.ai.providers import (
-    PROVIDERS,
+    LOCAL_PROVIDER_ID,
     Message,
     UnknownProviderError,
-    list_supported_providers,
+    is_resolvable_provider,
+    resolvable_provider_names,
 )
 from flowfile_core.ai.streaming import make_streaming_response, sse_stream
 from flowfile_core.auth.jwt import get_current_active_user
@@ -109,10 +110,10 @@ class ChatStreamRequest(BaseModel):
 
 
 def _ensure_known_provider(name: str) -> None:
-    if name not in PROVIDERS:
+    if not is_resolvable_provider(name):
         raise HTTPException(
             status_code=404,
-            detail=f"Unknown provider {name!r}; supported: {list_supported_providers()}",
+            detail=f"Unknown provider {name!r}; supported: {resolvable_provider_names()}",
         )
 
 
@@ -236,6 +237,11 @@ async def chat_stream(
             surface=prompt_surface,
             mentions=mention_text or None,
             samples_mode="off",
+            # Local model has a small context window; shrink verbose node
+            # settings (column/field lists, code bodies) and cap columns so a
+            # wide source node can't overflow the window.
+            compact_settings=body.provider == LOCAL_PROVIDER_ID,
+            max_columns_per_node=12 if body.provider == LOCAL_PROVIDER_ID else None,
         )
         messages = [
             Message(role="system", content=ctx.system),
@@ -339,6 +345,8 @@ async def chat_preview(
             body.selected_node_ids or [],
             surface=prompt_surface,
             mentions=mention_text or None,
+            compact_settings=body.provider == LOCAL_PROVIDER_ID,
+            max_columns_per_node=12 if body.provider == LOCAL_PROVIDER_ID else None,
         )
         messages = [
             Message(role="system", content=ctx.system),

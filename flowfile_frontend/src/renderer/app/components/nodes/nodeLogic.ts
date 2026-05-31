@@ -88,7 +88,7 @@ export const getNodeData = async (flow_id: number, node_id: number): Promise<Ref
 };
 
 export const addNodeSettings = async (node_type: string, nodeSettings: any) => {
-  const response = await axios.post("update_settings", nodeSettings, {
+  const response = await axios.post("update_settings/", nodeSettings, {
     params: { node_type: node_type },
   });
   console.log(response);

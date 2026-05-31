@@ -69,7 +69,7 @@ export class FlowApi {
    * Update flow settings
    */
   static async updateFlowSettings(flowSettings: FlowSettings): Promise<null> {
-    const response = await axios.post("/flow_settings/", flowSettings, {
+    const response = await axios.post("/flow_settings", flowSettings, {
       headers: { accept: "application/json" },
     });
     if (response.status === 200) {
@@ -86,7 +86,7 @@ export class FlowApi {
     name: string | null = null,
   ): Promise<number> {
     const response = await axios.post(
-      "/editor/create_flow",
+      "/editor/create_flow/",
       {},
       {
         headers: { accept: "application/json" },
@@ -228,7 +228,7 @@ export class FlowApi {
     flowIdToCopyFrom: number,
     nodePromise: NodePromise,
   ): Promise<OperationResponse> {
-    const response = await axios.post<OperationResponse>("editor/copy_node/", nodePromise, {
+    const response = await axios.post<OperationResponse>("editor/copy_node", nodePromise, {
       params: {
         node_id_to_copy_from: nodeIdToCopyFrom,
         flow_id_to_copy_from: flowIdToCopyFrom,

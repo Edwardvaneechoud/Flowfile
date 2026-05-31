@@ -127,7 +127,7 @@ export class NodeApi {
    */
   static async updateUserDefinedSettings(nodeType: string, inputData: any): Promise<any> {
     const response = await axios.post(
-      "/user_defined_components/update_user_defined_node/",
+      "/user_defined_components/update_user_defined_node",
       inputData,
       {
         params: { node_type: nodeType },
