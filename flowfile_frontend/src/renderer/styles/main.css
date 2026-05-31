@@ -233,6 +233,23 @@ button {
   background-color: var(--color-accent-subtle) !important;
 }
 
+/* Element Plus dark theme isn't imported — theme multiselect tags explicitly.
+   Scoped to .el-select so standalone status tags (success/danger/info) stay colored. */
+[data-theme="dark"] .el-select .el-tag {
+  background-color: var(--color-background-secondary);
+  border-color: var(--color-border-primary);
+  color: var(--color-text-primary);
+}
+
+[data-theme="dark"] .el-select .el-tag .el-tag__close {
+  color: var(--color-text-secondary);
+}
+
+[data-theme="dark"] .el-select .el-tag .el-tag__close:hover {
+  background-color: var(--color-text-secondary);
+  color: var(--color-background-primary);
+}
+
 /* ========== Element Plus Notification ========== */
 .el-notification {
   font-family: var(--font-family-base);
