@@ -297,6 +297,55 @@ def test_set_active_model_recycles_running_server(_tmp_storage, monkeypatch):  #
 
 
 # --------------------------------------------------------------------------- #
+# _spawn failure diagnostics                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_describe_exit_decodes_signals_and_127():
+    import signal as s
+
+    assert "SIGKILL" in manager._describe_exit(-int(s.SIGKILL))
+    assert "out of memory" in manager._describe_exit(-int(s.SIGKILL))
+    assert "SIGILL" in manager._describe_exit(-int(s.SIGILL))
+    assert "libgomp" in manager._describe_exit(127)
+    assert manager._describe_exit(1) == "exit code 1"
+
+
+def test_spawn_reports_exit_code_with_empty_stderr(monkeypatch):  # type: ignore[no-untyped-def]
+    """A clean non-zero exit with no captured stderr still names the code, instead
+    of the old opaque '(no error output captured)'."""
+
+    class _DeadProc:
+        def poll(self):  # type: ignore[no-untyped-def]
+            return 1  # exited 1, wrote nothing to stderr
+
+    monkeypatch.setattr(manager, "_free_port", lambda: 12345)
+    monkeypatch.setattr(manager.subprocess, "Popen", lambda *a, **k: _DeadProc())
+
+    with pytest.raises(manager.LocalModelError, match="exit code 1"):
+        manager._spawn(manager.Path("llama-server"), manager.Path("m.gguf"), "qwen2.5-coder-3b")
+
+
+def test_spawn_names_unavailable_stderr_capture(monkeypatch):  # type: ignore[no-untyped-def]
+    """A read-only temp dir disables capture; the failure says so rather than
+    silently hiding the real error."""
+
+    class _DeadProc:
+        def poll(self):  # type: ignore[no-untyped-def]
+            return 1
+
+    def no_tmp(*a, **k):  # type: ignore[no-untyped-def]
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(manager, "_free_port", lambda: 12345)
+    monkeypatch.setattr(manager.tempfile, "TemporaryFile", no_tmp)
+    monkeypatch.setattr(manager.subprocess, "Popen", lambda *a, **k: _DeadProc())
+
+    with pytest.raises(manager.LocalModelError, match="stderr capture unavailable"):
+        manager._spawn(manager.Path("llama-server"), manager.Path("m.gguf"), "qwen2.5-coder-3b")
+
+
+# --------------------------------------------------------------------------- #
 # Provider unification — local resolvable on read-only surfaces               #
 # --------------------------------------------------------------------------- #
 
