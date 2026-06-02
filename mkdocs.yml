@@ -41,7 +41,14 @@ theme:
 
 extra_css:
   - stylesheets/extra.css
+  - stylesheets/formula-playground.css
 
+extra_javascript:
+  - javascripts/formula-playground.js
+
+
+hooks:
+  - scripts/mkdocs_hooks.py
 
 plugins:
   - search
@@ -69,6 +76,8 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
   - footnotes
 
 # MkDocs Navigation Structure
@@ -121,11 +130,12 @@ nav:
         - Overview: users/python-api/reference/index.md
         - Reading Data: users/python-api/reference/reading-data.md
         - Writing Data: users/python-api/reference/writing-data.md
-        - Catalog References: users/python-api/reference/catalog-references.md
         - Data Types: users/python-api/reference/data-types.md
         - DataFrame Operations: users/python-api/reference/flowframe-operations.md
         - Aggregations: users/python-api/reference/aggregations.md
         - Joins: users/python-api/reference/joins.md
+        - Formula Functions: users/python-api/reference/formula-functions.md
+        - Catalog References: users/python-api/reference/catalog-references.md
         - Cloud Storage: users/python-api/reference/cloud-connections.md
         - Visual UI Integration: users/python-api/reference/visual-ui.md
       - Tutorials:

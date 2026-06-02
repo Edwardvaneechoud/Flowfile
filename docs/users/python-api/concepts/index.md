@@ -2,6 +2,8 @@
 
 Understanding the key concepts behind Flowfile's Python API will help you build better pipelines.
 
+**New here? Read in this order:** [Quick Start](../quickstart.md) → [FlowFrame & FlowGraph](design-concepts.md) → [Formula Syntax](expressions.md).
+
 ## Available Guides
 
 ### [FlowFrame and FlowGraph](design-concepts.md)
@@ -45,47 +47,8 @@ Flowfile's Excel-like formula syntax for expressions.
 | No operation history | Full operation history in graph |
 | Can't visualize workflow | Can open in visual editor |
 
-### The Lazy Advantage
-
-```python
-# This doesn't load the 10GB file!
-df = ff.read_csv("huge_file.csv")
-
-# Still no data loaded - just building the plan
-df = df.filter(ff.col("country") == "USA")
-df = df.select(["id", "amount"])
-
-# NOW it loads only what's needed
-result = df.collect()  # Might only read 100MB!
-```
-
-### Visual Integration
-
-Every FlowFrame knows its history:
-
-```python
-# Build a complex pipeline
-pipeline = (
-    ff.read_csv("input.csv")
-    .filter(ff.col("active") == True)
-    .group_by("category")
-    .agg(ff.col("revenue").sum())
-)
-
-# See the entire pipeline visually
-ff.open_graph_in_editor(pipeline.flow_graph)
-
-# The graph shows all 4 operations as connected nodes
-```
-
-## Why These Concepts Matter
-
-Understanding these concepts helps you:
-
-1. **Write efficient code** - Leverage lazy evaluation
-2. **Debug effectively** - Visualize your pipeline
-3. **Collaborate better** - Share visual representations
-4. **Optimize performance** - Understand what executes when
+For lazy evaluation, graph tracking, and visual integration in depth, see the
+[FlowFrame and FlowGraph guide](design-concepts.md).
 
 ## Learn More
 

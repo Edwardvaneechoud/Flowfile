@@ -46,6 +46,8 @@ Get up and running in 5 minutes with your first pipeline.
 - [DataFrame Operations](reference/flowframe-operations.md)
 - [Aggregations](reference/aggregations.md)
 - [Joins](reference/joins.md)
+- [Formula Functions](reference/formula-functions.md)
+- [Catalog References](reference/catalog-references.md)
 - [Cloud Storage](reference/cloud-connections.md)
 - [Visual UI Integration](reference/visual-ui.md)
 

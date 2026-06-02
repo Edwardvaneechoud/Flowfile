@@ -18,17 +18,6 @@ The complete guide to creating data pipelines programmatically while maintaining
 - Data scientists wanting reproducible pipelines
 - Anyone preferring code over drag-and-drop
 
-## Coming Soon
-
-### Data Pipeline Patterns
-Common patterns for ETL, data cleaning, and analysis.
-
-### Performance Optimization
-Advanced techniques for handling large datasets efficiently.
-
-### Integration Examples
-Connecting Flowfile with pandas, scikit-learn, and other tools.
-
 ## Tutorial Style
 
 Our Python tutorials focus on:

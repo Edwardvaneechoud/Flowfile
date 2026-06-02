@@ -82,7 +82,7 @@ df = (
 df.filter(ff.col("age") > 21)
 
 # Flowfile formula style
-df.filter(flowfile_formula="[age] > 21 AND [status] = 'active'")
+df.filter(flowfile_formula="[age] > 21 and [status] = 'active'")
 ```
 
 ### Adding Columns
@@ -98,6 +98,9 @@ df.with_columns(
     output_column_names=["total"]
 )
 ```
+
+> Formula syntax (`[column]` references, operators, `if … then … endif`, and 95
+> built-in functions) is documented in the [formula syntax guide](concepts/expressions.md).
 
 ### Grouping & Aggregation
 ```python
@@ -211,11 +214,10 @@ pipeline.write_parquet("yearly_sales.parquet")
 
 1. **Use descriptions** - They appear in the visual editor
 2. **Think lazy** - Build your entire pipeline before collecting
-3. **Leverage formulas** - Use `[column]` syntax for simpler expressions
+3. **Leverage formulas** - Use [`[column]` formula syntax](concepts/expressions.md) for simpler expressions
 4. **Visualize often** - `open_graph_in_editor()` helps debug
 5. **Check schemas** - Use `df.schema` to see structure without running
 
 ---
 
 *Ready for more? Check out the [full API reference](reference/index.md) or learn about [core concepts](concepts/design-concepts.md).*
-Or want to see another example? Checkout the [quickstart guide](../../quickstart.md#technical-quickstart)!

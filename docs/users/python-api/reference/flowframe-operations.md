@@ -15,9 +15,12 @@ df = df.filter(ff.col("price") > 15)
 # With description
 df = df.filter(ff.col("price") > 15, description="Keep items over $15")
 
-# Flowfile formula syntax
-df = df.filter(flowfile_formula="[price] > 15 AND [qty] > 0")
+# Flowfile formula syntax — see the Formula syntax guide for the full language
+df = df.filter(flowfile_formula="[price] > 15 and [qty] > 0")
 ```
+
+> Bracket-notation formulas (`[col]`, operators, `if … then … endif`, 95 functions)
+> are documented in the [formula syntax guide](../concepts/expressions.md).
 
 ## Selecting Columns
 
@@ -43,7 +46,7 @@ df = df.with_columns([
     (ff.col("price") * ff.col("qty")).alias("total")
 ])
 
-# Flowfile formula syntax
+# Flowfile formula syntax (see the formula syntax guide for details)
 df = df.with_columns(
     flowfile_formulas=["[price] * [qty]"],
     output_column_names=["total"],

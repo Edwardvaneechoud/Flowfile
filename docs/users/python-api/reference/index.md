@@ -18,6 +18,7 @@ This section documents Flowfile's Python API, focusing on extensions and differe
 
 ### Flowfile-Specific Features
 
+- [**Formula Functions**](formula-functions.md) - All 95 functions for `[column]` formula syntax
 - [**Catalog References**](catalog-references.md) - Typed catalog/schema handles for the Flowfile catalog
 - [**Cloud Storage**](cloud-connections.md) - S3 integration
 - [**visualize pipelines**](visual-ui.md) - Working with the visual editor
@@ -33,10 +34,10 @@ df = df.filter(ff.col("active") == True, description="Keep active records")
 ### Flowfile Formula Syntax
 Alternative bracket-based syntax for expressions:
 ```python
-df.filter(flowfile_formula="[price] > 100 AND [quantity] >= 10")
+df.filter(flowfile_formula="[price] > 100 and [quantity] >= 10")
 ```
-Read more about the formula syntax here: [Flowfile Formula Syntax](../concepts/expressions.md).
-Or try it out here: [Flowfile Formula Playground](https://polars-expr-transformer-playground-whuwbghlymon84t5ciewp3.streamlit.app/)
+Read the [formula syntax guide](../concepts/expressions.md) for the language, and
+the [formula function reference](formula-functions.md) for all 95 built-in functions.
 
 ### Automatic Node Types
 Operations map to UI nodes when possible, otherwise fall back to `polars_code`:
