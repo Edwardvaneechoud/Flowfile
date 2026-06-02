@@ -29,6 +29,24 @@
       </div>
 
       <div class="card mb-3">
+        <div class="card-content">
+          <div class="intro-info-box">
+            <i class="fa-solid fa-link"></i>
+            <div>
+              <p><strong>Where do they come from?</strong></p>
+              <p>
+                Some you add yourself. Many are created for you: when you set up a
+                <strong>Database</strong>, <strong>Cloud Storage</strong>, or
+                <strong>Google Analytics</strong> connection, Flowfile saves its credentials here as
+                a secret automatically — so this list mixes secrets you added with ones your
+                connections manage.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb-3">
         <div class="card-header">
           <h3 class="card-title">How to use a secret</h3>
         </div>

@@ -1,15 +1,20 @@
 <template>
   <div v-if="dataLoaded && nodeGaReader" class="ga-reader-container">
     <generic-node-settings
+      ref="genericSettingsRef"
       v-model="nodeGaReader"
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
-      <div class="ga-reader-tip">
+      <div v-if="!nodeGaReader.cache_results" class="ga-reader-tip">
         <i class="fa-solid fa-lightbulb"></i>
         <span>
           <strong>Tip:</strong> loading data from Google Analytics can be slow. Store the result in
-          the <strong>catalog</strong> for instant access and a better developer experience.
+          the <strong>catalog</strong>, or
+          <button type="button" class="ga-reader-tip-link" @click="openCacheSetting">
+            cache it
+          </button>
+          on this node, for instant access and a better developer experience.
         </span>
       </div>
 
@@ -506,6 +511,11 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
 const nodeGaReader = ref<NodeGoogleAnalyticsReader | null>(null);
 
+// Template ref to the settings wrapper so the "cache it" tip can jump to its
+// General Settings tab (where the Cache Results toggle lives).
+const genericSettingsRef = ref<{ openCacheSetting: () => void } | null>(null);
+const openCacheSetting = () => genericSettingsRef.value?.openCacheSetting();
+
 const metricsError = computed(() => {
   if (!nodeGaReader.value) return "";
   const settings = nodeGaReader.value.google_analytics_settings;
@@ -803,6 +813,21 @@ defineExpose({
 
 .ga-reader-tip strong {
   font-weight: 600;
+}
+
+.ga-reader-tip-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: #b45309;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ga-reader-tip-link:hover {
+  color: #92400e;
 }
 
 .section-subtitle {
