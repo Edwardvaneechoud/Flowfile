@@ -10,6 +10,7 @@ pagination — happens entirely in this process so the core stays responsive.
 
 from __future__ import annotations
 
+import json
 import re
 
 import polars as pl
@@ -150,6 +151,7 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
             RunReportRequest,
         )
         from google.auth.transport.requests import Request
+        from google.oauth2 import service_account
         from google.oauth2.credentials import Credentials
     except ImportError as e:
         raise RuntimeError(
@@ -164,23 +166,32 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
         ga_read_settings.end_date,
     )
 
-    if not ga_read_settings.oauth_client_id or not ga_read_settings.oauth_client_secret_encrypted:
-        raise RuntimeError(
-            "OAuth client credentials missing from read settings. "
-            "Configure them under Admin → Google OAuth in the Flowfile UI."
+    if ga_read_settings.auth_method == "service_account":
+        # Service-account JSON key: build credentials directly. The client
+        # refreshes the JWT-based token lazily on the first RPC, so no explicit
+        # creds.refresh() is needed here.
+        info = json.loads(ga_read_settings.get_decrypted_service_account_key())
+        creds = service_account.Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/analytics.readonly"]
         )
+    else:
+        if not ga_read_settings.oauth_client_id or not ga_read_settings.oauth_client_secret_encrypted:
+            raise RuntimeError(
+                "OAuth client credentials missing from read settings. "
+                "Configure them under Admin → Google OAuth in the Flowfile UI."
+            )
 
-    refresh_token = ga_read_settings.get_decrypted_refresh_token()
-    client_secret = ga_read_settings.get_decrypted_client_secret()
-    creds = Credentials(
-        token=None,
-        refresh_token=refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=ga_read_settings.oauth_client_id,
-        client_secret=client_secret,
-        scopes=["https://www.googleapis.com/auth/analytics.readonly"],
-    )
-    creds.refresh(Request())
+        refresh_token = ga_read_settings.get_decrypted_refresh_token()
+        client_secret = ga_read_settings.get_decrypted_client_secret()
+        creds = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=ga_read_settings.oauth_client_id,
+            client_secret=client_secret,
+            scopes=["https://www.googleapis.com/auth/analytics.readonly"],
+        )
+        creds.refresh(Request())
     client = BetaAnalyticsDataClient(credentials=creds)
 
     dim_objs = [Dimension(name=d) for d in ga_read_settings.dimensions]

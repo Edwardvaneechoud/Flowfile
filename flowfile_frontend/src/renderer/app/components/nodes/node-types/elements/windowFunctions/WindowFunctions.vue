@@ -202,11 +202,7 @@
                     <span class="param-label">number of groups</span>
                   </div>
                   <div v-else-if="item.function === 'rank'" class="param-cell">
-                    <el-select
-                      v-model="item.rank_method"
-                      size="small"
-                      class="param-input"
-                    >
+                    <el-select v-model="item.rank_method" size="small" class="param-input">
                       <el-option label="Ordinal" value="ordinal" />
                       <el-option label="Dense" value="dense" />
                       <el-option label="Min" value="min" />
@@ -270,8 +266,7 @@ const ROLLING_FUNCTIONS: ReadonlySet<WindowFunctionName> = new Set([
   "rolling_std",
 ]);
 
-const isRolling = (f: WindowFunctionName | undefined) =>
-  !!f && ROLLING_FUNCTIONS.has(f);
+const isRolling = (f: WindowFunctionName | undefined) => !!f && ROLLING_FUNCTIONS.has(f);
 
 const availableColumns = computed(() => nodeData.value?.main_input?.table_schema ?? []);
 

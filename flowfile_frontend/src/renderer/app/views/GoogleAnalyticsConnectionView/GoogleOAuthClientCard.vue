@@ -15,11 +15,14 @@
     <div v-if="expanded" class="card-content">
       <p class="section-description">
         OAuth client used by the Google Analytics connector. Create a
-        <strong>Web application</strong> OAuth 2.0 client at
-        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener"
-          >console.cloud.google.com/apis/credentials</a
+        <strong>Web application</strong> client under
+        <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener"
+          >Google Auth Platform → Clients</a
         >
         and paste the values here.
+        <button type="button" class="inline-link" @click="emit('show-guide')">
+          View the full OAuth setup guide
+        </button>
       </p>
 
       <form class="form" @submit.prevent="handleSave">
@@ -74,7 +77,7 @@
           />
           <p class="hint-text">
             Must be added verbatim to your OAuth client's
-            <em>Authorised redirect URIs</em> in the Google Cloud console.
+            <em>Authorized redirect URIs</em> in the Google Cloud console.
           </p>
         </div>
 
@@ -106,6 +109,14 @@ import {
   saveGoogleOAuthConfig,
 } from "./oauthClientApi";
 import { gaOAuthCallbackUrl } from "../../../config/constants";
+
+const emit = defineEmits<{
+  // Fired after the OAuth client config is saved or cleared, so the page can
+  // refresh its "is OAuth configured?" state.
+  (e: "saved"): void;
+  // Opens the detailed Google OAuth setup guide dialog.
+  (e: "show-guide"): void;
+}>();
 
 const form = reactive({
   clientId: "",
@@ -146,6 +157,7 @@ const handleSave = async () => {
     });
     form.clientSecret = "";
     await loadConfig();
+    emit("saved");
     ElMessage.success("Google OAuth config saved");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -168,6 +180,7 @@ const handleClear = async () => {
     form.clientId = "";
     form.clientSecret = "";
     await loadConfig();
+    emit("saved");
     ElMessage.success("Google OAuth config cleared");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -206,6 +219,17 @@ onMounted(loadConfig);
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   margin-bottom: var(--spacing-3);
+}
+
+.inline-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .badge {

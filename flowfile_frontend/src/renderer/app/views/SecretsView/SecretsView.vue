@@ -68,7 +68,7 @@
       <div class="manage-header mb-3">
         <button type="button" class="overview-link" @click="goToIntro">
           <i class="fa-solid fa-arrow-left"></i>
-          Overview
+          Back to intro
         </button>
         <div>
           <h2 class="page-title">Secrets</h2>
@@ -344,7 +344,7 @@ onMounted(() => {
   width: 48px;
   height: 48px;
   flex-shrink: 0;
-  border-radius: var(--border-radius-lg);
+  border-radius: 50%;
   background-color: var(--color-accent-subtle);
   color: var(--color-accent);
   font-size: var(--font-size-xl);

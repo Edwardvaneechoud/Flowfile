@@ -9,6 +9,7 @@ a raw credential over the wire.
 from __future__ import annotations
 
 import html
+import json
 import time
 from urllib.parse import urlencode
 
@@ -33,14 +34,16 @@ from flowfile_core.database.connection import get_db
 from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     delete_ga_connection,
     get_all_ga_connections_interface,
-    get_encrypted_refresh_token,
+    get_encrypted_credential,
     get_ga_connection,
     update_ga_connection_metadata,
     upsert_ga_connection_with_refresh_token,
+    upsert_ga_connection_with_service_account,
 )
 from flowfile_core.schemas.google_analytics_schemas import (
     FullGoogleAnalyticsConnectionInterface,
     GoogleAnalyticsConnectionMetadata,
+    GoogleAnalyticsServiceAccountInput,
 )
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
 
@@ -259,6 +262,38 @@ def oauth_callback(
     return HTMLResponse(_callback_html("ok", f"Connected as {oauth_user_email or 'Google user'}"))
 
 
+@router.post("/ga_connection/service_account", tags=["ga_connections"])
+def create_ga_service_account_connection(
+    input_connection: GoogleAnalyticsServiceAccountInput,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """Create or update a GA connection that authenticates with a service-account
+    JSON key.
+
+    Unlike the OAuth routes, this endpoint accepts credential material over the
+    wire — the key is validated and then encrypted at rest immediately (Fernet +
+    per-user HKDF key), exactly mirroring how cloud connections accept
+    ``gcs_service_account_key``. The plaintext key is never persisted or echoed
+    back. Service-account connections are shared-property: every user of the
+    connection sees whatever GA4 properties the service account's email has been
+    granted Viewer on.
+    """
+    logger.info("Create GA service account connection %s", input_connection.connection_name)
+    try:
+        upsert_ga_connection_with_service_account(
+            db,
+            connection_name=input_connection.connection_name,
+            user_id=current_user.id,
+            service_account_key=input_connection.service_account_key.get_secret_value(),
+            description=input_connection.description,
+            default_property_id=input_connection.default_property_id,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return {"message": "Google Analytics service account connection saved successfully"}
+
+
 @router.put("/ga_connection", tags=["ga_connections"])
 def update_ga_connection_endpoint(
     input_connection: GoogleAnalyticsConnectionMetadata,
@@ -317,18 +352,29 @@ def test_ga_connection(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ) -> GoogleAnalyticsConnectionTestResponse:
-    """Refresh the stored OAuth token. Proves the refresh token is still valid
-    without touching the Analytics Data API (so no property-level IAM needed)."""
-    cfg = _resolve_oauth_config(db, current_user.id)
-    encrypted = get_encrypted_refresh_token(db, request.connection_name, current_user.id)
+    """Prove the stored credential is valid.
+
+    For OAuth, refresh the stored token (no Data API call, so no property-level
+    IAM needed). For a service account, mint a token from the key and — when a
+    default property id is set — confirm the account has Viewer access via a
+    lightweight ``get_metadata`` call.
+    """
+    db_conn = get_ga_connection(db, request.connection_name, current_user.id)
+    if db_conn is None:
+        raise HTTPException(404, "Google Analytics connection not found")
+    encrypted = get_encrypted_credential(db, request.connection_name, current_user.id)
     if encrypted is None:
         raise HTTPException(404, "Google Analytics connection not found")
 
     try:
-        refresh_token = decrypt_secret(encrypted).get_secret_value()
+        secret_value = decrypt_secret(encrypted).get_secret_value()
     except Exception as e:
         return GoogleAnalyticsConnectionTestResponse(success=False, message=f"Could not decrypt stored credential: {e}")
 
+    if db_conn.auth_method == "service_account":
+        return _test_service_account(secret_value, db_conn.default_property_id)
+
+    cfg = _resolve_oauth_config(db, current_user.id)
     try:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
@@ -341,7 +387,7 @@ def test_ga_connection(
     try:
         creds = Credentials(
             token=None,
-            refresh_token=refresh_token,
+            refresh_token=secret_value,
             token_uri=_OAUTH_TOKEN_URL,
             client_id=cfg["client_id"],
             client_secret=cfg["client_secret"],
@@ -352,6 +398,56 @@ def test_ga_connection(
         return GoogleAnalyticsConnectionTestResponse(success=False, message=f"Could not refresh token: {e}")
 
     return GoogleAnalyticsConnectionTestResponse(success=True, message="Refresh token is valid")
+
+
+def _test_service_account(
+    service_account_key: str, default_property_id: str | None
+) -> GoogleAnalyticsConnectionTestResponse:
+    """Validate a service-account key: mint a token, then (if a property is set)
+    confirm the account has Viewer access to it."""
+    try:
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient
+        from google.auth.transport.requests import Request
+        from google.oauth2 import service_account
+    except ImportError as e:
+        raise HTTPException(
+            500,
+            "google-auth / google-analytics-data is not installed. "
+            "Run 'poetry install' to pull in all Flowfile dependencies.",
+        ) from e
+
+    try:
+        info = json.loads(service_account_key)
+        creds = service_account.Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/analytics.readonly"]
+        )
+        creds.refresh(Request())
+    except Exception as e:
+        return GoogleAnalyticsConnectionTestResponse(
+            success=False, message=f"Could not authenticate with the service account key: {e}"
+        )
+
+    if not default_property_id:
+        return GoogleAnalyticsConnectionTestResponse(
+            success=True,
+            message="Service account key is valid. Set a default property id to also verify access.",
+        )
+
+    try:
+        client = BetaAnalyticsDataClient(credentials=creds)
+        client.get_metadata(name=f"properties/{default_property_id}/metadata")
+    except Exception as e:
+        return GoogleAnalyticsConnectionTestResponse(
+            success=False,
+            message=(
+                f"Service account key is valid but it cannot access property {default_property_id}: {e}. "
+                "Add the service account's email as a Viewer on the GA4 property."
+            ),
+        )
+
+    return GoogleAnalyticsConnectionTestResponse(
+        success=True, message=f"Service account valid and has access to property {default_property_id}"
+    )
 
 
 @router.get("/oauth/client_config", response_model=GoogleOAuthClientView, tags=["ga_connections"])

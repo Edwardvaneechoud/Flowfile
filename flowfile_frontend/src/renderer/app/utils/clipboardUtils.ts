@@ -1,6 +1,41 @@
 import { desktop } from "../../lib/desktop";
 
 /**
+ * Writes text to the clipboard, with a fallback for insecure contexts.
+ *
+ * `navigator.clipboard` only exists in a secure context (https or localhost),
+ * so over a plain-http LAN IP (e.g. http://192.168.x.x:8080) it's undefined and
+ * throws. There we fall back to a hidden-textarea + execCommand("copy"), which
+ * still works. Returns whether the copy succeeded.
+ */
+export const copyToClipboard = async (text: string): Promise<boolean> => {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // fall through to the legacy path
+    }
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Snapshots the current OS clipboard text into localStorage so paste handlers
  * can detect whether the user copied something externally after copying a node.
  *

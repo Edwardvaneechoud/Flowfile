@@ -588,8 +588,11 @@ class SchedulerLock(Base):
 
 
 class GoogleAnalyticsConnection(Base):
-    """A Google Analytics 4 connection. The OAuth refresh token is stored as
-    a single encrypted Secret, referenced by ``credential_secret_id``.
+    """A Google Analytics 4 connection. The credential — an OAuth refresh token
+    or a service-account JSON key, per ``auth_method`` — is stored as a single
+    encrypted Secret, referenced by ``credential_secret_id``. ``oauth_user_email``
+    holds the principal identity (the signed-in Google account for OAuth, or the
+    service account's ``client_email``).
     """
 
     __tablename__ = "google_analytics_connections"
@@ -598,6 +601,7 @@ class GoogleAnalyticsConnection(Base):
     connection_name = Column(String, index=True, nullable=False)
     description = Column(Text, nullable=True)
     default_property_id = Column(String, nullable=True)
+    auth_method = Column(String, nullable=False, server_default="oauth")
     oauth_user_email = Column(String, nullable=True)
     credential_secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)

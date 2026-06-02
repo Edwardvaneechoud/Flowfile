@@ -1,8 +1,16 @@
+import { connectionTypes } from "../../../views/ConnectionsView/connectionTypes";
+
 export interface INavigationRoute {
   name: string;
   displayName: string;
   meta: { icon: string };
   children?: INavigationRoute[];
+  // Query carried into the resolved route (el-menu router mode) — lets children
+  // share a route name but target different ?tab= values.
+  query?: Record<string, string>;
+  // Unique el-menu index; falls back to `name` when absent. Required when several
+  // children resolve to the same route name.
+  index?: string;
   disabled?: boolean;
   requiresAdmin?: boolean;
   hideInElectron?: boolean;
@@ -35,6 +43,24 @@ export default {
       meta: {
         icon: "fa-solid fa-link",
       },
+      // Clicking the parent itself opens the Connections overview landing.
+      query: { tab: "overview" },
+      children: [
+        {
+          name: "connections",
+          index: "connections:overview",
+          query: { tab: "overview" },
+          displayName: "menu.connectionsOverview",
+          meta: { icon: "fa-solid fa-grip" },
+        },
+        ...connectionTypes.map((t) => ({
+          name: "connections",
+          index: `connections:${t.key}`,
+          query: { tab: t.key },
+          displayName: t.sidebarKey,
+          meta: { icon: t.icon },
+        })),
+      ],
     },
     {
       name: "kernelManager",

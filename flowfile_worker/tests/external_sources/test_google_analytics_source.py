@@ -145,6 +145,25 @@ def fake_google_sdk(monkeypatch: pytest.MonkeyPatch):
                 self.refreshed = True
                 self.token = "fake-access-token"
 
+        class _ServiceAccountCredentials:
+            """Stand-in for ``google.oauth2.service_account.Credentials``.
+            Records the ``info`` / ``scopes`` passed to ``from_service_account_info``."""
+
+            last_built: _ServiceAccountCredentials | None = None
+
+            def __init__(self, info=None, scopes=None) -> None:
+                self.info = info
+                self.scopes = scopes
+                self.refreshed = False
+                _ServiceAccountCredentials.last_built = self
+
+            @classmethod
+            def from_service_account_info(cls, info, scopes=None):  # noqa: ANN001
+                return cls(info=info, scopes=scopes)
+
+            def refresh(self, _request):  # noqa: ANN001
+                self.refreshed = True
+
         class _TransportRequest:
             def __init__(self) -> None:
                 pass
@@ -155,6 +174,7 @@ def fake_google_sdk(monkeypatch: pytest.MonkeyPatch):
         types_pkg = types.ModuleType("google.analytics.data_v1beta.types")
         oauth2_pkg = types.ModuleType("google.oauth2")
         creds_pkg = types.ModuleType("google.oauth2.credentials")
+        sa_pkg = types.ModuleType("google.oauth2.service_account")
         auth_pkg = types.ModuleType("google.auth")
         transport_pkg = types.ModuleType("google.auth.transport")
         requests_pkg = types.ModuleType("google.auth.transport.requests")
@@ -180,6 +200,7 @@ def fake_google_sdk(monkeypatch: pytest.MonkeyPatch):
         except ImportError:
             pass
         creds_pkg.Credentials = _Credentials
+        sa_pkg.Credentials = _ServiceAccountCredentials
         requests_pkg.Request = _TransportRequest
 
         monkeypatch.setitem(sys.modules, "google", google_pkg)
@@ -188,6 +209,7 @@ def fake_google_sdk(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setitem(sys.modules, "google.analytics.data_v1beta.types", types_pkg)
         monkeypatch.setitem(sys.modules, "google.oauth2", oauth2_pkg)
         monkeypatch.setitem(sys.modules, "google.oauth2.credentials", creds_pkg)
+        monkeypatch.setitem(sys.modules, "google.oauth2.service_account", sa_pkg)
         monkeypatch.setitem(sys.modules, "google.auth", auth_pkg)
         monkeypatch.setitem(sys.modules, "google.auth.transport", transport_pkg)
         monkeypatch.setitem(sys.modules, "google.auth.transport.requests", requests_pkg)
@@ -373,6 +395,87 @@ def test_missing_oauth_client_id_raises(monkeypatch, fake_google_sdk):
 
     with pytest.raises(RuntimeError, match="OAuth client credentials missing"):
         read_google_analytics(settings)
+
+
+_SA_JSON = (
+    '{"type": "service_account", "client_email": "sa@p.iam.gserviceaccount.com", '
+    '"private_key": "-----BEGIN PRIVATE KEY-----\\nfake\\n-----END PRIVATE KEY-----\\n", '
+    '"token_uri": "https://oauth2.googleapis.com/token"}'
+)
+
+
+def _build_sa_settings(monkeypatch: pytest.MonkeyPatch, **overrides):
+    from flowfile_worker.external_sources.google_analytics_source import models as ga_models
+
+    monkeypatch.setattr(
+        ga_models,
+        "decrypt_secret",
+        lambda _token: mock.MagicMock(get_secret_value=lambda: _SA_JSON),
+    )
+    kwargs = dict(
+        auth_method="service_account",
+        service_account_key_encrypted="$ffsec$1$1$sa-key",
+        property_id="999",
+        start_date="7daysAgo",
+        end_date="yesterday",
+        metrics=["sessions", "bounceRate"],
+        dimensions=["date", "country"],
+        flowfile_flow_id=1,
+        flowfile_node_id=42,
+    )
+    kwargs.update(overrides)
+    return ga_models.GoogleAnalyticsReadSettings(**kwargs)
+
+
+def test_service_account_builds_typed_frame(monkeypatch, fake_google_sdk):
+    """The service-account path builds the client from the JSON key (no OAuth
+    refresh-token construction) and returns a typed frame."""
+    fake_google_sdk(
+        [
+            [
+                {"date": "20240102", "country": "NL", "sessions": "12", "bounceRate": "0.42"},
+            ],
+        ]
+    )
+    settings = _build_sa_settings(monkeypatch)
+
+    from flowfile_worker.external_sources.google_analytics_source.main import (
+        read_google_analytics,
+    )
+
+    df = read_google_analytics(settings)
+
+    assert df.columns == ["date", "country", "sessions", "bounceRate"]
+    assert df["sessions"].dtype == pl.Int64
+
+    # The SA credential path was used with the readonly scope...
+    from google.oauth2 import service_account
+
+    built = service_account.Credentials.last_built
+    assert built is not None
+    assert built.info["client_email"] == "sa@p.iam.gserviceaccount.com"
+    assert built.scopes == ["https://www.googleapis.com/auth/analytics.readonly"]
+    # ...and the OAuth Credentials constructor was never touched.
+    from google.oauth2.credentials import Credentials as OAuthCredentials
+
+    assert OAuthCredentials.last_built is None
+
+
+def test_service_account_skips_oauth_guard(monkeypatch, fake_google_sdk):
+    """A service-account read with no OAuth client id/secret must NOT raise the
+    'OAuth client credentials missing' guard — that guard is OAuth-only."""
+    fake_google_sdk([[]])
+    settings = _build_sa_settings(
+        monkeypatch, oauth_client_id=None, oauth_client_secret_encrypted=None
+    )
+
+    from flowfile_worker.external_sources.google_analytics_source.main import (
+        read_google_analytics,
+    )
+
+    df = read_google_analytics(settings)  # must not raise
+    assert df.columns == ["date", "country", "sessions", "bounceRate"]
+    assert df.is_empty()
 
 
 def test_filters_are_forwarded_to_run_report(monkeypatch, fake_google_sdk):

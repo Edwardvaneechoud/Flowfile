@@ -20,24 +20,35 @@
       </el-menu-item>
 
       <!-- Items with children -->
-      <el-sub-menu v-else :index="routeItem.name">
+      <el-sub-menu v-else :index="routeItem.name" popper-class="sidebar-submenu-popper">
         <template #title>
-          <i v-if="routeItem.meta?.icon" :class="routeItem.meta.icon"></i>
-          <span>{{ t(routeItem.displayName) }}</span>
+          <i
+            v-if="routeItem.meta?.icon"
+            :class="routeItem.meta.icon"
+            @click="handleParentClick(routeItem)"
+          ></i>
+          <span @click="handleParentClick(routeItem)">{{ t(routeItem.displayName) }}</span>
+          <i
+            v-if="isCollapse"
+            class="submenu-caret fa-solid fa-angle-right"
+            @click="handleParentClick(routeItem)"
+          ></i>
         </template>
 
-        <el-menu-item
-          v-for="child in routeItem.children"
-          :key="child.name"
-          :index="child.name"
-          :route="{ name: child.name }"
-          :disabled="child.disabled"
-        >
-          <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
-          <template #title>
-            <span>{{ t(child.displayName) }}</span>
-          </template>
-        </el-menu-item>
+        <el-menu-item-group :title="t(routeItem.displayName)">
+          <el-menu-item
+            v-for="child in routeItem.children"
+            :key="child.index ?? child.name"
+            :index="child.index ?? child.name"
+            :route="child.query ? { name: child.name, query: child.query } : { name: child.name }"
+            :disabled="child.disabled"
+          >
+            <i v-if="child.meta?.icon" :class="child.meta.icon"></i>
+            <template #title>
+              <span>{{ t(child.displayName) }}</span>
+            </template>
+          </el-menu-item>
+        </el-menu-item-group>
       </el-sub-menu>
     </template>
   </el-menu>
@@ -46,11 +57,23 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { INavigationRoute } from "../NavigationRoutes";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
 const route = useRoute();
+const router = useRouter();
+
+function handleParentClick(routeItem: INavigationRoute) {
+  // A sub-menu parent with its own destination (marked via `query`) navigates to
+  // it on click, in addition to toggling the fly-out — Element's sub-menu title
+  // does not navigate on its own in router mode. For Connections this opens the
+  // overview landing page.
+  if (!routeItem.query) return;
+  router.push({ name: routeItem.name, query: routeItem.query }).catch(() => {
+    // ignore redundant navigation (already on this route)
+  });
+}
 
 const props = withDefaults(
   defineProps<{
@@ -63,7 +86,16 @@ const props = withDefaults(
   },
 );
 
-const activeIndex = computed(() => route.name as string);
+const activeIndex = computed(() => {
+  const name = route.name as string;
+  // Connection sub-items share the "connections" route but differ by ?tab=, so
+  // match the composite child index instead of the bare route name.
+  if (name === "connections") {
+    const tab = (route.query.tab as string) || "overview";
+    return `connections:${tab}`;
+  }
+  return name;
+});
 
 const accordionValue = ref<boolean[]>([]);
 onMounted(() => {
@@ -107,5 +139,34 @@ function isItemExpanded(item: INavigationRoute): boolean {
   .el-sub-menu [class^="fa-"] {
     margin-right: 0;
   }
+}
+
+/* Expand/collapse affordance on the collapsed rail icon */
+:deep(.el-sub-menu__title) {
+  position: relative;
+}
+
+.submenu-caret {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  width: auto;
+  transform: translateY(-50%);
+  font-size: 9px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+</style>
+
+<!-- Global: the fly-out popover is teleported to <body>, so scoped styles can't
+     reach it. Gives the collapsed sub-menu fly-out a clear "Connections" header. -->
+<style>
+.sidebar-submenu-popper .el-menu-item-group__title {
+  padding: 8px 20px 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
 }
 </style>

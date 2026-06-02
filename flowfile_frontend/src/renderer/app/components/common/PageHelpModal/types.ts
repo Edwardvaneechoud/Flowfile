@@ -1,7 +1,12 @@
+import type { RouteLocationRaw } from "vue-router";
+
 export interface HelpFeature {
   icon: string;
   title: string;
   description: string;
+  // When set, the feature card becomes a link to this route (closing the modal
+  // on click). Omit for a plain, non-interactive card.
+  link?: RouteLocationRaw;
 }
 
 export interface HelpTip {

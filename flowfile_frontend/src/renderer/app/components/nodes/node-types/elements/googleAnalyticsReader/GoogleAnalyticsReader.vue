@@ -5,6 +5,14 @@
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
+      <div class="ga-reader-tip">
+        <i class="fa-solid fa-lightbulb"></i>
+        <span>
+          <strong>Tip:</strong> loading data from Google Analytics can be slow. Store the result in
+          the <strong>catalog</strong> for instant access and a better developer experience.
+        </span>
+      </div>
+
       <div class="listbox-wrapper">
         <div class="form-group">
           <label for="ga-connection-select">Google Analytics Connection</label>
@@ -770,6 +778,31 @@ defineExpose({
   font-family: var(--font-family-base);
   max-width: 100%;
   color: var(--color-text-primary);
+}
+
+.ga-reader-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.625rem 0.75rem;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  color: #92400e;
+  line-height: 1.45;
+}
+
+.ga-reader-tip > i {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  font-size: 0.95rem;
+  color: #d97706;
+}
+
+.ga-reader-tip strong {
+  font-weight: 600;
 }
 
 .section-subtitle {
