@@ -122,12 +122,26 @@
 
         <ol class="setup-steps">
           <li>
-            <strong>Create (or pick) a Google Cloud project.</strong>
-            Go to
-            <SetupLink href="https://console.cloud.google.com/projectcreate">
-              console.cloud.google.com/projectcreate
-            </SetupLink>
-            and create a project, or select any existing one from the project picker.
+            <strong>Choose your Google Cloud project.</strong>
+            <ul class="setup-substeps">
+              <li>
+                <strong>Already use Google Cloud?</strong>
+                Open the
+                <SetupLink href="https://console.cloud.google.com/projectselector2/home/dashboard">
+                  project selector
+                </SetupLink>
+                and pick the project you want to use, then skip ahead to <strong>step 4</strong> to
+                create the OAuth client. First confirm the Analytics Data API is enabled (step 2)
+                and your OAuth consent screen is configured (step 3) — do those if you haven't yet.
+              </li>
+              <li>
+                <strong>New to Google Cloud?</strong>
+                <SetupLink href="https://console.cloud.google.com/projectcreate">
+                  Create a project
+                </SetupLink>
+                , then continue with step 2 below.
+              </li>
+            </ul>
           </li>
           <li>
             <strong>Enable the Google Analytics Data API.</strong>
@@ -186,6 +200,12 @@
             Click <em>Add Connection</em>, name it, then <em>Connect Google Account</em>. Sign in
             with a Google account that has Viewer access to your GA4 property. Flowfile stores only
             the refresh token, encrypted with your user-derived key.
+            <div class="setup-action">
+              <button type="button" class="btn btn-primary btn-sm" @click="openAddFromGuide">
+                <i class="fa-solid fa-plus"></i>
+                Open Add Connection
+              </button>
+            </div>
           </li>
         </ol>
 
@@ -232,6 +252,7 @@
 
 <script lang="ts" setup>
 import { ref, onMounted, onBeforeUnmount } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ElDialog, ElButton, ElMessage, ElPopover } from "element-plus";
 import {
   deleteGoogleAnalyticsConnection,
@@ -247,6 +268,9 @@ import GoogleAnalyticsConnectionSettings from "./GoogleAnalyticsConnectionSettin
 import GoogleOAuthClientCard from "./GoogleOAuthClientCard.vue";
 import SetupLink from "./SetupLink.vue";
 import { desktop, isDesktop } from "../../../lib/desktop";
+
+const route = useRoute();
+const router = useRouter();
 
 const connections = ref<GoogleAnalyticsConnectionInterface[]>([]);
 const isLoading = ref(true);
@@ -283,6 +307,18 @@ const stopGaOauthPolling = () => {
   }
 };
 
+// Web OAuth opens a popup we control. If the user closes that window before
+// Google redirects back (i.e. cancels), no message ever arrives — this timer
+// watches for the close so we reset state instead of hanging on "connecting".
+let oauthPopupCloseTimer: ReturnType<typeof setInterval> | null = null;
+
+const stopOauthPopupWatch = () => {
+  if (oauthPopupCloseTimer !== null) {
+    clearInterval(oauthPopupCloseTimer);
+    oauthPopupCloseTimer = null;
+  }
+};
+
 // After opening the browser, refresh the connection list until the target
 // connection shows a linked Google account (the callback upserts it), or we
 // hit the timeout. Reports success only for a freshly-linked connection so a
@@ -290,11 +326,18 @@ const stopGaOauthPolling = () => {
 const pollForGaOauthCompletion = (connectionName: string, wasLinkedBefore: boolean) => {
   stopGaOauthPolling();
   const deadline = Date.now() + 3 * 60 * 1000;
+  let consecutiveErrors = 0;
+  const giveUp = (message: string) => {
+    stopGaOauthPolling();
+    isConnecting.value = false;
+    ElMessage.warning(message);
+  };
   const tick = async () => {
     gaOauthPollTimer = null;
     try {
       const latest = await fetchGoogleAnalyticsConnections();
       connections.value = latest;
+      consecutiveErrors = 0;
       const match = latest.find((c) => c.connectionName === connectionName && c.oauthUserEmail);
       if (match && !wasLinkedBefore) {
         isConnecting.value = false;
@@ -304,14 +347,17 @@ const pollForGaOauthCompletion = (connectionName: string, wasLinkedBefore: boole
       }
     } catch (error) {
       console.error("Error polling GA connections:", error);
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= 5) {
+        giveUp("Lost contact with the server while finishing Google sign-in. Please try again.");
+        return;
+      }
     }
-    // TODO(E): silent failure. The desktop system-browser OAuth flow can't
-    // postMessage back, so we poll here. If the backend callback never completes,
-    // this just stops after 3 min with no user feedback (and the caught poll
-    // error above is console-only). Surface an ElMessage on timeout — and on
-    // repeated poll errors — so the user knows the connection didn't link.
+    // The system-browser OAuth flow can't postMessage back, so a true cancel
+    // emits no signal — on timeout we can only report that sign-in never
+    // completed (rather than reset silently and leave the user guessing).
     if (Date.now() > deadline) {
-      isConnecting.value = false;
+      giveUp("Google sign-in wasn't completed — the connection wasn't linked. Try again.");
       return;
     }
     gaOauthPollTimer = setTimeout(tick, 2000);
@@ -335,6 +381,11 @@ const showAddModal = () => {
   isEditing.value = false;
   activeConnection.value = undefined;
   dialogVisible.value = true;
+};
+
+const openAddFromGuide = () => {
+  setupGuideVisible.value = false;
+  showAddModal();
 };
 
 const showEditModal = (connection: GoogleAnalyticsConnectionInterface) => {
@@ -389,6 +440,17 @@ const handleConnectOAuth = async (metadata: GoogleAnalyticsConnectionMetadata) =
     if (!oauthPopup) {
       ElMessage.error("Popup blocked — allow popups for this site and try again");
       isConnecting.value = false;
+    } else {
+      // A manual popup close is the only cancel signal we get — watch for it.
+      stopOauthPopupWatch();
+      oauthPopupCloseTimer = setInterval(() => {
+        if (oauthPopup && oauthPopup.closed) {
+          stopOauthPopupWatch();
+          oauthPopup = null;
+          isConnecting.value = false;
+          ElMessage.info("Google sign-in was cancelled");
+        }
+      }, 500);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -406,6 +468,9 @@ const handleOAuthMessage = async (event: MessageEvent) => {
   if (!oauthPopup || event.source !== oauthPopup) return;
   const data = event.data;
   if (!data || data.source !== "flowfile-ga-oauth") return;
+  // A result arrived — stop the close-watch so the popup auto-closing (500ms
+  // after it postMessages) isn't mistaken for a cancellation.
+  stopOauthPopupWatch();
   isConnecting.value = false;
   if (data.status === "ok") {
     await fetchConnections();
@@ -447,11 +512,21 @@ const handleCloseDeleteDialog = (done: () => void) => {
 onMounted(() => {
   fetchConnections();
   window.addEventListener("message", handleOAuthMessage);
+  // Deep link (from the GA reader node or the setup guide): open the Add
+  // Connection dialog straight away, then drop the param so a refresh or
+  // tab-switch doesn't reopen it.
+  if (route.query.action === "add") {
+    showAddModal();
+    const query = { ...route.query };
+    delete query.action;
+    router.replace({ query });
+  }
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("message", handleOAuthMessage);
   stopGaOauthPolling();
+  stopOauthPopupWatch();
 });
 </script>
 
@@ -494,6 +569,19 @@ onBeforeUnmount(() => {
 
 .setup-steps li {
   line-height: 1.55;
+}
+
+.setup-substeps {
+  margin: var(--spacing-2) 0 0;
+  padding-left: var(--spacing-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  list-style: disc;
+}
+
+.setup-action {
+  margin-top: var(--spacing-3);
 }
 
 .setup-steps code {
