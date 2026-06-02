@@ -247,13 +247,14 @@ import GoogleAnalyticsConnectionSettings from "./GoogleAnalyticsConnectionSettin
 import GoogleOAuthClientCard from "./GoogleOAuthClientCard.vue";
 import SetupLink from "./SetupLink.vue";
 import { desktop, isDesktop } from "../../../lib/desktop";
+import { gaOAuthCallbackUrl } from "../../../config/constants";
 
 const connections = ref<GoogleAnalyticsConnectionInterface[]>([]);
 const isLoading = ref(true);
 const dialogVisible = ref(false);
 const deleteDialogVisible = ref(false);
 const setupGuideVisible = ref(false);
-const redirectUri = "http://localhost:63578/ga_connections/oauth/callback";
+const redirectUri = gaOAuthCallbackUrl;
 
 const copyRedirectUri = async () => {
   try {

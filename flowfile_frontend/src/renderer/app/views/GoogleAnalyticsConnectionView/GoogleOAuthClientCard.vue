@@ -69,7 +69,7 @@
             v-model="form.redirectUri"
             type="text"
             class="form-input"
-            placeholder="http://localhost:63578/ga_connections/oauth/callback"
+            :placeholder="gaOAuthCallbackUrl"
             required
           />
           <p class="hint-text">
@@ -105,11 +105,12 @@ import {
   fetchGoogleOAuthConfig,
   saveGoogleOAuthConfig,
 } from "./oauthClientApi";
+import { gaOAuthCallbackUrl } from "../../../config/constants";
 
 const form = reactive({
   clientId: "",
   clientSecret: "",
-  redirectUri: "http://localhost:63578/ga_connections/oauth/callback",
+  redirectUri: gaOAuthCallbackUrl,
 });
 
 const isConfigured = ref(false);
