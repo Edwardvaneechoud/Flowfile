@@ -34,7 +34,10 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
     get_local_database_connection,
 )
-from flowfile_core.flowfile.database_connection_manager.ga_connections import get_encrypted_refresh_token
+from flowfile_core.flowfile.database_connection_manager.ga_connections import (
+    get_encrypted_credential,
+    get_ga_connection,
+)
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -3840,34 +3843,26 @@ class FlowGraph:
         ga_settings = node_ga_reader.google_analytics_settings
 
         with get_db_context() as db:
-            encrypted_refresh_token = get_encrypted_refresh_token(
-                db, ga_settings.ga_connection_name, node_ga_reader.user_id
-            )
-            if encrypted_refresh_token is None:
+            db_conn = get_ga_connection(db, ga_settings.ga_connection_name, node_ga_reader.user_id)
+            if db_conn is None:
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         f"Google Analytics connection '{ga_settings.ga_connection_name}' not found "
-                        "or has not completed OAuth sign-in"
+                        "or has not completed sign-in"
                     ),
                 )
-            oauth_cfg = get_google_oauth_config(db, node_ga_reader.user_id)
+            auth_method = db_conn.auth_method
+            encrypted_credential = get_encrypted_credential(db, ga_settings.ga_connection_name, node_ga_reader.user_id)
+            if encrypted_credential is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Google Analytics connection '{ga_settings.ga_connection_name}' has no stored credential",
+                )
+            # OAuth needs the per-instance client config; service accounts don't.
+            oauth_cfg = get_google_oauth_config(db, node_ga_reader.user_id) if auth_method == "oauth" else None
 
-        if not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Google OAuth is not configured on this instance. Open Admin → Google OAuth "
-                    "and paste your OAuth client credentials before running this flow."
-                ),
-            )
-
-        client_secret_encrypted = _encrypt_with_master_key(oauth_cfg["client_secret"])
-
-        worker_settings = WorkerGoogleAnalyticsReadSettings(
-            refresh_token_encrypted=encrypted_refresh_token,
-            oauth_client_id=oauth_cfg["client_id"],
-            oauth_client_secret_encrypted=client_secret_encrypted,
+        common_kwargs = dict(
             property_id=ga_settings.property_id,
             start_date=ga_settings.start_date,
             end_date=ga_settings.end_date,
@@ -3889,6 +3884,29 @@ class FlowGraph:
             flowfile_flow_id=node_ga_reader.flow_id,
             flowfile_node_id=node_ga_reader.node_id,
         )
+
+        if auth_method == "service_account":
+            worker_settings = WorkerGoogleAnalyticsReadSettings(
+                auth_method="service_account",
+                service_account_key_encrypted=encrypted_credential,
+                **common_kwargs,
+            )
+        else:
+            if not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "Google OAuth is not configured on this instance. Open Admin → Google OAuth "
+                        "and paste your OAuth client credentials before running this flow."
+                    ),
+                )
+            worker_settings = WorkerGoogleAnalyticsReadSettings(
+                auth_method="oauth",
+                refresh_token_encrypted=encrypted_credential,
+                oauth_client_id=oauth_cfg["client_id"],
+                oauth_client_secret_encrypted=_encrypt_with_master_key(oauth_cfg["client_secret"]),
+                **common_kwargs,
+            )
 
         # Stamp the predicted schema onto the setting object now, so downstream
         # nodes can introspect columns without ever invoking ``_func`` (which

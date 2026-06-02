@@ -1,10 +1,23 @@
 <template>
   <div v-if="dataLoaded && nodeGaReader" class="ga-reader-container">
     <generic-node-settings
+      ref="genericSettingsRef"
       v-model="nodeGaReader"
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
+      <div v-if="!nodeGaReader.cache_results" class="ga-reader-tip">
+        <i class="fa-solid fa-lightbulb"></i>
+        <span>
+          <strong>Tip:</strong> loading data from Google Analytics can be slow. Store the result in
+          the <strong>catalog</strong>, or
+          <button type="button" class="ga-reader-tip-link" @click="openCacheSetting">
+            cache it
+          </button>
+          on this node, for instant access and a better developer experience.
+        </span>
+      </div>
+
       <div class="listbox-wrapper">
         <div class="form-group">
           <label for="ga-connection-select">Google Analytics Connection</label>
@@ -31,12 +44,31 @@
                 </template>
               </option>
             </select>
+            <div v-if="gaConnections.length === 0" class="connection-cta">
+              <i class="fa-solid fa-circle-info"></i>
+              <div class="connection-cta-body">
+                <span>No Google Analytics connections yet — set one up to use this node.</span>
+                <button
+                  type="button"
+                  class="btn btn-primary cta-button"
+                  @click="goToConnectionSetup"
+                >
+                  <i class="fa-solid fa-up-right-from-square"></i>
+                  Set up a connection
+                </button>
+              </div>
+            </div>
             <div
-              v-if="!nodeGaReader.google_analytics_settings.ga_connection_name"
+              v-else-if="!nodeGaReader.google_analytics_settings.ga_connection_name"
               class="helper-text"
             >
               <i class="fa-solid fa-info-circle"></i>
-              <span>Create a Google Analytics connection in the Connections manager first.</span>
+              <span>
+                Select a connection above, or
+                <button type="button" class="link-button" @click="goToConnectionSetup">
+                  set up a new one</button
+                >.
+              </span>
             </div>
             <div v-else-if="connectionDefaultPropertyId" class="helper-text">
               <i class="fa-solid fa-info-circle"></i>
@@ -451,6 +483,7 @@
 //   - SortBuilder.vue: sort rows (~lines 366-441)
 import { CodeLoader } from "vue-content-loader";
 import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage, ElOption, ElOptionGroup, ElSelect } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useNodeStore } from "../../../../../stores/node-store";
@@ -478,6 +511,11 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
 const nodeGaReader = ref<NodeGoogleAnalyticsReader | null>(null);
 
+// Template ref to the settings wrapper so the "cache it" tip can jump to its
+// General Settings tab (where the Cache Results toggle lives).
+const genericSettingsRef = ref<{ openCacheSetting: () => void } | null>(null);
+const openCacheSetting = () => genericSettingsRef.value?.openCacheSetting();
+
 const metricsError = computed(() => {
   if (!nodeGaReader.value) return "";
   const settings = nodeGaReader.value.google_analytics_settings;
@@ -495,6 +533,16 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
     }
   },
 });
+
+const router = useRouter();
+
+// When there's no connection to pick, the node is a dead end. Save any
+// in-progress edits, then jump straight to the GA connection setup with the
+// Add Connection dialog already open.
+const goToConnectionSetup = async () => {
+  await saveSettings();
+  router.push({ name: "connections", query: { tab: "google_analytics", action: "add" } });
+};
 
 const gaConnections = ref<GoogleAnalyticsConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
@@ -742,6 +790,46 @@ defineExpose({
   color: var(--color-text-primary);
 }
 
+.ga-reader-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.625rem 0.75rem;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  color: #92400e;
+  line-height: 1.45;
+}
+
+.ga-reader-tip > i {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  font-size: 0.95rem;
+  color: #d97706;
+}
+
+.ga-reader-tip strong {
+  font-weight: 600;
+}
+
+.ga-reader-tip-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: #b45309;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ga-reader-tip-link:hover {
+  color: #92400e;
+}
+
 .section-subtitle {
   margin: 0 0 0.75rem 0;
   font-size: 0.95rem;
@@ -827,6 +915,53 @@ select.form-control {
 
 .helper-text-warning > i {
   color: #d69e2e;
+}
+
+.connection-cta {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background: #ebf8ff;
+  border: 1px solid #bee3f8;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  color: #2c5282;
+}
+
+.connection-cta > i {
+  color: #3182ce;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.connection-cta-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+  line-height: 1.45;
+}
+
+.cta-button {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.link-button {
+  padding: 0;
+  background: none;
+  border: none;
+  color: #4299e1;
+  text-decoration: underline;
+  font-size: inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: #2b6cb0;
 }
 
 .required {

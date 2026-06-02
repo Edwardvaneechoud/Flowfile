@@ -26,14 +26,14 @@
 
 <script setup lang="ts">
 import { ElPopover, ElMessage } from "element-plus";
+import { copyToClipboard } from "../../utils/clipboardUtils";
 
 const props = defineProps<{ href: string }>();
 
 const copy = async () => {
-  try {
-    await navigator.clipboard.writeText(props.href);
+  if (await copyToClipboard(props.href)) {
     ElMessage.success("URL copied");
-  } catch {
+  } else {
     ElMessage.error("Could not access clipboard — copy it manually");
   }
 };

@@ -7,6 +7,7 @@ the correct Polars dtypes purely from the selected metric/dimension names.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import polars as pl
@@ -154,7 +155,12 @@ def _ga_connection_and_oauth_config():
         clear_google_oauth_config(db, _TEST_USER_ID)
 
 
-def _build_settings(node_id: int, metrics: list[str], dimensions: list[str]):
+def _build_settings(
+    node_id: int,
+    metrics: list[str],
+    dimensions: list[str],
+    connection_name: str = _TEST_CONNECTION_NAME,
+):
     from flowfile_core.schemas import input_schema
 
     return input_schema.NodeGoogleAnalyticsReader(
@@ -162,7 +168,7 @@ def _build_settings(node_id: int, metrics: list[str], dimensions: list[str]):
         flow_id=1,
         user_id=_TEST_USER_ID,
         google_analytics_settings=input_schema.GoogleAnalyticsSettings(
-            ga_connection_name=_TEST_CONNECTION_NAME,
+            ga_connection_name=connection_name,
             property_id="123456789",
             metrics=metrics,
             dimensions=dimensions,
@@ -235,3 +241,99 @@ def test_add_google_analytics_reader_refreshes_fields_on_resettle(
         )
         graph.add_google_analytics_reader(second)
         assert [f.name for f in second.fields] == ["country", "totalUsers", "bounceRate"]
+
+
+# --- Service-account flow-graph path -----------------------------------------
+
+_TEST_SA_CONNECTION_NAME = "ga-test-flow-graph-sa"
+_TEST_SA_KEY = json.dumps(
+    {
+        "type": "service_account",
+        "client_email": "etl-bot@my-project.iam.gserviceaccount.com",
+        "private_key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+)
+
+
+@pytest.fixture
+def _ga_service_account_connection():
+    """Stand up a service-account GA connection — deliberately WITHOUT any Google
+    OAuth client config, to prove the SA path doesn't need it."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.flowfile.database_connection_manager.ga_connections import (
+        delete_ga_connection,
+        upsert_ga_connection_with_service_account,
+    )
+
+    with get_db_context() as db:
+        upsert_ga_connection_with_service_account(
+            db,
+            connection_name=_TEST_SA_CONNECTION_NAME,
+            user_id=_TEST_USER_ID,
+            service_account_key=_TEST_SA_KEY,
+            default_property_id="123456789",
+        )
+
+    yield
+
+    with get_db_context() as db:
+        delete_ga_connection(db, _TEST_SA_CONNECTION_NAME, _TEST_USER_ID)
+
+
+def test_add_google_analytics_reader_service_account_emits_sa_settings(
+    _ga_service_account_connection,
+) -> None:
+    """The SA path builds worker settings with ``auth_method='service_account'``
+    and no OAuth fields, and does not require a Google OAuth client to be
+    configured on the instance."""
+    node_settings = _build_settings(
+        node_id=1,
+        metrics=["sessions"],
+        dimensions=["date"],
+        connection_name=_TEST_SA_CONNECTION_NAME,
+    )
+    graph = _new_graph(flow_id=1)
+
+    with patch("flowfile_core.flowfile.flow_graph.ExternalGoogleAnalyticsFetcher") as mock_fetcher:
+        mock_fetcher.return_value.get_result.return_value = pl.LazyFrame(
+            schema={"date": pl.Date, "sessions": pl.Int64}
+        )
+        graph.add_google_analytics_reader(node_settings)
+
+        node = graph.get_node(node_settings.node_id)
+        assert node is not None
+        # Invoke the lazy function so the worker fetcher is constructed with the
+        # built worker settings, then inspect what it was handed.
+        node.function()
+
+    worker_settings = mock_fetcher.call_args[0][0]
+    assert worker_settings.auth_method == "service_account"
+    assert worker_settings.service_account_key_encrypted is not None
+    assert worker_settings.service_account_key_encrypted.startswith("$ffsec$1$")
+    assert worker_settings.refresh_token_encrypted is None
+    assert worker_settings.oauth_client_id is None
+    assert worker_settings.oauth_client_secret_encrypted is None
+
+
+# --- Connection schema models ------------------------------------------------
+
+
+def test_service_account_input_keeps_key_secret() -> None:
+    from flowfile_core.schemas.google_analytics_schemas import GoogleAnalyticsServiceAccountInput
+
+    inp = GoogleAnalyticsServiceAccountInput(
+        connection_name="x", service_account_key="super-secret-json"
+    )
+    # The plaintext key must not leak through repr / str.
+    assert "super-secret-json" not in repr(inp)
+    assert "super-secret-json" not in str(inp.model_dump())
+    # ...but is recoverable for the route to forward to the CRUD layer.
+    assert inp.service_account_key.get_secret_value() == "super-secret-json"
+
+
+def test_connection_interface_defaults_auth_method_oauth() -> None:
+    from flowfile_core.schemas.google_analytics_schemas import FullGoogleAnalyticsConnectionInterface
+
+    iface = FullGoogleAnalyticsConnectionInterface(connection_name="x")
+    assert iface.auth_method == "oauth"

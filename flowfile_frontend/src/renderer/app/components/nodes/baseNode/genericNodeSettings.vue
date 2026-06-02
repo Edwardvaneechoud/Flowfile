@@ -300,6 +300,16 @@ const emit = defineEmits<{
 const isLoadingSchema = ref(false);
 
 const activeTab = ref("main");
+
+// Lets a node's main-tab content (rendered in the default slot) send the user to
+// the General Settings tab, where the Cache Results toggle lives. Exposed via a
+// template ref rather than provide/inject because slot content is a sibling of
+// this component in the tree, not a descendant, so inject wouldn't reach it.
+const openCacheSetting = () => {
+  activeTab.value = "general";
+};
+defineExpose({ openCacheSetting });
+
 const referenceError = ref<string | null>(null);
 const isValidatingReference = ref(false);
 let validationTimeout: ReturnType<typeof setTimeout> | null = null;

@@ -22,13 +22,21 @@
 
           <!-- Feature cards -->
           <div v-if="section.features" class="feature-grid">
-            <div v-for="(feature, fIdx) in section.features" :key="fIdx" class="feature-card">
+            <component
+              :is="feature.link ? RouterLink : 'div'"
+              v-for="(feature, fIdx) in section.features"
+              :key="fIdx"
+              v-bind="feature.link ? { to: feature.link } : {}"
+              :class="['feature-card', { 'feature-card--link': feature.link }]"
+              @click="feature.link && emit('close')"
+            >
               <div class="feature-icon">
                 <i :class="feature.icon"></i>
               </div>
               <h5>{{ feature.title }}</h5>
               <p>{{ feature.description }}</p>
-            </div>
+              <i v-if="feature.link" class="feature-card-arrow fa-solid fa-arrow-right"></i>
+            </component>
           </div>
 
           <!-- Tip cards -->
@@ -55,6 +63,7 @@
 </template>
 
 <script setup lang="ts">
+import { RouterLink } from "vue-router";
 import type { HelpSection } from "./types";
 
 defineProps<{
@@ -117,6 +126,43 @@ const emit = defineEmits<{
   background: var(--color-background-secondary, #f8f9fa);
   border: 1px solid var(--color-border-primary, #e0e0e0);
   border-radius: 8px;
+}
+
+/* Linked feature cards (router-link renders an <a>) */
+.feature-card--link {
+  display: block;
+  position: relative;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast, 0.15s),
+    transform var(--transition-fast, 0.15s),
+    box-shadow var(--transition-fast, 0.15s);
+}
+
+.feature-card--link:hover {
+  border-color: var(--color-accent, #0891b2);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.08));
+}
+
+.feature-card-arrow {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  font-size: 0.7rem;
+  color: var(--color-accent, #0891b2);
+  opacity: 0;
+  transform: translateX(-2px);
+  transition:
+    opacity var(--transition-fast, 0.15s),
+    transform var(--transition-fast, 0.15s);
+}
+
+.feature-card--link:hover .feature-card-arrow {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .feature-icon {

@@ -32,3 +32,7 @@ class GoogleAnalyticsReadSettings(_BaseGoogleAnalyticsReadSettings):
     def get_decrypted_client_secret(self) -> str:
         """Return the plaintext OAuth client secret. Never logged."""
         return decrypt_secret(self.oauth_client_secret_encrypted).get_secret_value()
+
+    def get_decrypted_service_account_key(self) -> str:
+        """Return the plaintext service-account JSON key. Never logged."""
+        return decrypt_secret(self.service_account_key_encrypted).get_secret_value()

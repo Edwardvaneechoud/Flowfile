@@ -3,19 +3,25 @@
     <div class="mb-3">
       <div class="page-header">
         <h2 class="page-title">Google Analytics Connections</h2>
-        <button type="button" class="btn btn-secondary btn-sm" @click="setupGuideVisible = true">
-          <i class="fa-solid fa-circle-question"></i>
-          How to set up
+        <button type="button" class="btn btn-primary btn-sm" @click="openWizard">
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          Set up a connection
         </button>
       </div>
       <p class="description-text">
-        Google Analytics connections store the OAuth refresh token minted when you sign in with
-        Google. Tokens are encrypted at rest with your user-derived key and are never transmitted
-        back to the browser after creation.
+        Connect Google Analytics with a <strong>service account</strong> (recommended for unattended
+        and scheduled flows) or by <strong>signing in with Google</strong>. Credentials are
+        encrypted at rest with your user-derived key and are never transmitted back to the browser
+        after creation.
       </p>
     </div>
 
-    <GoogleOAuthClientCard />
+    <div ref="oauthCardRef">
+      <GoogleOAuthClientCard
+        @saved="refreshOAuthConfigured"
+        @show-guide="setupGuideVisible = true"
+      />
+    </div>
 
     <div class="card mb-3">
       <div class="card-header">
@@ -35,11 +41,11 @@
             <div class="how-it-works-content">
               <p class="how-it-works-title">How it works</p>
               <p>
-                Click <em>Add Connection</em>, give it a name, then click
-                <em>Connect Google Account</em>. You'll sign in with the Google account that has
-                Viewer access to your GA4 property. Flowfile stores a refresh token (encrypted at
-                rest with your user-derived key) so it can read GA4 on your behalf — no
-                service-account key is ever required.
+                Click <em>Add Connection</em> and choose an authentication method. A
+                <strong>service account</strong> (recommended for scheduled flows) reads GA4
+                headlessly — paste its JSON key and grant its email Viewer on your property.
+                <strong>Sign in with Google</strong> links a specific user via OAuth instead. Either
+                credential is encrypted at rest with your user-derived key.
               </p>
             </div>
           </el-popover>
@@ -57,7 +63,10 @@
         <div v-else-if="connections.length === 0" class="empty-state">
           <i class="fa-solid fa-chart-line"></i>
           <p>You haven't added any Google Analytics connections yet</p>
-          <p class="hint-text">Click "Add Connection" to create your first one.</p>
+          <p class="hint-text">New here? Let us walk you through it step by step.</p>
+          <button type="button" class="btn btn-primary" @click="openWizard">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Start guided setup
+          </button>
         </div>
 
         <div v-else class="connections-list">
@@ -75,7 +84,10 @@
                 </span>
               </div>
               <div v-if="connection.oauthUserEmail" class="connection-details">
-                Connected as {{ connection.oauthUserEmail }}
+                {{
+                  connection.authMethod === "service_account" ? "Service account:" : "Connected as"
+                }}
+                {{ connection.oauthUserEmail }}
               </div>
               <div v-if="connection.description" class="connection-details">
                 {{ connection.description }}
@@ -107,27 +119,60 @@
         :is-editing="isEditing"
         :is-submitting="isSubmitting"
         :is-connecting="isConnecting"
+        :oauth-configured="oauthConfigured"
         @save-metadata="handleMetadataSave"
+        @save-service-account="handleSaveServiceAccount"
         @connect-oauth="handleConnectOAuth"
+        @setup-oauth="handleSetupOAuth"
+        @open-wizard="openWizardFromForm"
         @cancel="dialogVisible = false"
       />
     </el-dialog>
 
+    <GoogleAnalyticsSetupWizard
+      v-model="wizardVisible"
+      :oauth-configured="oauthConfigured"
+      :is-submitting="isSubmitting"
+      :is-connecting="isConnecting"
+      :redirect-uri="redirectUri"
+      :connections="connections"
+      @save-service-account="handleSaveServiceAccount"
+      @connect-oauth="handleConnectOAuth"
+      @refresh-oauth-configured="refreshOAuthConfigured"
+      @open-oauth-guide="setupGuideVisible = true"
+    />
+
     <el-dialog v-model="setupGuideVisible" title="Set up Google OAuth for Flowfile" width="720px">
       <div class="setup-guide">
         <p class="setup-intro">
-          Flowfile talks to GA4 using your own Google OAuth client. It takes about 5 minutes in the
-          Google Cloud console.
+          These steps configure the <strong>Sign in with Google</strong> (OAuth) method using your
+          own Google OAuth client — about 5 minutes in the Google Cloud console. Prefer a hands-off
+          setup? Use a <strong>service account</strong> instead: create one, download its JSON key,
+          and grant its email Viewer on your GA4 property — no OAuth client needed.
         </p>
 
         <ol class="setup-steps">
           <li>
-            <strong>Create (or pick) a Google Cloud project.</strong>
-            Go to
-            <SetupLink href="https://console.cloud.google.com/projectcreate">
-              console.cloud.google.com/projectcreate
-            </SetupLink>
-            and create a project, or select any existing one from the project picker.
+            <strong>Choose your Google Cloud project.</strong>
+            <ul class="setup-substeps">
+              <li>
+                <strong>Already use Google Cloud?</strong>
+                Open the
+                <SetupLink href="https://console.cloud.google.com/projectselector2/home/dashboard">
+                  project selector
+                </SetupLink>
+                and pick the project you want to use, then skip ahead to <strong>step 4</strong> to
+                create the OAuth client. First confirm the Analytics Data API is enabled (step 2)
+                and your OAuth consent screen is configured (step 3) — do those if you haven't yet.
+              </li>
+              <li>
+                <strong>New to Google Cloud?</strong>
+                <SetupLink href="https://console.cloud.google.com/projectcreate">
+                  Create a project
+                </SetupLink>
+                , then continue with step 2 below.
+              </li>
+            </ul>
           </li>
           <li>
             <strong>Enable the Google Analytics Data API.</strong>
@@ -140,28 +185,26 @@
             and click <em>Enable</em>.
           </li>
           <li>
-            <strong>Configure the OAuth consent screen.</strong>
-            Go to
-            <SetupLink href="https://console.cloud.google.com/apis/credentials/consent">
-              APIs &amp; Services → OAuth consent screen
-            </SetupLink>
-            . Choose <em>External</em> (unless you have a Workspace), fill in the app name and your
-            email, and add the scope
-            <code>https://www.googleapis.com/auth/analytics.readonly</code>. Add your Google account
-            as a test user while the app is in <em>Testing</em> mode.
+            <strong>Set up the Google Auth Platform.</strong>
+            Configure
+            <SetupLink href="https://console.cloud.google.com/auth/branding">Branding</SetupLink>
+            (app name + support email) and
+            <SetupLink href="https://console.cloud.google.com/auth/audience">Audience</SetupLink>
+            (Workspace org + colleagues only? choose <em>Internal</em>. Otherwise <em>External</em>,
+            then <em>Publish app</em> → <em>In production</em>; a Testing app's sign-in expires
+            after 7 days). If you've set this up before, skip ahead.
           </li>
           <li>
             <strong>Create the OAuth client.</strong>
             Go to
-            <SetupLink href="https://console.cloud.google.com/apis/credentials">
-              APIs &amp; Services → Credentials
+            <SetupLink href="https://console.cloud.google.com/auth/clients">
+              Google Auth Platform → Clients
             </SetupLink>
-            , click <em>Create credentials → OAuth client ID</em>, and pick
-            <strong>Web application</strong>.
+            , click <em>Create client</em>, and pick <strong>Web application</strong>.
           </li>
           <li>
             <strong>Add the redirect URI.</strong>
-            Under <em>Authorised redirect URIs</em>, add exactly:
+            Under <em>Authorized redirect URIs</em>, add exactly:
             <div class="setup-code-row">
               <pre class="setup-code">{{ redirectUri }}</pre>
               <button
@@ -186,6 +229,12 @@
             Click <em>Add Connection</em>, name it, then <em>Connect Google Account</em>. Sign in
             with a Google account that has Viewer access to your GA4 property. Flowfile stores only
             the refresh token, encrypted with your user-derived key.
+            <div class="setup-action">
+              <button type="button" class="btn btn-primary btn-sm" @click="openAddFromGuide">
+                <i class="fa-solid fa-plus"></i>
+                Open Add Connection
+              </button>
+            </div>
           </li>
         </ol>
 
@@ -231,35 +280,65 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, onBeforeUnmount } from "vue";
+import { ref, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ElDialog, ElButton, ElMessage, ElPopover } from "element-plus";
 import {
+  createGoogleAnalyticsServiceAccountConnection,
   deleteGoogleAnalyticsConnection,
   fetchGoogleAnalyticsConnections,
   startGoogleAnalyticsOAuth,
   updateGoogleAnalyticsConnectionMetadata,
 } from "./api";
+import { fetchGoogleOAuthConfig } from "./oauthClientApi";
 import type {
   GoogleAnalyticsConnectionInterface,
   GoogleAnalyticsConnectionMetadata,
+  GoogleAnalyticsServiceAccountInput,
 } from "./GoogleAnalyticsConnectionTypes";
 import GoogleAnalyticsConnectionSettings from "./GoogleAnalyticsConnectionSettings.vue";
+import GoogleAnalyticsSetupWizard from "./GoogleAnalyticsSetupWizard.vue";
 import GoogleOAuthClientCard from "./GoogleOAuthClientCard.vue";
 import SetupLink from "./SetupLink.vue";
 import { desktop, isDesktop } from "../../../lib/desktop";
+import { copyToClipboard } from "../../utils/clipboardUtils";
+import { gaOAuthCallbackUrl } from "../../../config/constants";
+
+const route = useRoute();
+const router = useRouter();
 
 const connections = ref<GoogleAnalyticsConnectionInterface[]>([]);
 const isLoading = ref(true);
 const dialogVisible = ref(false);
+const wizardVisible = ref(false);
 const deleteDialogVisible = ref(false);
 const setupGuideVisible = ref(false);
-const redirectUri = "http://localhost:63578/ga_connections/oauth/callback";
+const redirectUri = gaOAuthCallbackUrl;
+// Whether a Google OAuth client is configured (gates OAuth sign-in in the modal).
+const oauthConfigured = ref(false);
+const oauthCardRef = ref<HTMLElement | null>(null);
+
+const refreshOAuthConfigured = async () => {
+  try {
+    oauthConfigured.value = (await fetchGoogleOAuthConfig()).isConfigured;
+  } catch (error) {
+    console.error("Failed to load Google OAuth config status:", error);
+  }
+};
+
+// Close the dialog and scroll the Google OAuth panel into view so the user can
+// set it up. The panel auto-expands when it isn't configured.
+const handleSetupOAuth = () => {
+  dialogVisible.value = false;
+  nextTick(() => {
+    oauthCardRef.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+};
 
 const copyRedirectUri = async () => {
-  try {
-    await navigator.clipboard.writeText(redirectUri);
+  if (await copyToClipboard(redirectUri)) {
     ElMessage.success("Redirect URI copied");
-  } catch {
+  } else {
     ElMessage.error("Could not access clipboard — copy it manually");
   }
 };
@@ -283,6 +362,18 @@ const stopGaOauthPolling = () => {
   }
 };
 
+// Web OAuth opens a popup we control. If the user closes that window before
+// Google redirects back (i.e. cancels), no message ever arrives — this timer
+// watches for the close so we reset state instead of hanging on "connecting".
+let oauthPopupCloseTimer: ReturnType<typeof setInterval> | null = null;
+
+const stopOauthPopupWatch = () => {
+  if (oauthPopupCloseTimer !== null) {
+    clearInterval(oauthPopupCloseTimer);
+    oauthPopupCloseTimer = null;
+  }
+};
+
 // After opening the browser, refresh the connection list until the target
 // connection shows a linked Google account (the callback upserts it), or we
 // hit the timeout. Reports success only for a freshly-linked connection so a
@@ -290,12 +381,24 @@ const stopGaOauthPolling = () => {
 const pollForGaOauthCompletion = (connectionName: string, wasLinkedBefore: boolean) => {
   stopGaOauthPolling();
   const deadline = Date.now() + 3 * 60 * 1000;
+  let consecutiveErrors = 0;
+  const giveUp = (message: string) => {
+    stopGaOauthPolling();
+    isConnecting.value = false;
+    ElMessage.warning(message);
+  };
   const tick = async () => {
     gaOauthPollTimer = null;
     try {
       const latest = await fetchGoogleAnalyticsConnections();
       connections.value = latest;
-      const match = latest.find((c) => c.connectionName === connectionName && c.oauthUserEmail);
+      consecutiveErrors = 0;
+      // "Linked" means linked under OAuth: a service-account row also carries an
+      // oauthUserEmail (its client_email), so we must require authMethod === "oauth"
+      // to detect that the callback has actually completed the OAuth sign-in.
+      const match = latest.find(
+        (c) => c.connectionName === connectionName && c.authMethod === "oauth" && c.oauthUserEmail,
+      );
       if (match && !wasLinkedBefore) {
         isConnecting.value = false;
         dialogVisible.value = false;
@@ -304,14 +407,17 @@ const pollForGaOauthCompletion = (connectionName: string, wasLinkedBefore: boole
       }
     } catch (error) {
       console.error("Error polling GA connections:", error);
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= 5) {
+        giveUp("Lost contact with the server while finishing Google sign-in. Please try again.");
+        return;
+      }
     }
-    // TODO(E): silent failure. The desktop system-browser OAuth flow can't
-    // postMessage back, so we poll here. If the backend callback never completes,
-    // this just stops after 3 min with no user feedback (and the caught poll
-    // error above is console-only). Surface an ElMessage on timeout — and on
-    // repeated poll errors — so the user knows the connection didn't link.
+    // The system-browser OAuth flow can't postMessage back, so a true cancel
+    // emits no signal — on timeout we can only report that sign-in never
+    // completed (rather than reset silently and leave the user guessing).
     if (Date.now() > deadline) {
-      isConnecting.value = false;
+      giveUp("Google sign-in wasn't completed — the connection wasn't linked. Try again.");
       return;
     }
     gaOauthPollTimer = setTimeout(tick, 2000);
@@ -334,12 +440,31 @@ const fetchConnections = async () => {
 const showAddModal = () => {
   isEditing.value = false;
   activeConnection.value = undefined;
+  refreshOAuthConfigured();
   dialogVisible.value = true;
+};
+
+const openAddFromGuide = () => {
+  setupGuideVisible.value = false;
+  showAddModal();
+};
+
+// Guided setup is the primary entry point. Refresh the OAuth-configured state so
+// the wizard's OAuth branch can skip the console steps when a client already exists.
+const openWizard = () => {
+  refreshOAuthConfigured();
+  wizardVisible.value = true;
+};
+
+const openWizardFromForm = () => {
+  dialogVisible.value = false;
+  openWizard();
 };
 
 const showEditModal = (connection: GoogleAnalyticsConnectionInterface) => {
   isEditing.value = true;
   activeConnection.value = { ...connection };
+  refreshOAuthConfigured();
   dialogVisible.value = true;
 };
 
@@ -363,6 +488,21 @@ const handleMetadataSave = async (metadata: GoogleAnalyticsConnectionMetadata) =
   }
 };
 
+const handleSaveServiceAccount = async (input: GoogleAnalyticsServiceAccountInput) => {
+  isSubmitting.value = true;
+  try {
+    await createGoogleAnalyticsServiceAccountConnection(input);
+    await fetchConnections();
+    dialogVisible.value = false;
+    ElMessage.success(isEditing.value ? "Connection updated" : "Connection created");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    ElMessage.error(`Failed to save connection: ${message}`);
+  } finally {
+    isSubmitting.value = false;
+  }
+};
+
 const handleConnectOAuth = async (metadata: GoogleAnalyticsConnectionMetadata) => {
   if (!metadata.connectionName.trim()) {
     ElMessage.error("Connection name is required before connecting");
@@ -377,7 +517,10 @@ const handleConnectOAuth = async (metadata: GoogleAnalyticsConnectionMetadata) =
       // so hand the consent flow to the system browser. The backend callback
       // stores the credential; we poll the list to reflect completion.
       const wasLinkedBefore = connections.value.some(
-        (c) => c.connectionName === metadata.connectionName && c.oauthUserEmail,
+        (c) =>
+          c.connectionName === metadata.connectionName &&
+          c.authMethod === "oauth" &&
+          c.oauthUserEmail,
       );
       await desktop.openExternal(authUrl);
       ElMessage.info("Continue signing in with Google in your browser…");
@@ -389,6 +532,17 @@ const handleConnectOAuth = async (metadata: GoogleAnalyticsConnectionMetadata) =
     if (!oauthPopup) {
       ElMessage.error("Popup blocked — allow popups for this site and try again");
       isConnecting.value = false;
+    } else {
+      // A manual popup close is the only cancel signal we get — watch for it.
+      stopOauthPopupWatch();
+      oauthPopupCloseTimer = setInterval(() => {
+        if (oauthPopup && oauthPopup.closed) {
+          stopOauthPopupWatch();
+          oauthPopup = null;
+          isConnecting.value = false;
+          ElMessage.info("Google sign-in was cancelled");
+        }
+      }, 500);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -406,6 +560,9 @@ const handleOAuthMessage = async (event: MessageEvent) => {
   if (!oauthPopup || event.source !== oauthPopup) return;
   const data = event.data;
   if (!data || data.source !== "flowfile-ga-oauth") return;
+  // A result arrived — stop the close-watch so the popup auto-closing (500ms
+  // after it postMessages) isn't mistaken for a cancellation.
+  stopOauthPopupWatch();
   isConnecting.value = false;
   if (data.status === "ok") {
     await fetchConnections();
@@ -446,12 +603,23 @@ const handleCloseDeleteDialog = (done: () => void) => {
 
 onMounted(() => {
   fetchConnections();
+  refreshOAuthConfigured();
   window.addEventListener("message", handleOAuthMessage);
+  // Deep link (from the GA reader node or the setup guide): open the Add
+  // Connection dialog straight away, then drop the param so a refresh or
+  // tab-switch doesn't reopen it.
+  if (route.query.action === "add") {
+    showAddModal();
+    const query = { ...route.query };
+    delete query.action;
+    router.replace({ query });
+  }
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("message", handleOAuthMessage);
   stopGaOauthPolling();
+  stopOauthPopupWatch();
 });
 </script>
 
@@ -494,6 +662,19 @@ onBeforeUnmount(() => {
 
 .setup-steps li {
   line-height: 1.55;
+}
+
+.setup-substeps {
+  margin: var(--spacing-2) 0 0;
+  padding-left: var(--spacing-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  list-style: disc;
+}
+
+.setup-action {
+  margin-top: var(--spacing-3);
 }
 
 .setup-steps code {

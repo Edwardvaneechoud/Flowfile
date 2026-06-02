@@ -41,3 +41,11 @@ function resolveCorePort(): number {
 export const flowfileCorebaseURL = isDesktop
   ? `http://127.0.0.1:${resolveCorePort()}/`
   : `${window.location.origin}/api/`;
+
+// GA OAuth callback Google redirects to after consent. Must be browser-reachable
+// and registered verbatim in the Google Cloud console. Desktop: the system
+// browser hits the local core directly. Web/Docker: <origin>/api/ (nginx forwards
+// to core), so it tracks whatever host serves the app — e.g. a Cloudflare domain.
+export const gaOAuthCallbackUrl = isDesktop
+  ? `http://localhost:${DEFAULT_CORE_PORT}/ga_connections/oauth/callback`
+  : `${window.location.origin}/api/ga_connections/oauth/callback`;

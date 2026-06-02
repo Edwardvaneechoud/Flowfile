@@ -1,4 +1,5 @@
 import type { PageHelpContent } from "../../components/common/PageHelpModal/types";
+import { connectionTypes } from "./connectionTypes";
 
 export const connectionsHelp: PageHelpContent = {
   title: "Connections",
@@ -8,29 +9,15 @@ export const connectionsHelp: PageHelpContent = {
       title: "Overview",
       icon: "fa-solid fa-info-circle",
       description:
-        "Manage all your external connections in one place. Configure databases, cloud storage, streaming, and securely store credentials.",
-      features: [
-        {
-          icon: "fa-solid fa-database",
-          title: "Databases",
-          description: "Connect to PostgreSQL, MySQL, SQL Server, and other SQL databases",
-        },
-        {
-          icon: "fa-solid fa-cloud",
-          title: "Cloud Storage",
-          description: "Set up connections to S3, Google Cloud Storage, or Azure Blob Storage",
-        },
-        {
-          icon: "fa-solid fa-bolt",
-          title: "Kafka",
-          description: "Configure Kafka brokers for streaming data ingestion and publishing",
-        },
-        {
-          icon: "fa-solid fa-key",
-          title: "Secrets",
-          description: "Store API keys and passwords securely with encrypted storage",
-        },
-      ],
+        "Manage all your external connections in one place. Configure databases, cloud storage, streaming, analytics, and AI providers, and securely store credentials. Select a card to jump straight to it.",
+      // Derived from the shared connection-types config so icons/labels stay in
+      // sync with the tab bar, overview cards, and sidebar sub-menu.
+      features: connectionTypes.map((type) => ({
+        icon: type.icon,
+        title: type.label,
+        description: type.description,
+        link: { name: "connections", query: { tab: type.key } },
+      })),
     },
     {
       title: "Quick Tips",
@@ -39,12 +26,14 @@ export const connectionsHelp: PageHelpContent = {
         {
           type: "success",
           title: "Test connections before saving",
-          description: "Use the test button to verify credentials and network access before saving.",
+          description:
+            "Use the test button to verify credentials and network access before saving.",
         },
         {
           type: "success",
           title: "Connections are available across all flows",
-          description: "Once saved, a connection can be used by any node that supports external data sources.",
+          description:
+            "Once saved, a connection can be used by any node that supports external data sources.",
         },
         {
           type: "warning",

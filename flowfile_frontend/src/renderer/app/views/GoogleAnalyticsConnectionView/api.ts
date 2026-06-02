@@ -4,8 +4,10 @@ import type {
   GoogleAnalyticsConnectionMetadata,
   GoogleAnalyticsConnectionTestResult,
   GoogleAnalyticsOAuthStartResponse,
+  GoogleAnalyticsServiceAccountInput,
   PythonGoogleAnalyticsConnectionInterface,
   PythonGoogleAnalyticsConnectionMetadata,
+  PythonGoogleAnalyticsServiceAccountInput,
 } from "./GoogleAnalyticsConnectionTypes";
 
 const API_BASE_URL = "/ga_connections";
@@ -18,12 +20,22 @@ const toPythonMetadata = (
   default_property_id: c.defaultPropertyId ?? null,
 });
 
+const toPythonServiceAccount = (
+  c: GoogleAnalyticsServiceAccountInput,
+): PythonGoogleAnalyticsServiceAccountInput => ({
+  connection_name: c.connectionName,
+  service_account_key: c.serviceAccountKey,
+  description: c.description ?? null,
+  default_property_id: c.defaultPropertyId ?? null,
+});
+
 const fromPythonInterface = (
   p: PythonGoogleAnalyticsConnectionInterface,
 ): GoogleAnalyticsConnectionInterface => ({
   connectionName: p.connection_name,
   description: p.description,
   defaultPropertyId: p.default_property_id,
+  authMethod: p.auth_method ?? "oauth",
   oauthUserEmail: p.oauth_user_email,
 });
 
@@ -48,6 +60,16 @@ export const updateGoogleAnalyticsConnectionMetadata = async (
     await axios.put(`${API_BASE_URL}/ga_connection`, toPythonMetadata(data));
   } catch (error) {
     throw new Error(extractDetail(error, "Failed to update Google Analytics connection"));
+  }
+};
+
+export const createGoogleAnalyticsServiceAccountConnection = async (
+  data: GoogleAnalyticsServiceAccountInput,
+): Promise<void> => {
+  try {
+    await axios.post(`${API_BASE_URL}/ga_connection/service_account`, toPythonServiceAccount(data));
+  } catch (error) {
+    throw new Error(extractDetail(error, "Failed to save service account connection"));
   }
 };
 
