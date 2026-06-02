@@ -24,6 +24,7 @@ import logging
 import os
 import platform
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -511,6 +512,25 @@ def _health_ok(port: int) -> bool:
         return False
 
 
+def _describe_exit(rc: int) -> str:
+    """Cause for a llama-server exit. Negative ``rc`` is a POSIX signal: SIGKILL
+    is almost always the OOM killer, SIGILL the binary using CPU instructions
+    this host/arch lacks (incl. cross-arch qemu emulation in Docker)."""
+    if rc >= 0:
+        if rc == 127:
+            return "exit code 127 (a shared library is missing, e.g. libgomp.so.1)"
+        return f"exit code {rc}"
+    try:
+        sig = signal.Signals(-rc)
+    except ValueError:
+        return f"killed by signal {-rc}"
+    if sig == getattr(signal, "SIGKILL", None):
+        return f"killed by {sig.name} (likely out of memory)"
+    if sig == getattr(signal, "SIGILL", None):
+        return f"killed by {sig.name} (binary needs CPU instructions this host/arch lacks)"
+    return f"killed by {sig.name}"
+
+
 def _spawn(binary: Path, model: Path, model_id: str) -> _RunningServer:
     port = _free_port()
     cmd = [
@@ -525,12 +545,11 @@ def _spawn(binary: Path, model: Path, model_id: str) -> _RunningServer:
         str(get_ctx_size()),
         "--threads",
         str(_num_threads()),
-        "--log-disable",
     ]
     creationflags = 0x08000000 if sys.platform.startswith("win") else 0  # CREATE_NO_WINDOW
-    # Capture stderr to a temp file so a startup failure carries the real dyld /
-    # llama.cpp error instead of a bare "exited during startup" (the exact gap
-    # that hid the missing-dylib-symlink bug).
+    # Capture stderr to a temp file so a startup failure carries the real ggml /
+    # dyld error (no --log-disable, which would suppress those lines). A read-only
+    # temp dir disables capture; that fact is surfaced so it isn't a blind spot.
     try:
         err_fh = tempfile.TemporaryFile()
     except OSError:
@@ -547,9 +566,9 @@ def _spawn(binary: Path, model: Path, model_id: str) -> _RunningServer:
             err_fh.close()
         raise LocalModelError(f"Failed to start llama-server: {exc}") from exc
 
-    def _read_stderr_tail() -> str:
+    def _stderr_suffix() -> str:
         if err_fh is None:
-            return ""
+            return " (stderr capture unavailable — temp dir not writable)"
         try:
             err_fh.seek(0)
             raw = err_fh.read().decode("utf-8", errors="replace").strip()
@@ -557,21 +576,20 @@ def _spawn(binary: Path, model: Path, model_id: str) -> _RunningServer:
             return ""
         if not raw:
             return ""
-        tail = raw.splitlines()[-3:]
-        return " | ".join(line.strip() for line in tail if line.strip())
+        tail = " | ".join(line.strip() for line in raw.splitlines()[-3:] if line.strip())
+        return f": {tail}" if tail else ""
 
     try:
         deadline = time.monotonic() + _HEALTH_TIMEOUT
         while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                detail = _read_stderr_tail()
-                suffix = f": {detail}" if detail else " (no error output captured)."
-                raise LocalModelError(f"llama-server exited during startup{suffix}")
+            rc = proc.poll()
+            if rc is not None:
+                raise LocalModelError(f"llama-server exited during startup ({_describe_exit(rc)}){_stderr_suffix()}")
             if _health_ok(port):
                 return _RunningServer(proc=proc, port=port, model_id=model_id)
             time.sleep(0.25)
         _kill_proc(proc)
-        raise LocalModelError(f"llama-server did not become ready within {int(_HEALTH_TIMEOUT)}s.")
+        raise LocalModelError(f"llama-server did not become ready within {int(_HEALTH_TIMEOUT)}s{_stderr_suffix()}.")
     finally:
         if err_fh is not None:
             err_fh.close()

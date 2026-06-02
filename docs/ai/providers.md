@@ -115,6 +115,9 @@ The picked model doesn't support tools. Check the *Tools* column in the [provide
 **`404` from `POST /ai/providers/{name}`.**
 Provider name typo. The supported names are exactly: `anthropic`, `openai`, `google`, `groq`, `openrouter`, `ollama` (lowercase, no dashes).
 
+**On-device (local) model exits on startup in Docker / "no CPU backend found".**
+The bundled `llama-server` loads CPU compute backends (`libggml-cpu-*.so`) that need the OpenMP runtime, `libgomp1`. The official `flowfile-core` image bundles it; a custom or older image may not — add it (Debian/Ubuntu: `apt-get install -y libgomp1`) and restart. The startup error now names the cause: `no CPU backend found` / `exit code 127` → missing `libgomp1`; `killed by SIGKILL` → out of memory (give the container more RAM, or pick the 1.5B model / a smaller context in **Settings → AI**); `killed by SIGILL` → the image's architecture doesn't match the host CPU.
+
 **Credential `Test` returns `ok=false` with an authentication error.**
 Key is wrong, expired, or missing required scopes. The error message from the upstream provider is surfaced in the `error` field of the test result.
 
