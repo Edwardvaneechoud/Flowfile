@@ -211,16 +211,27 @@
             title="No favorites yet"
             description="Star flows from the catalog tree to see them here."
           />
-          <div v-else class="favorites-list">
-            <FlowListItem
-              v-for="flow in catalogStore.favorites"
-              :key="flow.id"
-              :flow="flow"
-              :selected="catalogStore.selectedFlowId === flow.id"
-              @select="selectFlow(flow.id)"
-              @toggle-favorite="catalogStore.toggleFavorite(flow.id)"
-            />
-          </div>
+          <template v-else>
+            <div class="favorites-filter-bar">
+              <el-input
+                v-model="favoritesSearch"
+                placeholder="Search favorites"
+                clearable
+                size="small"
+                style="width: 240px"
+              />
+            </div>
+            <div class="favorites-list">
+              <FlowListItem
+                v-for="flow in filteredFavorites"
+                :key="flow.id"
+                :flow="flow"
+                :selected="catalogStore.selectedFlowId === flow.id"
+                @select="selectFlow(flow.id)"
+                @toggle-favorite="catalogStore.toggleFavorite(flow.id)"
+              />
+            </div>
+          </template>
         </div>
         <!-- SQL Editor -->
         <SqlEditorPanel
@@ -485,6 +496,14 @@ const tabs = computed(() => [
 // Search and filter state
 const searchQuery = ref("");
 const showUnavailable = ref(false);
+
+// Client-side filter for the Favorites tab (fully-loaded list).
+const favoritesSearch = ref("");
+const filteredFavorites = computed(() => {
+  const q = favoritesSearch.value.trim().toLowerCase();
+  if (!q) return catalogStore.favorites;
+  return catalogStore.favorites.filter((f) => (f.name ?? "").toLowerCase().includes(q));
+});
 
 // Modal state
 const showInfoModal = ref(false);
@@ -1743,6 +1762,10 @@ onUnmounted(() => {
 .favorites-panel .empty-state p {
   margin: 0;
   font-size: var(--font-size-sm);
+}
+
+.favorites-filter-bar {
+  margin-bottom: var(--spacing-3);
 }
 
 .favorites-list {

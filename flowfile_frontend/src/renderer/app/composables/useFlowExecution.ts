@@ -1,8 +1,9 @@
 // composables/useFlowExecution.ts
 // Core flow execution composable for managing flow runs and polling
-import { ref, onUnmounted, Ref } from "vue";
+import { ref, onUnmounted, Ref, markRaw, type Component } from "vue";
 import axios from "axios";
 import { ElNotification } from "element-plus";
+import { Promotion, DataLine } from "@element-plus/icons-vue";
 import { useNodeStore } from "../stores/column-store";
 import { useEditorStore } from "../stores/editor-store";
 import { useResultsStore } from "../stores/results-store";
@@ -150,6 +151,7 @@ export function useFlowExecution(
     message: string,
     type?: "success" | "error",
     dangerouslyUseHTMLString?: boolean,
+    icon?: Component,
   ) => {
     ElNotification({
       title,
@@ -157,6 +159,7 @@ export function useFlowExecution(
       type,
       position: "top-left",
       dangerouslyUseHTMLString,
+      ...(icon ? { icon: markRaw(icon) } : {}),
     });
   };
 
@@ -289,7 +292,7 @@ export function useFlowExecution(
       </div>
     `;
 
-    showNotification("🚀 Flow Started", notificationMessage, undefined, true);
+    showNotification("Flow Started", notificationMessage, undefined, true, Promotion);
 
     try {
       await axios.post("/flow/run/", null, {
@@ -340,10 +343,11 @@ export function useFlowExecution(
     state.setExecutionState(getPollingKey(pollingKeySuffix), true);
 
     showNotification(
-      "📊 Fetching Node Data",
+      "Fetching Node Data",
       `Starting data fetch for node ${nodeId}...`,
       undefined,
       false,
+      DataLine,
     );
 
     try {

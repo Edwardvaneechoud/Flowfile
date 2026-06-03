@@ -52,7 +52,9 @@ export interface RunInformation {
   flow_id: number;
   start_time: string; // datetime in ISO format
   end_time: string; // datetime in ISO format
-  success: boolean;
+  success: boolean | null; // null while the flow is still running
+  is_running: boolean;
+  execution_mode: ExecutionMode | null;
   nodes_completed: number;
   number_of_nodes: number;
   node_step_result: NodeResult[];

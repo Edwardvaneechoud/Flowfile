@@ -325,7 +325,10 @@ const visibleArtifacts = computed((): ArtifactGroup[] => {
   return groups;
 });
 
-const expanded = ref(true);
+// System namespaces holding disk-backed/quick-created flows — they accumulate a
+// lot of entries, so collapse them by default to keep the tree tidy.
+const AUTO_COLLAPSE_NAMESPACES = new Set(["Local Flows", "Unnamed Flows"]);
+const expanded = ref(!AUTO_COLLAPSE_NAMESPACES.has(props.node.name));
 const toggle = () => {
   expanded.value = !expanded.value;
 };

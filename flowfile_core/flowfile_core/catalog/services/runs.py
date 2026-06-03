@@ -72,6 +72,7 @@ class FlowRunService:
         run_type: RunType | None = None,
         limit: int = 50,
         offset: int = 0,
+        search: str | None = None,
     ) -> PaginatedFlowRuns:
         """List run summaries (without snapshots) with total count for pagination."""
         runs = self.repo.list_runs(
@@ -80,9 +81,10 @@ class FlowRunService:
             run_type=run_type,
             limit=limit,
             offset=offset,
+            search=search,
         )
         counts = self.repo.count_runs_by_status(
-            registration_id=registration_id, schedule_id=schedule_id, run_type=run_type
+            registration_id=registration_id, schedule_id=schedule_id, run_type=run_type, search=search
         )
         name_overrides = self._display_names_for(runs)
         return PaginatedFlowRuns(

@@ -526,6 +526,13 @@ const openSettingsModal = () => {
   modalVisibleForSettings.value = true;
 };
 
+// Allow other components (e.g. the Performance-mode notice in the run results)
+// to open the Flow Settings modal via an editor-store signal.
+watch(
+  () => editorStore.flowSettingsOpenRequest,
+  () => openSettingsModal(),
+);
+
 watch(
   () => nodeStore.flow_id,
   async (newId, oldId) => {

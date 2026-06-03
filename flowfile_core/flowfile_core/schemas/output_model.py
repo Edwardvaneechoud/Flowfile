@@ -32,6 +32,8 @@ class RunInformation(BaseModel):
     start_time: datetime | None = Field(default_factory=datetime.now)
     end_time: datetime | None = None
     success: bool | None = None
+    is_running: bool = False
+    execution_mode: str | None = None
     nodes_completed: int = 0
     number_of_nodes: int = 0
     node_step_result: list[NodeResult]

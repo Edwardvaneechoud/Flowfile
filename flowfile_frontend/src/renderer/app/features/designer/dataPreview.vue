@@ -45,21 +45,6 @@
         </button>
       </div>
 
-      <!-- Button for when there is sample data, but the sample data is outdated -->
-      <div v-if="showOutdatedDataBanner" class="outdated-data-banner">
-        <p>
-          Displayed data might be outdated.
-          <button class="refresh-link-button" @click="handleRefresh">Refresh now</button>
-        </p>
-        <button
-          class="dismiss-button"
-          aria-label="Dismiss notification"
-          @click="dismissOutdatedBanner"
-        >
-          ×
-        </button>
-      </div>
-
       <!-- AG Grid -->
       <ag-grid-vue
         ref="gridComponentRef"
@@ -160,10 +145,9 @@
 </template>
 
 <script setup lang="ts">
-// TODO(refactor): ~906 LOC. Plan to extract:
-//   - DataTabs.vue (~lines 10-28), OutputSelector.vue (~33-46)
-//   - OutdatedDataBanner.vue (~49-61), ArtifactsPanel.vue (~84-155)
-//   - useTableData composable: AG Grid setup + refresh (~lines 316-378)
+// TODO(refactor): large component. Plan to extract:
+//   - DataTabs.vue, OutputSelector.vue, ArtifactsPanel.vue
+//   - useTableData composable: AG Grid setup + refresh
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { TableExample } from "../../components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "../../stores/column-store";
@@ -198,7 +182,6 @@ const gridComponentRef = ref<{ $el?: HTMLElement } | null>(null);
 const columnDefs = ref([{}]);
 const showFetchButton = ref(false);
 const currentNodeId = ref<number | null>(null);
-const showOutdatedDataBanner = ref(false);
 const selectedOutputHandle = ref<string>(DEFAULT_OUTPUT_HANDLE);
 
 // Available output handles for the currently previewed node, read from the
@@ -333,16 +316,6 @@ const onGridReady = (params: { api: GridApi }) => {
   }
 };
 
-function dismissOutdatedBanner() {
-  showOutdatedDataBanner.value = false;
-}
-
-async function handleRefresh() {
-  // Hide banner and trigger the existing fetch logic
-  showOutdatedDataBanner.value = false;
-  await handleFetchData();
-}
-
 const calculateGridHeight = () => {
   const otherElementsHeight = 300;
   const availableHeight = window.innerHeight - otherElementsHeight;
@@ -355,7 +328,6 @@ async function downloadData(nodeId: number) {
   try {
     isLoading.value = true;
     showFetchButton.value = false;
-    showOutdatedDataBanner.value = false;
     currentNodeId.value = nodeId;
 
     let resp = await nodeStore.getTableExample(
@@ -366,7 +338,6 @@ async function downloadData(nodeId: number) {
 
     if (resp) {
       dataPreview.value = resp;
-      showOutdatedDataBanner.value = !resp.has_run_with_current_setup && resp.has_example_data;
       // Always set up columns
       const _cd: Array<{ field: string; headerName: string; resizable: boolean }> = [];
       const _columns = dataPreview.value.table_schema;
@@ -552,174 +523,6 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   height: 100%;
   width: 100%;
   position: relative;
-}
-
-/* Modern Outdated Data Banner Styles */
-.outdated-data-banner {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-width: 380px;
-  max-width: 90%;
-  padding: 12px 16px;
-  background: linear-gradient(135deg, rgba(254, 243, 199, 0.98) 0%, rgba(253, 230, 138, 0.98) 100%);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(251, 191, 36, 0.3);
-  border-radius: 12px;
-  box-shadow:
-    0 4px 20px rgba(251, 191, 36, 0.15),
-    0 2px 8px rgba(0, 0, 0, 0.05);
-  font-size: 14px;
-  animation: slideDown 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  overflow: hidden;
-}
-
-/* Shimmer effect */
-.outdated-data-banner::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
-  animation: shimmer 3s infinite;
-}
-
-/* Warning icon animation */
-@keyframes pulse {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.1);
-  }
-}
-
-@keyframes shimmer {
-  0% {
-    left: -100%;
-  }
-  100% {
-    left: 100%;
-  }
-}
-
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -20px);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-}
-
-.outdated-data-banner p {
-  margin: 0;
-  color: var(--color-warning-darker);
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  position: relative;
-  z-index: 1;
-}
-
-/* Add warning icon */
-.outdated-data-banner p::before {
-  content: "⚠️";
-  font-size: 16px;
-  animation: pulse 2s ease-in-out infinite;
-}
-
-.refresh-link-button {
-  background: linear-gradient(
-    135deg,
-    var(--color-background-primary) 0%,
-    var(--color-warning-light) 100%
-  );
-  border: 1px solid var(--color-warning);
-  color: var(--color-warning-dark);
-  border-radius: 6px;
-  padding: 5px 14px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  position: relative;
-  overflow: hidden;
-  white-space: nowrap;
-  margin-left: 4px;
-}
-
-/* Refresh icon */
-.refresh-link-button::before {
-  content: "↻";
-  font-size: 14px;
-  transition: transform 0.3s ease;
-}
-
-.refresh-link-button:hover {
-  background: linear-gradient(135deg, var(--color-warning) 0%, var(--color-warning-hover) 100%);
-  color: var(--color-text-inverse);
-  border-color: var(--color-warning-hover);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
-}
-
-.refresh-link-button:hover::before {
-  transform: rotate(180deg);
-}
-
-.refresh-link-button:active {
-  transform: translateY(0);
-  box-shadow:
-    0 2px 6px rgba(245, 158, 11, 0.2),
-    inset 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.dismiss-button {
-  background: var(--color-background-primary);
-  border: 1px solid var(--color-warning);
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  color: var(--color-warning-dark);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  flex-shrink: 0;
-  margin-left: 12px;
-  position: relative;
-  z-index: 1;
-}
-
-.dismiss-button:hover {
-  background: var(--color-background-hover);
-  border-color: var(--color-warning);
-  color: var(--color-warning-darker);
-  transform: rotate(90deg) scale(1.1);
-  box-shadow: var(--shadow-sm);
-}
-
-.dismiss-button:active {
-  transform: rotate(90deg) scale(0.95);
 }
 
 /* Fetch Data Section Styles */

@@ -141,12 +141,14 @@ export class CatalogApi {
     offset = 0,
     scheduleId?: number | null,
     runType?: string | null,
+    search?: string | null,
   ): Promise<PaginatedFlowRuns> {
     const params: Record<string, any> = { limit, offset };
     if (registrationId !== undefined && registrationId !== null)
       params.registration_id = registrationId;
     if (scheduleId !== undefined && scheduleId !== null) params.schedule_id = scheduleId;
     if (runType) params.run_type = runType;
+    if (search) params.search = search;
     const response = await axios.get<PaginatedFlowRuns>("/catalog/runs", { params });
     return response.data;
   }
