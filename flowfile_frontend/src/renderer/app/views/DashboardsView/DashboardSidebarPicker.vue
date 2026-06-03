@@ -2,7 +2,15 @@
   <div class="picker">
     <div class="picker-tools">
       <h3>Insert</h3>
-      <el-button size="small" plain class="picker-tool-btn" @click="emit('add-text')">
+      <el-button
+        size="small"
+        plain
+        class="picker-tool-btn"
+        draggable="true"
+        title="Click or drag onto the canvas"
+        @click="emit('add-text')"
+        @dragstart="onTextDragStart($event)"
+      >
         <el-icon><EditPen /></el-icon>
         <span>Text block</span>
       </el-button>
@@ -10,22 +18,44 @@
     <div class="picker-divider" />
     <div class="picker-header">
       <h3>Visualizations</h3>
-      <p class="picker-sub">Click to add to the canvas.</p>
+      <p class="picker-sub">Click or drag onto the canvas.</p>
     </div>
-    <el-input v-model="search" size="small" placeholder="Filter" clearable class="picker-search">
+    <el-input
+      v-model="search"
+      size="small"
+      placeholder="Filter by name"
+      clearable
+      class="picker-search"
+    >
       <template #prefix>
         <el-icon><Search /></el-icon>
       </template>
     </el-input>
+    <el-select
+      v-if="tableOptions.length"
+      v-model="tableFilter"
+      size="small"
+      placeholder="All tables"
+      clearable
+      filterable
+      class="picker-table-filter"
+    >
+      <el-option v-for="opt in tableOptions" :key="opt.id" :label="opt.label" :value="opt.id" />
+    </el-select>
 
     <div v-if="catalogStore.loadingVisualizationLibrary" class="picker-state">
       <el-skeleton :rows="3" animated />
     </div>
     <div v-else-if="!filtered.length" class="picker-state">
       <el-empty
-        :description="search ? 'No visualizations match.' : 'No saved visualizations yet.'"
+        :description="hasActiveFilter ? 'No visualizations match.' : 'No saved visualizations yet.'"
         :image-size="40"
-      />
+      >
+        <el-button v-if="!hasActiveFilter" size="small" type="primary" @click="emit('create')">
+          <el-icon><Plus /></el-icon>
+          <span>New visualization</span>
+        </el-button>
+      </el-empty>
     </div>
     <ul v-else class="picker-list">
       <li
@@ -33,7 +63,13 @@
         :key="viz.id"
         class="picker-item"
         :class="{ 'picker-item-added': addedVizIds.has(viz.id) }"
-        :title="addedVizIds.has(viz.id) ? 'Already on canvas — adds another tile' : 'Add to canvas'"
+        :title="
+          addedVizIds.has(viz.id)
+            ? 'Already on canvas — click or drag to add another tile'
+            : 'Click or drag onto the canvas'
+        "
+        draggable="true"
+        @dragstart="onVizDragStart($event, viz.id)"
         @click="onAdd(viz)"
       >
         <i
@@ -50,6 +86,13 @@
         <el-icon class="picker-add-icon"><Plus /></el-icon>
       </li>
     </ul>
+
+    <div v-if="filtered.length || hasActiveFilter" class="picker-footer">
+      <el-button size="small" plain class="picker-tool-btn" @click="emit('create')">
+        <el-icon><Plus /></el-icon>
+        <span>New visualization</span>
+      </el-button>
+    </div>
   </div>
 </template>
 
@@ -57,6 +100,7 @@
 import { computed, onMounted, ref } from "vue";
 import { EditPen, Plus, Search } from "@element-plus/icons-vue";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useDashboardDragAndDrop } from "../../composables/useDashboardDragAndDrop";
 import type { CatalogVisualization } from "../../types";
 
 defineProps<{ addedVizIds: Set<number> }>();
@@ -64,21 +108,46 @@ defineProps<{ addedVizIds: Set<number> }>();
 const emit = defineEmits<{
   (e: "add", viz: CatalogVisualization): void;
   (e: "add-text"): void;
+  (e: "create"): void;
 }>();
 
 const catalogStore = useCatalogStore();
+const { onVizDragStart, onTextDragStart } = useDashboardDragAndDrop();
 const search = ref("");
+const tableFilter = ref<number | null>(null);
+
+// Distinct catalog tables that back at least one saved visualization.
+const tableOptions = computed(() => {
+  const seen = new Map<number, string>();
+  for (const v of catalogStore.visualizationLibrary) {
+    if (v.source_type === "table" && v.catalog_table_id != null && !seen.has(v.catalog_table_id)) {
+      seen.set(
+        v.catalog_table_id,
+        v.table_full_name ?? v.table_name ?? `Table #${v.catalog_table_id}`,
+      );
+    }
+  }
+  return [...seen.entries()]
+    .map(([id, label]) => ({ id, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+});
+
+const hasActiveFilter = computed(
+  () => search.value.trim().length > 0 || typeof tableFilter.value === "number",
+);
 
 const filtered = computed(() => {
-  const lib = catalogStore.visualizationLibrary;
   const q = search.value.trim().toLowerCase();
-  if (!q) return lib;
-  return lib.filter(
-    (v) =>
+  const table = typeof tableFilter.value === "number" ? tableFilter.value : null;
+  return catalogStore.visualizationLibrary.filter((v) => {
+    if (table !== null && v.catalog_table_id !== table) return false;
+    if (!q) return true;
+    return (
       v.name.toLowerCase().includes(q) ||
       (v.table_full_name ?? "").toLowerCase().includes(q) ||
-      (v.namespace_name ?? "").toLowerCase().includes(q),
-  );
+      (v.namespace_name ?? "").toLowerCase().includes(q)
+    );
+  });
 });
 
 const sourceLabel = (viz: CatalogVisualization): string => {
@@ -110,6 +179,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex-shrink: 0;
 }
 .picker-tools h3 {
   margin: 0;
@@ -124,6 +194,10 @@ onMounted(() => {
   height: 1px;
   background: var(--el-border-color-lighter);
   margin: 2px 0;
+  flex-shrink: 0;
+}
+.picker-header {
+  flex-shrink: 0;
 }
 .picker-header h3 {
   margin: 0 0 2px 0;
@@ -138,19 +212,31 @@ onMounted(() => {
 .picker-search {
   flex-shrink: 0;
 }
+.picker-table-filter {
+  flex-shrink: 0;
+  width: 100%;
+}
 .picker-state {
   padding-top: 16px;
 }
+/* flex-grow:0 so the list takes only its content height — the footer then sits
+ * directly under the last visual. flex-shrink:1 + min-height:0 + overflow lets
+ * it scroll (footer pinned near the bottom) once it fills the sidebar. */
 .picker-list {
   list-style: none;
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.picker-footer {
+  flex-shrink: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 .picker-item {
   display: flex;
@@ -159,9 +245,12 @@ onMounted(() => {
   padding: 8px 10px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
-  cursor: pointer;
+  cursor: grab;
   background: var(--el-bg-color);
   transition: background 0.1s;
+}
+.picker-item:active {
+  cursor: grabbing;
 }
 .picker-item:hover {
   background: var(--el-fill-color-light);
