@@ -94,6 +94,11 @@ const activeIndex = computed(() => {
     const tab = (route.query.tab as string) || "overview";
     return `connections:${tab}`;
   }
+  // Catalog sub-items likewise share the "catalog" route but differ by ?tab=.
+  if (name === "catalog") {
+    const tab = (route.query.tab as string) || "catalog";
+    return `catalog:${tab}`;
+  }
   return name;
 });
 
@@ -159,10 +164,29 @@ function isItemExpanded(item: INavigationRoute): boolean {
 </style>
 
 <!-- Global: the fly-out popover is teleported to <body>, so scoped styles can't
-     reach it. Gives the collapsed sub-menu fly-out a clear "Connections" header. -->
+     reach it. Gives the collapsed sub-menu fly-out a clear header and keeps the
+     item list compact — the default Element item height (56px) makes a 7-item
+     menu very tall. Shared by the Connections and Catalog sub-menus. -->
 <style>
+.sidebar-submenu-popper {
+  --el-menu-item-height: 34px;
+  --el-menu-sub-item-height: 34px;
+}
+
+.sidebar-submenu-popper .el-menu--popup {
+  min-width: 168px;
+  padding: var(--spacing-1);
+}
+
+.sidebar-submenu-popper .el-menu-item {
+  height: 34px;
+  line-height: 34px;
+  padding: 0 var(--spacing-3);
+  border-radius: var(--border-radius-md);
+}
+
 .sidebar-submenu-popper .el-menu-item-group__title {
-  padding: 8px 20px 5px;
+  padding: var(--spacing-2) var(--spacing-3) var(--spacing-1);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;

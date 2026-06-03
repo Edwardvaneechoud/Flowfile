@@ -802,8 +802,8 @@ function formatCell(value: any): string {
   gap: var(--spacing-2);
   padding: var(--spacing-2) var(--spacing-3);
   margin-bottom: var(--spacing-3);
-  background: var(--color-warning-light, rgba(234, 179, 8, 0.1));
-  border: 1px solid var(--color-warning, #eab308);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
   border-radius: var(--border-radius-md);
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);

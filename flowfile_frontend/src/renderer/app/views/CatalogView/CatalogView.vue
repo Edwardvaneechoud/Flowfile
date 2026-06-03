@@ -433,6 +433,7 @@ import SqlEditorPanel from "./SqlEditorPanel.vue";
 import VisualsPanel from "./VisualsPanel.vue";
 import ApisPanel from "./ApisPanel.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";
+import { catalogTabs } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   CatalogTab,
@@ -448,50 +449,19 @@ const route = useRoute();
 const catalogStore = useCatalogStore();
 const flowStore = useFlowStore();
 
-const tabs = computed(() => [
-  {
-    key: "catalog" as CatalogTab,
-    label: "Catalog",
-    icon: "fa-solid fa-folder-tree",
-    badge: null,
-  },
-  {
-    key: "favorites" as CatalogTab,
-    label: "Favorites",
-    icon: "fa-solid fa-star",
-    badge: catalogStore.stats?.total_favorites ?? null,
-  },
-  {
-    key: "runs" as CatalogTab,
-    label: "Run History",
-    icon: "fa-solid fa-clock-rotate-left",
-    badge: null,
-  },
-  {
-    key: "schedules" as CatalogTab,
-    label: "Schedules",
-    icon: "fa-solid fa-calendar-days",
-    badge: catalogStore.stats?.total_schedules ?? null,
-  },
-  {
-    key: "sql" as CatalogTab,
-    label: "SQL",
-    icon: "fa-solid fa-code",
-    badge: null,
-  },
-  {
-    key: "visuals" as CatalogTab,
-    label: "Visuals",
-    icon: "fa-solid fa-chart-pie",
-    badge: null,
-  },
-  {
-    key: "apis" as CatalogTab,
-    label: "APIs",
-    icon: "fa-solid fa-plug",
-    badge: null,
-  },
-]);
+const tabs = computed(() =>
+  catalogTabs.map((tab) => ({
+    key: tab.key as CatalogTab,
+    label: tab.label,
+    icon: tab.icon,
+    badge:
+      tab.key === "favorites"
+        ? (catalogStore.stats?.total_favorites ?? null)
+        : tab.key === "schedules"
+          ? (catalogStore.stats?.total_schedules ?? null)
+          : null,
+  })),
+);
 
 // Search and filter state
 const searchQuery = ref("");
