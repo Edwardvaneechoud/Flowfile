@@ -1,0 +1,114 @@
+<!doctype html>
+<!--
+  Standalone browser smoke test for the formula playground (Phase 3, Step 0).
+
+  Purpose: confirm the formula engine runs in a browser via Pyodide with NO
+  COOP/COEP cross-origin-isolation headers — i.e. exactly what GitHub Pages
+  serves. (Headless validation in Node already passed; this confirms the
+  browser path.)
+
+  How to run:
+    1. Build the patched wheel from the engine repo:
+         pip wheel /path/to/polars_expr_transformer --no-deps -w .
+       …so this file sits next to polars_expr_transformer-0.6.0-py3-none-any.whl
+    2. Serve this folder with a header-less static server (mimics GitHub Pages):
+         python -m http.server 8000
+    3. Open http://localhost:8000/formula_playground_smoketest.html and click Run.
+
+  If it prints a result table, the no-header browser path is confirmed.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Flowfile formula playground — smoke test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    input { width: 100%; font-family: monospace; padding: .5rem; box-sizing: border-box; }
+    button { margin-top: .5rem; padding: .5rem 1rem; }
+    table { border-collapse: collapse; margin-top: 1rem; }
+    th, td { border: 1px solid #ccc; padding: .3rem .6rem; }
+    #status { color: #555; margin-left: .5rem; }
+    .err { color: #b00020; font-family: monospace; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Formula playground — browser smoke test</h1>
+  <p>Served with no COOP/COEP headers (e.g. <code>python -m http.server</code>),
+     this mimics GitHub Pages. A result table means the no-header path works.</p>
+
+  <label>Formula (creates a <code>result</code> column):</label>
+  <input id="formula" value="[price] * [quantity]" spellcheck="false" />
+  <button id="run">Run ▸</button><span id="status"></span>
+  <div id="out"></div>
+
+  <script>
+    // Local wheel by default; override with ?pkg=polars-expr-transformer>=0.6.0 to test PyPI.
+    const PKG = new URLSearchParams(location.search).get("pkg")
+              || "emfs:/wheel/polars_expr_transformer-0.6.0-py3-none-any.whl";
+    const WHEEL_FILE = "polars_expr_transformer-0.6.0-py3-none-any.whl";
+    const V = "0.27.7";
+    const status = (m) => (document.getElementById("status").textContent = m || "");
+    let ready = null;
+
+    async function ensure() {
+      if (ready) return ready;
+      ready = (async () => {
+        status("loading Pyodide…");
+        await new Promise((res, rej) => {
+          const s = document.createElement("script");
+          s.src = `https://cdn.jsdelivr.net/pyodide/v${V}/full/pyodide.js`;
+          s.onload = res; s.onerror = () => rej(new Error("pyodide.js load failed"));
+          document.head.appendChild(s);
+        });
+        const py = await loadPyodide({ indexURL: `https://cdn.jsdelivr.net/pyodide/v${V}/full/` });
+        status("loading polars…");
+        await py.loadPackage(["micropip", "polars", "pydantic"]);
+        status("installing engine…");
+        // If using the local wheel, fetch it and drop into the Pyodide FS first.
+        if (PKG.startsWith("emfs:")) {
+          const buf = new Uint8Array(await (await fetch("./" + WHEEL_FILE)).arrayBuffer());
+          py.FS.mkdirTree("/wheel");
+          py.FS.writeFile("/wheel/" + WHEEL_FILE, buf);
+        }
+        const micropip = py.pyimport("micropip");
+        await micropip.install(PKG, false, false);
+        py.runPython(
+          "import json, polars as pl\n" +
+          "from polars_expr_transformer import simple_function_to_expr as _f\n" +
+          "_df = pl.DataFrame({'product':['Widget','Gadget','Tool'],'price':[10.5,25.0,8.75],'quantity':[100,50,200],'discount':[0.1,0.15,0.05]})\n"
+        );
+        return py;
+      })().catch((e) => { ready = null; throw e; });
+      return ready;
+    }
+
+    document.getElementById("run").onclick = async () => {
+      const out = document.getElementById("out");
+      out.innerHTML = "";
+      try {
+        const py = await ensure();
+        status("running…");
+        py.globals.set("__f", document.getElementById("formula").value);
+        const res = JSON.parse(await py.runPythonAsync(
+          "import json\n" +
+          "try:\n" +
+          "    r = _df.with_columns(_f(__f).alias('result'))\n" +
+          "    p = {'ok': True, 'cols': r.columns, 'rows': r.rows()}\n" +
+          "except Exception as e:\n" +
+          "    p = {'ok': False, 'error': type(e).__name__ + ': ' + str(e)}\n" +
+          "json.dumps(p, default=str)\n"
+        ));
+        status("");
+        if (!res.ok) { out.innerHTML = `<div class="err">${res.error}</div>`; return; }
+        out.innerHTML = "<table><thead><tr>" + res.cols.map((c) => `<th>${c}</th>`).join("") +
+          "</tr></thead><tbody>" +
+          res.rows.map((row) => "<tr>" + row.map((c) => `<td>${c}</td>`).join("") + "</tr>").join("") +
+          "</tbody></table>";
+      } catch (e) {
+        status("");
+        out.innerHTML = `<div class="err">${e && e.message ? e.message : e}</div>`;
+      }
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,94 @@
+/* Flowfile formula playground widget */
+.formula-playground {
+  border: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
+  border-radius: 8px;
+  padding: 1rem 1.25rem 1.25rem;
+  margin: 1.25rem 0;
+  background: var(--md-code-bg-color, #f5f5f5);
+}
+
+.formula-playground .fp-label {
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+  margin: 0.75rem 0 0.35rem;
+}
+.formula-playground .fp-label:first-child { margin-top: 0; }
+
+.formula-playground .fp-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--md-code-font-family, monospace);
+  font-size: 0.9rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--md-default-fg-color--lighter, #ccc);
+  border-radius: 6px;
+  background: var(--md-default-bg-color, #fff);
+  color: var(--md-default-fg-color, #000);
+}
+.formula-playground .fp-input:focus {
+  outline: none;
+  border-color: var(--md-accent-fg-color, #ff9800);
+}
+
+.formula-playground .fp-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+.formula-playground .fp-run {
+  background: var(--md-primary-fg-color, #3f51b5);
+  color: var(--md-primary-bg-color, #fff);
+  border: none;
+  border-radius: 6px;
+  padding: 0.45rem 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.formula-playground .fp-run:disabled { opacity: 0.55; cursor: default; }
+
+.formula-playground .fp-status {
+  font-size: 0.82rem;
+  opacity: 0.8;
+}
+
+.formula-playground .fp-sample,
+.formula-playground .fp-output { overflow-x: auto; }
+.formula-playground .fp-output { margin-top: 0.75rem; }
+
+.formula-playground table.fp-table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  font-family: var(--md-code-font-family, monospace);
+}
+.formula-playground table.fp-table th,
+.formula-playground table.fp-table td {
+  border: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
+  padding: 0.3rem 0.6rem;
+  text-align: right;
+  white-space: nowrap;
+}
+.formula-playground table.fp-table th {
+  background: var(--md-default-fg-color--lightest, #eee);
+  text-align: left;
+  font-weight: 600;
+}
+/* highlight the generated result column (last) */
+.formula-playground table.fp-table th:last-child,
+.formula-playground table.fp-table td:last-child {
+  background: color-mix(in srgb, var(--md-accent-fg-color, #ff9800) 14%, transparent);
+}
+
+.formula-playground .fp-error {
+  font-family: var(--md-code-font-family, monospace);
+  font-size: 0.85rem;
+  color: #b00020;
+  background: color-mix(in srgb, #b00020 8%, transparent);
+  border: 1px solid color-mix(in srgb, #b00020 35%, transparent);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+}
