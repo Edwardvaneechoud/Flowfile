@@ -835,6 +835,14 @@ def _resolve_database_credentials(
         return database_settings.database_connection, None, None
     else:
         ref_settings = get_local_database_connection(database_settings.database_connection_name, user_id)
+        if ref_settings is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Database connection '{database_settings.database_connection_name}' not found "
+                    "or not accessible for this user"
+                ),
+            )
         encrypted_password = ref_settings.password.get_secret_value()
         return ref_settings, encrypted_password, ref_settings
 
@@ -1081,6 +1089,18 @@ class FlowGraph:
         # Convert snapshot to FlowInformation
         flow_info = _flowfile_data_to_flow_information(snapshot)
 
+        # The history snapshot intentionally omits ``user_id`` (so on-disk flows stay
+        # portable across users). Capture it from the live graph BEFORE clearing so we
+        # can re-stamp it onto the replayed settings — otherwise connection-backed
+        # nodes would be restored with ``user_id=None`` and fail to resolve their
+        # owner's connection at run time. Mirrors ``open_flow``'s re-stamp.
+        prior_user_ids = {
+            node.node_id: uid
+            for node in self.nodes
+            if (uid := getattr(node.setting_input, "user_id", None)) is not None
+        }
+        fallback_uid = next(iter(prior_user_ids.values()), None)
+
         # Clear current state
         self._node_db.clear()
         self._node_ids.clear()
@@ -1120,6 +1140,13 @@ class FlowGraph:
                 # Update flow_id in setting_input
                 if hasattr(node_info.setting_input, "flow_id"):
                     node_info.setting_input.flow_id = original_flow_id
+
+                # Re-stamp the owning user_id (dropped from the snapshot) so the
+                # replayed add_<type> and any deferred connection resolution run
+                # under the correct user. Prefer the node's prior id; fall back to
+                # the session owner (shared by all nodes in a session).
+                if hasattr(node_info.setting_input, "user_id"):
+                    node_info.setting_input.user_id = prior_user_ids.get(node_id, fallback_uid)
 
                 if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
                     if node_info.type in CUSTOM_NODE_STORE:
@@ -3539,11 +3566,14 @@ class FlowGraph:
 
         node_type = "database_writer"
         database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
-        database_connection, encrypted_password, database_reference_settings = _resolve_database_credentials(
-            database_settings, node_database_writer.user_id
-        )
 
         def _func(df: FlowDataEngine):
+            # Resolve the connection lazily so opening/undoing a flow never requires
+            # the current session to own the connection (runs under the node's
+            # ``user_id`` — the flow owner at execution time).
+            _, encrypted_password, database_reference_settings = _resolve_database_credentials(
+                database_settings, node_database_writer.user_id
+            )
             df.lazy = True
             database_external_write_settings = (
                 sql_models.DatabaseExternalWriteSettings.create_from_from_node_database_writer(
@@ -3592,11 +3622,20 @@ class FlowGraph:
         logger.info("Adding database reader")
         node_type = "database_reader"
         database_settings: input_schema.DatabaseSettings = node_database_reader.database_settings
-        database_connection, encrypted_password, database_reference_settings = _resolve_database_credentials(
-            database_settings, node_database_reader.user_id
-        )
+
+        # Resolve the connection lazily so opening/undoing a flow never requires
+        # the current session to own the connection. Memoized so ``_func`` and
+        # ``schema_callback`` share a single lookup. Runs under the node's
+        # ``user_id`` (the flow owner at execution time).
+        _creds: dict = {}
+
+        def _get_creds():
+            if "v" not in _creds:
+                _creds["v"] = _resolve_database_credentials(database_settings, node_database_reader.user_id)
+            return _creds["v"]
 
         def _func():
+            database_connection, encrypted_password, database_reference_settings = _get_creds()
             sql_source = BaseSqlSource(
                 query=None if database_settings.query_mode == "table" else database_settings.query,
                 table_name=database_settings.table_name,
@@ -3647,6 +3686,12 @@ class FlowGraph:
             return fl
 
         def schema_callback():
+            # Prefer the schema cached on the node so opening a saved flow renders
+            # columns without a live connection. Fall back to the connection only
+            # when fields were never captured (failures here are caught per-node).
+            if node_database_reader.fields:
+                return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_database_reader.fields]
+            database_connection, encrypted_password, _ = _get_creds()
             sql_source = SqlSource(
                 connection_string=sql_utils.construct_sql_uri(
                     database_type=database_connection.database_type,
@@ -3704,32 +3749,40 @@ class FlowGraph:
         node_type = "kafka_source"
         kafka_settings = node_kafka_source.kafka_settings
 
-        with get_db_context() as db:
-            db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, node_kafka_source.user_id)
-            if db_conn is None:
-                if kafka_settings.kafka_connection_name:
-                    db_conn = get_kafka_connection_by_name(
-                        db, kafka_settings.kafka_connection_name, node_kafka_source.user_id
-                    )
-                if db_conn is None:
-                    raise HTTPException(status_code=400, detail="Kafka connection not found")
+        # Resolve the connection lazily so opening/undoing a flow never requires
+        # the current session to own the connection. Memoized so ``_func`` and
+        # ``schema_callback`` share a single lookup. Runs under the node's
+        # ``user_id`` (the flow owner at execution time).
+        _read_settings: dict = {}
 
-            consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
-
-        kafka_read_settings = KafkaReadSettings.from_consumer_config(
-            consumer_config,
-            topic=kafka_settings.topic_name,
-            value_format=kafka_settings.value_format,
-            group_id=kafka_settings.sync_name
-            or f"flowfile-{node_kafka_source.flow_id}-node-{node_kafka_source.node_id}",
-            start_offset=kafka_settings.start_offset,
-            max_messages=kafka_settings.max_messages,
-            poll_timeout_seconds=kafka_settings.poll_timeout_seconds,
-            flowfile_flow_id=node_kafka_source.flow_id,
-            flowfile_node_id=node_kafka_source.node_id,
-        )
+        def _get_kafka_read_settings() -> KafkaReadSettings:
+            if "v" not in _read_settings:
+                with get_db_context() as db:
+                    db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, node_kafka_source.user_id)
+                    if db_conn is None:
+                        if kafka_settings.kafka_connection_name:
+                            db_conn = get_kafka_connection_by_name(
+                                db, kafka_settings.kafka_connection_name, node_kafka_source.user_id
+                            )
+                        if db_conn is None:
+                            raise HTTPException(status_code=400, detail="Kafka connection not found")
+                    consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
+                _read_settings["v"] = KafkaReadSettings.from_consumer_config(
+                    consumer_config,
+                    topic=kafka_settings.topic_name,
+                    value_format=kafka_settings.value_format,
+                    group_id=kafka_settings.sync_name
+                    or f"flowfile-{node_kafka_source.flow_id}-node-{node_kafka_source.node_id}",
+                    start_offset=kafka_settings.start_offset,
+                    max_messages=kafka_settings.max_messages,
+                    poll_timeout_seconds=kafka_settings.poll_timeout_seconds,
+                    flowfile_flow_id=node_kafka_source.flow_id,
+                    flowfile_node_id=node_kafka_source.node_id,
+                )
+            return _read_settings["v"]
 
         def _func():
+            kafka_read_settings = _get_kafka_read_settings()
             if self.execution_location == "local":
                 # Local execution — consume directly in-process with spill-to-IPC
                 import tempfile
@@ -3780,7 +3833,12 @@ class FlowGraph:
             return decrypt_secret(encrypted).get_secret_value()
 
         def schema_callback():
-            schema_pairs = infer_topic_schema(kafka_read_settings, sample_size=10, decrypt_fn=_decrypt_fn)
+            # Prefer the schema cached on the node so opening a saved flow renders
+            # columns without sampling the topic (a live connection). Sampling only
+            # runs when fields were never captured (failures are caught per-node).
+            if node_kafka_source.fields:
+                return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_kafka_source.fields]
+            schema_pairs = infer_topic_schema(_get_kafka_read_settings(), sample_size=10, decrypt_fn=_decrypt_fn)
             # Since the schema callback takes quite some time, we only run the function once.
             if not schema_pairs:
                 result = [
@@ -3842,56 +3900,65 @@ class FlowGraph:
         node_type = "google_analytics_reader"
         ga_settings = node_ga_reader.google_analytics_settings
 
-        with get_db_context() as db:
-            db_conn = get_ga_connection(db, ga_settings.ga_connection_name, node_ga_reader.user_id)
-            if db_conn is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Google Analytics connection '{ga_settings.ga_connection_name}' not found "
-                        "or has not completed sign-in"
-                    ),
+        def _build_worker_settings() -> WorkerGoogleAnalyticsReadSettings:
+            # Connection resolution is deferred to run time so that *opening* or
+            # *undoing* a flow never requires the current session to own the
+            # connection (mirrors ``add_cloud_storage_reader``). It runs under
+            # ``node_ga_reader.user_id`` — the flow owner at execution time.
+            with get_db_context() as db:
+                db_conn = get_ga_connection(db, ga_settings.ga_connection_name, node_ga_reader.user_id)
+                if db_conn is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Google Analytics connection '{ga_settings.ga_connection_name}' not found "
+                            "or has not completed sign-in"
+                        ),
+                    )
+                auth_method = db_conn.auth_method
+                encrypted_credential = get_encrypted_credential(
+                    db, ga_settings.ga_connection_name, node_ga_reader.user_id
                 )
-            auth_method = db_conn.auth_method
-            encrypted_credential = get_encrypted_credential(db, ga_settings.ga_connection_name, node_ga_reader.user_id)
-            if encrypted_credential is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Google Analytics connection '{ga_settings.ga_connection_name}' has no stored credential",
-                )
-            # OAuth needs the per-instance client config; service accounts don't.
-            oauth_cfg = get_google_oauth_config(db, node_ga_reader.user_id) if auth_method == "oauth" else None
+                if encrypted_credential is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Google Analytics connection '{ga_settings.ga_connection_name}' has no stored credential"
+                        ),
+                    )
+                # OAuth needs the per-instance client config; service accounts don't.
+                oauth_cfg = get_google_oauth_config(db, node_ga_reader.user_id) if auth_method == "oauth" else None
 
-        common_kwargs = dict(
-            property_id=ga_settings.property_id,
-            start_date=ga_settings.start_date,
-            end_date=ga_settings.end_date,
-            metrics=ga_settings.metrics,
-            dimensions=ga_settings.dimensions,
-            limit=ga_settings.limit,
-            filters=[
-                WorkerGoogleAnalyticsFilter(
-                    field=f.field,
-                    operator=f.operator,
-                    value=f.value,
-                    case_sensitive=f.case_sensitive,
-                )
-                for f in ga_settings.filters
-            ],
-            order_bys=[
-                WorkerGoogleAnalyticsOrderBy(field=ob.field, descending=ob.descending) for ob in ga_settings.order_bys
-            ],
-            flowfile_flow_id=node_ga_reader.flow_id,
-            flowfile_node_id=node_ga_reader.node_id,
-        )
-
-        if auth_method == "service_account":
-            worker_settings = WorkerGoogleAnalyticsReadSettings(
-                auth_method="service_account",
-                service_account_key_encrypted=encrypted_credential,
-                **common_kwargs,
+            common_kwargs = dict(
+                property_id=ga_settings.property_id,
+                start_date=ga_settings.start_date,
+                end_date=ga_settings.end_date,
+                metrics=ga_settings.metrics,
+                dimensions=ga_settings.dimensions,
+                limit=ga_settings.limit,
+                filters=[
+                    WorkerGoogleAnalyticsFilter(
+                        field=f.field,
+                        operator=f.operator,
+                        value=f.value,
+                        case_sensitive=f.case_sensitive,
+                    )
+                    for f in ga_settings.filters
+                ],
+                order_bys=[
+                    WorkerGoogleAnalyticsOrderBy(field=ob.field, descending=ob.descending)
+                    for ob in ga_settings.order_bys
+                ],
+                flowfile_flow_id=node_ga_reader.flow_id,
+                flowfile_node_id=node_ga_reader.node_id,
             )
-        else:
+
+            if auth_method == "service_account":
+                return WorkerGoogleAnalyticsReadSettings(
+                    auth_method="service_account",
+                    service_account_key_encrypted=encrypted_credential,
+                    **common_kwargs,
+                )
             if not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
                 raise HTTPException(
                     status_code=500,
@@ -3900,7 +3967,7 @@ class FlowGraph:
                         "and paste your OAuth client credentials before running this flow."
                     ),
                 )
-            worker_settings = WorkerGoogleAnalyticsReadSettings(
+            return WorkerGoogleAnalyticsReadSettings(
                 auth_method="oauth",
                 refresh_token_encrypted=encrypted_credential,
                 oauth_client_id=oauth_cfg["client_id"],
@@ -3911,12 +3978,13 @@ class FlowGraph:
         # Stamp the predicted schema onto the setting object now, so downstream
         # nodes can introspect columns without ever invoking ``_func`` (which
         # would trigger a worker → Google round-trip). ``derive_schema`` is
-        # pure-Python and runs against the chosen metrics/dimensions only.
+        # pure-Python and runs against the chosen metrics/dimensions only — no DB,
+        # so it stays eager and keeps flow-open connection-free.
         predicted_columns = derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
         node_ga_reader.fields = [c.get_minimal_field_info() for c in predicted_columns]
 
         def _func() -> FlowDataEngine:
-            fetcher = ExternalGoogleAnalyticsFetcher(worker_settings, wait_on_completion=False)
+            fetcher = ExternalGoogleAnalyticsFetcher(_build_worker_settings(), wait_on_completion=False)
             node._fetch_cached_df = fetcher
             # ``get_result()`` returns a ``pl.LazyFrame`` deserialised from the
             # worker's Arrow IPC file — never collect on the core service.
@@ -3976,15 +4044,23 @@ class FlowGraph:
         node_type = "rest_api_reader"
         auth = node_rest_api_reader.rest_api_settings.auth
 
-        # Resolve the credential to an encrypted token for the worker (stored
-        # secret by name, or an inline plaintext). Never persist inline plaintext.
-        secret_encrypted = resolve_auth_secret_encrypted(auth, node_rest_api_reader.user_id)
+        # Encrypt any *inline* plaintext credential eagerly and null it out so it is
+        # never persisted on the node (a security guarantee, independent of who owns
+        # the flow). The *by-name* secret-store lookup is deferred to run time so
+        # opening/undoing a flow never requires the current session to own the
+        # secret — it resolves under the node's ``user_id`` (the flow owner).
+        _inline_encrypted = _encrypt_with_master_key(auth.secret) if (auth.secret and not auth.secret_name) else None
         auth.secret = None
+
+        def _resolve_secret_encrypted() -> str | None:
+            if _inline_encrypted is not None:
+                return _inline_encrypted
+            return resolve_auth_secret_encrypted(auth, node_rest_api_reader.user_id)
 
         def _func() -> FlowDataEngine:
             # All fetching happens in the worker; the core only orchestrates.
             fetcher = ExternalRestApiFetcher(
-                build_rest_api_worker_settings(node_rest_api_reader, secret_encrypted),
+                build_rest_api_worker_settings(node_rest_api_reader, _resolve_secret_encrypted()),
                 wait_on_completion=False,
             )
             node._fetch_cached_df = fetcher
