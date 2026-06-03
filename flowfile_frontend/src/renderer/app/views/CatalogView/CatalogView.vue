@@ -99,6 +99,7 @@
               @select-flow="selectFlow($event)"
               @select-artifact="selectArtifact($event)"
               @select-table="selectTable($event)"
+              @table-context-menu="onTableContextMenu($event)"
               @select-visualization="openVisualization($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
               @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
@@ -334,6 +335,35 @@
       />
     </el-dialog>
 
+    <!-- New visualization editor (opened from a table's right-click menu) -->
+    <el-dialog
+      v-model="vizEditorOpen"
+      title="New visualization"
+      width="92vw"
+      destroy-on-close
+      append-to-body
+    >
+      <VisualizationEditor
+        v-if="vizEditorOpen && vizEditorSource"
+        :source="vizEditorSource"
+        :viz="null"
+        :appearance="vizViewerAppearance"
+        @saved="onVizCreated"
+        @cancel="vizEditorOpen = false"
+      />
+    </el-dialog>
+
+    <!-- Right-click context menu for catalog tables -->
+    <Teleport to="body">
+      <ContextMenu
+        v-if="tableMenu"
+        :position="{ x: tableMenu.x, y: tableMenu.y }"
+        :options="tableMenuOptions"
+        @select="onTableMenuSelect"
+        @close="tableMenu = null"
+      />
+    </Teleport>
+
     <!-- Info Modal -->
     <el-dialog
       v-model="showInfoModal"
@@ -412,7 +442,9 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
+import { NodeApi } from "../../api/node.api";
 import { EmptyState } from "../../components/common";
+import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
 import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
@@ -433,15 +465,19 @@ import SqlEditorPanel from "./SqlEditorPanel.vue";
 import VisualsPanel from "./VisualsPanel.vue";
 import ApisPanel from "./ApisPanel.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";
+import VisualizationEditor from "./VisualizationEditor.vue";
 import { catalogTabs } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   CatalogTab,
+  CatalogTable,
   FlowSchedule,
   FlowScheduleCreate,
   GlobalArtifact,
   NamespaceTree,
+  VizSourceDescriptor,
 } from "../../types";
+import type { ContextMenuOption } from "../../components/common/ContextMenu/types";
 
 const router = useRouter();
 const route = useRoute();
@@ -491,6 +527,19 @@ const showCreateSync = ref(false);
 const vizViewerOpen = ref(false);
 const activeVizId = ref<number | null>(null);
 const vizViewerAppearance = useGraphicWalkerAppearance();
+
+// New-visualization editor (opened from a table's right-click menu)
+const vizEditorOpen = ref(false);
+const vizEditorSource = ref<VizSourceDescriptor | null>(null);
+
+// Right-click context menu for catalog tables
+const tableMenu = ref<{ table: CatalogTable; x: number; y: number } | null>(null);
+const tableMenuOptions: ContextMenuOption[] = [
+  { label: "View table", action: "view" },
+  { label: "Use in flow", action: "read" },
+  { label: "Create visual", action: "visuals" },
+];
+
 const showCreateVirtualTable = ref(false);
 const showSqlEditor = ref(false);
 const sqlInitialQuery = ref<string | undefined>(undefined);
@@ -569,6 +618,61 @@ function closeVizViewer() {
   vizViewerOpen.value = false;
   activeVizId.value = null;
   // Keep the namespace tree in sync if the user renamed/deleted from the viewer.
+  catalogStore.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
+}
+
+function onTableContextMenu(payload: { table: CatalogTable; x: number; y: number }) {
+  tableMenu.value = payload;
+}
+
+function onTableMenuSelect(action: string) {
+  const table = tableMenu.value?.table;
+  if (!table) return;
+  if (action === "view") selectTable(table.id);
+  else if (action === "read") createReadInFlow(table);
+  else if (action === "visuals") openCreateViz(table);
+}
+
+// Spin up a fresh flow whose only node is a catalog reader pre-configured for the
+// given table, then open it in the designer. Mirrors the setting_input the
+// CatalogReader node persists for a configured table (is_setup: true).
+async function createReadInFlow(table: CatalogTable) {
+  try {
+    const flowId = await FlowApi.createFlow(null, null);
+    const nodeId = 1;
+    const posX = 200;
+    const posY = 200;
+    await FlowApi.insertNode(flowId, nodeId, "catalog_reader", posX, posY);
+    await NodeApi.updateSettingsDirectly("catalog_reader", {
+      catalog_table_id: table.id,
+      catalog_table_name: table.name,
+      catalog_full_table_name: null,
+      catalog_namespace_id: table.namespace_id,
+      delta_version: null,
+      sql_query: null,
+      flow_id: flowId,
+      node_id: nodeId,
+      cache_results: false,
+      pos_x: posX,
+      pos_y: posY,
+      is_setup: true,
+      description: "",
+    });
+    flowStore.setFlowId(flowId);
+    router.push({ name: "designer" });
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to create read flow");
+  }
+}
+
+function openCreateViz(table: CatalogTable) {
+  vizEditorSource.value = { source_type: "table", table_id: table.id };
+  vizEditorOpen.value = true;
+}
+
+function onVizCreated() {
+  vizEditorOpen.value = false;
+  vizEditorSource.value = null;
   catalogStore.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
 }
 

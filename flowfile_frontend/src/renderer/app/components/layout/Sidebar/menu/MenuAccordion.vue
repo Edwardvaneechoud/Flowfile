@@ -132,10 +132,10 @@ function isItemExpanded(item: INavigationRoute): boolean {
 
 .el-menu-item [class^="fa-"],
 .el-sub-menu [class^="fa-"] {
-  margin-right: 5px;
-  width: 24px;
+  margin-right: 8px;
+  width: 22px;
   text-align: center;
-  font-size: 18px;
+  font-size: 16px;
   vertical-align: middle;
 }
 
@@ -169,24 +169,34 @@ function isItemExpanded(item: INavigationRoute): boolean {
      menu very tall. Shared by the Connections and Catalog sub-menus. -->
 <style>
 .sidebar-submenu-popper {
-  --el-menu-item-height: 34px;
-  --el-menu-sub-item-height: 34px;
+  --el-menu-item-height: 38px;
+  --el-menu-sub-item-height: 38px;
 }
 
 .sidebar-submenu-popper .el-menu--popup {
-  min-width: 168px;
-  padding: var(--spacing-1);
+  min-width: 184px;
+  padding: var(--spacing-2);
 }
 
 .sidebar-submenu-popper .el-menu-item {
-  height: 34px;
-  line-height: 34px;
-  padding: 0 var(--spacing-3);
+  height: 38px;
+  line-height: 38px;
+  padding: 0 var(--spacing-4);
   border-radius: var(--border-radius-md);
 }
 
+/* Smaller, lighter icons with real breathing room between icon and label —
+   the teleported popper doesn't inherit MenuAccordion's scoped icon rule. */
+.sidebar-submenu-popper .el-menu-item [class^="fa-"] {
+  width: 18px;
+  margin-right: 12px;
+  font-size: 14px;
+  text-align: center;
+  vertical-align: middle;
+}
+
 .sidebar-submenu-popper .el-menu-item-group__title {
-  padding: var(--spacing-2) var(--spacing-3) var(--spacing-1);
+  padding: var(--spacing-2) var(--spacing-4) var(--spacing-1);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;

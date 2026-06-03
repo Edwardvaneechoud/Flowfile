@@ -10,7 +10,7 @@
       />
     </div>
     <div v-if="nodeStore.node_id !== -1" class="node-settings-footer">
-      <el-button type="primary" :loading="isApplying" @click="applySettings">
+      <el-button type="primary" size="small" :loading="isApplying" @click="applySettings">
         {{ justApplied ? "Applied ✓" : "Apply" }}
       </el-button>
     </div>
@@ -113,13 +113,14 @@ watch(
   min-height: 0;
 }
 
-/* Body holds the active node component. It has an explicit (flex-allocated)
-   height, so a node whose root opts in with `height: 100%` (or flex: 1) will
-   fill the panel; nodes with natural-height forms still render at the top
-   with the remaining space below them. */
+/* Body holds the active node component. It scrolls internally so tall forms
+   stay contained instead of overflowing onto the Apply footer; the title above
+   and the footer below stay pinned. A node whose root opts in with
+   `height: 100%` still fills the body; shorter forms render at the top. */
 .node-settings-body {
   flex: 1;
   min-height: 0;
+  overflow: auto;
 }
 
 /* Sticky footer holding the universal Apply button, present for every node. */
@@ -128,7 +129,7 @@ watch(
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 6px 12px;
   border-top: 1px solid var(--el-border-color-lighter);
   background-color: var(--el-bg-color);
 }

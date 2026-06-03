@@ -33,7 +33,7 @@
         :w="item.w"
         :h="item.h"
         :min-w="2"
-        :min-h="2"
+        :min-h="tileById[item.i]?.type === 'text' ? 1 : 2"
         drag-allow-from=".tile-handle"
       >
         <DashboardTile

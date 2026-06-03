@@ -20,28 +20,24 @@
       <h3>Visualizations</h3>
       <p class="picker-sub">Click or drag onto the canvas.</p>
     </div>
-    <el-input
-      v-model="search"
-      size="small"
-      placeholder="Filter by name"
-      clearable
-      class="picker-search"
-    >
-      <template #prefix>
-        <el-icon><Search /></el-icon>
-      </template>
-    </el-input>
-    <el-select
-      v-if="tableOptions.length"
-      v-model="tableFilter"
-      size="small"
-      placeholder="All tables"
-      clearable
-      filterable
-      class="picker-table-filter"
-    >
-      <el-option v-for="opt in tableOptions" :key="opt.id" :label="opt.label" :value="opt.id" />
-    </el-select>
+    <div class="picker-filters">
+      <el-input v-model="search" size="small" placeholder="Filter" clearable class="picker-search">
+        <template #prefix>
+          <el-icon><Search /></el-icon>
+        </template>
+      </el-input>
+      <el-select
+        v-if="tableOptions.length"
+        v-model="tableFilter"
+        size="small"
+        placeholder="All tables"
+        clearable
+        filterable
+        class="picker-table-filter"
+      >
+        <el-option v-for="opt in tableOptions" :key="opt.id" :label="opt.label" :value="opt.id" />
+      </el-select>
+    </div>
 
     <div v-if="catalogStore.loadingVisualizationLibrary" class="picker-state">
       <el-skeleton :rows="3" animated />
@@ -209,12 +205,18 @@ onMounted(() => {
   font-size: 11px;
   color: var(--el-text-color-secondary);
 }
-.picker-search {
+.picker-filters {
+  display: flex;
+  gap: 6px;
   flex-shrink: 0;
 }
+.picker-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .picker-table-filter {
-  flex-shrink: 0;
-  width: 100%;
+  flex: 0 0 116px;
+  width: 116px;
 }
 .picker-state {
   padding-top: 16px;
