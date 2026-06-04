@@ -38,9 +38,9 @@ Build pipelines on a visual canvas, run them, and export the graph as plain Pyth
 Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a SQL editor with embedded viz, flow parameters, sandboxed Python kernels, and a built-in scheduler.
 
 <div align="center">
-  <img src=".github/images/flowfile_canvas_code.png" alt="Flowfile — visual pipeline designer with live code generation" width="800"/>
+  <img src=".github/images/ai-overview.gif" alt="Flowfile AI assistant building a pipeline on the canvas" width="800"/>
   <br>
-  <sub>A three-source pipeline in the visual designer, with the generated Python code on the right.</sub>
+  <sub>The AI assistant building a pipeline on the canvas — describe what you want, get a runnable flow.</sub>
 </div>
 
 &nbsp;
@@ -60,6 +60,14 @@ Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a
 &nbsp;
 
 **A Python API** with Polars-like syntax. Code and visual are two ways to build the same object graph — write a pipeline, call `open_graph_in_editor()`, and see it visually without re-building anything.
+
+<div align="center">
+  <img src=".github/images/flowfile_canvas_code.png" alt="Flowfile — visual pipeline designer with live code generation" width="800"/>
+  <br>
+  <sub>A three-source pipeline in the visual designer, with the generated Python code on the right.</sub>
+</div>
+
+&nbsp;
 
 **Code generation.** Export any visual flow as Python code. For pipelines built from standard transformations (joins, filters, aggregations, formulas, etc.), you get pure Polars code with no Flowfile dependency. For flows using Flowfile-specific nodes — the catalog, Kafka sources, virtual table reads — the export uses Flowfile's Python API instead, since there's no direct Polars equivalent. Flows also save as human-readable YAML, so version control works.
 
