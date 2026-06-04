@@ -180,12 +180,19 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(self: "FlowGraph", *args, **kwargs):
+            # Get the first argument (settings input) from args or kwargs
+            settings_input = args[0] if args else next(iter(kwargs.values()), None)
+
+            # Remember the session owner so restore_from_snapshot can re-stamp
+            # user_id even when the live graph holds no nodes (every editor
+            # mutation funnels through this decorator with a stamped user_id).
+            owner_uid = getattr(settings_input, "user_id", None) if settings_input else None
+            if owner_uid is not None:
+                self._owner_user_id = owner_uid
+
             # Skip history capture if tracking is disabled
             if not self.flow_settings.track_history:
                 return func(self, *args, **kwargs)
-
-            # Get the first argument (settings input) from args or kwargs
-            settings_input = args[0] if args else next(iter(kwargs.values()), None)
 
             # Extract node info from the settings input
             node_id = getattr(settings_input, "node_id", None) if settings_input else None
@@ -928,6 +935,10 @@ class FlowGraph:
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
         self.artifact_context = ArtifactContext()
+        # Last user_id seen on any node settings (stamped by the editor routes /
+        # open_flow). Lets restore_from_snapshot re-stamp the owner even when the
+        # live graph is empty at undo time (snapshots intentionally omit user_id).
+        self._owner_user_id: int | None = None
 
         # Initialize history manager for undo/redo support
         from flowfile_core.flowfile.history_manager import HistoryManager
@@ -1093,13 +1104,18 @@ class FlowGraph:
         # portable across users). Capture it from the live graph BEFORE clearing so we
         # can re-stamp it onto the replayed settings — otherwise connection-backed
         # nodes would be restored with ``user_id=None`` and fail to resolve their
-        # owner's connection at run time. Mirrors ``open_flow``'s re-stamp.
+        # owner's connection at run time. Same idea as ``open_flow``'s re-stamp, but
+        # sourced from the prior graph state instead of the opening user. If the live
+        # graph holds no stamped nodes (e.g. undo right after deleting every node),
+        # fall back to the session owner remembered by ``with_history_capture``.
         prior_user_ids = {
             node.node_id: uid
             for node in self.nodes
             if (uid := getattr(node.setting_input, "user_id", None)) is not None
         }
         fallback_uid = next(iter(prior_user_ids.values()), None)
+        if fallback_uid is None:
+            fallback_uid = self._owner_user_id
 
         # Clear current state
         self._node_db.clear()
@@ -3625,14 +3641,18 @@ class FlowGraph:
 
         # Resolve the connection lazily so opening/undoing a flow never requires
         # the current session to own the connection. Memoized so ``_func`` and
-        # ``schema_callback`` share a single lookup. Runs under the node's
+        # ``schema_callback`` share a single lookup; the lock matters because the
+        # schema callback runs on a background thread (``SingleExecutionFuture``)
+        # while ``_func`` runs on the execution thread. Runs under the node's
         # ``user_id`` (the flow owner at execution time).
         _creds: dict = {}
+        _creds_lock = threading.Lock()
 
         def _get_creds():
-            if "v" not in _creds:
-                _creds["v"] = _resolve_database_credentials(database_settings, node_database_reader.user_id)
-            return _creds["v"]
+            with _creds_lock:
+                if "v" not in _creds:
+                    _creds["v"] = _resolve_database_credentials(database_settings, node_database_reader.user_id)
+                return _creds["v"]
 
         def _func():
             database_connection, encrypted_password, database_reference_settings = _get_creds()
@@ -3749,37 +3769,60 @@ class FlowGraph:
         node_type = "kafka_source"
         kafka_settings = node_kafka_source.kafka_settings
 
+        # Settings updates may echo back ``fields`` cached from a previous topic /
+        # format / connection (the UI clears them, but programmatic callers may
+        # not). Stale fields would make ``schema_callback`` report the old topic's
+        # columns, so drop them whenever a schema-affecting setting changed.
+        # Open/undo replays keep their fields: the replayed settings match the
+        # node's previous ones (or the prior node is just a promise).
+        prior_settings = getattr(self.get_node(node_kafka_source.node_id), "setting_input", None)
+        if node_kafka_source.fields and isinstance(prior_settings, input_schema.NodeKafkaSource):
+            prior_kafka = prior_settings.kafka_settings
+            if (
+                prior_kafka.topic_name != kafka_settings.topic_name
+                or prior_kafka.value_format != kafka_settings.value_format
+                or prior_kafka.kafka_connection_id != kafka_settings.kafka_connection_id
+                or prior_kafka.kafka_connection_name != kafka_settings.kafka_connection_name
+            ):
+                node_kafka_source.fields = None
+
         # Resolve the connection lazily so opening/undoing a flow never requires
         # the current session to own the connection. Memoized so ``_func`` and
-        # ``schema_callback`` share a single lookup. Runs under the node's
+        # ``schema_callback`` share a single lookup; the lock matters because the
+        # schema callback runs on a background thread (``SingleExecutionFuture``)
+        # while ``_func`` runs on the execution thread. Runs under the node's
         # ``user_id`` (the flow owner at execution time).
         _read_settings: dict = {}
+        _read_settings_lock = threading.Lock()
 
         def _get_kafka_read_settings() -> KafkaReadSettings:
-            if "v" not in _read_settings:
-                with get_db_context() as db:
-                    db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, node_kafka_source.user_id)
-                    if db_conn is None:
-                        if kafka_settings.kafka_connection_name:
-                            db_conn = get_kafka_connection_by_name(
-                                db, kafka_settings.kafka_connection_name, node_kafka_source.user_id
-                            )
+            with _read_settings_lock:
+                if "v" not in _read_settings:
+                    with get_db_context() as db:
+                        db_conn = get_kafka_connection(
+                            db, kafka_settings.kafka_connection_id, node_kafka_source.user_id
+                        )
                         if db_conn is None:
-                            raise HTTPException(status_code=400, detail="Kafka connection not found")
-                    consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
-                _read_settings["v"] = KafkaReadSettings.from_consumer_config(
-                    consumer_config,
-                    topic=kafka_settings.topic_name,
-                    value_format=kafka_settings.value_format,
-                    group_id=kafka_settings.sync_name
-                    or f"flowfile-{node_kafka_source.flow_id}-node-{node_kafka_source.node_id}",
-                    start_offset=kafka_settings.start_offset,
-                    max_messages=kafka_settings.max_messages,
-                    poll_timeout_seconds=kafka_settings.poll_timeout_seconds,
-                    flowfile_flow_id=node_kafka_source.flow_id,
-                    flowfile_node_id=node_kafka_source.node_id,
-                )
-            return _read_settings["v"]
+                            if kafka_settings.kafka_connection_name:
+                                db_conn = get_kafka_connection_by_name(
+                                    db, kafka_settings.kafka_connection_name, node_kafka_source.user_id
+                                )
+                            if db_conn is None:
+                                raise HTTPException(status_code=400, detail="Kafka connection not found")
+                        consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
+                    _read_settings["v"] = KafkaReadSettings.from_consumer_config(
+                        consumer_config,
+                        topic=kafka_settings.topic_name,
+                        value_format=kafka_settings.value_format,
+                        group_id=kafka_settings.sync_name
+                        or f"flowfile-{node_kafka_source.flow_id}-node-{node_kafka_source.node_id}",
+                        start_offset=kafka_settings.start_offset,
+                        max_messages=kafka_settings.max_messages,
+                        poll_timeout_seconds=kafka_settings.poll_timeout_seconds,
+                        flowfile_flow_id=node_kafka_source.flow_id,
+                        flowfile_node_id=node_kafka_source.node_id,
+                    )
+                return _read_settings["v"]
 
         def _func():
             kafka_read_settings = _get_kafka_read_settings()
@@ -3959,7 +4002,9 @@ class FlowGraph:
                     service_account_key_encrypted=encrypted_credential,
                     **common_kwargs,
                 )
-            if not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
+            # ``oauth_cfg`` is only fetched for the oauth auth method; guard against
+            # an unknown auth_method value reaching this branch with ``None``.
+            if not oauth_cfg or not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
                 raise HTTPException(
                     status_code=500,
                     detail=(
