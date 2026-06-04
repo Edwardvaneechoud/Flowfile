@@ -501,6 +501,11 @@ def _resolve_connection_string(database_settings: DatabaseSettings, user_id: int
             password = decrypt_secret(encrypted_secret)
     else:
         database_connection = get_local_database_connection(database_settings.database_connection_name, user_id)
+        if database_connection is None:
+            raise ValueError(
+                f"Database connection '{database_settings.database_connection_name}' not found "
+                "or not accessible for this user"
+            )
         encrypted_secret = database_connection.password.get_secret_value()
         password = decrypt_secret(encrypted_secret)
 
