@@ -9,6 +9,11 @@
         :node-id="nodeStore.node_id"
       />
     </div>
+    <div v-if="nodeStore.node_id !== -1" class="node-settings-footer">
+      <el-button type="primary" size="small" :loading="isApplying" @click="applySettings">
+        {{ justApplied ? "Applied ✓" : "Apply" }}
+      </el-button>
+    </div>
   </div>
 </template>
 <script setup lang="ts">
@@ -19,12 +24,34 @@ import NodeTitle from "../../components/nodes/baseNode/nodeTitle.vue";
 
 interface DrawerComponentInstance {
   loadNodeData: (nodeId: number) => void;
-  pushNodeData: () => void;
+  pushNodeData: () => void | Promise<void>;
 }
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const drawerComponentInstance = ref<DrawerComponentInstance | null>(null);
+
+// Universal Apply: every drawer-entry node component exposes pushNodeData (the
+// same save that runs on drawer-close), so this works for all node types,
+// including the ones that don't use genericNodeSettings. Saves without closing.
+const isApplying = ref(false);
+const justApplied = ref(false);
+let appliedTimer: ReturnType<typeof setTimeout> | null = null;
+
+const applySettings = async () => {
+  if (!drawerComponentInstance.value?.pushNodeData) return;
+  isApplying.value = true;
+  try {
+    await drawerComponentInstance.value.pushNodeData();
+    justApplied.value = true;
+    if (appliedTimer) clearTimeout(appliedTimer);
+    appliedTimer = setTimeout(() => {
+      justApplied.value = false;
+    }, 1500);
+  } finally {
+    isApplying.value = false;
+  }
+};
 
 // Track last executed values to prevent double execution
 const lastExecutedState = ref({
@@ -53,6 +80,9 @@ watch(
   [() => drawerComponentInstance.value, () => nodeStore.node_id],
   async ([newInstance, newNodeId], [, oldNodeId]) => {
     const nodeIdChanged = newNodeId !== oldNodeId;
+    if (nodeIdChanged) {
+      justApplied.value = false;
+    }
     if (nodeIdChanged && oldNodeId !== -1 && lastExecutedState.value.componentInstance) {
       await executeCleanup();
       lastExecutedState.value = {
@@ -83,12 +113,24 @@ watch(
   min-height: 0;
 }
 
-/* Body holds the active node component. It has an explicit (flex-allocated)
-   height, so a node whose root opts in with `height: 100%` (or flex: 1) will
-   fill the panel; nodes with natural-height forms still render at the top
-   with the remaining space below them. */
+/* Body holds the active node component. It scrolls internally so tall forms
+   stay contained instead of overflowing onto the Apply footer; the title above
+   and the footer below stay pinned. A node whose root opts in with
+   `height: 100%` still fills the body; shorter forms render at the top. */
 .node-settings-body {
   flex: 1;
   min-height: 0;
+  overflow: auto;
+}
+
+/* Sticky footer holding the universal Apply button, present for every node. */
+.node-settings-footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  background-color: var(--el-bg-color);
 }
 </style>

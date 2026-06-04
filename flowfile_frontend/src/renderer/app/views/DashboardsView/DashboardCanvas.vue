@@ -1,11 +1,19 @@
 <template>
-  <div class="canvas" :class="{ 'canvas-edit': mode === 'edit' }">
+  <div
+    ref="canvasRef"
+    class="canvas"
+    :class="{ 'canvas-edit': mode === 'edit', 'canvas-drop-active': dragOver }"
+    @dragover="onCanvasDragOver"
+    @dragleave="onCanvasDragLeave"
+    @drop="onCanvasDrop"
+  >
     <div v-if="!layout.tiles.length && mode === 'view'" class="canvas-empty">
       <el-empty description="This dashboard has no tiles." />
     </div>
 
     <GridLayout
       v-else
+      ref="gridRef"
       v-model:layout="gridItems"
       :col-num="layout.grid.cols"
       :row-height="layout.grid.row_height"
@@ -25,7 +33,7 @@
         :w="item.w"
         :h="item.h"
         :min-w="2"
-        :min-h="2"
+        :min-h="tileById[item.i]?.type === 'text' ? 1 : 2"
         drag-allow-from=".tile-handle"
       >
         <DashboardTile
@@ -45,9 +53,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, type ComponentPublicInstance } from "vue";
 import { GridItem, GridLayout } from "grid-layout-plus";
 import DashboardTile from "./DashboardTile.vue";
+import {
+  useDashboardDragAndDrop,
+  TEXT_MIME,
+  VIZ_MIME,
+} from "../../composables/useDashboardDragAndDrop";
+import { computeDropCell } from "./gridDrop";
 import type { DashboardLayout, DashboardTile as DashboardTileType } from "../../types";
 
 const props = defineProps<{
@@ -64,7 +78,79 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "update:layout", value: DashboardLayout): void;
   (e: "edit-viz", vizId: number | null): void;
+  (e: "add-viz-at", payload: { vizId: number; x: number; y: number }): void;
+  (e: "add-text-at", payload: { x: number; y: number }): void;
 }>();
+
+const { isDraggingViz, isDraggingText } = useDashboardDragAndDrop();
+const canvasRef = ref<HTMLElement | null>(null);
+const gridRef = ref<ComponentPublicInstance | null>(null);
+const dragOver = ref(false);
+
+const dragHasOurPayload = (e: DragEvent): boolean => {
+  if (isDraggingViz.value || isDraggingText.value) return true;
+  const types = e.dataTransfer?.types;
+  return !!types && (types.includes(VIZ_MIME) || types.includes(TEXT_MIME));
+};
+
+const onCanvasDragOver = (e: DragEvent) => {
+  if (props.mode !== "edit") return;
+  // Payload is unreadable during dragover, so gate on our shared flags (and the
+  // advertised MIME types) to ignore unrelated file/text drags.
+  if (!dragHasOurPayload(e)) return;
+  e.preventDefault(); // required so the subsequent `drop` fires
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  dragOver.value = true;
+};
+
+const onCanvasDragLeave = (e: DragEvent) => {
+  const target = e.currentTarget;
+  if (
+    target instanceof HTMLElement &&
+    e.relatedTarget instanceof Node &&
+    target.contains(e.relatedTarget)
+  ) {
+    return; // moving between children, still inside the canvas
+  }
+  dragOver.value = false;
+};
+
+const onCanvasDrop = (e: DragEvent) => {
+  dragOver.value = false;
+  if (props.mode !== "edit") return;
+  const dt = e.dataTransfer;
+  if (!dt) return;
+  const isText = dt.types.includes(TEXT_MIME);
+  const rawViz = dt.getData(VIZ_MIME);
+  const vizId = rawViz ? Number(rawViz) : NaN;
+  const isViz = Number.isFinite(vizId);
+  if (!isText && !isViz) return;
+  e.preventDefault();
+
+  // Text tiles span the full width (w:12), viz tiles half (w:6); the width
+  // drives the x-clamp so a tile never overflows the grid.
+  const w = isText ? 12 : 6;
+  const layoutEl =
+    (gridRef.value?.$el as HTMLElement | undefined) ??
+    canvasRef.value?.querySelector<HTMLElement>(".vgl-layout") ??
+    null;
+  // Grid not mounted — let the parent append at the next free row (y < 0).
+  let cell = { x: 0, y: -1 };
+  if (layoutEl) {
+    const rect = layoutEl.getBoundingClientRect();
+    cell = computeDropCell({
+      rect: { left: rect.left, top: rect.top, width: rect.width },
+      clientX: e.clientX,
+      clientY: e.clientY,
+      cols: props.layout.grid.cols,
+      rowHeight: props.layout.grid.row_height,
+      margin: 8,
+      w,
+    });
+  }
+  if (isText) emit("add-text-at", { x: cell.x, y: cell.y });
+  else emit("add-viz-at", { vizId, x: cell.x, y: cell.y });
+};
 
 const vizRefreshNonceFor = (vizId: number): number => props.vizRefreshNonces?.[vizId] ?? 0;
 
@@ -164,6 +250,10 @@ const onUpdateTile = (next: DashboardTileType) => {
   :deep(.vgl-layout:not(:has(.vgl-item--dragging, .vgl-item--resizing)))
   .vgl-item--placeholder {
   display: none;
+}
+.canvas-drop-active {
+  outline: 2px dashed var(--el-color-primary);
+  outline-offset: -4px;
 }
 .canvas-edit {
   background: repeating-linear-gradient(

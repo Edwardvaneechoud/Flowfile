@@ -2,10 +2,31 @@
   <el-card class="run-card" shadow="hover">
     <div class="clearfix">
       <span>Flow: {{ runInformation?.flow_id }}</span>
-      <span class="flow-summary">
-        - {{ runInformation?.success ? "Succeeded" : "Failed" }}, Nodes:
-        {{ runInformation?.nodes_completed }}/{{ runInformation?.number_of_nodes }}
+      <span class="flow-summary" :class="runStatusClass">
+        - {{ runStatusText }}, Nodes: {{ runInformation?.nodes_completed }}/{{
+          runInformation?.number_of_nodes
+        }}
       </span>
+    </div>
+
+    <!-- Performance-mode notice: per-step data isn't stored in Performance mode -->
+    <div v-if="showPerfNotice" class="perf-mode-notice">
+      <el-icon class="perf-mode-notice__icon"><Odometer /></el-icon>
+      <span class="perf-mode-notice__text">
+        This flow ran in <strong>Performance</strong> mode, so data for each step isn't stored. To
+        inspect the data step by step, switch to
+        <button type="button" class="perf-mode-notice__link" @click="openFlowSettings">
+          Development mode
+        </button>
+        and run again.
+      </span>
+      <button
+        class="perf-mode-notice__dismiss"
+        aria-label="Dismiss notice"
+        @click="perfNoticeDismissed = true"
+      >
+        ×
+      </button>
     </div>
     <br />
     <div>
@@ -66,10 +87,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, defineProps } from "vue";
+import { ref, computed, watch, defineProps } from "vue";
 import { format } from "date-fns"; // Assuming date-fns is added for date formatting
+import { Odometer } from "@element-plus/icons-vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useAiStore } from "../../../stores/ai-store";
+import { useEditorStore } from "../../../stores/editor-store";
 
 interface RunNode {
   node_id: number;
@@ -92,8 +115,44 @@ const props = defineProps({
 
 const nodeStore = useNodeStore();
 const aiStore = useAiStore();
+const editorStore = useEditorStore();
 const runInformation = computed(() => nodeStore.currentRunResult);
 const selectedNode = ref<Element | null>(null);
+
+const openFlowSettings = () => editorStore.requestOpenFlowSettings();
+
+// Three-state flow status. The backend leaves `success` null while the flow is
+// running and sets `is_running`, so we never render a running flow as "Failed".
+const runStatusText = computed(() => {
+  const info = runInformation.value;
+  if (!info) return "";
+  if (info.is_running) return "Running";
+  return info.success ? "Succeeded" : "Failed";
+});
+
+const runStatusClass = computed(() => ({
+  running: !!runInformation.value?.is_running,
+  success: !runInformation.value?.is_running && runInformation.value?.success === true,
+  failure: !runInformation.value?.is_running && runInformation.value?.success === false,
+}));
+
+// Performance mode skips per-step example data, so after a successful run we
+// nudge the user toward Development mode to inspect step-by-step data.
+const perfNoticeDismissed = ref(false);
+const showPerfNotice = computed(
+  () =>
+    !perfNoticeDismissed.value &&
+    runInformation.value?.success === true &&
+    runInformation.value?.execution_mode === "Performance",
+);
+
+// Reset the dismissal whenever a new run starts so the notice can reappear.
+watch(
+  () => runInformation.value?.is_running,
+  (isRunning) => {
+    if (isRunning) perfNoticeDismissed.value = false;
+  },
+);
 
 const onFixWithAi = (node: RunNode) => {
   // — open the AI drawer and stream a server-built explanation +
@@ -174,6 +233,55 @@ const navigateToNode = (nodeId: string) => {
 .flow-summary {
   margin-left: 10px;
   font-weight: bold;
+  color: var(--color-text-primary);
+}
+.perf-mode-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-info, #909399);
+  border-radius: 8px;
+  background-color: var(--color-info-light-9, rgba(144, 147, 153, 0.1));
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+.perf-mode-notice__icon {
+  flex-shrink: 0;
+  font-size: 16px;
+  margin-top: 1px;
+  color: var(--color-text-secondary);
+}
+.perf-mode-notice__text {
+  flex: 1;
+}
+.perf-mode-notice__link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-accent, var(--el-color-primary));
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.perf-mode-notice__link:hover {
+  opacity: 0.8;
+}
+.perf-mode-notice__dismiss {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  padding: 0 2px;
+}
+.perf-mode-notice__dismiss:hover {
   color: var(--color-text-primary);
 }
 .node-card {

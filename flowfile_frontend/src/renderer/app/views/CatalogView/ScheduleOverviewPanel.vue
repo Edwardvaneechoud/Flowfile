@@ -111,25 +111,35 @@
       </template>
     </EmptyState>
 
-    <!-- Schedules list -->
-    <ScheduleTable
-      v-else
-      :schedules="enrichedSchedules"
-      show-flow-column
-      paginated
-      :save-description="onSaveDescription"
-      @select-schedule="$emit('selectSchedule', $event)"
-      @run-now="$emit('runNow', $event)"
-      @cancel-schedule-run="$emit('cancelScheduleRun', $event)"
-      @toggle-schedule="(id, val) => $emit('toggleSchedule', id, val)"
-      @delete-schedule="$emit('deleteSchedule', $event)"
-      @view-flow="$emit('viewFlow', $event)"
-    />
+    <!-- Filter + schedules list -->
+    <template v-else>
+      <div class="schedule-filter-bar">
+        <el-input
+          v-model="scheduleSearch"
+          placeholder="Search by flow or schedule name"
+          clearable
+          size="small"
+          style="width: 280px"
+        />
+      </div>
+      <ScheduleTable
+        :schedules="displaySchedules"
+        show-flow-column
+        paginated
+        :save-description="onSaveDescription"
+        @select-schedule="$emit('selectSchedule', $event)"
+        @run-now="$emit('runNow', $event)"
+        @cancel-schedule-run="$emit('cancelScheduleRun', $event)"
+        @toggle-schedule="(id, val) => $emit('toggleSchedule', id, val)"
+        @delete-schedule="$emit('deleteSchedule', $event)"
+        @view-flow="$emit('viewFlow', $event)"
+      />
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { authService } from "../../services/auth.service";
@@ -155,6 +165,16 @@ const isStandalone = computed(
 );
 
 const enrichedSchedules = computed(() => catalogStore.enrichedSchedules);
+
+// Client-side filter over the fully-loaded schedule list (flow + schedule name).
+const scheduleSearch = ref("");
+const displaySchedules = computed(() => {
+  const q = scheduleSearch.value.trim().toLowerCase();
+  if (!q) return enrichedSchedules.value;
+  return enrichedSchedules.value.filter((s: any) =>
+    [s.flowName, s.name, s.description].some((v) => (v ?? "").toLowerCase().includes(q)),
+  );
+});
 
 const enabledCount = computed(() => catalogStore.schedules.filter((s) => s.enabled).length);
 
@@ -184,6 +204,13 @@ async function onSaveDescription(scheduleId: number, description: string | null)
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
+}
+
+.schedule-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-3);
 }
 
 /* Scheduler status bar */

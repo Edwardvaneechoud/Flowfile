@@ -335,9 +335,23 @@ const handleCanvasClick = (event: any | PointerEvent) => {
 const handleMainDblClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null;
   if (!target) return;
+
+  // Double-click on a node body: open Settings AND the Data preview.
+  const nodeEl = target.closest(".vue-flow__node") as HTMLElement | null;
+  if (nodeEl) {
+    // Leave the description editor (node header) alone — it owns dblclick there.
+    if (target.closest(".custom-node-header")) return;
+    const dataId = nodeEl.getAttribute("data-id");
+    if (dataId && !isGroupNodeId(dataId)) {
+      const id = parseInt(dataId);
+      openNodeSettings(id);
+      openNodeData(id);
+    }
+    return;
+  }
+
   if (
     target.closest(".overlay") ||
-    target.closest(".vue-flow__node") ||
     target.closest(".vue-flow__edge") ||
     target.closest(".vue-flow__handle") ||
     target.closest(".vue-flow__minimap") ||
@@ -595,25 +609,48 @@ const NodeIsSelected = (nodeId: string) => {
   return selectedNodeIdInTable.value === +nodeId;
 };
 
-const nodeClick = (mouseEvent: any) => {
-  if (isGroupNodeId(mouseEvent.node.id)) return; // groups have no node data to preview
-  showTablePreview.value = true;
-
-  nextTick().then(() => {
-    nodeStore.nodeId = parseInt(mouseEvent.node.id);
-    itemStore.bringToFront("tablePreview");
+// Open + front a node's Settings drawer. Settings only ever opens by setting
+// nodeStore.nodeId, which the per-node nodeButton watcher turns into openDrawer.
+const openNodeSettings = async (nodeId: number) => {
+  if (isGroupNodeId(String(nodeId))) return;
+  if (nodeStore.nodeId === nodeId && editorStore.drawerOpen) {
+    // Already the selected node and the drawer is open — just front it. (Don't
+    // re-trigger the watcher; that would reload settings, e.g. the second click
+    // of a double-click.)
     itemStore.bringToFront("nodeSettings");
+    return;
+  }
+  if (nodeStore.nodeId === nodeId) {
+    // Same node but the drawer is closed/minimized: assigning the same value is
+    // a no-op and won't reopen it. Bounce through -1 across a tick so the
+    // watcher observes old(-1)->new and re-runs openDrawer.
+    nodeStore.nodeId = -1;
+    await nextTick();
+  }
+  nodeStore.nodeId = nodeId;
+  await nextTick(); // drawer mounts (v-if nodeStore.isDrawerOpen) before fronting
+  itemStore.bringToFront("nodeSettings");
+};
 
-    if (
-      (mouseEvent.node.id && !NodeIsSelected(mouseEvent.node.id)) ||
+// Open + front the bottom Data/Table preview for a node, loading data if needed.
+const openNodeData = (nodeId: number) => {
+  if (isGroupNodeId(String(nodeId))) return;
+  showTablePreview.value = true;
+  nextTick().then(() => {
+    itemStore.bringToFront("tablePreview");
+    const needsLoad =
+      !NodeIsSelected(String(nodeId)) ||
       (dataPreview.value &&
         dataPreview.value.dataLength == 0 &&
-        dataPreview.value.columnLength == 0)
-    ) {
-      setNodeTableView(mouseEvent.node.id);
-    }
-    selectedNodeIdInTable.value = +mouseEvent.node.id;
+        dataPreview.value.columnLength == 0);
+    if (needsLoad) setNodeTableView(nodeId);
+    selectedNodeIdInTable.value = nodeId;
   });
+};
+
+const nodeClick = (mouseEvent: any) => {
+  // Single click: Settings only — never touches the table.
+  openNodeSettings(parseInt(mouseEvent.node.id));
 };
 
 const setNodeTableView = (nodeId: number) => {
@@ -621,6 +658,17 @@ const setNodeTableView = (nodeId: number) => {
     dataPreview.value.downloadData(nodeId);
   }
 };
+
+// The per-node right-click menu (NodeWrapper) can't reach Canvas-local refs, so
+// it asks via these editor-store counters. Watch the token, dispatch by node id.
+watch(
+  () => editorStore.nodeSettingsOpenRequest.token,
+  () => openNodeSettings(editorStore.nodeSettingsOpenRequest.nodeId),
+);
+watch(
+  () => editorStore.nodeDataOpenRequest.token,
+  () => openNodeData(editorStore.nodeDataOpenRequest.nodeId),
+);
 
 const handleNodeChange = async (nodeChangesEvent: any) => {
   const nodeChanges = nodeChangesEvent as NodeChange[];

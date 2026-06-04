@@ -5,6 +5,8 @@
       'tile-text': isText,
       'tile-text-view': isText && mode === 'view',
     }"
+    :style="tileStyle"
+    @contextmenu="onTileContextMenu"
   >
     <div v-if="!isText" class="tile-header" :class="{ 'tile-handle': mode === 'edit' }">
       <span class="tile-title">{{ headerTitle }}</span>
@@ -59,17 +61,16 @@
         />
         <div
           v-else-if="!renderedHtml"
-          class="tile-state tile-text-empty"
+          class="tile-text-empty"
           :title="mode === 'edit' ? 'Double-click to edit' : undefined"
           @dblclick="enterTextEdit"
-        >
-          <el-icon><EditPen /></el-icon>
-          <span>{{ mode === "edit" ? "Double-click to add content." : "Empty text block" }}</span>
-        </div>
+        />
         <!-- eslint-disable vue/no-v-html -- renderedHtml is DOMPurify-sanitised marked output -->
         <div
           v-else
           class="text-rendered"
+          :class="{ 'tile-text-colored': !!tile.text_color }"
+          :style="textStyle"
           :title="mode === 'edit' ? 'Double-click to edit' : undefined"
           @dblclick="enterTextEdit"
           v-html="renderedHtml"
@@ -113,6 +114,66 @@
         </div>
       </template>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="colorMenu.visible"
+        ref="colorMenuEl"
+        class="tile-color-menu"
+        :style="{ left: `${colorMenu.x}px`, top: `${colorMenu.y}px` }"
+      >
+        <div class="tile-color-menu-title">Background</div>
+        <div class="tile-color-swatches">
+          <button
+            v-for="preset in bgPresets"
+            :key="preset.value ?? 'bg-none'"
+            type="button"
+            class="tile-color-swatch"
+            :class="{
+              'is-none': preset.value === null,
+              'is-active': (tile.bg_color ?? null) === preset.value,
+            }"
+            :style="preset.value ? { background: preset.value } : undefined"
+            :title="preset.label"
+            @click="setBg(preset.value)"
+          >
+            <el-icon v-if="preset.value === null"><Close /></el-icon>
+          </button>
+          <label class="tile-color-swatch tile-color-custom" title="Custom color">
+            <input
+              type="color"
+              :value="tile.bg_color || '#ffffff'"
+              @change="setBg(($event.target as HTMLInputElement).value)"
+            />
+          </label>
+        </div>
+        <div class="tile-color-menu-title">Text</div>
+        <div class="tile-color-swatches">
+          <button
+            v-for="preset in textPresets"
+            :key="preset.value ?? 'text-none'"
+            type="button"
+            class="tile-color-swatch"
+            :class="{
+              'is-none': preset.value === null,
+              'is-active': (tile.text_color ?? null) === preset.value,
+            }"
+            :style="preset.value ? { background: preset.value } : undefined"
+            :title="preset.label"
+            @click="setTextColor(preset.value)"
+          >
+            <el-icon v-if="preset.value === null"><Close /></el-icon>
+          </button>
+          <label class="tile-color-swatch tile-color-custom" title="Custom color">
+            <input
+              type="color"
+              :value="tile.text_color || '#000000'"
+              @change="setTextColor(($event.target as HTMLInputElement).value)"
+            />
+          </label>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -121,10 +182,11 @@
 //   - Move :deep() markdown styles (~lines 399-484) to an external _markdown.css import
 //   - TextTile.vue (~62-88) and VizTile.vue (~91-108) child components
 //   - useDashboardTileViz composable: viz loading (~lines 155-234)
-import { computed, nextTick, onMounted, ref, toRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import {
+  Close,
   Delete,
   Edit,
   EditPen,
@@ -299,6 +361,95 @@ const toggleTextEdit = async () => {
 };
 
 const headerTitle = computed(() => vizName.value);
+
+const tileStyle = computed(() =>
+  isText.value && props.tile.bg_color ? { background: props.tile.bg_color } : undefined,
+);
+const textStyle = computed(() =>
+  isText.value && props.tile.text_color ? { color: props.tile.text_color } : undefined,
+);
+
+const bgPresets: { label: string; value: string | null }[] = [
+  { label: "Default", value: null },
+  { label: "Slate", value: "#f1f5f9" },
+  { label: "Amber", value: "#fef3c7" },
+  { label: "Green", value: "#dcfce7" },
+  { label: "Blue", value: "#dbeafe" },
+  { label: "Purple", value: "#ede9fe" },
+  { label: "Rose", value: "#fee2e2" },
+];
+const textPresets: { label: string; value: string | null }[] = [
+  { label: "Default", value: null },
+  { label: "Black", value: "#0f172a" },
+  { label: "Gray", value: "#64748b" },
+  { label: "Red", value: "#dc2626" },
+  { label: "Green", value: "#16a34a" },
+  { label: "Blue", value: "#2563eb" },
+  { label: "Purple", value: "#7c3aed" },
+];
+
+const colorMenu = ref({ visible: false, x: 0, y: 0 });
+const colorMenuEl = ref<HTMLElement | null>(null);
+
+const closeColorMenu = () => {
+  colorMenu.value = { ...colorMenu.value, visible: false };
+};
+
+const onTileContextMenu = (e: MouseEvent) => {
+  if (!isText.value || props.mode !== "edit" || textEditing.value) return;
+  e.preventDefault();
+  colorMenu.value = {
+    visible: true,
+    x: Math.min(e.clientX, window.innerWidth - 240),
+    y: Math.min(e.clientY, window.innerHeight - 160),
+  };
+};
+
+const setBg = (value: string | null) => {
+  const next = value ?? null;
+  if (next !== (props.tile.bg_color ?? null))
+    emit("update:tile", { ...props.tile, bg_color: next });
+  closeColorMenu();
+};
+
+const setTextColor = (value: string | null) => {
+  const next = value ?? null;
+  if (next !== (props.tile.text_color ?? null)) {
+    emit("update:tile", { ...props.tile, text_color: next });
+  }
+  closeColorMenu();
+};
+
+const onDocPointerDown = (e: MouseEvent) => {
+  if (colorMenuEl.value && !colorMenuEl.value.contains(e.target as Node)) closeColorMenu();
+};
+const onDocKeyDown = (e: KeyboardEvent) => {
+  if (e.key === "Escape") closeColorMenu();
+};
+
+watch(
+  () => colorMenu.value.visible,
+  (open) => {
+    if (open) {
+      document.addEventListener("mousedown", onDocPointerDown, true);
+      document.addEventListener("keydown", onDocKeyDown);
+      window.addEventListener("scroll", closeColorMenu, true);
+      window.addEventListener("resize", closeColorMenu);
+    } else {
+      document.removeEventListener("mousedown", onDocPointerDown, true);
+      document.removeEventListener("keydown", onDocKeyDown);
+      window.removeEventListener("scroll", closeColorMenu, true);
+      window.removeEventListener("resize", closeColorMenu);
+    }
+  },
+);
+
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onDocPointerDown, true);
+  document.removeEventListener("keydown", onDocKeyDown);
+  window.removeEventListener("scroll", closeColorMenu, true);
+  window.removeEventListener("resize", closeColorMenu);
+});
 </script>
 
 <style scoped>
@@ -433,7 +584,7 @@ const headerTitle = computed(() => vizName.value);
   gap: 6px;
 }
 .tile-text-empty {
-  font-style: italic;
+  height: 100%;
 }
 .tile-missing {
   color: var(--el-color-warning);
@@ -461,6 +612,65 @@ const headerTitle = computed(() => vizName.value);
   font-size: 14px;
   line-height: 1.5;
   color: var(--el-text-color-primary);
+}
+.text-rendered.tile-text-colored :deep(*) {
+  color: inherit;
+}
+
+.tile-color-menu {
+  position: fixed;
+  z-index: 3000;
+  padding: 8px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  background: var(--el-bg-color-overlay);
+  box-shadow: var(--el-box-shadow-light);
+}
+.tile-color-menu-title {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 6px;
+}
+.tile-color-swatches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tile-color-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--el-text-color-secondary);
+  background: var(--el-bg-color);
+}
+.tile-color-swatch:hover {
+  border-color: var(--el-color-primary);
+}
+.tile-color-swatch.is-active {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 1px;
+}
+.tile-color-custom {
+  position: relative;
+  overflow: hidden;
+  background: conic-gradient(red, magenta, blue, cyan, lime, yellow, red);
+}
+.tile-color-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
 }
 .text-rendered :deep(h1) {
   font-size: 22px;

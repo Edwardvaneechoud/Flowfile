@@ -94,6 +94,11 @@ const activeIndex = computed(() => {
     const tab = (route.query.tab as string) || "overview";
     return `connections:${tab}`;
   }
+  // Catalog sub-items likewise share the "catalog" route but differ by ?tab=.
+  if (name === "catalog") {
+    const tab = (route.query.tab as string) || "catalog";
+    return `catalog:${tab}`;
+  }
   return name;
 });
 
@@ -127,10 +132,10 @@ function isItemExpanded(item: INavigationRoute): boolean {
 
 .el-menu-item [class^="fa-"],
 .el-sub-menu [class^="fa-"] {
-  margin-right: 5px;
-  width: 24px;
+  margin-right: 8px;
+  width: 22px;
   text-align: center;
-  font-size: 18px;
+  font-size: 16px;
   vertical-align: middle;
 }
 
@@ -159,10 +164,39 @@ function isItemExpanded(item: INavigationRoute): boolean {
 </style>
 
 <!-- Global: the fly-out popover is teleported to <body>, so scoped styles can't
-     reach it. Gives the collapsed sub-menu fly-out a clear "Connections" header. -->
+     reach it. Gives the collapsed sub-menu fly-out a clear header and keeps the
+     item list compact — the default Element item height (56px) makes a 7-item
+     menu very tall. Shared by the Connections and Catalog sub-menus. -->
 <style>
+.sidebar-submenu-popper {
+  --el-menu-item-height: 38px;
+  --el-menu-sub-item-height: 38px;
+}
+
+.sidebar-submenu-popper .el-menu--popup {
+  min-width: 184px;
+  padding: var(--spacing-2);
+}
+
+.sidebar-submenu-popper .el-menu-item {
+  height: 38px;
+  line-height: 38px;
+  padding: 0 var(--spacing-4);
+  border-radius: var(--border-radius-md);
+}
+
+/* Smaller, lighter icons with real breathing room between icon and label —
+   the teleported popper doesn't inherit MenuAccordion's scoped icon rule. */
+.sidebar-submenu-popper .el-menu-item [class^="fa-"] {
+  width: 18px;
+  margin-right: 12px;
+  font-size: 14px;
+  text-align: center;
+  vertical-align: middle;
+}
+
 .sidebar-submenu-popper .el-menu-item-group__title {
-  padding: 8px 20px 5px;
+  padding: var(--spacing-2) var(--spacing-4) var(--spacing-1);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;

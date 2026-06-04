@@ -309,8 +309,9 @@
               Google Auth Platform
             </SetupLink>
             , set up these two pages. If you've used Google sign-in in this project before they may
-            already be done — just confirm and continue. On a brand-new project, click
-            <em>Get started</em> first.
+            already be done — just confirm and continue. On a brand-new project, Google's page shows
+            a <em>Get started</em> button — click that there first (it's on Google's side, not
+            here).
           </p>
           <ol class="step-instructions">
             <li>
@@ -452,6 +453,11 @@
             <strong>Viewer</strong> access and the property ID is correct, then test again.
           </p>
         </div>
+
+        <p v-if="currentStep?.kind === 'confirm'" class="step-hint confirm-hint">
+          <i class="fa-solid fa-circle-check"></i>
+          Tick the box above once you've done this, then click <em>Next</em> to continue.
+        </p>
       </div>
     </div>
 
@@ -879,6 +885,10 @@ watch(activeIndex, () => {
 .step-hint i {
   color: var(--color-success, #10b981);
   margin-right: 4px;
+}
+
+.confirm-hint {
+  margin-top: var(--spacing-3);
 }
 
 .step-error {

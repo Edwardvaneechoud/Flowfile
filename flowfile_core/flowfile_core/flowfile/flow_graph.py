@@ -4432,6 +4432,8 @@ class FlowGraph:
             start_time=datetime.datetime.now(),
             end_time=None,
             success=None,
+            is_running=True,
+            execution_mode=self.flow_settings.execution_mode,
             number_of_nodes=number_of_nodes,
             node_step_result=[],
             run_type=run_type,
@@ -4443,6 +4445,8 @@ class FlowGraph:
             start_time=None,
             end_time=None,
             success=None,
+            is_running=False,
+            execution_mode=self.flow_settings.execution_mode,
             number_of_nodes=0,
             node_step_result=[],
             run_type="init",
@@ -4903,11 +4907,10 @@ class FlowGraph:
         if self.latest_run_info is None:
             return self.create_empty_run_information()
 
-        elif not is_running and self.latest_run_info.success is not None:
-            return self.latest_run_info
-
         run_info = self.latest_run_info
-        if not is_running:
+        run_info.is_running = is_running
+        run_info.execution_mode = self.flow_settings.execution_mode
+        if not is_running and run_info.success is None:
             run_info.success = all(nr.success for nr in run_info.node_step_result)
         return run_info
 
