@@ -70,6 +70,9 @@ export interface KernelImageStatus {
   // "pulling" while a background install is running, "error:<msg>" if the
   // last attempt failed, null otherwise.
   pull_state: string | null;
+  // True when an older official version is installed locally and a newer one
+  // (the `image` tag) is available to pull.
+  update_available: boolean;
 }
 
 export interface DockerStatus {

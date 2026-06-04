@@ -142,6 +142,7 @@ export interface GlobalArtifact {
   owner_id: number | null;
   created_at: string | null;
   updated_at: string | null;
+  blob_exists: boolean;
 }
 
 // Catalog Table

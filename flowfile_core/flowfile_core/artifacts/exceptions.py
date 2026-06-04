@@ -34,6 +34,24 @@ class ArtifactNotFoundError(ArtifactError):
         super().__init__(detail)
 
 
+class AmbiguousArtifactError(ArtifactError):
+    """Raised when an artifact name matches multiple namespaces and none was given.
+
+    The same name may be published into several namespaces (the unique key is
+    ``(name, namespace_id, version)``). When a lookup omits ``namespace_id`` the
+    result would be ambiguous, so the caller must disambiguate.
+    """
+
+    def __init__(self, name: str, namespace_ids: list[int | None]):
+        self.name = name
+        self.namespace_ids = namespace_ids
+        rendered = ", ".join("none" if n is None else str(n) for n in namespace_ids)
+        super().__init__(
+            f"Multiple artifacts named '{name}' exist across namespaces [{rendered}]. "
+            "Specify a namespace_id to disambiguate."
+        )
+
+
 class ArtifactStateError(ArtifactError):
     """Raised when an artifact is not in the expected state for an operation.
 
@@ -84,6 +102,26 @@ class StorageError(ArtifactError):
 class NamespaceNotFoundError(ArtifactError):
     """Raised when a namespace lookup fails for artifact operations."""
 
-    def __init__(self, namespace_id: int):
+    def __init__(self, namespace_id: int | None = None, name: str | None = None):
         self.namespace_id = namespace_id
-        super().__init__(f"Namespace with id={namespace_id} not found")
+        self.name = name
+        if name is not None:
+            super().__init__(f"Namespace '{name}' not found")
+        else:
+            super().__init__(f"Namespace with id={namespace_id} not found")
+
+
+class AmbiguousNamespaceError(ArtifactError):
+    """Raised when a namespace *name* matches more than one namespace.
+
+    Namespace names are unique only within their parent (catalog vs schema), so
+    resolving a bare name can match several; the caller must use ``namespace_id``.
+    """
+
+    def __init__(self, name: str, namespace_ids: list[int]):
+        self.name = name
+        self.namespace_ids = namespace_ids
+        rendered = ", ".join(str(n) for n in namespace_ids)
+        super().__init__(
+            f"Namespace name '{name}' is ambiguous (matches ids [{rendered}]). Specify namespace_id instead."
+        )

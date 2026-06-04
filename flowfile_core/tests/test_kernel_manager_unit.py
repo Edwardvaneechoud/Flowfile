@@ -19,11 +19,14 @@ from flowfile_core.kernel import manager as kernel_manager
 from flowfile_core.kernel.manager import (
     KernelManager,
     _derived_image_tag,
+    _friendly_pull_error,
     _resolve_image,
     _resolve_local_image,
     _spec_to_name,
     _validate_custom_image,
     _validate_packages,
+    newest_installed_version,
+    parse_image_version,
 )
 from flowfile_core.kernel.models import (
     ImageFlavour,
@@ -276,13 +279,13 @@ class TestImagePull:
 
     def test_do_pull_records_error_on_failure(self):
         mgr = _bare_manager()
-        mgr._docker.images.pull.side_effect = docker.errors.APIError("registry timeout")
+        mgr._docker.images.pull.side_effect = docker.errors.APIError("registry exploded")
         mgr._pull_state["x:1"] = "pulling"
         mgr._do_pull("x:1")
         state = mgr.get_pull_state("x:1")
         assert state is not None
         assert state.startswith("error:")
-        assert "timeout" in state
+        assert "registry exploded" in state
 
 
 class TestSpecToName:
@@ -311,6 +314,61 @@ class TestDerivedImageTag:
 
 
 # Orphan derived-image GC
+
+
+class TestImageVersionHelpers:
+    def test_parse_image_version_parses_dotted_numeric(self):
+        assert parse_image_version("edwardvaneechoud/flowfile-kernel-base:0.3.1") == (0, 3, 1)
+
+    def test_parse_image_version_none_for_non_numeric(self):
+        assert parse_image_version("flowfile-kernel-base:local") is None
+        assert parse_image_version("noversion") is None
+
+    def test_newest_installed_version_picks_highest(self):
+        client = MagicMock()
+        v030 = MagicMock()
+        v030.tags = ["edwardvaneechoud/flowfile-kernel-base:0.3.0"]
+        v031 = MagicMock()
+        v031.tags = ["edwardvaneechoud/flowfile-kernel-base:0.3.1"]
+        client.images.list.return_value = [v030, v031]
+        result = newest_installed_version("edwardvaneechoud/flowfile-kernel-base", client)
+        assert result == ("edwardvaneechoud/flowfile-kernel-base:0.3.1", (0, 3, 1))
+
+    def test_newest_installed_version_ignores_local_and_other_repos(self):
+        client = MagicMock()
+        local = MagicMock()
+        local.tags = ["edwardvaneechoud/flowfile-kernel-base:local"]
+        other = MagicMock()
+        other.tags = ["someoneelse/flowfile-kernel-base:9.9.9"]
+        client.images.list.return_value = [local, other]
+        assert newest_installed_version("edwardvaneechoud/flowfile-kernel-base", client) is None
+
+    def test_newest_installed_version_none_when_empty(self):
+        client = MagicMock()
+        client.images.list.return_value = []
+        assert newest_installed_version("edwardvaneechoud/flowfile-kernel-base", client) is None
+
+
+class TestFriendlyPullError:
+    def test_not_found_is_clean(self):
+        exc = docker.errors.ImageNotFound(
+            "404 Client Error for http+docker://localhost/v1.47/images/create: "
+            "Not Found (manifest for edwardvaneechoud/flowfile-kernel-ml:0.3.1 not found)"
+        )
+        msg = _friendly_pull_error(exc, "edwardvaneechoud/flowfile-kernel-ml:0.3.1")
+        assert msg == "edwardvaneechoud/flowfile-kernel-ml:0.3.1 isn't available on the registry yet."
+        assert "http+docker" not in msg and "404" not in msg
+
+    def test_unauthorized(self):
+        exc = docker.errors.APIError("unauthorized: authentication required")
+        assert "Not authorized" in _friendly_pull_error(exc, "repo:1.0")
+
+    def test_network(self):
+        assert "Check your connection" in _friendly_pull_error(Exception("connection timed out"), "repo:1.0")
+
+    def test_fallback_uses_first_line(self):
+        exc = Exception("Some unexpected error\nsecond line of noise")
+        assert _friendly_pull_error(exc, "repo:1.0") == "Some unexpected error"
 
 
 def _image_with_tag(tag: str, labels: dict[str, str] | None = None) -> MagicMock:

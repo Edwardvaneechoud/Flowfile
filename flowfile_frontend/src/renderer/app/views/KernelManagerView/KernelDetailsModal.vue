@@ -31,6 +31,16 @@
             <dt>Image tag</dt>
             <dd>
               <code class="break">{{ kernel.image || resolvedImage || "—" }}</code>
+              <span
+                v-if="updateInfo?.available"
+                class="km-update-badge"
+                :title="`Latest is ${updateInfo.latest}. Update the image and recreate this kernel to use it.`"
+              >
+                <i class="fa-solid fa-circle-up"></i> Update available
+              </span>
+              <span v-else-if="updateInfo" class="km-uptodate">
+                <i class="fa-solid fa-circle-check"></i> Up to date
+              </span>
             </dd>
             <dt>Kernel runtime</dt>
             <dd>{{ kernel.kernel_version ? `v${kernel.kernel_version}` : "—" }}</dd>
@@ -209,6 +219,41 @@ const resolvedImage = computed(
   () => props.flavourInfo.get(props.kernel.image_flavour)?.image ?? null,
 );
 
+// Compare this kernel's own image tag against the flavour's latest registry tag
+// so the user can see whether the kernel is running an outdated image. Skips
+// non-version tags (e.g. :local dev builds) and mismatched/custom repos.
+function parseImageVersion(tag: string): number[] | null {
+  const idx = tag.lastIndexOf(":");
+  if (idx === -1) return null;
+  const nums = tag
+    .slice(idx + 1)
+    .split(".")
+    .map(Number);
+  return nums.some((n) => !Number.isInteger(n)) ? null : nums;
+}
+
+function isOlder(a: number[], b: number[]): boolean {
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av !== bv) return av < bv;
+  }
+  return false;
+}
+
+const updateInfo = computed<{ available: boolean; latest: string } | null>(() => {
+  const current = props.kernel.image;
+  const latest = resolvedImage.value;
+  if (!current || !latest) return null;
+  const repo = (t: string) => t.slice(0, t.lastIndexOf(":"));
+  if (repo(current) !== repo(latest)) return null;
+  const cv = parseImageVersion(current);
+  const lv = parseImageVersion(latest);
+  if (!cv || !lv) return null;
+  return { available: isOlder(cv, lv), latest };
+});
+
 const preinstalled = computed<FlavourPackage[]>(
   () => props.flavourInfo.get(props.kernel.image_flavour)?.packages ?? [],
 );
@@ -376,6 +421,25 @@ const save = async () => {
 
 .detail-grid code.break {
   word-break: break-all;
+}
+
+.km-update-badge,
+.km-uptodate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-0-5);
+  margin-left: var(--spacing-2);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+.km-update-badge {
+  color: var(--color-primary, #3b82f6);
+}
+
+.km-uptodate {
+  color: var(--color-text-tertiary);
 }
 
 .kernel-card__flavour {

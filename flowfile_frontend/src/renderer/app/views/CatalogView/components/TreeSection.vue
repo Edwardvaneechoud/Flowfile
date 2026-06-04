@@ -15,7 +15,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
+
+import { useCatalogTreeExpansion } from "../useCatalogTreeExpansion";
 
 const props = withDefaults(
   defineProps<{
@@ -23,15 +25,28 @@ const props = withDefaults(
     count?: number;
     hidden?: boolean;
     defaultExpanded?: boolean;
+    storageKey?: string;
   }>(),
   {
     count: undefined,
     hidden: false,
     defaultExpanded: false,
+    storageKey: undefined,
   },
 );
 
-const expanded = ref(props.defaultExpanded);
+const treeState = useCatalogTreeExpansion();
+const localExpanded = ref(props.defaultExpanded);
+const expanded = computed({
+  get: () =>
+    props.storageKey
+      ? treeState.isExpanded(props.storageKey, props.defaultExpanded)
+      : localExpanded.value,
+  set: (value) => {
+    if (props.storageKey) treeState.setExpanded(props.storageKey, value);
+    else localExpanded.value = value;
+  },
+});
 
 function toggle() {
   expanded.value = !expanded.value;

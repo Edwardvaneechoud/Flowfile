@@ -230,6 +230,12 @@ export class CatalogApi {
     await axios.delete(`/catalog/tables/${id}`);
   }
 
+  // Delete all versions of a model (global artifact) by name within its namespace.
+  static async deleteArtifact(name: string, namespaceId: number | null): Promise<void> {
+    const params = namespaceId !== null ? { namespace_id: namespaceId } : {};
+    await axios.delete(`/artifacts/by-name/${encodeURIComponent(name)}`, { params });
+  }
+
   static async getTablePreview(
     tableId: number,
     limit = 100,

@@ -35,9 +35,9 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.0"
-_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.0"
-_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.3.0"
+_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.1"
+_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.1"
+_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.3.1"
 
 
 def _envvar_or_default(name: str, default: str) -> str:
@@ -149,6 +149,75 @@ def _resolve_local_image(
             if tag.startswith(f"{repo_name}:"):
                 return tag
     return None
+
+
+def parse_image_version(image_tag: str) -> tuple[int, ...] | None:
+    """Parse a numeric version tuple from an image tag's ``:version`` suffix.
+
+    Returns None for tags without a dotted-numeric version (e.g. ``:local``,
+    digests), so callers can skip update comparisons for non-release images.
+    """
+    if ":" not in image_tag:
+        return None
+    tag = image_tag.rsplit(":", 1)[1]
+    parts = tag.split(".")
+    try:
+        return tuple(int(p) for p in parts)
+    except ValueError:
+        return None
+
+
+def newest_installed_version(repo: str, docker_client) -> tuple[str, tuple[int, ...]] | None:
+    """Return ``(tag, version)`` of the newest locally-present image for ``repo``.
+
+    Only considers tags of ``repo`` carrying a dotted-numeric version; ``:local``
+    / digest / non-version tags are ignored. Returns None when none are present.
+    Used to detect that an older official kernel image is installed.
+    """
+    try:
+        images = docker_client.images.list(name=repo)
+    except Exception:
+        return None
+    best: tuple[str, tuple[int, ...]] | None = None
+    prefix = f"{repo}:"
+    for img in images:
+        for tag in img.tags or ():
+            if not tag.startswith(prefix):
+                continue
+            version = parse_image_version(tag)
+            if version is None:
+                continue
+            if best is None or version > best[1]:
+                best = (tag, version)
+    return best
+
+
+def _friendly_pull_error(exc: Exception, image_tag: str) -> str:
+    """Translate a raw docker pull exception into a short, user-facing message.
+
+    The raw exception (e.g. ``404 Client Error for http+docker://.../images/create``)
+    is still written to the logs via ``logger.exception``; this is only what the
+    Kernel Manager surfaces to the user.
+    """
+    text = str(exc).lower()
+    if isinstance(exc, docker.errors.ImageNotFound) or "not found" in text or "manifest" in text:
+        return f"{image_tag} isn't available on the registry yet."
+    if any(s in text for s in ("unauthorized", "denied", "authentication", "401", "403")):
+        return f"Not authorized to pull {image_tag}. Check your registry login."
+    network_markers = (
+        "timed out",
+        "timeout",
+        "connection",
+        "could not resolve",
+        "no such host",
+        "unreachable",
+    )
+    if any(s in text for s in network_markers):
+        return f"Couldn't reach the registry to pull {image_tag}. Check your connection."
+    if "no space" in text:
+        return "Not enough disk space to pull the image."
+    first = next((ln.strip() for ln in str(exc).splitlines() if ln.strip()), exc.__class__.__name__)
+    return first[:200]
 
 
 # Pip package specifier (PEP 508-ish, conservative): rejects anything with
@@ -825,7 +894,7 @@ class KernelManager:
                 self._pull_state.pop(image_tag, None)
             logger.info("Pulled image '%s'", image_tag)
         except Exception as exc:
-            msg = str(exc).splitlines()[0][:200] if str(exc) else exc.__class__.__name__
+            msg = _friendly_pull_error(exc, image_tag)
             with self._pull_state_lock:
                 self._pull_state[image_tag] = f"error:{msg}"
             logger.exception("Failed to pull image '%s'", image_tag)

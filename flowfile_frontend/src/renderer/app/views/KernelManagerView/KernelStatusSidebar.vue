@@ -21,14 +21,10 @@
           <div class="km-image-row__body">
             <div class="km-image-row__header">
               <span class="km-image-row__label">{{ row.label }}</span>
-              <span v-if="row.localChip" class="km-image-row__chip">local</span>
+              <span v-if="row.chip" class="km-image-row__chip">{{ row.chip }}</span>
             </div>
             <code v-if="row.subline" class="km-image-row__tag">{{ row.subline }}</code>
-            <p
-              v-if="row.state === 'error'"
-              class="km-image-row__error"
-              :title="row.errorMessage ?? undefined"
-            >
+            <p v-if="row.state === 'error'" class="km-image-row__error">
               {{ row.errorMessage }}
             </p>
           </div>
@@ -38,6 +34,17 @@
               <span class="loading-spinner loading-spinner--inline"></span>
               Installing…
             </span>
+            <button
+              v-else-if="row.state === 'update'"
+              type="button"
+              class="km-image-row__install km-image-row__update"
+              :disabled="pendingInstalls.has(row.flavour)"
+              title="Pull the new image. Restart existing kernels to use it."
+              @click="installImage(row.flavour)"
+            >
+              <i class="fa-solid fa-circle-up"></i>
+              Update
+            </button>
             <template v-else-if="row.state === 'missing' || row.state === 'error'">
               <button
                 type="button"
@@ -58,6 +65,14 @@
                 <i class="fa-solid fa-xmark"></i>
               </button>
             </template>
+            <span
+              v-else-if="row.state === 'installed'"
+              class="km-image-row__uptodate"
+              title="You're on the latest version"
+            >
+              <i class="fa-solid fa-circle-check"></i>
+              Up to date
+            </span>
           </div>
         </li>
       </ul>
@@ -160,14 +175,14 @@ const canDismiss = (row: ImageRow): boolean =>
   // — otherwise the user can dismiss their only path to a working kernel.
   row.flavour !== "base" || baseAvailable.value;
 
-type RowState = "installed" | "local" | "missing" | "pulling" | "error";
+type RowState = "installed" | "local" | "missing" | "pulling" | "error" | "update";
 interface ImageRow {
   flavour: ImageFlavour;
   label: string;
   image: string;
   state: RowState;
   subline: string | null;
-  localChip: boolean;
+  chip: string | null;
   errorMessage: string | null;
   dotTitle: string;
 }
@@ -189,7 +204,7 @@ const imageRows = computed<ImageRow[]>(() => {
         image: status.image,
         state: "pulling",
         subline: null,
-        localChip: false,
+        chip: null,
         errorMessage: null,
         dotTitle: "Installing",
       });
@@ -202,22 +217,36 @@ const imageRows = computed<ImageRow[]>(() => {
         image: status.image,
         state: "error",
         subline: status.image,
-        localChip: false,
+        chip: null,
         errorMessage: status.pull_state.slice("error:".length),
         dotTitle: "Last install attempt failed",
       });
       continue;
     }
     if (status.available && status.resolved_image && status.resolved_image !== status.image) {
+      // A local dev build is in use — respect it, don't nag about updates.
       rows.push({
         flavour,
         label,
         image: status.image,
         state: "local",
         subline: status.resolved_image,
-        localChip: true,
+        chip: "local",
         errorMessage: null,
         dotTitle: `Using local build (${status.resolved_image})`,
+      });
+      continue;
+    }
+    if (status.update_available) {
+      rows.push({
+        flavour,
+        label,
+        image: status.image,
+        state: "update",
+        subline: status.image,
+        chip: "update",
+        errorMessage: null,
+        dotTitle: `A newer image is available: ${status.image}`,
       });
       continue;
     }
@@ -228,7 +257,7 @@ const imageRows = computed<ImageRow[]>(() => {
         image: status.image,
         state: "installed",
         subline: null,
-        localChip: false,
+        chip: null,
         errorMessage: null,
         dotTitle: "Installed",
       });
@@ -240,7 +269,7 @@ const imageRows = computed<ImageRow[]>(() => {
       image: status.image,
       state: "missing",
       subline: status.image,
-      localChip: false,
+      chip: null,
       errorMessage: null,
       dotTitle: "Not installed",
     });
@@ -438,6 +467,13 @@ onBeforeUnmount(stopPullPoll);
   border-color: var(--color-border-light);
   background: var(--color-background-secondary);
 }
+.km-image-row--update {
+  border-color: var(--color-primary, rgba(59, 130, 246, 0.4));
+  background: var(--color-primary-light, rgba(59, 130, 246, 0.06));
+}
+.km-image-row--update .km-image-row__dot {
+  background: var(--color-primary, #3b82f6);
+}
 
 .km-image-row__dot {
   flex: 0 0 auto;
@@ -513,9 +549,8 @@ onBeforeUnmount(stopPullPoll);
   margin: var(--spacing-0-5) 0 0;
   font-size: var(--font-size-2xs);
   color: var(--color-danger);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .km-image-row__actions {
@@ -549,6 +584,9 @@ onBeforeUnmount(stopPullPoll);
   opacity: 0.6;
   cursor: not-allowed;
 }
+.km-image-row__update {
+  background: var(--color-primary, #3b82f6);
+}
 
 .km-image-row__dismiss {
   background: transparent;
@@ -570,6 +608,16 @@ onBeforeUnmount(stopPullPoll);
   gap: var(--spacing-1);
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+}
+
+.km-image-row__uptodate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-0-5);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-success, #2e7d32);
+  white-space: nowrap;
 }
 
 .loading-spinner--inline {

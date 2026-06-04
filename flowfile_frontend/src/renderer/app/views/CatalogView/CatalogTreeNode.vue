@@ -53,6 +53,8 @@
           @select-artifact="$emit('selectArtifact', $event)"
           @select-table="$emit('selectTable', $event)"
           @table-context-menu="$emit('tableContextMenu', $event)"
+          @artifact-context-menu="$emit('artifactContextMenu', $event)"
+          @flow-context-menu="$emit('flowContextMenu', $event)"
           @select-visualization="$emit('selectVisualization', $event)"
           @toggle-favorite="$emit('toggleFavorite', $event)"
           @toggle-table-favorite="$emit('toggleTableFavorite', $event)"
@@ -69,6 +71,8 @@
         ref="flowsSection"
         title="Flows"
         :count="visibleFlows.length"
+        :storage-key="`sec:${node.id}:flows`"
+        :default-expanded="sectionsDefaultExpanded"
       >
         <div
           v-for="flow in visibleFlows"
@@ -76,14 +80,20 @@
           class="tree-flow"
           :class="{ selected: selectedFlowId === flow.id, 'file-missing': !flow.file_exists }"
           @click.stop="$emit('selectFlow', flow.id)"
+          @contextmenu.prevent.stop="
+            $emit('flowContextMenu', { flow, x: $event.clientX, y: $event.clientY })
+          "
         >
           <i class="fa-solid fa-diagram-project flow-icon"></i>
           <span class="flow-name">{{ flow.name }}</span>
-          <i
+          <el-tooltip
             v-if="!flow.file_exists"
-            class="fa-solid fa-triangle-exclamation missing-icon"
-            title="Flow file not found on disk"
-          ></i>
+            content="Flow file not found on disk"
+            placement="top"
+            :show-after="300"
+          >
+            <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
+          </el-tooltip>
           <div class="flow-actions" @click.stop>
             <button
               class="action-btn star-btn"
@@ -115,13 +125,25 @@
         ref="modelsSection"
         title="Models"
         :count="visibleArtifacts.length"
+        :storage-key="`sec:${node.id}:models`"
+        :default-expanded="sectionsDefaultExpanded"
       >
         <div
           v-for="group in visibleArtifacts"
           :key="'ag-' + group.name"
           class="tree-artifact"
-          :class="{ selected: selectedArtifactId === group.latest.id }"
+          :class="{
+            selected: selectedArtifactId === group.latest.id,
+            'file-missing': group.latest.blob_exists === false,
+          }"
           @click.stop="$emit('selectArtifact', group.latest.id)"
+          @contextmenu.prevent.stop="
+            $emit('artifactContextMenu', {
+              artifact: group.latest,
+              x: $event.clientX,
+              y: $event.clientY,
+            })
+          "
         >
           <i class="fa-solid fa-cube artifact-icon"></i>
           <span class="artifact-name">{{ group.name }}</span>
@@ -129,6 +151,14 @@
             {{ group.versionCount }} versions
           </span>
           <span class="artifact-version">v{{ group.latest.version }}</span>
+          <el-tooltip
+            v-if="group.latest.blob_exists === false"
+            content="Model data file not found on disk"
+            placement="top"
+            :show-after="300"
+          >
+            <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
+          </el-tooltip>
         </div>
       </TreeSection>
 
@@ -137,6 +167,8 @@
         ref="tablesSection"
         title="Tables"
         :count="visibleTables.length"
+        :storage-key="`sec:${node.id}:tables`"
+        :default-expanded="sectionsDefaultExpanded"
       >
         <div
           v-for="table in visibleTables"
@@ -164,11 +196,14 @@
             title="Virtual Flow Table"
             >virtual</span
           >
-          <i
+          <el-tooltip
             v-if="table.table_type !== 'virtual' && table.file_exists === false"
-            class="fa-solid fa-triangle-exclamation missing-icon"
-            title="Table data file not found on disk"
-          ></i>
+            content="Table data file not found on disk"
+            placement="top"
+            :show-after="300"
+          >
+            <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
+          </el-tooltip>
           <div class="flow-actions" @click.stop>
             <button
               class="action-btn star-btn"
@@ -194,6 +229,8 @@
         ref="visualizationsSection"
         title="Visualizations"
         :count="visibleVisualizations.length"
+        :storage-key="`sec:${node.id}:visualizations`"
+        :default-expanded="sectionsDefaultExpanded"
       >
         <div
           v-for="viz in visibleVisualizations"
@@ -221,8 +258,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { SYSTEM_NAMESPACE_NAMES } from "../../types";
 import type { GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
+import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 
 type TreeSectionRef = InstanceType<typeof TreeSection> | null;
 
@@ -252,6 +291,8 @@ defineEmits([
   "selectArtifact",
   "selectTable",
   "tableContextMenu",
+  "artifactContextMenu",
+  "flowContextMenu",
   "selectVisualization",
   "toggleFavorite",
   "toggleTableFavorite",
@@ -324,6 +365,9 @@ const groupedArtifacts = computed((): ArtifactGroup[] => {
 
 const visibleArtifacts = computed((): ArtifactGroup[] => {
   let groups = groupedArtifacts.value;
+  if (!props.showUnavailable) {
+    groups = groups.filter((g) => g.latest.blob_exists !== false);
+  }
   if (query.value) {
     groups = groups.filter((g) => g.name.toLowerCase().includes(query.value));
   }
@@ -333,10 +377,21 @@ const visibleArtifacts = computed((): ArtifactGroup[] => {
 // System namespaces holding disk-backed/quick-created flows — they accumulate a
 // lot of entries, so collapse them by default to keep the tree tidy.
 const AUTO_COLLAPSE_NAMESPACES = new Set(["Local Flows", "Unnamed Flows"]);
-const expanded = ref(!AUTO_COLLAPSE_NAMESPACES.has(props.node.name));
+// Expansion state is shared + persisted to localStorage; user toggles and
+// selection/search-driven expands both stick, so the tree reopens as left.
+const treeState = useCatalogTreeExpansion();
+const expanded = computed({
+  get: () =>
+    treeState.isExpanded(`ns:${props.node.id}`, !AUTO_COLLAPSE_NAMESPACES.has(props.node.name)),
+  set: (value) => treeState.setExpanded(`ns:${props.node.id}`, value),
+});
 const toggle = () => {
   expanded.value = !expanded.value;
 };
+
+// Sections inside system namespaces stay collapsed by default; the default
+// schema and user-created namespaces open fully uncollapsed.
+const sectionsDefaultExpanded = computed(() => !SYSTEM_NAMESPACE_NAMES.has(props.node.name));
 
 const flowsSection = ref<TreeSectionRef>(null);
 const modelsSection = ref<TreeSectionRef>(null);
@@ -389,15 +444,6 @@ watch(query, (value) => {
   if (visibleTables.value.length > 0) tablesSection.value?.expand();
   if (visibleVisualizations.value.length > 0) visualizationsSection.value?.expand();
 });
-
-watch(
-  () => props.node.id,
-  () => {
-    flowsSection.value?.collapse();
-    modelsSection.value?.collapse();
-    tablesSection.value?.collapse();
-  },
-);
 
 function countUniqueArtifactNames(artifacts: GlobalArtifact[]): number {
   return new Set(artifacts.map((a) => a.name)).size;
@@ -576,11 +622,13 @@ const totalFlows = computed(() => {
 }
 
 .tree-flow.file-missing,
-.tree-table.file-missing {
+.tree-table.file-missing,
+.tree-artifact.file-missing {
   opacity: 0.55;
 }
 .tree-flow.file-missing .flow-icon,
-.tree-table.file-missing .table-icon {
+.tree-table.file-missing .table-icon,
+.tree-artifact.file-missing .artifact-icon {
   color: var(--color-warning);
 }
 

@@ -41,14 +41,15 @@ export interface FlowSettings {
 
 export interface RunInformation {
   flow_id: number;
-  start_time: string; // datetime in ISO format
-  end_time: string; // datetime in ISO format
+  start_time: string | null; // datetime in ISO format; null when the flow never ran
+  end_time: string | null; // datetime in ISO format
   success: boolean | null; // null while the flow is still running
   is_running: boolean;
   execution_mode: ExecutionMode | null;
   nodes_completed: number;
   number_of_nodes: number;
   node_step_result: NodeResult[];
+  run_type: "fetch_one" | "full_run" | "init";
 }
 
 export interface RunInformationDictionary {

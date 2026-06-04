@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core.artifacts.exceptions import (
+    AmbiguousArtifactError,
+    AmbiguousNamespaceError,
     ArtifactNotActiveError,
     ArtifactNotFoundError,
     ArtifactUploadError,
@@ -169,16 +171,21 @@ def get_artifact_by_name(
     name: str,
     version: int | None = Query(None, description="Specific version to retrieve"),
     namespace_id: int | None = Query(None, description="Namespace filter"),
+    namespace: str | None = Query(None, description="Namespace name (resolved to id; alternative to namespace_id)"),
     service: ArtifactService = Depends(get_artifact_service),
 ):
     """Get artifact by name with optional version."""
     try:
+        if namespace_id is None and namespace is not None:
+            namespace_id = service.resolve_namespace_id(namespace)
         return service.get_artifact_by_name(
             name=name,
             namespace_id=namespace_id,
             version=version,
         )
-    except ArtifactNotFoundError as e:
+    except (AmbiguousArtifactError, AmbiguousNamespaceError) as e:
+        raise HTTPException(409, str(e)) from e
+    except (ArtifactNotFoundError, NamespaceNotFoundError) as e:
         raise HTTPException(404, str(e)) from e
 
 
@@ -191,15 +198,20 @@ def get_artifact_by_name(
 def get_artifact_versions(
     name: str,
     namespace_id: int | None = Query(None, description="Namespace filter"),
+    namespace: str | None = Query(None, description="Namespace name (resolved to id; alternative to namespace_id)"),
     service: ArtifactService = Depends(get_artifact_service),
 ):
     """Get artifact with all available versions."""
     try:
+        if namespace_id is None and namespace is not None:
+            namespace_id = service.resolve_namespace_id(namespace)
         return service.get_artifact_with_versions(
             name=name,
             namespace_id=namespace_id,
         )
-    except ArtifactNotFoundError as e:
+    except (AmbiguousArtifactError, AmbiguousNamespaceError) as e:
+        raise HTTPException(409, str(e)) from e
+    except (ArtifactNotFoundError, NamespaceNotFoundError) as e:
         raise HTTPException(404, str(e)) from e
 
 
@@ -261,11 +273,14 @@ async def delete_artifact(
 async def delete_artifact_by_name(
     name: str,
     namespace_id: int | None = Query(None, description="Namespace filter"),
+    namespace: str | None = Query(None, description="Namespace name (resolved to id; alternative to namespace_id)"),
     current_user=Depends(get_user_or_internal_service),
     service: ArtifactService = Depends(get_artifact_service),
 ):
     """Delete all versions of an artifact."""
     try:
+        if namespace_id is None and namespace is not None:
+            namespace_id = service.resolve_namespace_id(namespace)
         versions_deleted = service.delete_all_versions(
             name=name,
             namespace_id=namespace_id,
@@ -275,5 +290,7 @@ async def delete_artifact_by_name(
             artifact_id=0,  # Multiple versions deleted
             versions_deleted=versions_deleted,
         )
-    except ArtifactNotFoundError as e:
+    except AmbiguousNamespaceError as e:
+        raise HTTPException(409, str(e)) from e
+    except (ArtifactNotFoundError, NamespaceNotFoundError) as e:
         raise HTTPException(404, str(e)) from e

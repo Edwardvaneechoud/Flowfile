@@ -34,6 +34,7 @@ _ML_EXTRA_PACKAGE_NAMES: tuple[str, ...] = (
     "xgboost",
     "lightgbm",
     "statsmodels",
+    "polars-ds",
 )
 # Only the packages users actually import in flow code. The kernel image
 # also has fastapi/uvicorn/httpx (to serve the runtime HTTP API) and

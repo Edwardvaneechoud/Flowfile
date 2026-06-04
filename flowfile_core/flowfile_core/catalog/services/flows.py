@@ -11,8 +11,7 @@ from flowfile_core.catalog.exceptions import (
     NamespaceNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
-from flowfile_core.catalog.serializers import artifact_to_out
-from flowfile_core.catalog.services.namespaces import NamespaceService
+from flowfile_core.catalog.services.namespaces import NamespaceService, bulk_enrich_artifacts
 from flowfile_core.database.models import CatalogNamespace, FlowRegistration
 from flowfile_core.schemas.catalog_schema import (
     CatalogTableSummary,
@@ -214,7 +213,7 @@ class FlowRegistrationService:
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
         artifacts = self.repo.list_artifacts_for_flow(registration_id)
-        return [artifact_to_out(a) for a in artifacts]
+        return bulk_enrich_artifacts(artifacts)
 
     def _ensure_general_child(self, name: str, description: str) -> CatalogNamespace | None:
         """Ensure 'General > {name}' namespace exists, creating it if needed."""

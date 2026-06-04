@@ -390,24 +390,28 @@ def get_global(
     name: str,
     version: int | None = None,
     namespace_id: int | None = None,
+    namespace: str | None = None,
 ) -> Any:
     """Retrieve a Python object from the global artifact store.
 
     Args:
         name: Artifact name to retrieve.
         version: Specific version to retrieve. Returns latest version if not specified.
-        namespace_id: Namespace (schema) filter.
+        namespace_id: Namespace (schema) filter by id.
+        namespace: Namespace (schema) filter by name; resolved to an id server-side.
+            Raises if the name is unknown or matches more than one namespace.
 
     Returns:
         The deserialized Python object.
 
     Raises:
-        KeyError: If artifact is not found.
+        KeyError: If artifact is not found or the lookup is ambiguous.
         httpx.HTTPStatusError: If API calls fail.
 
     Example:
         >>> model = flowfile_ctx.get_global("my_model")
         >>> model_v1 = flowfile_ctx.get_global("my_model", version=1)
+        >>> model = flowfile_ctx.get_global("my_model", namespace="my_schema")
     """
     from kernel_runtime.serialization import deserialize_from_bytes, deserialize_from_file
 
@@ -417,6 +421,8 @@ def get_global(
         params["version"] = version
     if namespace_id is not None:
         params["namespace_id"] = namespace_id
+    if namespace is not None:
+        params["namespace"] = namespace
 
     auth_headers = _get_internal_auth_headers()
     with httpx.Client(timeout=30.0, headers=auth_headers) as client:
@@ -426,6 +432,12 @@ def get_global(
         )
         if resp.status_code == 404:
             raise KeyError(f"Artifact '{name}' not found")
+        if resp.status_code == 409:
+            try:
+                detail = resp.json().get("detail", "")
+            except Exception:
+                detail = ""
+            raise KeyError(detail or f"Artifact '{name}' is ambiguous; specify a namespace_id")
         resp.raise_for_status()
 
         meta = resp.json()
@@ -436,6 +448,12 @@ def get_global(
         if download["method"] == "file":
             # Shared filesystem - translate host path to container path if in Docker
             file_path = _translate_host_path_to_container(download["path"])
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(
+                    f"Artifact '{name}' v{meta['version']} data not found at {file_path}. "
+                    "If running in Docker, the shared artifacts volume may not be mounted "
+                    "into the kernel container."
+                )
             obj = deserialize_from_file(file_path, format)
         else:
             # S3 presigned URL
@@ -481,13 +499,16 @@ def delete_global_artifact(
     name: str,
     version: int | None = None,
     namespace_id: int | None = None,
+    namespace: str | None = None,
 ) -> None:
     """Delete a global artifact.
 
     Args:
         name: Artifact name to delete.
         version: Specific version to delete. Deletes all versions if not specified.
-        namespace_id: Namespace (schema) filter.
+        namespace_id: Namespace (schema) filter by id.
+        namespace: Namespace (schema) filter by name; resolved to an id server-side.
+            Raises if the name is unknown or matches more than one namespace.
 
     Raises:
         KeyError: If artifact is not found.
@@ -496,6 +517,7 @@ def delete_global_artifact(
     Example:
         >>> flowfile_ctx.delete_global_artifact("my_model")  # delete all versions
         >>> flowfile_ctx.delete_global_artifact("my_model", version=1)  # delete v1 only
+        >>> flowfile_ctx.delete_global_artifact("my_model", namespace="my_schema")
     """
     auth_headers = _get_internal_auth_headers()
     with httpx.Client(timeout=30.0, headers=auth_headers) as client:
@@ -504,6 +526,8 @@ def delete_global_artifact(
             params = {"version": version}
             if namespace_id is not None:
                 params["namespace_id"] = namespace_id
+            if namespace is not None:
+                params["namespace"] = namespace
 
             resp = client.get(
                 f"{_CORE_URL}/artifacts/by-name/{name}",
@@ -521,6 +545,8 @@ def delete_global_artifact(
             params = {}
             if namespace_id is not None:
                 params["namespace_id"] = namespace_id
+            if namespace is not None:
+                params["namespace"] = namespace
 
             resp = client.delete(
                 f"{_CORE_URL}/artifacts/by-name/{name}",

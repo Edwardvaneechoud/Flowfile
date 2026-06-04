@@ -1,24 +1,27 @@
 <template>
   <el-card class="run-card" shadow="hover">
     <div class="clearfix">
-      <span>Flow: {{ runInformation?.flow_id }}</span>
+      <span>Flow: {{ runInformation?.flow_id }}:</span>
       <span class="flow-summary" :class="runStatusClass">
-        - {{ runStatusText }}, Nodes: {{ runInformation?.nodes_completed }}/{{
-          runInformation?.number_of_nodes
-        }}
+        {{ runStatusText
+        }}<template v-if="hasRun"
+          >, Nodes: {{ runInformation?.nodes_completed }}/{{
+            runInformation?.number_of_nodes
+          }}</template
+        >
       </span>
     </div>
 
     <!-- Performance-mode notice: per-step data isn't stored in Performance mode -->
     <div v-if="showPerfNotice" class="perf-mode-notice">
-      <el-icon class="perf-mode-notice__icon"><Odometer /></el-icon>
+      <el-icon class="perf-mode-notice__icon"><InfoFilled /></el-icon>
       <span class="perf-mode-notice__text">
         This flow ran in <strong>Performance</strong> mode, so data for each step isn't stored. To
-        inspect the data step by step, switch to
+        inspect the data step by step, select Development as 
         <button type="button" class="perf-mode-notice__link" @click="openFlowSettings">
-          Development mode
+          execution mode
         </button>
-        and run again.
+       and run again.
       </span>
       <button
         class="perf-mode-notice__dismiss"
@@ -89,7 +92,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, defineProps } from "vue";
 import { format } from "date-fns";
-import { Odometer } from "@element-plus/icons-vue";
+import { InfoFilled } from "@element-plus/icons-vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useAiStore } from "../../../stores/ai-store";
 import { useEditorStore } from "../../../stores/editor-store";
@@ -121,12 +124,20 @@ const selectedNode = ref<Element | null>(null);
 
 const openFlowSettings = () => editorStore.requestOpenFlowSettings();
 
-// Three-state flow status. The backend leaves `success` null while the flow is
-// running and sets `is_running`, so we never render a running flow as "Failed".
+// Flow status. The backend leaves `success` null while the flow is running
+// and sets `is_running`, so we never render a running flow as "Failed". A
+// flow that never ran reports `run_type: "init"` — render that as "Not run
+// yet" instead of "Failed", and skip the meaningless 0/0 node count.
+const hasRun = computed(() => {
+  const info = runInformation.value;
+  return !!info && info.run_type !== "init";
+});
+
 const runStatusText = computed(() => {
   const info = runInformation.value;
   if (!info) return "";
   if (info.is_running) return "Running";
+  if (!hasRun.value) return "No results yet";
   return info.success ? "Succeeded" : "Failed";
 });
 

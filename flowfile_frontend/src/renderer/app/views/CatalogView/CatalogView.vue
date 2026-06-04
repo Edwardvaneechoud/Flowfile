@@ -53,15 +53,6 @@
                 <i class="fa-solid fa-rotate"></i>
               </button>
             </el-tooltip>
-            <el-tooltip content="SQL Editor" placement="bottom" :show-after="400">
-              <button
-                class="btn btn-ghost btn-icon btn-sm"
-                :class="{ 'btn-active': showSqlEditor }"
-                @click="showSqlEditor = !showSqlEditor"
-              >
-                <i class="fa-solid fa-code"></i>
-              </button>
-            </el-tooltip>
             <el-tooltip content="New catalog" placement="bottom" :show-after="400">
               <button class="btn btn-ghost btn-icon btn-sm" @click="showCreateNamespace = true">
                 <i class="fa-solid fa-plus"></i>
@@ -100,6 +91,8 @@
               @select-artifact="selectArtifact($event)"
               @select-table="selectTable($event)"
               @table-context-menu="onTableContextMenu($event)"
+              @artifact-context-menu="onArtifactContextMenu($event)"
+              @flow-context-menu="onFlowContextMenu($event)"
               @select-visualization="openVisualization($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
               @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
@@ -145,6 +138,7 @@
           :versions="selectedArtifactVersions"
           @close="handleCloseDetail"
           @navigate-to-flow="navigateToFlow($event)"
+          @delete-artifact="handleDeleteArtifact($event)"
         />
         <!-- Table detail view -->
         <TableDetailPanel
@@ -167,6 +161,8 @@
           v-else-if="catalogStore.selectedFlow"
           :flow="catalogStore.selectedFlow"
           :artifacts="catalogStore.flowArtifacts"
+          :focus-runs="flowDetailFocusRuns"
+          @runs-focused="flowDetailFocusRuns = false"
           @close="handleCloseDetail"
           @view-run="handleViewRun"
           @view-flow="navigateToFlow($event)"
@@ -236,7 +232,7 @@
         </div>
         <!-- SQL Editor -->
         <SqlEditorPanel
-          v-else-if="showSqlEditor || catalogStore.activeTab === 'sql'"
+          v-else-if="catalogStore.activeTab === 'sql'"
           :initial-query="sqlInitialQuery"
         />
         <!-- Visuals (charts + dashboards) -->
@@ -265,6 +261,7 @@
           @delete-schedule="handleDeleteSchedule"
           @run-now="handleRunNow"
           @cancel-schedule-run="handleCancelScheduleRun"
+          @open-tab="handleTabClick($event)"
         />
       </div>
     </div>
@@ -353,7 +350,7 @@
       />
     </el-dialog>
 
-    <!-- Right-click context menu for catalog tables -->
+    <!-- Right-click context menus for catalog tables and flows -->
     <Teleport to="body">
       <ContextMenu
         v-if="tableMenu"
@@ -361,6 +358,20 @@
         :options="tableMenuOptions"
         @select="onTableMenuSelect"
         @close="tableMenu = null"
+      />
+      <ContextMenu
+        v-if="flowMenu"
+        :position="{ x: flowMenu.x, y: flowMenu.y }"
+        :options="flowMenuOptions"
+        @select="onFlowMenuSelect"
+        @close="flowMenu = null"
+      />
+      <ContextMenu
+        v-if="artifactMenu"
+        :position="{ x: artifactMenu.x, y: artifactMenu.y }"
+        :options="artifactMenuOptions"
+        @select="onArtifactMenuSelect"
+        @close="artifactMenu = null"
       />
     </Teleport>
 
@@ -471,6 +482,7 @@ import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAp
 import type {
   CatalogTab,
   CatalogTable,
+  FlowRegistration,
   FlowSchedule,
   FlowScheduleCreate,
   GlobalArtifact,
@@ -540,8 +552,29 @@ const tableMenuOptions: ContextMenuOption[] = [
   { label: "Create visual", action: "visuals" },
 ];
 
+// Right-click context menu for catalog models (artifacts)
+const artifactMenu = ref<{ artifact: GlobalArtifact; x: number; y: number } | null>(null);
+const artifactMenuOptions = computed<ContextMenuOption[]>(() => [
+  { label: "View model", action: "view" },
+  {
+    label: "Read in flow",
+    action: "read",
+    disabled: artifactMenu.value?.artifact.blob_exists === false,
+  },
+  { label: "Delete model", action: "delete", danger: true },
+]);
+
+// Right-click context menu for catalog flows
+const flowMenu = ref<{ flow: FlowRegistration; x: number; y: number } | null>(null);
+const flowMenuOptions = computed<ContextMenuOption[]>(() => [
+  { label: "Open flow in editor", action: "open", disabled: !flowMenu.value?.flow.file_exists },
+  { label: "Flow overview", action: "view" },
+  { label: "Run history", action: "runs" },
+]);
+// One-shot signal: scroll the flow detail panel to its Run History section.
+const flowDetailFocusRuns = ref(false);
+
 const showCreateVirtualTable = ref(false);
-const showSqlEditor = ref(false);
 const sqlInitialQuery = ref<string | undefined>(undefined);
 
 // Default namespace ID (loaded once on mount)
@@ -633,6 +666,33 @@ function onTableMenuSelect(action: string) {
   else if (action === "visuals") openCreateViz(table);
 }
 
+function onArtifactContextMenu(payload: { artifact: GlobalArtifact; x: number; y: number }) {
+  artifactMenu.value = payload;
+}
+
+function onArtifactMenuSelect(action: string) {
+  const artifact = artifactMenu.value?.artifact;
+  if (!artifact) return;
+  if (action === "view") selectArtifact(artifact.id);
+  else if (action === "read") createReadInFlowFromArtifact(artifact);
+  else if (action === "delete") handleDeleteArtifact(artifact);
+}
+
+function onFlowContextMenu(payload: { flow: FlowRegistration; x: number; y: number }) {
+  flowMenu.value = payload;
+}
+
+function onFlowMenuSelect(action: string) {
+  const flow = flowMenu.value?.flow;
+  if (!flow) return;
+  if (action === "view") selectFlow(flow.id);
+  else if (action === "open") openFlowInDesigner(flow.flow_path);
+  else if (action === "runs") {
+    flowDetailFocusRuns.value = true;
+    selectFlow(flow.id);
+  }
+}
+
 // Spin up a fresh flow whose only node is a catalog reader pre-configured for the
 // given table, then open it in the designer. Mirrors the setting_input the
 // CatalogReader node persists for a configured table (is_setup: true).
@@ -657,6 +717,43 @@ async function createReadInFlow(table: CatalogTable) {
       pos_y: posY,
       is_setup: true,
       description: "",
+    });
+    flowStore.setFlowId(flowId);
+    router.push({ name: "designer" });
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to create read flow");
+  }
+}
+
+// Spin up a fresh flow whose only node is a Python Script that loads the given
+// model from the catalog, then open it in the designer. Mirrors createReadInFlow
+// (tables) but targets the kernel-backed python_script node where flowfile_ctx lives.
+async function createReadInFlowFromArtifact(artifact: GlobalArtifact) {
+  try {
+    const flowId = await FlowApi.createFlow(null, null);
+    const nodeId = 1;
+    const posX = 200;
+    const posY = 200;
+    const id = artifact.namespace_id;
+    let nsArg = "";
+    if (id !== null && id !== undefined) {
+      const nsName = catalogStore.getNamespaceName(id);
+      nsArg = nsName ? `, namespace=${JSON.stringify(nsName)}` : `, namespace_id=${id}`;
+    }
+    // Omit version so the flow always reads the latest model (picks up retrains).
+    const code = `obj = flowfile_ctx.get_global("${artifact.name}"${nsArg})\nobj`;
+    await FlowApi.insertNode(flowId, nodeId, "python_script", posX, posY);
+    await NodeApi.updateSettingsDirectly("python_script", {
+      flow_id: flowId,
+      node_id: nodeId,
+      cache_results: false,
+      pos_x: posX,
+      pos_y: posY,
+      is_setup: true,
+      description: "",
+      depending_on_ids: [],
+      output_names: ["main"],
+      python_script_input: { code, kernel_id: null },
     });
     flowStore.setFlowId(flowId);
     router.push({ name: "designer" });
@@ -759,7 +856,6 @@ function quoteSqlName(name: string): string {
 
 function handleQueryTable(tableName: string) {
   sqlInitialQuery.value = `SELECT * FROM ${quoteSqlName(tableName)}`;
-  showSqlEditor.value = true;
   // Clear selected table so the SQL editor panel shows
   catalogStore.clearTableSelection();
   router.push({ name: "catalog", query: { tab: "sql" } });
@@ -789,6 +885,31 @@ async function handleDeleteTable(tableId: number) {
     ]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to delete table");
+  }
+}
+
+// Delete a model (all versions). Backend hard-deletes the blobs; mirrors the
+// table delete flow (confirm -> API -> clear selection -> refresh).
+async function handleDeleteArtifact(artifact: GlobalArtifact) {
+  try {
+    await ElMessageBox.confirm(
+      `Are you sure you want to delete the model "${artifact.name}"? All versions and their data will be removed.`,
+      "Delete Model",
+      {
+        confirmButtonText: "Delete",
+        cancelButtonText: "Cancel",
+        type: "warning",
+      },
+    );
+  } catch {
+    return; // User cancelled
+  }
+  try {
+    await CatalogApi.deleteArtifact(artifact.name, artifact.namespace_id);
+    catalogStore.clearArtifactSelection();
+    await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to delete model");
   }
 }
 
@@ -1323,6 +1444,11 @@ onUnmounted(() => {
   color: var(--color-danger);
 }
 
+.catalog-view .status-badge.unavailable {
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--color-warning);
+}
+
 /* ========== Overview Table ========== */
 .catalog-view .overview-table,
 .catalog-view .runs-table,
@@ -1733,11 +1859,6 @@ onUnmounted(() => {
 .sidebar-header-actions {
   display: flex;
   gap: 4px;
-}
-
-.sidebar-header-actions .btn-active {
-  color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
 }
 
 .catalog-detail {

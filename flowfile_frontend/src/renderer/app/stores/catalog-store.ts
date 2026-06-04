@@ -453,6 +453,16 @@ export const useCatalogStore = defineStore("catalog", {
       return null;
     },
 
+    getNamespaceName(namespaceId: number): string | null {
+      for (const cat of this.tree) {
+        if (cat.id === namespaceId) return cat.name;
+        for (const schema of cat.children) {
+          if (schema.id === namespaceId) return schema.name;
+        }
+      }
+      return null;
+    },
+
     // -- Schedule actions --
 
     async loadSchedules() {

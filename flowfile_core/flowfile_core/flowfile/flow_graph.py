@@ -2650,6 +2650,13 @@ class FlowGraph:
                         "(FLOWFILE_ARTIFACT_STORAGE=filesystem). S3 support is not implemented."
                     )
                 model_path = artifact.download_source.path
+                if not os.path.exists(model_path):
+                    raise ValueError(
+                        f"Apply Model: data for catalog model '{settings.model_name}' "
+                        f"v{artifact.version} (namespace {artifact.namespace_id}) is missing "
+                        f"at {model_path}. If running in Docker, ensure the shared artifacts "
+                        "volume is mounted into both core and the worker."
+                    )
                 origin_label = f"catalog '{settings.model_name}' v{artifact.version}"
 
             node = self.get_node(node_id=apply_settings.node_id)

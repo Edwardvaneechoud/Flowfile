@@ -604,6 +604,31 @@ xlsx2csv = ["xlsx2csv (>=0.8.0)"]
 xlsxwriter = ["xlsxwriter"]
 
 [[package]]
+name = "polars-ds"
+version = "0.12.0"
+description = ""
+optional = true
+python-versions = ">=3.9"
+files = [
+    {file = "polars_ds-0.12.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:b48a80ce89a564b13aab1230c89b105e36c44151424c9d970f5497598b4041a5"},
+    {file = "polars_ds-0.12.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:b67a89b230e57219f2c2b0bc1f1f0c855fcab302f843a909cedd62c9dbaad5ca"},
+    {file = "polars_ds-0.12.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b0ec13327e7fcb732d497a6d1fbc352eb4c769da0073219640efe5112bf51af0"},
+    {file = "polars_ds-0.12.0-cp39-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:17acd14ff159dc665b58fb34279c4334fb243fb55915f5eed2609bea99c8715b"},
+    {file = "polars_ds-0.12.0-cp39-abi3-win_amd64.whl", hash = "sha256:a1e5fd40056625615e8622b6683974d10d3432a95fe906ef8acbf118b085d2b4"},
+    {file = "polars_ds-0.12.0.tar.gz", hash = "sha256:d7b39c7f70782caa8a0fbc0bf52c6cceaff2f109476540b680f612b6b83f8042"},
+]
+
+[package.dependencies]
+polars = ">=1.4.0,<1.25 || >1.25,<1.26 || >1.26,<1.32.1 || >1.32.1,<1.32.2 || >1.32.2"
+typing-extensions = {version = "*", markers = "python_version <= \"3.11\""}
+
+[package.extras]
+all = ["altair (>=5.4.0)", "graphviz (>=0.20)", "great-tables (>=0.9)", "numpy (>=1.16)", "vegafusion[embed]"]
+compat = ["numpy (>=1.16)"]
+models = ["numpy (>=1.16)"]
+plot = ["altair (>=5.4.0)", "graphviz (>=0.20)", "great-tables (>=0.9)", "vegafusion[embed]"]
+
+[[package]]
 name = "polars-runtime-32"
 version = "1.38.1"
 description = "Blazingly fast DataFrame library"
@@ -1349,10 +1374,10 @@ pyspark = ["cloudpickle", "pyspark", "scikit-learn"]
 scikit-learn = ["scikit-learn"]
 
 [extras]
-ml = ["lightgbm", "scikit-learn", "statsmodels", "xgboost"]
+ml = ["lightgbm", "polars-ds", "scikit-learn", "statsmodels", "xgboost"]
 test = ["pytest"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "5d829fbdadaee1a9b74c579b0aa2f845565c1e53747ddab75702fe2e2057073f"
+content-hash = "d02b20d1624f4b0264f504580dd93edfcd99216ef2c777e9437c182cb84ee031"
