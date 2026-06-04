@@ -206,7 +206,7 @@
     <div v-if="!activeSection" class="info-section">
       <h3>Getting Started</h3>
       <div class="info-cards">
-        <div class="info-card">
+        <div class="info-card clickable" @click="$emit('openTab', 'catalog')">
           <div class="info-card-header">
             <i class="fa-solid fa-folder-tree"></i>
             <h4>Organization</h4>
@@ -217,7 +217,7 @@
             schemas for finer separation within them.
           </p>
         </div>
-        <div class="info-card">
+        <div class="info-card clickable" @click="$emit('openTab', 'runs')">
           <div class="info-card-header">
             <i class="fa-solid fa-clock-rotate-left"></i>
             <h4>Run History</h4>
@@ -227,7 +227,7 @@
             node-level progress for each run, or open a snapshot to inspect a past state.
           </p>
         </div>
-        <div class="info-card">
+        <div class="info-card clickable" @click="$emit('openTab', 'catalog')">
           <div class="info-card-header">
             <i class="fa-solid fa-table"></i>
             <h4>Tables &amp; Artifacts</h4>
@@ -237,7 +237,7 @@
             produced by flows are versioned and linked back to the run that created them.
           </p>
         </div>
-        <div class="info-card">
+        <div class="info-card clickable" @click="$emit('openTab', 'schedules')">
           <div class="info-card-header">
             <i class="fa-solid fa-calendar-days"></i>
             <h4>Schedules</h4>
@@ -245,6 +245,26 @@
           <p>
             Automate flow execution with cron-based or table-trigger schedules. Monitor active runs
             and manage schedules from the Schedules tab.
+          </p>
+        </div>
+        <div class="info-card clickable" @click="$emit('openTab', 'visuals')">
+          <div class="info-card-header">
+            <i class="fa-solid fa-chart-pie"></i>
+            <h4>Visuals</h4>
+          </div>
+          <p>
+            Build charts from catalog tables or SQL queries and assemble them into dashboards. Saved
+            visuals stay linked to their source data on the Visuals tab.
+          </p>
+        </div>
+        <div class="info-card clickable" @click="$emit('openTab', 'apis')">
+          <div class="info-card-header">
+            <i class="fa-solid fa-plug"></i>
+            <h4>APIs</h4>
+          </div>
+          <p>
+            Publish flows as HTTP data APIs. Manage parameters, keys, and consumers, or test
+            endpoints from the APIs tab.
           </p>
         </div>
       </div>
@@ -309,6 +329,7 @@ defineEmits([
   "deleteSchedule",
   "runNow",
   "cancelScheduleRun",
+  "openTab",
 ]);
 
 const activeSection = ref<Section | null>(null);
@@ -493,6 +514,14 @@ function toggleSection(section: Section) {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: var(--spacing-3);
+}
+
+.info-card.clickable {
+  transition: border-color var(--transition-fast);
+}
+
+.info-card.clickable:hover {
+  border-color: var(--color-primary);
 }
 
 /* Welcome */

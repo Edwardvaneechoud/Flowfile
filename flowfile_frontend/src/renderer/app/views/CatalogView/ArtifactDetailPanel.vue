@@ -119,10 +119,10 @@
     <div class="section">
       <h3>Usage</h3>
       <div class="code-block">
-        <code>obj = flowfile_ctx.get_global("{{ artifact.name }}")</code>
+        <code>obj = flowfile_ctx.get_global("{{ artifact.name }}"{{ nsArg }})</code>
       </div>
       <div v-if="versions.length > 1" class="code-block" style="margin-top: 8px">
-        <code>obj_v1 = flowfile_ctx.get_global("{{ artifact.name }}", version=1)</code>
+        <code>obj_v1 = flowfile_ctx.get_global("{{ artifact.name }}"{{ nsArg }}, version=1)</code>
       </div>
     </div>
   </div>
@@ -148,6 +148,16 @@ const sourceFlowName = computed((): string | null => {
   if (regId === null) return null;
   const flow = catalogStore.allFlows.find((f) => f.id === regId);
   return flow?.name ?? null;
+});
+
+// Namespace-qualify the usage snippet so it resolves unambiguously when the
+// same name exists in multiple schemas. Prefer the readable namespace name,
+// falling back to the id; omitted when the artifact has no namespace.
+const nsArg = computed((): string => {
+  const id = props.artifact.namespace_id;
+  if (id === null || id === undefined) return "";
+  const name = catalogStore.getNamespaceName(id);
+  return name ? `, namespace=${JSON.stringify(name)}` : `, namespace_id=${id}`;
 });
 </script>
 

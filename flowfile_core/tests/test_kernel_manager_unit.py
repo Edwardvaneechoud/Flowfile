@@ -24,6 +24,8 @@ from flowfile_core.kernel.manager import (
     _spec_to_name,
     _validate_custom_image,
     _validate_packages,
+    newest_installed_version,
+    parse_image_version,
 )
 from flowfile_core.kernel.models import (
     ImageFlavour,
@@ -311,6 +313,39 @@ class TestDerivedImageTag:
 
 
 # Orphan derived-image GC
+
+
+class TestImageVersionHelpers:
+    def test_parse_image_version_parses_dotted_numeric(self):
+        assert parse_image_version("edwardvaneechoud/flowfile-kernel-base:0.3.1") == (0, 3, 1)
+
+    def test_parse_image_version_none_for_non_numeric(self):
+        assert parse_image_version("flowfile-kernel-base:local") is None
+        assert parse_image_version("noversion") is None
+
+    def test_newest_installed_version_picks_highest(self):
+        client = MagicMock()
+        v030 = MagicMock()
+        v030.tags = ["edwardvaneechoud/flowfile-kernel-base:0.3.0"]
+        v031 = MagicMock()
+        v031.tags = ["edwardvaneechoud/flowfile-kernel-base:0.3.1"]
+        client.images.list.return_value = [v030, v031]
+        result = newest_installed_version("edwardvaneechoud/flowfile-kernel-base", client)
+        assert result == ("edwardvaneechoud/flowfile-kernel-base:0.3.1", (0, 3, 1))
+
+    def test_newest_installed_version_ignores_local_and_other_repos(self):
+        client = MagicMock()
+        local = MagicMock()
+        local.tags = ["edwardvaneechoud/flowfile-kernel-base:local"]
+        other = MagicMock()
+        other.tags = ["someoneelse/flowfile-kernel-base:9.9.9"]
+        client.images.list.return_value = [local, other]
+        assert newest_installed_version("edwardvaneechoud/flowfile-kernel-base", client) is None
+
+    def test_newest_installed_version_none_when_empty(self):
+        client = MagicMock()
+        client.images.list.return_value = []
+        assert newest_installed_version("edwardvaneechoud/flowfile-kernel-base", client) is None
 
 
 def _image_with_tag(tag: str, labels: dict[str, str] | None = None) -> MagicMock:

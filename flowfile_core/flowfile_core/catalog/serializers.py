@@ -57,7 +57,7 @@ def run_to_out(run: FlowRun, *, has_log: bool, display_name: str | None = None) 
     )
 
 
-def artifact_to_out(artifact: GlobalArtifact) -> GlobalArtifactOut:
+def artifact_to_out(artifact: GlobalArtifact, blob_exists: bool = True) -> GlobalArtifactOut:
     """Convert a GlobalArtifact ORM instance to its Pydantic output schema."""
     tags: list[str] = []
     if hasattr(artifact, "tags") and artifact.tags:
@@ -88,6 +88,7 @@ def artifact_to_out(artifact: GlobalArtifact) -> GlobalArtifactOut:
         owner_id=getattr(artifact, "owner_id", None),
         created_at=getattr(artifact, "created_at", None),
         updated_at=getattr(artifact, "updated_at", None),
+        blob_exists=blob_exists,
     )
 
 

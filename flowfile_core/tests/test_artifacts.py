@@ -613,7 +613,8 @@ class TestRetrieveArtifact:
         assert resp.json()["version"] == 2
 
     def test_get_artifact_with_namespace_filter(self, test_namespace):
-        """Should filter by namespace."""
+        """Filtering by namespace works; a name-only lookup that spans multiple
+        namespaces is rejected as ambiguous (409)."""
         self._create_active_artifact("ns_filtered", namespace_id=test_namespace)
         self._create_active_artifact("ns_filtered")
 
@@ -624,9 +625,28 @@ class TestRetrieveArtifact:
         assert resp.status_code == 200
         assert resp.json()["namespace_id"] == test_namespace
 
+        # Same name in two namespaces + no namespace_id -> ambiguous.
         resp = client.get("/artifacts/by-name/ns_filtered")
+        assert resp.status_code == 409
+        assert "namespace_id" in resp.json()["detail"]
+
+    def test_get_artifact_by_namespace_name(self, test_namespace):
+        """Lookup by namespace *name* resolves to the same artifact as namespace_id."""
+        self._create_active_artifact("ns_named", namespace_id=test_namespace)
+
+        resp = client.get(
+            "/artifacts/by-name/ns_named",
+            params={"namespace": "ArtifactTestSchema"},
+        )
         assert resp.status_code == 200
-        assert resp.json()["namespace_id"] == test_namespace  # Default namespace ID for test artifacts
+        assert resp.json()["namespace_id"] == test_namespace
+
+        # Unknown namespace name -> 404.
+        resp = client.get(
+            "/artifacts/by-name/ns_named",
+            params={"namespace": "does_not_exist"},
+        )
+        assert resp.status_code == 404
 
     def test_get_artifact_versions(self):
         """Should retrieve artifact with all versions."""

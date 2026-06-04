@@ -128,6 +128,24 @@ class NamespaceService:
         namespace_artifact_map: dict[int, list[GlobalArtifactOut]] = {}
         namespace_table_map: dict[int, list[CatalogTableOut]] = {}
 
+        # Flag artifacts whose backing blob is missing on disk (filesystem backend
+        # only — exists() is one cheap stat; an S3 probe per item would be a network
+        # call on every tree load).
+        from flowfile_core.artifacts import get_storage_backend
+        from shared.artifact_storage import SharedFilesystemStorage
+
+        _storage = get_storage_backend()
+        _fs_storage = _storage if isinstance(_storage, SharedFilesystemStorage) else None
+
+        def _artifacts_out(ns_id: int) -> list[GlobalArtifactOut]:
+            items: list[GlobalArtifactOut] = []
+            for a in self.repo.list_artifacts_for_namespace(ns_id):
+                blob_exists = True
+                if _fs_storage is not None and a.storage_key:
+                    blob_exists = _fs_storage.exists(a.storage_key)
+                items.append(artifact_to_out(a, blob_exists=blob_exists))
+            return items
+
         # Visualizations are surfaced as a peer of flows / tables / artifacts in
         # whatever namespace they were saved into (their own ``namespace_id``,
         # not the parent table's). Resolve once and bucket by namespace.
@@ -141,18 +159,14 @@ class NamespaceService:
             cat_flows = self.repo.list_flows(namespace_id=cat.id)
             namespace_flow_map[cat.id] = cat_flows
             all_flows.extend(cat_flows)
-            namespace_artifact_map[cat.id] = [
-                artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(cat.id)
-            ]
+            namespace_artifact_map[cat.id] = _artifacts_out(cat.id)
             namespace_table_map[cat.id] = bulk_enrich_tables(self.repo.list_tables_for_namespace(cat.id), user_id)
 
             for schema in self.repo.list_child_namespaces(cat.id):
                 schema_flows = self.repo.list_flows(namespace_id=schema.id)
                 namespace_flow_map[schema.id] = schema_flows
                 all_flows.extend(schema_flows)
-                namespace_artifact_map[schema.id] = [
-                    artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(schema.id)
-                ]
+                namespace_artifact_map[schema.id] = _artifacts_out(schema.id)
                 namespace_table_map[schema.id] = bulk_enrich_tables(
                     self.repo.list_tables_for_namespace(schema.id), user_id
                 )

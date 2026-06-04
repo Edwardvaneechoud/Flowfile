@@ -1,11 +1,14 @@
 <template>
   <el-card class="run-card" shadow="hover">
     <div class="clearfix">
-      <span>Flow: {{ runInformation?.flow_id }}</span>
+      <span>Flow: {{ runInformation?.flow_id }}:</span>
       <span class="flow-summary" :class="runStatusClass">
-        - {{ runStatusText }}, Nodes: {{ runInformation?.nodes_completed }}/{{
-          runInformation?.number_of_nodes
-        }}
+        {{ runStatusText
+        }}<template v-if="hasRun"
+          >, Nodes: {{ runInformation?.nodes_completed }}/{{
+            runInformation?.number_of_nodes
+          }}</template
+        >
       </span>
     </div>
 
@@ -121,12 +124,20 @@ const selectedNode = ref<Element | null>(null);
 
 const openFlowSettings = () => editorStore.requestOpenFlowSettings();
 
-// Three-state flow status. The backend leaves `success` null while the flow is
-// running and sets `is_running`, so we never render a running flow as "Failed".
+// Flow status. The backend leaves `success` null while the flow is running
+// and sets `is_running`, so we never render a running flow as "Failed". A
+// flow that never ran reports `run_type: "init"` — render that as "Not run
+// yet" instead of "Failed", and skip the meaningless 0/0 node count.
+const hasRun = computed(() => {
+  const info = runInformation.value;
+  return !!info && info.run_type !== "init";
+});
+
 const runStatusText = computed(() => {
   const info = runInformation.value;
   if (!info) return "";
   if (info.is_running) return "Running";
+  if (!hasRun.value) return "No results yet";
   return info.success ? "Succeeded" : "Failed";
 });
 

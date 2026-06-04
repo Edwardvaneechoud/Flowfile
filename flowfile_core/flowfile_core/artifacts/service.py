@@ -17,6 +17,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from flowfile_core.artifacts.exceptions import (
+    AmbiguousArtifactError,
+    AmbiguousNamespaceError,
     ArtifactNotFoundError,
     ArtifactStateError,
     ArtifactUploadError,
@@ -271,6 +273,8 @@ class ArtifactService:
         Raises:
             ArtifactNotFoundError: If artifact doesn't exist.
         """
+        self._assert_unambiguous(name, namespace_id)
+
         query = self.db.query(GlobalArtifact).filter_by(
             name=name,
             status="active",
@@ -323,6 +327,8 @@ class ArtifactService:
         Raises:
             ArtifactNotFoundError: If artifact doesn't exist.
         """
+        self._assert_unambiguous(name, namespace_id)
+
         query = self.db.query(GlobalArtifact).filter_by(name=name, status="active")
         if namespace_id is not None:
             query = query.filter_by(namespace_id=namespace_id)
@@ -350,6 +356,20 @@ class ArtifactService:
             **out.model_dump(),
             all_versions=version_infos,
         )
+
+    def resolve_namespace_id(self, namespace: str) -> int:
+        """Resolve a namespace *name* to its id.
+
+        Raises:
+            NamespaceNotFoundError: If no namespace has that name.
+            AmbiguousNamespaceError: If the name matches more than one namespace.
+        """
+        ids = [r[0] for r in self.db.query(CatalogNamespace.id).filter_by(name=namespace).all()]
+        if not ids:
+            raise NamespaceNotFoundError(name=namespace)
+        if len(ids) > 1:
+            raise AmbiguousNamespaceError(namespace, ids)
+        return ids[0]
 
     # ------------------------------------------------------------------ #
     # Listing
@@ -523,6 +543,26 @@ class ArtifactService:
     # ------------------------------------------------------------------ #
     # Private helpers
     # ------------------------------------------------------------------ #
+
+    def _assert_unambiguous(self, name: str, namespace_id: int | None) -> None:
+        """Reject a name-only lookup that would span more than one namespace.
+
+        The same name can be published into several namespaces, so resolving by
+        name alone (``namespace_id is None``) is only safe when exactly one
+        namespace holds an active artifact with that name. Otherwise the caller
+        must disambiguate with an explicit ``namespace_id``.
+        """
+        if namespace_id is not None:
+            return
+        rows = (
+            self.db.query(GlobalArtifact.namespace_id)
+            .filter_by(name=name, status="active")
+            .distinct()
+            .all()
+        )
+        namespaces = [r[0] for r in rows]
+        if len(namespaces) > 1:
+            raise AmbiguousArtifactError(name, namespaces)
 
     def _artifact_to_out(
         self,

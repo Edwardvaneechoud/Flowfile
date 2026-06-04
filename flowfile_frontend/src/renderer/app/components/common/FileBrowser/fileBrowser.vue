@@ -103,7 +103,7 @@
                 />
                 <img
                   v-else-if="isFlowfile(file)"
-                  src="/images/flowfile.svg"
+                  src="/images/flowfile.png"
                   alt="Flow file"
                   class="file-icon"
                 />

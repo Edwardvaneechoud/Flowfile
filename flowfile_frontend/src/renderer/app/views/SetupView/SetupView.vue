@@ -3,7 +3,7 @@
     <div class="setup-card">
       <div class="setup-header">
         <div class="logo-container">
-          <img src="/images/flowfile.svg" alt="Flowfile" class="logo" />
+          <img src="/images/flowfile.png" alt="Flowfile" class="logo" />
         </div>
         <h1 class="setup-title">Initial Setup Required</h1>
         <p class="setup-subtitle">Configure your master encryption key to get started</p>

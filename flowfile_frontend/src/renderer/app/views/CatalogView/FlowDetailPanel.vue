@@ -117,7 +117,7 @@
     </div>
 
     <!-- Run History -->
-    <div class="section">
+    <div ref="runHistorySection" class="section">
       <h3><i class="fa-solid fa-clock-rotate-left section-icon"></i> Run History</h3>
       <RunHistoryTable
         :registration-id="flow.id"
@@ -298,7 +298,7 @@
 // TODO(refactor): now ~750 LOC after ScheduleTable extraction. Remaining target:
 //   - DataLineageSection.vue: lineage block (~lines 281+)
 //   - ArtifactsSection.vue: artifacts table (~lines 336+)
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
@@ -314,6 +314,7 @@ const catalogStore = useCatalogStore();
 const props = defineProps<{
   flow: FlowRegistration;
   artifacts: GlobalArtifact[];
+  focusRuns?: boolean;
 }>();
 
 const emit = defineEmits([
@@ -332,7 +333,22 @@ const emit = defineEmits([
   "selectSchedule",
   "recoverFromSnapshot",
   "openSnapshot",
+  "runsFocused",
 ]);
+
+const runHistorySection = ref<HTMLElement | null>(null);
+
+// One-shot scroll to Run History (flow context menu's "Run history" action).
+watch(
+  () => [props.focusRuns, props.flow.id],
+  async () => {
+    if (!props.focusRuns) return;
+    await nextTick();
+    runHistorySection.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+    emit("runsFocused");
+  },
+  { immediate: true },
+);
 
 const latestSnapshotRunId = computed((): number | null => {
   const runs = catalogStore.runs.filter(

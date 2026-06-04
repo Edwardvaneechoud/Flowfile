@@ -85,15 +85,13 @@ class KernelImageStatus(BaseModel):
     """Availability of one kernel image flavour on the host."""
 
     flavour: ImageFlavour
-    image: str  # full registry tag, e.g. edwardvaneechoud/flowfile-kernel-base:0.3.0
+    image: str  # full registry tag, e.g. edwardvaneechoud/flowfile-kernel-base:0.3.1
     available: bool
-    # Tag actually picked by the resolver when ``image`` itself isn't present
-    # but a locally-built variant (e.g. ``flowfile-kernel-base:local``) was
-    # found. ``None`` means the registry default is in use (or nothing is).
     resolved_image: str | None = None
-    # ``"pulling"`` while a background pull is running, ``"error:<msg>"`` if
-    # the last attempt failed, ``None`` otherwise. Lets the UI show progress.
     pull_state: str | None = None
+    # True when an older official version of this image is installed locally and a
+    # newer one (the ``image`` tag above) is available to pull.
+    update_available: bool = False
 
 
 class FlavourPackage(BaseModel):

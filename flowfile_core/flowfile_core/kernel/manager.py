@@ -35,9 +35,9 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.0"
-_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.0"
-_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.3.0"
+_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.1"
+_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.1"
+_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.3.1"
 
 
 def _envvar_or_default(name: str, default: str) -> str:
@@ -149,6 +149,47 @@ def _resolve_local_image(
             if tag.startswith(f"{repo_name}:"):
                 return tag
     return None
+
+
+def parse_image_version(image_tag: str) -> tuple[int, ...] | None:
+    """Parse a numeric version tuple from an image tag's ``:version`` suffix.
+
+    Returns None for tags without a dotted-numeric version (e.g. ``:local``,
+    digests), so callers can skip update comparisons for non-release images.
+    """
+    if ":" not in image_tag:
+        return None
+    tag = image_tag.rsplit(":", 1)[1]
+    parts = tag.split(".")
+    try:
+        return tuple(int(p) for p in parts)
+    except ValueError:
+        return None
+
+
+def newest_installed_version(repo: str, docker_client) -> tuple[str, tuple[int, ...]] | None:
+    """Return ``(tag, version)`` of the newest locally-present image for ``repo``.
+
+    Only considers tags of ``repo`` carrying a dotted-numeric version; ``:local``
+    / digest / non-version tags are ignored. Returns None when none are present.
+    Used to detect that an older official kernel image is installed.
+    """
+    try:
+        images = docker_client.images.list(name=repo)
+    except Exception:
+        return None
+    best: tuple[str, tuple[int, ...]] | None = None
+    prefix = f"{repo}:"
+    for img in images:
+        for tag in img.tags or ():
+            if not tag.startswith(prefix):
+                continue
+            version = parse_image_version(tag)
+            if version is None:
+                continue
+            if best is None or version > best[1]:
+                best = (tag, version)
+    return best
 
 
 # Pip package specifier (PEP 508-ish, conservative): rejects anything with

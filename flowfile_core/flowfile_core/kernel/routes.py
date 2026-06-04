@@ -84,7 +84,7 @@ async def docker_status():
     except Exception as exc:
         return DockerStatus(available=False, image_available=False, error=str(exc))
 
-    from flowfile_core.kernel.manager import _flavour_images
+    from flowfile_core.kernel.manager import _flavour_images, newest_installed_version, parse_image_version
 
     # Manager may be unavailable (Docker not initialised yet); degrade
     # gracefully — resolved_image / pull_state stay None, fallback discovery
@@ -117,6 +117,14 @@ async def docker_status():
         resolved_image = resolved if resolved and resolved != image_tag else None
         pull_state = manager.get_pull_state(image_tag) if manager is not None else None
 
+        # Surface "update available" when an older official version is installed
+        # locally but the newer registry default isn't.
+        desired_version = parse_image_version(image_tag)
+        installed = newest_installed_version(image_tag.rsplit(":", 1)[0], client)
+        update_available = bool(
+            desired_version is not None and installed is not None and installed[1] < desired_version
+        )
+
         images.append(
             KernelImageStatus(
                 flavour=flavour,
@@ -124,6 +132,7 @@ async def docker_status():
                 available=available,
                 resolved_image=resolved_image,
                 pull_state=pull_state,
+                update_available=update_available,
             )
         )
 

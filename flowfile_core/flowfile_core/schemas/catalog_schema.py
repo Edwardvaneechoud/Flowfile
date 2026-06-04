@@ -183,6 +183,7 @@ class GlobalArtifactOut(BaseModel):
     owner_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    blob_exists: bool = True  # False when the backing blob is missing (filesystem backend only)
 
     model_config = ConfigDict(from_attributes=True)
 
