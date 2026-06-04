@@ -1,4 +1,5 @@
 import { connectionTypes } from "../../../views/ConnectionsView/connectionTypes";
+import { catalogTabs } from "../../../views/CatalogView/catalogTabs";
 
 export interface INavigationRoute {
   name: string;
@@ -36,6 +37,15 @@ export default {
       meta: {
         icon: "fa-solid fa-folder-tree",
       },
+      // Clicking the parent itself opens the catalog browse / tree view.
+      query: { tab: "catalog" },
+      children: catalogTabs.map((t) => ({
+        name: "catalog",
+        index: `catalog:${t.key}`,
+        query: { tab: t.key },
+        displayName: t.sidebarKey,
+        meta: { icon: t.icon },
+      })),
     },
     {
       name: "connections",

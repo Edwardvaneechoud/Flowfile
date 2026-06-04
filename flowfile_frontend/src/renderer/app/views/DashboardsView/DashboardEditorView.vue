@@ -34,6 +34,7 @@
           :added-viz-ids="addedVizIds"
           @add="onAddTile"
           @add-text="onAddTextTile"
+          @create="sourcePickerOpen = true"
         />
       </aside>
       <main class="editor-canvas">
@@ -61,6 +62,8 @@
             :tile-datasource="tileDatasource"
             @update:layout="onLayoutChange"
             @edit-viz="onEditViz"
+            @add-viz-at="onAddVizAt"
+            @add-text-at="onAddTextAt"
           />
         </template>
       </main>
@@ -82,6 +85,25 @@
         @deleted="onVizDeleted"
       />
     </el-dialog>
+
+    <VisualizationSourcePicker v-model="sourcePickerOpen" @picked="onSourcePicked" />
+
+    <el-dialog
+      v-model="vizCreatorOpen"
+      title="New visualization"
+      width="92vw"
+      destroy-on-close
+      append-to-body
+      :close-on-click-modal="false"
+    >
+      <VisualizationEditor
+        v-if="vizCreatorOpen && pendingSource"
+        :source="pendingSource"
+        :appearance="appearance"
+        @saved="onVizCreated"
+        @cancel="vizCreatorOpen = false"
+      />
+    </el-dialog>
   </div>
 </template>
 
@@ -97,12 +119,15 @@ import DashboardCanvas from "./DashboardCanvas.vue";
 import DashboardFilterBar from "./DashboardFilterBar.vue";
 import DashboardSidebarPicker from "./DashboardSidebarPicker.vue";
 import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
+import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
+import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
 import {
   EMPTY_DASHBOARD_LAYOUT,
   type CatalogVisualization,
   type DashboardFilter,
   type DashboardLayout,
   type DashboardTile,
+  type VizSourceDescriptor,
 } from "../../types";
 
 const props = defineProps<{ id?: string | number }>();
@@ -185,37 +210,75 @@ const onVizDeleted = (vizId: number) => {
   ElMessage.info("Removed deleted visualization from dashboard");
 };
 
+const buildVizTile = (vizId: number, x: number, y: number): DashboardTile => ({
+  id: generateTileId(),
+  type: "viz",
+  viz_id: vizId,
+  chart_index: 0,
+  x,
+  y,
+  w: 6,
+  h: 6,
+});
+
 const onAddTile = (viz: CatalogVisualization) => {
   if (!store.current) return;
   const layout = store.current.layout;
-  const tile: DashboardTile = {
-    id: generateTileId(),
-    type: "viz",
-    viz_id: viz.id,
-    chart_index: 0,
-    x: 0,
-    y: findFreeRow(layout),
-    w: 6,
-    h: 6,
-  };
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, tile] });
+  onLayoutChange({
+    ...layout,
+    tiles: [...layout.tiles, buildVizTile(viz.id, 0, findFreeRow(layout))],
+  });
 };
+
+// Drag-drop from the sidebar lands a tile at the dropped cell; a negative y
+// (grid not measurable) falls back to the next free row, like a click-add.
+const onAddVizAt = ({ vizId, x, y }: { vizId: number; x: number; y: number }) => {
+  if (!store.current) return;
+  const layout = store.current.layout;
+  const row = y < 0 ? findFreeRow(layout) : y;
+  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildVizTile(vizId, x, row)] });
+};
+
+const sourcePickerOpen = ref(false);
+const vizCreatorOpen = ref(false);
+const pendingSource = ref<VizSourceDescriptor | null>(null);
+
+const onSourcePicked = (source: VizSourceDescriptor) => {
+  pendingSource.value = source;
+  vizCreatorOpen.value = true;
+};
+
+// The new viz is saved to the catalog (createVisualization refreshes the
+// library, so the sidebar picks it up) and dropped straight onto the canvas.
+const onVizCreated = (viz: CatalogVisualization) => {
+  vizCreatorOpen.value = false;
+  pendingSource.value = null;
+  onAddTile(viz);
+};
+
+const buildTextTile = (x: number, y: number): DashboardTile => ({
+  id: generateTileId(),
+  type: "text",
+  viz_id: null,
+  chart_index: 0,
+  text_md: "## New section\n\nDescribe what's below.",
+  x,
+  y,
+  w: 12,
+  h: 3,
+});
 
 const onAddTextTile = () => {
   if (!store.current) return;
   const layout = store.current.layout;
-  const tile: DashboardTile = {
-    id: generateTileId(),
-    type: "text",
-    viz_id: null,
-    chart_index: 0,
-    text_md: "## New section\n\nDescribe what's below.",
-    x: 0,
-    y: findFreeRow(layout),
-    w: 12,
-    h: 3,
-  };
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, tile] });
+  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTextTile(0, findFreeRow(layout))] });
+};
+
+const onAddTextAt = ({ x, y }: { x: number; y: number }) => {
+  if (!store.current) return;
+  const layout = store.current.layout;
+  const row = y < 0 ? findFreeRow(layout) : y;
+  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTextTile(x, row)] });
 };
 
 const initialise = async () => {

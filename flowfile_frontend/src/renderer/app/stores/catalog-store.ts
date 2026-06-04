@@ -34,6 +34,7 @@ interface CatalogState {
   runsPage: number;
   runsPageSize: number;
   runsTriggerFilter: string | null;
+  runsSearch: string | null;
   stats: CatalogStats | null;
   selectedFlowId: number | null;
   selectedRunId: number | null;
@@ -87,6 +88,7 @@ export const useCatalogStore = defineStore("catalog", {
     runsPage: 1,
     runsPageSize: 25,
     runsTriggerFilter: null,
+    runsSearch: null,
     stats: null,
     selectedFlowId: null,
     selectedRunId: null,
@@ -214,6 +216,7 @@ export const useCatalogStore = defineStore("catalog", {
           offset,
           scheduleId,
           runType,
+          this.runsSearch,
         );
         this.runs = result.items;
         this.runsTotal = result.total;
@@ -232,6 +235,12 @@ export const useCatalogStore = defineStore("catalog", {
 
     setTriggerFilter(filter: string | null) {
       this.runsTriggerFilter = filter;
+      this.runsPage = 1;
+      this.loadRuns(this.selectedFlowId);
+    },
+
+    setRunsSearch(search: string | null) {
+      this.runsSearch = search && search.trim() ? search.trim() : null;
       this.runsPage = 1;
       this.loadRuns(this.selectedFlowId);
     },
@@ -390,11 +399,7 @@ export const useCatalogStore = defineStore("catalog", {
     async loadTablePreview(tableId: number, limit = 100) {
       this.loadingTablePreview = true;
       try {
-        this.tablePreview = await CatalogApi.getTablePreview(
-          tableId,
-          limit,
-          this.selectedVersion,
-        );
+        this.tablePreview = await CatalogApi.getTablePreview(tableId, limit, this.selectedVersion);
       } catch {
         this.tablePreview = null;
       } finally {
@@ -494,7 +499,13 @@ export const useCatalogStore = defineStore("catalog", {
       try {
         const offset = (this.scheduleRunsPage - 1) * this.runsPageSize;
         const runType = this.scheduleRunsTriggerFilter ?? undefined;
-        const result = await CatalogApi.getRuns(null, this.runsPageSize, offset, scheduleId, runType);
+        const result = await CatalogApi.getRuns(
+          null,
+          this.runsPageSize,
+          offset,
+          scheduleId,
+          runType,
+        );
         this.scheduleRuns = result.items;
         this.scheduleRunsTotal = result.total;
         this.scheduleRunsTotalSuccess = result.total_success;

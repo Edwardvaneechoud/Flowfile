@@ -41,6 +41,15 @@ export const useEditorStore = defineStore("editor", {
     // Incremented whenever a graph-mutating action completes. Consumers (e.g.
     // the flow tab strip) watch this to refresh dirty state.
     graphVersion: 0,
+
+    // Incremented to request opening the Flow Settings modal from anywhere
+    // (e.g. the Performance-mode notice). HeaderButtons watches this counter.
+    flowSettingsOpenRequest: 0,
+
+    // Request signals to open a node's panels from outside Canvas (the per-node
+    // right-click menu in NodeWrapper). Canvas watches the `token`.
+    nodeSettingsOpenRequest: { nodeId: -1 as number, token: 0 },
+    nodeDataOpenRequest: { nodeId: -1 as number, token: 0 },
   }),
 
   getters: {
@@ -172,6 +181,21 @@ export const useEditorStore = defineStore("editor", {
     // ========== Graph version (dirty tracking) ==========
     bumpGraphVersion() {
       this.graphVersion += 1;
+    },
+
+    // Signal HeaderButtons to open the Flow Settings modal.
+    requestOpenFlowSettings() {
+      this.flowSettingsOpenRequest += 1;
+    },
+
+    // Ask Canvas to open + front a node's Settings / Data panels. Reassign the
+    // whole object so the token watch fires reliably.
+    requestNodeSettings(nodeId: number) {
+      this.nodeSettingsOpenRequest = { nodeId, token: this.nodeSettingsOpenRequest.token + 1 };
+    },
+
+    requestNodeData(nodeId: number) {
+      this.nodeDataOpenRequest = { nodeId, token: this.nodeDataOpenRequest.token + 1 };
     },
 
     // ========== AI Assistant Drawer ==========

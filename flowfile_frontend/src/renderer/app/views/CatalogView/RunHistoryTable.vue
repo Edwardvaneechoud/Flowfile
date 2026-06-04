@@ -58,6 +58,14 @@
           />
         </el-option-group>
       </el-select>
+      <el-input
+        v-if="!isScheduleMode && registrationId === undefined"
+        v-model="searchText"
+        placeholder="Search by flow name"
+        clearable
+        size="small"
+        style="width: 240px"
+      />
     </div>
 
     <!-- Empty state -->
@@ -178,7 +186,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowRun } from "../../types";
 import {
@@ -214,6 +222,14 @@ function checkTruncation(event: MouseEvent, id: number) {
 defineEmits(["viewRun", "viewFlow", "viewScheduleRuns", "openSnapshot"]);
 
 const catalogStore = useCatalogStore();
+
+// Server-side flow-name search (debounced) for the global Run History tab.
+const searchText = ref(catalogStore.runsSearch ?? "");
+let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+watch(searchText, (val) => {
+  if (searchDebounce) clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => catalogStore.setRunsSearch(val), 300);
+});
 
 const isScheduleMode = computed(() => props.scheduleId !== undefined);
 

@@ -484,6 +484,7 @@ class SQLAlchemyCatalogRepository:
         registration_id: int | None = None,
         schedule_id: int | None = None,
         run_type: RunType | None = None,
+        search: str | None = None,
     ):
         """Apply the standard run filters to a FlowRun query."""
         if registration_id is not None:
@@ -492,6 +493,8 @@ class SQLAlchemyCatalogRepository:
             q = q.filter(FlowRun.schedule_id == schedule_id)
         if run_type is not None:
             q = q.filter(FlowRun.run_type == run_type)
+        if search:
+            q = q.filter(FlowRun.flow_name.ilike(f"%{search}%"))
         return q
 
     def count_flows_in_namespace(self, namespace_id: int) -> int:
@@ -565,12 +568,14 @@ class SQLAlchemyCatalogRepository:
         run_type: RunType | None = None,
         limit: int = 50,
         offset: int = 0,
+        search: str | None = None,
     ) -> list[FlowRun]:
         q = self._apply_run_filters(
             self._db.query(FlowRun),
             registration_id=registration_id,
             schedule_id=schedule_id,
             run_type=run_type,
+            search=search,
         )
         return q.order_by(FlowRun.started_at.desc()).offset(offset).limit(limit).all()
 
@@ -603,6 +608,7 @@ class SQLAlchemyCatalogRepository:
         registration_id: int | None = None,
         schedule_id: int | None = None,
         run_type: RunType | None = None,
+        search: str | None = None,
     ) -> dict[str, int]:
         from sqlalchemy import case, func
 
@@ -616,6 +622,7 @@ class SQLAlchemyCatalogRepository:
             registration_id=registration_id,
             schedule_id=schedule_id,
             run_type=run_type,
+            search=search,
         )
         row = q.one()
         return {"total": row.total, "success": row.success, "failed": row.failed, "running": row.running}

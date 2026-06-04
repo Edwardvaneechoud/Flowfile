@@ -2,7 +2,8 @@
   <CollapsibleSection
     title="Expose as API"
     icon="fa-solid fa-plug"
-    persist-key="flow.api"
+    :persist-key="flow.is_api_compatible ? 'flow.api' : undefined"
+    :default-open="flow.is_api_compatible"
     :summary="endpoint ? 'Published' : 'Not published'"
   >
     <template v-if="endpoint" #actions>

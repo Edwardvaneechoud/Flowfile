@@ -345,12 +345,18 @@ def list_runs(
     registration_id: int | None = None,
     schedule_id: int | None = None,
     run_type: RunType | None = None,
+    search: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.list_runs(
-        registration_id=registration_id, schedule_id=schedule_id, run_type=run_type, limit=limit, offset=offset
+        registration_id=registration_id,
+        schedule_id=schedule_id,
+        run_type=run_type,
+        limit=limit,
+        offset=offset,
+        search=search,
     )
 
 

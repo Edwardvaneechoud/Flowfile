@@ -306,9 +306,10 @@ class CatalogService:
         run_type: RunType | None = None,
         limit: int = 50,
         offset: int = 0,
+        search: str | None = None,
     ) -> PaginatedFlowRuns:
         """List run summaries (without snapshots) with total count for pagination."""
-        return self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset)
+        return self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset, search)
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
         """Get a single run including the YAML snapshot."""

@@ -537,11 +537,12 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 const router = useRouter();
 
 // When there's no connection to pick, the node is a dead end. Save any
-// in-progress edits, then jump straight to the GA connection setup with the
-// Add Connection dialog already open.
+// in-progress edits, then jump to the GA connection page so the user can set
+// up their credentials first (don't force-open Add Connection — without an
+// OAuth client or service account configured it's a dead end).
 const goToConnectionSetup = async () => {
   await saveSettings();
-  router.push({ name: "connections", query: { tab: "google_analytics", action: "add" } });
+  router.push({ name: "connections", query: { tab: "google_analytics" } });
 };
 
 const gaConnections = ref<GoogleAnalyticsConnectionInterface[]>([]);

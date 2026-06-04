@@ -13,6 +13,9 @@ export interface DashboardTile {
   chart_index: number;
   /** Markdown source when type === "text". */
   text_md?: string | null;
+  /** CSS colors for text tiles. */
+  bg_color?: string | null;
+  text_color?: string | null;
   x: number;
   y: number;
   w: number;

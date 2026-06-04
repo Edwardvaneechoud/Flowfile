@@ -52,6 +52,7 @@
           @select-flow="$emit('selectFlow', $event)"
           @select-artifact="$emit('selectArtifact', $event)"
           @select-table="$emit('selectTable', $event)"
+          @table-context-menu="$emit('tableContextMenu', $event)"
           @select-visualization="$emit('selectVisualization', $event)"
           @toggle-favorite="$emit('toggleFavorite', $event)"
           @toggle-table-favorite="$emit('toggleTableFavorite', $event)"
@@ -146,6 +147,9 @@
             'file-missing': table.table_type !== 'virtual' && table.file_exists === false,
           }"
           @click.stop="$emit('selectTable', table.id)"
+          @contextmenu.prevent.stop="
+            $emit('tableContextMenu', { table, x: $event.clientX, y: $event.clientY })
+          "
         >
           <i
             v-if="table.table_type === 'virtual'"
@@ -247,6 +251,7 @@ defineEmits([
   "selectFlow",
   "selectArtifact",
   "selectTable",
+  "tableContextMenu",
   "selectVisualization",
   "toggleFavorite",
   "toggleTableFavorite",
@@ -325,7 +330,10 @@ const visibleArtifacts = computed((): ArtifactGroup[] => {
   return groups;
 });
 
-const expanded = ref(true);
+// System namespaces holding disk-backed/quick-created flows — they accumulate a
+// lot of entries, so collapse them by default to keep the tree tidy.
+const AUTO_COLLAPSE_NAMESPACES = new Set(["Local Flows", "Unnamed Flows"]);
+const expanded = ref(!AUTO_COLLAPSE_NAMESPACES.has(props.node.name));
 const toggle = () => {
   expanded.value = !expanded.value;
 };

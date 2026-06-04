@@ -548,6 +548,8 @@ class DashboardTile(BaseModel):
     viz_id: int | None = None
     chart_index: int = 0
     text_md: str | None = None
+    bg_color: str | None = None
+    text_color: str | None = None
     x: int
     y: int
     w: int
