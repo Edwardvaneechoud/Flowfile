@@ -24,7 +24,6 @@ def create_fake_data(n_records: int = 1000, optimized: bool = True) -> pl.DataFr
     max_n_records = min(10_000, n_records) if optimized else n_records
 
     min_range = partial(min, max_n_records)
-    # Pre-generation of static data
     cities = [fake.city() for _ in range(min_range(7000))]
     companies = [fake.company() for _ in range(min_range(100_000))]
     zipcodes = [fake.zipcode() for _ in range(min_range(200_000))]
@@ -91,7 +90,7 @@ def create_fake_data_raw(
     dob = partial(fake.date_of_birth)
     first_names = partial(fake.first_name)
     last_names = partial(fake.last_name)
-    domain_names = [fake.domain_name() for _ in range(10)]  # Pre-generate a small list
+    domain_names = [fake.domain_name() for _ in range(10)]
 
     def sales_data():
         return fake.random_int(0, 1000)
@@ -108,7 +107,6 @@ def create_fake_data_raw(
     def generate_phone_number():
         return fake.phone_number()
 
-    # Default columns if no selection is provided
     all_columns = {
         "ID": lambda: randint(1, 1000000),
         "Name": generate_name,
@@ -123,11 +121,9 @@ def create_fake_data_raw(
         "sales_data": sales_data,
     }
 
-    # Filter the available columns based on col_selection
     if col_selection is not None:
         all_columns = {col: all_columns[col] for col in col_selection if col in all_columns}
 
-    # Use a generator to yield one record at a time
     for _ in range(n_records):
         record = {}
         for col, generator in all_columns.items():

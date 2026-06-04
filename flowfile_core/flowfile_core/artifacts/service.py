@@ -89,16 +89,13 @@ class ArtifactService:
             FlowNotFoundError: If source registration doesn't exist.
             NamespaceNotFoundError: If specified namespace doesn't exist.
         """
-        # Validate registration exists
         registration = self.db.get(FlowRegistration, request.source_registration_id)
         if registration is None:
             raise FlowNotFoundError(registration_id=request.source_registration_id)
 
-        # Inherit namespace_id from registration if not explicitly provided
         if request.namespace_id is None:
             request.namespace_id = registration.namespace_id
 
-        # Validate namespace if specified
         if request.namespace_id is not None:
             ns = self.db.get(CatalogNamespace, request.namespace_id)
             if ns is None:
@@ -134,7 +131,6 @@ class ArtifactService:
             )
             next_version = (latest.version + 1) if latest else 1
 
-            # Create pending artifact record
             artifact = GlobalArtifact(
                 name=request.name,
                 namespace_id=request.namespace_id,
@@ -179,7 +175,6 @@ class ArtifactService:
                 ),
             )
 
-        # Get upload target from storage backend
         ext_map = {
             "parquet": ".parquet",
             "joblib": ".joblib",
@@ -230,7 +225,6 @@ class ArtifactService:
         if artifact.status != "pending":
             raise ArtifactStateError(artifact_id, artifact.status, expected_status="pending")
 
-        # Verify and finalize storage
         try:
             verified_size = self.storage.finalize_upload(storage_key, sha256)
         except FileNotFoundError:
@@ -242,7 +236,6 @@ class ArtifactService:
             self.db.commit()
             raise ArtifactUploadError(artifact_id, str(e)) from e
 
-        # Activate artifact
         artifact.status = "active"
         artifact.storage_key = storage_key
         artifact.sha256 = sha256
@@ -330,7 +323,6 @@ class ArtifactService:
         Raises:
             ArtifactNotFoundError: If artifact doesn't exist.
         """
-        # Get latest version
         query = self.db.query(GlobalArtifact).filter_by(name=name, status="active")
         if namespace_id is not None:
             query = query.filter_by(namespace_id=namespace_id)
@@ -340,7 +332,6 @@ class ArtifactService:
         if not latest:
             raise ArtifactNotFoundError(name=name)
 
-        # Get all versions
         versions = query.order_by(GlobalArtifact.version.desc()).all()
 
         version_infos = [
@@ -406,8 +397,6 @@ class ArtifactService:
         # This needs to be abstracted if multi-database support is required.
         if tags:
             for tag in tags:
-                # Use EXISTS with json_each to check if tag is in the JSON array
-                # This works with SQLite's JSON1 extension
                 query = query.filter(
                     text(
                         "EXISTS (SELECT 1 FROM json_each(global_artifacts.tags) " "WHERE json_each.value = :tag)"
@@ -471,7 +460,6 @@ class ArtifactService:
         if not artifact:
             raise ArtifactNotFoundError(artifact_id=artifact_id)
 
-        # Delete blob from storage
         if artifact.storage_key:
             try:
                 self.storage.delete(artifact.storage_key)
@@ -483,7 +471,6 @@ class ArtifactService:
                     exc,
                 )
 
-        # Soft delete in DB
         artifact.status = "deleted"
         self.db.commit()
 

@@ -15,9 +15,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _make_graph(
@@ -67,10 +65,8 @@ def _wire_ml_node(graph: FlowGraph, node_type: str, node_id: int, upstream_id: i
     add_connection(graph, connection)
 
 
-# ---------------------------------------------------------------------------
 # Schema-callback tests — these don't need a worker, just call the predicted
 # schema getter and inspect the result.
-# ---------------------------------------------------------------------------
 
 
 def test_train_model_schema_passes_through_input_schema():
@@ -204,10 +200,8 @@ def test_apply_model_schema_refreshes_when_output_column_changes():
     assert "renamed" in second and "pred" not in second
 
 
-# ---------------------------------------------------------------------------
 # _func validation tests — call the train function directly with mocks so we
 # don't actually round-trip through a worker.
-# ---------------------------------------------------------------------------
 
 
 def _run_train_func(graph: FlowGraph, settings: input_schema.NodeTrainModel):
@@ -215,7 +209,6 @@ def _run_train_func(graph: FlowGraph, settings: input_schema.NodeTrainModel):
     _wire_ml_node(graph, "train_model", node_id=settings.node_id, upstream_id=1)
     graph.add_train_model(settings)
     train_node = graph.get_node(settings.node_id)
-    # Calling get_resulting_data() triggers _func.
     return train_node.get_resulting_data()
 
 
@@ -225,7 +218,6 @@ def test_train_model_requires_path_when_unregistered_only_for_catalog_publish():
     graph._flow_settings.path = ""
     _seed_manual_input(graph, node_id=1)
 
-    # publish_to_catalog=True must surface the registration error.
     settings = input_schema.NodeTrainModel(
         flow_id=graph.flow_id,
         node_id=2,
@@ -319,7 +311,6 @@ def test_train_model_forwards_namespace_id_to_prepare_upload(monkeypatch):
     )
     graph.add_train_model(settings)
 
-    # The fetcher will explode (no worker), but we only care about prepare_upload's args.
     with patch(
         "flowfile_core.flowfile.flow_graph.MLTrainFetcher",
         side_effect=RuntimeError("expected"),
@@ -397,7 +388,6 @@ def test_apply_model_upstream_mode_reads_train_node_flow_path(tmp_path, monkeypa
     graph = _make_graph()
     _seed_manual_input(graph, node_id=1)
 
-    # Build a minimal train_model node in the graph.
     _wire_ml_node(graph, "train_model", node_id=10, upstream_id=1)
     train_settings = input_schema.NodeTrainModel(
         flow_id=graph.flow_id,
@@ -412,7 +402,6 @@ def test_apply_model_upstream_mode_reads_train_node_flow_path(tmp_path, monkeypa
     )
     graph.add_train_model(train_settings)
 
-    # Pretend the train node has already produced a model on disk.
     from flowfile_core.flowfile.flow_graph import ml_flow_model_path
 
     model_path = ml_flow_model_path(graph.flow_id, 10)
@@ -459,7 +448,6 @@ def test_apply_model_upstream_mode_reads_train_node_flow_path(tmp_path, monkeypa
     )
     graph.add_apply_model(apply_settings)
 
-    # _func should resolve the path and call our fake fetcher with it.
     graph.get_node(20).get_resulting_data()
     assert captured["model_path"] == str(model_path)
     assert captured["output_column"] == "pred"
@@ -489,8 +477,6 @@ def test_train_model_rolls_back_pending_artifact_on_worker_failure(monkeypatch):
     _seed_manual_input(graph, node_id=1)
     _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
 
-    # Patch the FlowRegistration lookup so prepare_upload doesn't 404 and the
-    # storage backend so we don't actually touch the filesystem.
     from flowfile_core.artifacts import service as artifact_service_mod
     from flowfile_core.schemas.artifact_schema import PrepareUploadResponse
 
@@ -520,7 +506,6 @@ def test_train_model_rolls_back_pending_artifact_on_worker_failure(monkeypatch):
         _fake_delete_artifact,
     )
 
-    # Patch the fetcher so it raises instead of contacting a worker.
     with patch(
         "flowfile_core.flowfile.flow_graph.MLTrainFetcher",
         side_effect=RuntimeError("worker exploded"),
@@ -579,10 +564,8 @@ def test_apply_model_upstream_mode_requires_upstream_node_id():
         graph.get_node(2).get_resulting_data()
 
 
-# ---------------------------------------------------------------------------
 # Schema callback creates Float64 column even if the apply node has no
 # upstream yet (defensive sanity check).
-# ---------------------------------------------------------------------------
 
 
 def test_flowfile_column_float64_dtype_for_prediction():
@@ -591,9 +574,7 @@ def test_flowfile_column_float64_dtype_for_prediction():
     assert col.column_name == "predicted_value"
 
 
-# ---------------------------------------------------------------------------
 # Artifact tab — train_model surfaces in node Artifacts tab via artifact_context
-# ---------------------------------------------------------------------------
 
 
 def test_train_model_records_artifact_in_node_summary(monkeypatch):
@@ -614,7 +595,6 @@ def test_train_model_records_artifact_in_node_summary(monkeypatch):
             captured["staging_path"] = staging_path
 
         def get_result(self):
-            # Pretend the worker wrote a small model and report its size.
             from pathlib import Path
             Path(captured["staging_path"]).parent.mkdir(parents=True, exist_ok=True)
             Path(captured["staging_path"]).write_text('{"stub": true}')
@@ -636,7 +616,6 @@ def test_train_model_records_artifact_in_node_summary(monkeypatch):
     graph.add_train_model(settings)
     graph.get_node(2).get_resulting_data()
 
-    # Per-node summary used by the frontend Data | Artifacts tab.
     summaries = graph.artifact_context.get_node_summaries()
     assert "2" in summaries
     s = summaries["2"]
@@ -681,7 +660,6 @@ def test_train_model_artifact_replaces_on_rerun(monkeypatch):
         ),
     )
     graph.add_train_model(settings)
-    # Run twice — should still have exactly one entry.
     graph.get_node(2).get_resulting_data()
     graph.get_node(2).reset()
     graph.get_node(2).get_resulting_data()
@@ -690,9 +668,7 @@ def test_train_model_artifact_replaces_on_rerun(monkeypatch):
     assert summaries["2"]["published_count"] == 1
 
 
-# ---------------------------------------------------------------------------
 # Wait For node
-# ---------------------------------------------------------------------------
 
 
 def _wire_wait_for(graph: FlowGraph, *, node_id: int, left: int, right: int) -> None:
@@ -761,9 +737,7 @@ def test_wait_for_runs_after_dependency_and_passes_data_through():
     assert out.height == 2  # _seed_manual_input writes 2 rows
 
 
-# ---------------------------------------------------------------------------
 # /ml/upstream-train-models picker — strict DAG ancestor scope
-# ---------------------------------------------------------------------------
 
 
 def _patch_upstream_handler(monkeypatch, graph: FlowGraph) -> None:

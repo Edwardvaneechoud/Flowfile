@@ -96,7 +96,6 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 const nodeStore = useNodeStore();
 const nodePivot = ref<NodePivot | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodePivot,
 });
@@ -155,10 +154,8 @@ const onDrop = (index: number) => {
 
 const onDropInSection = (section: "index" | "pivot" | "value") => {
   if (draggedColumnName.value) {
-    // Remove column from any existing assignments
     removeColumnIfExists(draggedColumnName.value);
 
-    // Assign the dragged column to the appropriate section
     if (section === "index" && !pivotInput.value.index_columns.includes(draggedColumnName.value)) {
       pivotInput.value.index_columns.push(draggedColumnName.value);
     } else if (section === "pivot") {

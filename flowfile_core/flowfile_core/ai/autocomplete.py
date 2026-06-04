@@ -68,22 +68,14 @@ logger = logging.getLogger(__name__)
 
 
 SURFACE: str = "settings_autocomplete"
-"""The single ``SurfaceLiteral`` value the autocomplete path emits —
-kept as a constant so call sites and test assertions stay in
-lock-step."""
 
 DEFAULT_TIMEOUT_SECONDS: float = 3.0
-"""Hard timeout per call. Bypasses the retry budget — autocomplete is
-fail-fast by design (frontend falls back to static suggestions on
-timeout)."""
 
 MAX_FORMULA_SUGGESTIONS: int = 5
 MAX_JOIN_KEY_PAIRS: int = 5
 
 
-# --------------------------------------------------------------------------- #
-# Wire types                                                                   #
-# --------------------------------------------------------------------------- #
+# Wire types
 
 
 class FormulaSuggestion(BaseModel):
@@ -150,9 +142,7 @@ class _JoinKeyLLMOutput(BaseModel):
     key_pairs: list[JoinKeyPair] = Field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
-# Column reference extraction                                                  #
-# --------------------------------------------------------------------------- #
+# Column reference extraction
 
 
 # Literal patterns we can statically extract column refs from:
@@ -208,9 +198,7 @@ def _extract_column_refs(text: str) -> tuple[set[str], bool]:
     return refs, extraction_complete
 
 
-# --------------------------------------------------------------------------- #
-# Schema lookup                                                                #
-# --------------------------------------------------------------------------- #
+# Schema lookup
 
 
 def _column_names_for_node(node: FlowNode) -> list[str] | None:
@@ -244,9 +232,7 @@ def _get_main_upstream(graph: FlowGraph, node_id: int | str) -> FlowNode | None:
     return inputs[0]
 
 
-# --------------------------------------------------------------------------- #
-# Prompt construction                                                          #
-# --------------------------------------------------------------------------- #
+# Prompt construction
 
 
 _FORMULA_SYSTEM_PROMPT = """\
@@ -353,9 +339,7 @@ def _build_join_keys_messages(
     ]
 
 
-# --------------------------------------------------------------------------- #
-# Provider call wrapper                                                        #
-# --------------------------------------------------------------------------- #
+# Provider call wrapper
 
 
 async def _call_provider_for_json(
@@ -423,9 +407,7 @@ def _parse_json_payload(content: str | None) -> tuple[Any, str | None]:
     return None, "parse_error"
 
 
-# --------------------------------------------------------------------------- #
-# Public API                                                                   #
-# --------------------------------------------------------------------------- #
+# Public API
 
 
 async def suggest_formula_completions(

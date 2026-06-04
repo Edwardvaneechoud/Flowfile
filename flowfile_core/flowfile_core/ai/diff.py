@@ -53,9 +53,7 @@ from shared.storage_config import storage
 logger = logging.getLogger(__name__)
 
 
-# --------------------------------------------------------------------------- #
-# Per-op staged payload shapes                                                 #
-# --------------------------------------------------------------------------- #
+# Per-op staged payload shapes
 
 
 class StagedInsertionContext(BaseModel):
@@ -125,9 +123,7 @@ class StagedSettingsUpdate(BaseModel):
     audit_id: int | None = None
 
 
-# --------------------------------------------------------------------------- #
-# GraphDiff bundle                                                             #
-# --------------------------------------------------------------------------- #
+# GraphDiff bundle
 
 
 class GraphDiff(BaseModel):
@@ -174,9 +170,7 @@ class ApplyResult(BaseModel):
     audit_ids: list[int] = Field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
-# Errors                                                                       #
-# --------------------------------------------------------------------------- #
+# Errors
 
 
 class DiffDriftError(Exception):
@@ -214,9 +208,7 @@ class DiffInconsistentError(Exception):
         super().__init__(f"diff has inconsistent connection endpoints: {self.missing_endpoints}")
 
 
-# --------------------------------------------------------------------------- #
-# DiffStore — repository-backed. Public surface stable across backends         #
-# --------------------------------------------------------------------------- #
+# DiffStore — repository-backed. Public surface stable across backends
 
 
 def _build_default_repo() -> DiffRepository:
@@ -277,9 +269,7 @@ def clear_for_tests() -> None:
     set_diff_repo(InMemoryDiffRepository())
 
 
-# --------------------------------------------------------------------------- #
-# Audit-id walker                                                              #
-# --------------------------------------------------------------------------- #
+# Audit-id walker
 
 
 _GRAPH_PREFIX = "flowfile.graph."
@@ -320,17 +310,9 @@ class AppliedNodeRecord(BaseModel):
     tool_name: str = Field(min_length=1)
     audit_id: int | None = None
     node_id: int
-    """The id assigned by the executor / planner — the live node id
-    in ``flow.nodes`` after the apply succeeds."""
     node_type: str = Field(min_length=1)
     rationale: str = ""
     output_schema: list[dict[str, Any]] = Field(default_factory=list)
-    """The real (Performance-mode runtime) or sample-derived
-    (Development-mode) output schema captured in the post-apply
-    observation. Same shape as
-    ``StagedToolEntry.staged_node_payload['predicted_output_schema']``
-    so frontend rendering can branch on the surface alone, not the
-    record shape."""
 
 
 def bundle_staged_results(staged: list[StagedToolEntry]) -> GraphDiff:
@@ -501,9 +483,7 @@ def collect_audit_ids(diff: GraphDiff) -> list[int]:
     return out
 
 
-# --------------------------------------------------------------------------- #
-# Drift detection                                                              #
-# --------------------------------------------------------------------------- #
+# Drift detection
 
 
 def validate_diff_against_flow(flow, diff: GraphDiff) -> None:
@@ -589,9 +569,7 @@ def validate_diff_against_flow(flow, diff: GraphDiff) -> None:
         raise DiffInconsistentError(inconsistent)
 
 
-# --------------------------------------------------------------------------- #
-# Apply orchestrator                                                           #
-# --------------------------------------------------------------------------- #
+# Apply orchestrator
 
 
 def apply_diff(flow, diff: GraphDiff) -> ApplyResult:

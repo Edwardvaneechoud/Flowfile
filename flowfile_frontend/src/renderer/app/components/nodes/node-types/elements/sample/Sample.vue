@@ -36,11 +36,9 @@ const nodeSample = ref<null | NodeSample>(null);
 const nodeData = ref<null | NodeData>(null);
 const sampleSize = ref<number>(1000);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeSample,
   onBeforeSave: () => {
-    // Sync sample size before saving
     if (nodeSample.value) {
       nodeSample.value.sample_size = sampleSize.value;
     }

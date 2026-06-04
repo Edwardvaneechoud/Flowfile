@@ -69,9 +69,7 @@ from flowfile_core.ai.audit import (
     update_diff_action,
 )
 
-# ---------------------------------------------------------------------------
 # Sample-row policy
-# ---------------------------------------------------------------------------
 
 SampleMode = Literal["off", "regex", "presidio"]
 
@@ -119,9 +117,7 @@ class FlowSafetyConfig(BaseModel):
     provider_acknowledged: str | None = None
 
 
-# ---------------------------------------------------------------------------
 # Regex scrubber
-# ---------------------------------------------------------------------------
 
 EMAIL_PLACEHOLDER = "<<email>>"
 PHONE_PLACEHOLDER = "<<phone>>"
@@ -192,9 +188,7 @@ def scrub_value_regex(value: Any) -> Any:
     return value
 
 
-# ---------------------------------------------------------------------------
 # Presidio adapter (lazy)
-# ---------------------------------------------------------------------------
 
 _PRESIDIO_INSTALL_HINT = (
     "Presidio is not installed. Add `presidio-analyzer` and " "`presidio-anonymizer` to enable sample_mode='presidio'."
@@ -244,9 +238,7 @@ def _scrub_value_presidio(value: Any, *, analyzer: Any, anonymizer: Any) -> Any:
     return value
 
 
-# ---------------------------------------------------------------------------
 # Sample orchestrator
-# ---------------------------------------------------------------------------
 
 
 def prepare_samples(
@@ -284,9 +276,7 @@ def prepare_samples(
     return limited  # pragma: no cover — Pydantic constrains the Literal
 
 
-# ---------------------------------------------------------------------------
 # Secret redaction
-# ---------------------------------------------------------------------------
 
 SECRET_PLACEHOLDER_TEMPLATE = "<<secret:{name}>>"
 SECRET_REDACTED = "<<secret:redacted>>"
@@ -417,9 +407,7 @@ def _redact(value: Any, *, key_hint: str | None, extra: frozenset[str]) -> Any:
     return value
 
 
-# ---------------------------------------------------------------------------
 # §9.6 refusal helpers
-# ---------------------------------------------------------------------------
 
 RefusalReason = Literal[
     "unknown_columns",
@@ -540,9 +528,7 @@ def detect_network_egress(code: str) -> list[str]:
     return matched
 
 
-# ---------------------------------------------------------------------------
 # Public surface
-# ---------------------------------------------------------------------------
 
 __all__ = [
     # Sample-row pipeline

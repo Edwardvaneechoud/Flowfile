@@ -42,7 +42,6 @@ class ExprListNameSpace:
 
         new_repr = f"{self.parent_repr_str}.list.{method_name}({args_str})"
 
-        # Create new instance, inheriting current agg_func status by default
         new_expr_instance = Expr(
             result_expr,
             self.parent.column_name,
@@ -159,7 +158,6 @@ class ExprListNameSpace:
         res_expr = None
         other_expr = None
 
-        # Handle different types of 'other'
         if isinstance(other, Expr | str):
             if isinstance(other, Expr):
                 other_expr = other.expr
@@ -169,17 +167,13 @@ class ExprListNameSpace:
             other_expr = pl.lit(other)
         elif isinstance(other, list):
             if len(other) > 0 and isinstance(other[0], Expr | str | pl.Series):
-                # List of expressions
                 other_expr = [o.expr if hasattr(o, "expr") else (pl.col(o) if isinstance(o, str) else o) for o in other]
             else:
-                # List of values
                 other_expr = pl.lit(other)
 
-        # Create the polars expression if possible
         if self.expr is not None and other_expr is not None:
             try:
                 if isinstance(other_expr, list):
-                    # Insert self.expr at the beginning
                     all_exprs = [self.parent.expr] + other_expr
                     res_expr = pl.concat_list(all_exprs)
                 else:

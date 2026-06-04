@@ -9,7 +9,6 @@ from typing import Any
 
 import polars as pl
 
-# Import public types
 from flowfile_core.types import DataType, TypeGroup
 
 

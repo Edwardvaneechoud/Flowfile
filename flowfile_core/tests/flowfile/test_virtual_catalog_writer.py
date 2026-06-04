@@ -67,7 +67,6 @@ def lazy_virtual_table_id() -> int:
         flow_path = f.name
     reg_id = _create_flow_registration(ns_id, name="lazy_flow", path=flow_path)
     graph = _create_graph(source_registration_id=reg_id)
-    # Node 1: manual input
     _add_manual_input(graph, SAMPLE_DATA, node_id=1)
 
     # Node 2: filter (lazy operation)
@@ -85,7 +84,6 @@ def lazy_virtual_table_id() -> int:
     graph.add_filter(filter_settings)
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
 
-    # Node 3: virtual catalog writer
     _add_catalog_writer(
         graph,
         node_id=3,
@@ -114,7 +112,6 @@ def eager_virtual_table_id() -> int:
     reg_id = _create_flow_registration(ns_id, name="eager_flow", path=flow_path)
     graph = _create_graph(source_registration_id=reg_id)
 
-    # Node 1: manual input
     _add_manual_input(graph, SAMPLE_DATA, node_id=1)
 
     # Node 2: pivot (eager operation)
@@ -134,7 +131,6 @@ def eager_virtual_table_id() -> int:
     graph.add_pivot(pivot_settings)
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
 
-    # Node 3: virtual catalog writer
     _add_catalog_writer(
         graph,
         node_id=3,
@@ -304,7 +300,6 @@ class TestVirtualCatalogWriter:
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="lazy_flow")
         graph = _create_graph(source_registration_id=reg_id)
-        # Node 1: manual input
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
 
         # Node 2: filter (lazy operation)
@@ -322,7 +317,6 @@ class TestVirtualCatalogWriter:
         graph.add_filter(filter_settings)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
 
-        # Node 3: virtual catalog writer
         _add_catalog_writer(
             graph,
             node_id=3,
@@ -350,7 +344,6 @@ class TestVirtualCatalogWriter:
         reg_id = _create_flow_registration(ns_id, name="eager_flow")
         graph = _create_graph(source_registration_id=reg_id)
 
-        # Node 1: manual input
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
         # Node 2: pivot (eager operation)
         promise_pivot = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="pivot")
@@ -369,7 +362,6 @@ class TestVirtualCatalogWriter:
         graph.add_pivot(pivot_settings)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
 
-        # Node 3: virtual catalog writer
         _add_catalog_writer(
             graph,
             node_id=3,
@@ -726,7 +718,6 @@ class TestFlowRegistrationAttributes:
         AttributeError (regression: previously accessed .file_path)."""
         ns_id = _create_namespace()
 
-        # Save a minimal flow YAML to disk
         graph = _create_graph(flow_id=99)
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
         _add_catalog_writer(
@@ -743,7 +734,6 @@ class TestFlowRegistrationAttributes:
 
         reg_id = _create_flow_registration(ns_id, name="blocker_flow", path=save_path)
 
-        # Look up the registration and call _compute_laziness_blockers via flow_path
         with get_db_context() as db:
             reg = db.get(FlowRegistration, reg_id)
             assert hasattr(reg, "flow_path"), "FlowRegistration should have flow_path attribute"
@@ -805,7 +795,6 @@ class TestVirtualTableTriggerFiring:
         reg_id = _create_flow_registration(ns_id, name="producer_flow")
         downstream_reg_id = _create_flow_registration(ns_id, name="downstream_flow", path="/tmp/downstream.yaml")
 
-        # Create a virtual table
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             svc = CatalogService(repo)
@@ -887,7 +876,6 @@ class TestVirtualTableOptimizationPropagation:
         graph.add_filter(filter_settings)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
 
-        # Node 3: virtual catalog writer
         _add_catalog_writer(
             graph,
             node_id=3,
@@ -897,11 +885,9 @@ class TestVirtualTableOptimizationPropagation:
             write_mode="virtual",
         )
 
-        # The catalog_reader's setting_input should reflect non-optimized source
         reader_node = graph.get_node(1)
         assert reader_node.setting_input.is_virtual_optimized is False
 
-        # The downstream writer's upstream laziness check should report non-lazy
         writer_node = graph.get_node(3)
         is_lazy, reasons = writer_node.check_upstream_laziness()
         assert is_lazy is False
@@ -942,7 +928,6 @@ class TestVirtualTableOptimizationPropagation:
         graph.add_filter(filter_settings)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
 
-        # Node 3: virtual catalog writer
         _add_catalog_writer(
             graph,
             node_id=3,
@@ -952,11 +937,9 @@ class TestVirtualTableOptimizationPropagation:
             write_mode="virtual",
         )
 
-        # The catalog_reader's setting_input should reflect optimized source
         reader_node = graph.get_node(1)
         assert reader_node.setting_input.is_virtual_optimized is True
 
-        # The downstream writer's upstream laziness check should report all lazy
         writer_node = graph.get_node(3)
         is_lazy, reasons = writer_node.check_upstream_laziness()
         assert is_lazy is True
@@ -994,7 +977,6 @@ class TestVirtualTableOptimizationPropagation:
         graph.add_filter(filter_settings)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
 
-        # Node 3: virtual catalog writer
         _add_catalog_writer(
             graph,
             node_id=3,
@@ -1004,11 +986,9 @@ class TestVirtualTableOptimizationPropagation:
             write_mode="virtual",
         )
 
-        # The SQL catalog_reader's setting_input should reflect non-optimized source
         reader_node = graph.get_node(1)
         assert reader_node.setting_input.is_virtual_optimized is False
 
-        # The downstream writer's upstream laziness check should report non-lazy
         writer_node = graph.get_node(3)
         is_lazy, reasons = writer_node.check_upstream_laziness()
         assert is_lazy is False
@@ -1016,9 +996,7 @@ class TestVirtualTableOptimizationPropagation:
         _run_graph(graph)
 
 
-# ---------------------------------------------------------------------------
 # Source table version tracking tests
-# ---------------------------------------------------------------------------
 
 
 class TestCheckSourceVersionsCurrent:
@@ -1094,7 +1072,6 @@ class TestSourceTableVersionCapture:
 
         ns_id = _create_namespace()
 
-        # Create a physical delta catalog table
         with tempfile.TemporaryDirectory() as tmp_dir:
             delta_path = f"{tmp_dir}/source_delta"
             df = pl.DataFrame({"name": ["Alice", "Bob"], "age": [30, 25]})
@@ -1116,13 +1093,11 @@ class TestSourceTableVersionCapture:
                 )
                 physical_table_id = physical_table.id
 
-            # Create a flow that reads from the physical table and writes a virtual table
             with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
                 flow_path = f.name
             reg_id = _create_flow_registration(ns_id, name="version_tracking_flow", path=flow_path)
             graph = _create_graph(source_registration_id=reg_id)
 
-            # Node 1: catalog reader
             promise_reader = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
             graph.add_node_promise(promise_reader)
             reader = input_schema.NodeCatalogReader(
@@ -1147,7 +1122,6 @@ class TestSourceTableVersionCapture:
             graph.add_filter(filter_settings)
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
 
-            # Node 3: virtual catalog writer
             _add_catalog_writer(
                 graph,
                 node_id=3,
@@ -1159,7 +1133,6 @@ class TestSourceTableVersionCapture:
 
             _run_graph(graph)
 
-            # Verify source_table_versions is populated
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
                 tables = repo.list_tables(namespace_id=ns_id)

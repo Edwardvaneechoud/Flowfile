@@ -49,11 +49,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 KEEPALIVE_INTERVAL_SECONDS: float = 15.0
-"""Seconds between keepalive comments emitted to defeat proxy idle-timeouts.
-
-15s default. Configurable per call via ``sse_stream(...,
-keepalive_interval=...)`` so tests can run in <1s.
-"""
 
 _TOOL_CALL_ID_LINE = re.compile(r"^id: (?P<id>[^\r\n]+)$", re.MULTILINE)
 

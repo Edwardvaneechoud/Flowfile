@@ -52,9 +52,6 @@ interface CreateAiCompletionSourceOptions {
 
 /** Build a CodeMirror `CompletionSource` that calls the AI backend. */
 export function createAiCompletionSource(opts: CreateAiCompletionSourceOptions): CompletionSource {
-  // Per-source debounce token. CodeMirror calls the source on every
-  // relevant edit; we drop everything but the last call inside the
-  // window. AbortController on the store handles upstream cancellation.
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let resolveWaiter: ((value: CompletionResult | null) => void) | null = null;
 
@@ -87,7 +84,6 @@ export function createAiCompletionSource(opts: CreateAiCompletionSourceOptions):
       return null;
     }
 
-    // Wait out the debounce window. A more recent invocation cancels us.
     const debouncePromise = new Promise<CompletionResult | null>((resolve) => {
       resolveWaiter = resolve;
       debounceTimer = setTimeout(() => {

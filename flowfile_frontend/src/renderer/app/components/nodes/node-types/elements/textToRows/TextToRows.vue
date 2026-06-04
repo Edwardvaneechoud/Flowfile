@@ -111,7 +111,6 @@ const nodeStore = useNodeStore();
 const isLoaded = ref(false);
 const nodeTextToRows = ref<NodeTextToRows | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeTextToRows,
 });

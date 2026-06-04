@@ -21,7 +21,6 @@ const emit = defineEmits<{
 const tooltipRef = ref<HTMLElement | null>(null);
 const tooltipRect = ref<DOMRect | null>(null);
 
-// Update tooltip rect after mount and on changes
 function updateTooltipRect() {
   if (tooltipRef.value) {
     tooltipRect.value = tooltipRef.value.getBoundingClientRect();
@@ -45,10 +44,8 @@ onUnmounted(() => {
   window.removeEventListener("resize", updateTooltipRect);
 });
 
-// Calculate final tooltip position with viewport bounds checking
 const tooltipStyle = computed(() => {
   if (props.isCenterMode) {
-    // Check if this step should be centered in screen
     if (props.step.centerInScreen) {
       return {
         position: "fixed" as const,
@@ -59,7 +56,6 @@ const tooltipStyle = computed(() => {
         transform: "translate(-50%, -50%)",
       };
     }
-    // Position in bottom-right corner when no target is highlighted
     return {
       position: "fixed" as const,
       right: "24px",
@@ -102,11 +98,9 @@ const tooltipStyle = computed(() => {
       break;
   }
 
-  // Bounds checking
   let finalX = x;
   let finalY = y;
 
-  // After transform, check bounds
   let effectiveX = x;
   let effectiveY = y;
 
@@ -122,7 +116,6 @@ const tooltipStyle = computed(() => {
     effectiveY = y - tooltipHeight / 2;
   }
 
-  // Adjust if out of bounds
   if (effectiveX < padding) {
     finalX = x + (padding - effectiveX);
   }
@@ -151,7 +144,6 @@ const showPrevButton = computed(
 );
 const canSkip = computed(() => props.step.canSkip !== false);
 
-// Action hint text based on step action
 const actionHint = computed(() => {
   switch (props.step.action) {
     case "click":

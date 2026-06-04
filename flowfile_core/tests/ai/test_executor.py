@@ -50,9 +50,7 @@ from flowfile_core.ai.tools import executor as executor_module
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
-# --------------------------------------------------------------------------- #
-# Test helpers #
-# --------------------------------------------------------------------------- #
+# Test helpers
 
 
 def _flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
@@ -141,9 +139,7 @@ def stub_kernel(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict[str, Any]
     yield calls
 
 
-# --------------------------------------------------------------------------- #
-# 1. Static apply #
-# --------------------------------------------------------------------------- #
+# 1. Static apply
 
 
 def test_static_apply_returns_predicted_schema(call_kwargs: dict[str, Any]) -> None:
@@ -161,15 +157,12 @@ def test_static_apply_returns_predicted_schema(call_kwargs: dict[str, Any]) -> N
     assert result.predicted_output_schema is not None
     names = {col["name"] for col in result.predicted_output_schema}
     assert {"order_id", "customer_id", "amount", "region"} <= names
-    # Real graph mutated: filter node now exists, wired to orders.
     assert flow.get_node(2) is not None
     assert flow.get_node(2).node_inputs.main_inputs[0].node_id == 1
     assert result.audit_id is not None
 
 
-# --------------------------------------------------------------------------- #
-# 2. Unknown-columns refusal #
-# --------------------------------------------------------------------------- #
+# 2. Unknown-columns refusal
 
 
 def test_unknown_columns_refusal(call_kwargs: dict[str, Any]) -> None:
@@ -199,14 +192,11 @@ def test_unknown_columns_refusal(call_kwargs: dict[str, Any]) -> None:
     assert result.refusal_reason == "unknown_columns"
     assert "not_a_real_column" in (result.refusal_detail or "")
     assert flow.get_node(99) is None  # NOT added
-    # Audit row recorded with rejected status.
     rows = audit.query_events(session_id="test-session-w31", limit=10)
     assert any(r.tool_name == "flowfile.graph.add_filter" and r.result_status == "rejected" for r in rows)
 
 
-# --------------------------------------------------------------------------- #
-# 3. Dynamic node dry-run cache #
-# --------------------------------------------------------------------------- #
+# 3. Dynamic node dry-run cache
 
 
 def test_dynamic_node_dry_run_cache(call_kwargs: dict[str, Any], stub_kernel: list[dict[str, Any]]) -> None:
@@ -235,7 +225,6 @@ def test_dynamic_node_dry_run_cache(call_kwargs: dict[str, Any], stub_kernel: li
     assert first.predicted_output_schema is not None
     assert len(stub_kernel) == 1
 
-    # Second call with identical (code, sample) hits cache → kernel NOT called.
     polars_settings_2 = polars_settings.model_copy(update={"node_id": 11})
     second = execute_tool_call(
         flow_id=flow.flow_id,
@@ -251,9 +240,7 @@ def test_dynamic_node_dry_run_cache(call_kwargs: dict[str, Any], stub_kernel: li
     assert len(stub_kernel) == 1, "second identical call should hit cache"
 
 
-# --------------------------------------------------------------------------- #
-# 4. Source target via mirror-graph (no upstream needed) #
-# --------------------------------------------------------------------------- #
+# 4. Source target via mirror-graph (no upstream needed)
 
 
 def test_source_target_via_mirror(call_kwargs: dict[str, Any]) -> None:
@@ -283,9 +270,7 @@ def test_source_target_via_mirror(call_kwargs: dict[str, Any]) -> None:
     assert names == {"id", "label"}
 
 
-# --------------------------------------------------------------------------- #
-# 5. Network egress refusal #
-# --------------------------------------------------------------------------- #
+# 5. Network egress refusal
 
 
 def test_network_egress_refusal(call_kwargs: dict[str, Any], stub_kernel: list[dict[str, Any]]) -> None:
@@ -349,21 +334,14 @@ def test_polars_code_with_import_refuses_with_guidance(
     assert result.refusal_reason == "polars_code_import_forbidden"
     detail = result.refusal_detail or ""
     detail_lower = detail.lower()
-    # Refusal must say imports aren't allowed AND tell the LLM `pl` is
-    # already there — without those the LLM doesn't know how to fix it.
     assert "import" in detail_lower
     assert "already" in detail_lower or "available" in detail_lower
     assert "``pl``" in detail or "`pl`" in detail
-    # Pre-flight short-circuits BEFORE the dry-run kernel runs — no
-    # kernel call should have fired.
     assert len(stub_kernel) == 0, "import-rejected code must not reach the kernel"
-    # And the node must NOT have been added to the flow.
     assert flow.get_node(20) is None
 
 
-# --------------------------------------------------------------------------- #
-# 6. Audit redacts secret refs #
-# --------------------------------------------------------------------------- #
+# 6. Audit redacts secret refs
 
 
 def test_audit_redacts_secrets(call_kwargs: dict[str, Any]) -> None:
@@ -391,9 +369,7 @@ def test_audit_redacts_secrets(call_kwargs: dict[str, Any]) -> None:
     assert result.executed_args.get("password_ref") == "<<secret:my-secret>>"
 
 
-# --------------------------------------------------------------------------- #
-# 6b. Connect tool flat-shape contract #
-# --------------------------------------------------------------------------- #
+# 6b. Connect tool flat-shape contract
 
 
 def _flow_with_orders_and_filter() -> FlowGraph:
@@ -559,7 +535,6 @@ def test_delete_connection_idempotent_when_already_removed(call_kwargs: dict[str
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
     assert [n.node_id for n in flow.get_node(2).node_inputs.main_inputs] == [1]
 
-    # First delete — succeeds, removes the wire.
     result1 = execute_tool_call(
         flow_id=flow.flow_id,
         tool_name="flowfile.graph.delete_connection",
@@ -571,7 +546,6 @@ def test_delete_connection_idempotent_when_already_removed(call_kwargs: dict[str
     assert result1.status == "applied"
     assert flow.get_node(2).node_inputs.main_inputs == []
 
-    # Second delete on the SAME wire — silent no-op (was 422 previously).
     result2 = execute_tool_call(
         flow_id=flow.flow_id,
         tool_name="flowfile.graph.delete_connection",
@@ -584,7 +558,6 @@ def test_delete_connection_idempotent_when_already_removed(call_kwargs: dict[str
         "v2.8A: deleting an already-absent connection must be a silent no-op, "
         f"not a refusal; got status={result2.status} detail={result2.refusal_detail}"
     )
-    # Still empty — second delete didn't perturb anything.
     assert flow.get_node(2).node_inputs.main_inputs == []
 
 
@@ -598,7 +571,6 @@ def test_add_connection_idempotent_when_already_present(call_kwargs: dict[str, A
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
     assert [n.node_id for n in flow.get_node(2).node_inputs.main_inputs] == [1]
 
-    # Re-issue the same connect via the executor.
     result = execute_tool_call(
         flow_id=flow.flow_id,
         tool_name="flowfile.graph.connect",
@@ -608,7 +580,6 @@ def test_add_connection_idempotent_when_already_present(call_kwargs: dict[str, A
         **call_kwargs,
     )
     assert result.status == "applied", result.refusal_detail
-    # Wire is still there — exactly once, not duplicated.
     assert [n.node_id for n in flow.get_node(2).node_inputs.main_inputs] == [1]
 
 
@@ -626,7 +597,6 @@ def test_delete_connection_accepts_arrow_id_shape(call_kwargs: dict[str, Any]) -
     result = execute_tool_call(
         flow_id=flow.flow_id,
         tool_name="flowfile.graph.delete_connection",
-        # The LLM-natural shape — previously this was rejected.
         tool_args={"flow_id": flow.flow_id, "connection_id": "1→2"},
         insertion_context=InsertionContext(),
         flow=flow,
@@ -639,14 +609,11 @@ def test_delete_connection_accepts_arrow_id_shape(call_kwargs: dict[str, Any]) -
     assert flow.get_node(2).node_inputs.main_inputs == []
 
 
-# --------------------------------------------------------------------------- #
-# 7-9. tiered handling #
-# --------------------------------------------------------------------------- #
+# 7-9. tiered handling
 
 
 def test_d011_tier_0_cached_schema(call_kwargs: dict[str, Any]) -> None:
     flow = _flow_with_orders()
-    # Upstream is already populated; tier 0 returns the cached schema.
     assert flow.get_node(1).node_schema.predicted_schema is not None
     result = execute_tool_call(
         flow_id=flow.flow_id,
@@ -674,7 +641,6 @@ def test_d011_tier_1_callback_fires(call_kwargs: dict[str, Any]) -> None:
     )
     flow.add_filter(filter_settings)
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
-    # Wipe the filter's cached predicted_schema to force tier 1 path.
     flow.get_node(2).node_schema.predicted_schema = None
 
     result = execute_tool_call(
@@ -687,7 +653,6 @@ def test_d011_tier_1_callback_fires(call_kwargs: dict[str, Any]) -> None:
     )
     assert result.status == "applied", result.refusal_detail
     assert result.warnings == []
-    # Tier 1 populated the upstream's predicted_schema in place.
     assert flow.get_node(2).node_schema.predicted_schema is not None
 
 
@@ -729,9 +694,7 @@ def test_d011_tier_2_warn_and_stage(call_kwargs: dict[str, Any]) -> None:
         assert any("schema unknown" in w for w in result.warnings)
 
 
-# --------------------------------------------------------------------------- #
-# 10. Stage mode #
-# --------------------------------------------------------------------------- #
+# 10. Stage mode
 
 
 def test_stage_mode_returns_payload(call_kwargs: dict[str, Any]) -> None:
@@ -751,15 +714,11 @@ def test_stage_mode_returns_payload(call_kwargs: dict[str, Any]) -> None:
     assert result.staged_node_payload["node_type"] == "filter"
     assert result.staged_node_payload["settings"]["node_id"] == 42
     assert result.predicted_output_schema is not None
-    # Real graph not mutated.
     assert flow.get_node(42) is None
-    # Audit row still recorded.
     assert result.audit_id is not None
 
 
-# --------------------------------------------------------------------------- #
-# 10b. — auto-layout for staged nodes #
-# --------------------------------------------------------------------------- #
+# 10b. — auto-layout for staged nodes
 
 
 def test_w62_default_pos_resolves_from_upstream(call_kwargs: dict[str, Any]) -> None:
@@ -772,13 +731,10 @@ def test_w62_default_pos_resolves_from_upstream(call_kwargs: dict[str, Any]) -> 
     )
 
     flow = _flow_with_orders()
-    # Stamp a known upstream position so the assertion is unambiguous.
     flow.get_node(1).setting_input.pos_x = 400.0
     flow.get_node(1).setting_input.pos_y = 300.0
 
     args = _filter_args(node_id=2, depending_on_id=1)
-    # Strip pos_x / pos_y from tool_args so the executor's "settings have
-    # explicit coords" branch doesn't fire.
     args.pop("pos_x", None)
     args.pop("pos_y", None)
 
@@ -803,9 +759,7 @@ def test_w62_default_pos_resolves_from_upstream(call_kwargs: dict[str, Any]) -> 
     # the node at the resolved position.
     assert payload["settings"]["pos_x"] == 400.0 + _AUTO_LAYOUT_X_SPACING
     assert payload["settings"]["pos_y"] == 300.0
-    # Sanity: not the previously (0, 0) bug.
     assert (ic["pos_x"], ic["pos_y"]) != (0.0, 0.0)
-    # Layout offset Δy unused for a single anchor — staged_offset_index defaults to 0.
     _ = _AUTO_LAYOUT_Y_SPACING  # imported to assert it exists
 
 
@@ -861,7 +815,6 @@ def test_w62_explicit_zero_pos_respected(call_kwargs: dict[str, Any]) -> None:
     )
     assert result.status == "staged"
     ic = result.staged_node_payload["insertion_context"]
-    # (0, 0) survives — it was deliberate.
     assert (ic["pos_x"], ic["pos_y"]) == (0.0, 0.0)
 
 
@@ -927,7 +880,6 @@ def test_w62_staged_offset_index_stacks_fan_out(call_kwargs: dict[str, Any]) -> 
         assert result.status == "staged", result.refusal_detail
         ic = result.staged_node_payload["insertion_context"]
         coords.append((ic["pos_x"], ic["pos_y"]))
-    # All three at the same x (one column over from upstream), increasing y.
     xs = {c[0] for c in coords}
     ys = [c[1] for c in coords]
     assert len(xs) == 1
@@ -936,9 +888,7 @@ def test_w62_staged_offset_index_stacks_fan_out(call_kwargs: dict[str, Any]) -> 
     assert ys[2] > ys[1]
 
 
-# --------------------------------------------------------------------------- #
-# 11. Meta classify_intent #
-# --------------------------------------------------------------------------- #
+# 11. Meta classify_intent
 #
 # — ``test_meta_pick_category`` was deleted. The legacy
 # ``flowfile.meta.pick_category`` tool was removed alongside the
@@ -949,9 +899,7 @@ def test_w62_staged_offset_index_stacks_fan_out(call_kwargs: dict[str, Any]) -> 
 # code path.
 
 
-# --------------------------------------------------------------------------- #
-# 12. Invalid tool name #
-# --------------------------------------------------------------------------- #
+# 12. Invalid tool name
 
 
 def test_invalid_tool_name(call_kwargs: dict[str, Any]) -> None:
@@ -968,17 +916,13 @@ def test_invalid_tool_name(call_kwargs: dict[str, Any]) -> None:
     assert "invalid tool name" in (result.refusal_detail or "")
 
 
-# --------------------------------------------------------------------------- #
-# 13. Lazy litellm contract #
-# --------------------------------------------------------------------------- #
+# 13. Lazy litellm contract
 
 
 def test_lazy_litellm_contract() -> None:
-    # Drop any cached litellm shims so the contract is enforced from a clean slate.
     for mod in list(sys.modules):
         if mod.startswith("litellm") or mod == "litellm":
             sys.modules.pop(mod, None)
-    # Re-import the executor surface.
     sys.modules.pop("flowfile_core.ai.tools.executor", None)
     sys.modules.pop("flowfile_core.ai.tools", None)
     import flowfile_core.ai.tools  # noqa: F401
@@ -988,9 +932,7 @@ def test_lazy_litellm_contract() -> None:
     assert not leaked, f"litellm leaked: {leaked}"
 
 
-# --------------------------------------------------------------------------- #
-# 14. Formula is static — no kernel call #
-# --------------------------------------------------------------------------- #
+# 14. Formula is static — no kernel call
 
 
 def test_formula_predicts_via_mirror_not_kernel(call_kwargs: dict[str, Any], stub_kernel: list[dict[str, Any]]) -> None:
@@ -1018,9 +960,7 @@ def test_formula_predicts_via_mirror_not_kernel(call_kwargs: dict[str, Any], stu
     assert result.tool_name == "flowfile.graph.add_formula"
 
 
-# --------------------------------------------------------------------------- #
-# LLM-provided node_id validation #
-# --------------------------------------------------------------------------- #
+# LLM-provided node_id validation
 
 
 def test_add_with_llm_provided_colliding_node_id_is_refused(call_kwargs: dict[str, Any]) -> None:
@@ -1084,9 +1024,7 @@ def test_add_with_llm_provided_id_already_live_is_refused(call_kwargs: dict[str,
     assert "already exists in the live graph" in (result.refusal_detail or "")
 
 
-# --------------------------------------------------------------------------- #
-# Sanity: ToolExecutionResult shape #
-# --------------------------------------------------------------------------- #
+# Sanity: ToolExecutionResult shape
 
 
 def test_tool_execution_result_default_shape() -> None:
@@ -1100,13 +1038,10 @@ def test_executor_module_exposes_seam() -> None:
     """The kernel-runner seam must be a module attribute we can monkey-patch."""
     assert hasattr(dry_run_module, "_run_kernel_for_dry_run")
     assert callable(dry_run_module._run_kernel_for_dry_run)
-    # And the executor module re-exports the public surface unchanged.
     assert executor_module.execute_tool_call is execute_tool_call
 
 
-# --------------------------------------------------------------------------- #
-# settings-validation refusal enrichment #
-# --------------------------------------------------------------------------- #
+# settings-validation refusal enrichment
 
 
 def _add_manual_input_args_with_string_raw_data() -> dict[str, Any]:
@@ -1167,8 +1102,6 @@ def test_w67_settings_validation_refusal_includes_field_and_shape(call_kwargs: d
     detail = result.refusal_detail or ""
     assert "raw_data_format" in detail, detail
     assert "object" in detail.lower(), detail
-    # Received type is Python's ``str`` — exact substring match on what
-    # ``type(received).__name__`` produces.
     assert "str" in detail, detail
     assert "flowfile.graph.add_manual_input" in detail, detail
     assert "JSON-encoded string" in detail, detail
@@ -1214,9 +1147,7 @@ def test_w67_settings_validation_refusal_includes_concrete_example(call_kwargs: 
     assert "data" in parsed, parsed
 
 
-# --------------------------------------------------------------------------- #
-# — manual_input shape tolerance #
-# --------------------------------------------------------------------------- #
+# — manual_input shape tolerance
 
 
 def test_normalize_columns_dict_to_list_of_objects() -> None:
@@ -1460,9 +1391,7 @@ def test_executor_canonical_manual_input_still_validates(call_kwargs: dict[str, 
     assert raw.data == [["Alice", "Bob", "Cat"], [30, 25, 19]]
 
 
-# --------------------------------------------------------------------------- #
-# update_node_settings #
-# --------------------------------------------------------------------------- #
+# update_node_settings
 
 
 def _flow_with_orders_and_filter() -> FlowGraph:
@@ -1527,11 +1456,9 @@ def test_update_node_settings_stage_returns_modification_payload(call_kwargs: di
     assert payload["kind"] == "modification"
     assert payload["node_id"] == 2
     assert payload["node_type"] == "filter"
-    # Old settings reflect the pre-change state captured at stage time.
     assert payload["old_settings"]["filter_input"]["advanced_filter"] == "[region]=='EU'"
     assert payload["new_settings"]["filter_input"]["advanced_filter"] == "[amount] > 50"
     assert payload["predicted_output_schema"] is not None
-    # Live graph unchanged.
     assert (
         flow.get_node(2).setting_input.model_dump(mode="json")["filter_input"]["advanced_filter"]
         == pre_filter["filter_input"]["advanced_filter"]
@@ -1560,7 +1487,6 @@ def test_update_node_settings_apply_mutates_live_node(call_kwargs: dict[str, Any
     assert result.node_id == 2
     post = flow.get_node(2).setting_input
     assert post.filter_input.advanced_filter == "[amount] > 50"
-    # The wiring is preserved — main upstream is still node 1.
     assert flow.get_node(2).node_inputs.main_inputs[0].node_id == 1
 
 
@@ -1695,9 +1621,7 @@ def test_update_node_settings_missing_node_id_arg(call_kwargs: dict[str, Any]) -
     assert "node_id" in (result.refusal_detail or "")
 
 
-# --------------------------------------------------------------------------- #
-# sink-as-upstream refusal #
-# --------------------------------------------------------------------------- #
+# sink-as-upstream refusal
 
 
 def _flow_with_orders_and_explore_data() -> FlowGraph:
@@ -1738,7 +1662,6 @@ def test_add_node_refuses_when_upstream_is_sink(call_kwargs: dict[str, Any]) -> 
     detail = result.refusal_detail or ""
     assert "99" in detail
     assert "explore_data" in detail
-    # Refusal includes non-sink candidates so the LLM can retry intelligently.
     assert "[1]" in detail
 
 
@@ -1767,7 +1690,6 @@ def test_connect_refuses_self_loop(call_kwargs: dict[str, Any]) -> None:
     detail = result.refusal_detail or ""
     assert "must be different" in detail
     assert "2" in detail
-    # No connection got staged — the input list of node 2 is unchanged.
     assert flow.get_node(2) is not None
 
 
@@ -1828,10 +1750,8 @@ def test_add_node_passes_when_upstream_is_non_sink(call_kwargs: dict[str, Any]) 
     assert result.refusal_reason is None
 
 
-# --------------------------------------------------------------------------- #
-# — refuse unrequested wires from freshly-staged source nodes #
-# into pre-existing live nodes #
-# --------------------------------------------------------------------------- #
+# — refuse unrequested wires from freshly-staged source nodes
+# into pre-existing live nodes
 
 
 def test_connect_refuses_unrequested_wire_from_staged_source_to_live(
@@ -1983,9 +1903,7 @@ def test_connect_allows_staged_non_source_to_live(call_kwargs: dict[str, Any]) -
     assert result.refusal_reason is None
 
 
-# --------------------------------------------------------------------------- #
-# node_id coercion in non-Pydantic handlers #
-# --------------------------------------------------------------------------- #
+# node_id coercion in non-Pydantic handlers
 
 
 def test_delete_node_coerces_string_node_id(call_kwargs: dict[str, Any]) -> None:
@@ -2004,7 +1922,6 @@ def test_delete_node_coerces_string_node_id(call_kwargs: dict[str, Any]) -> None
         mode="stage",
         **call_kwargs,
     )
-    # Coercion succeeded → handler ran → staging path applied.
     assert result.status == "staged", result.refusal_detail
 
 
@@ -2059,9 +1976,7 @@ def test_delete_node_refuses_bool_node_id(call_kwargs: dict[str, Any]) -> None:
     assert "bool" in (result.refusal_detail or "")
 
 
-# --------------------------------------------------------------------------- #
-# — join-shaped wire validation #
-# --------------------------------------------------------------------------- #
+# — join-shaped wire validation
 
 
 def _flow_with_two_inputs() -> FlowGraph:
@@ -2126,7 +2041,6 @@ def test_cross_join_refused_when_right_input_missing(call_kwargs: dict[str, Any]
     assert result.status == "rejected"
     assert "join-shaped" in (result.refusal_detail or "")
     assert "right" in (result.refusal_detail or "").lower()
-    # The flow must NOT have a partially-wired cross_join node.
     assert flow.get_node(3) is None
 
 
@@ -2173,8 +2087,6 @@ def test_agent_writer_node_types_refused_with_writer_blocked(call_kwargs: dict[s
     assert result.status == "rejected"
     assert result.refusal_reason == "writer_blocked"
     assert "Writer nodes" in (result.refusal_detail or "")
-    # The writer node never gets staged — the live graph stays
-    # exactly as it was.
     assert flow.get_node(2) is None
 
 
@@ -2273,7 +2185,6 @@ def test_cross_join_succeeds_with_one_left_and_one_right(call_kwargs: dict[str, 
     assert result.status in ("applied", "warned"), result.refusal_detail
     join_node = flow.get_node(3)
     assert join_node is not None
-    # Both wires must be present on the join node.
     main_input_ids = [n.node_id for n in (join_node.node_inputs.main_inputs or [])]
     assert main_input_ids == [1], main_input_ids
     assert (
@@ -2282,9 +2193,7 @@ def test_cross_join_succeeds_with_one_left_and_one_right(call_kwargs: dict[str, 
     )
 
 
-# --------------------------------------------------------------------------- #
-# — _unwrap_json_string_values: scalar preservation #
-# --------------------------------------------------------------------------- #
+# — _unwrap_json_string_values: scalar preservation
 
 
 def test_unwrap_preserves_digit_string_for_str_fields() -> None:
@@ -2299,17 +2208,14 @@ def test_unwrap_preserves_digit_string_for_str_fields() -> None:
     """
     from flowfile_core.ai.tools.executor import _unwrap_json_string_values
 
-    # Bare scalar digit strings preserved verbatim — the bug fix.
     assert _unwrap_json_string_values("1") == "1"
     assert _unwrap_json_string_values("-5") == "-5"
     assert _unwrap_json_string_values("3.14") == "3.14"
     assert _unwrap_json_string_values("0") == "0"
 
-    # Container unwrap still works — the cases this heuristic exists for.
     assert _unwrap_json_string_values("[3, 4]") == [3, 4]
     assert _unwrap_json_string_values('{"a": 1}') == {"a": 1}
 
-    # Recursive: numeric string nested inside a real dict stays a string.
     nested = {"filter_input": {"basic_filter": {"value": "1"}}}
     assert _unwrap_json_string_values(nested) == nested
 
@@ -2318,7 +2224,6 @@ def test_unwrap_preserves_digit_string_for_str_fields() -> None:
     # cleanly, so they pass through untouched.
     assert _unwrap_json_string_values("2024_q1") == "2024_q1"
 
-    # Booleans and code bodies still pass through (existing guarantees).
     assert _unwrap_json_string_values("true") == "true"
     assert _unwrap_json_string_values("pl.col('x') > 5") == "pl.col('x') > 5"
 

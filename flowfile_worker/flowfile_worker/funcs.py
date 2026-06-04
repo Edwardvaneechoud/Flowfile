@@ -207,12 +207,12 @@ def process_and_cache(
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
-        error_msg = str(e).encode()[:1024]  # Limit error message length
+        error_msg = str(e).encode()[:1024]
         flowfile_logger.error(f"Error during process and cache operation: {str(e)}")
         with error_message.get_lock():
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
-            progress.value = -1  # Indicate error
+            progress.value = -1
         return error_msg
 
 
@@ -236,11 +236,11 @@ def store_sample(
             progress.value = 100
     except Exception as e:
         flowfile_logger.error(f"Error during store sample operation: {str(e)}")
-        error_msg = str(e).encode()[:1024]  # Limit error message length
+        error_msg = str(e).encode()[:1024]
         with error_message.get_lock():
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
-            progress.value = -1  # Indicate error
+            progress.value = -1
         return error_msg
 
 
@@ -337,12 +337,12 @@ def calculate_schema(
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
-        error_msg = str(e).encode()[:256]  # Limit error message length
+        error_msg = str(e).encode()[:256]
         flowfile_logger.error("error", e)
         with error_message.get_lock():
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
-            progress.value = -1  # Indicate error
+            progress.value = -1
 
 
 def calculate_number_of_records(
@@ -367,11 +367,11 @@ def calculate_number_of_records(
             progress.value = 100
     except Exception as e:
         flowfile_logger.error("error", e)
-        error_msg = str(e).encode()[:256]  # Limit error message length
+        error_msg = str(e).encode()[:256]
         with error_message.get_lock():
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
-            progress.value = -1  # Indicate error
+            progress.value = -1
         return b"error"
 
 
@@ -660,7 +660,6 @@ def merge_delta(
                 progress.value = 100
             return
 
-        # Read back metadata from the resulting table
         result_df = pl.scan_delta(output_path)
         result_schema = result_df.collect_schema()
         schema = [{"name": n, "dtype": str(d)} for n, d in result_schema.items()]
@@ -772,11 +771,9 @@ def execute_sql_query(
 
     result_lf = ctx.execute(query)
 
-    # Determine which registered tables were actually used via the query plan
     plan = result_lf.explain()
     used_tables = [name for name in registered_names if re.search(r"\b" + re.escape(name) + r"\b", plan)]
 
-    # Collect with row limit
     schema = result_lf.collect_schema()
     columns = list(schema.keys())
     dtypes = [str(d) for d in schema.values()]
@@ -860,7 +857,6 @@ def read_delta_version_preview(table_name: str, version: int, n_rows: int = 100)
     rows = pa_table.to_pylist()
 
     row_list = [[make_json_safe(row.get(c)) for c in columns] for row in rows]
-    # Estimate total rows from Delta metadata
     try:
         total_rows = sum(
             v for v in dt.get_add_actions(flatten=True).to_pydict().get("num_records", []) if v is not None

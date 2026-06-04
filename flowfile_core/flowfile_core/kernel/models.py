@@ -166,9 +166,7 @@ class ExecuteResult(BaseModel):
     execution_time_ms: float = 0.0
 
 
-# ---------------------------------------------------------------------------
 # Artifact Persistence & Recovery models
-# ---------------------------------------------------------------------------
 
 
 class RecoveryStatus(BaseModel):

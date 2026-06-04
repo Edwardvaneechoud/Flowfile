@@ -220,7 +220,6 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
 const nodeKafkaSource = ref<NodeKafkaSource | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeKafkaSource,
 });

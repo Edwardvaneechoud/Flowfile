@@ -153,7 +153,6 @@ const fetchSecrets = async () => {
       "Error fetching secrets:",
       error instanceof Error ? error.message : String(error),
     );
-    // Provide empty array as fallback if fetch fails
     availableSecrets.value = [];
   }
 };

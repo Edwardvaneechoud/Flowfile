@@ -99,7 +99,6 @@ def test_used_tables_only_referenced(delta_tables):
     result = execute_sql_query("SELECT * FROM customers", delta_tables)
 
     assert "customers" in result["used_tables"]
-    # orders should NOT be in used_tables since it wasn't referenced
     assert "orders" not in result["used_tables"]
 
 

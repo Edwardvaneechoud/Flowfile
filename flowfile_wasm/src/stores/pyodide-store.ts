@@ -1436,10 +1436,8 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
       return rawResult
     }
 
-    // Convert Python result to JavaScript with deep conversion
     const jsResult = rawResult.toJs({ dict_converter: Object.fromEntries })
 
-    // Recursively convert any remaining Map objects to plain objects
     function deepConvert(obj: any): any {
       if (obj instanceof Map) {
         const result: Record<string, any> = {}

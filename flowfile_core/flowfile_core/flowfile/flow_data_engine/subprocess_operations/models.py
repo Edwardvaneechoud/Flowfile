@@ -87,9 +87,9 @@ class Status(BaseModel):
     background_task_id: str
     status: Literal[
         "Processing", "Completed", "Error", "Unknown Error", "Starting", "Cancelled"
-    ]  # Type alias for status
+    ]
     file_ref: str
     progress: int = 0
-    error_message: str | None = None  # Add error_message field
+    error_message: str | None = None
     results: Any
     result_type: Literal["polars", "other"] = "polars"

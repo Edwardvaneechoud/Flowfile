@@ -16,26 +16,21 @@ def format_type_annotation(annotation_obj) -> str:
     """
     Properly format a type annotation object to a string representation.
     """
-    # Handle None/NoneType specially
     if annotation_obj is None or annotation_obj is type(None):
         return "None"
 
-    # For class objects like <class 'str'>
     if isinstance(annotation_obj, type):
         module = annotation_obj.__module__
         name = annotation_obj.__name__
         return name if module == "builtins" else name
 
-    # Handle strings
     if isinstance(annotation_obj, str):
-        # Clean up class references
         class_match = re.match(r"<class '([^']+)'>", annotation_obj)
         if class_match:
             full_path = class_match.group(1)
             return "None" if full_path == "NoneType" or full_path.endswith(".NoneType") else full_path.split(".")[-1]
         return annotation_obj
 
-    # For other cases, convert to string and clean up
     str_rep = str(annotation_obj).replace("<class '", "").replace("'>", "")
     return "None" if str_rep == "NoneType" or str_rep.endswith(".NoneType") else str_rep
 
@@ -51,19 +46,15 @@ def process_method_signature(method, name, class_name) -> tuple[str, str, list[s
     """
     lines = []
     try:
-        # Get the signature
         sig = inspect.signature(method)
 
-        # Process parameters - skip 'self'
         processed_params = []
         for i, (param_name, param) in enumerate(sig.parameters.items()):
             if i == 0 and param_name == "self":
                 continue
 
-            # Format parameter with type annotation
             param_str = param_name
             if param.annotation is not inspect.Parameter.empty:
-                # Handle Union types
                 if hasattr(param.annotation, "__origin__") and param.annotation.__origin__ is Union:
                     type_parts = []
                     for arg in param.annotation.__args__:
@@ -73,12 +64,10 @@ def process_method_signature(method, name, class_name) -> tuple[str, str, list[s
                     formatted_type = format_type_annotation(param.annotation)
                     param_str = f"{param_name}: {formatted_type}"
 
-            # Add default value if available
             if param.default is not inspect.Parameter.empty:
                 default_repr = repr(param.default)
                 param_str = f"{param_str}={default_repr}"
 
-            # Handle special parameter types (*args, **kwargs)
             if param.kind == inspect.Parameter.VAR_KEYWORD:
                 param_str = f"**{param_name}"
             elif param.kind == inspect.Parameter.VAR_POSITIONAL:
@@ -86,7 +75,6 @@ def process_method_signature(method, name, class_name) -> tuple[str, str, list[s
 
             processed_params.append(param_str)
 
-        # Determine return type
         return_type = "Any"
         if sig.return_annotation is not inspect.Parameter.empty:
             return_type = format_type_annotation(sig.return_annotation)
@@ -126,21 +114,17 @@ def process_method_signature(method, name, class_name) -> tuple[str, str, list[s
         ]:
             return_type = f"'{class_name}'"
         elif name in ["str", "dt", "name"] and class_name == "Expr":
-            # Special properties
             property_types = {"str": "StringMethods", "dt": "DateTimeMethods", "name": "ExprNameNameSpace"}
             return_type = property_types.get(name, "Any")
 
-        # Build the method signature
         params_str = ", ".join(processed_params)
         method_sig = f"    def {name}(self, {params_str}) -> {return_type}: ..."
 
-        # Extract docstring if available
         docstring = ""
         if method.__doc__:
             doc_lines = method.__doc__.strip().split("\n")
             docstring = f"    # {doc_lines[0].strip()}"
 
-        # Add an empty line after each method for readability
         lines.append("")
         return docstring, method_sig, lines
 
@@ -163,7 +147,6 @@ def generate_expr_type_stub(
     if output_file is None:
         output_file = os.path.join(os.path.dirname(__file__), "flowfile_frame", "expr.pyi")
 
-    # Extract classes from the module
     class_map = {
         "Expr": expr_module.Expr,
         "Column": expr_module.Column,
@@ -174,12 +157,10 @@ def generate_expr_type_stub(
         "ExprListNameSpace": expr_module.ExprListNameSpace,
     }
 
-    # Discover top-level functions dynamically
     top_level_functions = []
     for name, obj in inspect.getmembers(expr_module):
         if inspect.isfunction(obj) and not name.startswith("_") and obj.__module__ == expr_module.__name__:
             top_level_functions.append(name)
-    # Start building the stub file content
     content = [
         "# This file was auto-generated to provide type information for Expr",
         "# DO NOT MODIFY THIS FILE MANUALLY",
@@ -218,7 +199,6 @@ def generate_expr_type_stub(
         "",
     ]
 
-    # Discover polars Expr methods dynamically
     common_polars_methods = set()
     for name, method in inspect.getmembers(pl.Expr):
         if callable(method) and not isinstance(method, property):
@@ -227,7 +207,6 @@ def generate_expr_type_stub(
     def process_class(cls_name, cls, is_subclass=False):
         parent_class = f"({cls.__base__.__name__})" if is_subclass else ""
         class_lines = [f"class {cls_name}{parent_class}:"]
-        # Add class attributes (properties)
         properties_added = False
         for name, value in inspect.getmembers(cls, lambda x: isinstance(x, property)):
             properties_added = True
@@ -235,7 +214,6 @@ def generate_expr_type_stub(
             if hasattr(value.fget, "__annotations__") and "return" in value.fget.__annotations__:
                 return_type = format_type_annotation(value.fget.__annotations__["return"])
             class_lines.append(f"    {name}: {return_type}")
-        # Add other attributes
 
         attrs_added = False
         cls_annotations = vars(cls).get("__annotations__", {})
@@ -245,17 +223,13 @@ def generate_expr_type_stub(
 
                 attrs_added = True
                 class_lines.append(f"    {name}: {type_annotation}")
-        # Add an empty line after attributes if any were added
         if properties_added or attrs_added:
             class_lines.append("")
 
-        # Process methods
         existing_methods = set()
         for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
-            # Skip private methods unless it's __init__
             if name.startswith("_") and name != "__init__" and not include_constructors:
                 continue
-            # Skip inherited methods if not requested
             if not include_inherited and method.__module__ != cls.__module__:
                 continue
 
@@ -295,14 +269,12 @@ def generate_expr_type_stub(
         content.extend(process_class(class_name, cls, is_subclass))
         content.append("")
 
-    # Process top-level functions
     for func_name in top_level_functions:
         if hasattr(expr_module, func_name):
             func = getattr(expr_module, func_name)
             try:
                 sig = inspect.signature(func)
 
-                # Process parameters
                 params = []
                 for param_name, param in sig.parameters.items():
                     param_str = param_name
@@ -321,7 +293,6 @@ def generate_expr_type_stub(
 
                     params.append(param_str)
 
-                # Determine return type
                 return_type = "Expr"
                 if sig.return_annotation is not inspect.Parameter.empty:
                     return_type = format_type_annotation(sig.return_annotation)
@@ -341,7 +312,6 @@ def generate_expr_type_stub(
                 content.append(f"def {func_name}(*args, **kwargs) -> Any: ...")
                 content.append("")
 
-    # Write the stub file
     with open(output_file, "w") as f:
         f.write("\n".join(content))
 
@@ -358,10 +328,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        # Import the Expr module
         module = import_module(args.module)
 
-        # Generate the type stub
         output_file = generate_expr_type_stub(expr_module=module, output_file=args.output)
 
         print(f"Type stub file generated successfully: {output_file}")

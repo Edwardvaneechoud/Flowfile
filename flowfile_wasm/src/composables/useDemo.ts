@@ -16,7 +16,6 @@ const DEMO_DISMISSED_KEY = 'flowfile_demo_dismissed'
 const ORDERS_NODE_ID = 1 // Must match the read_csv node ID for orders in sample-flow.yaml
 const REGIONS_NODE_ID = 2 // Must match the read_csv node ID for regions in sample-flow.yaml
 
-// Track loading state
 const isLoading = ref(false)
 const loadError = ref<string | null>(null)
 
@@ -30,11 +29,9 @@ const isDismissed = ref(localStorage.getItem(DEMO_DISMISSED_KEY) === 'true')
  * - ?demo=true (query parameter)
  */
 function shouldAutoLoadDemo(): boolean {
-  // Check for demo subdomain (e.g., demo.flowfile.org)
   const hostname = window.location.hostname
   const isOnDemoSubdomain = hostname.startsWith('demo.')
 
-  // Check for ?demo=true query parameter
   const urlParams = new URLSearchParams(window.location.search)
   const hasDemoParam = urlParams.get('demo') === 'true'
 
@@ -89,7 +86,6 @@ export function useDemo() {
    * @returns Promise<boolean> - True if demo was loaded successfully
    */
   async function loadDemo(confirmReplace: boolean = true): Promise<boolean> {
-    // Check if there's an existing flow with nodes
     if (confirmReplace && flowStore.nodes.size > 0) {
       const confirmed = window.confirm(
         'This will replace your current flow. Do you want to continue?'
@@ -103,7 +99,6 @@ export function useDemo() {
     loadError.value = null
 
     try {
-      // Fetch all demo files in parallel
       const [flowResponse, ordersResponse, regionsResponse] = await Promise.all([
         fetch('/demo/sample-flow.yaml'),
         fetch('/demo/sales-data.csv'),
@@ -126,7 +121,6 @@ export function useDemo() {
         regionsResponse.text()
       ])
 
-      // Parse the YAML flow definition
       const flowData = yaml.load(flowYaml) as FlowfileData
       if (!flowData || !flowData.nodes) {
         throw new Error('Invalid flow definition')
@@ -138,24 +132,20 @@ export function useDemo() {
         throw new Error('Failed to import flow')
       }
 
-      // Load the orders CSV content into the first Read CSV node
       flowStore.setFileContent(ORDERS_NODE_ID, ordersContent)
       const ordersSchema = inferSchemaFromCsv(ordersContent, true, ',')
       if (ordersSchema) {
         flowStore.setSourceNodeSchema(ORDERS_NODE_ID, ordersSchema)
       }
 
-      // Load the regions CSV content into the second Read CSV node
       flowStore.setFileContent(REGIONS_NODE_ID, regionsContent)
       const regionsSchema = inferSchemaFromCsv(regionsContent, true, ',')
       if (regionsSchema) {
         flowStore.setSourceNodeSchema(REGIONS_NODE_ID, regionsSchema)
       }
 
-      // Propagate schemas downstream
       await flowStore.propagateSchemas()
 
-      // Mark demo as seen
       markDemoAsSeen()
 
       return true

@@ -48,9 +48,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.configs import settings as core_settings
 
-# --------------------------------------------------------------------------- #
-# Fakes #
-# --------------------------------------------------------------------------- #
+# Fakes
 
 
 class _FakeColumn:
@@ -176,9 +174,7 @@ def _select_settings(*, old_name: str) -> dict[str, Any]:
     }
 
 
-# --------------------------------------------------------------------------- #
-# 1. Surface vocabulary lockstep #
-# --------------------------------------------------------------------------- #
+# 1. Surface vocabulary lockstep
 
 
 def test_ghost_node_surface_in_lockstep() -> None:
@@ -235,9 +231,7 @@ def test_allowed_node_types_derived_from_preset() -> None:
     assert "python_script" not in _ALLOWED_NODE_TYPES
 
 
-# --------------------------------------------------------------------------- #
-# 2. Schema-grounding: hallucinated columns dropped #
-# --------------------------------------------------------------------------- #
+# 2. Schema-grounding: hallucinated columns dropped
 
 
 @pytest.mark.asyncio
@@ -333,9 +327,7 @@ async def test_drops_candidate_outside_ghost_node_preset() -> None:
     assert response.suggestions[0].node_type == "select"
 
 
-# --------------------------------------------------------------------------- #
-# 3. Degraded / failure paths #
-# --------------------------------------------------------------------------- #
+# 3. Degraded / failure paths
 
 
 @pytest.mark.asyncio
@@ -428,9 +420,7 @@ async def test_degrades_when_all_candidates_filtered() -> None:
     assert response.suggestions == []
 
 
-# --------------------------------------------------------------------------- #
-# 4. Provider call wiring #
-# --------------------------------------------------------------------------- #
+# 4. Provider call wiring
 
 
 @pytest.mark.asyncio
@@ -535,9 +525,7 @@ async def test_markdown_fenced_json_unwrapped() -> None:
     assert len(response.suggestions) == 1
 
 
-# --------------------------------------------------------------------------- #
-# 5. Predicted-schema attachment #
-# --------------------------------------------------------------------------- #
+# 5. Predicted-schema attachment
 
 
 @pytest.mark.asyncio
@@ -577,9 +565,7 @@ async def test_predicted_schema_attached_for_static_node() -> None:
         assert "a" in names
 
 
-# --------------------------------------------------------------------------- #
-# 6. Routes #
-# --------------------------------------------------------------------------- #
+# 6. Routes
 
 
 @pytest.fixture
@@ -694,9 +680,7 @@ def test_route_happy_path(authed_client: TestClient, monkeypatch: pytest.MonkeyP
     assert body["suggestions"][0]["label"] == "Filter by region"
 
 
-# --------------------------------------------------------------------------- #
-# 7. Lazy-litellm contract #
-# --------------------------------------------------------------------------- #
+# 7. Lazy-litellm contract
 
 
 def test_lazy_litellm_contract() -> None:

@@ -318,7 +318,6 @@ const emit = defineEmits<{
   (e: "cancel"): void;
 }>();
 
-// Authentication methods available for each storage type
 const authMethodsByStorageType = {
   s3: [
     { value: "access_key", label: "Access Key" },
@@ -340,7 +339,6 @@ const authMethodsByStorageType = {
   ],
 };
 
-// Create a default connection object
 const defaultConnection = (): FullCloudStorageConnection => ({
   connectionName: "",
   storageType: "s3",
@@ -349,12 +347,10 @@ const defaultConnection = (): FullCloudStorageConnection => ({
   awsAllowUnsafeHtml: false,
 });
 
-// Initialize connection with props or default values
 const connection = ref<FullCloudStorageConnection>(
   props.initialConnection ? { ...props.initialConnection } : defaultConnection(),
 );
 
-// Watch for changes in initialConnection prop
 watch(
   () => props.initialConnection,
   (newVal) => {
@@ -364,25 +360,21 @@ watch(
   },
 );
 
-// Password visibility toggles
 const showAwsSecret = ref(false);
 const showAzureKey = ref(false);
 const showAzureSecret = ref(false);
 const showAzureSasToken = ref(false);
 
-// Computed property for available auth methods based on storage type
 const availableAuthMethods = computed(() => {
   const cloudStorageType = connection.value.storageType as CloudStorageType;
   return authMethodsByStorageType[cloudStorageType] || [];
 });
 
-// Reset auth method when storage type changes
 watch(
   () => connection.value.storageType,
   (newStorageType) => {
     const methods = authMethodsByStorageType[newStorageType as CloudStorageType];
     if (methods && methods.length > 0) {
-      // If current auth method is not available for new storage type, reset to first option
       const currentMethodAvailable = methods.some((m) => m.value === connection.value.authMethod);
       if (!currentMethodAvailable) {
         connection.value.authMethod = methods[0].value as AuthMethod;
@@ -391,7 +383,6 @@ watch(
   },
 );
 
-// Computed property to determine if the form is valid
 const isValid = computed(() => {
   const baseValid =
     !!connection.value.connectionName &&
@@ -441,7 +432,6 @@ const isValid = computed(() => {
   return true;
 });
 
-// Computed property for the submit button text
 const submitButtonText = computed(() => {
   if (props.isSubmitting) {
     return "Saving...";
@@ -449,7 +439,6 @@ const submitButtonText = computed(() => {
   return props.initialConnection ? "Update Connection" : "Create Connection";
 });
 
-// Submit form
 const submitForm = () => {
   if (isValid.value) {
     emit("submit", connection.value);

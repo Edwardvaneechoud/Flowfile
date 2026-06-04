@@ -364,8 +364,8 @@ def create_big_flow():
     graph.add_formula(field_with_date)
     graph.add_formula(field_with_boolean)
     graph.add_explore_data(explore_data_settings)
-    add_manual_input(graph, data=input_schema.RawData.from_pylist([{'Column 1': 'edward', 'Column 2': 'test'}, {'Column 1': 'eduward', 'Column 2': 'xre'}]), node_id=4)  # add another manual input with different data types
-    add_manual_input(graph, data=input_schema.RawData.from_pylist([{'Column 3': 'edward', 'Column 4': 'test'}, {'Column 3': 'eduward', 'Column 4': 'xre'}]), node_id=5)  # add another manual input with different columns
+    add_manual_input(graph, data=input_schema.RawData.from_pylist([{'Column 1': 'edward', 'Column 2': 'test'}, {'Column 1': 'eduward', 'Column 2': 'xre'}]), node_id=4)
+    add_manual_input(graph, data=input_schema.RawData.from_pylist([{'Column 3': 'edward', 'Column 4': 'test'}, {'Column 3': 'eduward', 'Column 4': 'xre'}]), node_id=5)
     return graph
 
 
@@ -455,13 +455,10 @@ def test_analytics_processor_existing_specs_run():
 
 
 def test_analytics_changing_data_processor_existing_specs_run():
-    # In this scenario, we want to reset the data types of the columns in the graphic walker settings
     graph = create_big_flow()
 
     graph.get_node(2).get_predicted_schema()
-    # We want to run the graph in development mode
     graph.flow_settings.execution_mode = "Performance"
-    # Shuffle things up by changing the data type input. Instead of float, we get string as input
     delete_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(8, 3))
 

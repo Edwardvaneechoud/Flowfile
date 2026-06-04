@@ -255,7 +255,6 @@ import { ref, onMounted } from "vue";
 import type { SecretInput } from "./secretTypes";
 import { useSecretManager } from "./useSecretManager";
 
-// Use our secrets composable
 const { secrets, filteredSecrets, isLoading, searchTerm, loadSecrets, addSecret, deleteSecret } =
   useSecretManager();
 
@@ -286,7 +285,6 @@ const isDeleting = ref(false);
 const showDeleteModal = ref(false);
 const secretToDelete = ref("");
 
-// Add a new secret
 const handleAddSecret = async () => {
   if (!newSecret.value.name || !newSecret.value.value) return;
 
@@ -304,19 +302,16 @@ const handleAddSecret = async () => {
   }
 };
 
-// Confirm deletion of a secret
 const handleConfirmDelete = (secretName: string) => {
   secretToDelete.value = secretName;
   showDeleteModal.value = true;
 };
 
-// Cancel delete operation
 const cancelDelete = () => {
   showDeleteModal.value = false;
   secretToDelete.value = "";
 };
 
-// Delete a secret after confirmation
 const handleDeleteSecret = async () => {
   if (!secretToDelete.value) return;
 
@@ -334,7 +329,6 @@ const handleDeleteSecret = async () => {
   }
 };
 
-// Load secrets when component mounts
 onMounted(() => {
   loadSecrets().catch(() => {
     alert("Failed to load secrets. Please try again.");

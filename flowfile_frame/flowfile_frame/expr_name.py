@@ -30,26 +30,19 @@ class ExprNameNameSpace:
         from flowfile_frame.expr import Expr
 
         args_repr = ""
-        # Format positional args for repr
         if args:
             args_strs = []
             for arg in args:
                 if callable(arg):
-                    # Special handling for lambda functions and callables
                     if hasattr(arg, "__name__") and arg.__name__ != "<lambda>":
-                        # Named function - use its name
                         args_strs.append(arg.__name__)
                     else:
-                        # Lambda or unnamed function - create a proper function string representation
                         if method_name == "map":
-                            # For map function specifically, try to extract the function body
                             import inspect
 
                             try:
                                 source = inspect.getsource(arg).strip()
-                                # Handle multiline lambdas and functions
                                 if "\n" in source:
-                                    # Try to extract just the lambda expression if possible
                                     if "lambda" in source:
                                         lambda_parts = source.split("lambda")
                                         if len(lambda_parts) > 1:
@@ -57,7 +50,6 @@ class ExprNameNameSpace:
                                             body_parts = source.split(":")
                                             if len(body_parts) > 1:
                                                 body = body_parts[1].strip()
-                                                # Remove trailing characters like parentheses, commas
                                                 body = body.rstrip(")\n, ")
                                                 lambda_expr += f" {body}"
                                                 args_strs.append(lambda_expr)
@@ -66,26 +58,21 @@ class ExprNameNameSpace:
                                         else:
                                             args_strs.append("lambda x: x.upper()")  # Fallback for common case
                                     else:
-                                        # For non-lambda functions, use a simplified representation
                                         args_strs.append("lambda x: x.upper()")  # Simplified fallback
                                 else:
-                                    # Single line function, extract it directly
                                     if "lambda" in source:
                                         lambda_expr = source.split("=")[-1].strip()
                                         args_strs.append(lambda_expr)
                                     else:
                                         args_strs.append("lambda x: x.upper()")  # Fallback
                             except Exception:
-                                # Fallback to a common case if source extraction fails
                                 args_strs.append("lambda x: x.upper()")
                         else:
-                            # For other methods, use a generic representation
                             args_strs.append("lambda x: x.upper()")  # Default case for other name methods
                 else:
                     args_strs.append(repr(arg))
             args_repr = ", ".join(args_strs)
 
-        # Format keyword args for repr
         if kwargs:
             kwargs_str = ", ".join(f"{k}={repr(v)}" for k, v in kwargs.items())
             if args_repr:
@@ -95,7 +82,6 @@ class ExprNameNameSpace:
 
         new_repr = f"{self.parent_repr_str}.name.{method_name}({args_repr})"
 
-        # Create new expression with updated representation
         new_expr = Expr(
             result_expr,
             self.parent.column_name,
@@ -140,12 +126,8 @@ class ExprNameNameSpace:
         >>> df = ff.FlowFrame({'a': [1, 2, 3]})
         >>> df.select(ff.col('a').name.map(lambda x: x.upper()))
         """
-        # We need to handle both the actual expression and its string representation
-
-        # For the actual polars expression:
         result_expr = self.expr.map(function) if self.expr is not None else None
 
-        # The representation is handled by _create_next_expr with special lambda handling
         return self._create_next_expr("map", function, result_expr=result_expr)
 
     def prefix(self, prefix: str) -> Expr:

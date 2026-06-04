@@ -79,7 +79,6 @@ import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
 import { kernelHelp } from "../../../views/KernelManagerView/kernelHelp";
 import { dashboardHelp } from "../../../views/DashboardsView/dashboardHelp";
 
-// Define the isCollapse prop
 defineProps({
   isCollapse: {
     type: Boolean,
@@ -87,7 +86,6 @@ defineProps({
   },
 });
 
-// Define the toggle-collapse emit
 defineEmits(["toggle-collapse"]);
 
 const router = useRouter();
@@ -115,7 +113,6 @@ const currentPageHelp = computed(() => {
   return helpByRoute[name] ?? null;
 });
 
-// Close help modal on route change
 watch(
   () => route.name,
   () => {
@@ -123,21 +120,16 @@ watch(
   },
 );
 
-// Filter routes based on admin status and desktop-shell mode
 const items = computed(() => {
   const isAdmin = authStore.isAdmin;
   const isDesktopShell = authService.isInDesktopMode();
   return NavigationRoutes.routes.filter((route) => {
-    // Hide routes marked as hideInElectron when in desktop mode
     if (route.hideInElectron && isDesktopShell) return false;
-    // Hide routes marked as dockerOnly when in desktop mode
     if (route.dockerOnly && isDesktopShell) return false;
-    // Show route if it doesn't require admin, or if user is admin
     return !route.requiresAdmin || isAdmin;
   });
 });
 
-// Only show logout button in Docker/web mode
 const showLogout = computed(() => !authService.isInDesktopMode());
 
 const handleStartTutorial = async () => {

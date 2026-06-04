@@ -139,7 +139,6 @@ async def get_local_files(directory: str) -> list[FileInfo]:
         HTTPException: 404 if the directory does not exist.
         HTTPException: 403 if access is denied (path outside sandbox).
     """
-    # Validate path is within sandbox before proceeding
     explorer = SecureFileExplorer(start_path=storage.user_data_directory, sandbox_root=storage.user_data_directory)
     validated_path = explorer.get_absolute_path(directory)
     if validated_path is None:
@@ -305,10 +304,8 @@ def _run_and_track(flow, user_id: int | None):
     reg_id, flow_name, flow_path = _resolve_run_identity(flow)
     logger.debug(f"source_registration_id for flow '{flow_name}': {reg_id}")
 
-    # Phase 1: Create run record before execution
     run_id = None
     try:
-        # Build snapshot (non-critical if fails)
         snapshot_yaml = None
         try:
             snapshot_data = flow.get_flowfile_data()
@@ -332,15 +329,12 @@ def _run_and_track(flow, user_id: int | None):
     except Exception as exc:
         logger.error(f"Failed to create run record for flow '{flow_name}': {exc}", exc_info=True)
 
-    # Execute the flow
     run_info = flow.run_graph()
     if run_info is None:
         logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
         return
 
-    # Phase 2: Update run record with results
     try:
-        # Serialise node results (non-critical if fails)
         node_results = None
         try:
             node_results = json.dumps(
@@ -439,7 +433,6 @@ def apply_standard_layout(flow_id: int):
     if flow.flow_settings.is_running:
         raise HTTPException(422, "Flow is running")
 
-    # Capture history BEFORE the layout change
     flow.capture_history_snapshot(HistoryActionType.APPLY_LAYOUT, "Apply standard layout")
 
     flow.apply_layout()
@@ -504,7 +497,6 @@ def copy_node(
         if flow.flow_settings.is_running:
             raise HTTPException(422, "Flow is running")
 
-        # Capture history BEFORE the change
         flow.capture_history_snapshot(
             HistoryActionType.COPY_NODE, f"Copy {node_promise.node_type} node", node_id=node_promise.node_id
         )
@@ -559,11 +551,9 @@ def add_node(
     if node_type == "explore_data":
         flow.add_initial_node_analysis(node_promise)
     else:
-        # Capture state BEFORE adding node (for batched history)
         pre_snapshot = flow.get_flowfile_data() if flow.flow_settings.track_history else None
 
         logger.info("Adding node")
-        # Add node without individual history tracking
         flow.add_node_promise(node_promise, track_history=False)
 
         if check_if_has_default_setting(node_type):
@@ -583,7 +573,6 @@ def add_node(
             finally:
                 flow.flow_settings.track_history = original_track_history
 
-        # Capture batched history entry for the whole add_node operation
         if pre_snapshot is not None and flow.flow_settings.track_history:
             flow._history_manager.capture_if_changed(
                 flow,
@@ -610,7 +599,6 @@ def delete_node(flow_id: int | None, node_id: int) -> OperationResponse:
     if flow.flow_settings.is_running:
         raise HTTPException(422, "Flow is running")
 
-    # Capture history BEFORE the change
     node = flow.get_node(node_id)
     node_type = node.node_type if node else "unknown"
     flow.capture_history_snapshot(HistoryActionType.DELETE_NODE, f"Delete {node_type} node", node_id=node_id)
@@ -636,7 +624,6 @@ def delete_node_connection(flow_id: int, node_connection: input_schema.NodeConne
     if flow.flow_settings.is_running:
         raise HTTPException(422, "Flow is running")
 
-    # Capture history BEFORE the change
     from_id = node_connection.output_connection.node_id
     to_id = node_connection.input_connection.node_id
     flow.capture_history_snapshot(HistoryActionType.DELETE_CONNECTION, f"Delete connection {from_id} -> {to_id}")
@@ -719,7 +706,6 @@ def connect_node(flow_id: int, node_connection: input_schema.NodeConnection) -> 
     if flow.flow_settings.is_running:
         raise HTTPException(422, "Flow is running")
 
-    # Capture history BEFORE the change
     from_id = node_connection.output_connection.node_id
     to_id = node_connection.input_connection.node_id
     flow.capture_history_snapshot(HistoryActionType.ADD_CONNECTION, f"Connect {from_id} -> {to_id}")
@@ -729,9 +715,7 @@ def connect_node(flow_id: int, node_connection: input_schema.NodeConnection) -> 
     return OperationResponse(success=True, history=flow.get_history_state())
 
 
-# ============================================================================
 # Node-group editor endpoints (visual containers; organizational only)
-# ============================================================================
 
 
 class GroupOperationResponse(OperationResponse):
@@ -1260,13 +1244,11 @@ def update_reference_node(flow_id: int, node_id: int, reference: str = Body(...)
         node.setting_input.node_reference = None
         return True
 
-    # Validate: lowercase only, no spaces
     if " " in reference:
         raise HTTPException(422, "Reference cannot contain spaces")
     if reference != reference.lower():
         raise HTTPException(422, "Reference must be lowercase")
 
-    # Validate: unique across all nodes in the flow
     for other_node in flow.nodes:
         if other_node.node_id != node_id:
             other_ref = getattr(other_node.setting_input, "node_reference", None)
@@ -1305,15 +1287,12 @@ def validate_node_reference(flow_id: int, node_id: int, reference: str):
     if reference == "" or reference is None:
         return {"valid": True, "error": None}
 
-    # Validate: lowercase only
     if reference != reference.lower():
         return {"valid": False, "error": "Reference must be lowercase"}
 
-    # Validate: no spaces
     if " " in reference:
         return {"valid": False, "error": "Reference cannot contain spaces"}
 
-    # Validate: unique across all nodes in the flow
     for other_node in flow.nodes:
         if other_node.node_id != node_id:
             other_ref = getattr(other_node.setting_input, "node_reference", None)
@@ -1381,7 +1360,6 @@ def _save_flow_impl(
     flow = flow_file_handler.get_flow(flow_id)
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
 
-    # If no explicit path provided, use the current path (silent save)
     if flow_path is None:
         flow_path = current_path
     if not flow_path:
@@ -1786,7 +1764,6 @@ async def validate_db_settings(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ):
     """Validates that a connection can be made to a database with the given settings."""
-    # Validate the query settings
     try:
         sql_source = create_sql_source_from_db_settings(database_settings, user_id=current_user.id)
         sql_source.validate()
@@ -1850,9 +1827,7 @@ async def get_db_tables(
         raise HTTPException(status_code=422, detail=str(e)) from e
 
 
-# =============================================================================
 # Template Endpoints
-# =============================================================================
 
 
 @router.get("/templates/", tags=["templates"])
@@ -1933,7 +1908,6 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
             detail=f"get_template_flowfile_data({template_id}) failed: {type(e).__name__}: {e}",
         ) from e
 
-    # Write to a unique temp YAML and import via existing flow import path
     import uuid
 
     from shared.storage_config import storage

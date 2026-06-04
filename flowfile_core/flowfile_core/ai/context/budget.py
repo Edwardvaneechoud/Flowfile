@@ -172,7 +172,6 @@ def apply_budget(
         report.estimated_input_tokens = estimated
         return _rebuild(snapshot, nodes, edges), report
 
-    # Step 1+2 — drop samples upstream-first.
     upstream_first_order = _upstream_first(nodes, pinned_ids)
     samples_dropped = 0
     for node in upstream_first_order:
@@ -194,7 +193,6 @@ def apply_budget(
         report.estimated_input_tokens = estimated
         return _rebuild(snapshot, nodes, edges), report
 
-    # Step 3 — drop furthest-upstream nodes (excluding pinned).
     nodes_dropped = 0
     while estimated > prompt_budget:
         candidate = _next_drop_candidate(nodes, pinned_ids)

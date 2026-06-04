@@ -83,7 +83,6 @@ import { Handle, Position } from '@vue-flow/core'
 import type { NodeResult } from '../../types'
 import { useFlowStore } from '../../stores/flow-store'
 
-// Icon mapping to files
 const iconMap: Record<string, string> = {
   read: 'input_data.png',
   manual_input: 'manual_input.png',
@@ -123,24 +122,19 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// Description editing - initialize from store
 const description = ref('')
 const editMode = ref(false)
 const CHAR_LIMIT = 100
 
-// Initialize description from store node data
 function initDescription() {
   const node = flowStore.getNode(props.data.id)
   if (node) {
-    // Get description from node level (primary) or settings (fallback)
     description.value = node.description || (node.settings as any)?.description || ''
   }
 }
 
-// Initialize on component mount
 initDescription()
 
-// Watch for external changes to the node (e.g., import from YAML)
 watch(
   () => flowStore.getNode(props.data.id)?.description,
   (newDesc) => {
@@ -150,13 +144,11 @@ watch(
   }
 )
 
-// Context menu state
 const menuVisible = ref(false)
 const menuEl = ref<HTMLElement | null>(null)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 
-// Computed properties
 const isSelected = computed(() => flowStore.selectedNodeId === props.data.id)
 
 const iconUrl = computed(() => {
@@ -166,16 +158,15 @@ const iconUrl = computed(() => {
 
 const statusClass = computed(() => {
   const isDirty = flowStore.isNodeDirty(props.data.id)
-  if (isDirty) return 'unknown'  // Show grey when dirty
-  
+  if (isDirty) return 'unknown'
+
   if (!props.data.result) return 'unknown'
   if (props.data.result.success === true) return 'success'
   if (props.data.result.success === false) return 'failure'
-  return 'unknown'  // undefined = not executed yet
+  return 'unknown'
 })
 
 const statusTooltip = computed(() => {
-  // Check if node is dirty first
   const isDirty = flowStore.isNodeDirty(props.data.id)
   if (isDirty) return 'Node has changes - run flow to update'
   
@@ -206,9 +197,7 @@ const contextMenuStyle = computed(() => ({
   left: `${contextMenuX.value}px`
 }))
 
-// Methods
 function toggleEditMode(state: boolean) {
-  // Save description when exiting edit mode
   if (!state && editMode.value) {
     saveDescription()
   }

@@ -1,5 +1,4 @@
 // Flow API Service - Handles all flow-related HTTP requests
-// Consolidated from features/designer/nodes/nodeLogic.ts and components/Canvas/backendInterface.ts
 import axios from "../services/axios.config";
 import type {
   FlowSettings,
@@ -20,9 +19,7 @@ import type {
 } from "../types";
 
 export class FlowApi {
-  // ============================================================================
   // Flow CRUD Operations
-  // ============================================================================
 
   /**
    * Get all active flow sessions
@@ -141,9 +138,7 @@ export class FlowApi {
     throw Error("Error fetching flow data");
   }
 
-  // ============================================================================
   // Flow Execution Operations
-  // ============================================================================
 
   /**
    * Run the entire flow
@@ -189,9 +184,7 @@ export class FlowApi {
     });
   }
 
-  // ============================================================================
   // Node Operations within Flow
-  // ============================================================================
 
   /**
    * Insert a new node into the flow
@@ -288,9 +281,7 @@ export class FlowApi {
     return response.data;
   }
 
-  // ============================================================================
   // Node Group Operations (visual containers; organizational only)
-  // ============================================================================
 
   /** Create a visual group around a set of nodes. Returns the server-assigned group. */
   static async createGroup(
@@ -372,9 +363,7 @@ export class FlowApi {
     return response.data;
   }
 
-  // ============================================================================
   // History/Undo-Redo Operations
-  // ============================================================================
 
   /**
    * Undo the last action on the flow graph
@@ -409,9 +398,7 @@ export class FlowApi {
     return response.data;
   }
 
-  // ============================================================================
   // Artifact Operations
-  // ============================================================================
 
   /**
    * Get artifact visualization data for a flow (badges, edges)

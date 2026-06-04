@@ -40,7 +40,6 @@ const startStreamingLogs = async () => {
   connectionStatus.value = "disconnected";
 
   try {
-    // Get the auth token
     const token = await authService.getToken();
     if (!token) {
       console.error("No auth token available for log streaming");
@@ -49,7 +48,6 @@ const startStreamingLogs = async () => {
       return;
     }
 
-    // Create URL with token as query parameter
     const url = new URL(`${flowfileCorebaseURL}logs/${nodeStore.flow_id}`, window.location.origin);
     url.searchParams.append("access_token", token);
 
@@ -83,7 +81,6 @@ const startStreamingLogs = async () => {
           connectionStatus.value = "error";
           stopStreamingLogs();
 
-          // Check if token is still valid, refresh if needed
           if (!authService.hasValidToken()) {
             await authService.getToken();
           }
@@ -128,7 +125,6 @@ const clearLogs = () => (logs.value = "");
 let tokenRefreshInterval: number | null = null;
 
 const setupTokenRefresh = () => {
-  // Clear existing interval if any
   if (tokenRefreshInterval) {
     clearInterval(tokenRefreshInterval);
   }
@@ -161,10 +157,8 @@ onUnmounted(() => {
   }
 });
 
-// Expose functions to parent component
 defineExpose({ startStreamingLogs, stopStreamingLogs, clearLogs, logs });
 
-// Computed property to split logs into lines and identify errors
 const logLines = ref<string[]>([]);
 watch(logs, (newLogs) => {
   logLines.value = newLogs

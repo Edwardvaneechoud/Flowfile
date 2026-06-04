@@ -125,7 +125,6 @@ export function useNodeSettings<T extends NodeBase>(
       return false;
     }
 
-    // Run before save callback
     if (onBeforeSave) {
       const shouldContinue = await onBeforeSave();
       if (shouldContinue === false) {
@@ -136,20 +135,16 @@ export function useNodeSettings<T extends NodeBase>(
     isSaving.value = true;
 
     try {
-      // Auto-set is_setup flag if enabled
       if (autoSetIsSetup && nodeRef.value.is_setup !== undefined) {
         nodeRef.value.is_setup = true;
       }
 
-      // Save to backend
       await nodeStore.updateSettings(nodeRef);
 
-      // Run after save callback
       if (onAfterSave) {
         await onAfterSave();
       }
 
-      // Register validation function if provided
       if (getValidationFunc) {
         const validateFunc = getValidationFunc();
         if (validateFunc && nodeRef.value) {
@@ -181,7 +176,6 @@ export function useNodeSettings<T extends NodeBase>(
   const handleGenericSettingsUpdate = (updatedNode: NodeBase): void => {
     if (!nodeRef.value) return;
 
-    // Sync NodeBase properties
     nodeRef.value.cache_results = updatedNode.cache_results;
     nodeRef.value.description = updatedNode.description;
     nodeRef.value.output_field_config = updatedNode.output_field_config;
@@ -194,7 +188,6 @@ export function useNodeSettings<T extends NodeBase>(
       nodeRef.value.pos_y = updatedNode.pos_y;
     }
 
-    // Copy any additional properties that exist on both objects
     for (const key in updatedNode) {
       if (
         key in nodeRef.value &&

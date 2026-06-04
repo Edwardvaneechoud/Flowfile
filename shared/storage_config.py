@@ -1,4 +1,3 @@
-# shared/storage_config.py - Updated for Option 3
 """
 Centralized storage configuration for Flowfile.
 This module can be imported by both core and worker without creating dependencies.
@@ -41,10 +40,8 @@ class FlowfileStorage:
         """Get the base Flowfile storage directory (for internal container communication)."""
         if self._base_dir is None:
             if _is_docker_mode():
-                # In Docker, internal storage stays inside /app
                 base_path = os.environ.get("FLOWFILE_STORAGE_DIR", "/app/internal_storage")
             else:
-                # Local development
                 base_path = os.environ.get("FLOWFILE_STORAGE_DIR")
                 if not base_path:
                     home_dir = Path.home()
@@ -58,10 +55,8 @@ class FlowfileStorage:
         """Get the user data directory (completely separate from application code)."""
         if self._user_data_dir is None:
             if _is_docker_mode():
-                # In Docker, user data is at /data/user (completely outside /app)
                 user_data_path = os.environ.get("FLOWFILE_USER_DATA_DIR", "/data/user")
             else:
-                # Local development - use user's home directory
                 user_data_path = Path.home()
 
             self._user_data_dir = Path(user_data_path)
@@ -87,10 +82,8 @@ class FlowfileStorage:
     def flows_directory(self) -> Path:
         """Directory for flow storage (user-accessible)."""
         if _is_docker_mode():
-            # In Docker, flows are in separate user data area
             return self.user_data_directory / "flows"
         else:
-            # Local development - flows in ~/.flowfile/flows
             return self.base_directory / "flows"
 
     @property
@@ -107,10 +100,8 @@ class FlowfileStorage:
     def uploads_directory(self) -> Path:
         """Directory for user uploads (user-accessible)."""
         if _is_docker_mode():
-            # In Docker, uploads are in separate user data area
             return self.user_data_directory / "uploads"
         else:
-            # Local development - uploads in ~/.flowfile/uploads
             return self.base_directory / "uploads"
 
     @property
@@ -130,10 +121,8 @@ class FlowfileStorage:
     def outputs_directory(self) -> Path:
         """Directory for user outputs (user-accessible)."""
         if _is_docker_mode():
-            # In Docker, outputs are in separate user data area
             return self.user_data_directory / "outputs"
         else:
-            # Local development - outputs in ~/.flowfile/outputs
             return self.base_directory / "outputs"
 
     @property
@@ -246,7 +235,6 @@ class FlowfileStorage:
 
     def _ensure_directories(self) -> None:
         """Create all necessary directories if they don't exist."""
-        # Internal directories (always created in base_directory)
         internal_directories = [
             self.cache_directory,
             self.database_directory,
@@ -258,7 +246,6 @@ class FlowfileStorage:
             self.artifact_staging_directory,
         ]
 
-        # User-accessible directories (location depends on environment)
         user_directories = [
             self.flows_directory,
             self.unnamed_flows_directory,
@@ -330,7 +317,6 @@ class FlowfileStorage:
                     elif item.is_dir():
                         shutil.rmtree(item)
             except (OSError, FileNotFoundError):
-                # Handle permission errors or files that disappeared
                 continue
 
     def cleanup_directories(self) -> None:

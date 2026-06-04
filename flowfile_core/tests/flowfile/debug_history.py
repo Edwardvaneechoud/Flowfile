@@ -10,7 +10,6 @@ This script creates a flow, performs operations, and tests undo/redo.
 import sys
 import os
 
-# Add paths for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'shared'))
 
@@ -64,15 +63,12 @@ def main():
     print("UNDO/REDO HISTORY SYSTEM DEBUG TEST")
     print("=" * 60)
 
-    # Create flow
     flow = create_test_flow()
     print_state(flow, "Initial empty flow")
 
-    # Step 1: Add a manual input node
-    # Note: add_node_promise now handles history capture internally
     print("\n>>> Adding manual input node (id=1)...")
     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='manual_input')
-    flow.add_node_promise(node_promise)  # History captured automatically
+    flow.add_node_promise(node_promise)
 
     sample_data = [
         {'name': 'John', 'city': 'New York', 'age': 30},
@@ -87,10 +83,9 @@ def main():
     flow.add_manual_input(input_settings)
     print_state(flow, "After adding manual input node")
 
-    # Step 2: Add a filter node
     print("\n>>> Adding filter node (id=2)...")
     node_promise2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type='filter')
-    flow.add_node_promise(node_promise2)  # History captured automatically
+    flow.add_node_promise(node_promise2)
 
     filter_settings = input_schema.NodeFilter(
         flow_id=1,
@@ -108,7 +103,6 @@ def main():
     flow.add_filter(filter_settings)
     print_state(flow, "After adding filter node")
 
-    # Step 3: Add connection
     # Note: add_connection still needs explicit history capture (external function)
     print("\n>>> Adding connection 1 -> 2...")
     pre_snapshot = flow.get_flowfile_data()
@@ -121,53 +115,44 @@ def main():
     flow.capture_history_if_changed(pre_snapshot, HistoryActionType.ADD_CONNECTION, "Connect 1 -> 2")
     print_state(flow, "After adding connection")
 
-    # Step 4: Add a sample node
     print("\n>>> Adding sample node (id=3)...")
     node_promise3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type='sample')
-    flow.add_node_promise(node_promise3)  # History captured automatically
+    flow.add_node_promise(node_promise3)
     print_state(flow, "After adding sample node")
 
-    # Now test UNDO
     print("\n" + "=" * 60)
     print("TESTING UNDO")
     print("=" * 60)
 
-    # Undo 1: Remove sample node
     print("\n>>> Undo #1...")
     result = flow.undo()
     print(f"Undo result: success={result.success}, action='{result.action_description}'")
     print_state(flow, "After undo #1 (should remove sample node)")
 
-    # Undo 2: Remove connection
     print("\n>>> Undo #2...")
     result = flow.undo()
     print(f"Undo result: success={result.success}, action='{result.action_description}'")
     print_state(flow, "After undo #2 (should remove connection)")
 
-    # Undo 3: Remove filter
     print("\n>>> Undo #3...")
     result = flow.undo()
     print(f"Undo result: success={result.success}, action='{result.action_description}'")
     print_state(flow, "After undo #3 (should remove filter node)")
 
-    # Now test REDO
     print("\n" + "=" * 60)
     print("TESTING REDO")
     print("=" * 60)
 
-    # Redo 1: Add filter back
     print("\n>>> Redo #1...")
     result = flow.redo()
     print(f"Redo result: success={result.success}, action='{result.action_description}'")
     print_state(flow, "After redo #1 (should restore filter node)")
 
-    # Redo 2: Add connection back
     print("\n>>> Redo #2...")
     result = flow.redo()
     print(f"Redo result: success={result.success}, action='{result.action_description}'")
     print_state(flow, "After redo #2 (should restore connection)")
 
-    # Test: New action should clear redo stack
     print("\n" + "=" * 60)
     print("TESTING: New action clears redo stack")
     print("=" * 60)
@@ -176,12 +161,11 @@ def main():
 
     print("\n>>> Adding new node (id=4)...")
     node_promise4 = input_schema.NodePromise(flow_id=1, node_id=4, node_type='select')
-    flow.add_node_promise(node_promise4)  # History captured automatically, clears redo stack
+    flow.add_node_promise(node_promise4)
 
     print(f"Redo stack now has {flow.get_history_state().redo_count} entries (should be 0)")
     print_state(flow, "After adding new node (redo stack should be cleared)")
 
-    # Final summary
     print("\n" + "=" * 60)
     print("TEST COMPLETE")
     print("=" * 60)

@@ -75,25 +75,16 @@ logger = logging.getLogger(__name__)
 
 
 SURFACE: str = "ghost_node"
-"""The ``SurfaceLiteral`` value the ghost-node surface emits — kept as
-a constant so call sites and test assertions stay in lock-step."""
 
 DEFAULT_TIMEOUT_SECONDS: float = 3.5
-"""Hard timeout per call. TTFB <2s, total <4s — leaves ~500 ms of
-headroom for the route/scheduler/serdes overhead before the user
-perceives the hover as stale."""
 
 MAX_SUGGESTIONS: int = 3
 """§3.3 spec: top-3 by upstream-schema fit."""
 
 MAX_TOKENS: int = 1024
-"""Generous-but-bounded — three candidates with full settings JSON
-typically fit well under 700 tokens; we add slack for the rationale field."""
 
 
-# --------------------------------------------------------------------------- #
-# Wire types                                                                   #
-# --------------------------------------------------------------------------- #
+# Wire types
 
 
 class NextNodeSuggestion(BaseModel):
@@ -107,20 +98,11 @@ class NextNodeSuggestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     node_type: str
-    """Un-namespaced flowfile node type (e.g. ``"filter"``).
-    Always one of the entries in the ``ghost_node`` ``SURFACE_PRESETS``."""
     settings: dict[str, Any]
-    """Validated settings payload — already model_dump'd through the matching
-    Pydantic class so it round-trips back to the real-graph add path."""
     label: str
-    """Short human label rendered in the ghost popover (e.g. ``"Filter rows
-    where region == 'EU'"``)."""
     description: str | None = None
     """One-line elaboration; optional — cheap providers tend to skip it."""
     predicted_output_schema: list[dict[str, Any]] | None = None
-    """Result of ``predict_schema_via_mirror`` if available; ``None`` when
-    the node is dynamic / source-without-callback / mirror-prediction failed.
-    The frontend can show downstream-friendly schema previews when present."""
     rationale: str | None = None
     """The LLM's reasoning for why this node fits. Optional."""
 
@@ -128,13 +110,9 @@ class NextNodeSuggestion(BaseModel):
 class NextNodeSuggestionsResponse(BaseModel):
     suggestions: list[NextNodeSuggestion] = Field(default_factory=list)
     degraded: bool = False
-    """``True`` when no real suggestions were produced (cold upstream,
-    timeout, parse error, all candidates filtered, etc.) — frontend hides
-    the popover. ``reason`` carries a stable string for analytics."""
     reason: str | None = None
 
 
-# Internal: shape the LLM is asked to return.
 class _LLMSuggestion(BaseModel):
     """Subset of ``NextNodeSuggestion`` the LLM emits.
 
@@ -158,9 +136,7 @@ class _LLMOutput(BaseModel):
     suggestions: list[_LLMSuggestion] = Field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
-# Surface preset → candidate node-type set                                     #
-# --------------------------------------------------------------------------- #
+# Surface preset → candidate node-type set
 
 
 def _allowed_node_types() -> frozenset[str]:
@@ -187,9 +163,7 @@ def _allowed_node_types() -> frozenset[str]:
 _ALLOWED_NODE_TYPES: frozenset[str] = _allowed_node_types()
 
 
-# --------------------------------------------------------------------------- #
-# Schema lookup                                                                #
-# --------------------------------------------------------------------------- #
+# Schema lookup
 
 
 def _column_names_for_node(node: FlowNode | None) -> list[str] | None:
@@ -215,9 +189,7 @@ def _columns_for_node(node: FlowNode | None) -> list[FlowfileColumn] | None:
     return list(schema)
 
 
-# --------------------------------------------------------------------------- #
-# Prompt construction                                                          #
-# --------------------------------------------------------------------------- #
+# Prompt construction
 
 
 _SYSTEM_PROMPT = """\
@@ -280,9 +252,7 @@ def _build_messages(
     ]
 
 
-# --------------------------------------------------------------------------- #
-# Provider call wrapper                                                        #
-# --------------------------------------------------------------------------- #
+# Provider call wrapper
 
 
 async def _call_provider_for_json(
@@ -341,9 +311,7 @@ def _parse_json_payload(content: str | None) -> tuple[Any, str | None]:
     return None, "parse_error"
 
 
-# --------------------------------------------------------------------------- #
-# Candidate validation                                                         #
-# --------------------------------------------------------------------------- #
+# Candidate validation
 
 
 def _validate_candidate(
@@ -365,7 +333,6 @@ def _validate_candidate(
     by design — the user shouldn't see hallucinated suggestions in the
     popover, and a degraded popover is preferable to a noisy one.
     """
-    # 1. Allowed node type.
     if candidate.node_type not in _ALLOWED_NODE_TYPES:
         logger.debug(
             "ghost_node candidate rejected: %s not in ghost_node preset",
@@ -373,7 +340,6 @@ def _validate_candidate(
         )
         return None
 
-    # 2. Pydantic settings validation.
     settings_cls = get_settings_class_for_node_type(candidate.node_type)
     if settings_cls is None:
         # Defensive — _ALLOWED_NODE_TYPES is derived from the preset which is
@@ -391,7 +357,6 @@ def _validate_candidate(
         )
         return None
 
-    # 3. Column-ref validation against upstream.
     if upstream_columns:
         refs = collect_column_refs(candidate.node_type, settings_obj)
         if refs:
@@ -404,7 +369,6 @@ def _validate_candidate(
                 )
                 return None
 
-    # 4. Predicted schema via mirror (best-effort).
     predicted_dicts: list[dict[str, Any]] | None = None
     if is_predictable_via_mirror(candidate.node_type) and upstream_columns_full is not None:
         try:
@@ -435,9 +399,7 @@ def _validate_candidate(
     )
 
 
-# --------------------------------------------------------------------------- #
-# Public API                                                                   #
-# --------------------------------------------------------------------------- #
+# Public API
 
 
 async def suggest_next_node(

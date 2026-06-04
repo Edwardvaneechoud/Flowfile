@@ -58,14 +58,12 @@ const emit = defineEmits<{
 
 const mounted = ref(false)
 
-// Initialize stores
 const pyodideStore = usePyodideStore()
 const flowStore = useFlowStore()
 const themeStore = useThemeStore()
 
 const { isReady: pyodideReady } = storeToRefs(pyodideStore)
 
-// Loading status from pyodide store
 const loadingStatusText = computed(() => {
   return pyodideStore.loadingStatus || 'Initializing Pyodide...'
 })
@@ -74,7 +72,6 @@ const showLoadingOverlay = computed(() => {
   return props.pyodide?.autoInit !== false
 })
 
-// Theme handling
 const effectiveTheme = computed(() => {
   if (props.theme?.mode && props.theme.mode !== 'system') {
     return props.theme.mode
@@ -91,7 +88,6 @@ const rootStyle = computed(() => ({
   flexDirection: 'column' as const
 }))
 
-// Merge toolbar config with defaults for embedded mode
 const toolbarConfigMerged = computed<ToolbarConfig>(() => ({
   showRun: true,
   showSaveLoad: true,
@@ -101,25 +97,21 @@ const toolbarConfigMerged = computed<ToolbarConfig>(() => ({
   ...props.toolbar
 }))
 
-// Watch for initialFlow prop changes
 watch(() => props.initialFlow, (flow) => {
   if (flow && pyodideReady.value) {
     flowStore.importFromFlowfile(flow)
   }
 }, { deep: true })
 
-// Watch for inputData prop changes — push to store as external datasets
 watch(() => props.inputData, (data) => {
   if (data) {
     pushExternalDatasets(data)
   }
 }, { deep: true })
 
-// Watch for pyodide ready
 watch(pyodideReady, (ready) => {
   if (ready) {
     emit('ready')
-    // Load initial flow if provided
     if (props.initialFlow) {
       flowStore.importFromFlowfile(props.initialFlow)
     }
@@ -158,17 +150,14 @@ onMounted(async () => {
     pushExternalDatasets(props.inputData)
   }
 
-  // Set embedded mode on theme store
   themeStore.setEmbedded(true)
 
-  // Initialize theme
   if (props.theme?.mode) {
     themeStore.setTheme(props.theme.mode)
   } else {
     themeStore.initialize()
   }
 
-  // Initialize Pyodide unless autoInit is disabled
   if (props.pyodide?.autoInit !== false) {
     emit('loading-status', 'Initializing...')
     try {
@@ -182,11 +171,9 @@ onMounted(async () => {
 onUnmounted(() => {
   // Clean up output callbacks to prevent leaks if host forgets offOutput
   flowStore.clearOutputCallbacks()
-  // Restore non-embedded mode if needed
   themeStore.setEmbedded(false)
 })
 
-// Expose programmatic API
 const api: FlowfileEditorAPI = {
   get isReady() { return pyodideStore.isReady },
   get isExecuting() { return flowStore.isExecuting },

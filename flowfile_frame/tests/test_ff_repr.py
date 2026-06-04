@@ -9,9 +9,7 @@ from flowfile_frame import FlowFrame
 from flowfile_frame.expr import Column, Expr, col, lit
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def sample_ff():
@@ -43,9 +41,7 @@ def _get_formula(node_settings) -> str:
     return node_settings.setting_input.function.function
 
 
-# ---------------------------------------------------------------------------
 # Unit tests for _ff_repr on Expr
-# ---------------------------------------------------------------------------
 
 class TestFfReprBasic:
     """Test _ff_repr tracking on basic expression operations."""
@@ -233,10 +229,7 @@ class TestFfReprStringMethods:
 
     def test_chained_string_ops_break_ff_repr(self):
         """Chaining two string ops should lose ff_repr since the second operates on a non-col."""
-        # After to_uppercase(), the result is an Expr (not Column), so the parent's _ff_repr
-        # for the next string op depends on the first op's result
         expr = col("x").str.to_uppercase()
-        # The result has ff_repr but is no longer a Column
         assert expr._ff_repr == "uppercase([x])"
 
 
@@ -358,9 +351,7 @@ class TestFfReprNonConvertible:
         assert expr._ff_repr == "(power([x], 2) + [z])"
 
 
-# ---------------------------------------------------------------------------
 # Integration tests for with_columns NodeFormula conversion
-# ---------------------------------------------------------------------------
 
 class TestWithColumnsFormulaConversion:
     """Test that with_columns creates NodeFormula nodes when possible."""
@@ -407,7 +398,6 @@ class TestWithColumnsFormulaConversion:
             (col("x") + col("y")).alias("sum"),
             (col("x") * col("y")).alias("product"),
         )
-        # The last node should be a formula
         node = result.get_node_settings()
         assert _is_formula_node(node), "Expected NodeFormula for last expression in chain"
 
@@ -487,9 +477,7 @@ class TestWithColumnsFormulaConversion:
         assert _is_formula_node(node)
 
 
-# ---------------------------------------------------------------------------
 # Correctness tests — formula results match polars results
-# ---------------------------------------------------------------------------
 
 class TestFormulaCorrectness:
     """Verify that formula conversion produces correct results."""
@@ -621,9 +609,7 @@ class TestFormulaCorrectness:
         assert result["double_x"].to_list() == [2, 4, 6]
 
 
-# ---------------------------------------------------------------------------
 # Output column name derivation tests
-# ---------------------------------------------------------------------------
 
 class TestBinaryOpColumnName:
     """Test that binary ops derive column_name from polars meta.output_name()."""
@@ -693,9 +679,7 @@ class TestBinaryOpColumnName:
             )
 
 
-# ---------------------------------------------------------------------------
 # Polars parity tests — flowfile results must match polars results exactly
-# ---------------------------------------------------------------------------
 
 class TestPolarsParityWithColumns:
     """Verify that flowfile with_columns produces identical results to polars,

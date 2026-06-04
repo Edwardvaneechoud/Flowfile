@@ -170,7 +170,6 @@ InputTableSettings = Annotated[
 ]
 
 
-# Now create the main ReceivedTable model
 class ReceivedTable(BaseModel):
     """Model for defining a table received from an external source."""
 
@@ -193,7 +192,6 @@ class ReceivedTable(BaseModel):
         """Creates an instance from a file path string."""
         filename = Path(path).name
 
-        # Create appropriate table_settings based on file_type
         settings_map = {
             "csv": InputCsvTable(),
             "json": InputJsonTable(),
@@ -294,7 +292,7 @@ class OutputSettings(BaseModel):
             result["fields"] = self.fields
         # Only include table_settings if it has non-default values beyond file_type
         ts_dict = self.table_settings.model_dump(exclude={"file_type"})
-        if any(v for v in ts_dict.values()):  # Has meaningful settings
+        if any(v for v in ts_dict.values()):
             result["table_settings"] = ts_dict
         return result
 
@@ -314,7 +312,6 @@ class OutputSettings(BaseModel):
         """Ensures table_settings matches the file_type."""
         if v is None:
             file_type = info.data.get("file_type", "csv")
-            # Create default based on file_type
             match file_type:
                 case "csv":
                     return OutputCsvTable()
@@ -325,7 +322,6 @@ class OutputSettings(BaseModel):
                 case _:
                     return OutputCsvTable()
 
-        # If it's a dict, add file_type if missing
         if isinstance(v, dict) and "file_type" not in v:
             v["file_type"] = info.data.get("file_type", "csv")
 
@@ -896,11 +892,9 @@ class DatabaseSettings(BaseModel):
 
     @model_validator(mode="after")
     def validate_table_or_query(self):
-        # Validate that either table_name or query is provided
         if (not self.table_name and not self.query) and self.query_mode == "inline":
             raise ValueError("Either 'table_name' or 'query' must be provided")
 
-        # Validate correct connection information based on connection_mode
         if self.connection_mode == "inline" and self.database_connection is None:
             raise ValueError("When 'connection_mode' is 'inline', 'database_connection' must be provided")
 

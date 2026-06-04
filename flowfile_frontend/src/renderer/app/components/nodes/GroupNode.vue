@@ -1,7 +1,4 @@
 <script setup lang="ts">
-// Visual group container: a labeled, auto-fitting box drawn behind its member nodes.
-// Organizational only — it has no effect on execution. Rename/recolor/collapse persist
-// via FlowApi.updateGroup; ungroup/collapse are delegated to the useNodeGroups composable.
 import { Handle, Position, useVueFlow } from "@vue-flow/core";
 import { computed, nextTick, ref } from "vue";
 

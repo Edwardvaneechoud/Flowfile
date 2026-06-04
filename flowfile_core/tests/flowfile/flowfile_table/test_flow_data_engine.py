@@ -652,18 +652,15 @@ def test_error_no_output_df():
     code = """temp_df = input_df.with_columns([pl.col("name").alias("other_name")])
 something_else_df = temp_df.select("other_name")"""
 
-    # Using pytest to check for the expected exception
     with pytest.raises(NameError) as excinfo:
         execute_polars_code(test_df, code=code)
 
-    # Verify the error message
     assert "name 'output_df' is not defined" in str(
         excinfo.value
     ), "Expected error about output_df not being defined"
 
 
 def test_execute_polars_code_multiple_frames():
-    # Create two test dataframes
     test_df1 = FlowDataEngine(
         [
             {"id": 1, "name": "eduward"},
@@ -680,7 +677,6 @@ def test_execute_polars_code_multiple_frames():
         ]
     )
 
-    # Code that joins the two dataframes
     code = """
 # Join the two dataframes on id
 joined_df = input_df_1.join(input_df_2, on="id", how="inner")
@@ -705,16 +701,13 @@ def test_execute_polars_code_with_syntax_error():
         [{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
     )
 
-    # Code with a syntax error (missing closing parenthesis)
     code = """
 output_df = input_df.filter(pl.col("name").str.contains("e"
 """
 
-    # Check that appropriate error is raised
     with pytest.raises(ValueError) as excinfo:
         execute_polars_code(test_df, code=code)
 
-    # Verify the error message mentions syntax
     assert "syntax" in str(excinfo.value).lower(), "Expected error about syntax"
 
 

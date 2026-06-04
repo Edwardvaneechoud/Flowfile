@@ -94,9 +94,7 @@ def _cleanup_scratch_rows():
         db.commit()
 
 
-# ---------------------------------------------------------------------------
 # Provision / discard lifecycle
-# ---------------------------------------------------------------------------
 
 
 class TestProvisionScratchFlow:
@@ -113,7 +111,6 @@ class TestProvisionScratchFlow:
             assert row.name == "_kernel_scratch_k-1"
             assert row.flow_path == "<kernel:k-1>"
             assert row.owner_id == 1
-            # And the kernel row points back at it
             assert get_kernel_scratch_flow_id(db, "k-1") == scratch_id
 
     def test_provision_uses_default_namespace_when_seeded(self):
@@ -175,9 +172,7 @@ class TestDiscardScratchFlow:
         mgr._discard_scratch_flow("never-existed")
 
 
-# ---------------------------------------------------------------------------
 # get_scratch_flow_id — cache + lazy upgrade
-# ---------------------------------------------------------------------------
 
 
 class TestGetScratchFlowId:
@@ -207,9 +202,7 @@ class TestGetScratchFlowId:
             assert row.name == "_kernel_scratch_k-legacy"
 
 
-# ---------------------------------------------------------------------------
 # ExecuteRequest injection
-# ---------------------------------------------------------------------------
 
 
 class TestExecuteScratchInjection:
@@ -269,9 +262,7 @@ class TestExecuteScratchInjection:
         assert captured["body"]["source_registration_id"] == 42
 
 
-# ---------------------------------------------------------------------------
 # Persistence helpers
-# ---------------------------------------------------------------------------
 
 
 class TestPersistenceHelpers:
@@ -310,9 +301,7 @@ class TestPersistenceHelpers:
             assert mapping["k-b"] is None
 
 
-# ---------------------------------------------------------------------------
 # Imports we reference so the linter doesn't trip
-# ---------------------------------------------------------------------------
 
 # Silence unused-import noise — ``ResolvedPackage`` is referenced indirectly
 # via ``KernelInfo``. Keeping the explicit import documents the dependency.

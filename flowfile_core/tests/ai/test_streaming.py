@@ -163,7 +163,6 @@ async def test_sse_stream_emits_keepalive_when_provider_idle() -> None:
     assert keepalive_count >= 1, (
         "Expected at least one keepalive comment when the upstream is slow; " f"got {keepalive_count} in output {out!r}"
     )
-    # ...and the real chunk + done are still emitted in order.
     chunks = [line for line in out if line.startswith("event: chunk")]
     dones = [line for line in out if line.startswith("event: done")]
     assert len(chunks) == 1

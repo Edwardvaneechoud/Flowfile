@@ -177,7 +177,6 @@ const runAllCells = async () => {
 
 const runCellAndAdvance = async (cellId: string, index: number) => {
   await runCell(cellId);
-  // Focus next cell or add new one
   if (index >= props.cells.length - 1) {
     addCell();
   }
@@ -189,7 +188,6 @@ const restartKernel = async () => {
   if (!props.kernelId) return;
   try {
     await KernelApi.clearNamespace(props.kernelId, props.flowId);
-    // Clear outputs and reset execution counter
     clearAllOutputs();
     executionCounter.value = 1;
   } catch (error) {

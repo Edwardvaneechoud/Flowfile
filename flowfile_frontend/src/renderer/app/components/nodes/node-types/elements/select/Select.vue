@@ -42,11 +42,9 @@ const nodeStore = useNodeStore();
 const nodeSelect = ref<NodeSelect>(createNodeSelect().value);
 const dataLoaded = ref(false);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeSelect,
   onBeforeSave: () => {
-    // Prepare select data before saving
     nodeSelect.value.select_input.sort((a, b) => a.position - b.position);
     const originalData = nodeStore.getCurrentNodeData();
     const newColumnSettings = nodeSelect.value.select_input;

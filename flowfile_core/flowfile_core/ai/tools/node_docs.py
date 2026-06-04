@@ -1017,9 +1017,7 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
 }
 
 
-# --------------------------------------------------------------------------- #
-# Agent payload examples                                                       #
-# --------------------------------------------------------------------------- #
+# Agent payload examples
 #
 # Only for node types whose Pydantic settings shape diverges from what an LLM
 # would naively guess from the field names. The agent prompt injects this

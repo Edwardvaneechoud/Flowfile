@@ -19,25 +19,20 @@ def get_all_custom_nodes() -> dict[str, type[CustomNodeBase]]:
     """
     custom_nodes = {}
 
-    # Get the directory path where user-defined nodes are stored
     nodes_directory = storage.user_defined_nodes_icons
 
-    # Convert to Path object for easier handling
     nodes_path = Path(nodes_directory)
 
     if not nodes_path.exists() or not nodes_path.is_dir():
         print(f"Warning: Nodes directory {nodes_path} does not exist or is not a directory")
         return custom_nodes
 
-    # Scan all Python files in the directory
     for file_path in nodes_path.glob("*.py"):
-        # Skip __init__.py and other special files
         if file_path.name.startswith("__"):
             continue
 
         try:
-            # Load the module dynamically
-            module_name = file_path.stem  # filename without extension
+            module_name = file_path.stem
             spec = importlib.util.spec_from_file_location(module_name, file_path)
 
             if spec and spec.loader:
@@ -46,22 +41,16 @@ def get_all_custom_nodes() -> dict[str, type[CustomNodeBase]]:
                 # Add to sys.modules to handle imports within the module
                 sys.modules[module_name] = module
 
-                # Execute the module
                 spec.loader.exec_module(module)
 
-                # Inspect the module for CustomNodeBase subclasses
                 for name, obj in inspect.getmembers(module):
-                    # Check if it's a class and a subclass of CustomNodeBase
-                    # but not CustomNodeBase itself
                     if inspect.isclass(obj) and issubclass(obj, CustomNodeBase) and obj is not CustomNodeBase:
-                        # Use the node_name attribute if it exists, otherwise use class name
                         node_name = getattr(obj, "node_name", name)
                         custom_nodes[node_name] = obj
                         print(f"Loaded custom node: {node_name} from {file_path.name}")
 
         except Exception as e:
             print(f"Error loading module from {file_path}: {e}")
-            # Continue with other files even if one fails
             continue
 
     return custom_nodes
@@ -95,7 +84,6 @@ def get_all_custom_nodes_with_validation() -> dict[str, type[CustomNodeBase]]:
                     if inspect.isclass(obj) and issubclass(obj, CustomNodeBase) and obj is not CustomNodeBase:
                         try:
                             _obj = obj()
-                            # Validate that the node has required attributes
                             if not hasattr(_obj, "node_name"):
                                 logger.error(f"Warning: {name} missing node_name attribute")
                                 raise ValueError(f"Node {name} must implement a node_name attribute")
@@ -169,7 +157,6 @@ def get_custom_nodes_lazy() -> list[type[CustomNodeBase]]:
     return nodes
 
 
-# Example usage function that matches your original pattern
 def add_custom_node(node_class: type[CustomNodeBase], registry: dict[str, type[CustomNodeBase]]):
     """Add a single custom node to the registry."""
     if hasattr(node_class, "node_name"):
@@ -221,7 +208,6 @@ def load_single_node_from_file(file_path: Path) -> type[CustomNodeBase] | None:
                 if inspect.isclass(obj) and issubclass(obj, CustomNodeBase) and obj is not CustomNodeBase:
                     try:
                         _obj = obj()
-                        # Validate required attributes
                         if not hasattr(_obj, "node_name"):
                             raise ValueError(f"Node {name} must have a node_name attribute")
                         if not hasattr(_obj, "settings_schema"):
@@ -259,10 +245,8 @@ def unload_node_by_name(node_name: str) -> bool:
     Returns:
         True if any modules were removed, False otherwise
     """
-    # Convert node name to potential module names
     module_stem = node_name.lower().replace(" ", "_")
 
-    # Find and remove any matching modules from sys.modules
     modules_to_remove = [
         key for key in sys.modules.keys() if key == module_stem or key.startswith(f"custom_node_{module_stem}")
     ]

@@ -45,13 +45,10 @@ def _should_quote_value(value: str, field_data_type: str | None) -> bool:
     Returns:
         True if the value should be quoted, False otherwise.
     """
-    # If field is explicitly string type, always quote
     if field_data_type == "str":
         return True
-    # If field is explicitly numeric type, never quote
     if field_data_type == "numeric":
         return False
-    # Otherwise, quote if the value doesn't look numeric
     return not _is_numeric_string(value)
 
 
@@ -266,7 +263,6 @@ def build_filter_expression(basic_filter: BasicFilter, field_data_type: str | No
     except (ValueError, AttributeError):
         operator = FilterOperator.from_symbol(str(basic_filter.operator))
 
-    # For simple comparison operators, determine quoting based on the single value
     should_quote = _should_quote_value(value, field_data_type)
 
     if operator == FilterOperator.EQUALS:

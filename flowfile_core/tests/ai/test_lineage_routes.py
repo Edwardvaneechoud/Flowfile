@@ -97,9 +97,7 @@ from flowfile_core.configs import settings as core_settings
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
 
-# --------------------------------------------------------------------------- #
-# Shared fixtures #
-# --------------------------------------------------------------------------- #
+# Shared fixtures
 
 
 @pytest.fixture
@@ -153,9 +151,7 @@ def patch_get_configured_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[F
     yield fake
 
 
-# --------------------------------------------------------------------------- #
-# Flow fixtures #
-# --------------------------------------------------------------------------- #
+# Flow fixtures
 
 
 _FLOW_ID = 9951  # avoid clashing with W23/W50 flow ids
@@ -363,9 +359,7 @@ def registered_flow_with_in_memory_run() -> Iterator[FlowGraph]:
         flow_file_handler._flows.pop(flow.flow_id, None)
 
 
-# --------------------------------------------------------------------------- #
-# 1. Happy path #
-# --------------------------------------------------------------------------- #
+# 1. Happy path
 
 
 def test_lineage_question_emits_provider_chunks(
@@ -397,9 +391,7 @@ def test_lineage_question_emits_provider_chunks(
     assert system_msg.content.strip(), "system prompt must not be empty"
 
     assert user_msg.role == "user"
-    #'s render_prompt_context surfaces "## Subgraph" for the deterministic body.
     assert "## Subgraph" in user_msg.content
-    # The history + question blocks land verbatim.
     assert "## Run history" in user_msg.content
     assert "Showing last 3 run(s)" in user_msg.content
     assert "## Question" in user_msg.content
@@ -407,13 +399,10 @@ def test_lineage_question_emits_provider_chunks(
     assert "read-only assist" in user_msg.content
     assert "Do not propose graph mutations" in user_msg.content
 
-    # Read-only contract: tools=None.
     assert patch_get_configured_provider.last_call_kwargs.get("tools") is None
 
 
-# --------------------------------------------------------------------------- #
-# 2. Pinned-node-id contract #
-# --------------------------------------------------------------------------- #
+# 2. Pinned-node-id contract
 
 
 def test_lineage_question_pins_all_nodes_when_no_focus(
@@ -497,9 +486,7 @@ def test_lineage_question_focus_node_not_in_flow_returns_422(
     assert "999" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 3. Prompt block format #
-# --------------------------------------------------------------------------- #
+# 3. Prompt block format
 
 
 def test_lineage_question_includes_run_history_block_format(
@@ -519,16 +506,12 @@ def test_lineage_question_includes_run_history_block_format(
     assert response.status_code == 200
     user_msg = patch_get_configured_provider.last_call_kwargs["messages"][1]
     text = user_msg.content
-    # Per-run table headers
     assert "| Run | Started | Ended | Duration | Success | Nodes | Type |" in text
-    # Per-node aggregates
     assert "### Per-node behaviour (all nodes)" in text
     assert "Node 2 — `filter_eu` (filter)" in text
     assert "Most recent error (run #43)" in text
     assert "Column 'customer_id' not found in upstream schema" in text
-    # Successful runtimes show median + range
     assert "Run-time:" in text
-    # Registration id surfaces
     assert "registration_id=42" in text
 
 
@@ -589,9 +572,7 @@ def test_lineage_question_falls_back_to_in_memory_run_info(
     assert "Column 'customer_id' not found" in text
 
 
-# --------------------------------------------------------------------------- #
-# 4. Surface contract #
-# --------------------------------------------------------------------------- #
+# 4. Surface contract
 
 
 def test_lineage_question_uses_lineage_surface(
@@ -666,9 +647,7 @@ def test_lineage_question_history_limit_forwarded(
     assert patch_collect_run_history["calls"][-1]["limit"] == 25
 
 
-# --------------------------------------------------------------------------- #
-# 4b. — prospective schema reaches the lineage surface #
-# --------------------------------------------------------------------------- #
+# 4b. — prospective schema reaches the lineage surface
 
 
 _W48_LINEAGE_FLOW_ID = 9947
@@ -744,9 +723,7 @@ def test_lineage_question_user_block_contains_columns_for_un_run_static_upstream
     )
 
 
-# --------------------------------------------------------------------------- #
-# 5. Error mapping #
-# --------------------------------------------------------------------------- #
+# 5. Error mapping
 
 
 def test_lineage_question_flow_not_found_returns_422(
@@ -827,9 +804,7 @@ def test_lineage_question_disabled_returns_503(
     assert "AI features are disabled" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 6. Request validation #
-# --------------------------------------------------------------------------- #
+# 6. Request validation
 
 
 @pytest.mark.parametrize(
@@ -866,9 +841,7 @@ def test_lineage_question_rejects_oversize_history_limit(authed_client: TestClie
     assert response.status_code == 422
 
 
-# --------------------------------------------------------------------------- #
-# 7. Surface lockstep #
-# --------------------------------------------------------------------------- #
+# 7. Surface lockstep
 
 
 def test_lineage_surface_in_lockstep() -> None:
@@ -893,28 +866,22 @@ def test_lineage_surface_in_lockstep() -> None:
         assert "lineage" in models, f"provider {name!r} missing surface_models['lineage']"
 
 
-# --------------------------------------------------------------------------- #
-# 8. Pure-function tests #
-# --------------------------------------------------------------------------- #
+# 8. Pure-function tests
 
 
 def test_format_run_history_block_renders_table_and_aggregates() -> None:
     window = _make_window()
     block = _format_run_history_block(window, focus_node_id=None)
-    # Header and per-run table
     assert block.startswith("## Run history\n\n")
     assert "registration_id=42" in block
     assert "| Run | Started | Ended | Duration | Success | Nodes | Type |" in block
     assert "| #45 | 2026-05-03T09:14:02Z | 2026-05-03T09:14:05Z | 3.2s | OK | 2/2 | in_designer_run |" in block
     assert "| #44 |" in block
     assert "| #43 |" in block and "FAIL" in block
-    # Per-node section
     assert "### Per-node behaviour (all nodes)" in block
     assert "Node 1 — `orders` (manual_input)" in block
     assert "Node 2 — `filter_eu` (filter)" in block
-    # Median runtime is computed
     assert "median 175ms" in block or "median 177ms" in block  # statistics.median([180, 175])
-    # Most recent error included
     assert "Most recent error (run #43)" in block
 
 
@@ -923,7 +890,6 @@ def test_format_run_history_block_focus_node_subsets() -> None:
     block = _format_run_history_block(window, focus_node_id=2)
     assert "### Per-node behaviour (focus on node 2)" in block
     assert "Node 2 — `filter_eu` (filter)" in block
-    # Node 1 must not appear in the per-node section.
     assert "Node 1 —" not in block
 
 
@@ -931,7 +897,6 @@ def test_format_run_history_block_empty_window() -> None:
     window = _make_window(with_runs=False)
     block = _format_run_history_block(window, focus_node_id=None)
     assert "no run history available" in block
-    # Per-node section must not render when there are no runs.
     assert "### Per-node behaviour" not in block
 
 
@@ -1020,17 +985,12 @@ def test_parse_node_results_json_is_defensive() -> None:
     assert _parse_node_results_json(None) == []
     assert _parse_node_results_json("") == []
     assert _parse_node_results_json("   ") == []
-    # Corrupt JSON → empty list, no raise.
     assert _parse_node_results_json("{not-json") == []
-    # Non-list payload → empty list.
     assert _parse_node_results_json('{"a": 1}') == []
-    # Mixed types in list → only dicts kept.
     assert _parse_node_results_json('[{"node_id": 1}, "junk", null, 42]') == [{"node_id": 1}]
 
 
-# --------------------------------------------------------------------------- #
-# 9. Lazy-litellm contract #
-# --------------------------------------------------------------------------- #
+# 9. Lazy-litellm contract
 
 
 def test_lazy_litellm_import_for_lineage_routes() -> None:

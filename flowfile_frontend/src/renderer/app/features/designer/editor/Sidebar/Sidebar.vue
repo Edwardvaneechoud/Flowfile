@@ -16,7 +16,7 @@
 
 <script setup lang="ts">
 import { ref, defineProps, defineEmits, watch } from "vue";
-import PopOver from "../PopOver.vue"; // Adjust the path accordingly
+import PopOver from "../PopOver.vue";
 
 interface Option {
   text: string;
@@ -35,7 +35,7 @@ const props = defineProps({
   },
   defaultIcon: {
     type: String,
-    default: "fas fa-circle", // Default Font Awesome icon
+    default: "fas fa-circle",
   },
 });
 

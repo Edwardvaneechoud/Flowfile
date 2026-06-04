@@ -82,7 +82,6 @@ def calculate_layered_layout(
                 if current_in_degree[v] == 0:
                     queue.append(v)
                 elif current_in_degree[v] < 0:
-                    # Basic warning for potential issues
                     print(f"[Layout Warning] Node {v} negative in-degree.")
         if nodes_in_current_stage:
             stages[current_stage] = nodes_in_current_stage

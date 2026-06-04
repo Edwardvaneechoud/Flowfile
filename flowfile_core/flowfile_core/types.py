@@ -1,4 +1,3 @@
-# types.py - Public API for type specifications
 """
 Public type system for column selection and data type specification.
 
@@ -176,7 +175,6 @@ class Types:
     Array = DataType.Array
 
 
-# Type alias for better type hints
 TypeSpec = (
     TypeGroup
     | DataType

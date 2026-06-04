@@ -104,9 +104,6 @@ class ChatStreamRequest(BaseModel):
     selected_node_ids: list[int] | None = None
     mentions: list[str] | None = None
     chat_mode: Literal["chat", "auto_agent"] | None = None
-    """Selects which escalation footer the chat agent uses. ``"chat"``
-    swaps the assist.md default for an agent-toggle-only footer (since
-    auto-promotion is off in that mode)."""
 
 
 def _ensure_known_provider(name: str) -> None:

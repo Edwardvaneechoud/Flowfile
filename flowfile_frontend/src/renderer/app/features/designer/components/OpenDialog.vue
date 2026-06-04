@@ -174,7 +174,6 @@ watch(selectedNamespaceId, (nsId) => {
   else localStorage.setItem(NAMESPACE_STORAGE_KEY, String(nsId));
 });
 
-// Reload flow list when the selected namespace changes
 watch(selectedNamespaceId, async (nsId) => {
   selectedFlowId.value = null;
   if (nsId === null) {

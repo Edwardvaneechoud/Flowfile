@@ -93,7 +93,6 @@ const flowStore = useFlowStore()
 const view = shallowRef<EditorView | null>(null)
 const validationError = ref<string | null>(null)
 
-// Code snippets for quick reference
 const snippets = {
   passthrough: 'input_df',
   filter: "input_df.filter(pl.col('column') > 0)",
@@ -109,28 +108,24 @@ const defaultCode = `# Polars transformation
 
 input_df`
 
-// Initialize directly from props
 const polarsCode = ref(props.settings.polars_code_input?.polars_code || defaultCode)
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
 
-// Polars-specific autocompletions
 const polarsCompletions: CompletionSource = (context) => {
   const word = context.matchBefore(/[\w.]*/)
   if (word?.from === word?.to && !context.explicit) {
     return null
   }
 
-  // Convert polarsCompletionVals to CodeMirror format
   const completionOptions = polarsCompletionVals.map(item => ({
     label: item.label,
     type: item.type,
     detail: item.info
   }))
 
-  // Add column completions from input schema
   columns.value.forEach(col => {
     completionOptions.push({
       label: `pl.col("${col.name}")`,
@@ -145,7 +140,6 @@ const polarsCompletions: CompletionSource = (context) => {
   }
 }
 
-// Custom keymap for tab handling
 const tabKeymap = keymap.of([
   {
     key: 'Tab',
@@ -164,7 +158,6 @@ const tabKeymap = keymap.of([
   },
 ])
 
-// Extensions configuration
 const extensions: Extension[] = [
   python(),
   oneDark,
@@ -197,7 +190,6 @@ function insertColumn(name: string) {
         insert: text,
       },
     })
-    // Update the model
     polarsCode.value = view.value.state.doc.toString()
     emitUpdate()
   }
@@ -212,7 +204,6 @@ function insertSnippet(snippet: string) {
         insert: snippet,
       },
     })
-    // Update the model
     polarsCode.value = view.value.state.doc.toString()
     emitUpdate()
   }

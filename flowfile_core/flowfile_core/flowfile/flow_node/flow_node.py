@@ -168,7 +168,6 @@ class FlowNode:
         self._kernel_cancel_context = None
         self._kernel_cancel_event: threading.Event | None = None
         self._cache_epoch = 0
-        # Initialize execution state
         self._execution_state = NodeExecutionState()
         self._executor = None  # Will be lazily created
         # Multi-output: output handle (e.g. "output-0") → FlowDataEngine
@@ -430,7 +429,6 @@ class FlowNode:
         if is_manual_input:
             _ = self.hash
         self._setting_input = setting_input
-        # Copy cache_results from setting_input to node_settings
         if hasattr(setting_input, "cache_results"):
             self.node_settings.cache_results = setting_input.cache_results
         self.set_node_information()
@@ -797,11 +795,9 @@ class FlowNode:
         Returns:
             The FlowDataEngine for the requested output, or None.
         """
-        # Ensure the node has been executed first
         self.get_resulting_data()
         if handle in self._named_outputs:
             return self._named_outputs[handle]
-        # Fall back to the default (single) result
         return self.results.resulting_data
 
     def _resolve_input_result(self, input_node: "FlowNode") -> FlowDataEngine | None:
@@ -883,7 +879,6 @@ class FlowNode:
                         else:
                             fl.set_streamable(self.node_settings.streamable)
 
-                        # Apply output field configuration if enabled
                         if (
                             hasattr(self._setting_input, "output_field_config")
                             and self._setting_input.output_field_config
@@ -1453,7 +1448,6 @@ class FlowNode:
         else:
             logger.warning("Could not find the connection to delete...")
         if deleted:
-            # Clean up the output handle mapping for the removed connection
             self._input_output_handles.pop(node_id, None)
             self.reset()
         return deleted

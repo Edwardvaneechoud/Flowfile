@@ -33,24 +33,19 @@ def remove_comments_and_docstrings(source: str) -> str:
         while i < len(line):
             char = line[i]
 
-            # Handle string boundaries
             if char in ('"', "'"):
-                # Check for escaped quotes
                 if i > 0 and line[i - 1] == "\\":
                     result.append(char)
                     i += 1
                     continue
 
                 if not in_string:
-                    # Check if it's the start of a string
                     in_string = True
                     string_char = char
                 elif string_char == char:
-                    # Check if it's the end of a string
                     in_string = False
                     string_char = None
 
-            # Only process comment characters outside strings
             elif char == "#" and not in_string:
                 break
 
@@ -59,11 +54,9 @@ def remove_comments_and_docstrings(source: str) -> str:
 
         return "".join(result).rstrip()
 
-    # First pass: handle comments
     lines = [remove_comments_from_line(line) for line in source.splitlines()]
     source = "\n".join(line for line in lines if line.strip())
 
-    # Second pass: handle docstrings using AST
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -71,7 +64,6 @@ def remove_comments_and_docstrings(source: str) -> str:
 
     class DocstringRemover(ast.NodeTransformer):
         def visit_Module(self, node):
-            # Remove module-level docstrings
             while (
                 node.body
                 and isinstance(node.body[0], ast.Expr)
@@ -82,7 +74,6 @@ def remove_comments_and_docstrings(source: str) -> str:
             return self.generic_visit(node)
 
         def visit_FunctionDef(self, node):
-            # Remove function docstrings
             if (
                 node.body
                 and isinstance(node.body[0], ast.Expr)
@@ -93,7 +84,6 @@ def remove_comments_and_docstrings(source: str) -> str:
             return self.generic_visit(node)
 
         def visit_ClassDef(self, node):
-            # Remove class docstrings
             if (
                 node.body
                 and isinstance(node.body[0], ast.Expr)
@@ -104,7 +94,6 @@ def remove_comments_and_docstrings(source: str) -> str:
             return self.generic_visit(node)
 
         def visit_AsyncFunctionDef(self, node):
-            # Remove async function docstrings
             if (
                 node.body
                 and isinstance(node.body[0], ast.Expr)
@@ -115,7 +104,6 @@ def remove_comments_and_docstrings(source: str) -> str:
             return self.generic_visit(node)
 
         def visit_Expr(self, node):
-            # Remove standalone string literals
             if isinstance(node.value, ast.Str | ast.Constant) and isinstance(getattr(node.value, "value", None), str):
                 return None
             return self.generic_visit(node)
@@ -124,7 +112,6 @@ def remove_comments_and_docstrings(source: str) -> str:
         tree = DocstringRemover().visit(tree)
         ast.fix_missing_locations(tree)
         result = ast.unparse(tree)
-        # Remove empty lines
         return "\n".join(line for line in result.splitlines() if line.strip())
     except Exception:
         return source
@@ -230,11 +217,9 @@ class PolarsCodeParser:
         try:
             tree = ast.parse(code)
             for node in ast.walk(tree):
-                # Block imports
                 if isinstance(node, ast.Import | ast.ImportFrom):
                     raise ValueError("Import statements are not allowed")
 
-                # Block dangerous function calls
                 if isinstance(node, ast.Call):
                     if isinstance(node.func, ast.Name):
                         if node.func.id in _blocked_functions:
@@ -265,7 +250,6 @@ class PolarsCodeParser:
         # Dedent the code first to handle various indentation styles
         code = textwrap.dedent(code).strip()
 
-        # Create appropriate function signature based on number of inputs
         if num_inputs == 0:
             function_def = "def _transform():\n"
         elif num_inputs == 1:
@@ -274,16 +258,12 @@ class PolarsCodeParser:
             params = ", ".join([f"input_df_{i+1}" for i in range(num_inputs)])
             function_def = f"def _transform({params}):\n"
 
-        # Handle single line expressions
         if "\n" not in code:
-            # For expressions that should return directly
             if any(code.startswith(prefix) for prefix in ["pl.", "col(", "input_df", "expr("]):
                 return function_def + f"    return {code}"
-            # For assignments
             else:
                 return function_def + f"    {code}\n    return output_df"
 
-        # For multi-line code
         indented_code = "\n".join(f"    {line}" for line in code.split("\n"))
         return function_def + indented_code + "\n    return output_df"
 
@@ -298,15 +278,12 @@ class PolarsCodeParser:
         Returns:
             Callable: A function that takes the specified number of DataFrames
         """
-        # Validate and clean the code
         code = remove_comments_and_docstrings(code)
         code = textwrap.dedent(code).strip()
         self._validate_code(code)
 
-        # Wrap the code in a function
         wrapped_code = self._wrap_in_function(code, num_inputs)
         try:
-            # Create namespace for execution
             local_namespace: dict[str, Any] = {}
 
             exec(wrapped_code, self.safe_globals, local_namespace)

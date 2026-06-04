@@ -78,9 +78,7 @@ def _consumer_granted_to(db, *, slug, name="prod", owner=USER1):
     return c, ep, created.api_key
 
 
-# ---------------------------------------------------------------------------
 # Consumer CRUD + scoping
-# ---------------------------------------------------------------------------
 
 
 def test_create_list_get_consumer(db_session):
@@ -134,9 +132,7 @@ def test_update_consumer(db_session):
     assert upd.enabled is False and upd.description == "x"
 
 
-# ---------------------------------------------------------------------------
 # Grants
-# ---------------------------------------------------------------------------
 
 
 def test_grant_and_revoke(db_session):
@@ -175,9 +171,7 @@ def test_available_endpoints_lists_only_owner_endpoints(db_session):
     assert sorted(e.slug for e in avail) == ["a", "b"]
 
 
-# ---------------------------------------------------------------------------
 # Consumer-based auth: one key, many endpoints
-# ---------------------------------------------------------------------------
 
 
 def test_one_key_authorizes_every_granted_endpoint(db_session):
@@ -218,9 +212,7 @@ def test_disabled_endpoint_with_granted_key_is_403(db_session):
     assert "disabled" in exc.value.detail.lower()
 
 
-# ---------------------------------------------------------------------------
 # Keys
-# ---------------------------------------------------------------------------
 
 
 def test_key_rename_disable_and_delete(db_session):
@@ -252,9 +244,7 @@ def test_delete_consumer_removes_keys_and_grants(db_session):
     assert exc.value.status_code == 401
 
 
-# ---------------------------------------------------------------------------
 # Per-flow "Create key" button -> implicit consumer (single auth path)
-# ---------------------------------------------------------------------------
 
 
 def test_per_flow_key_creates_implicit_consumer(db_session):
@@ -295,9 +285,7 @@ def test_endpoint_consumers_excludes_implicit(db_session):
     assert [c.name for c in listed] == ["prod"]  # implicit excluded
 
 
-# ---------------------------------------------------------------------------
 # Migration 018 backfill
-# ---------------------------------------------------------------------------
 
 
 def _load_migration_018():

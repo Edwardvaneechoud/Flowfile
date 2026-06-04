@@ -113,7 +113,6 @@ def test_write_df_to_adls(test_case: ADLSWorkerWriteCase, adls_connection_settin
     try:
         write_df_to_cloud(df, cloud_storage_write_settings, logger)
 
-        # Verify the blob exists in Azurite
         blob_service = get_blob_service_client()
         blob_client = blob_service.get_blob_client(
             container="worker-test-container", blob=test_case.blob_name

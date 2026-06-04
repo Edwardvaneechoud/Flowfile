@@ -3,9 +3,7 @@
  * Aligned with flowfile_core/schemas for compatibility
  */
 
-// =============================================================================
 // BASE NODE TYPES (matches flowfile_core/schemas/input_schema.py)
-// =============================================================================
 
 export interface NodeBase {
   flow_id?: number
@@ -26,9 +24,7 @@ export interface NodeMultiInput extends NodeBase {
   depending_on_ids: number[]
 }
 
-// =============================================================================
 // FILTER SCHEMAS (matches flowfile_core/schemas/transform_schema.py)
-// =============================================================================
 
 export type FilterOperator =
   | 'equals'
@@ -78,9 +74,7 @@ export interface FilterInput {
   advanced_filter: string  // Polars expression
 }
 
-// =============================================================================
 // SELECT SCHEMAS
-// =============================================================================
 
 export interface SelectInput {
   old_name: string
@@ -94,18 +88,14 @@ export interface SelectInput {
   keep: boolean
 }
 
-// =============================================================================
 // SORT SCHEMAS
-// =============================================================================
 
 export interface SortByInput {
   column: string
   how: 'asc' | 'desc'
 }
 
-// =============================================================================
 // GROUP BY / AGGREGATION SCHEMAS
-// =============================================================================
 
 export type AggType =
   | 'groupby'
@@ -131,9 +121,7 @@ export interface GroupByInput {
   agg_cols: AggCol[]
 }
 
-// =============================================================================
 // JOIN SCHEMAS
-// =============================================================================
 
 export type JoinStrategy = 'inner' | 'left' | 'right' | 'full' | 'semi' | 'anti' | 'cross' | 'outer'
 
@@ -153,18 +141,14 @@ export interface JoinInput {
   how: JoinStrategy
 }
 
-// =============================================================================
 // UNIQUE SCHEMAS
-// =============================================================================
 
 export interface UniqueInput {
   columns?: string[]  // Optional - can be None in flowfile_core (all columns)
   strategy: 'first' | 'last' | 'any' | 'none'
 }
 
-// =============================================================================
 // PIVOT SCHEMAS (matches flowfile_core/schemas/transform_schema.py)
-// =============================================================================
 
 export interface PivotInput {
   index_columns: string[]    // Columns to keep stable (row identifiers)
@@ -173,9 +157,7 @@ export interface PivotInput {
   aggregations: string[]     // Aggregation functions: 'sum', 'mean', 'count', 'min', 'max', etc.
 }
 
-// =============================================================================
 // UNPIVOT SCHEMAS (matches flowfile_core/schemas/transform_schema.py)
-// =============================================================================
 
 export type UnpivotDataTypeSelector = 'float' | 'all' | 'date' | 'numeric' | 'string'
 export type UnpivotSelectorMode = 'data_type' | 'column'
@@ -187,9 +169,7 @@ export interface UnpivotInput {
   data_type_selector_mode: UnpivotSelectorMode     // How to select columns: by type or explicit list
 }
 
-// =============================================================================
 // OUTPUT SCHEMAS (matches flowfile_core/schemas/input_schema.py)
-// =============================================================================
 
 export type OutputFileType = 'csv' | 'parquet'
 export type OutputWriteMode = 'overwrite' | 'new file' | 'append'
@@ -218,9 +198,7 @@ export interface OutputSettings {
   polars_method: OutputPolarsMethod  // The polars method to use for writing (sink_csv or sink_parquet)
 }
 
-// =============================================================================
 // FORMULA / WITH COLUMNS SCHEMAS
-// =============================================================================
 
 export interface FieldInput {
   name: string
@@ -232,17 +210,13 @@ export interface FunctionInput {
   function: string  // Polars expression
 }
 
-// =============================================================================
 // HEAD/SAMPLE SCHEMAS
-// =============================================================================
 
 export interface SampleInput {
   sample_size: number
 }
 
-// =============================================================================
 // MANUAL INPUT / RAW DATA SCHEMAS (matches flowfile_core/schemas/input_schema.py)
-// =============================================================================
 
 export interface MinimalFieldInfo {
   name: string
@@ -254,9 +228,7 @@ export interface RawData {
   data: any[][]
 }
 
-// =============================================================================
 // INPUT TABLE SCHEMAS (for CSV reading)
-// =============================================================================
 
 // Matches flowfile_core InputCsvTable
 export interface InputCsvTable {
@@ -288,9 +260,7 @@ export interface ReceivedTable {
   table_settings: InputCsvTable
 }
 
-// =============================================================================
 // NODE SETTING TYPES (matches flowfile_core node structures)
-// =============================================================================
 
 // Matches flowfile_core NodeRead
 export interface NodeReadSettings extends NodeBase {
@@ -386,9 +356,7 @@ export type NodeSettings =
   | NodeOutputSettings
   | NodeExternalOutputSettings
 
-// =============================================================================
 // FLOWFILE DATA STRUCTURE (for save/load - matches flowfile_core/schemas/schemas.py)
-// =============================================================================
 
 export interface FlowfileSettings {
   description: string
@@ -429,9 +397,7 @@ export interface FlowfileData {
   connections?: NodeConnection[]  // Optional - flowfile_core derives connections from node relationships
 }
 
-// =============================================================================
 // RUNTIME TYPES (for Vue Flow and execution)
-// =============================================================================
 
 export interface FlowNode {
   id: number
@@ -478,9 +444,7 @@ export interface DownloadInfo {
   row_count: number
 }
 
-// =============================================================================
 // GRAPHIC WALKER TYPES (mirrors flowfile_core/schemas/analysis_schemas/graphic_walker_schemas.py)
-// =============================================================================
 
 export interface GWMutField {
   fid: string
@@ -527,9 +491,7 @@ export interface FlowState {
   nodeResults: Map<number, NodeResult>
 }
 
-// =============================================================================
 // NODE TYPE MAPPING (matches NODE_TYPE_TO_SETTINGS_CLASS in flowfile_core)
-// =============================================================================
 
 export const NODE_TYPES = {
   // Input nodes
@@ -561,10 +523,8 @@ export const NODE_TYPES = {
 
 export type NodeType = typeof NODE_TYPES[keyof typeof NODE_TYPES]
 
-// =============================================================================
 // LEGACY COMPATIBILITY (for existing component props)
 // These types map to the new structure for backwards compatibility
-// =============================================================================
 
 // Legacy ReadCsvSettings - maps to NodeReadSettings
 export interface ReadCsvSettings extends NodeBase {

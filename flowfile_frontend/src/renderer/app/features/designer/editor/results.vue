@@ -88,7 +88,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, defineProps } from "vue";
-import { format } from "date-fns"; // Assuming date-fns is added for date formatting
+import { format } from "date-fns";
 import { Odometer } from "@element-plus/icons-vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useAiStore } from "../../../stores/ai-store";
@@ -190,7 +190,6 @@ const formatRunTime = (runTimeMs: number, startTimestamp: number, isRunning: boo
 };
 
 const navigateToNode = (nodeId: string) => {
-  // Assuming you've assigned IDs to each node's root element in a way that incorporates the nodeId
   console.log(nodeId, "nodeId");
   if (selectedNode.value) {
     if (selectedNode.value?.classList.contains("selected")) {

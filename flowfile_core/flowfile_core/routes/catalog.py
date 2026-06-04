@@ -124,9 +124,7 @@ def get_catalog_service(db: Session = Depends(get_db)) -> CatalogService:
     return CatalogService(repo)
 
 
-# ---------------------------------------------------------------------------
 # Exception → HTTP mapping
-# ---------------------------------------------------------------------------
 
 _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     NamespaceNotFoundError: (404, "Namespace not found"),
@@ -163,7 +161,6 @@ def handle_catalog_exceptions(**overrides: str):
     override the default for a specific exception within one endpoint.
     """
 
-    # Pre-build a name→type lookup for the overrides
     override_map: dict[type[Exception], str] = {}
     if overrides:
         name_to_type = {cls.__name__: cls for cls in _CATALOG_EXCEPTION_MAP}
@@ -253,9 +250,7 @@ def get_namespace_tree(
     return service.get_namespace_tree(user_id=current_user.id)
 
 
-# ---------------------------------------------------------------------------
 # Default namespace helper
-# ---------------------------------------------------------------------------
 
 
 @router.get("/default-namespace-id")
@@ -370,9 +365,7 @@ def get_run_detail(
     return service.get_run_detail(run_id)
 
 
-# ---------------------------------------------------------------------------
 # Run Logs
-# ---------------------------------------------------------------------------
 
 
 @router.get("/runs/{run_id}/log")
@@ -394,9 +387,7 @@ def get_run_log(
     return {"log": log_file.read_text(errors="replace")}
 
 
-# ---------------------------------------------------------------------------
 # Open Run Snapshot in Designer
-# ---------------------------------------------------------------------------
 
 
 @router.post("/runs/{run_id}/open")
@@ -439,9 +430,7 @@ def open_run_snapshot(
     return {"flow_id": flow_id}
 
 
-# ---------------------------------------------------------------------------
 # Favorites
-# ---------------------------------------------------------------------------
 
 
 @router.get("/favorites", response_model=list[FlowRegistrationOut])
@@ -472,9 +461,7 @@ def remove_favorite(
     service.remove_favorite(user_id=current_user.id, registration_id=flow_id)
 
 
-# ---------------------------------------------------------------------------
 # Follows
-# ---------------------------------------------------------------------------
 
 
 @router.get("/following", response_model=list[FlowRegistrationOut])
@@ -505,9 +492,7 @@ def remove_follow(
     service.remove_follow(user_id=current_user.id, registration_id=flow_id)
 
 
-# ---------------------------------------------------------------------------
 # Catalog Tables
-# ---------------------------------------------------------------------------
 
 
 @router.get("/tables", response_model=list[CatalogTableOut])
@@ -708,9 +693,7 @@ def get_table_history(
     return service.get_table_history(table_id, limit=limit)
 
 
-# ---------------------------------------------------------------------------
 # Table Favorites
-# ---------------------------------------------------------------------------
 
 
 @router.get("/table-favorites", response_model=list[CatalogTableOut])
@@ -741,9 +724,7 @@ def remove_table_favorite(
     service.remove_table_favorite(user_id=current_user.id, table_id=table_id)
 
 
-# ---------------------------------------------------------------------------
 # Catalog Visualizations
-# ---------------------------------------------------------------------------
 
 
 @router.get("/visualizations", response_model=list[VisualizationOut])
@@ -872,9 +853,7 @@ def list_visualizations_for_table(
     return service.list_visualizations_for_table(table_id, user_id=current_user.id)
 
 
-# ---------------------------------------------------------------------------
 # Catalog Dashboards
-# ---------------------------------------------------------------------------
 
 
 @router.get("/dashboards", response_model=list[DashboardOut])
@@ -929,9 +908,7 @@ def delete_dashboard(
     service.delete_dashboard(dashboard_id, user_id=current_user.id)
 
 
-# ---------------------------------------------------------------------------
 # Virtual Flow Tables
-# ---------------------------------------------------------------------------
 
 
 @router.post("/virtual-tables", response_model=CatalogTableOut, status_code=201)
@@ -950,7 +927,6 @@ def create_virtual_flow_table(
         description=body.description,
     )
 
-    # Compute laziness blockers from the producer flow
     flow_reg = service.repo.get_flow(body.producer_registration_id)
     blockers = CatalogService._compute_laziness_blockers(flow_reg.flow_path if flow_reg else None)
     if blockers:
@@ -989,9 +965,7 @@ def resolve_virtual_flow_table(
     return service.resolve_virtual_flow_table_preview(table_id, limit, user_id=current_user.id)
 
 
-# ---------------------------------------------------------------------------
 # Query-based Virtual Tables
-# ---------------------------------------------------------------------------
 
 
 @router.post("/query-virtual-tables", response_model=CatalogTableOut, status_code=201)
@@ -1029,10 +1003,7 @@ def update_query_virtual_table(
     )
 
 
-# ---------------------------------------------------------------------------
-
 # SQL Query
-# ---------------------------------------------------------------------------
 
 
 @router.post("/sql/execute", response_model=SqlQueryResult)
@@ -1066,9 +1037,7 @@ def save_query_as_flow(
         raise HTTPException(500, str(e)) from e
 
 
-# ---------------------------------------------------------------------------
 # Dashboard / Stats
-# ---------------------------------------------------------------------------
 
 
 @router.get("/stats", response_model=CatalogStats)
@@ -1079,9 +1048,7 @@ def get_catalog_stats(
     return service.get_catalog_stats(user_id=current_user.id)
 
 
-# ---------------------------------------------------------------------------
 # Schedules
-# ---------------------------------------------------------------------------
 
 
 @router.get("/schedules", response_model=list[FlowScheduleOut])
@@ -1191,9 +1158,7 @@ def trigger_schedule_now(
     return service.trigger_schedule_now(schedule_id=schedule_id, user_id=current_user.id)
 
 
-# ---------------------------------------------------------------------------
 # Active Runs
-# ---------------------------------------------------------------------------
 
 
 @router.get("/active-runs", response_model=list[ActiveFlowRun])
@@ -1216,9 +1181,7 @@ def cancel_run(
     service.cancel_run(run_id)
 
 
-# ---------------------------------------------------------------------------
 # Scheduler management
-# ---------------------------------------------------------------------------
 
 
 @router.get("/scheduler/status", response_model=SchedulerStatusOut)

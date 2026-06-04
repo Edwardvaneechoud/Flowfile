@@ -169,7 +169,7 @@ class Status(BaseModel):
     status: Literal["Processing", "Completed", "Error", "Unknown Error", "Starting"]  # Type alias for status
     file_ref: str
     progress: int | None = 0
-    error_message: str | None = None  # Add error_message field
+    error_message: str | None = None
     results: Any | None = None
     result_type: ResultType | None = "polars"
 

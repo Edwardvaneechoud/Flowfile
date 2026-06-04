@@ -137,7 +137,6 @@ def test_chat_stream_emits_provider_chunks(
     assert response.headers["content-type"].startswith("text/event-stream")
 
     body = response.text
-    # Two chunk deltas + a done marker, in order.
     assert 'event: chunk\ndata: {"content_delta": "hello "}' in body
     assert 'event: chunk\ndata: {"content_delta": "world"}' in body
     assert 'event: done\ndata: {"finish_reason": "stop"}' in body
@@ -505,7 +504,6 @@ def test_chat_stream_calls_render_prompt_context_when_flow_id_set(
     assert response.status_code == 200
 
     captured = patch_get_configured_provider.last_call_kwargs["messages"]
-    # System (W22 layered) + user block + the user's question.
     assert len(captured) == 3
     system_msg, ctx_user_msg, question_msg = captured
 
@@ -546,7 +544,6 @@ def test_chat_stream_without_flow_id_uses_w26_identity_path(
     assert response.status_code == 200
 
     captured = patch_get_configured_provider.last_call_kwargs["messages"]
-    # No flow_id → no user block. Just system + user.
     assert len(captured) == 2
     system_msg, user_msg = captured
     assert system_msg.role == "system"
@@ -763,7 +760,7 @@ def test_chat_stream_user_block_contains_columns_for_un_run_static_upstream(
     assert response.status_code == 200
 
     captured = patch_get_configured_provider.last_call_kwargs["messages"]
-    assert len(captured) == 3  # system + user + question
+    assert len(captured) == 3
     _system_msg, ctx_user_msg, _question_msg = captured
 
     # The filter must report a known schema — the bug-of-record was the
@@ -816,9 +813,7 @@ def test_lazy_litellm_import_for_chat_routes() -> None:
         sys.modules.update(saved)
 
 
-# ---------------------------------------------------------------------------
 # v2 — POST /ai/chat/preview (debug endpoint)
-# ---------------------------------------------------------------------------
 
 
 def test_chat_preview_returns_assembled_messages_as_json(
@@ -838,7 +833,6 @@ def test_chat_preview_returns_assembled_messages_as_json(
     body = response.json()
     assert body["provider"] == "anthropic"
     assert body["prompt_surface"] == "explain"
-    # Two messages: server-issued system + the client's user turn.
     assert len(body["messages"]) == 2
     assert body["messages"][0]["role"] == "system"
     assert body["messages"][1]["role"] == "user"
@@ -848,7 +842,6 @@ def test_chat_preview_returns_assembled_messages_as_json(
     # (let the user verify the catalog is reaching the LLM).
     assert "## Flowfile node reference" in body["messages"][0]["content"]
     assert "Group by" in body["messages"][0]["content"]
-    # Char counts and token estimate populated.
     assert body["total_chars"] > 0
     assert body["estimated_tokens"] == body["total_chars"] // 4
 
@@ -902,9 +895,7 @@ def test_chat_preview_disabled_returns_503(
     assert response.status_code == 503
 
 
-# --------------------------------------------------------------------------- #
-# chat preamble must never invoke _predicted_data_getter #
-# --------------------------------------------------------------------------- #
+# chat preamble must never invoke _predicted_data_getter
 
 _W65_FLOW_ID = 9965
 

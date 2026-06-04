@@ -21,7 +21,6 @@ import type {
 } from '../../src/types'
 
 describe('Schema Inference', () => {
-  // Test fixtures
   const basicSchema: ColumnSchema[] = [
     { name: 'id', data_type: 'Int64' },
     { name: 'name', data_type: 'String' },

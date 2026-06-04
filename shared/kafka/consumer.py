@@ -45,9 +45,7 @@ class _ConsumeResult(NamedTuple):
     messages_consumed: int
 
 
-# ---------------------------------------------------------------------------
 # Public API
-# ---------------------------------------------------------------------------
 
 
 def read_kafka_source(
@@ -113,9 +111,7 @@ def infer_topic_schema(
     return list(schema.items())
 
 
-# ---------------------------------------------------------------------------
 # Internal: consume loop
-# ---------------------------------------------------------------------------
 
 
 def _consume_messages(
@@ -230,9 +226,7 @@ class _IpcWriter:
         return self._writer is not None
 
 
-# ---------------------------------------------------------------------------
 # Internal: build result from rows
-# ---------------------------------------------------------------------------
 
 
 def _coerce_metadata_types(df: pl.DataFrame) -> pl.DataFrame:

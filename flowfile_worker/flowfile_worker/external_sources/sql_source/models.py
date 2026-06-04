@@ -13,7 +13,7 @@ class DataBaseConnection(BaseModel):
     password: SecretStr | None = None  # Encrypted password
     host: str | None = None
     port: int | None = None
-    database: str | None = None  # The database name
+    database: str | None = None
     database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
     url: str | None = None
 

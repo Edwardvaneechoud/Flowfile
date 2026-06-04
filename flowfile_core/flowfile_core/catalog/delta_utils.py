@@ -87,7 +87,6 @@ def read_delta_preview(path: str, n_rows: int = 100) -> pa.Table:
     """Read the first N rows from a Delta table using PyArrow."""
     dt = DeltaTable(str(path))
 
-    # Creates a lazy dataset reference, no data is loaded yet
     dataset = dt.to_pyarrow_dataset()
 
     return dataset.head(n_rows)

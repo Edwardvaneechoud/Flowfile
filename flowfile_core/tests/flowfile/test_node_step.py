@@ -131,7 +131,6 @@ def test_hash_change_data_with_old_data():
             {"name": "Courtney", "city": "Chicago"},
         ],
     )
-    # this should not have impacted the
     data = graph.get_node_data(2, True).main_output.data
     assert len(data) > 0, "Data should be present, cause we did not run yet"
 

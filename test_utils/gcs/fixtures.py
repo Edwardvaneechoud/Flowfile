@@ -16,7 +16,6 @@ GCS_CONTAINER_NAME = os.environ.get("TEST_GCS_CONTAINER", "test-fake-gcs")
 GCS_ENDPOINT_URL = f"http://{GCS_HOST}:{GCS_PORT}"
 GCS_EXTERNAL_URL = f"http://{GCS_HOST}:{GCS_PORT}"
 
-# OS detection
 IS_MACOS = os.uname().sysname == "Darwin" if hasattr(os, "uname") else False
 IS_WINDOWS = os.name == "nt"
 
@@ -51,7 +50,6 @@ def is_gcs_available() -> bool:
     if not is_gcs_reachable():
         logger.info(f"fake-gcs-server is not reachable at {GCS_ENDPOINT_URL}")
         return False
-    # Verify test data exists
     try:
         client = get_gcs_client()
         bucket = client.bucket("test-bucket")
@@ -153,7 +151,6 @@ def start_fake_gcs_container() -> bool:
     """Start fake-gcs-server container and populate test data."""
     if is_container_running(GCS_CONTAINER_NAME):
         logger.info(f"Container {GCS_CONTAINER_NAME} is already running")
-        # Container exists but may not have data — check and populate if needed
         if not is_gcs_available():
             logger.info("Container running but test data missing, populating...")
             create_test_buckets()

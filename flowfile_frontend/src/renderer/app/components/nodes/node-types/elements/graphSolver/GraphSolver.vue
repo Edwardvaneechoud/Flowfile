@@ -76,7 +76,6 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 const nodeStore = useNodeStore();
 const nodeGraphSolver = ref<NodeGraphSolver | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeGraphSolver,
 });
@@ -124,10 +123,8 @@ const onDrop = (index: number) => {
 
 const onDropInSection = (section: "from" | "to") => {
   if (draggedColumnName.value) {
-    // Remove column from any existing assignments
     removeColumnIfExists(draggedColumnName.value);
 
-    // Assign the dragged column to the appropriate section
     if (section === "from" && graphSolverInput.value.col_from !== draggedColumnName.value) {
       graphSolverInput.value.col_from = draggedColumnName.value;
     } else if (section === "to") {

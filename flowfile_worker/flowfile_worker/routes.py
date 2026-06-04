@@ -45,15 +45,12 @@ def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:
 async def submit_query(request: Request, background_tasks: BackgroundTasks) -> models.Status:
     """Accept raw binary data with metadata in headers for efficient transfer."""
     try:
-        # Read raw bytes directly from request body - no base64 decoding needed
         polars_serializable_object = await request.body()
 
-        # Get metadata from headers
         task_id = request.headers.get("X-Task-Id") or str(uuid.uuid4())
         operation_type = request.headers.get("X-Operation-Type", "store")
         flow_id = int(request.headers.get("X-Flow-Id", "1"))
         node_id = request.headers.get("X-Node-Id", "-1")
-        # Try to parse node_id as int, fall back to string
         try:
             node_id = int(node_id)
         except ValueError:
@@ -61,7 +58,6 @@ async def submit_query(request: Request, background_tasks: BackgroundTasks) -> m
 
         logger.info(f"Processing query with operation: {operation_type}")
 
-        # Extract extra kwargs from header if present (used by write_parquet, etc.)
         kwargs_str = request.headers.get("X-Kwargs")
         kwargs = json.loads(kwargs_str) if kwargs_str else {}
 
@@ -96,15 +92,12 @@ async def submit_query(request: Request, background_tasks: BackgroundTasks) -> m
 async def store_sample(request: Request, background_tasks: BackgroundTasks) -> models.Status:
     """Accept raw binary data with metadata in headers for efficient transfer."""
     try:
-        # Read raw bytes directly from request body - no base64 decoding needed
         polars_serializable_object = await request.body()
 
-        # Get metadata from headers
         task_id = request.headers.get("X-Task-Id") or str(uuid.uuid4())
         sample_size = int(request.headers.get("X-Sample-Size", "100"))
         flow_id = int(request.headers.get("X-Flow-Id", "1"))
         node_id = request.headers.get("X-Node-Id", "-1")
-        # Try to parse node_id as int, fall back to string
         try:
             node_id = int(node_id)
         except ValueError:
@@ -792,7 +785,6 @@ async def fetch_results(task_id: str):
         raise HTTPException(status_code=404, detail=f"An error occurred during processing: {status.error_message}")
     try:
         lf = pl.scan_parquet(status.file_ref)
-        # Return raw bytes - Pydantic/FastAPI will handle serialization
         return {"task_id": task_id, "result": lf.serialize()}
     except Exception as e:
         logger.error(f"Error reading results: {str(e)}")
@@ -968,7 +960,6 @@ def clear_task(task_id: str):
         if os.path.exists(status.file_ref):
             os.remove(status.file_ref)
             logger.debug(f"Removed file: {status.file_ref}")
-        # Also remove Kafka offset sidecar if present
         sidecar = status.file_ref + ".offsets.json"
         if os.path.exists(sidecar):
             os.remove(sidecar)

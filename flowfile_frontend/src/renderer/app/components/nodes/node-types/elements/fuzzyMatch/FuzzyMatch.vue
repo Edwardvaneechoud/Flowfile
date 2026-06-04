@@ -186,7 +186,7 @@ import unavailableField from "../../../baseNode/selectComponents/UnavailableFiel
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { CodeLoader } from "vue-content-loader";
 
-const activeTab = ref("match"); // Default to match settings tab
+const activeTab = ref("match");
 
 const containsVal = (arr: string[], val: string) => {
   return arr.includes(val);
@@ -197,11 +197,9 @@ const nodeStore = useNodeStore();
 const isLoaded = ref(false);
 const nodeFuzzyJoin = ref<NodeJoin | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeFuzzyJoin,
   onAfterSave: () => {
-    // Validate after save
     if (hasInvalidFields.value && nodeFuzzyJoin.value) {
       nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
         isValid: false,

@@ -53,13 +53,11 @@ const referenceError = ref<string | null>(null)
 
 const defaultReference = computed(() => `df_${props.nodeId}`)
 
-// Initialize from node or settings
 onMounted(() => {
   const node = flowStore.nodes.get(props.nodeId)
   localReference.value = node?.node_reference || props.settings?.node_reference || ''
 })
 
-// Watch for external changes
 watch(() => props.settings?.node_reference, (newRef) => {
   const node = flowStore.nodes.get(props.nodeId)
   localReference.value = node?.node_reference || newRef || ''
@@ -68,7 +66,6 @@ watch(() => props.settings?.node_reference, (newRef) => {
 function handleReferenceInput(value: string) {
   localReference.value = value
 
-  // Validate locally first
   const result = flowStore.validateNodeReference(props.nodeId, value)
   referenceError.value = result.error
 }
@@ -76,14 +73,12 @@ function handleReferenceInput(value: string) {
 function handleReferenceBlur() {
   const value = localReference.value.trim()
 
-  // Validate
   const result = flowStore.validateNodeReference(props.nodeId, value)
   if (!result.valid) {
     referenceError.value = result.error
     return
   }
 
-  // Save if valid
   referenceError.value = null
   flowStore.updateNodeReference(props.nodeId, value || undefined)
 }

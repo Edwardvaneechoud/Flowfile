@@ -308,7 +308,6 @@ class TestSourceFileInfo:
             assert info is not None
             assert info.has_changed() is False
 
-            # Modify the file
             time.sleep(0.1)  # Ensure mtime changes
             with open(temp_path, 'w') as f:
                 f.write("modified content that is longer")
@@ -450,7 +449,6 @@ class TestNodeExecutor:
         add_manual_input(graph, [{"a": 1}], node_id=1)
         node = graph.get_node(1)
 
-        # Ensure node hasn't run
         node._execution_state.has_run_with_current_setup = False
 
         executor = NodeExecutor(node)
@@ -470,7 +468,6 @@ class TestNodeExecutor:
         add_manual_input(graph, [{"a": 1}], node_id=1)
         node = graph.get_node(1)
 
-        # Mark as already run
         node._execution_state.has_run_with_current_setup = True
 
         executor = NodeExecutor(node)
@@ -478,7 +475,7 @@ class TestNodeExecutor:
             state=node._execution_state,
             run_location="remote",
             performance_mode=False,
-            force_refresh=True,  # Force refresh
+            force_refresh=True,
         )
 
         assert decision.should_run is True
@@ -489,7 +486,6 @@ class TestNodeExecutor:
         graph = create_graph()
         add_manual_input(graph, [{"a": 1}], node_id=1)
         node = graph.get_node(1)
-        # Mark as already run
         node._execution_state.has_run_with_current_setup = True
 
         executor = NodeExecutor(node)
@@ -518,7 +514,6 @@ class TestNodeExecutor:
         add_manual_input(graph, [{"a": 1}], node_id=1)
         node = graph.get_node(1)
 
-        # Access executor via property
         executor = node.executor
         assert isinstance(executor, NodeExecutor)
         assert executor.node is node
@@ -529,10 +524,8 @@ class TestNodeExecutor:
         add_manual_input(graph, [{"a": 1}], node_id=1)
         node = graph.get_node(1)
 
-        # Executor should not exist yet
         assert node._executor is None
 
-        # Access executor - should be created
         executor = node.executor
         assert node._executor is not None
         assert node._executor is executor
@@ -570,14 +563,12 @@ class TestExecutorIntegration:
             assert state.source_file_info is not None
             assert state.source_file_info.has_changed() is False
 
-            # Modify file
             time.sleep(0.1)
             with open(temp_path, 'w') as f:
                 f.write("modified content")
 
             assert state.source_file_info.has_changed() is True
 
-            # Update file info
             state.source_file_info = SourceFileInfo.from_path(temp_path)
             assert state.source_file_info.has_changed() is False
         finally:
@@ -590,14 +581,11 @@ class TestExecutorIntegration:
 
         node = graph.get_node(1)
 
-        # Before execution
         assert node._execution_state.has_run_with_current_setup is False
 
-        # Run the graph
         result = graph.run_graph()
         assert result.success is True
 
-        # After execution, state should be updated
         assert node._execution_state.has_run_with_current_setup is True
 
 
@@ -1087,7 +1075,6 @@ class TestPreviewAfterUpstreamChange:
         )
         graph.add_select(node_select)
 
-        # _execution_state should be reset
         assert select_node._execution_state.has_run_with_current_setup is False
 
     def test_settings_change_node_stats_has_completed_last_run(self, execution_location):
@@ -1102,7 +1089,6 @@ class TestPreviewAfterUpstreamChange:
         select_node = graph.get_node(2)
         assert select_node.node_stats.has_completed_last_run is True
 
-        # Change the select configuration
         new_select_input = transform_schema.SelectInput(old_name='City', new_name='City', keep=True)
         node_select = input_schema.NodeSelect(
             flow_id=graph.flow_id,
@@ -1133,7 +1119,6 @@ class TestPreviewAfterUpstreamChange:
         assert first_preview.columns == ["Name"]
         assert len(first_preview.data) > 0
 
-        # Change select to keep City instead of Name
         new_select_input = transform_schema.SelectInput(old_name='City', new_name='City', keep=True)
         node_select = input_schema.NodeSelect(
             flow_id=graph.flow_id,
@@ -1171,7 +1156,6 @@ class TestPreviewAfterUpstreamChange:
         first_preview = select_node.get_table_example(include_data=True)
         assert first_preview.columns == ["Name"]
 
-        # Change select to keep City
         new_select_input = transform_schema.SelectInput(old_name='City', new_name='City', keep=True)
         node_select = input_schema.NodeSelect(
             flow_id=graph.flow_id,
@@ -1182,16 +1166,13 @@ class TestPreviewAfterUpstreamChange:
         )
         graph.add_select(node_select)
 
-        # Re-run the graph
         run_info = graph.run_graph()
         assert run_info.success
 
-        # Now preview should reflect the new settings
         select_node = graph.get_node(2)
         second_preview = select_node.get_table_example(include_data=True)
         assert second_preview.columns == ["City"]
         assert len(second_preview.data) > 0
-        # Every row should have the City key
         for row in second_preview.data:
             assert "City" in row, f"Expected City column in row, got: {row.keys()}"
 
@@ -1206,7 +1187,6 @@ class TestPreviewAfterUpstreamChange:
         assert first_preview.columns == ["Name"]
         assert len(first_preview.data) > 0
 
-        # Change sort direction (upstream settings change)
         node_sort = input_schema.NodeSort(
             flow_id=graph.flow_id,
             node_id=2,
@@ -1272,7 +1252,6 @@ class TestPreviewAfterUpstreamChange:
             auto_keep_all=True,
             depending_on_ids=[1, 2]
         ))
-        # Start test
 
         fuzzy_node = graph.get_node(3)
         result = fuzzy_node.get_table_example(True)

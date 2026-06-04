@@ -128,14 +128,6 @@ _STAGE_TO_PROMPT: dict[str, str] = {
     "single_stage_op": "planner",
     "verify_completion": "stage_verify_completion",
 }
-"""Per-stage suffix file map for the ``agent_staged`` surface.
-
-Each stage gets its own short suffix prompt so the LLM only sees the
-guidance relevant to the choice it's about to make. ``single_stage_op``
-re-uses ``planner.md`` because the modify/delete/connect/disconnect
-ops follow the same staging discipline as the legacy agent surfaces
-(they emit one ``flowfile.graph.<op>`` call directly, no multi-stage
-cycle)."""
 
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -146,9 +138,7 @@ _HTML_COMMENT_CLOSE = "-->"
 logger = logging.getLogger(__name__)
 
 
-# --------------------------------------------------------------------------- #
-# Snapshot models                                                              #
-# --------------------------------------------------------------------------- #
+# Snapshot models
 
 
 class ColumnSnapshot(BaseModel):
@@ -203,9 +193,7 @@ class PromptContext(BaseModel):
     resolved_mentions: list[ResolvedMention] = Field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
-# Public entry points                                                          #
-# --------------------------------------------------------------------------- #
+# Public entry points
 
 
 def render_prompt_context(
@@ -570,7 +558,6 @@ def _palette_label_disambiguation_pairs() -> tuple[tuple[str, str], ...]:
         label = palette_label_for(nt)
         if not label or label == nt:
             continue
-        # Snake-case the palette label and compare to the node_type.
         snake = label.lower().replace(" ", "_")
         if snake != nt and snake.replace("-", "_") != nt:
             pairs.append((nt, label))
@@ -1033,9 +1020,7 @@ def render_user_message(
     return "\n".join(lines).rstrip() + "\n"
 
 
-# --------------------------------------------------------------------------- #
-# Internals                                                                    #
-# --------------------------------------------------------------------------- #
+# Internals
 
 
 def _coerce_to_list(node_ids: list[int | str] | int | str) -> list[int | str]:

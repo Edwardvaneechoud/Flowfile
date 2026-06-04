@@ -218,14 +218,12 @@ const defaultDatabaseConnection: DatabaseConnection = {
   url: undefined,
 };
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeDatabaseReader,
   onBeforeSave: () => {
     if (!nodeDatabaseReader.value || !nodeDatabaseReader.value.database_settings) {
       return false;
     }
-    // Clean up settings based on connection_mode before saving
     if (nodeDatabaseReader.value.database_settings.connection_mode === "reference") {
       nodeDatabaseReader.value.database_settings.database_connection = undefined;
     } else {
@@ -287,7 +285,6 @@ const validateQuery = () => {
     return;
   }
 
-  // Now we'll use the API endpoint instead of just showing an alert
   validateDatabaseSettings();
 };
 
@@ -415,7 +412,6 @@ const validateDatabaseSettings = async () => {
   resetFields();
 
   try {
-    // Clean up settings based on connection_mode before sending
     const settings = { ...nodeDatabaseReader.value.database_settings };
     if (settings.connection_mode === "reference") {
       settings.database_connection = undefined;
@@ -425,10 +421,8 @@ const validateDatabaseSettings = async () => {
 
     const response = await axios.post("/validate_db_settings", settings);
 
-    // If we get here, validation was successful
     validationSuccess.value = response.data.message || "Settings are valid";
   } catch (error: any) {
-    // Handle validation errors
     if (error.response && error.response.data && error.response.data.detail) {
       validationError.value = error.response.data.detail;
     } else {

@@ -17,9 +17,7 @@ from flowfile_core.routes import file_manager as fm_module
 _real_check_docker_mode = fm_module._check_docker_mode
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _get_auth_token() -> str:
@@ -50,9 +48,7 @@ def _upload_test_file(name: str = "test.csv", content: bytes = b"a,b\n1,2\n") ->
     return resp.json()
 
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -79,12 +75,8 @@ def _docker_mode_with_tmp_uploads(tmp_path):
     ):
         yield uploads_dir
 
-    # tmp_path cleanup is automatic
 
-
-# ---------------------------------------------------------------------------
 # Docker-mode gating
-# ---------------------------------------------------------------------------
 
 
 class TestDockerModeGating:
@@ -114,9 +106,7 @@ class TestDockerModeGating:
         assert resp.status_code == 403
 
 
-# ---------------------------------------------------------------------------
 # List files
-# ---------------------------------------------------------------------------
 
 
 class TestListFiles:
@@ -144,9 +134,7 @@ class TestListFiles:
         assert "test_sneaky.py" not in names
 
 
-# ---------------------------------------------------------------------------
 # Upload
-# ---------------------------------------------------------------------------
 
 
 class TestUpload:
@@ -232,9 +220,7 @@ class TestUpload:
         assert data["size"] == len(content)
 
 
-# ---------------------------------------------------------------------------
 # Delete
-# ---------------------------------------------------------------------------
 
 
 class TestDelete:
@@ -274,27 +260,21 @@ class TestDelete:
         assert "directories" in resp.json()["detail"].lower()
 
 
-# ---------------------------------------------------------------------------
 # Integration: upload → list → delete round-trip
-# ---------------------------------------------------------------------------
 
 
 class TestRoundTrip:
     def test_upload_list_delete_cycle(self):
-        # Upload
         _upload_test_file("test_roundtrip.csv", b"x,y\n1,2\n")
 
-        # Verify in list
         resp = client.get(f"{PREFIX}/files")
         assert resp.status_code == 200
         names = [f["name"] for f in resp.json()]
         assert "test_roundtrip.csv" in names
 
-        # Delete
         resp = client.delete(f"{PREFIX}/files/test_roundtrip.csv")
         assert resp.status_code == 200
 
-        # Verify removed from list
         resp = client.get(f"{PREFIX}/files")
         names = [f["name"] for f in resp.json()]
         assert "test_roundtrip.csv" not in names

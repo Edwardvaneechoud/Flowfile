@@ -47,11 +47,9 @@
 </template>
 
 <script setup lang="ts">
-// UPDATED: Added 'computed' and defineEmits
 import { ref, onMounted, onBeforeUnmount, computed, useTemplateRef } from "vue";
 import { useItemStore } from "./stateStore";
 
-// Define emits for parent component communication
 const emit = defineEmits<{
   (e: "reset-layout-graph"): void;
 }>();
@@ -100,7 +98,6 @@ const hasDragged = ref(false);
 const dragStart = ref({ x: 0, y: 0 });
 const initialPosition = ref({ x: 0, y: 0 });
 
-// --- Function to handle window resizing ---
 // Always reset to bottom-left (next to Data Actions) on resize so the
 // button stays accessible even when the canvas shrinks below the
 // previously-saved coordinate.
@@ -116,21 +113,18 @@ const handleViewportResize = () => {
   savePosition();
 };
 
-// --- NEW: Computed property for dynamic panel positioning ---
 const panelStyle = computed(() => {
   const style: { [key: string]: string } = {};
   const bounds = getCanvasBounds();
   const isRightHalf = position.value.x > bounds.width / 2;
   const isBottomHalf = position.value.y > bounds.height / 2;
 
-  // Position horizontally
   if (isRightHalf) {
     style.right = "60px"; // Open to the left of the button
   } else {
     style.left = "60px"; // Open to the right of the button
   }
 
-  // Position vertically
   if (isBottomHalf) {
     style.bottom = "0px"; // Align with the bottom of the button
   } else {
@@ -140,7 +134,6 @@ const panelStyle = computed(() => {
   return style;
 });
 
-// Load saved position from localStorage - but always ensure it's in valid bounds
 onMounted(() => {
   const buttonSize = 45;
   const boundaryMargin = 10;
@@ -163,7 +156,6 @@ onMounted(() => {
     ) {
       position.value = parsed;
     } else {
-      // Reset to default if saved position is out of bounds
       position.value.x = defaultX;
       position.value.y = maxY;
       savePosition();
@@ -177,12 +169,10 @@ onMounted(() => {
   window.addEventListener("resize", handleViewportResize);
 });
 
-// Save position to localStorage
 const savePosition = () => {
   localStorage.setItem(LAYOUT_CONTROLS_STORAGE_KEY, JSON.stringify(position.value));
 };
 
-// Handle mouse down - prepare for potential drag
 const handleMouseDown = (e: MouseEvent) => {
   e.preventDefault();
   hasDragged.value = false;
@@ -205,7 +195,6 @@ const handleMouseDown = (e: MouseEvent) => {
   document.addEventListener("mouseup", stopDrag);
 };
 
-// Handle click - open panel only if we didn't drag
 const handleClick = (e: MouseEvent) => {
   e.preventDefault();
   e.stopPropagation();
@@ -252,32 +241,26 @@ const stopDrag = () => {
   }
 };
 
-// Helper function to run an action and then close the panel
 const runAction = <T extends any[]>(action: (...args: T) => void, ...args: T) => {
   action(...args);
   isOpen.value = false;
 };
 
-// Arrange all windows in a specific layout
 const arrangeLayout = (layout: "tile" | "cascade") => {
   itemStore.arrangeItems(layout);
 };
 
-// Reset layout using the store's resetLayout method without reloading
 const resetLayout = () => {
   itemStore.resetLayout();
 };
 
-// NEW: Reset layout graph - emits event to parent
 const resetLayoutGraph = () => {
   emit("reset-layout-graph");
 };
 
-// Cleanup
 onBeforeUnmount(() => {
   document.removeEventListener("mousemove", onDrag);
   document.removeEventListener("mouseup", stopDrag);
-  // UPDATED: This now correctly removes the listener
   window.removeEventListener("resize", handleViewportResize);
 });
 </script>

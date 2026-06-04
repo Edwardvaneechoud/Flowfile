@@ -81,12 +81,11 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// Initialize directly from props
 const joinType = ref<JoinType>(props.settings.join_input?.join_type || props.settings.join_input?.how || 'inner')
 const joinMapping = ref<JoinMapping[]>(
   props.settings.join_input?.join_mapping && props.settings.join_input.join_mapping.length > 0
     ? props.settings.join_input.join_mapping.map(m => ({ left_col: m.left_col, right_col: m.right_col }))
-    : [{ left_col: '', right_col: '' }] // Start with one empty row
+    : [{ left_col: '', right_col: '' }]
 )
 
 const leftColumns = computed<ColumnSchema[]>(() => {
@@ -97,7 +96,6 @@ const rightColumns = computed<ColumnSchema[]>(() => {
   return flowStore.getRightInputSchema(props.nodeId)
 })
 
-// Ensure at least one row when columns become available
 watch([leftColumns, rightColumns], () => {
   if (leftColumns.value.length > 0 && rightColumns.value.length > 0 && joinMapping.value.length === 0) {
     joinMapping.value = [{ left_col: '', right_col: '' }]

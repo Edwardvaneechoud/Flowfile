@@ -111,4 +111,4 @@ class TestGetPasswordHash:
     def test_different_salts(self):
         h1 = get_password_hash("SamePass1!")
         h2 = get_password_hash("SamePass1!")
-        assert h1 != h2  # Salt should differ
+        assert h1 != h2

@@ -11,7 +11,6 @@ from botocore.client import Config
 from deltalake import write_deltalake
 from pyiceberg.catalog import load_catalog
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -130,29 +129,26 @@ def _create_iceberg_table(df: pl.DataFrame, bucket_name: str, endpoint_url: str,
                           s3_client):
     """Creates an Apache Iceberg table and FORCES sane metadata pointers."""
     logger.info("Writing Apache Iceberg table with SANE metadata access...")
-    # Configure the catalog properties for S3 access
     catalog_props = {
         "py-io-impl": "pyiceberg.io.pyarrow.PyArrowFileIO",
         "s3.endpoint": endpoint_url,
         "s3.access-key-id": access_key,
         "s3.secret-access-key": secret_key,
     }
-    # Use the SQL catalog with an in-memory SQLite database for storing metadata pointers
     catalog = load_catalog(
         "default",
         **{
             "type": "sql",
-            "uri": "sqlite:///:memory:",  # Use an in-memory SQL DB for the catalog
+            "uri": "sqlite:///:memory:",
             "warehouse": f"s3a://{bucket_name}/iceberg_warehouse",
             **catalog_props,
         }
     )
     table_identifier = ("default_db", "iceberg_table")
-    # Create a namespace (like a schema or database) for the table
     try:
         catalog.drop_namespace("default_db")
     except Exception:
-        pass  # Ignore if namespace doesn't exist
+        pass
     catalog.create_namespace("default_db")
     try:
         catalog.load_table(table_identifier)
@@ -160,33 +156,25 @@ def _create_iceberg_table(df: pl.DataFrame, bucket_name: str, endpoint_url: str,
     except:
         pass
 
-    # Create the table schema and object first
     schema = df.to_arrow().schema
     table = catalog.create_table(identifier=table_identifier, schema=schema)
 
-    # Use the simplified write_iceberg method from Polars
     df.write_iceberg(table, mode='overwrite')
 
-    # NOW CREATE WHAT SHOULD EXIST BY DEFAULT - SANE METADATA POINTERS
-    # Get the current metadata location from the table
     current_metadata = table.metadata_location
     logger.info(f"Original metadata location: {current_metadata}")
 
-    # Extract just the path part
     if current_metadata.startswith("s3a://"):
         current_metadata_key = current_metadata.replace(f"s3a://{bucket_name}/", "")
     else:
         current_metadata_key = current_metadata.replace(f"s3://{bucket_name}/", "")
 
-    # Read the current metadata
     response = s3_client.get_object(Bucket=bucket_name, Key=current_metadata_key)
     metadata_content = response['Body'].read()
 
-    # Get the metadata directory
     metadata_dir = "/".join(current_metadata_key.split("/")[:-1])
 
-    # Write it to standardized locations
-    # 1. metadata.json in the metadata folder (this is what pl.scan_iceberg expects)
+    # metadata.json in the metadata folder (this is what pl.scan_iceberg expects)
     s3_client.put_object(
         Bucket=bucket_name,
         Key=f"{metadata_dir}/metadata.json",
@@ -194,14 +182,12 @@ def _create_iceberg_table(df: pl.DataFrame, bucket_name: str, endpoint_url: str,
     )
     logger.info(f"Created stable metadata.json at: s3://{bucket_name}/{metadata_dir}/metadata.json")
 
-    # 2. current.json as an additional pointer
     s3_client.put_object(
         Bucket=bucket_name,
         Key=f"{metadata_dir}/current.json",
         Body=metadata_content
     )
 
-    # 3. VERSION file that contains the current metadata filename
     current_metadata_filename = current_metadata_key.split("/")[-1]
     s3_client.put_object(
         Bucket=bucket_name,
@@ -209,7 +195,7 @@ def _create_iceberg_table(df: pl.DataFrame, bucket_name: str, endpoint_url: str,
         Body=current_metadata_filename.encode()
     )
 
-    # 4. version-hint.text (some Iceberg readers look for this)
+    # version-hint.text (some Iceberg readers look for this)
     s3_client.put_object(
         Bucket=bucket_name,
         Key=f"{metadata_dir}/version-hint.text",
@@ -275,7 +261,6 @@ def populate_test_data(endpoint_url: str, access_key: str, secret_key: str, buck
     _create_single_parquet_file(s3_client, df, bucket_name)
     _create_multi_parquet_file(s3_client, df, bucket_name)
 
-    # Convert to PyArrow table once for Delta and Iceberg
     arrow_table = df.to_arrow()
 
     _create_delta_lake_table(arrow_table, bucket_name, storage_options)

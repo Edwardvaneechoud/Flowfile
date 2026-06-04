@@ -161,7 +161,6 @@ const isDeleting = ref(false);
 const connectionToDelete = ref("");
 const activeConnection = ref<FullDatabaseConnection | undefined>(undefined);
 
-// Fetch connections
 const fetchConnections = async () => {
   isLoading.value = true;
   try {
@@ -174,14 +173,12 @@ const fetchConnections = async () => {
   }
 };
 
-// Show add connection modal
 const showAddModal = () => {
   isEditing.value = false;
   activeConnection.value = undefined;
   dialogVisible.value = true;
 };
 
-// Show edit connection modal
 const showEditModal = (connection: FullDatabaseConnectionInterface) => {
   isEditing.value = true;
   activeConnection.value = {
@@ -198,13 +195,11 @@ const showEditModal = (connection: FullDatabaseConnectionInterface) => {
   dialogVisible.value = true;
 };
 
-// Show delete confirmation modal
 const showDeleteModal = (connectionName: string) => {
   connectionToDelete.value = connectionName;
   deleteDialogVisible.value = true;
 };
 
-// Handle form submission
 const handleFormSubmit = async (connection: FullDatabaseConnection) => {
   isSubmitting.value = true;
   try {
@@ -225,7 +220,6 @@ const handleFormSubmit = async (connection: FullDatabaseConnection) => {
   }
 };
 
-// Handle delete connection
 const handleDeleteConnection = async () => {
   if (!connectionToDelete.value) return;
 
@@ -243,19 +237,16 @@ const handleDeleteConnection = async () => {
   }
 };
 
-// Handle close dialog
 const handleCloseDialog = (done: () => void) => {
   if (isSubmitting.value) return;
   done();
 };
 
-// Handle close delete dialog
 const handleCloseDeleteDialog = (done: () => void) => {
   if (isDeleting.value) return;
   done();
 };
 
-// Load connections on mount
 onMounted(() => {
   fetchConnections();
 });

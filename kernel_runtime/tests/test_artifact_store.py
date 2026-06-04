@@ -175,7 +175,6 @@ class TestFlowIsolation:
         store.publish("model", "v1", node_id=1, flow_id=1)
         store.publish("model", "v2", node_id=2, flow_id=2)
         store.delete("model", flow_id=1)
-        # flow 2's artifact is untouched
         assert store.get("model", flow_id=2) == "v2"
         with pytest.raises(KeyError):
             store.get("model", flow_id=1)
@@ -212,7 +211,6 @@ class TestFlowIsolation:
         store.publish("model", "f2", node_id=5, flow_id=2)
         removed = store.clear_by_node_ids({5}, flow_id=1)
         assert removed == ["model"]
-        # flow 2's artifact survives
         assert store.get("model", flow_id=2) == "f2"
         with pytest.raises(KeyError):
             store.get("model", flow_id=1)
@@ -222,7 +220,6 @@ class TestFlowIsolation:
         store.publish("b", 2, node_id=5, flow_id=2)
         assert set(store.list_by_node_id(5, flow_id=1).keys()) == {"a"}
         assert set(store.list_by_node_id(5, flow_id=2).keys()) == {"b"}
-        # Unfiltered returns both
         assert set(store.list_by_node_id(5).keys()) == {"a", "b"}
 
     def test_metadata_includes_flow_id(self, store: ArtifactStore):

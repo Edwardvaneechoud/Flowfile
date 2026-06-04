@@ -93,7 +93,7 @@ class ApiEndpointOut(BaseModel):
     slug: str
     enabled: bool
     parameters: list[ApiParamSpec] = Field(default_factory=list)
-    path: str = ""  # convenience: "/api/data/{slug}"
+    path: str = ""
     flow_name: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

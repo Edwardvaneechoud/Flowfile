@@ -70,7 +70,6 @@ async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
     if not safe_name or ".." in safe_name:
         raise HTTPException(400, "Invalid filename")
 
-    # Check extension
     suffix = Path(safe_name).suffix.lstrip(".").lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -82,7 +81,6 @@ async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
     uploads_dir.mkdir(parents=True, exist_ok=True)
     file_location = uploads_dir / safe_name
 
-    # Read file content with size check
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(400, f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)} MB")
@@ -104,7 +102,6 @@ async def delete_file(filename: str) -> JSONResponse:
     """Delete a file from the user data uploads directory."""
     _check_docker_mode()
 
-    # Sanitize filename
     safe_name = Path(filename).name
     if not safe_name or ".." in safe_name or "/" in filename or "\\" in filename:
         raise HTTPException(400, "Invalid filename")

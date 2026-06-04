@@ -74,11 +74,9 @@ def validate_sql_query(query: str) -> None:
     if not query or not query.strip():
         raise UnsafeSQLError("SQL query cannot be empty")
 
-    # Normalize the query: remove comments and extra whitespace
     normalized = _remove_sql_comments(query)
     normalized = " ".join(normalized.split()).upper()
 
-    # Check if query starts with SELECT (allowing for WITH clauses / CTEs)
     if not _is_select_query(normalized):
         raise UnsafeSQLError(
             "Only SELECT queries are allowed. "
@@ -153,7 +151,6 @@ def _is_select_query(normalized_query: str) -> bool:
     - SELECT ...
     - WITH ... SELECT ... (CTEs)
     """
-    # Check for direct SELECT
     if normalized_query.startswith("SELECT ") or normalized_query.startswith("SELECT\t"):
         return True
 
@@ -239,13 +236,11 @@ class BaseSqlSource:
         if schema_name == "":
             schema_name = None
 
-        # Validate inputs
         if query is not None and table_name is not None:
             raise ValueError("Only one of table_name or query can be provided")
         if query is None and table_name is None:
             raise ValueError("Either table_name or query must be provided")
 
-        # Set query mode and build query if needed
         if query is not None:
             # Validate user-provided queries for safety (read-only SELECT only)
             validate_sql_query(query)
@@ -261,13 +256,11 @@ class BaseSqlSource:
             if schema_name is not None and schema_name != "":
                 validate_sql_identifier(schema_name, "schema name")
 
-            # Generate the basic query
             if schema_name is not None and schema_name != "":
                 self.query = f"SELECT * FROM {schema_name}.{table_name}"
             else:
                 self.query = f"SELECT * FROM {table_name}"
 
-        # Set schema if provided
         if fields:
             self.schema = [FlowfileColumn.from_input(column_name=col.name, data_type=col.data_type) for col in fields]
 
@@ -293,7 +286,6 @@ class BaseSqlSource:
         """
         table_parts = table_name.split(".")
         if len(table_parts) > 1:
-            # Handle schema.table_name format
             schema = ".".join(table_parts[:-1])
             table = table_parts[-1]
             return schema, table
@@ -313,10 +305,8 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         schema_name: str = None,
         fields: list[MinimalFieldInfo] | None = None,
     ):
-        # Initialize the base class first
         BaseSqlSource.__init__(self, query=query, table_name=table_name, schema_name=schema_name, fields=fields)
 
-        # Set connection-specific attributes
         self.connection_string = connection_string
         self.read_result = None
 

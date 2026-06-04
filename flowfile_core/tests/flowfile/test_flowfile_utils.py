@@ -24,7 +24,7 @@ class TestGenerateSha256Hash:
     def test_basic_hash(self):
         result = generate_sha256_hash(b"hello")
         assert isinstance(result, str)
-        assert len(result) == 64  # SHA256 hex digest is 64 chars
+        assert len(result) == 64
 
     def test_deterministic(self):
         h1 = generate_sha256_hash(b"test data")
@@ -54,7 +54,6 @@ class TestCreateDirectoryIfNotExists:
     def test_existing_directory_no_error(self, tmp_path):
         existing_dir = str(tmp_path / "existing")
         os.mkdir(existing_dir)
-        # Should not raise
         create_directory_if_not_exists(existing_dir)
         assert os.path.exists(existing_dir)
 
@@ -205,5 +204,4 @@ class TestCreateUniqueId:
 
     def test_uniqueness(self):
         ids = {create_unique_id() for _ in range(100)}
-        # Should have a high degree of uniqueness
         assert len(ids) > 90

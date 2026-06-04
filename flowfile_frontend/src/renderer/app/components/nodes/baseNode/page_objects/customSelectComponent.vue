@@ -40,7 +40,6 @@ const props = defineProps({
 const showOptions = ref(false);
 const selectedOption = ref<Option | null>(null);
 
-// Watch for external modelValue changes to update the selected option
 watch(
   () => props.modelValue,
   (newVal) => {

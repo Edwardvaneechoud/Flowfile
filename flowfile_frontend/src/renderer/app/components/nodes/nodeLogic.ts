@@ -8,15 +8,12 @@ import type { NodeData } from "../../types/node.types";
 import type { FlowSettings, LocalFileInfo, RunInformation } from "../../types/flow.types";
 import { AxiosResponse } from "axios";
 
-// Re-export types for backward compatibility
 export type {
   ExecutionMode,
   ExecutionLocation,
   FlowSettings,
   LocalFileInfo,
 } from "../../types/flow.types";
-
-// Legacy function wrappers that delegate to the new API
 
 export const insertNode = async (
   flow_id: number,

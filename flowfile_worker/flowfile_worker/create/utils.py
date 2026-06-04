@@ -10,7 +10,6 @@ def create_fake_data(n_records: int = 1000) -> pl.DataFrame:
     fake = Faker()
     selector = partial(randint, 0)
     min_range = partial(min, n_records)
-    # Pre-generation of static data
     cities = [fake.city() for _ in range(min_range(7000))]
     companies = [fake.company() for _ in range(min_range(100_000))]
     zipcodes = [fake.zipcode() for _ in range(min_range(200_000))]

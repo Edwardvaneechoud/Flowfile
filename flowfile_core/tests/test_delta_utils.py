@@ -21,9 +21,7 @@ from flowfile_core.catalog.delta_utils import (
 )
 
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -44,9 +42,7 @@ def parquet_file_path(tmp_path: Path) -> Path:
     return dest
 
 
-# ---------------------------------------------------------------------------
 # is_delta_table
-# ---------------------------------------------------------------------------
 
 
 class TestIsDeltaTable:
@@ -68,9 +64,7 @@ class TestIsDeltaTable:
         assert is_delta_table(str(delta_table_path)) is True
 
 
-# ---------------------------------------------------------------------------
 # is_legacy_parquet
-# ---------------------------------------------------------------------------
 
 
 class TestIsLegacyParquet:
@@ -95,9 +89,7 @@ class TestIsLegacyParquet:
         assert is_legacy_parquet(dest) is True
 
 
-# ---------------------------------------------------------------------------
 # table_exists
-# ---------------------------------------------------------------------------
 
 
 class TestTableExists:
@@ -116,9 +108,7 @@ class TestTableExists:
         assert table_exists(d) is False
 
 
-# ---------------------------------------------------------------------------
 # get_delta_table_size_bytes
-# ---------------------------------------------------------------------------
 
 
 class TestGetDeltaTableSizeBytes:
@@ -134,9 +124,7 @@ class TestGetDeltaTableSizeBytes:
         assert delta_size == fs_size
 
 
-# ---------------------------------------------------------------------------
 # read_delta_preview
-# ---------------------------------------------------------------------------
 
 
 class TestReadDeltaPreview:
@@ -156,9 +144,7 @@ class TestReadDeltaPreview:
         assert df.schema.field("name").type == pa.string()
 
 
-# ---------------------------------------------------------------------------
 # delete_table_storage
-# ---------------------------------------------------------------------------
 
 
 class TestDeleteTableStorage:
@@ -175,5 +161,4 @@ class TestDeleteTableStorage:
     def test_noop_for_nonexistent(self, tmp_path: Path):
         """Should not raise if path doesn't exist."""
         nonexistent = tmp_path / "gone"
-        # No exception — the path is neither dir nor file
         delete_table_storage(nonexistent)

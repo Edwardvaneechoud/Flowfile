@@ -394,9 +394,7 @@ describe("useAiAgentStore - abort + clear", () => {
   });
 });
 
-// --------------------------------------------------------------------------
 // currentSessionId from-wire propagation + resume state machine
-// --------------------------------------------------------------------------
 
 describe("useAiAgentStore - currentSessionId from wire", () => {
   it("onPaused populates currentSessionId from the SSE wire", async () => {
@@ -484,10 +482,8 @@ describe("useAiAgentStore - resume state machine", () => {
   });
 });
 
-// --------------------------------------------------------------------------
 // Diff-store rehydration on agent-store hydrate + onComplete defensive
 // logging when the wire reports staged ops without a diff payload.
-// --------------------------------------------------------------------------
 
 describe("useAiAgentStore - hydration → diff store sync", () => {
   it("pushes lastResult.diff_payload into the diff store on hydrate", () => {
@@ -616,9 +612,7 @@ describe("useAiAgentStore - onComplete defensive logging", () => {
   });
 });
 
-// --------------------------------------------------------------------------
 // reattach() across page-reload (cold-start re-attach + Last-Event-ID)
-// --------------------------------------------------------------------------
 
 const _baseAgentSession = (overrides: Record<string, unknown> = {}) => ({
   sessionId: "sess-reattach",
@@ -916,12 +910,10 @@ describe("useAiAgentStore - followup re-entry", () => {
   });
 });
 
-// --------------------------------------------------------------------------- #
-// clearLastResultDiffPayload — called by the diff store on a successful        #
-// accept/reject (and on a 404 from accept/reject) so the persisted             #
-// ``lastResult.diff_payload`` doesn't survive past its useful lifetime and     #
-// re-hydrate a dead diff on the next page refresh.                             #
-// --------------------------------------------------------------------------- #
+// clearLastResultDiffPayload — called by the diff store on a successful
+// accept/reject (and on a 404 from accept/reject) so the persisted
+// ``lastResult.diff_payload`` doesn't survive past its useful lifetime and
+// re-hydrate a dead diff on the next page refresh.
 
 describe("useAiAgentStore - clearLastResultDiffPayload", () => {
   it("is a no-op when lastResult is null", () => {

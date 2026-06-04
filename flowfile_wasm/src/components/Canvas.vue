@@ -238,16 +238,13 @@ import type { NodeSettings, FlowEdge, ColumnSchema, NodeResult } from '../types'
 import type { ToolbarConfig, NodeCategoryConfig } from '../lib/types'
 import { iconUrls } from '../utils/iconUrls'
 
-// AG Grid imports
 import { AgGridVue } from '@ag-grid-community/vue3'
 import { ClientSideRowModelModule } from '@ag-grid-community/client-side-row-model'
 import { ModuleRegistry } from '@ag-grid-community/core'
 import type { ColDef, GridReadyEvent, GridApi } from '@ag-grid-community/core'
 
-// Register AG Grid modules
 ModuleRegistry.registerModules([ClientSideRowModelModule])
 
-// Components
 import DraggablePanel from './common/DraggablePanel.vue'
 import FlowNode from './nodes/FlowNode.vue'
 import NodeTitle from './nodes/NodeTitle.vue'
@@ -291,7 +288,6 @@ const emit = defineEmits<{
   (e: 'output', data: { nodeId: number; content: string; fileName: string; mimeType: string }): void
 }>()
 
-// Merge toolbar config with defaults (all visible by default)
 const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
   showRun: props.toolbarConfig?.showRun !== false,
   showSaveLoad: props.toolbarConfig?.showSaveLoad !== false,
@@ -303,7 +299,6 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
 const flowStore = useFlowStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
 
-// Demo state
 const { hasSeenDemo } = useDemo()
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -316,7 +311,6 @@ const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
 
-// Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
   'flow-node': markRaw(FlowNode)
 }
@@ -326,7 +320,6 @@ function getIconUrl(iconFile: string): string {
   return iconUrls[iconFile] || new URL(`../assets/icons/${iconFile}`, import.meta.url).href
 }
 
-// Node definition interface
 interface NodeDefinition {
   type: string
   name: string
@@ -390,7 +383,6 @@ const nodeCategories = ref<NodeCategory[]>([
   }
 ])
 
-// Filtered categories based on search
 const filteredCategories = computed(() => {
   if (!searchQuery.value) return nodeCategories.value
 
@@ -401,7 +393,6 @@ const filteredCategories = computed(() => {
   })).filter(cat => cat.nodes.length > 0)
 })
 
-// Find node definition
 function findNodeDef(type: string): NodeDefinition | undefined {
   for (const cat of nodeCategories.value) {
     const node = cat.nodes.find(n => n.type === type)
@@ -410,7 +401,6 @@ function findNodeDef(type: string): NodeDefinition | undefined {
   return undefined
 }
 
-// Convert flow nodes to Vue Flow nodes
 const vueNodes = computed<Node[]>({
   get() {
     return Array.from(flowNodes.value.values()).map(node => {
@@ -438,7 +428,6 @@ const vueNodes = computed<Node[]>({
   }
 })
 
-// Convert flow edges to Vue Flow edges
 const vueEdges = computed<Edge[]>({
   get() {
     return flowEdges.value.map(edge => ({
@@ -452,7 +441,6 @@ const vueEdges = computed<Edge[]>({
   set() {}
 })
 
-// Selected node
 const selectedNode = computed(() => {
   if (selectedNodeId.value === null) return null
   return flowNodes.value.get(selectedNodeId.value) || null
@@ -463,7 +451,6 @@ const selectedNodeResult = computed(() => {
   return nodeResults.value.get(selectedNodeId.value) || null
 })
 
-// Drag and drop handlers
 let draggedNodeDef: NodeDefinition | null = null
 
 function onDragStart(event: DragEvent, node: NodeDefinition) {
@@ -498,7 +485,6 @@ function onDrop(event: DragEvent) {
   draggedNodeDef = null
 }
 
-// Connection handler
 function onConnect(connection: Connection) {
   if (!connection.source || !connection.target) return
 
@@ -513,17 +499,14 @@ function onConnect(connection: Connection) {
   flowStore.addEdge(edge)
 }
 
-// Node click handler
 function onNodeClick(event: { node: Node }) {
   flowStore.selectNode(parseInt(event.node.id))
 }
 
-// Pane click handler
 function onPaneClick() {
   flowStore.selectNode(null)
 }
 
-// Handle edge changes (deletion)
 function onEdgesChange(changes: EdgeChange[]) {
   changes.forEach(change => {
     if (change.type === 'remove') {
@@ -532,7 +515,6 @@ function onEdgesChange(changes: EdgeChange[]) {
   })
 }
 
-// Handle node changes (deletion, position)
 function onNodesChange(changes: NodeChange[]) {
   changes.forEach(change => {
     if (change.type === 'remove') {
@@ -559,25 +541,21 @@ function onNodesChange(changes: NodeChange[]) {
   })
 }
 
-// Handle delete from context menu
 function handleDeleteNode(nodeId: number) {
   removeNodes(String(nodeId))
   flowStore.removeNode(nodeId)
 }
 
-// Handle run from context menu
 async function handleRunNode(nodeId: number) {
   await flowStore.executeNode(nodeId)
 }
 
-// Update settings
 function updateSettings(settings: NodeSettings) {
   if (selectedNodeId.value !== null) {
     flowStore.updateNodeSettings(selectedNodeId.value, settings)
   }
 }
 
-// Get settings component for node type
 function getSettingsComponent(type: string) {
   const components: Record<string, any> = {
     read: ReadCsvSettings,
@@ -600,19 +578,16 @@ function getSettingsComponent(type: string) {
   return components[type] || null
 }
 
-// AG Grid references and state
 const gridApi = ref<GridApi | null>(null)
 const isPreviewLoading = computed(() => {
   if (selectedNodeId.value === null) return false
   return flowStore.isPreviewLoading(selectedNodeId.value)
 })
 
-// AG Grid column definitions generated from schema
 const columnDefs = computed<ColDef[]>(() => {
   const result = selectedNodeResult.value
   if (!result?.data?.columns) return []
 
-  // Use schema for data types if available, otherwise use columns array
   const schemaMap = new Map<string, ColumnSchema>()
   if (result.schema) {
     result.schema.forEach(col => schemaMap.set(col.name, col))
@@ -634,11 +609,9 @@ const columnDefs = computed<ColDef[]>(() => {
       resizable: true,
       minWidth: 80,
       flex: 1,
-      // Format numbers nicely
       valueFormatter: isNumeric ? (params: any) => {
         if (params.value === null || params.value === undefined) return 'null'
         if (typeof params.value === 'number') {
-          // Check if it's a float with decimals
           if (!Number.isInteger(params.value)) {
             return params.value.toFixed(2)
           }
@@ -653,7 +626,6 @@ const columnDefs = computed<ColDef[]>(() => {
   })
 })
 
-// AG Grid row data - convert from array of arrays to array of objects
 // Use caching to prevent unnecessary re-renders that reset scroll position
 let cachedDataRef: any[] | null = null
 let cachedRowData: Record<string, any>[] = []
@@ -666,7 +638,6 @@ const rowData = computed(() => {
     return []
   }
 
-  // Only recompute if the underlying data array reference changed
   if (result.data.data === cachedDataRef) {
     return cachedRowData
   }
@@ -683,7 +654,6 @@ const rowData = computed(() => {
   return cachedRowData
 })
 
-// AG Grid default column definitions
 const defaultColDef: ColDef = {
   sortable: true,
   filter: true,
@@ -692,19 +662,16 @@ const defaultColDef: ColDef = {
   flex: 1,
 }
 
-// AG Grid event handlers
 function onGridReady(params: GridReadyEvent) {
   gridApi.value = params.api
 }
 
-// Auto-size columns to fit content
 function autoSizeColumns() {
   if (gridApi.value) {
     gridApi.value.autoSizeAllColumns()
   }
 }
 
-// Toolbar handlers
 async function handleRunFlow() {
   await flowStore.executeFlow()
   emit('execution-complete', nodeResults.value)
@@ -745,15 +712,11 @@ function handleClearFlow() {
   }
 }
 
-// Handle layout reset from LayoutControls
 function handleResetLayout() {
-  // Dispatch custom event that DraggablePanel components listen to
   window.dispatchEvent(new CustomEvent('layout-reset'))
 }
 
-// Keyboard shortcut handler
 function handleKeyDown(event: KeyboardEvent) {
-  // Ctrl+E or Cmd+E to run flow
   if ((event.ctrlKey || event.metaKey) && (event.key === 'e' || event.key === 'E')) {
     event.preventDefault()
     if (!isExecuting.value) {
@@ -762,23 +725,18 @@ function handleKeyDown(event: KeyboardEvent) {
   }
 }
 
-// Output callback for embeddable mode
 function handleOutputCallback(data: { nodeId: number; content: string; fileName: string; mimeType: string }) {
   emit('output', data)
 }
 
-// Register keyboard shortcuts and output callbacks
 onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
 
-  // Register output callback if the store supports it
   if (flowStore.onOutput) {
     flowStore.onOutput(handleOutputCallback)
   }
 
-  // Wait for DOM to be fully rendered
   await nextTick()
-  // Calculate toolbar bottom position for panel positioning
   if (toolbarRef.value) {
     const rect = toolbarRef.value.getBoundingClientRect()
     toolbarHeight.value = rect.bottom
@@ -787,7 +745,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown)
-  // Unregister output callback
   if (flowStore.offOutput) {
     flowStore.offOutput(handleOutputCallback)
   }

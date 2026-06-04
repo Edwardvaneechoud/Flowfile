@@ -57,10 +57,8 @@ class TestJoins:
         """Test inner join operation."""
         result = customers.join(orders, on="customer_id", how="inner").collect()
 
-        # Check dimensions
         assert len(result) == 5  # 5 matching orders
 
-        # Check columns
         assert set(result.columns) == {
             "customer_id",
             "name",
@@ -71,12 +69,10 @@ class TestJoins:
             "order_date",
         }
 
-        # Check specific results
         alice_orders = result.filter(pl.col("name") == "Alice")
         assert len(alice_orders) == 2
         assert set(alice_orders["order_id"].to_list()) == {101, 104}
 
-        # Verify all non-matching orders were excluded
         assert 106 not in result["order_id"].to_list()  # customer_id=6 doesn't exist
         assert 107 not in result["order_id"].to_list()  # customer_id=None doesn't match
 
@@ -84,7 +80,6 @@ class TestJoins:
         """Test left join operation."""
         result = customers.join(orders, on="customer_id", how="left").collect()
 
-        # Check dimensions
         assert len(result) == 7
 
         customer_ids = (
@@ -110,7 +105,6 @@ class TestJoins:
         assert order_106["email"][0] is None
         assert order_106["country"][0] is None
 
-        # Check order with null customer_id (order_id=107)
         order_107 = result.filter(pl.col("order_id") == 107)
         assert len(order_107) == 1
         assert order_107["name"][0] is None
@@ -124,22 +118,17 @@ class TestJoins:
         """Test outer join operation."""
         result = customers.join(orders, on="customer_id", how="outer").collect()
 
-        # Check dimensions
         assert len(result) >= 9  # 5 customers + 2 orders with no match
 
-        # Check that all customers are present
         customer_ids = result.filter(pl.col("name").is_not_null())["customer_id"].unique().sort()
         assert customer_ids.to_list() == [1, 2, 3, 4, 5]
 
-        # Check that all orders are present
         assert set(result.filter(pl.col("order_id").is_not_null())["order_id"]) == {101, 102, 103, 104, 105, 106, 107}
 
-        # Check customers with no orders (e.g., Eve)
         eve_rows = result.filter(pl.col("name") == "Eve")
         assert len(eve_rows) == 1
         assert eve_rows["order_id"][0] is None
 
-        # Check orders with no customers
         order_106 = result.filter(pl.col("order_id") == 106)
         assert len(order_106) == 1
         assert order_106["name"][0] is None
@@ -148,13 +137,10 @@ class TestJoins:
         """Test semi join operation."""
         result = customers.join(orders, on="customer_id", how="semi").collect()
 
-        # Check dimensions
         assert len(result) == 3  # Only customers who have at least one order
 
-        # Check that only matching customers are included
         assert set(result["customer_id"].to_list()) == {1, 2, 3}
 
-        # Check that no order columns are included
         assert "order_id" not in result.columns
         assert "amount" not in result.columns
 
@@ -162,19 +148,15 @@ class TestJoins:
         """Test anti join operation."""
         result = customers.join(orders, on="customer_id", how="anti").collect()
 
-        # Check dimensions
         assert len(result) == 2  # Only customers who have no orders
 
-        # Check that only non-matching customers are included
         assert set(result["customer_id"].to_list()) == {4, 5}  # David and Eve
 
-        # Check that no order columns are included
         assert "order_id" not in result.columns
         assert "amount" not in result.columns
 
     def test_join_with_different_column_names(self, customers, orders):
         """Test join using different column names."""
-        # Create a modified orders dataset with different customer ID field name
         orders_data = {
             "order_id": [101, 102, 103, 104, 105],
             "buyer_id": [1, 2, 3, 1, 2],  # renamed from customer_id
@@ -182,59 +164,49 @@ class TestJoins:
         }
         modified_orders = FlowFrame(orders_data, flow_graph=self.graph)
 
-        # Join on different column names
         result = customers.join(
             modified_orders,
             left_on="customer_id",
             right_on="buyer_id"
         ).collect()
 
-        # Check dimensions
         assert len(result) == 5  # 5 matching orders
 
-        # Check columns
         assert set(result.columns) == {"customer_id", "name", "email", "country",
                                        "order_id", "amount"}
 
-        # Check specific results
         alice_orders = result.filter(pl.col("name") == "Alice")
         assert len(alice_orders) == 2
         assert set(alice_orders["order_id"].to_list()) == {101, 104}
 
     def test_join_with_suffix(self, customers, products):
         """Test join with custom suffix."""
-        # Create datasets with overlapping column names
         customers_simple = customers.select("customer_id", "name")
         products_simple = products.select("product_id", "name")  # Both have 'name' column
 
-        # Join with custom suffix
         result = customers_simple.join(
             products_simple,
             how="cross",
             suffix="_product"
         ).collect()
 
-        # Check that conflicting columns are renamed with suffix
         assert "name" in result.columns  # Original from left side
         assert "name_product" in result.columns  # Renamed from right side
 
     def test_multi_level_join(self, customers, orders, order_items, products):
         """Test complex multi-level join scenario."""
-        # Join customers with their orders
         customer_orders = customers.join(
             orders,
             on="customer_id",
             how="inner"
         )
 
-        # Join with order items
         with_items = customer_orders.join(
             order_items,
             on="order_id",
             how="right"
         )
 
-        # Finally join with products
         full_data = with_items.join(
             products,
             left_on="product_id",
@@ -242,13 +214,10 @@ class TestJoins:
             how="inner"
         )
 
-        # Execute the full query and check results
         result = full_data.collect()
 
-        # Check dimensions - should have a row for each order item
         assert len(result) == len(order_items.collect())
 
-        # Check columns from all tables are present
         customer_cols = {"customer_id", "name", "email", "country"}
         order_cols = {"order_id", "amount", "order_date"}
         item_cols = {"product_id", "quantity", "price_at_order"}
@@ -257,7 +226,6 @@ class TestJoins:
         for col_set in [customer_cols, order_cols, item_cols]:
             assert col_set.issubset(result_cols)
 
-        # Verify joined data makes sense - check specific order
         order_101 = result.filter(pl.col("order_id") == 101)
         assert len(order_101) == 2  # Two items in this order
         assert order_101["name"][0] == "Alice"  # Customer name
@@ -266,17 +234,14 @@ class TestJoins:
 
     def test_join_with_expression(self, customers, orders):
         """Test joining with an expression condition."""
-        # First create a new column in orders that can be used for join
         orders_with_year = orders.with_columns(
             col("order_date").cast(pl.Date).dt.year().alias("order_year")
         )
 
-        # Add year column to customers for demonstration
         customers_with_year = customers.with_columns(
             lit(2023).alias("active_year")
         )
 
-        # Join where order_year matches active_year
         result = customers_with_year.join(
             orders_with_year,
             left_on="active_year",
@@ -287,12 +252,10 @@ class TestJoins:
         # All orders should match since they're all from 2023
         assert len(result) == (len(orders.collect()) * len(customers_with_year.collect()))
 
-        # Change year for some customers
         customers_varied_years = customers.with_columns(
             (col("customer_id") + 2020).alias("active_year")  # customer_id 3 -> year 2023
         )
 
-        # Join where years match
         restricted_result = customers_varied_years.join(
             orders_with_year,
             left_on="active_year",
@@ -307,17 +270,14 @@ class TestJoins:
 
     def test_join_columns_with_cast(self, customers, orders):
         """Test joining with columns that need casting."""
-        # Create a string version of customer_id in customers
         customers_str_id = customers.with_columns(
             col("customer_id").cast(pl.String).alias("customer_id_str")
         )
 
-        # Create a string version of customer_id in orders
         orders_str_id = orders.with_columns(
             col("customer_id").cast(pl.String).alias("customer_id_str")
         ).filter(col("customer_id").is_not_null())  # Filter out null IDs
 
-        # Join using the string versions
         flow_frame = customers_str_id.join(
             orders_str_id,
             left_on="customer_id_str",
@@ -326,17 +286,14 @@ class TestJoins:
         )
         assert flow_frame.get_node_settings().node_type == 'join', 'Should be able to map this to join node'
         result = flow_frame.collect()
-        # Check dimensions
         assert len(result) == 5  # 5 matching orders with non-null IDs
 
-        # Check columns - should include both numeric and string versions
         assert "customer_id" in result.columns
         assert "customer_id_str" in result.columns
         assert "customer_id_right" in result.columns
 
     def test_join_with_multiple_columns(self, customers, orders):
         """Test join using multiple columns."""
-        # Add a region column to both datasets
         customers_with_region = customers.with_columns(
             lit("North").alias("region")
         )

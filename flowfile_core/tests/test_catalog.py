@@ -26,9 +26,7 @@ from flowfile_core.database.models import (
 )
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _get_auth_token() -> str:
@@ -62,9 +60,7 @@ def _cleanup_catalog():
         db.commit()
 
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -75,9 +71,7 @@ def clean_catalog():
     _cleanup_catalog()
 
 
-# ---------------------------------------------------------------------------
 # Namespace tests
-# ---------------------------------------------------------------------------
 
 
 class TestNamespaces:
@@ -93,7 +87,6 @@ class TestNamespaces:
         assert data["parent_id"] is None
 
     def test_create_schema_under_catalog(self):
-        # Create catalog first
         cat = client.post("/catalog/namespaces", json={"name": "Cat"}).json()
         resp = client.post(
             "/catalog/namespaces",
@@ -147,9 +140,7 @@ class TestNamespaces:
         assert root["children"][0]["name"] == "TreeSchema"
 
 
-# ---------------------------------------------------------------------------
 # Flow registration tests
-# ---------------------------------------------------------------------------
 
 
 class TestFlowRegistration:
@@ -440,9 +431,7 @@ class TestCatalogTableMaterialization:
             assert table_out.schema_columns[0].dtype == "Int64"
 
 
-# ---------------------------------------------------------------------------
 # Favorites tests
-# ---------------------------------------------------------------------------
 
 
 class TestFavorites:
@@ -479,13 +468,10 @@ class TestFavorites:
         fid = self._make_flow()
         client.post(f"/catalog/flows/{fid}/favorite")
         resp = client.post(f"/catalog/flows/{fid}/favorite")
-        # Should not error, returns existing
         assert resp.status_code == 201
 
 
-# ---------------------------------------------------------------------------
 # Follows tests
-# ---------------------------------------------------------------------------
 
 
 class TestFollows:
@@ -517,9 +503,7 @@ class TestFollows:
         assert resp.status_code == 204
 
 
-# ---------------------------------------------------------------------------
 # Runs tests
-# ---------------------------------------------------------------------------
 
 
 class TestRuns:
@@ -568,40 +552,33 @@ class TestRuns:
                 db.add(run)
             db.commit()
 
-        # Page 1: limit=2, offset=0
         resp = client.get("/catalog/runs", params={"limit": 2, "offset": 0})
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["items"]) == 2
         assert data["total"] == 5
 
-        # Page 2: limit=2, offset=2
         resp = client.get("/catalog/runs", params={"limit": 2, "offset": 2})
         data = resp.json()
         assert len(data["items"]) == 2
         assert data["total"] == 5
 
-        # Page 3: limit=2, offset=4
         resp = client.get("/catalog/runs", params={"limit": 2, "offset": 4})
         data = resp.json()
         assert len(data["items"]) == 1
         assert data["total"] == 5
 
-        # Filter by registration_id
         resp = client.get("/catalog/runs", params={"registration_id": flow["id"]})
         data = resp.json()
         assert data["total"] == 5
 
-        # Filter by non-existent registration_id
         resp = client.get("/catalog/runs", params={"registration_id": 99999})
         data = resp.json()
         assert data["total"] == 0
         assert len(data["items"]) == 0
 
 
-# ---------------------------------------------------------------------------
 # Stats tests
-# ---------------------------------------------------------------------------
 
 
 class TestStats:
@@ -620,13 +597,10 @@ class TestStats:
         cat = client.post("/catalog/namespaces", json={"name": "StatCat"}).json()
         client.post("/catalog/namespaces", json={"name": "StatSch", "parent_id": cat["id"]})
         resp = client.get("/catalog/stats")
-        # Only top-level catalogs should be counted
         assert resp.json()["total_namespaces"] == 1
 
 
-# ---------------------------------------------------------------------------
 # Default namespace tests
-# ---------------------------------------------------------------------------
 
 
 class TestDefaultNamespace:
@@ -638,7 +612,6 @@ class TestDefaultNamespace:
         ns_id = resp.json()
         assert isinstance(ns_id, int)
 
-        # Verify it points to default under General
         with get_db_context() as db:
             ns = db.get(CatalogNamespace, ns_id)
             assert ns is not None
@@ -700,9 +673,7 @@ class TestDefaultNamespace:
             assert ns.owner_id == general.owner_id
 
 
-# ---------------------------------------------------------------------------
 # Auto-registration tests
-# ---------------------------------------------------------------------------
 
 
 class TestAutoRegisterFlow:
@@ -840,9 +811,7 @@ class TestAutoRegisterFlow:
             assert reg.name == "my_pipeline"
 
 
-# ---------------------------------------------------------------------------
 # Read link / lineage repository tests
-# ---------------------------------------------------------------------------
 
 
 class TestReadLinks:
@@ -961,9 +930,7 @@ class TestReadLinks:
             assert reader_ids == {flow_id_1, flow_id_2}
 
 
-# ---------------------------------------------------------------------------
 # Table lineage tests (source_registration_id on CatalogTable)
-# ---------------------------------------------------------------------------
 
 
 class TestTableLineage:
@@ -1047,7 +1014,6 @@ class TestTableLineage:
     def test_bulk_get_tables_for_flows(self):
         schema_id, flow_id = self._make_namespace_and_flow()
         with get_db_context() as db:
-            # Create a second flow
             flow2 = FlowRegistration(
                 name="producer2",
                 flow_path="/tmp/producer2.yaml",
@@ -1092,9 +1058,7 @@ class TestTableLineage:
             assert result == {}
 
 
-# ---------------------------------------------------------------------------
 # Service-level lineage enrichment tests
-# ---------------------------------------------------------------------------
 
 
 class TestServiceLineageEnrichment:
@@ -1189,9 +1153,7 @@ class TestServiceLineageEnrichment:
         assert table_id in table_ids
 
 
-# ---------------------------------------------------------------------------
 # Push-driven table trigger tests
-# ---------------------------------------------------------------------------
 
 
 class TestPushTableTrigger:
@@ -1303,7 +1265,6 @@ class TestPushTableTrigger:
             svc.overwrite_table_data(table_id, parquet_path)
 
             runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
-            # Only the pre-existing active run, no new one
             assert len(runs) == 1
 
     def test_push_trigger_updates_schedule_timestamps(self, monkeypatch):
@@ -1344,9 +1305,7 @@ class TestPushTableTrigger:
             assert len(runs) == 0
 
 
-# ---------------------------------------------------------------------------
 # Cross-namespace table resolution
-# ---------------------------------------------------------------------------
 
 
 class TestCrossNamespaceResolution:

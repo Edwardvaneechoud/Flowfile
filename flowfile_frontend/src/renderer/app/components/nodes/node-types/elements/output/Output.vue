@@ -131,7 +131,6 @@ const nodeStore = useNodeStore();
 const nodeOutput = ref<NodeOutput | null>(null);
 const dataLoaded = ref(false);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData } = useNodeSettings({
   nodeRef: nodeOutput,
 });
@@ -179,7 +178,6 @@ function detectFileType(fileName: string) {
     nodeOutput.value.output_settings.file_type = fileTypeMap[verifiedExtension];
     nodeOutput.value.output_settings.write_mode = "overwrite";
 
-    // Update table_settings to match the new file type
     updateTableSettings(fileTypeMap[verifiedExtension]);
   }
 }
@@ -225,7 +223,6 @@ function handleFileTypeChange() {
     nodeOutput.value.output_settings.write_mode = "overwrite";
   }
 
-  // Update table_settings when file type changes
   updateTableSettings(nodeOutput.value.output_settings.file_type);
 }
 
@@ -264,7 +261,6 @@ async function loadNodeData(nodeId: number) {
   if (nodeResult?.setting_input && nodeResult.setting_input.is_setup) {
     nodeOutput.value = nodeResult.setting_input;
   } else {
-    // Provide a default configuration that matches NodeBase interface
     nodeOutput.value = {
       output_settings: createDefaultOutputSettings(),
       flow_id: nodeStore.flow_id,

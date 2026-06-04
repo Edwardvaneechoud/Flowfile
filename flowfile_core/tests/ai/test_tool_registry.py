@@ -70,9 +70,7 @@ _NODE_TOOL_RE = re.compile(r"^flowfile\.graph\.add_[a-z_][a-z0-9_]*$")
 _OPS_TOOL_RE = re.compile(r"^flowfile\.(graph|schema|codegen|meta)\.[a-z_][a-z0-9_]*$")
 
 
-# ---------------------------------------------------------------------------
 # Catalog shape
-# ---------------------------------------------------------------------------
 
 
 def test_full_catalog_min_size() -> None:
@@ -136,9 +134,7 @@ def test_w47_update_node_settings_present_in_catalog() -> None:
         )
 
 
-# ---------------------------------------------------------------------------
 # Naming convention
-# ---------------------------------------------------------------------------
 
 
 def test_node_tool_names_follow_mcp_convention() -> None:
@@ -171,9 +167,7 @@ def test_mcp_tool_name_helper() -> None:
         mcp_tool_name("graph", "add filter")  # space in op
 
 
-# ---------------------------------------------------------------------------
 # JSON Schema dialect
-# ---------------------------------------------------------------------------
 
 
 def _validate_schema(schema: dict, *, ctx: str) -> None:
@@ -207,9 +201,7 @@ def test_ops_tool_parameters_are_valid_json_schema() -> None:
         _validate_schema(tool.parameters, ctx=tool.name)
 
 
-# ---------------------------------------------------------------------------
 # Surface / category presets
-# ---------------------------------------------------------------------------
 
 
 def test_surface_preset_keys_match_literal() -> None:
@@ -273,9 +265,7 @@ def test_unknown_surface_raises() -> None:
         build_tool_catalog(surface="nonsense")
 
 
-# ---------------------------------------------------------------------------
 # UDF integration
-# ---------------------------------------------------------------------------
 
 
 def test_user_defined_node_appears_in_catalog() -> None:
@@ -300,9 +290,7 @@ def test_user_defined_node_appears_in_catalog() -> None:
             node_store_mod.CUSTOM_NODE_STORE.update(original)
 
 
-# ---------------------------------------------------------------------------
 # Lazy-import contract
-# ---------------------------------------------------------------------------
 
 
 def test_lazy_litellm_import() -> None:
@@ -322,9 +310,7 @@ def test_lazy_litellm_import() -> None:
     assert "litellm" not in sys.modules
 
 
-# ---------------------------------------------------------------------------
 # Description quality (the model uses these to disambiguate)
-# ---------------------------------------------------------------------------
 
 
 def test_descriptions_are_non_empty() -> None:
@@ -336,9 +322,7 @@ def test_descriptions_are_non_empty() -> None:
         assert len(tool.description) <= 2000, f"{tool.name} description too long: {len(tool.description)} chars"
 
 
-# ---------------------------------------------------------------------------
 # Coverage cross-check: every node-type ToolSpec round-trips
-# ---------------------------------------------------------------------------
 
 
 def test_every_node_type_in_catalog_has_corresponding_settings_class() -> None:
@@ -354,9 +338,7 @@ def test_every_node_type_in_catalog_has_corresponding_settings_class() -> None:
         )
 
 
-# ---------------------------------------------------------------------------
 # long_description coverage (per-node-type narrative docs)
-# ---------------------------------------------------------------------------
 
 
 # Sanity floor for narrative docs — short enough that placeholder strings
@@ -420,9 +402,7 @@ def test_w56_long_description_does_not_duplicate_short_description() -> None:
         )
 
 
-# ---------------------------------------------------------------------------
 # v2 — user_instructions field (chat / advisory surfaces)
-# ---------------------------------------------------------------------------
 
 
 _W56_USER_INSTRUCTIONS_MIN_CHARS = 200  # higher than long_description floor —
@@ -535,9 +515,7 @@ def test_w56v2_palette_labels_match_node_store() -> None:
     assert palette_label_for("filter") == "Filter data"
 
 
-# ---------------------------------------------------------------------------
 # v2 — agent_payload_example field (Pydantic-shape drift guard)
-# ---------------------------------------------------------------------------
 
 
 def test_w56v2_agent_payload_examples_validate() -> None:
@@ -647,9 +625,7 @@ def test_w56v2_agent_payload_examples_surface_on_agent_only() -> None:
     assert user_marker in explain_prompt.lower(), "explain surface missing user-instructions worked example"
 
 
-# ---------------------------------------------------------------------------
 # v2 — frontend sidebar label cross-check
-# ---------------------------------------------------------------------------
 
 
 def test_w56v2_sidebar_labels_match_frontend() -> None:
@@ -684,9 +660,7 @@ def test_w56v2_sidebar_labels_match_frontend() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
 # nested-Pydantic shape pass-through (inline $ref)
-# ---------------------------------------------------------------------------
 
 
 def _walk_for_refs_and_defs(node: object, path: str = "") -> list[tuple[str, str]]:

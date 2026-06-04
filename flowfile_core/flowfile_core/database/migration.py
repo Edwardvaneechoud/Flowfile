@@ -251,7 +251,6 @@ def migrate_data_from_legacy_db() -> None:
         logger.info("Migrating data from %s to new catalog database", legacy_path)
         logger.info("Tables to migrate: %s", migration_order)
 
-        # Disable FK checks for the duration of the data copy
         with new_engine.connect() as conn:
             conn.execute(text("PRAGMA foreign_keys = OFF"))
             conn.commit()
@@ -267,7 +266,6 @@ def migrate_data_from_legacy_db() -> None:
                     table_name,
                 )
 
-        # Re-enable FK checks
         with new_engine.connect() as conn:
             conn.execute(text("PRAGMA foreign_keys = ON"))
             conn.commit()

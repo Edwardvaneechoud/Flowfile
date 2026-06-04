@@ -53,11 +53,9 @@ def test_train_model_task_writes_artifact_and_reports_metadata(tmp_path, linear_
         flowfile_node_id=42,
     )
 
-    # No error.
     with progress.get_lock():
         assert progress.value == 100, error_message.value.decode().rstrip("\x00")
 
-    # Artifact written.
     assert staging.exists()
     model = json.loads(staging.read_bytes())
     assert model["model_type"] == "linear_regression"
@@ -70,7 +68,6 @@ def test_train_model_task_writes_artifact_and_reports_metadata(tmp_path, linear_
     assert model["coefficients"][1] == pytest.approx(3.0, abs=1e-6)
     assert model["intercept"] == pytest.approx(1.0, abs=1e-6)
 
-    # Queue contract.
     msg = queue.get(timeout=1)
     assert set(msg) == {"sha256", "size_bytes", "model_type"}
     assert msg["size_bytes"] == staging.stat().st_size
@@ -78,7 +75,6 @@ def test_train_model_task_writes_artifact_and_reports_metadata(tmp_path, linear_
 
 
 def test_apply_model_task_writes_predictions(tmp_path, linear_data):
-    # First train.
     progress_t, err_t, q_t = _shared_objects()
     staging = tmp_path / "model.json"
     train_model_task(
@@ -96,7 +92,6 @@ def test_apply_model_task_writes_predictions(tmp_path, linear_data):
         flowfile_node_id=42,
     )
 
-    # Apply.
     new_data = pl.LazyFrame({"x1": [10.0], "x2": [20.0]})
     progress_a, err_a, q_a = _shared_objects()
     out_ipc = tmp_path / "scored.arrow"

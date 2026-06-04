@@ -94,11 +94,9 @@ def convert_to_dict(obj: Any, _seen: set = None) -> Any:
     if _seen is None:
         _seen = set()
 
-    # Handle None
     if obj is None:
         return None
 
-    # Handle primitives
     if isinstance(obj, str | int | float | bool):
         return obj
 
@@ -109,50 +107,40 @@ def convert_to_dict(obj: Any, _seen: set = None) -> Any:
     _seen.add(obj_id)
 
     try:
-        # Handle Pydantic models FIRST (check for model_dump method)
+        # Pydantic models must be checked before dataclasses
         if hasattr(obj, "model_dump") and callable(obj.model_dump):
             try:
                 data = obj.model_dump()
-                # Recursively convert any nested structures
                 return convert_to_dict(data, _seen)
             except Exception:
-                # Fall through to other methods if model_dump fails
                 pass
 
-        # Handle dataclasses
         if is_dataclass(obj) and not isinstance(obj, type):
             try:
-                # Try asdict first (handles nested dataclasses)
                 return asdict(obj)
             except Exception:
-                # Fall back to manual conversion
                 result = {}
                 for f in fields(obj):
                     value = getattr(obj, f.name, None)
                     result[f.name] = convert_to_dict(value, _seen)
                 return result
 
-        # Handle dicts
         if isinstance(obj, dict):
             return {k: convert_to_dict(v, _seen) for k, v in obj.items()}
 
-        # Handle lists and tuples - convert both to lists for clean YAML
+        # Convert tuples to lists for clean YAML
         if isinstance(obj, list | tuple):
             return [convert_to_dict(item, _seen) for item in obj]
 
-        # Handle sets
         if isinstance(obj, set):
             return [convert_to_dict(item, _seen) for item in obj]
 
-        # Handle Path objects
         if isinstance(obj, Path):
             return str(obj)
 
-        # Handle objects with __dict__ (generic fallback)
         if hasattr(obj, "__dict__"):
             return {k: convert_to_dict(v, _seen) for k, v in obj.__dict__.items() if not k.startswith("_")}
 
-        # Fallback: try to convert to string
         return str(obj)
 
     finally:
@@ -229,7 +217,6 @@ def _transform_nodes(nodes_data: dict, node_starts: set) -> list[dict]:
             "outputs": node_info.get("outputs", []),
         }
 
-        # Transform settings based on node type
         setting_input = node_info.get("setting_input", {})
         if setting_input:
             if not isinstance(setting_input, dict):
@@ -270,7 +257,6 @@ def _transform_node_settings(node_type: str, settings: dict) -> dict:
         )
     }
 
-    # Handle specific node types
     if node_type == "read":
         return _transform_read_settings(settings)
     elif node_type == "output":
@@ -307,7 +293,6 @@ def _transform_join_settings(settings: dict) -> dict:
     Handles migration of old JoinInput where left_select/right_select could be None.
     New schema requires these to be JoinInputs with renames list.
     """
-    # Handle join_input transformation
     join_input = settings.get("join_input") or settings.get("cross_join_input")
     if join_input and isinstance(join_input, dict):
         # ADD DEFAULT EMPTY JoinInputs IF MISSING (required in new schema)
@@ -317,7 +302,6 @@ def _transform_join_settings(settings: dict) -> dict:
 
             select = join_input.get(side)
             if select and isinstance(select, dict):
-                # Ensure renames key exists
                 if "renames" not in select:
                     select["renames"] = []
 
@@ -359,7 +343,6 @@ def _transform_read_settings(settings: dict) -> dict:
 
     file_type = received_file.get("file_type", "csv")
 
-    # Build table_settings based on file_type, extracting from flat structure
     if file_type == "csv":
         table_settings = {
             "file_type": "csv",
@@ -407,7 +390,6 @@ def _transform_read_settings(settings: dict) -> dict:
         # Unknown file type - try to preserve what we can
         table_settings = {"file_type": file_type or "csv"}
 
-    # Build new structure with metadata + nested table_settings
     return {
         "received_file": {
             # Metadata fields (preserved from old structure)
@@ -455,7 +437,6 @@ def _transform_output_settings(settings: dict) -> dict:
 
     file_type = output_settings.get("file_type", "csv")
 
-    # Build table_settings from old separate fields
     if file_type == "csv":
         old_csv = output_settings.get("output_csv_table", {}) or {}
         table_settings = {
@@ -494,7 +475,6 @@ def _transform_polars_code_settings(settings: dict) -> dict:
     """
     polars_code_input = settings.get("polars_code_input", {})
 
-    # Extract the actual code
     polars_code = ""
     if isinstance(polars_code_input, dict):
         polars_code = polars_code_input.get("polars_code", "")
@@ -533,23 +513,16 @@ def migrate_flowfile(input_path: Path, output_path: Path = None, format: str = "
     if format == "yaml" and yaml is None:
         raise ImportError("PyYAML is required for YAML output. Install with: pip install pyyaml")
 
-    # Determine output path
     if output_path is None:
         suffix = ".yaml" if format == "yaml" else ".json"
         output_path = input_path.with_suffix(suffix)
 
     print(f"Loading: {input_path}")
 
-    # Load legacy flowfile
     legacy_data = load_legacy_flowfile(input_path)
-
-    # Convert to dict
     data_dict = convert_to_dict(legacy_data)
-
-    # Transform to new schema
     transformed = transform_to_new_schema(data_dict)
 
-    # Write output
     print(f"Writing: {output_path}")
 
     with open(output_path, "w", encoding="utf-8") as f:

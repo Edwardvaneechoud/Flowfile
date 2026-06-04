@@ -102,11 +102,6 @@ class RouteRequest(BaseModel):
     provider: str = Field(min_length=1)
     model: str | None = None
     history: list[ChatHistoryEntry] | None = None
-    """Recent chat turns (oldest first), excluding the current message. The
-    classifier uses this to disambiguate short follow-ups like *"can you
-    implement?"* — the answer depends entirely on whether the prior assistant
-    turn proposed concrete nodes / steps. Capped server-side at
-    :data:`flowfile_core.ai.intent_router.DEFAULT_HISTORY_TURNS` turns."""
 
 
 class RouteResponse(BaseModel):

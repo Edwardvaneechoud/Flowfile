@@ -495,7 +495,6 @@ const loadArtifacts = async () => {
     const flowId = nodePythonScript.value?.flow_id;
     const currentNodeId = nodePythonScript.value?.node_id;
 
-    // Fetch kernel artifacts and upstream node IDs in parallel
     const [response, upstreamIds] = await Promise.all([
       KernelApi.getArtifacts(kernelId),
       flowId != null && currentNodeId != null
@@ -590,7 +589,6 @@ const loadFlowRunDisplayOutputs = async () => {
   try {
     const outputs = await KernelApi.getDisplayOutputs(kernelId, Number(flowId), nodeId);
     if (outputs.length > 0 && cells.value.length > 0) {
-      // Attach display outputs to the last cell
       const lastCell = cells.value[cells.value.length - 1];
       cells.value = cells.value.map((c) =>
         c.id === lastCell.id
@@ -613,7 +611,6 @@ const loadFlowRunDisplayOutputs = async () => {
   }
 };
 
-// Watch for flow run completion to refresh display outputs
 watch(
   () => editorStore.isRunning,
   (running, wasRunning) => {
@@ -656,7 +653,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   nodeRef: nodePythonScript,
   onBeforeSave: () => {
     syncCellsToNode();
-    // Validate that there's actual code
     const combinedCode = nodePythonScript.value?.python_script_input.code;
     if (!combinedCode?.trim()) {
       return false;
@@ -680,7 +676,6 @@ const loadNodeData = async (nodeId: number) => {
         ? nodeData.value.setting_input
         : createPythonScriptNode(nodeStore.flow_id, nodeStore.node_id);
 
-      // Initialize cells from saved data or create from existing code
       const input = nodePythonScript.value!.python_script_input;
       if (input.cells && input.cells.length > 0) {
         // Load from saved cells (output is runtime-only, not persisted)
@@ -702,7 +697,6 @@ const loadNodeData = async (nodeId: number) => {
 
       selectedKernelId.value = nodePythonScript.value!.python_script_input.kernel_id;
 
-      // Initialize output names from saved data
       const savedOutputNames = nodePythonScript.value!.output_names;
       outputNames.value =
         savedOutputNames && savedOutputNames.length > 0 ? [...savedOutputNames] : ["main"];
@@ -710,7 +704,6 @@ const loadNodeData = async (nodeId: number) => {
       showEditor.value = true;
       dataLoaded.value = true;
 
-      // Load kernels, artifacts, display outputs, input names, and start memory polling
       await loadKernels();
       startKernelPolling();
       loadArtifacts();

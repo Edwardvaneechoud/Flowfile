@@ -1,5 +1,3 @@
-// 📄 MultiSelect.vue
-
 <template>
   <div class="component-container">
     <label class="listbox-subtitle">{{ schema.label }}</label>
@@ -23,7 +21,6 @@
 </template>
 
 <script setup lang="ts">
-// No changes are needed in the <script> section
 import { computed, PropType } from "vue";
 import type { MultiSelectComponent } from "../interface";
 

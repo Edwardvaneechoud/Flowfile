@@ -3,7 +3,6 @@
 
 import { ref } from "vue";
 
-// Re-export all types from the new location
 export * from "../../../types/node.types";
 
 // Keep the nodeSelect ref for backward compatibility (it was defined here)

@@ -136,17 +136,15 @@ def ensure_unique(lst: list[str]) -> list[str]:
 
     for item in lst:
         if item in seen:
-            # Increment the version and append the version number
             seen[item] += 1
             new_item = f"{item}_v{seen[item]}"
-            # Ensure the new item is unique by checking for conflicts
             while new_item in seen:
                 seen[new_item] += 1
                 new_item = f"{item}_v{seen[item]}"
             result.append(new_item)
-            seen[new_item] = 1  # Mark the new unique item as seen
+            seen[new_item] = 1
         else:
             result.append(item)
-            seen[item] = 1  # First occurrence of the item
+            seen[item] = 1
 
     return result

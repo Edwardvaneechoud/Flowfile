@@ -188,8 +188,6 @@ def upsert_provider_credential(
     elif payload.api_key is not None:
         _store_or_rotate_api_key(db, cred, user_id, payload.api_key.get_secret_value())
 
-    # Curated model list. ``clear_models`` and ``models=[]`` collapse to
-    # the same NULL state so callers don't have to distinguish the two on read.
     if payload.clear_models or (payload.models is not None and len(payload.models) == 0):
         cred.models = None
     elif payload.models is not None:

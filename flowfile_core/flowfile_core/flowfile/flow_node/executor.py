@@ -113,11 +113,9 @@ class NodeExecutor:
 
         state = self.state_provider.get_state(self.node.node_id, self.node.parent_uuid)
 
-        # Handle explicit cache reset
         if reset_cache:
             self._clear_cache(state)
 
-        # Decide execution strategy
         decision = self._decide_execution(state, run_location, performance_mode, reset_cache)
 
         # Override for wide transforms when optimizing for downstream
@@ -143,7 +141,6 @@ class NodeExecutor:
         if self.node.node_settings.cache_results:
             effective_performance_mode = False
 
-        # Prepare and execute
         self._prepare_for_execution(state)
         self.node.reset()
 
@@ -167,12 +164,10 @@ class NodeExecutor:
 
         Determines both WHETHER to run and HOW to run in one place.
         """
-        # Output nodes always run
         if self.node.node_template.node_group == "output":
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.OUTPUT_NODE)
 
-        # Forced refresh (reset_cache=True)
         if force_refresh:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.FORCED_REFRESH)
@@ -186,17 +181,14 @@ class NodeExecutor:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
 
-        # In performance mode we always evaluate all objects
         if performance_mode:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.PERFORMANCE_MODE)
 
-        # Never ran before
         if not state.has_run_with_current_setup:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.NEVER_RAN)
 
-        # Check if source file changed (for read nodes)
         if self._source_file_changed(state):
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.SOURCE_FILE_CHANGED)
@@ -224,20 +216,15 @@ class NodeExecutor:
         When cache_results is enabled, the node must run fully remote so the
         result can be materialized and stored in the cache.
         """
-        # Local execution mode (e.g., WASM, no worker available)
         if run_location == "local":
             return ExecutionStrategy.FULL_LOCAL
 
-        # Caching requires full remote execution to materialize and store results
         if self.node.node_settings.cache_results:
             return ExecutionStrategy.REMOTE
 
-        # Narrow transforms are lightweight column-level operations that can
-        # run locally with an external sampler for preview data
         if self.node.node_default is not None and self.node.node_default.transform_type == "narrow":
             return ExecutionStrategy.LOCAL_WITH_SAMPLING
 
-        # Full remote execution for wide transforms and everything else
         return ExecutionStrategy.REMOTE
 
     def _execute_with_strategy(
@@ -320,7 +307,6 @@ class NodeExecutor:
             return None
 
         rf = setting_input.received_file
-        # Prefer absolute path if available
         if hasattr(rf, "abs_file_path") and rf.abs_file_path:
             return rf.abs_file_path
         return rf.path if hasattr(rf, "path") else None
@@ -375,7 +361,6 @@ class NodeExecutor:
         if "No such file or directory (os error" in error_str and retry:
             node_logger.warning("Input file missing, retrying upstream nodes...")
             for node_input in self.node.node_inputs.get_all_inputs():
-                # Recursively execute upstream nodes
                 node_input.execute_node(
                     run_location=run_location,
                     performance_mode=performance_mode,
@@ -392,7 +377,6 @@ class NodeExecutor:
             )
             return
 
-        # Log appropriate error message
         if "Connection refused" in error_str and "/submit_query/" in error_str:
             node_logger.warning(
                 "Could not connect to remote worker. "

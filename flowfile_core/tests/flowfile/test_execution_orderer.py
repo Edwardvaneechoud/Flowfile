@@ -24,9 +24,7 @@ def _make_node(node_id: int, leads_to=None, is_correct: bool = True):
     return node
 
 
-# ---------------------------------------------------------------------------
 # ExecutionStage
-# ---------------------------------------------------------------------------
 
 
 class TestExecutionStage:
@@ -46,9 +44,7 @@ class TestExecutionStage:
         assert list(stage) == []
 
 
-# ---------------------------------------------------------------------------
 # ExecutionPlan
-# ---------------------------------------------------------------------------
 
 
 class TestExecutionPlan:
@@ -74,9 +70,7 @@ class TestExecutionPlan:
         assert plan.node_count == 0
 
 
-# ---------------------------------------------------------------------------
 # determine_execution_order — stage grouping
-# ---------------------------------------------------------------------------
 
 
 class TestDetermineExecutionOrder:
@@ -194,9 +188,7 @@ class TestDetermineExecutionOrder:
         assert list(stages[1]) == [n2]
 
 
-# ---------------------------------------------------------------------------
 # compute_execution_plan
-# ---------------------------------------------------------------------------
 
 
 class TestComputeExecutionPlan:
@@ -222,13 +214,10 @@ class TestComputeExecutionPlan:
         skip_ids = {n.node_id for n in plan.skip_nodes}
         assert 10 in skip_ids
         assert 20 in skip_ids
-        # No stages should contain skipped nodes
         assert plan.node_count == 0
 
 
-# ---------------------------------------------------------------------------
 # max_parallel_workers setting
-# ---------------------------------------------------------------------------
 
 
 class TestMaxParallelWorkersSetting:

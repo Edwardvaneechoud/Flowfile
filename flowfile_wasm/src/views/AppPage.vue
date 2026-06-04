@@ -87,7 +87,6 @@ const { isReady: pyodideReady } = storeToRefs(pyodideStore)
 const { isDark, toggleTheme } = useTheme()
 const { hasSeenDemo, hasDismissedDemo, loadDemo } = useDemo()
 
-// Check for demo URL parameter
 const urlParams = new URLSearchParams(window.location.search)
 const shouldAutoLoadDemo = urlParams.get('demo') === 'true'
 
@@ -98,7 +97,6 @@ onMounted(async () => {
   await pyodideStore.initialize()
 })
 
-// Auto-load demo when URL has ?demo=true and Pyodide is ready
 if (shouldAutoLoadDemo) {
   watch(pyodideReady, async (ready) => {
     if (ready) {

@@ -1,9 +1,7 @@
 // Catalog TypeScript interfaces
 // Maps to backend schemas in catalog_schema.py
 
-// ============================================================================
 // Namespace (Unity Catalog-style hierarchy)
-// ============================================================================
 
 export interface CatalogNamespace {
   id: number;
@@ -53,9 +51,7 @@ export interface NamespaceUpdate {
   description?: string;
 }
 
-// ============================================================================
 // Flow Registration
-// ============================================================================
 
 export interface FlowRegistration {
   id: number;
@@ -91,9 +87,7 @@ export interface FlowRegistrationUpdate {
   namespace_id?: number | null;
 }
 
-// ============================================================================
 // Flow Run
-// ============================================================================
 
 export interface FlowRun {
   id: number;
@@ -126,9 +120,7 @@ export interface FlowRunDetail extends FlowRun {
   node_results_json: string | null;
 }
 
-// ============================================================================
 // Global Artifact
-// ============================================================================
 
 /** A global artifact stored in the catalog. */
 export interface GlobalArtifact {
@@ -152,9 +144,7 @@ export interface GlobalArtifact {
   updated_at: string | null;
 }
 
-// ============================================================================
 // Catalog Table
-// ============================================================================
 
 export interface ColumnSchema {
   name: string;
@@ -243,9 +233,7 @@ export interface CatalogTablePreview {
   total_rows: number;
 }
 
-// ============================================================================
 // Delta Version History
-// ============================================================================
 
 export interface DeltaVersionCommit {
   version: number;
@@ -259,9 +247,7 @@ export interface DeltaTableHistory {
   history: DeltaVersionCommit[];
 }
 
-// ============================================================================
 // Schedule
-// ============================================================================
 
 export interface FlowSchedule {
   id: number;
@@ -320,9 +306,7 @@ export interface CronValidationResult {
   error: string | null;
 }
 
-// ============================================================================
 // Active Flow Run
-// ============================================================================
 
 export interface ActiveFlowRun {
   id: number;
@@ -336,9 +320,7 @@ export interface ActiveFlowRun {
   run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand";
 }
 
-// ============================================================================
 // Catalog Stats
-// ============================================================================
 
 export interface CatalogStats {
   total_namespaces: number;
@@ -356,9 +338,7 @@ export interface CatalogStats {
   active_runs: ActiveFlowRun[];
 }
 
-// ============================================================================
 // Scheduler Status
-// ============================================================================
 
 export interface SchedulerStatus {
   active: boolean;
@@ -368,9 +348,7 @@ export interface SchedulerStatus {
   is_embedded?: boolean;
 }
 
-// ============================================================================
 // View state helpers
-// ============================================================================
 
 export type CatalogTab =
   | "catalog"
@@ -382,9 +360,7 @@ export type CatalogTab =
   | "visuals"
   | "apis";
 
-// ============================================================================
 // SQL Query types
-// ============================================================================
 
 export interface SqlQueryResult {
   columns: string[];
@@ -397,9 +373,7 @@ export interface SqlQueryResult {
   error: string | null;
 }
 
-// ============================================================================
 // Visualizations
-// ============================================================================
 
 export type VizSourceKind = "table" | "sql";
 

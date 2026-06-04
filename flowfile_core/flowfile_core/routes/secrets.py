@@ -37,10 +37,8 @@ async def get_secrets(current_user=Depends(get_current_active_user), db: Session
     """
     user_id = current_user.id
 
-    # Get secrets from database
     db_secrets = db.query(db_models.Secret).filter(db_models.Secret.user_id == user_id).all()
 
-    # Prepare response model (without decrypting)
     secrets = []
     for db_secret in db_secrets:
         secrets.append(Secret(name=db_secret.name, value=db_secret.encrypted_value, user_id=str(db_secret.user_id)))
@@ -68,7 +66,6 @@ async def create_secret(
     Returns:
         A `Secret` object containing the name and the *encrypted* value.
     """
-    # Get user ID
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
     existing_secret = (
@@ -80,7 +77,6 @@ async def create_secret(
     if existing_secret:
         raise HTTPException(status_code=400, detail="Secret with this name already exists")
 
-    # The store_secret function handles encryption and DB storage
     stored_secret = store_secret(db, secret, user_id)
     return Secret(name=stored_secret.name, value=stored_secret.encrypted_value, user_id=str(user_id))
 
@@ -105,10 +101,8 @@ async def get_secret(
     Returns:
         A `Secret` object containing the name and encrypted value.
     """
-    # Get user ID
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
-    # Get secret from database
     db_secret = (
         db.query(db_models.Secret)
         .filter(db_models.Secret.user_id == user_id, db_models.Secret.name == secret_name)
@@ -135,7 +129,6 @@ async def delete_secret(
     Returns:
         An empty response with a 204 No Content status code upon success.
     """
-    # Get user ID
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
     delete_secret_action(db, secret_name, user_id)
     return None

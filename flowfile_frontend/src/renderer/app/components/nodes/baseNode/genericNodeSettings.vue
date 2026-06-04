@@ -296,7 +296,6 @@ const emit = defineEmits<{
 }>();
 /* eslint-enable no-undef */
 
-// Loading state for async operations
 const isLoadingSchema = ref(false);
 
 const activeTab = ref("main");
@@ -338,9 +337,7 @@ const aiNodeName = computed<string | undefined>(() => {
   return typeof label === "string" && label.length > 0 ? label : undefined;
 });
 
-// Watch for tab changes to trigger save when switching to Output Schema
 watch(activeTab, (newTab, oldTab) => {
-  // When switching to Output Schema tab from any other tab, request a save
   if (newTab === "output-schema" && oldTab !== "output-schema") {
     emit("request-save");
   }
@@ -371,7 +368,6 @@ watch(
         node_reference: newValue.node_reference ?? "",
       };
 
-      // Update output field config if it exists
       if (newValue.output_field_config) {
         Object.assign(outputFieldConfig, newValue.output_field_config);
       }
@@ -412,19 +408,16 @@ const validateReferenceLocally = (value: string): string | null => {
 };
 
 const handleReferenceInput = (value: string) => {
-  // Clear any pending validation
   if (validationTimeout) {
     clearTimeout(validationTimeout);
   }
 
-  // Run local validation immediately
   const localError = validateReferenceLocally(value);
   if (localError) {
     referenceError.value = localError;
     return;
   }
 
-  // If local validation passes, debounce server-side uniqueness check
   referenceError.value = null;
   if (value && value !== "") {
     isValidatingReference.value = true;
@@ -446,21 +439,18 @@ const handleReferenceInput = (value: string) => {
 };
 
 const handleReferenceBlur = async () => {
-  // Clear any pending validation
   if (validationTimeout) {
     clearTimeout(validationTimeout);
   }
 
   const value = localSettings.value.node_reference || "";
 
-  // Run local validation
   const localError = validateReferenceLocally(value);
   if (localError) {
     referenceError.value = localError;
     return;
   }
 
-  // If non-empty and passes local validation, do final server validation and save
   if (value !== "") {
     isValidatingReference.value = true;
     try {
@@ -477,7 +467,6 @@ const handleReferenceBlur = async () => {
     }
   }
 
-  // Save the reference if validation passed
   if (!referenceError.value) {
     try {
       await nodeStore.setNodeReference(props.modelValue.node_id, value);
@@ -512,7 +501,6 @@ const removeField = (index: number) => {
 
 const loadFieldsFromSchema = async () => {
   try {
-    // Validate that we have a valid node to work with
     if (!props.modelValue || !props.modelValue.node_id) {
       console.error("Cannot load schema: Invalid or missing node data");
       return;
@@ -520,11 +508,8 @@ const loadFieldsFromSchema = async () => {
 
     isLoadingSchema.value = true;
 
-    // Request parent component to save current state and wait for completion
-    // The parent component's saveSettings() should return a promise
     const saveResult = emit("request-save");
 
-    // Wait for the save to complete if it returns a promise
     if (saveResult instanceof Promise) {
       await saveResult;
     }
@@ -532,11 +517,9 @@ const loadFieldsFromSchema = async () => {
     // Give the backend a moment to process and update the schema
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Get the node data from the store with updated schema
     const nodeData = await nodeStore.getNodeData(props.modelValue.node_id, false);
 
     if (nodeData?.main_output?.table_schema) {
-      // Load fields from the schema
       outputFieldConfig.fields = nodeData.main_output.table_schema.map((col: any) => ({
         name: col.name,
         data_type: col.data_type,

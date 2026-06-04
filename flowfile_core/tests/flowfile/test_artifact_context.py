@@ -7,9 +7,7 @@ import pytest
 from flowfile_core.flowfile.artifacts import ArtifactContext, ArtifactRef, NodeArtifactState
 
 
-# ---------------------------------------------------------------------------
 # ArtifactRef
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactRef:
@@ -52,9 +50,7 @@ class TestArtifactRef:
         assert "created_at" in d
 
 
-# ---------------------------------------------------------------------------
 # NodeArtifactState
-# ---------------------------------------------------------------------------
 
 
 class TestNodeArtifactState:
@@ -73,9 +69,7 @@ class TestNodeArtifactState:
         assert d["consumed"] == ["m"]
 
 
-# ---------------------------------------------------------------------------
 # ArtifactContext — Recording
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactContextRecording:
@@ -140,9 +134,7 @@ class TestArtifactContextRecording:
         assert len(ctx.get_kernel_artifacts("k1")) == 1
 
 
-# ---------------------------------------------------------------------------
 # ArtifactContext — Availability
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactContextAvailability:
@@ -157,8 +149,6 @@ class TestArtifactContextAvailability:
         """Node 3 should see artifacts from node 1 via node 2."""
         ctx = ArtifactContext()
         ctx.record_published(1, "k1", ["model"])
-        # Node 2 doesn't publish anything
-        # Node 3 lists both 1 and 2 as upstream
         avail = ctx.compute_available(node_id=3, kernel_id="k1", upstream_node_ids=[1, 2])
         assert "model" in avail
 
@@ -197,14 +187,11 @@ class TestArtifactContextAvailability:
         ctx = ArtifactContext()
         ctx.record_published(1, "k1", ["model"])
         ctx.compute_available(node_id=2, kernel_id="k1", upstream_node_ids=[1])
-        # Re-compute with no upstream
         ctx.compute_available(node_id=2, kernel_id="k1", upstream_node_ids=[])
         assert ctx.get_available_for_node(2) == {}
 
 
-# ---------------------------------------------------------------------------
 # ArtifactContext — Deletion tracking
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactContextDeletion:
@@ -219,12 +206,10 @@ class TestArtifactContextDeletion:
         ctx = ArtifactContext()
         ctx.record_published(1, "k1", ["model", "scaler"])
         ctx.record_deleted(2, "k1", ["model"])
-        # Publisher's published list is preserved as historical record
         published = ctx.get_published_by_node(1)
         names = [r.name for r in published]
-        assert "model" in names  # Still there as historical record
+        assert "model" in names
         assert "scaler" in names
-        # The deleting node has it tracked in its deleted list
         state = ctx._node_states[2]
         assert "model" in state.deleted
 
@@ -256,9 +241,7 @@ class TestArtifactContextDeletion:
         assert avail["model"].source_node_id == 3
 
 
-# ---------------------------------------------------------------------------
 # ArtifactContext — Clearing
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactContextClearing:
@@ -276,12 +259,10 @@ class TestArtifactContextClearing:
         ctx.record_published(1, "k1", ["model"])
         ctx.record_published(1, "k2", ["encoder"])
         ctx.clear_kernel("k1")
-        # Published list is preserved as historical record
         published = ctx.get_published_by_node(1)
         names = [r.name for r in published]
-        assert "model" in names  # Still there as historical record
+        assert "model" in names
         assert "encoder" in names
-        # But the kernel index is cleared
         assert ctx.get_kernel_artifacts("k1") == {}
 
     def test_clear_kernel_removes_from_available(self):
@@ -305,9 +286,7 @@ class TestArtifactContextClearing:
         assert ctx.get_all_artifacts() == {}
 
 
-# ---------------------------------------------------------------------------
 # ArtifactContext — Selective node clearing
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactContextClearNodes:
@@ -360,7 +339,6 @@ class TestArtifactContextClearNodes:
         ctx = ArtifactContext()
         ctx.record_published(1, "k1", ["model"])
         ctx.clear_nodes({1})
-        # After clearing, the artifact should not show up as available
         avail = ctx.compute_available(node_id=2, kernel_id="k1", upstream_node_ids=[1])
         assert avail == {}
 
@@ -370,17 +348,13 @@ class TestArtifactContextClearNodes:
         ctx = ArtifactContext()
         ctx.record_published(1, "k1", ["model"])
         ctx.record_published(2, "k1", ["predictions"])
-        # Clear only node 2 (it will re-run)
         ctx.clear_nodes({2})
-        # Node 3 should still see "model" from node 1
         avail = ctx.compute_available(node_id=3, kernel_id="k1", upstream_node_ids=[1, 2])
         assert "model" in avail
         assert "predictions" not in avail
 
 
-# ---------------------------------------------------------------------------
 # ArtifactContext — Queries
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactContextQueries:
@@ -414,9 +388,7 @@ class TestArtifactContextQueries:
         assert ctx.get_all_artifacts() == {}
 
 
-# ---------------------------------------------------------------------------
 # ArtifactContext — Serialisation
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactContextSerialization:
@@ -448,9 +420,7 @@ class TestArtifactContextSerialization:
         assert isinstance(serialised, str)
 
 
-# ---------------------------------------------------------------------------
 # ArtifactContext — Deletion origin tracking
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactContextDeletionOrigins:
@@ -505,13 +475,10 @@ class TestArtifactContextDeletionOrigins:
         ctx.record_deleted(3, "k2", ["encoder"])
         ctx.clear_kernel("k1")
         producers = ctx.get_producer_nodes_for_deletions({3})
-        # Only the k2 producer should remain
         assert producers == {2}
 
 
-# ---------------------------------------------------------------------------
 # ArtifactContext — Independent chain isolation
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactContextChainIsolation:
@@ -524,21 +491,17 @@ class TestArtifactContextChainIsolation:
         chain A (node 5).
         """
         ctx = ArtifactContext()
-        # Chain A: node 5 publishes "linear_model"
         ctx.record_published(5, "ds", [{"name": "linear_model", "type_name": "dict"}])
-        # Chain B: node 8 publishes "graph" and "centrality"
         ctx.record_published(8, "ds", [
             {"name": "graph", "type_name": "Graph"},
             {"name": "centrality", "type_name": "dict"},
         ])
 
-        # Node 6 is downstream of chain A only (upstream = [5, 4])
         avail_6 = ctx.compute_available(node_id=6, kernel_id="ds", upstream_node_ids=[5, 4])
         assert "linear_model" in avail_6
         assert "graph" not in avail_6
         assert "centrality" not in avail_6
 
-        # Node 9 is downstream of chain B only (upstream = [8, 7])
         avail_9 = ctx.compute_available(node_id=9, kernel_id="ds", upstream_node_ids=[8, 7])
         assert "graph" in avail_9
         assert "centrality" in avail_9
@@ -551,7 +514,6 @@ class TestArtifactContextChainIsolation:
         ctx.record_published(5, "ds", ["linear_model"])
         ctx.record_published(8, "ds", ["graph", "centrality"])
 
-        # Kernel-level query returns everything (unfiltered)
         all_kernel = ctx.get_kernel_artifacts("ds")
         assert set(all_kernel.keys()) == {"linear_model", "graph", "centrality"}
 
@@ -563,10 +525,8 @@ class TestArtifactContextChainIsolation:
         ctx.record_published(2, "k", ["b"])
         ctx.record_published(3, "k", ["c"])
 
-        # Node 4 only has node 1 upstream
         avail = ctx.compute_available(node_id=4, kernel_id="k", upstream_node_ids=[1])
         assert set(avail.keys()) == {"a"}
 
-        # Node 5 only has node 2 and 3 upstream
         avail = ctx.compute_available(node_id=5, kernel_id="k", upstream_node_ids=[2, 3])
         assert set(avail.keys()) == {"b", "c"}

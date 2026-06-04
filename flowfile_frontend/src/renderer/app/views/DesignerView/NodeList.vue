@@ -89,17 +89,13 @@ const groupedNodes = computed(() => {
   );
 });
 
-// Reactive search query
 const searchQuery = ref("");
 
-// Compute filtered nodes based on the search query
 const filteredNodes = computed(() => {
-  // If no search query, return all grouped nodes
   if (!searchQuery.value) return groupedNodes.value;
 
   const query = searchQuery.value.toLowerCase();
   const filtered = {} as Record<CategoryKey, NodeTemplate[]>;
-  // Loop through each category and filter nodes
   for (const category in groupedNodes.value) {
     const nodesArray = groupedNodes.value[category as CategoryKey];
     const filteredArray = nodesArray.filter((node) => node.name.toLowerCase().includes(query));

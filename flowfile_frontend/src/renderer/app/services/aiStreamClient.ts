@@ -325,9 +325,7 @@ export const streamLineageQuestion = async (
   await _postSseRequest("ai/lineage_question", body, handlers, signal);
 };
 
-// --------------------------------------------------------------------------- //
-// Multi-turn planner agent                                                     //
-// --------------------------------------------------------------------------- //
+// Multi-turn planner agent
 
 export interface AgentStartRequest {
   flow_id: number;
@@ -758,9 +756,7 @@ export const resumeAgentSessionStream = async (
   await _consumePlannerSse(response, handlers);
 };
 
-// --------------------------------------------------------------------------- //
-// Chat → Agent auto-promotion routing                                          //
-// --------------------------------------------------------------------------- //
+// Chat → Agent auto-promotion routing
 
 export interface RouteHistoryEntry {
   role: "user" | "assistant";

@@ -24,9 +24,7 @@ from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database import models as db_models
 from flowfile_core.flowfile import api_consumer_manager, catalog_helpers
 
-# ---------------------------------------------------------------------------
 # Fixtures / helpers
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -99,9 +97,7 @@ def _fake_flow(flow_path, *, api_response_count):
     return SimpleNamespace(flow_settings=SimpleNamespace(path=flow_path, save_location=None), nodes=nodes)
 
 
-# ---------------------------------------------------------------------------
 # #6 — delete_flow cleans up endpoints + keys
-# ---------------------------------------------------------------------------
 
 
 def test_delete_flow_removes_endpoint_and_keys(db_session):
@@ -157,9 +153,7 @@ def test_delete_flow_without_endpoint_is_clean(db_session):
     assert db_session.get(db_models.FlowRegistration, reg_id) is None
 
 
-# ---------------------------------------------------------------------------
 # #8 — sync_api_compatibility disables an already-published endpoint
-# ---------------------------------------------------------------------------
 
 
 def test_sync_api_compatibility_disables_published_endpoint(helpers_db):
@@ -211,9 +205,7 @@ def test_sync_api_compatibility_keeps_compatible_endpoint_enabled(helpers_db):
     assert api_key_mod.verify_api_key(slug="sales", x_api_key=raw, db=helpers_db).id == ep.id
 
 
-# ---------------------------------------------------------------------------
 # #13 — enabled columns carry a server_default
-# ---------------------------------------------------------------------------
 
 
 def test_enabled_columns_have_server_default(db_session):

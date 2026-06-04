@@ -19,9 +19,7 @@ from flowfile_core.kernel.models import (
 )
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _run(coro):
@@ -61,9 +59,7 @@ def _make_manager(kernel_id: str = "test-kernel", port: int = 19000):
     return manager
 
 
-# ---------------------------------------------------------------------------
 # Model tests
-# ---------------------------------------------------------------------------
 
 
 class TestPersistenceModels:
@@ -142,14 +138,11 @@ class TestPersistenceModels:
         d = info.model_dump()
         assert d["enabled"] is True
         assert d["kernel_id"] == "k1"
-        # Should round-trip through JSON
         info2 = ArtifactPersistenceInfo(**d)
         assert info2 == info
 
 
-# ---------------------------------------------------------------------------
 # KernelManager proxy method tests (mocked HTTP)
-# ---------------------------------------------------------------------------
 
 
 class TestKernelManagerRecoverArtifacts:
@@ -185,7 +178,6 @@ class TestKernelManagerRecoverArtifacts:
     def test_recover_artifacts_kernel_not_running(self):
         manager = _make_manager()
         manager._kernels["test-kernel"].state = MagicMock(value="stopped")
-        # Set state to STOPPED
         from flowfile_core.kernel.models import KernelState
         manager._kernels["test-kernel"].state = KernelState.STOPPED
 
@@ -341,9 +333,7 @@ class TestKernelManagerPersistenceInfo:
         assert result.persisted_count == 0
 
 
-# ---------------------------------------------------------------------------
 # Docker environment variable injection tests
-# ---------------------------------------------------------------------------
 
 
 class TestKernelStartupEnvironment:
@@ -363,21 +353,17 @@ class TestKernelStartupEnvironment:
                 with patch.object(KernelManager, "_reclaim_running_containers"):
                     manager = KernelManager(shared_volume_path="/tmp/test")
 
-            # Create a kernel
             config = KernelConfig(id="env-test", name="Env Test")
             _run(manager.create_kernel(config, user_id=1))
 
-            # Mock the Docker image check and container run
             mock_docker.from_env.return_value.images.get.return_value = MagicMock()
             mock_container = MagicMock()
             mock_container.id = "fake-id"
             mock_docker.from_env.return_value.containers.run.return_value = mock_container
 
-            # Mock health check
             with patch.object(manager, "_wait_for_healthy", new_callable=AsyncMock):
                 _run(manager.start_kernel("env-test"))
 
-            # Verify containers.run was called with persistence env vars
             call_args = mock_docker.from_env.return_value.containers.run.call_args
             environment = call_args[1]["environment"]
 
@@ -400,7 +386,6 @@ class TestKernelStartupEnvironment:
                 with patch.object(KernelManager, "_reclaim_running_containers"):
                     manager = KernelManager(shared_volume_path="/tmp/test")
 
-            # Create a kernel with custom persistence settings
             config = KernelConfig(
                 id="custom-persist",
                 name="Custom Persistence",
@@ -409,12 +394,10 @@ class TestKernelStartupEnvironment:
             )
             _run(manager.create_kernel(config, user_id=1))
 
-            # Verify the kernel info has the persistence settings
             kernel = manager._kernels["custom-persist"]
             assert kernel.persistence_enabled is False
             assert kernel.recovery_mode == RecoveryMode.EAGER
 
-            # Mock Docker and start the kernel
             mock_docker.from_env.return_value.images.get.return_value = MagicMock()
             mock_container = MagicMock()
             mock_container.id = "fake-id"
@@ -423,7 +406,6 @@ class TestKernelStartupEnvironment:
             with patch.object(manager, "_wait_for_healthy", new_callable=AsyncMock):
                 _run(manager.start_kernel("custom-persist"))
 
-            # Verify containers.run received custom persistence settings
             call_args = mock_docker.from_env.return_value.containers.run.call_args
             environment = call_args[1]["environment"]
 

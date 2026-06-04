@@ -7,7 +7,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { fileStorage, SIZE_THRESHOLD } from '../../src/stores/file-storage'
 
 describe('FileStorageManager', () => {
-  // Clean up IndexedDB after each test
   afterEach(async () => {
     await fileStorage.clearAll()
     await fileStorage.clearAllDownloads()
@@ -85,7 +84,6 @@ describe('FileStorageManager', () => {
     })
 
     it('should handle deleting non-existent file gracefully', async () => {
-      // Should not throw
       await expect(fileStorage.deleteFileContent(999)).resolves.toBeUndefined()
     })
   })

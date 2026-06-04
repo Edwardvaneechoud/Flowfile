@@ -146,7 +146,6 @@ const closePanel = () => {
   emit('close')
 }
 
-// Watch for visibility changes and regenerate code
 watch(() => props.isVisible, (isVisible) => {
   if (isVisible) {
     generateCodeFromFlow()

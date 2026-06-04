@@ -12,11 +12,9 @@ class TestPersistenceOnPublish:
     def test_publish_persists_to_disk(self, store_with_persistence, persistence):
         store_with_persistence.publish("model", {"w": [1, 2]}, node_id=1, flow_id=0)
 
-        # Verify it's on disk
         persisted = persistence.list_persisted()
         assert (0, "model") in persisted
 
-        # Verify the data is correct
         loaded = persistence.load("model", flow_id=0)
         assert loaded == {"w": [1, 2]}
 
@@ -62,11 +60,9 @@ class TestLazyRecovery:
     """Lazy loading: artifacts on disk are loaded into memory on first access."""
 
     def test_lazy_index_built(self, persistence):
-        # Pre-populate disk
         meta = {"name": "model", "node_id": 1, "type_name": "dict", "module": "builtins"}
         persistence.save("model", {"w": 1}, meta, flow_id=0)
 
-        # Create a fresh store with persistence
         store = ArtifactStore()
         store.enable_persistence(persistence)
         count = store.build_lazy_index()
@@ -74,28 +70,22 @@ class TestLazyRecovery:
         assert count == 1
 
     def test_lazy_load_on_get(self, persistence):
-        # Pre-populate disk
         meta = {"name": "model", "node_id": 1, "type_name": "dict", "module": "builtins"}
         persistence.save("model", {"w": 42}, meta, flow_id=0)
 
-        # Create a fresh store with persistence + lazy index
         store = ArtifactStore()
         store.enable_persistence(persistence)
         store.build_lazy_index()
 
-        # The artifact should not be in memory yet
         listing = store.list_all()
         assert "model" in listing
         assert listing["model"].get("in_memory") is False
 
-        # Accessing it should trigger lazy load
         obj = store.get("model", flow_id=0)
         assert obj == {"w": 42}
 
-        # Now it should be in memory
         listing = store.list_all()
         assert "model" in listing
-        # No more in_memory=False flag
 
     def test_lazy_load_preserves_metadata(self, persistence):
         meta = {"name": "model", "node_id": 5, "type_name": "dict", "module": "builtins",
@@ -106,7 +96,6 @@ class TestLazyRecovery:
         store.enable_persistence(persistence)
         store.build_lazy_index()
 
-        # Trigger lazy load
         store.get("model", flow_id=3)
 
         listing = store.list_all(flow_id=3)
@@ -122,12 +111,11 @@ class TestLazyRecovery:
         store.enable_persistence(persistence)
         store.build_lazy_index()
 
-        # Publish an in-memory artifact
         store.publish("other", 42, node_id=2, flow_id=0)
 
         listing = store.list_all(flow_id=0)
-        assert "model" in listing  # from disk
-        assert "other" in listing  # from memory
+        assert "model" in listing
+        assert "other" in listing
 
     def test_publish_removes_from_lazy_index(self, persistence):
         meta = {"name": "model", "node_id": 1, "type_name": "dict", "module": "builtins"}
@@ -137,7 +125,6 @@ class TestLazyRecovery:
         store.enable_persistence(persistence)
         store.build_lazy_index()
 
-        # Delete (which should clear from lazy index) then republish
         store.delete("model", flow_id=0)
         store.publish("model", {"w": 2}, node_id=3, flow_id=0)
 
@@ -170,8 +157,8 @@ class TestEagerRecovery:
         store.publish("model", 99, node_id=1, flow_id=0)
 
         recovered = store.recover_all()
-        assert recovered == []  # already in memory
-        assert store.get("model", flow_id=0) == 99  # original value preserved
+        assert recovered == []
+        assert store.get("model", flow_id=0) == 99
 
     def test_recover_marks_recovered(self, persistence):
         meta = {"name": "model", "node_id": 1, "type_name": "dict", "module": "builtins"}

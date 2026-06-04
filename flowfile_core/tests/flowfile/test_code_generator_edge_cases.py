@@ -165,7 +165,6 @@ class TestBasicFilterOperators:
         add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
         code = export_flow_to_polars(flow)
-        # Compare flow node output with generated code output
         assert_flow_result_matches_generated(flow, output_node_id=2, code=code)
 
     @pytest.mark.parametrize("operator,value,expected_names", [
@@ -196,7 +195,6 @@ class TestBasicFilterOperators:
         add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
         code = export_flow_to_polars(flow)
-        # Compare flow node output with generated code output
         assert_flow_result_matches_generated(flow, output_node_id=2, code=code)
 
     @pytest.mark.xfail(
@@ -289,7 +287,6 @@ class TestNullHandling:
     def data_with_nulls_flow(self):
         """Create a flow with data containing nulls"""
         flow = create_basic_flow()
-        # Creating data with nulls using explicit None values
         data = input_schema.NodeManualInput(
             flow_id=1,
             node_id=1,
@@ -551,7 +548,6 @@ class TestUnionModes:
         """Test union with selective mode (diagonal) - compare flow result with generated code"""
         flow = create_basic_flow()
 
-        # Two dataframes with same columns
         for i in range(1, 3):
             data = input_schema.NodeManualInput(
                 flow_id=1,
@@ -586,7 +582,6 @@ class TestUnionModes:
         """Test union with relaxed mode (diagonal_relaxed) - compare flow result with generated code"""
         flow = create_basic_flow()
 
-        # Two dataframes with same columns
         for i in range(1, 3):
             data = input_schema.NodeManualInput(
                 flow_id=1,
@@ -669,7 +664,6 @@ class TestPolarsCodeEdgeCases:
         )
         flow.add_manual_input(data)
 
-        # Code that just returns the input
         polars_code_node = input_schema.NodePolarsCode(
             flow_id=1,
             node_id=2,
@@ -829,7 +823,6 @@ class TestFlowOutputNodes:
         """Test flow with multiple output markers"""
         flow = create_basic_flow()
 
-        # Input node
         data = input_schema.NodeManualInput(
             flow_id=1,
             node_id=1,
@@ -840,7 +833,6 @@ class TestFlowOutputNodes:
         )
         flow.add_manual_input(data)
 
-        # Two branches from the same input
         for i in range(2, 4):
             filter_node = input_schema.NodeFilter(
                 flow_id=1,
@@ -906,7 +898,6 @@ class TestConverterHelperMethods:
         flow = create_basic_flow()
         converter = FlowGraphToPolarsConverter(flow)
 
-        # Test all documented mappings
         assert converter._get_polars_dtype("String") == "pl.Utf8"
         assert converter._get_polars_dtype("Integer") == "pl.Int64"
         assert converter._get_polars_dtype("Double") == "pl.Float64"
@@ -914,7 +905,6 @@ class TestConverterHelperMethods:
         assert converter._get_polars_dtype("Date") == "pl.Date"
         assert converter._get_polars_dtype("Datetime") == "pl.Datetime"
 
-        # Test unknown type defaults to Utf8
         assert converter._get_polars_dtype("UnknownType") == "pl.Utf8"
 
     def test_get_agg_function_mapping(self):
@@ -922,12 +912,10 @@ class TestConverterHelperMethods:
         flow = create_basic_flow()
         converter = FlowGraphToPolarsConverter(flow)
 
-        # Test mapped functions
         assert converter._get_agg_function("avg") == "mean"
         assert converter._get_agg_function("average") == "mean"
         assert converter._get_agg_function("concat") == "str.concat"
 
-        # Test pass-through functions
         assert converter._get_agg_function("sum") == "sum"
         assert converter._get_agg_function("min") == "min"
         assert converter._get_agg_function("max") == "max"
@@ -940,7 +928,6 @@ class TestUnsupportedNodeHandling:
         """Test that unknown node types raise UnsupportedNodeError"""
         flow = create_basic_flow()
 
-        # Add a manual input
         data = input_schema.NodeManualInput(
             flow_id=1,
             node_id=1,

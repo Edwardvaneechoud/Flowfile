@@ -17,9 +17,7 @@ from flowfile_worker import main, models
 client = TestClient(main.app)
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def _ws_submit(metadata: dict, payload_bytes: bytes, timeout: float = 30.0):
     """Run a full WebSocket submit cycle and return (messages, binary_results).
@@ -34,11 +32,9 @@ def _ws_submit(metadata: dict, payload_bytes: bytes, timeout: float = 30.0):
     binary_frames = []
 
     with client.websocket_connect("/ws/submit") as ws:
-        # Send metadata + binary payload
         ws.send_json(metadata)
         ws.send_bytes(payload_bytes)
 
-        # Receive messages until we get a terminal one (complete or error)
         expecting_binary = False
         while True:
             if expecting_binary:
@@ -53,26 +49,20 @@ def _ws_submit(metadata: dict, payload_bytes: bytes, timeout: float = 30.0):
                 if data.get("type") == "complete":
                     if data.get("has_result"):
                         if data.get("result_type") == "polars":
-                            # Next frame is binary (raw LazyFrame bytes)
                             expecting_binary = True
                             continue
                         else:
-                            # Next frame is JSON (result_data)
                             continue
-                    # No result data follows
                     break
                 elif data.get("type") == "error":
                     break
                 elif data.get("type") == "result_data":
                     break
-                # progress messages: keep reading
 
     return json_messages, binary_frames
 
 
-# ---------------------------------------------------------------------------
 # Tests: Store operation (polars result via binary frame)
-# ---------------------------------------------------------------------------
 
 class TestWsStoreOperation:
     """Test the 'store' operation which returns a serialized LazyFrame as binary."""
@@ -88,7 +78,6 @@ class TestWsStoreOperation:
 
         json_msgs, binary_frames = _ws_submit(metadata, lf.serialize())
 
-        # Should have at least one progress message and a complete message
         complete_msgs = [m for m in json_msgs if m.get("type") == "complete"]
         assert len(complete_msgs) == 1, f"Expected 1 complete message, got {len(complete_msgs)}"
 
@@ -97,7 +86,6 @@ class TestWsStoreOperation:
         assert complete["has_result"] is True
         assert complete["file_ref"].endswith(".arrow")
 
-        # Binary frame should contain a valid serialized LazyFrame
         assert len(binary_frames) == 1, "Expected exactly 1 binary frame with result"
         result_lf = pl.LazyFrame.deserialize(io.BytesIO(binary_frames[0]))
         result_df = result_lf.collect()
@@ -140,10 +128,8 @@ class TestWsStoreOperation:
         json_msgs, binary_frames = _ws_submit(metadata, lf.serialize())
 
         progress_msgs = [m for m in json_msgs if m.get("type") == "progress"]
-        # At least the initial progress should be reported
         assert len(progress_msgs) >= 0, "Progress messages may or may not appear depending on timing"
 
-        # The complete message must be present
         complete_msgs = [m for m in json_msgs if m.get("type") == "complete"]
         assert len(complete_msgs) == 1
 
@@ -162,16 +148,12 @@ class TestWsStoreOperation:
         assert len(binary_frames) == 1
         raw_bytes = binary_frames[0]
 
-        # Should be raw bytes, not a base64 string
         assert isinstance(raw_bytes, bytes)
-        # Verify it's directly deserializable without base64 decoding
         result_lf = pl.LazyFrame.deserialize(io.BytesIO(raw_bytes))
         assert result_lf.collect().equals(lf.collect())
 
 
-# ---------------------------------------------------------------------------
 # Tests: Store sample operation (file on disk, no binary result)
-# ---------------------------------------------------------------------------
 
 class TestWsStoreSampleOperation:
     """Test the 'store_sample' operation which writes to disk without returning data."""
@@ -193,17 +175,13 @@ class TestWsStoreSampleOperation:
         assert complete["has_result"] is False
         assert complete["file_ref"].endswith(".arrow")
 
-        # No binary frame since store_sample has no queue result
         assert len(binary_frames) == 0
 
-        # The file should exist and contain the sampled data
         result_df = pl.read_ipc(complete["file_ref"])
         assert len(result_df) == 10, f"Expected 10 rows, got {len(result_df)}"
 
 
-# ---------------------------------------------------------------------------
 # Tests: Calculate schema operation (JSON result, not binary)
-# ---------------------------------------------------------------------------
 
 class TestWsCalculateSchemaOperation:
     """Test the 'calculate_schema' operation which returns schema stats as JSON."""
@@ -222,7 +200,6 @@ class TestWsCalculateSchemaOperation:
         complete = [m for m in json_msgs if m.get("type") == "complete"][0]
         assert complete["result_type"] == "other"
 
-        # Schema result comes as JSON, not binary
         assert len(binary_frames) == 0
         result_data_msgs = [m for m in json_msgs if m.get("type") == "result_data"]
         assert len(result_data_msgs) == 1, "Expected 1 result_data message"
@@ -230,15 +207,12 @@ class TestWsCalculateSchemaOperation:
         schema_stats = result_data_msgs[0]["data"]
         assert isinstance(schema_stats, list)
         assert len(schema_stats) > 0
-        # Schema stats should contain column info
         col_names = {s.get("column_name") for s in schema_stats}
         assert "name" in col_names
         assert "age" in col_names
 
 
-# ---------------------------------------------------------------------------
 # Tests: Calculate number of records (JSON result, integer)
-# ---------------------------------------------------------------------------
 
 class TestWsCalculateNumberOfRecords:
     """Test 'calculate_number_of_records' which returns an integer via JSON."""
@@ -262,9 +236,7 @@ class TestWsCalculateNumberOfRecords:
         assert result_data_msgs[0]["data"] == 42
 
 
-# ---------------------------------------------------------------------------
 # Tests: REST endpoint compatibility (ensures REST still works after changes)
-# ---------------------------------------------------------------------------
 
 class TestRestCompatibilityAfterStreamingChanges:
     """Verify the existing REST endpoints still work correctly.
@@ -289,7 +261,6 @@ class TestRestCompatibilityAfterStreamingChanges:
         status = models.Status.model_validate(r.json())
         assert status.status == "Completed", f"Expected Completed, got {status.status}: {status.error_message}"
 
-        # Results should still be base64-encoded in REST responses
         from base64 import b64decode
 
         result_df = pl.LazyFrame.deserialize(io.BytesIO(b64decode(status.results))).collect()
@@ -316,9 +287,7 @@ class TestRestCompatibilityAfterStreamingChanges:
         assert len(result_df) == 5
 
 
-# ---------------------------------------------------------------------------
 # Tests: Error handling
-# ---------------------------------------------------------------------------
 
 class TestWsErrorHandling:
     """Test WebSocket error scenarios."""
@@ -350,7 +319,6 @@ class TestWsErrorHandling:
 
         _ws_submit(metadata, lf.serialize())
 
-        # The REST status endpoint should also show completed
         r = client.get(f"/status/{task_id}")
         assert r.status_code == 200
         status = models.Status.model_validate(r.json())

@@ -26,19 +26,16 @@ def _clear_global_state():
     from kernel_runtime.artifact_persistence import RecoveryMode
 
     artifact_store.clear()
-    # Reset persistence state
     main._persistence = None
     main._recovery_mode = RecoveryMode.LAZY
     main._recovery_status = {"status": "pending", "recovered": [], "errors": []}
     main._kernel_id = "default"
     main._persistence_path = "/shared/artifacts"
     main._is_executing = False
-    # Detach persistence from artifact store
     artifact_store._persistence = None
     artifact_store._lazy_index.clear()
     artifact_store._loading_locks.clear()
     artifact_store._persist_pending.clear()
-    # Clear display output store
     main._display_output_store.clear()
 
     yield
@@ -64,14 +61,12 @@ def client(tmp_path: Path) -> Generator[TestClient, None, None]:
     Sets PERSISTENCE_PATH to a temp directory so persistence tests work
     in CI environments without /shared.
     """
-    # Set env vars before TestClient triggers lifespan
     old_path = os.environ.get("PERSISTENCE_PATH")
     os.environ["PERSISTENCE_PATH"] = str(tmp_path / "artifacts")
 
     with TestClient(app) as c:
         yield c
 
-    # Restore original env var
     if old_path is None:
         os.environ.pop("PERSISTENCE_PATH", None)
     else:

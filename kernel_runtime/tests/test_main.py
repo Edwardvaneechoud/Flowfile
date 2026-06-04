@@ -333,7 +333,6 @@ class TestArtifactEndpoints:
         assert "my_dict" in data["artifacts_published"]
 
     def test_list_artifacts(self, client: TestClient):
-        # Publish via execute
         client.post(
             "/execute",
             json={
@@ -352,7 +351,6 @@ class TestArtifactEndpoints:
         data = resp.json()
         assert "item_a" in data
         assert "item_b" in data
-        # The object itself should not be in the listing
         assert "object" not in data["item_a"]
 
     def test_clear_artifacts(self, client: TestClient):
@@ -442,7 +440,6 @@ class TestArtifactEndpoints:
         assert data["success"] is True
         assert "temp" in data["artifacts_deleted"]
 
-        # Verify artifact is gone
         resp_list = client.get("/artifacts")
         assert "temp" not in resp_list.json()
 
@@ -461,7 +458,6 @@ class TestArtifactEndpoints:
         assert resp1.json()["success"] is True
         assert "model" in resp1.json()["artifacts_published"]
 
-        # Same node re-executes — should NOT fail with "already exists"
         resp2 = client.post(
             "/execute",
             json={
@@ -475,7 +471,6 @@ class TestArtifactEndpoints:
         assert resp2.json()["success"] is True
         assert "model" in resp2.json()["artifacts_published"]
 
-        # Verify we get v2
         resp3 = client.post(
             "/execute",
             json={
@@ -513,14 +508,6 @@ class TestArtifactEndpoints:
         )
         data = resp.json()
         assert data["success"] is True
-        # The artifact was deleted and re-published in the same call.
-        # Since the final state has "model" which didn't exist before the
-        # first publish in this request, it depends on whether it was in
-        # artifacts_before. Since it existed before this execute call,
-        # and still exists after, it's neither new nor deleted from the
-        # perspective of this single call. But the name was re-published
-        # so it shouldn't appear in artifacts_deleted.
-        # Let's just verify the artifact exists and has the new value.
         resp_read = client.post(
             "/execute",
             json={
@@ -538,7 +525,6 @@ class TestArtifactEndpoints:
 class TestClearNodeArtifactsEndpoint:
     def test_clear_node_artifacts_selective(self, client: TestClient):
         """Only artifacts from specified node IDs should be removed."""
-        # Publish artifacts from two different nodes
         client.post(
             "/execute",
             json={
@@ -560,14 +546,12 @@ class TestClearNodeArtifactsEndpoint:
             },
         )
 
-        # Clear only node 40's artifacts
         resp = client.post("/clear_node_artifacts", json={"node_ids": [40]})
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "cleared"
         assert "model" in data["removed"]
 
-        # "scaler" from node 41 should still exist
         artifacts = client.get("/artifacts").json()
         assert "model" not in artifacts
         assert "scaler" in artifacts
@@ -744,7 +728,6 @@ class TestDisplayOutputs:
 
     def test_display_outputs_cleared_between_executions(self, client: TestClient):
         """Display outputs should not persist between execution calls."""
-        # First execution
         client.post(
             "/execute",
             json={
@@ -756,7 +739,6 @@ class TestDisplayOutputs:
             },
         )
 
-        # Second execution should not include first call's displays
         resp = client.post(
             "/execute",
             json={
@@ -840,7 +822,6 @@ class TestDisplayOutputs:
         )
         data = resp.json()
         assert data["success"] is True
-        # print doesn't return a value worth displaying
         assert data["display_outputs"] == []
 
 
@@ -906,8 +887,6 @@ class TestContextCleanup:
                 "output_dir": "",
             },
         )
-        # A second call that tries to use context should still work
-        # (context is re-set for each request)
         resp = client.post(
             "/execute",
             json={
@@ -976,7 +955,6 @@ class TestFlowIsolation:
         )
         assert resp2.json()["success"] is True
 
-        # Each flow reads its own artifact
         resp_read1 = client.post(
             "/execute",
             json={
@@ -1032,7 +1010,6 @@ class TestFlowIsolation:
 
     def test_reexecution_only_clears_own_flow(self, client: TestClient):
         """Re-executing a node in flow 1 doesn't clear flow 2's artifacts."""
-        # Flow 1, node 5 publishes "model"
         client.post(
             "/execute",
             json={
@@ -1043,7 +1020,6 @@ class TestFlowIsolation:
                 "flow_id": 1,
             },
         )
-        # Flow 2, node 5 publishes "model"
         client.post(
             "/execute",
             json={
@@ -1055,7 +1031,6 @@ class TestFlowIsolation:
             },
         )
 
-        # Re-execute node 5 in flow 1 — auto-clear only affects flow 1
         resp = client.post(
             "/execute",
             json={
@@ -1068,7 +1043,6 @@ class TestFlowIsolation:
         )
         assert resp.json()["success"] is True
 
-        # Flow 2's artifact should be untouched
         resp_f2 = client.post(
             "/execute",
             json={
@@ -1111,7 +1085,6 @@ class TestFlowIsolation:
         resp20 = client.get("/artifacts", params={"flow_id": 20})
         assert set(resp20.json().keys()) == {"b"}
 
-        # No filter returns both
         resp_all = client.get("/artifacts")
         assert set(resp_all.json().keys()) == {"a", "b"}
 
@@ -1145,7 +1118,6 @@ class TestFlowIsolation:
         assert resp.json()["status"] == "cleared"
         assert "model" in resp.json()["removed"]
 
-        # Flow 2's artifact survives
         artifacts_f2 = client.get("/artifacts", params={"flow_id": 2}).json()
         assert "model" in artifacts_f2
 
@@ -1167,7 +1139,6 @@ class TestExecutionCancellation:
         def _target():
             ready.set()
             try:
-                # Block until interrupted
                 time.sleep(30)
             except KeyboardInterrupt:
                 caught[0] = True

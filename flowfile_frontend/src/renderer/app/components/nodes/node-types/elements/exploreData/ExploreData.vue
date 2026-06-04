@@ -46,7 +46,6 @@ const loadNodeData = async (nodeId: number) => {
     chartList.value = inputData.specList || [];
   } catch (error: any) {
     console.error("Error loading GraphicWalker data:", error);
-    // Set user-friendly error message
     if (error.response && error.response.status === 422) {
       errorMessage.value = "The analysis flow has not been run yet.";
     } else if (error instanceof Error) {
@@ -88,7 +87,6 @@ const getCurrentSpec = async (): Promise<IChart[] | null> => {
   }
 };
 
-// --- Save Spec Back to Store ---
 const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
   if (!nodeData.value) {
     console.error("Cannot save: Original node data context is missing.");
@@ -116,7 +114,7 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
 };
 
 const pushNodeData = async () => {
-  errorMessage.value = null; // Clear previous errors
+  errorMessage.value = null;
   windowStore.setFullScreen("nodeSettings", false);
   const currentSpec = await getCurrentSpec();
 
@@ -125,7 +123,6 @@ const pushNodeData = async () => {
     return;
   }
 
-  // Decide whether to save empty specs or not
   if (currentSpec.length === 0) {
     console.log("No chart configurations exported, skipping save.");
     return;
@@ -138,10 +135,9 @@ const pushNodeData = async () => {
   }
 };
 
-// --- Expose Methods ---
 defineExpose({
   loadNodeData,
-  pushNodeData, // Expose the main save action
+  pushNodeData,
 });
 </script>
 

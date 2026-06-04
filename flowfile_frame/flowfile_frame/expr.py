@@ -107,7 +107,6 @@ def _compute_cast_ff_repr(ff_repr: str | None, pl_dtype: pl.DataType | type) -> 
 def _get_expr_and_repr(value: Any) -> tuple[pl.Expr | None, str]:
     """Helper to get polars expr and repr string for operands."""
     if isinstance(value, Expr):
-        # Ensure we return None if the inner expression is None
         inner_expr = value.expr if value.expr is not None else None
         return inner_expr, value._repr_str
     elif isinstance(value, pl.Expr):
@@ -154,7 +153,6 @@ class StringMethods:
         if convertable_to_code is None:
             convertable_to_code = self.convertable_to_code
 
-        # Compute ff_repr for string methods
         ff = None
         parent_ff = self.parent._ff_repr
         if parent_ff is not None and method_name in STRING_METHOD_FF_MAP:
@@ -181,7 +179,6 @@ class StringMethods:
         )
         return new_expr
 
-    # ... (String methods remain unchanged from your provided code) ...
     def contains(self, pattern, *, literal=False):
         res_expr = self.expr.contains(pattern, literal=literal) if self.expr is not None else None
         return self._create_next_expr(
@@ -359,7 +356,6 @@ class DateTimeMethods:
         if convertable_to_code is None:
             convertable_to_code = self.convertable_to_code
 
-        # Compute ff_repr for datetime methods
         ff = None
         parent_ff = self.parent._ff_repr
         if parent_ff is not None and method_name in DT_METHOD_FF_MAP:
@@ -515,18 +511,14 @@ class Expr:
         bool
             True if this is a simple expression, False otherwise
         """
-        # Check for selector expressions
         if self.selector is not None:
             # Selector expressions are complex - they select multiple columns
             return False
 
-        # Check if this expression has any arithmetic/logical operators
         if hasattr(self, "_repr_str"):
-            # Check for when/then/otherwise expressions
             if any(marker in self._repr_str for marker in ["when(", ".then(", ".otherwise("]):
                 return False
 
-            # Look for arithmetic operators in the expression string
             for op in [
                 "+",
                 "-",
@@ -549,10 +541,8 @@ class Expr:
                     if f".alias('{op}" in self._repr_str:
                         continue
 
-                    # Otherwise, we have a complex expression
                     return False
 
-            # Check for other functions that might create complex expressions
             for func in [
                 "filter(",
                 "where(",
@@ -564,7 +554,6 @@ class Expr:
                 if func in self._repr_str:
                     return False
 
-        # If we reach here, it's a simple expression (just column reference and maybe aggregation)
         return True
 
     def arg_unique(self) -> Expr:
@@ -607,7 +596,6 @@ class Expr:
         if convertable_to_code is None:
             convertable_to_code = self.convertable_to_code
 
-        # Combine function sources from current expression and new ones
         combined_function_sources = self._function_sources.copy()
         if _function_sources:
             combined_function_sources.extend(_function_sources)
@@ -653,7 +641,6 @@ class Expr:
         # For binary operations, just construct the expression without extra parentheses
         new_repr = f"{self._repr_str} {op_symbol} {other_repr}"
 
-        # Compute flowfile function representation
         if ff_repr is not ...:
             new_ff = ff_repr
         else:
@@ -664,7 +651,6 @@ class Expr:
             else:
                 new_ff = None
 
-        # Derive output column name from the polars expression metadata
         output_column_name = None
         if result_expr is not None:
             try:
@@ -989,7 +975,6 @@ class Expr:
         """
         Filter expression
         """
-        # Build arguments for the filter representation
         args_strs = []
         for pred in predicates:
             if isinstance(pred, Expr):
@@ -1000,27 +985,21 @@ class Expr:
             else:
                 args_strs.append(repr(pred))
 
-        # Add constraints as keyword arguments
         constraints_strs = [f"{k}={repr(v)}" for k, v in constraints.items()]
         all_args_str = ", ".join(args_strs + constraints_strs)
 
-        # Process the predicates for the polars expression
         processed_predicates = []
         for pred in predicates:
             if isinstance(pred, Expr):
                 if pred.expr is not None:
                     processed_predicates.append(pred.expr)
             else:
-                # Handle non-Expr predicates (convert to polars Expr if possible)
                 processed_predicates.append(pred)
 
-        # Process constraints for the polars expression
         for col_name, value in constraints.items():
-            # Create equivalent of pl.col(col_name).eq(value)
             constraint_expr = pl.col(col_name).eq(value)
             processed_predicates.append(constraint_expr)
 
-        # Create the actual polars expression if possible
         res_expr = None
         if self.expr is not None:
             try:
@@ -1140,7 +1119,6 @@ class Expr:
         String representation will show 'descending' and 'nulls_last' if they are True,
         regardless of 'order_by' presence.
         """
-        # Process all partition columns (partition_by + more_exprs)
         all_partition_cols = [partition_by]
         if more_exprs:
             all_partition_cols.extend(more_exprs)
@@ -1177,8 +1155,6 @@ class Expr:
             col_reprs = [self._get_expr_repr(p) for p in processed_partition_cols]
             over_arg_strings_for_repr.append(f"[{', '.join(col_reprs)}]")
 
-        # Handle keyword-like arguments for string representation
-        # order_by
         if processed_order_by is not None:
             if isinstance(processed_order_by, list):
                 order_by_repr_val = f"[{', '.join([self._get_expr_repr(o) for o in processed_order_by])}]"
@@ -1209,11 +1185,9 @@ class Expr:
                 else:
                     partition_arg = [p.expr if hasattr(p, "expr") else p for p in processed_partition_cols]
 
-                # Build kwargs for the actual polars over() call
                 polars_call_kwargs = {"mapping_strategy": mapping_strategy}
 
                 if processed_order_by is not None:
-                    # Convert order_by to Polars expressions
                     if isinstance(processed_order_by, list):
                         polars_order_by_arg = [o.expr if hasattr(o, "expr") else o for o in processed_order_by]
                     else:
@@ -1253,7 +1227,6 @@ class Expr:
         if not self._function_sources:
             return self._repr_str
 
-        # Remove duplicates while preserving order
         unique_sources = []
         seen = set()
         for source in self._function_sources:
@@ -1261,7 +1234,6 @@ class Expr:
                 seen.add(source)
                 unique_sources.append(source)
 
-        # Build the complete code with function definitions
         functions_section = "# Function definitions\n" + "\n\n".join(unique_sources)
         return functions_section + "\n#─────SPLIT─────\n\n" + self._repr_str
 
@@ -1402,7 +1374,6 @@ class Column(Expr):
 
     def to_select_input(self) -> transform_schema.SelectInput:
         """Convert Column state back to a SelectInput schema object."""
-        # This logic seems correct based on your previous version
         current_name = self.column_name
         original_name = self._select_input.old_name
         new_name_attr = self._select_input.new_name
@@ -1437,13 +1408,10 @@ class When(Expr):
 
     def __init__(self, condition):
         """Initialize a When expression with a condition."""
-        # Get the condition's expression and representation
         condition_expr, condition_repr = self._get_expr_and_repr(condition)
         self.condition = condition_expr
 
-        # Build the initial representation string
         repr_str = f"pl.when({condition_repr})"
-        # Initialize the base class
         super().__init__(expr=None, repr_str=repr_str, is_complex=True)
         self._branch_expr = None
 
@@ -1472,7 +1440,6 @@ class When(Expr):
 
     def otherwise(self, value):
         """Set the value to use when no condition is True."""
-        # Get the value's expression and representation
         value_expr, value_repr = self._get_expr_and_repr(value)
         final_repr = f"{self._repr_str}.otherwise({value_repr})"
 
@@ -1500,7 +1467,6 @@ class When(Expr):
         except Exception as e:
             logger.warning(f"Error adding new when() branch: {e}")
 
-        # Return self for chaining
         return self
 
 
@@ -1551,12 +1517,9 @@ def agg_function(func=None, *, customize_repr=True):
         def wrapper(*args, **kwargs):
             from flowfile_frame.expr import Expr
 
-            # Get the Polars expression from the original function
             pl_expr = func(*args, **kwargs)
 
-            # Generate representation string
             if customize_repr:
-                # Process positional arguments
                 args_reprs = []
                 for arg in args:
                     if isinstance(arg, str):
@@ -1566,7 +1529,6 @@ def agg_function(func=None, *, customize_repr=True):
                     else:
                         args_reprs.append(repr(arg))
 
-                # Process keyword arguments
                 kwargs_reprs = []
                 for k, v in kwargs.items():
                     if isinstance(v, str) and not (k == "method" or k == "mapping_strategy"):
@@ -1578,15 +1540,12 @@ def agg_function(func=None, *, customize_repr=True):
                     else:
                         kwargs_reprs.append(f"{k}={repr(v)}")
 
-                # Combine into final representation
                 all_args = args_reprs + kwargs_reprs
                 args_str = ", ".join(all_args)
                 repr_str = f"pl.{agg_func_name}({args_str})"
             else:
-                # Use default representation (rarely needed)
                 repr_str = None
 
-            # Determine initial column name for tracking (if applicable)
             initial_column_name = None
             if built_in_len(args) > 0:
                 first_arg = args[0]
@@ -1595,12 +1554,10 @@ def agg_function(func=None, *, customize_repr=True):
                 elif hasattr(first_arg, "column_name"):
                     initial_column_name = first_arg.column_name
 
-            # Determine if this is a complex expression
             is_complex = True
             if built_in_len(args) == 1 and isinstance(args[0], str) and not kwargs:
                 is_complex = False
 
-            # Create the expression with all necessary properties
             return Expr(
                 pl_expr,
                 repr_str=repr_str,

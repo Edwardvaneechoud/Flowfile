@@ -1,6 +1,5 @@
 <template>
   <div class="popover-container">
-    <!-- Attach a ref to the reference element -->
     <div
       ref="referenceEl"
       class="popover-reference"
@@ -10,9 +9,7 @@
       <slot></slot>
     </div>
 
-    <!-- The portal target for the popover -->
     <Teleport v-if="visible" to="body">
-      <!-- Attach a ref to the popover itself -->
       <div
         ref="popoverEl"
         :style="popoverStyle"
@@ -79,7 +76,7 @@ const updatePosition = () => {
 
   const referenceRect = referenceEl.value.getBoundingClientRect();
   const popoverRect = popoverEl.value.getBoundingClientRect();
-  const offset = 20; // Increased offset for a lower popover position
+  const offset = 20;
 
   let top = 0;
   let left = 0;
@@ -106,13 +103,11 @@ const updatePosition = () => {
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
 
-  // Adjust horizontal position if needed
   if (left < 10) left = 10;
   if (left + popoverRect.width > viewportWidth - 10) {
     left = viewportWidth - popoverRect.width - 10;
   }
 
-  // Adjust vertical position if needed
   if (top < 10) top = 10;
   if (top + popoverRect.height > viewportHeight - 10) {
     top = viewportHeight - popoverRect.height - 10;
@@ -125,7 +120,6 @@ const updatePosition = () => {
   };
 };
 
-// Listen for window resize to update popover position
 onMounted(() => {
   window.addEventListener("resize", () => {
     if (visible.value) {

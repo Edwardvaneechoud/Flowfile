@@ -62,7 +62,6 @@ async def refresh_access_token(
     """Exchange a valid refresh token for a new access token and refresh token."""
     username = decode_refresh_token(refresh_token)
 
-    # Verify user still exists and is not disabled
     user = db.query(db_models.User).filter(db_models.User.username == username).first()
     if user is None:
         raise HTTPException(
@@ -82,7 +81,6 @@ async def refresh_access_token(
     return {"access_token": new_access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
 
 
-# Get current user endpoint
 @router.get("/users/me", response_model=User)
 async def read_users_me(current_user=Depends(get_current_active_user)):
     return current_user
@@ -114,23 +112,19 @@ async def create_user(
     user_data: UserCreate, current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)
 ):
     """Create a new user (admin only)"""
-    # Check if username already exists
     existing_user = db.query(db_models.User).filter(db_models.User.username == user_data.username).first()
     if existing_user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
 
-    # Check if email already exists (if provided)
     if user_data.email:
         existing_email = db.query(db_models.User).filter(db_models.User.email == user_data.email).first()
         if existing_email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
 
-    # Validate password requirements
     is_valid, error_message = validate_password(user_data.password)
     if not is_valid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
-    # Create new user with must_change_password=True
     hashed_password = get_password_hash(user_data.password)
     new_user = db_models.User(
         username=user_data.username,
@@ -175,9 +169,7 @@ async def update_user(
     if user.id == current_user.id and user_data.is_admin is False:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot remove your own admin privileges")
 
-    # Update fields
     if user_data.email is not None:
-        # Check if email already exists for another user
         existing_email = (
             db.query(db_models.User)
             .filter(db_models.User.email == user_data.email, db_models.User.id != user_id)
@@ -197,12 +189,10 @@ async def update_user(
         user.is_admin = user_data.is_admin
 
     if user_data.password is not None:
-        # Validate password requirements
         is_valid, error_message = validate_password(user_data.password)
         if not is_valid:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
         user.hashed_password = get_password_hash(user_data.password)
-        # Reset must_change_password when admin sets a new password
         user.must_change_password = True
 
     if user_data.must_change_password is not None:
@@ -258,16 +248,13 @@ async def change_own_password(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    # Verify current password
     if not verify_password(password_data.current_password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
 
-    # Validate new password requirements
     is_valid, error_message = validate_password(password_data.new_password)
     if not is_valid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
-    # Update password and clear must_change_password flag
     user.hashed_password = get_password_hash(password_data.new_password)
     user.must_change_password = False
     db.commit()

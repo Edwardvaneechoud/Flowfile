@@ -123,7 +123,6 @@ def _build_null_row_from_schema(schema: list[FlowfileColumn]):
         dtype = cast_str_to_polars_type(col.data_type)
         pl_schema[col.column_name] = dtype if dtype is not None else pl.String
 
-    # One row of None per column.
     data = {name: [None] for name in pl_schema}
     return pl.DataFrame(data, schema=pl_schema).lazy()
 
@@ -140,7 +139,6 @@ def _resolve_sample_row(
     the executor honours the upstream-tier handler before calling here)."""
     upstream_node = flow.get_node(upstream_id) if hasattr(flow, "get_node") else None
     if upstream_node is not None:
-        # Best-effort: use real materialised data when present.
         data_frame = getattr(upstream_node, "data_frame", None)
         has_run = getattr(upstream_node, "has_run", False)
         if has_run and data_frame is not None:

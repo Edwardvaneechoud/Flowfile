@@ -41,9 +41,7 @@ def _upsert_secret(db: Session, existing_secret_id: int | None, name: str, secre
     return new_secret.id
 
 
-# ---------------------------------------------------------------------------
 # Kafka Connection CRUD
-# ---------------------------------------------------------------------------
 
 
 def store_kafka_connection(db: Session, connection: KafkaConnectionCreate, user_id: int) -> KafkaConnectionOut:
@@ -57,7 +55,6 @@ def store_kafka_connection(db: Session, connection: KafkaConnectionCreate, user_
             f"Kafka connection with name '{connection.connection_name}' already exists for user {user_id}."
         )
 
-    # Encrypt secrets
     sasl_password_id = None
     if connection.sasl_password:
         secret = store_secret(
@@ -120,7 +117,6 @@ def update_kafka_connection(
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
-    # Only update fields explicitly provided in the request (allows clearing via null)
     provided = update.model_fields_set
     if "connection_name" in provided:
         db_conn.connection_name = update.connection_name
@@ -141,7 +137,6 @@ def update_kafka_connection(
     if "extra_config" in provided:
         db_conn.extra_config = json.dumps(update.extra_config) if update.extra_config else None
 
-    # Update secrets if provided
     if update.sasl_password is not None:
         db_conn.sasl_password_id = _upsert_secret(
             db, db_conn.sasl_password_id, f"kafka_{db_conn.connection_name}_sasl", update.sasl_password, user_id
@@ -161,7 +156,6 @@ def delete_kafka_connection(db: Session, connection_id: int, user_id: int) -> No
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
-    # Delete secrets first, then the connection
     secret_ids = [db_conn.sasl_password_id, db_conn.ssl_key_id]
     for sid in secret_ids:
         if sid:
@@ -223,9 +217,7 @@ def _decrypt_config_secrets(config: dict, user_id: int) -> dict:
     return out
 
 
-# ---------------------------------------------------------------------------
 # Connection testing & topic discovery
-# ---------------------------------------------------------------------------
 
 
 def test_kafka_connection(db: Session, connection_id: int, user_id: int) -> KafkaConnectionTestResult:
@@ -271,9 +263,7 @@ def list_topics(db: Session, connection_id: int, user_id: int) -> list[KafkaTopi
         consumer.close()
 
 
-# ---------------------------------------------------------------------------
 # Consumer group management (offset tracking is handled by Kafka broker)
-# ---------------------------------------------------------------------------
 
 
 def reset_consumer_group(db: Session, group_id: str, connection_id: int, user_id: int, topic: str) -> None:
@@ -291,7 +281,6 @@ def reset_consumer_group(db: Session, group_id: str, connection_id: int, user_id
 
     config = _decrypt_config_secrets(build_consumer_config(db, db_conn, user_id), user_id)
 
-    # Discover partition count for the topic
     config["group.id"] = group_id
     consumer = Consumer(config)
     try:
@@ -303,7 +292,6 @@ def reset_consumer_group(db: Session, group_id: str, connection_id: int, user_id
     finally:
         consumer.close()
 
-    # Set committed offsets to 0 (beginning) for every partition
     tps = [TopicPartition(topic, p, 0) for p in range(partition_count)]
     admin = AdminClient(config)
     futures = admin.alter_consumer_group_offsets([ConsumerGroupTopicPartitions(group_id, tps)])
@@ -351,9 +339,7 @@ def get_consumer_group_offsets(db: Session, group_id: str, connection_id: int, u
     return {}
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _to_connection_out(db_conn: KafkaConnection) -> KafkaConnectionOut:

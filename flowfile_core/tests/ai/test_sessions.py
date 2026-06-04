@@ -88,9 +88,7 @@ def _reset_session_store() -> Iterator[None]:
     sessions.clear_for_tests()
 
 
-# --------------------------------------------------------------------------- #
-# Store round-trip #
-# --------------------------------------------------------------------------- #
+# Store round-trip
 
 
 def test_agent_session_w57_fields_default_to_empty_lists() -> None:
@@ -138,9 +136,7 @@ def test_session_store_user_id_namespacing() -> None:
     owner = _make_session(user_id=1)
     sessions.register_session(owner)
 
-    # Wrong user_id → no read.
     assert sessions.get_session(owner.session_id, user_id=2) is None
-    # Wrong user_id → no pop.
     assert sessions.pop_session(owner.session_id, user_id=2) is None
     # Owner can still read after the failed cross-user pop attempt.
     assert sessions.get_session(owner.session_id, user_id=1) is owner
@@ -170,9 +166,7 @@ def test_list_sessions_for_user() -> None:
     assert {s.session_id for s in user2_sessions} == {s2.session_id}
 
 
-# --------------------------------------------------------------------------- #
-# Snapshot capture #
-# --------------------------------------------------------------------------- #
+# Snapshot capture
 
 
 def test_capture_snapshot_basic() -> None:
@@ -192,9 +186,7 @@ def test_capture_snapshot_records_node_types() -> None:
     assert snap.node_types == {1: "manual_input", 2: "manual_input"}
 
 
-# --------------------------------------------------------------------------- #
-# Drift detection (W45 — id-set only) #
-# --------------------------------------------------------------------------- #
+# Drift detection (W45 — id-set only)
 
 
 def test_detect_drift_no_change() -> None:
@@ -276,9 +268,7 @@ def test_drift_detail_is_empty() -> None:
     assert not detail3.is_empty()
 
 
-# --------------------------------------------------------------------------- #
-# Lazy litellm contract #
-# --------------------------------------------------------------------------- #
+# Lazy litellm contract
 
 
 def test_lazy_litellm_contract() -> None:
@@ -295,7 +285,6 @@ def test_lazy_litellm_contract() -> None:
 def test_session_touch_updates_timestamp() -> None:
     sess = _make_session()
     before = sess.updated_at
-    # Force a different instant.
     import time
 
     time.sleep(0.001)
@@ -312,9 +301,7 @@ def test_session_default_status_is_running() -> None:
     assert sess.diff_id is None
 
 
-# --------------------------------------------------------------------------- #
-# staged_results hygiene on resume #
-# --------------------------------------------------------------------------- #
+# staged_results hygiene on resume
 
 
 def _staged_add_entry(

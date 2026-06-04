@@ -60,7 +60,6 @@ class TestCustomNode(CustomNodeBase):
         f.flush()
         yield Path(f.name)
 
-    # Cleanup
     Path(f.name).unlink(missing_ok=True)
 
 
@@ -86,7 +85,6 @@ class InvalidNode(CustomNodeBase):
         f.flush()
         yield Path(f.name)
 
-    # Cleanup
     Path(f.name).unlink(missing_ok=True)
 
 
@@ -107,7 +105,6 @@ def broken_function(
         f.flush()
         yield Path(f.name)
 
-    # Cleanup
     Path(f.name).unlink(missing_ok=True)
 
 
@@ -147,17 +144,13 @@ class TestUnloadNodeByName:
 
     def test_unload_removes_module_from_cache(self):
         """Test that unloading removes related modules from sys.modules."""
-        # Add some fake modules to sys.modules
         sys.modules['test_node_module'] = MagicMock()
         sys.modules['custom_node_test_node_module_123'] = MagicMock()
 
-        # Verify they exist
         assert 'test_node_module' in sys.modules
 
-        # Unload
         result = unload_node_by_name('Test Node Module')
 
-        # Verify removed
         assert 'test_node_module' not in sys.modules
         assert 'custom_node_test_node_module_123' not in sys.modules
         assert result is True
@@ -175,14 +168,11 @@ class TestNodeRegistryIntegration:
         """Test the full workflow of loading and using a custom node."""
         import polars as pl
 
-        # Load the node
         node_class = load_single_node_from_file(temp_node_file)
         assert node_class is not None
 
-        # Create an instance
         node = node_class()
 
-        # Verify it can process data
         input_df = pl.DataFrame({"a": [1, 2, 3]}).lazy()
         result = node.process(input_df)
 
@@ -190,19 +180,16 @@ class TestNodeRegistryIntegration:
 
     def test_reload_modified_node(self, temp_node_file):
         """Test that a node can be reloaded after modification."""
-        # First load
         node_class_1 = load_single_node_from_file(temp_node_file)
         assert node_class_1 is not None
         assert node_class_1().node_name == "Test Custom Node"
 
-        # Modify the file
         new_code = temp_node_file.read_text().replace(
             'node_name: str = "Test Custom Node"',
             'node_name: str = "Modified Node Name"'
         )
         temp_node_file.write_text(new_code)
 
-        # Reload - should get the modified version
         node_class_2 = load_single_node_from_file(temp_node_file)
         assert node_class_2 is not None
         assert node_class_2().node_name == "Modified Node Name"

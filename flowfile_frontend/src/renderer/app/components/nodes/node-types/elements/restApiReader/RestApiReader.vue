@@ -382,7 +382,6 @@ const bodyError = ref<string>("");
 const sampling = ref<boolean>(false);
 const sampleError = ref<string>("");
 
-// settings is a stable accessor used throughout the template.
 const settings = computed(() => nodeRestApi.value!.rest_api_settings);
 
 const secretLabel = computed(() => {
@@ -416,7 +415,6 @@ const loadSecrets = async () => {
 };
 
 const openSecretsManager = () => {
-  // Navigate in-app to the Secrets tab of the Connections manager (same tab).
   router.push({ name: "connections", query: { tab: "secrets" } });
 };
 

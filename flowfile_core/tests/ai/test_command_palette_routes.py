@@ -32,9 +32,7 @@ from flowfile_core.configs import settings as core_settings
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
-# --------------------------------------------------------------------------- #
-# Fixtures #
-# --------------------------------------------------------------------------- #
+# Fixtures
 
 
 def _flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
@@ -122,9 +120,7 @@ def authed_client() -> Iterator[TestClient]:
         main.app.dependency_overrides.pop(get_current_active_user, None)
 
 
-# --------------------------------------------------------------------------- #
-# 1. Happy path #
-# --------------------------------------------------------------------------- #
+# 1. Happy path
 
 
 def test_route_happy_path(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -163,9 +159,7 @@ def test_route_happy_path(authed_client: TestClient, monkeypatch: pytest.MonkeyP
     assert body["diff"]["additions"][0]["node_type"] == "filter"
 
 
-# --------------------------------------------------------------------------- #
-# 2. 404 unknown provider #
-# --------------------------------------------------------------------------- #
+# 2. 404 unknown provider
 
 
 def test_route_404_unknown_provider(authed_client: TestClient) -> None:
@@ -181,9 +175,7 @@ def test_route_404_unknown_provider(authed_client: TestClient) -> None:
     assert "imaginary" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 3. 409 unconfigured provider #
-# --------------------------------------------------------------------------- #
+# 3. 409 unconfigured provider
 
 
 def test_route_409_unconfigured(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -210,9 +202,7 @@ def test_route_409_unconfigured(authed_client: TestClient, monkeypatch: pytest.M
     assert response.status_code == 409
 
 
-# --------------------------------------------------------------------------- #
-# 4. 422 flow not found #
-# --------------------------------------------------------------------------- #
+# 4. 422 flow not found
 
 
 def test_route_422_flow_not_found(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -233,9 +223,7 @@ def test_route_422_flow_not_found(authed_client: TestClient, monkeypatch: pytest
     assert "999" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 5. 422 validation #
-# --------------------------------------------------------------------------- #
+# 5. 422 validation
 
 
 @pytest.mark.parametrize(
@@ -256,9 +244,7 @@ def test_route_422_validation(authed_client: TestClient, payload: dict[str, Any]
     assert response.status_code == 422
 
 
-# --------------------------------------------------------------------------- #
-# 6. 503 gate #
-# --------------------------------------------------------------------------- #
+# 6. 503 gate
 
 
 def test_route_503_when_flag_off(authed_client: TestClient) -> None:
@@ -275,9 +261,7 @@ def test_route_503_when_flag_off(authed_client: TestClient) -> None:
     assert "AI features are disabled" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 7. Soft failure passes through as 200 + degraded #
-# --------------------------------------------------------------------------- #
+# 7. Soft failure passes through as 200 + degraded
 
 
 def test_route_degraded_passes_through(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

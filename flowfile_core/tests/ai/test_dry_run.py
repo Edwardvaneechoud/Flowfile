@@ -20,9 +20,7 @@ from flowfile_core.ai.tools.dry_run import (
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 
-# --------------------------------------------------------------------------- #
-# DryRunCache #
-# --------------------------------------------------------------------------- #
+# DryRunCache
 
 
 def test_cache_hit_returns_stored_schema() -> None:
@@ -45,7 +43,6 @@ def test_cache_lru_eviction() -> None:
     for i in range(5):
         cache.put(f"c{i}", f"s{i}", [FlowfileColumn.from_input(f"col{i}", "Integer")])
     assert len(cache) == 3
-    # First two evicted.
     assert cache.get("c0", "s0") is None
     assert cache.get("c1", "s1") is None
     assert cache.get("c4", "s4") is not None
@@ -55,9 +52,7 @@ def test_cache_get_promotes_to_recent() -> None:
     cache = DryRunCache(capacity=2)
     cache.put("a", "1", [FlowfileColumn.from_input("a", "Integer")])
     cache.put("b", "1", [FlowfileColumn.from_input("b", "Integer")])
-    # Access "a" — moves to recent end.
     cache.get("a", "1")
-    # Insert "c" — should evict "b" (least recently used), not "a".
     cache.put("c", "1", [FlowfileColumn.from_input("c", "Integer")])
     assert cache.get("a", "1") is not None
     assert cache.get("b", "1") is None
@@ -68,9 +63,7 @@ def test_default_cache_capacity() -> None:
     assert DEFAULT_CACHE_CAPACITY == 64
 
 
-# --------------------------------------------------------------------------- #
-# Hash helpers #
-# --------------------------------------------------------------------------- #
+# Hash helpers
 
 
 def test_hash_code_deterministic() -> None:
@@ -92,9 +85,7 @@ def test_hash_sample_distinguishes_data() -> None:
     assert _hash_sample(df1) != _hash_sample(df2)
 
 
-# --------------------------------------------------------------------------- #
-# Null-row construction #
-# --------------------------------------------------------------------------- #
+# Null-row construction
 
 
 def test_build_null_row_from_schema() -> None:
@@ -115,20 +106,17 @@ def test_build_null_row_handles_unknown_dtype_string_fallback() -> None:
     lf = _build_null_row_from_schema(schema)
     df = lf.collect()
     assert df.shape == (1, 1)
-    # Unknown types fall back to String — schema is preserved structurally.
     assert df.schema["weird"] == pl.String
 
 
-# --------------------------------------------------------------------------- #
-# dry_run_code orchestration #
-# --------------------------------------------------------------------------- #
+# dry_run_code orchestration
 
 
 class _FakeFlow:
     flow_id = 7
 
     def get_node(self, node_id):
-        return None  # No materialised upstream — falls back to null-row path.
+        return None
 
 
 def test_dry_run_uses_null_row_fallback_when_upstream_unrun(
@@ -158,7 +146,6 @@ def test_dry_run_uses_null_row_fallback_when_upstream_unrun(
     assert len(out) == 1
     assert out[0].column_name == "out"
     assert captured["code"] == "main"
-    # Cache populated.
     assert cache.get(_hash_code("main"), _hash_sample(captured["sample"])) is not None
 
 
@@ -172,7 +159,7 @@ def test_dry_run_raises_when_no_sample_available(monkeypatch: pytest.MonkeyPatch
             code="main",
             output_names=["main"],
             cache=cache,
-            upstream_schemas={},  # no schema for upstream id 1
+            upstream_schemas={},
         )
 
 

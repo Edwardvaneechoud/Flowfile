@@ -266,7 +266,6 @@ def read_csv(
                 description or f"Read CSV with Polars scan_csv from {Path(source[0]).name} (and possibly others)"
             )
 
-        # Assuming input_schema.NodePolarsCode, transform_schema.PolarsCodeInput are defined
         polars_code_settings = input_schema.NodePolarsCode(
             flow_id=flow_id,
             node_id=node_id,
@@ -498,7 +497,6 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
     Returns:
         A FlowFrame with the data
     """
-    # Create new node ID
     node_id = generate_node_id()
 
     if not flow_graph:
@@ -515,10 +513,8 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
         description=description,
     )
 
-    # Add to graph
     flow_graph.add_manual_input(input_node)
 
-    # Return new frame
     return FlowFrame(
         data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
     )
@@ -590,7 +586,6 @@ def concat(
         raise ValueError("No frames provided to concat_frames")
     if len(frames) == 1:
         return frames[0]
-    # Use first frame's concat method with remaining frames
     first_frame = frames[0]
     remaining_frames = frames[1:]
 

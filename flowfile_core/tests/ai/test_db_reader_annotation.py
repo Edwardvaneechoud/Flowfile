@@ -88,7 +88,6 @@ class TestDatabaseReaderQueryAnnotation:
         old_settings = _db_reader_settings(query="SELECT * FROM users")
         flow = _mock_flow_with_db_reader(old_settings)
 
-        # Same query, no change
         new_settings_payload = old_settings.model_dump(mode="json")
 
         result = _handle_update_node_settings(

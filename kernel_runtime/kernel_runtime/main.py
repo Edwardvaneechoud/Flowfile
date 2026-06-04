@@ -57,21 +57,15 @@ logger = logging.getLogger(__name__)
 
 artifact_store = ArtifactStore()
 
-# ---------------------------------------------------------------------------
-# Persistent namespace store for notebook-style execution
-# ---------------------------------------------------------------------------
-# Maintains a persistent execution namespace per flow_id so that variables
-# defined in one cell execution are available in subsequent cell executions.
-# Uses LRU eviction to prevent unbounded memory growth.
+# Persistent namespace store for notebook-style execution.
+# Per flow_id so variables defined in one cell are available in later cells;
+# LRU eviction prevents unbounded memory growth.
 _namespace_store: dict[int, dict] = {}
 _namespace_access: dict[int, float] = {}  # flow_id -> last access timestamp
 _MAX_NAMESPACES = int(os.environ.get("MAX_NAMESPACES", "20"))
 
-# ---------------------------------------------------------------------------
-# Persistent display output store keyed by (flow_id, node_id)
-# ---------------------------------------------------------------------------
-# Stores display outputs from the most recent execution of each node so they
-# can be retrieved by the frontend after a flow run completes.
+# Display outputs from the most recent execution of each node, retrievable by
+# the frontend after a flow run completes.
 _display_output_store: dict[tuple[int, int], list[dict]] = {}
 
 
@@ -102,9 +96,7 @@ def _clear_namespace(flow_id: int) -> None:
     _namespace_access.pop(flow_id, None)
 
 
-# ---------------------------------------------------------------------------
-# Execution cancellation
-# ---------------------------------------------------------------------------
+# Execution cancellation.
 # When user code runs via asyncio.to_thread(), we track its thread ident so
 # that /interrupt (or SIGUSR1) can inject a KeyboardInterrupt into it.
 _exec_thread_id: int | None = None
@@ -148,9 +140,7 @@ def _cancel_signal_handler(signum, frame):
         logger.debug("SIGUSR1 received outside execution, ignoring")
 
 
-# ---------------------------------------------------------------------------
 # Persistence setup (driven by environment variables)
-# ---------------------------------------------------------------------------
 _persistence: ArtifactPersistence | None = None
 _recovery_mode = RecoveryMode.LAZY
 _recovery_status: dict = {"status": "pending", "recovered": [], "errors": []}
@@ -182,7 +172,6 @@ def _setup_persistence() -> None:
     _persistence = ArtifactPersistence(base_path)
     artifact_store.enable_persistence(_persistence)
 
-    # Cleanup stale artifacts before recovery
     if cleanup_age_hours > 0:
         try:
             removed = _persistence.cleanup(max_age_hours=cleanup_age_hours)
@@ -254,9 +243,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="FlowFile Kernel Runtime", version=__version__, lifespan=_lifespan)
 
 
-# ---------------------------------------------------------------------------
 # Request / Response models
-# ---------------------------------------------------------------------------
 
 # Matplotlib setup code to auto-capture plt.show() calls.
 # Captures ``flowfile_ctx`` into a dunder-prefixed name so the hook keeps
@@ -299,20 +286,16 @@ def _maybe_wrap_last_expression(code: str) -> str:
     if isinstance(last.value, ast.Constant) and last.value.value is None:
         return code
     if isinstance(last.value, ast.Call):
-        # Check if it's already a print or display call
         func = last.value.func
         if isinstance(func, ast.Name) and func.id in ("print", "display"):
             return code
         if isinstance(func, ast.Attribute) and func.attr in ("print", "display"):
             return code
 
-    # Use ast.get_source_segment for robust source extraction (Python 3.8+)
     last_expr_text = ast.get_source_segment(code, last)
     if last_expr_text is None:
-        # Fallback if get_source_segment fails
         return code
 
-    # Build the new code with the last expression wrapped
     lines = code.split("\n")
     prefix = "\n".join(lines[: last.lineno - 1])
     if prefix:
@@ -373,9 +356,7 @@ class CleanupRequest(BaseModel):
     )
 
 
-# ---------------------------------------------------------------------------
 # Existing endpoints
-# ---------------------------------------------------------------------------
 
 
 def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
@@ -413,11 +394,8 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
             interactive=request.interactive,
         )
 
-        # Reset display outputs for this execution
         flowfile_client._reset_displays()
 
-        # Get or create persistent namespace for this flow
-        # Variables defined in one cell will be available in subsequent cells
         exec_globals = _get_namespace(request.flow_id)
 
         # Always update the kernel-context reference (context changes between
@@ -443,10 +421,8 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
             # process-wide filter state is not mutated.
             warnings.simplefilter("default", DeprecationWarning)
 
-            # Execute matplotlib setup to patch plt.show()
             exec(_MATPLOTLIB_SETUP, exec_globals)  # noqa: S102
 
-            # Prepare user code - optionally wrap last expression for interactive mode
             user_code = request.code
             if request.interactive:
                 user_code = _maybe_wrap_last_expression(user_code)
@@ -460,13 +436,10 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
                 with _exec_lock:
                     _exec_thread_id = None
 
-        # Collect display outputs
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
 
-        # Persist display outputs for later retrieval by the frontend
         _display_output_store[(request.flow_id, request.node_id)] = [d.model_dump() for d in display_outputs]
 
-        # Collect output parquet files
         output_paths: list[str] = []
         if output_dir and Path(output_dir).exists():
             output_paths = [str(p) for p in sorted(Path(output_dir).glob("*.parquet"))]
@@ -500,7 +473,6 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
             execution_time_ms=elapsed,
         )
     except Exception as exc:
-        # Still collect any display outputs that were generated before the error
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
         _display_output_store[(request.flow_id, request.node_id)] = [d.model_dump() for d in display_outputs]
         elapsed = (time.perf_counter() - start) * 1000
@@ -535,7 +507,6 @@ async def interrupt():
 async def clear_artifacts(flow_id: int | None = Query(default=None)):
     """Clear all artifacts, or only those belonging to a specific flow."""
     artifact_store.clear(flow_id=flow_id)
-    # Also clear the namespace for this flow
     if flow_id is not None:
         _clear_namespace(flow_id)
     else:
@@ -584,9 +555,7 @@ async def list_node_artifacts(
     return artifact_store.list_by_node_id(node_id, flow_id=flow_id)
 
 
-# ---------------------------------------------------------------------------
 # Persistence & Recovery endpoints
-# ---------------------------------------------------------------------------
 
 
 @app.post("/recover")
@@ -637,7 +606,6 @@ async def cleanup_artifacts(request: CleanupRequest):
         max_age_hours=request.max_age_hours,
         names=names,
     )
-    # Rebuild lazy index after cleanup
     artifact_store.build_lazy_index()
     return {"status": "cleaned", "removed_count": removed_count}
 
@@ -656,7 +624,6 @@ async def persistence_info():
     persisted = _persistence.list_persisted()
     in_memory = artifact_store.list_all()
 
-    # Build per-artifact status
     artifact_status = {}
     for (fid, name), _meta in persisted.items():
         artifact_status[name] = {

@@ -126,11 +126,6 @@ def get_configured_provider(
         if resolved_model is None and cred.default_model is not None:
             resolved_model = cred.default_model
 
-        # Consult the user's curated models list when neither an
-        # explicit ``model=`` nor a stored ``default_model`` won. Step 3:
-        # if a per-surface routing target appears in the user's list,
-        # honour it. Step 4: otherwise, take the first listed model as
-        # the per-credential default.
         if resolved_model is None:
             curated = decode_models(cred)
             if curated:

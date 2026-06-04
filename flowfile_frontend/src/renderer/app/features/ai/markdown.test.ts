@@ -27,7 +27,6 @@ describe("renderSafeMarkdown — formatting (AC #6, #8)", () => {
     expect(html).toContain('href="https://example.com"');
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
-    // No literal markdown markers leak through.
     expect(html).not.toMatch(/\*\*bold\*\*/);
     expect(html).not.toMatch(/`code`/);
     expect(html).not.toMatch(/\[link\]/);

@@ -108,7 +108,6 @@ class TestRunFlowCommand:
         result = run_flow(str(simple_flow_yaml))
         assert result == 0
 
-        # Check output contains expected messages
         captured = capsys.readouterr()
         assert 'Loading flow from:' in captured.out
         assert 'Running flow:' in captured.out
@@ -211,7 +210,6 @@ class TestRunFlowCommand:
         result = run_flow(str(simple_flow_yaml))
 
         assert result == 0
-        # Should show duration in seconds
         captured = capsys.readouterr()
         assert ' in ' in captured.out and 's' in captured.out
 
@@ -262,7 +260,6 @@ class TestCLIArgParsing:
         """Test that 'flowfile run flow' appears in help output."""
         from flowfile.__main__ import main
 
-        # Call main with no arguments to show help
         with patch('sys.argv', ['flowfile']):
             main()
 

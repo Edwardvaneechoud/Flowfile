@@ -36,7 +36,6 @@ class FileInfo(BaseModel):
         try:
             stats = path.stat()
 
-            # Decide whether to use relative or absolute path
             if use_relative_paths and sandbox_root:
                 try:
                     display_path = str(path.relative_to(sandbox_root))
@@ -57,7 +56,6 @@ class FileInfo(BaseModel):
                 exists=True,
             )
         except (PermissionError, OSError):
-            # Handle error case
             if use_relative_paths and sandbox_root:
                 try:
                     display_path = str(path.relative_to(sandbox_root))
@@ -96,7 +94,6 @@ class SecureFileExplorer:
         """
         self.use_relative_paths = use_relative_paths
 
-        # Set up the sandbox root
         if sandbox_root is not None:
             self.sandbox_root = Path(sandbox_root).expanduser().resolve()
         else:
@@ -126,7 +123,6 @@ class SecureFileExplorer:
         try:
             resolved_path = path.resolve()
             resolved_sandbox = self.sandbox_root.resolve()
-            # Check if the resolved path is within sandbox
             resolved_path.relative_to(resolved_sandbox)
             return True
         except (ValueError, RuntimeError):
@@ -138,22 +134,16 @@ class SecureFileExplorer:
         Returns None if path would escape sandbox.
         """
         try:
-            # Handle relative paths from current directoryb
             if isinstance(path, str):
-                # Remove any suspicious patterns
                 if path.startswith("/"):
-                    # For absolute paths or parent references, resolve from sandbox root
                     test_path = Path(path).expanduser()
                 else:
-                    # For simple relative paths, resolve from current directory
                     test_path = self.current_path / path
             else:
                 test_path = path
 
-            # Resolve to absolute path
             resolved = test_path.resolve()
 
-            # Check if within sandbox
             if self._is_path_safe(resolved):
                 return resolved
             else:
@@ -232,7 +222,6 @@ class SecureFileExplorer:
                 while dirs_to_process:
                     current_dir, depth = dirs_to_process.pop(0)
 
-                    # Skip if already processed or exceeds depth
                     if current_dir in processed or depth > max_depth:
                         continue
 
@@ -240,7 +229,6 @@ class SecureFileExplorer:
 
                     try:
                         for item in current_dir.iterdir():
-                            # Security check for each item
                             if not self._is_path_safe(item):
                                 continue
 
@@ -256,9 +244,7 @@ class SecureFileExplorer:
                     except (PermissionError, OSError):
                         continue
             else:
-                # Non-recursive listing
                 for item in self.current_path.iterdir():
-                    # Security check
                     if not self._is_path_safe(item):
                         continue
 
@@ -272,7 +258,6 @@ class SecureFileExplorer:
         except PermissionError:
             raise PermissionError(f"Permission denied to access directory: {self.current_directory}") from None
 
-        # Sort results
         sort_key = {
             "name": lambda x: (not x.is_directory, x.name.lower()),
             "date": lambda x: (not x.is_directory, x.last_modified),
@@ -293,7 +278,6 @@ class SecureFileExplorer:
             return False
 
         try:
-            # Test if we can actually read the directory
             next(sanitized.iterdir(), None)
             self.current_path = sanitized
             return True
@@ -306,11 +290,9 @@ class SecureFileExplorer:
         """Navigate up to the parent directory, respecting sandbox."""
         parent = self.current_path.parent
 
-        # Check if parent is within sandbox
         if not self._is_path_safe(parent):
             return False
 
-        # Don't navigate if we're already at sandbox root
         if parent == self.current_path:
             return False
 
@@ -319,7 +301,6 @@ class SecureFileExplorer:
 
     def navigate_into(self, directory_name: str) -> bool:
         """Navigate into a subdirectory, with path sanitization."""
-        # Sanitize directory name
         if "/" in directory_name or "\\" in directory_name or ".." in directory_name:
             return False
 
@@ -357,17 +338,14 @@ def get_files_from_directory(
         List of FileInfo objects or None if directory doesn't exist or is outside sandbox
     """
     try:
-        # Create a secure explorer with sandbox
         if sandbox_root:
             explorer = SecureFileExplorer(start_path=dir_name, sandbox_root=sandbox_root)
         else:
             explorer = SecureFileExplorer(start_path=dir_name)
 
-        # Use the explorer's list_contents method
         return explorer.list_contents(show_hidden=include_hidden, file_types=types, recursive=recursive)
 
     except (ValueError, PermissionError):
-        # Return None for invalid/inaccessible directories
         return None
     except Exception as e:
         raise type(e)(f"Error scanning directory {dir_name}: {str(e)}") from e
@@ -390,10 +368,8 @@ def validate_file_path(user_path: str, allowed_base: Path) -> Path | None:
         if ".." in user_path:
             return None
 
-        # Get the base path as a normalized, real path string
         base_path = os.path.realpath(str(allowed_base.resolve()))
 
-        # Always resolve the user path relative to the allowed base directory
         candidate_path = os.path.join(base_path, user_path)
         fullpath = os.path.realpath(candidate_path)
 
@@ -433,7 +409,6 @@ def validate_path_under_cwd(user_path: str) -> str:
     # In Electron mode, allow access to any local file path
     # This is safe because Electron runs locally on the user's machine
     if settings.is_electron_mode():
-        # Normalize and resolve the path
         normalized_path = os.path.normpath(os.path.expanduser(user_path))
         # Block path traversal patterns even in Electron mode
         if ".." in user_path:
@@ -441,7 +416,6 @@ def validate_path_under_cwd(user_path: str) -> str:
         return normalized_path
 
     # In Docker/package mode, enforce strict sandboxing
-    # Try current working directory first
     base_path = os.path.normpath(os.getcwd())
     fullpath = os.path.normpath(os.path.join(base_path, user_path))
     if fullpath.startswith(base_path):

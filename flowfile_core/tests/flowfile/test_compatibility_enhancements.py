@@ -239,7 +239,6 @@ class TestEnsureFlowSettings:
         flow_obj.flow_id = 1
         flow_obj.flow_name = "test_flow"
         flow_obj.flow_settings = None
-        # Mock model_validate to return the flow_obj itself
         schemas.FlowInformation.model_validate = MagicMock(return_value=flow_obj)
 
         result = ensure_flow_settings(flow_obj, "/path/to/flow")

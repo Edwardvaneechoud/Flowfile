@@ -21,9 +21,7 @@ from kernel_runtime import flowfile_client
 from kernel_runtime.flowfile_client import CatalogRef, SchemaRef, TableRef
 
 
-# ---------------------------------------------------------------------------
 # Mock Core HTTP backend
-# ---------------------------------------------------------------------------
 
 
 class _MockCore:
@@ -176,9 +174,7 @@ def _df(values: list[dict[str, Any]]) -> pl.DataFrame:
     return pl.DataFrame(values)
 
 
-# ---------------------------------------------------------------------------
 # write_catalog_table — happy paths per write_mode (string-name form)
-# ---------------------------------------------------------------------------
 
 
 class TestWriteCatalogTableNewTable:
@@ -300,9 +296,7 @@ class TestWriteCatalogTableExisting:
         assert out["id"].to_list() == [2]
 
 
-# ---------------------------------------------------------------------------
 # write_catalog_table — validation
-# ---------------------------------------------------------------------------
 
 
 class TestWriteCatalogTableValidation:
@@ -347,9 +341,7 @@ class TestWriteCatalogTableValidation:
                 flowfile_client.write_catalog_table(df, ref, schema="default")
 
 
-# ---------------------------------------------------------------------------
 # Discovery / typed navigation
-# ---------------------------------------------------------------------------
 
 
 class TestListCatalogs:
@@ -372,7 +364,6 @@ class TestListCatalogs:
             result = flowfile_client.list_schemas()
         names = sorted(s.name for s in result)
         assert names == ["default", "ml", "sales"]
-        # Every schema knows its parent catalog
         assert all(isinstance(s.catalog, CatalogRef) for s in result)
 
     def test_list_schemas_by_catalog_name(
@@ -452,7 +443,6 @@ class TestListCatalogTables:
             result = flowfile_client.list_catalog_tables()
         names = sorted(t.name for t in result)
         assert names == ["customers", "orders"]
-        # Each ref carries a fully-populated SchemaRef
         for t in result:
             assert isinstance(t, TableRef)
             assert t.schema.name == "default"
@@ -477,9 +467,7 @@ class TestListCatalogTables:
                 flowfile_client.list_catalog_tables(schema="default", namespace_id=2)
 
 
-# ---------------------------------------------------------------------------
 # read_catalog_table
-# ---------------------------------------------------------------------------
 
 
 class TestReadCatalogTable:
@@ -517,9 +505,7 @@ class TestReadCatalogTable:
         assert historic["v"].to_list() == ["a"]
 
 
-# ---------------------------------------------------------------------------
 # Typed navigation: CatalogRef / SchemaRef / TableRef methods
-# ---------------------------------------------------------------------------
 
 
 class TestRefNavigation:
@@ -617,7 +603,6 @@ class TestTableRefReadWrite:
         with _patch_core_client(mock_core):
             flowfile_client.write_catalog_table(df, "orders", write_mode="overwrite")
             sch = flowfile_client.default_schema()
-            # Build a lazy ref (no metadata) then refresh
             lazy = TableRef(name="orders", schema=sch)
             refreshed = lazy.refresh()
         assert refreshed.exists()
@@ -740,7 +725,7 @@ class TestTopLevelAcceptsRef:
         df = _df([{"id": 1}])
         with _patch_core_client(mock_core):
             sch = flowfile_client.default_schema()
-            ref = sch.get_table_ref("orders")  # lazy, doesn't exist yet
+            ref = sch.get_table_ref("orders")
             result = flowfile_client.write_catalog_table(df, ref, write_mode="overwrite")
         assert isinstance(result, TableRef)
         assert result.exists()

@@ -1,4 +1,3 @@
-# Standard library imports
 from __future__ import annotations
 
 import logging
@@ -14,8 +13,6 @@ if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
 
 import polars as pl
-
-# Third-party imports
 from loky import Future
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
 from polars.exceptions import PanicException
@@ -24,11 +21,8 @@ from polars_grouper import graph_solver
 from pyarrow import Table as PaTable
 from pyarrow.parquet import ParquetFile
 
-# Local imports - Core
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
-
-# Local imports - Flow File Components
 from flowfile_core.flowfile.flow_data_engine import utils
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (
     CloudStorageReader,
@@ -639,7 +633,6 @@ class FlowDataEngine:
     ) -> FlowDataEngine:
         """Reads Parquet file(s) from cloud storage."""
         try:
-            # Use scan_parquet for lazy evaluation
             if is_directory:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="parquet")
             scan_kwargs = {"source": resource_path}
@@ -1042,7 +1035,6 @@ class FlowDataEngine:
         df = self.data_frame.rename({c.old_name: c.new_name for c in group_columns})
         group_by_columns = [n_c.new_name for n_c in group_columns]
 
-        # Handle case where there are no aggregations - just get unique combinations of group columns
         if len(aggregations) == 0:
             return FlowDataEngine(
                 df.select(group_by_columns).unique(),
@@ -1414,7 +1406,6 @@ class FlowDataEngine:
         Returns:
             A new, pivoted `FlowDataEngine` instance.
         """
-        # Get unique values for pivot columns
         max_unique_vals = 200
         new_cols_unique = fetch_unique_values(
             self.data_frame.select(pivot_input.pivot_column)
@@ -1438,7 +1429,6 @@ class FlowDataEngine:
             no_index_cols = False
             ff = self
 
-        # Perform pivot operations
         index_columns = pivot_input.get_index_columns()
         grouped_ff = ff.do_group_by(pivot_input.get_group_by_input(), False)
         pivot_column = pivot_input.get_pivot_column()
@@ -1471,7 +1461,6 @@ class FlowDataEngine:
             )
         )
 
-        # Clean up temporary columns if needed
         if no_index_cols:
             df = df.drop("__temp__")
             pivot_input.index_columns = []
@@ -1643,7 +1632,7 @@ class FlowDataEngine:
                 self.data_frame = self.external_source.get_pl_df().lazy()
             else:
                 self.data_frame = pl.LazyFrame(list(self.external_source.get_iter()))
-            self._schema = None  # enforce reset schema
+            self._schema = None
 
     def get_output_sample(self, n_rows: int = 10) -> list[dict]:
         """Gets a sample of the data as a list of dictionaries.
@@ -2011,7 +2000,6 @@ class FlowDataEngine:
         other: FlowDataEngine,
     ) -> FlowDataEngine:
         """Performs a standard SQL-style join with another DataFrame."""
-        # Create manager from input
         join_manager = transform_schemas.JoinInputManager(join_input)
         _ensure_all_columns_have_select(left_cols=self.columns, right_cols=other.columns, manager=join_manager)
         join_manager.set_join_keys()
@@ -2028,7 +2016,6 @@ class FlowDataEngine:
         if auto_generate_selection:
             join_manager.auto_rename()
 
-        # Use manager properties throughout
         left = self.data_frame.select(join_manager.left_manager.get_select_cols()).rename(
             join_manager.left_manager.get_rename_table()
         )
@@ -2346,7 +2333,6 @@ class FlowDataEngine:
         actual_names = set(self.columns)
         expected_names = [c.column_name for c in expected_schema]
 
-        # Add missing columns as typed null literals
         missing_exprs = []
         for col in expected_schema:
             if col.column_name not in actual_names:
@@ -2357,7 +2343,6 @@ class FlowDataEngine:
         if missing_exprs:
             df = df.with_columns(missing_exprs)
 
-        # Build final column order: expected first, then any extras
         expected_set = set(expected_names)
         extra_names = [c for c in self.columns if c not in expected_set]
         final_order = expected_names + extra_names

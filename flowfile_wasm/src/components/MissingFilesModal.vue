@@ -134,7 +134,6 @@
       const content = await file.text()
       flowStore.updateNodeFile(nodeId, file.name, content)
       resolvedFiles.value.add(nodeId)
-      // Trigger reactivity
       resolvedFiles.value = new Set(resolvedFiles.value)
     } catch (error) {
       console.error('Failed to read file:', error)

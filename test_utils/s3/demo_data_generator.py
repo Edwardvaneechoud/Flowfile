@@ -10,7 +10,6 @@ import boto3
 import polars as pl
 from botocore.client import Config
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,6 @@ def _create_sales_data(s3_client, df: pl.DataFrame, bucket_name: str):
     s3://data-lake/sales/year=YYYY/month=MM/
     """
     logger.info("Writing partitioned sales data...")
-    # Use Polars' built-in partitioning
     # A temporary local directory is needed to stage the partitioned files before uploading
     with tempfile.TemporaryDirectory() as temp_dir:
         df.write_parquet(
@@ -37,12 +35,10 @@ def _create_sales_data(s3_client, df: pl.DataFrame, bucket_name: str):
             use_pyarrow=True,
             pyarrow_options={"partition_cols": ["year", "month"]}
         )
-        # Walk through the local directory and upload files to S3
         for root, _, files in os.walk(temp_dir):
             for file in files:
                 if file.endswith(".parquet"):
                     local_path = os.path.join(root, file)
-                    # Construct the S3 key to match the desired structure
                     relative_path = os.path.relpath(local_path, temp_dir)
                     s3_key = f"data-lake/sales/{relative_path.replace(os.path.sep, '/')}"
                     s3_client.upload_file(local_path, bucket_name, s3_key)
@@ -72,7 +68,6 @@ def _create_orders_data(s3_client, df: pl.DataFrame, bucket_name: str):
     """
     logger.info("Writing orders CSV data...")
     csv_buffer = io.BytesIO()
-    # Write with pipe delimiter and header
     df.write_csv(csv_buffer, separator="|")
     csv_buffer.seek(0)
     s3_client.put_object(
@@ -87,7 +82,6 @@ def _create_products_data(df: pl.DataFrame):
     Creates a local Parquet file for the products data.
     """
     logger.info("Writing local products Parquet data...")
-    # Create a directory for local data if it doesn't exist
     local_data_dir = "local_data"
     os.makedirs(local_data_dir, exist_ok=True)
     file_path = os.path.join(local_data_dir, "local_products.parquet")
@@ -110,15 +104,13 @@ def create_demo_data(endpoint_url: str, access_key: str, secret_key: str, bucket
     )
 
     # --- Generate Core DataFrames ---
-    DATA_SIZE = 15_000 # Increased data size for more variety
+    DATA_SIZE = 15_000
     START_DATE = datetime(2022, 1, 1)
     END_DATE = datetime(2024, 12, 31)
     TOTAL_DAYS = (END_DATE - START_DATE).days
 
-    # States for region mapping
     states = ["CA", "OR", "WA", "NY", "NJ", "PA", "TX", "FL", "GA", "IL", "OH", "MI"]
 
-    # Generate base sales data across multiple years
     sales_data = {
         "order_id": range(1, DATA_SIZE + 1),
         "customer_id": [random.randint(100, 299) for _ in range(DATA_SIZE)],
@@ -138,16 +130,13 @@ def create_demo_data(endpoint_url: str, access_key: str, secret_key: str, bucket
         pl.col("unit_price").alias("amount")
     ])
 
-    # Generate customers DataFrame
     unique_customer_ids = sales_df["customer_id"].unique().to_list()
     customers_df = pl.DataFrame({
         "customer_id": unique_customer_ids,
         "customer_segment": [random.choice(["VIP", "Regular", "New"]) for _ in unique_customer_ids]
     })
 
-    # Generate products DataFrame
     unique_product_ids = sales_df["product_id"].unique().to_list()
-    # Create a map of product_id to unit_price from the first occurrence in sales_df
     product_price_map = sales_df.group_by("product_id").agg(pl.first("unit_price")).to_dict(as_series=False)
     price_dict = dict(zip(product_price_map['product_id'], product_price_map['unit_price'], strict=False))
 
@@ -157,7 +146,6 @@ def create_demo_data(endpoint_url: str, access_key: str, secret_key: str, bucket
         "unit_price": [price_dict.get(pid) for pid in unique_product_ids]
     })
 
-    # Generate orders DataFrame for the CSV file (subset of sales)
     orders_df = sales_df.select(["customer_id", "product_id", "quantity", "discount_rate"])
 
     logger.info(f"Generated {len(sales_df)} sales records across {sales_df['year'].n_unique()} years, for {len(customers_df)} customers, and {len(products_df)} products.")
@@ -172,7 +160,6 @@ def create_demo_data(endpoint_url: str, access_key: str, secret_key: str, bucket
 
 
 if __name__ == '__main__':
-    # The bucket that will be created and populated
     BUCKET = "flowfile-demo-data"
 
     create_demo_data(

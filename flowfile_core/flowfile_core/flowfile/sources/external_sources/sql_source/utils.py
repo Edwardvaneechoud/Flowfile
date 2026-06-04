@@ -348,13 +348,11 @@ def get_polars_type(sqlalchemy_type: SqlType | str):
         The corresponding Polars data type, or None if no mapping exists
     """
     if isinstance(sqlalchemy_type, type):
-        # For SQLAlchemy type classes
         return sqlalchemy_to_polars.get(cast(SqlType, sqlalchemy_type), pl.Utf8)
     elif isinstance(sqlalchemy_type, str):
         # For string type names (lowercase for case-insensitive matching)
         return sql_type_name_to_polars.get(sqlalchemy_type.lower(), pl.Utf8)
     else:
-        # For SQLAlchemy type instances
         instance_type = type(sqlalchemy_type)
         return sqlalchemy_to_polars.get(cast(SqlType, instance_type), pl.Utf8)
 

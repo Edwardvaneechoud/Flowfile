@@ -144,7 +144,6 @@ export const useFlowStore = defineStore('flow', () => {
   // Track nodes that have been modified since last execution (dirty state)
   const dirtyNodes = ref<Set<number>>(new Set())
 
-  // Load state from session storage on init
   async function loadFromStorage() {
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY)
@@ -154,7 +153,6 @@ export const useFlowStore = defineStore('flow', () => {
         if (state.version === STORAGE_VERSION && state.flowfileData) {
           const data = state.flowfileData as FlowfileData
 
-          // Import from FlowfileData
           for (const flowfileNode of data.nodes) {
             // Migrate old node types to new names (for backward compatibility)
             let nodeType = flowfileNode.type
@@ -189,8 +187,8 @@ export const useFlowStore = defineStore('flow', () => {
               inputIds: flowfileNode.input_ids || [],
               leftInputId: flowfileNode.left_input_id,
               rightInputId: flowfileNode.right_input_id,
-              description: nodeDescription,  // Set node-level description
-              node_reference: nodeReference   // Set node-level reference
+              description: nodeDescription,
+              node_reference: nodeReference
             }
             nodes.value.set(flowfileNode.id, node)
           }
@@ -219,7 +217,6 @@ export const useFlowStore = defineStore('flow', () => {
 
           // Restore large file contents from IndexedDB
           if (state.largeFileNodeIds && Array.isArray(state.largeFileNodeIds)) {
-            // Load large files asynchronously from IndexedDB
             await Promise.all(
               state.largeFileNodeIds.map(async (nodeId: number) => {
                 try {
@@ -244,7 +241,6 @@ export const useFlowStore = defineStore('flow', () => {
             }
           }
 
-          // Restore counter
           const maxId = Math.max(0, ...data.nodes.map(n => n.id))
           nodeIdCounter.value = state.nodeIdCounter ?? maxId
         }
@@ -266,10 +262,8 @@ export const useFlowStore = defineStore('flow', () => {
    * This handles imports from flowfile_core which doesn't have explicit connections
    */
   function deriveEdgesFromNodes(flowfileNodes: FlowfileNode[]) {
-    // Collect all derived edges first
     const derivedEdges: FlowEdge[] = []
 
-    // For each node, look at incoming connections based on input_ids, left_input_id, right_input_id
     for (const targetNode of flowfileNodes) {
       // Handle right_input_id (for join nodes - second input goes to input-1)
       if (targetNode.right_input_id !== undefined && targetNode.right_input_id !== null) {
@@ -314,7 +308,6 @@ export const useFlowStore = defineStore('flow', () => {
       }
     }
 
-    // Add all edges at once
     edges.value.push(...derivedEdges)
     console.log('[deriveEdgesFromNodes] Created edges:', derivedEdges.map(e => `${e.source}->${e.target}`))
   }
@@ -440,19 +433,15 @@ export const useFlowStore = defineStore('flow', () => {
 
   watch([nodes, edges, fileContents, nodeIdCounter], scheduleSave, { deep: true })
 
-  // Watch for edge changes to trigger schema propagation
   watch(() => edges.value, () => {
     debouncedPropagateSchemas()
   }, { deep: true })
 
   // Watch for node settings changes to trigger schema propagation
-  // We need to watch the settings of each node for changes
   watch(
     () => {
-      // Create a dependency on all node settings
       const settingsSnapshot: Record<number, string> = {}
       nodes.value.forEach((node, id) => {
-        // Stringify settings to detect deep changes
         settingsSnapshot[id] = JSON.stringify(node.settings)
       })
       return settingsSnapshot
@@ -463,10 +452,8 @@ export const useFlowStore = defineStore('flow', () => {
     { deep: true }
   )
 
-  // Load on init (async)
   loadFromStorage()
     .then(() => {
-      // Initial schema propagation after loading
       // Ensure nodeResults are populated from storage before propagating
       return propagateSchemas()
     })
@@ -487,7 +474,6 @@ export const useFlowStore = defineStore('flow', () => {
     const node = nodes.value.get(nodeId)
     if (!node) return []
 
-    // Find input node(s) and get their schema
     const inputIds = node.inputIds
     if (inputIds.length > 0) {
       const result = nodeResults.value.get(inputIds[0])
@@ -539,7 +525,7 @@ export const useFlowStore = defineStore('flow', () => {
       inputIds: [],
       leftInputId: undefined,
       rightInputId: undefined,
-      description: ''  // Initialize node-level description
+      description: ''
     }
 
     nodes.value.set(id, node)
@@ -559,7 +545,6 @@ export const useFlowStore = defineStore('flow', () => {
       node.settings = settings
       nodes.value.set(id, node)
 
-      // Invalidate preview cache for this node and downstream
       invalidatePreviewCache(id)
     }
   }
@@ -585,7 +570,6 @@ export const useFlowStore = defineStore('flow', () => {
   function updateNodeDescription(id: number, description: string) {
     const node = nodes.value.get(id)
     if (node) {
-      // Update node-level description (primary)
       node.description = description
       // Also sync to settings for backward compatibility with flowfile_core
       if (node.settings) {
@@ -648,7 +632,6 @@ export const useFlowStore = defineStore('flow', () => {
     previewCache.value.delete(id)
     dirtyNodes.value.delete(id)
 
-    // Delete file from IndexedDB if it exists there
     fileStorage.deleteFileContent(id).catch(err => {
       // Silently ignore if file doesn't exist in IndexedDB
       if (err && err.name !== 'NotFoundError') {
@@ -656,12 +639,10 @@ export const useFlowStore = defineStore('flow', () => {
       }
     })
 
-    // Remove related edges
     edges.value = edges.value.filter(
       e => e.source !== String(id) && e.target !== String(id)
     )
 
-    // Remove from other nodes' inputs
     nodes.value.forEach(node => {
       node.inputIds = node.inputIds.filter(inputId => inputId !== id)
       if (node.leftInputId === id) node.leftInputId = undefined
@@ -670,7 +651,6 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   function addEdge(edge: FlowEdge) {
-    // Check if edge already exists
     const exists = edges.value.some(
       e => e.source === edge.source &&
            e.target === edge.target &&
@@ -681,13 +661,11 @@ export const useFlowStore = defineStore('flow', () => {
     if (!exists) {
       edges.value.push(edge)
 
-      // Update node inputs
       const targetId = parseInt(edge.target)
       const sourceId = parseInt(edge.source)
       const targetNode = nodes.value.get(targetId)
 
       if (targetNode) {
-        // Determine which input based on handle
         if (edge.targetHandle === 'input-0' || !edge.targetHandle) {
           // input-0 is the default/left input
           if (!targetNode.inputIds.includes(sourceId)) {
@@ -700,11 +678,9 @@ export const useFlowStore = defineStore('flow', () => {
           targetNode.rightInputId = sourceId
         }
 
-        // Invalidate preview cache for target node
         invalidatePreviewCache(targetId)
       }
 
-      // Trigger immediate schema propagation for new connection
       debouncedPropagateSchemas()
     }
   }
@@ -727,13 +703,11 @@ export const useFlowStore = defineStore('flow', () => {
           nodeResults.value.delete(targetId)
         }
 
-        // Invalidate preview cache for target node
         invalidatePreviewCache(targetId)
       }
 
       edges.value = edges.value.filter(e => e.id !== edgeId)
 
-      // Trigger schema propagation to update downstream nodes
       debouncedPropagateSchemas()
     }
   }
@@ -748,7 +722,6 @@ export const useFlowStore = defineStore('flow', () => {
       })
     }
 
-    // Get node to check settings for CSV parsing options
     const node = nodes.value.get(nodeId)
     if (node && (node.type === 'read' || node.type === 'manual_input')) {
       let hasHeaders = true
@@ -760,18 +733,15 @@ export const useFlowStore = defineStore('flow', () => {
         delimiter = settings?.received_file?.table_settings?.delimiter ?? ','
       }
 
-      // Infer schema from CSV content
       const schema = inferSchemaFromCsv(content, hasHeaders, delimiter)
       if (schema) {
         // Set schema for source node (success undefined = not yet executed, shows grey)
         nodeResults.value.set(nodeId, { schema })
 
-        // Trigger schema propagation to update downstream nodes
         debouncedPropagateSchemas()
       }
     }
 
-    // Invalidate preview cache
     invalidatePreviewCache(nodeId)
   }
 
@@ -820,7 +790,6 @@ export const useFlowStore = defineStore('flow', () => {
       // Set schema for source node (success undefined = not yet executed, shows grey)
       nodeResults.value.set(nodeId, { schema })
 
-      // Trigger schema propagation
       debouncedPropagateSchemas()
     }
   }
@@ -835,16 +804,14 @@ export const useFlowStore = defineStore('flow', () => {
       if (prevResult?.data) {
         nodeResults.value.set(previousId, {
           ...prevResult,
-          data: undefined  // Clear the large preview data
+          data: undefined
         })
       }
-      // Also clear from preview cache
       previewCache.value.delete(previousId)
     }
 
     selectedNodeId.value = id
 
-    // Auto-fetch preview when selecting a node that has data
     if (id !== null) {
       const result = nodeResults.value.get(id)
       if (result?.success && !hasPreviewCached(id)) {
@@ -862,38 +829,32 @@ export const useFlowStore = defineStore('flow', () => {
    * This helps prevent memory leaks when nodes are deleted.
    */
   async function cleanupOrphanedData() {
-    // Get current node IDs
     const currentNodeIds = new Set(nodes.value.keys())
 
-    // Clean up file contents for removed nodes
     for (const [nodeId] of fileContents.value) {
       if (!currentNodeIds.has(nodeId)) {
         fileContents.value.delete(nodeId)
       }
     }
 
-    // Clean up node results for removed nodes
     for (const [nodeId] of nodeResults.value) {
       if (!currentNodeIds.has(nodeId)) {
         nodeResults.value.delete(nodeId)
       }
     }
 
-    // Clean up preview cache for removed nodes
     for (const [nodeId] of previewCache.value) {
       if (!currentNodeIds.has(nodeId)) {
         previewCache.value.delete(nodeId)
       }
     }
 
-    // Clean up dirty flags for removed nodes
     for (const nodeId of dirtyNodes.value) {
       if (!currentNodeIds.has(nodeId)) {
         dirtyNodes.value.delete(nodeId)
       }
     }
 
-    // Clean up Python lazyframes for removed nodes
     if (pyodideStore.isReady) {
       const nodeIdList = Array.from(currentNodeIds).join(',')
       await pyodideStore.runPython(`
@@ -927,7 +888,6 @@ gc.collect()
         return null
       }
 
-      // Get all dependencies (nodes this node depends on)
       const dependencies: number[] = [...node.inputIds]
       if (node.leftInputId) dependencies.push(node.leftInputId)
       if (node.rightInputId) dependencies.push(node.rightInputId)
@@ -938,7 +898,6 @@ gc.collect()
           const cycleStart = dfs(depId)
           if (cycleStart !== null) return cycleStart
         } else if (recursionStack.has(depId)) {
-          // Found a cycle - return the start of the cycle
           parent.set(depId, id)
           return depId
         }
@@ -953,14 +912,13 @@ gc.collect()
       if (!visited.has(id)) {
         const cycleStart = dfs(id)
         if (cycleStart !== null) {
-          // Reconstruct cycle path
           const cyclePath: number[] = [cycleStart]
           let current = parent.get(cycleStart)
           while (current !== undefined && current !== cycleStart) {
             cyclePath.push(current)
             current = parent.get(current)
           }
-          cyclePath.push(cycleStart) // Complete the cycle
+          cyclePath.push(cycleStart)
           return cyclePath
         }
       }
@@ -970,7 +928,6 @@ gc.collect()
   }
 
   function getExecutionOrder(): number[] {
-    // Check for cycles first
     const cycle = detectCycle()
     if (cycle) {
       const cycleDescription = cycle
@@ -982,7 +939,6 @@ gc.collect()
       throw new Error(`Circular dependency detected: ${cycleDescription}`)
     }
 
-    // Topological sort for execution order
     const visited = new Set<number>()
     const order: number[] = []
 
@@ -993,7 +949,6 @@ gc.collect()
       const node = nodes.value.get(id)
       if (!node) return
 
-      // Visit dependencies first
       for (const inputId of node.inputIds) {
         visit(inputId)
       }
@@ -1017,19 +972,15 @@ gc.collect()
     let modified = false
 
     if (node.type === 'select') {
-      // Sync select_input with available columns
       const currentSelectInput = settings.select_input || []
       const existingColumns = new Map<string, any>(currentSelectInput.map((s: any) => [s.old_name, s]))
       const inputColumnNames = new Set(inputSchema.map(c => c.name))
 
-      // Build new select_input array
       const newSelectInput: any[] = []
 
-      // First, add all columns from input schema
       inputSchema.forEach((col, index) => {
         const existing = existingColumns.get(col.name)
         if (existing) {
-          // Keep existing settings but update position and mark as available
           newSelectInput.push({
             ...existing,
             data_type: col.data_type,
@@ -1037,7 +988,6 @@ gc.collect()
             position: (existing as any).position ?? index
           })
         } else {
-          // New column - add with defaults
           newSelectInput.push({
             old_name: col.name,
             new_name: col.name,
@@ -1059,22 +1009,18 @@ gc.collect()
         }
       })
 
-      // Sort by position
       newSelectInput.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0))
 
-      // Update settings
       settings.select_input = newSelectInput
       node.settings = settings
       modified = true
     }
 
     if (node.type === 'group_by') {
-      // Sync groupby agg_cols with available columns
       const groupbyInput = settings.groupby_input || { agg_cols: [] }
       const currentAggCols = groupbyInput.agg_cols || []
       const inputColumnNames = new Set(inputSchema.map(c => c.name))
 
-      // Mark unavailable columns
       const newAggCols = currentAggCols.map((col: any) => ({
         ...col,
         is_available: inputColumnNames.has(col.old_name)
@@ -1092,7 +1038,6 @@ gc.collect()
     }
 
     if (node.type === 'filter') {
-      // Check if the filtered field still exists
       const filterInput = settings.filter_input
       if (filterInput?.basic_filter?.field) {
         const fieldExists = inputSchema.some(c => c.name === filterInput.basic_filter.field)
@@ -1145,11 +1090,9 @@ gc.collect()
         continue
       }
 
-      // Get input schema from upstream node
       let inputSchema: ColumnSchema[] | null = null
       let rightInputSchema: ColumnSchema[] | null = null
 
-      // Get primary input schema and check if input has been executed
       const primaryInputId = node.leftInputId || node.inputIds[0]
       let inputHasData = false
       if (primaryInputId) {
@@ -1165,7 +1108,6 @@ gc.collect()
         rightInputSchema = rightResult?.schema || null
       }
 
-      // Sync node settings with input schema (updates select_input, agg_cols, etc.)
       if (inputSchema && inputSchema.length > 0) {
         const modified = syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
         // Trigger Vue reactivity by re-setting the node in the Map
@@ -1177,7 +1119,6 @@ gc.collect()
       // For polars_code/formula nodes, try lazy execution if input data is available
       if (requiresLazyExecution(node.type) && inputHasData && pyodideStore.isReady) {
         try {
-          // Execute the node to get its actual output schema
           const result = await executeNode(nodeId)
           if (result.success && result.schema) {
             // Schema is already set by executeNode, continue to next node
@@ -1205,7 +1146,7 @@ gc.collect()
             success: wasExecuted ? existingResult.success : undefined,
             schema: inferredSchema,
             data: existingResult?.data,
-            error: existingResult?.error,  // ADD THIS - preserve error!
+            error: existingResult?.error,
             execution_time: existingResult?.execution_time,
             download: existingResult?.download,
             // Preserve explore_data Graphic Walker payload across schema propagation
@@ -1230,7 +1171,6 @@ gc.collect()
   }
 
   // Debounced schema propagation to avoid excessive updates
-  // Using a wrapper to handle async
   let propagateTimeout: ReturnType<typeof setTimeout> | null = null
   function debouncedPropagateSchemas() {
     if (propagateTimeout) clearTimeout(propagateTimeout)
@@ -1240,9 +1180,7 @@ gc.collect()
     }, 50)
   }
 
-  // =============================================================================
   // Preview Cache Management (Lazy Loading)
-  // =============================================================================
 
   /**
    * Evict old entries from previewCache to prevent memory bloat.
@@ -1252,14 +1190,12 @@ gc.collect()
     const now = Date.now()
     const entries = Array.from(previewCache.value.entries())
 
-    // First, evict expired entries
     for (const [nodeId, entry] of entries) {
       if (now - entry.timestamp > PREVIEW_CACHE_MAX_AGE_MS) {
         previewCache.value.delete(nodeId)
       }
     }
 
-    // Then, if still over limit, evict oldest entries
     if (previewCache.value.size > PREVIEW_CACHE_MAX_SIZE) {
       const sortedEntries = Array.from(previewCache.value.entries())
         .sort((a, b) => a[1].timestamp - b[1].timestamp)
@@ -1306,7 +1242,6 @@ gc.collect()
 
       previewCache.value.delete(current)
 
-      // Mark node as dirty (has changes since last run)
       dirtyNodes.value.add(current)
 
       const downstream = downstreamGraph[current] || []
@@ -1341,7 +1276,6 @@ invalidate_downstream_previews(${nodeId}, node_graph)
     if (cached && !cached.loading && cached.data !== null) {
       return true
     }
-    // Also check nodeResults for data
     const result = nodeResults.value.get(nodeId)
     return !!(result?.data)
   }
@@ -1371,11 +1305,9 @@ invalidate_downstream_previews(${nodeId}, node_graph)
   ): Promise<{ success: boolean; data?: any; error?: string; fromCache?: boolean }> {
     const { maxRows = 100, forceRefresh = false } = options
 
-    // Check local cache first (unless force refresh)
     if (!forceRefresh) {
       const cached = previewCache.value.get(nodeId)
       if (cached && !cached.loading && cached.data) {
-        // Also update nodeResults for display
         const existingResult = nodeResults.value.get(nodeId)
         if (existingResult) {
           nodeResults.value.set(nodeId, {
@@ -1386,7 +1318,6 @@ invalidate_downstream_previews(${nodeId}, node_graph)
         return { success: true, data: cached.data, fromCache: true }
       }
 
-      // Check nodeResults too
       const result = nodeResults.value.get(nodeId)
       if (result?.data) {
         return { success: true, data: result.data, fromCache: true }
@@ -1397,7 +1328,6 @@ invalidate_downstream_previews(${nodeId}, node_graph)
       return { success: false, error: 'Pyodide is not ready' }
     }
 
-    // Mark as loading
     previewLoadingNodes.value.add(nodeId)
     previewCache.value.set(nodeId, {
       data: null,
@@ -1421,7 +1351,6 @@ result
         // Evict old entries to prevent memory bloat
         evictPreviewCacheIfNeeded()
 
-        // Also update nodeResults with the preview data for display
         const existingResult = nodeResults.value.get(nodeId)
         if (existingResult) {
           nodeResults.value.set(nodeId, {
@@ -1459,9 +1388,7 @@ result
     }
   }
 
-  // =============================================================================
   // Node Execution
-  // =============================================================================
 
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
@@ -1729,7 +1656,6 @@ result
           }
           const settings = node.settings as NodeExternalOutputSettings
           const outputName = settings.output_name || 'result'
-          // Build the output settings object and serialize safely via toPythonJson
           const outputSettings = {
             output_settings: {
               name: `${outputName}.csv`,
@@ -1793,7 +1719,6 @@ result
 
       nodeResults.value.set(nodeId, nodeResult)
 
-      // Clear dirty flag since we just executed
       if (result.success) {
         dirtyNodes.value.delete(nodeId)
       }
@@ -1823,17 +1748,14 @@ result
     isExecuting.value = true
     executionError.value = null
     nodeResults.value.clear()
-    previewCache.value.clear()  // Clear all preview cache
+    previewCache.value.clear()
     dirtyNodes.value.clear()    // Clear all dirty flags (will be re-set if execution fails)
 
     try {
-      // Clean up orphaned data before execution
       await cleanupOrphanedData()
 
-      // Clear Python state
       await pyodideStore.runPython('clear_all()')
 
-      // Get execution order and execute nodes
       // This builds the lazy query plans - should be fast!
       const order = getExecutionOrder()
 
@@ -2072,12 +1994,9 @@ result
     console.log('[exportToFlowfile] Current edges:', edges.value.map(e => `${e.source}->${e.target}`))
     const flowfileNodes: FlowfileNode[] = []
 
-    // Convert nodes
     nodes.value.forEach((node, id) => {
-      // Determine if this is a start node (no inputs)
       const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
 
-      // Get output nodes from edges
       const outputs = edges.value
         .filter(e => e.source === String(id))
         .map(e => parseInt(e.target))
@@ -2144,7 +2063,6 @@ result
   function importFromFlowfile(data: FlowfileData): boolean {
 
     try {
-      // Clear existing state
       nodes.value.clear()
       edges.value = []
       nodeResults.value.clear()
@@ -2153,15 +2071,12 @@ result
       dirtyNodes.value.clear()
       selectedNodeId.value = null
 
-      // Clear IndexedDB file storage
       fileStorage.clearAll().catch(err => {
         console.error('Failed to clear IndexedDB:', err)
       })
 
-      // Find max node id for counter
       let maxId = 0
 
-      // Import nodes
       for (const flowfileNode of data.nodes) {
         if (flowfileNode.id > maxId) maxId = flowfileNode.id
 
@@ -2198,8 +2113,8 @@ result
           inputIds: flowfileNode.input_ids || [],
           leftInputId: flowfileNode.left_input_id,
           rightInputId: flowfileNode.right_input_id,
-          description: nodeDescription,  // Set node-level description
-          node_reference: nodeReference   // Set node-level reference
+          description: nodeDescription,
+          node_reference: nodeReference
         }
 
         nodes.value.set(flowfileNode.id, node)
@@ -2225,7 +2140,6 @@ result
         deriveEdgesFromNodes(data.nodes)
       }
 
-      // Trigger schema propagation after import
       // Note: Source nodes will need data loaded before schemas propagate
       setTimeout(() => {
         propagateSchemas().catch(err => console.error('Import schema propagation error:', err))
@@ -2325,12 +2239,9 @@ result
   
       let data: FlowfileData
   
-      // Detect format by extension or content
       if (fileName.endsWith('.yaml') || fileName.endsWith('.yml')) {
-        // Parse as YAML
         data = yaml.load(text) as FlowfileData
       } else if (fileName.endsWith('.json') || fileName.endsWith('.flowfile')) {
-        // Parse as JSON
         data = JSON.parse(text) as FlowfileData
       } else {
         // Try to auto-detect: if it starts with '{', it's probably JSON
@@ -2347,14 +2258,12 @@ result
         throw new Error('Invalid flowfile format')
       }
   
-      // Optional: Validate using Pydantic schemas
       const validation = await validateFlowfileData(data)
       if (!validation.success) {
         console.warn('Flowfile validation warning:', validation.error)
         // Continue anyway - validation is advisory
       }
-  
-      // Clear IndexedDB file storage
+
       fileStorage.clearAll().catch(err => {
         console.error('Failed to clear IndexedDB:', err)
       })
@@ -2399,7 +2308,6 @@ result
     nodeIdCounter.value = 0
     sessionStorage.removeItem(STORAGE_KEY)
 
-    // Clear IndexedDB file storage
     fileStorage.clearAll().catch(err => {
       console.error('Failed to clear IndexedDB:', err)
     })

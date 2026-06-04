@@ -113,7 +113,6 @@ def test_get_pl_df(sql_source):
     df = sql_source.get_pl_df()
     assert isinstance(df, pl.DataFrame), "get_pl_df should return a polars DataFrame"
 
-    # Test caching
     cached_df = sql_source.read_result
     assert cached_df is not None, "The result should be cached in read_result"
     assert cached_df is df, "Cached DataFrame should be the same object as returned DataFrame"
@@ -122,14 +121,11 @@ def test_get_pl_df(sql_source):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_df(sql_source, monkeypatch):
     """Test that get_df converts polars DataFrame to pandas DataFrame."""
-    # Mock the get_pl_df method
     mock_pl_df = pl.DataFrame({"col1": [1, 2, 3]})
     monkeypatch.setattr(sql_source, "get_pl_df", lambda: mock_pl_df)
 
-    # Call get_df
     result = sql_source.get_df()
 
-    # Check it's a pandas DataFrame
     import pandas as pd
 
     assert isinstance(result, pd.DataFrame), "get_df should return a pandas DataFrame"
@@ -139,14 +135,11 @@ def test_get_df(sql_source, monkeypatch):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_data_getter(sql_source, monkeypatch):
     """Test that data_getter yields dictionaries from the DataFrame."""
-    # Mock the get_pl_df method
     mock_pl_df = pl.DataFrame({"col1": [1, 2], "col2": ["a", "b"]})
     monkeypatch.setattr(sql_source, "get_pl_df", lambda: mock_pl_df)
 
-    # Get results from data_getter
     results = list(sql_source.data_getter())
 
-    # Check the results
     assert len(results) == 2, "Should have 2 rows of data"
     assert results[0] == {"col1": 1, "col2": "a"}, "First row should match expected values"
     assert results[1] == {"col1": 2, "col2": "b"}, "Second row should match expected values"
@@ -155,20 +148,16 @@ def test_data_getter(sql_source, monkeypatch):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_sample_with_table(monkeypatch):
     """Test get_sample with table mode."""
-    # Create SqlSource with table mode
     sql_source = SqlSource(
         connection_string="postgresql://testuser:testpass@localhost:5433/testdb", table_name="credits"
     )
 
-    # Mock pl.read_database_uri
     expected_data = [{"col1": 1, "col2": "a"}, {"col1": 2, "col2": "b"}]
     mock_df = pl.DataFrame(expected_data)
     monkeypatch.setattr(pl, "read_database_uri", lambda query, conn: mock_df)
 
-    # Get samples
     samples = list(sql_source.get_sample(n=10))
 
-    # Check results
     assert len(samples) == 2, "Should return all rows in the sample DataFrame"
     assert samples == expected_data, "Sample data should match expected data"
 
@@ -176,7 +165,6 @@ def test_get_sample_with_table(monkeypatch):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_sample_with_query(monkeypatch):
     """Test get_sample with query mode."""
-    # Create SqlSource with query mode
     sql_source = SqlSource(
         connection_string="postgresql://testuser:testpass@localhost:5433/testdb", query="SELECT * FROM credits"
     )
@@ -184,10 +172,8 @@ def test_get_sample_with_query(monkeypatch):
     mock_df = pl.DataFrame({"col1": [1, 2, 3, 4, 5], "col2": ["a", "b", "c", "d", "e"]})
     monkeypatch.setattr(sql_source, "get_pl_df", lambda: mock_df)
 
-    # Get samples with n=3
     samples = list(sql_source.get_sample(n=3))
 
-    # Check results
     assert len(samples) == 3, "Should return n rows in the sample"
     assert samples[0] == {"col1": 1, "col2": "a"}, "First sample should match expected data"
 
@@ -202,14 +188,11 @@ def test_get_initial_data(sql_source):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_iter(sql_source, monkeypatch):
     """Test that get_iter yields data from data_getter."""
-    # Mock data_getter
     expected_data = [{"col1": 1}, {"col1": 2}]
     monkeypatch.setattr(sql_source, "data_getter", lambda: (item for item in expected_data))
 
-    # Get results from get_iter
     results = list(sql_source.get_iter())
 
-    # Check results
     assert results == expected_data, "get_iter should yield data from data_getter"
 
 
@@ -264,27 +247,21 @@ def test_get_polars_type():
     import polars as pl
     from sqlalchemy.sql.sqltypes import BOOLEAN, DATE, DATETIME, FLOAT, INTEGER, VARCHAR
 
-    # Test INTEGER type
     int_type = get_polars_type(INTEGER())
     assert isinstance(int_type(), pl.Int64), "INTEGER should convert to polars Int64"
 
-    # Test FLOAT type
     float_type = get_polars_type(FLOAT())
     assert isinstance(float_type(), pl.Float64), "FLOAT should convert to polars Float64"
 
-    # Test VARCHAR type
     string_type = get_polars_type(VARCHAR())
     assert isinstance(string_type(), pl.String), "VARCHAR should convert to polars String"
 
-    # Test BOOLEAN type
     bool_type = get_polars_type(BOOLEAN())
     assert isinstance(bool_type(), pl.Boolean), "BOOLEAN should convert to polars Boolean"
 
-    # Test DATE type
     date_type = get_polars_type(DATE())
     assert isinstance(date_type(), pl.Date), "DATE should convert to polars Date"
 
-    # Test DATETIME type
     datetime_type = get_polars_type(DATETIME())
     assert isinstance(datetime_type(), pl.Datetime), "DATETIME should convert to polars Datetime"
 
@@ -298,8 +275,6 @@ def test_get_polars_type():
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_create_sql_source_from_db_settings_connection():
     """Test the create_sql_source_from_db_settings function."""
-    # Mock the settings
-
     database_connection = DatabaseConnection(
         database_type="postgresql",
         username="testuser",
@@ -324,7 +299,6 @@ def test_create_sql_source_from_db_settings_connection():
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_create_sql_source_from_db_settings_connection_reference():
     """Test the create_sql_source_from_db_settings function."""
-    # Mock the settings
     database_connection = FullDatabaseConnection(
         database_type="postgresql",
         username="testuser",
@@ -377,9 +351,7 @@ def test_error_sql_source_validate():
     assert 'relation "public.moviess" does not exist' in error_message
 
 
-# ============================================================================
 # SQL Query Validation Tests (no Docker required)
-# ============================================================================
 
 
 class TestSQLQueryValidation:
@@ -431,7 +403,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # DROP statements don't start with SELECT, so they get caught by that check
             error_msg = str(exc_info.value)
             assert "DROP" in error_msg or "Only SELECT" in error_msg
 
@@ -445,7 +416,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # DELETE doesn't start with SELECT, so it gets caught as non-SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_update_statement_rejected(self):
@@ -458,7 +428,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # UPDATE doesn't start with SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_insert_statement_rejected(self):
@@ -471,7 +440,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # INSERT doesn't start with SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_create_statement_rejected(self):
@@ -485,7 +453,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # CREATE doesn't start with SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_alter_statement_rejected(self):
@@ -498,7 +465,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # ALTER doesn't start with SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_truncate_statement_rejected(self):
@@ -511,7 +477,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # TRUNCATE doesn't start with SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_grant_revoke_rejected(self):
@@ -531,8 +496,6 @@ class TestSQLQueryValidation:
         This is correct security behavior - dangerous SQL inside comments
         is not executed by the database, so we strip comments first.
         """
-        # These queries have dangerous SQL inside comments - after stripping,
-        # they become valid SELECT queries
         safe_after_stripping = [
             "SELECT * FROM users; -- DROP TABLE users",
             "SELECT * FROM users /* DROP TABLE users */",
@@ -543,7 +506,6 @@ class TestSQLQueryValidation:
 
     def test_dangerous_sql_outside_comments_blocked(self):
         """Test that dangerous SQL outside of comments is blocked."""
-        # This has DROP outside of any comment - should be caught
         with pytest.raises(UnsafeSQLError) as exc_info:
             validate_sql_query("SELECT * FROM users; DROP TABLE users")
         assert "DROP" in str(exc_info.value)
@@ -633,7 +595,6 @@ class TestSQLQueryValidation:
 
     def test_sql_source_accepts_safe_query(self):
         """Test that SqlSource constructor accepts safe SELECT queries."""
-        # This should not raise - it's a valid SELECT query
         sql_source = SqlSource(
             connection_string="postgresql://test:test@localhost/test", query="SELECT * FROM users WHERE id = 1"
         )
@@ -642,15 +603,12 @@ class TestSQLQueryValidation:
 
     def test_table_mode_bypasses_validation(self):
         """Test that table mode (auto-generated queries) bypasses validation."""
-        # Table mode generates its own SELECT query, so no user input validation needed
         sql_source = SqlSource(connection_string="postgresql://test:test@localhost/test", table_name="users")
         assert sql_source.query_mode == "table"
         assert "SELECT * FROM users" in sql_source.query
 
 
-# ============================================================================
 # SQL Identifier Validation Tests (no Docker required)
-# ============================================================================
 
 
 class TestSQLIdentifierValidation:

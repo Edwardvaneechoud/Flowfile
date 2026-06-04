@@ -39,16 +39,12 @@ def extend_app(app: FastAPI):
     Extend the flowfile_core FastAPI app with routes to serve the Vue.js frontend
     and worker functionality.
     """
-    # Add middleware to strip /api prefix (for unified mode compatibility)
     app.add_middleware(StripApiPrefixMiddleware)
 
-    # Serve static files if the directory exists
     if static_dir.exists():
-        # Mount the assets directory
         if (static_dir / "assets").exists():
             app.mount("/assets", StaticFiles(directory=str(static_dir / "assets")), name="assets")
 
-        # Mount other common directories
         for dir_name in ["css", "js", "img", "fonts", "icons", "images"]:
             dir_path = static_dir / dir_name
             if dir_path.exists() and dir_path.is_dir():
@@ -87,12 +83,10 @@ def extend_app(app: FastAPI):
     @app.get("/ui/{path:path}", include_in_schema=False)
     async def serve_vue_app(path: str):
         """Serve static files or the index.html for client-side routing"""
-        # Try to serve the requested file
         file_path = static_dir / path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
 
-        # If it's a directory, redirect to add trailing slash
         if (static_dir / path).exists() and (static_dir / path).is_dir():
             return RedirectResponse(f"/ui/{path}/")
 
@@ -103,7 +97,6 @@ def extend_app(app: FastAPI):
 
         return {"error": f"File not found: {path}"}
 
-    # Include worker routes if simplified mode is enabled
     include_worker_routes(app)
 
     return app
@@ -115,11 +108,9 @@ def include_worker_routes(app: FastAPI):
     This creates a unified API that serves both the web UI and processes the worker operations.
     """
     try:
-        # Import worker modules
         from flowfile_worker import CACHE_DIR, mp_context
         from flowfile_worker.routes import router as worker_router
 
-        # Add lifecycle event handler for worker cleanup
         @app.on_event("shutdown")
         async def shutdown_worker():
             """Clean up worker resources on shutdown"""
@@ -138,7 +129,6 @@ def include_worker_routes(app: FastAPI):
 
             await asyncio.sleep(0.1)
 
-        # Include the worker router with a prefix
         app.include_router(worker_router, prefix="/worker")
 
         print("Worker functionality included in unified API")
@@ -153,11 +143,9 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     Start the flowfile_core FastAPI app with the web UI routes and worker functionality.
     This function is a wrapper around flowfile_core.main.run().
     """
-    # Set electron mode
     if "FLOWFILE_MODE" not in os.environ:
         os.environ["FLOWFILE_MODE"] = "electron"
 
-    # Import core app
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
     from flowfile_core.main import app as core_app
     from flowfile_core.main import run
@@ -168,10 +156,8 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
         raise NotImplementedError("Service must run on port 63578")
     OFFLOAD_TO_WORKER.value = True
 
-    # Extend the core app with web UI routes and worker functionality
     extend_app(core_app)
 
-    # Open browser if requested
     if open_browser:
         time.sleep(5)
         webbrowser.open_new_tab(f"http://{host}:{port}/ui")
@@ -182,5 +168,4 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     print(f"    API Docs: http://{host}:{port}/docs")
     print("=" * 60 + "\n")
 
-    # Run the core app
     run(host=host, port=port)

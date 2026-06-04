@@ -8,7 +8,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import SelectSettings from '../../src/components/nodes/SelectSettings.vue'
 import type { SelectSettings as SelectSettingsType } from '../../src/types'
 
-// Mock the flow store
 const mockGetNode = vi.fn()
 const mockGetNodeInputSchema = vi.fn()
 
@@ -83,7 +82,7 @@ describe('SelectSettings', () => {
     })
 
     const checkboxes = wrapper.findAll('input[type="checkbox"]')
-    expect(checkboxes.length).toBe(3) // One for each column
+    expect(checkboxes.length).toBe(3)
     expect(checkboxes.every(cb => (cb.element as HTMLInputElement).checked)).toBe(true)
   })
 
@@ -115,9 +114,8 @@ describe('SelectSettings', () => {
     })
 
     const inputs = wrapper.findAll('input[type="text"]')
-    expect(inputs.length).toBe(3) // One for each column
+    expect(inputs.length).toBe(3)
 
-    // Check initial values
     expect((inputs[0].element as HTMLInputElement).value).toBe('id')
     expect((inputs[1].element as HTMLInputElement).value).toBe('name')
     expect((inputs[2].element as HTMLInputElement).value).toBe('value')
@@ -262,7 +260,6 @@ describe('SelectSettings', () => {
     })
 
     const rows = wrapper.findAll('tbody tr')
-    // All rows should be draggable
     rows.forEach(row => {
       expect(row.attributes('draggable')).toBe('true')
     })
@@ -285,7 +282,7 @@ describe('SelectSettings', () => {
     })
 
     const rows = wrapper.findAll('tbody tr')
-    expect(rows.length).toBe(1) // Only available column shown
+    expect(rows.length).toBe(1)
     expect(wrapper.text()).toContain('id')
     expect(wrapper.text()).not.toContain('old_col')
   })

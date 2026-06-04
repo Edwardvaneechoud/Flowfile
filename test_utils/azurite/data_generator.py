@@ -131,7 +131,6 @@ def populate_test_data(container: str = "test-container"):
     except Exception as e:
         logger.error(f"Failed to create Delta Lake table (non-fatal): {e}")
 
-    # Verify: list all blobs in the container and log them
     _log_container_contents(client, container)
     logger.info("All Azurite test data populated successfully.")
 

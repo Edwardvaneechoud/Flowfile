@@ -97,7 +97,6 @@ const emit = defineEmits<{
   (e: "delete"): void;
 }>();
 
-// Cell classes (computed)
 const cellClasses = computed(() => ({
   "cell--executing": props.isExecuting,
   "cell--error": props.cell.output?.error,

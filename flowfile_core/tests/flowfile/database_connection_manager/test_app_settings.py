@@ -54,7 +54,6 @@ def test_set_updates_existing_row() -> None:
             .filter(Secret.name == GOOGLE_OAUTH_CLIENT_ID_KEY, Secret.user_id == user_id)
             .count()
         )
-        # Update, not append — still a single row.
         assert rows == 1
     _cleanup(user_id)
 

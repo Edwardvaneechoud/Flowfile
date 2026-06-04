@@ -27,9 +27,7 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.schemas import FlowParameter
 
-# ---------------------------------------------------------------------------
 # Fixtures / helpers
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -125,9 +123,7 @@ def _publish(client, tmp_path, slug, flow_id, parameters=None):
 _REGION_PARAM = [{"name": "region", "type": "string"}]
 
 
-# ---------------------------------------------------------------------------
 # Tests
-# ---------------------------------------------------------------------------
 
 
 def test_publish_key_and_call_with_param_filtering(client, tmp_path):

@@ -68,19 +68,15 @@ const flowStore = useFlowStore()
 
 const selectedDataset = ref('')
 
-// Available datasets from the store
 const availableDatasets = computed(() => flowStore.getExternalDatasetNames())
 
-// Check if data is currently loaded for this node
 const dataLoaded = computed(() => flowStore.fileContents.has(props.nodeId))
 
-// Schema from node results
 const schemaFields = computed(() => {
   const result = flowStore.getNodeResult(props.nodeId)
   return result?.schema ?? []
 })
 
-// Row count from results
 const rowCount = computed(() => {
   const result = flowStore.getNodeResult(props.nodeId)
   return result?.data?.total_rows ?? null
@@ -90,7 +86,6 @@ onMounted(() => {
   const s = props.settings as NodeExternalDataSettings
   selectedDataset.value = s.dataset_name || ''
 
-  // If a dataset is selected and data is available, load it
   if (selectedDataset.value) {
     loadDataset(selectedDataset.value)
   }

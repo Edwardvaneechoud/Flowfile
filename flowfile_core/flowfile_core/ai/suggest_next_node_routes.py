@@ -42,8 +42,6 @@ router = APIRouter()
 
 
 _DEFAULT_PROVIDER = "anthropic"
-"""Ghost-node defaults to the same provider AnthropicProvider routes
-``ghost_node`` to (Haiku 4.5) — fastest TTFB on tool-aware traffic."""
 
 
 class SuggestNextNodeRequest(BaseModel):
@@ -55,8 +53,6 @@ class SuggestNextNodeRequest(BaseModel):
     provider: str = Field(default=_DEFAULT_PROVIDER, min_length=1)
     model: str | None = None
     intent: str | None = Field(default=None, max_length=500)
-    """Optional caller-supplied hint (e.g. ``"filter to last 30 days"``).
-    The LLM uses this to bias which suggestions it returns."""
     max_suggestions: int = Field(default=MAX_SUGGESTIONS, ge=1, le=10)
     timeout: float = Field(default=DEFAULT_TIMEOUT_SECONDS, gt=0.0, le=10.0)
 

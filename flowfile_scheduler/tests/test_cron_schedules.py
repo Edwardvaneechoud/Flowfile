@@ -95,7 +95,7 @@ def test_cron_due_launches(sched, monkeypatch):
     _set_now(monkeypatch, datetime(2026, 5, 25, 10, 16, 0, tzinfo=timezone.utc))
     assert _run_tick(sched) == 1
     assert len(_runs(sched, reg_id)) == 1
-    assert sched.spawned  # subprocess spawn attempted
+    assert sched.spawned
 
 
 def test_cron_not_due(sched, monkeypatch):

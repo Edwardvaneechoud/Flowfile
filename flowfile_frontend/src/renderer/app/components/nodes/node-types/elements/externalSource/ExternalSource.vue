@@ -40,7 +40,6 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 const nodeStore = useNodeStore();
 const nodeExternalSource = ref<null | NodeExternalSource>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeExternalSource,
   onBeforeSave: async () => {
@@ -66,7 +65,6 @@ const isDirty = ref(false);
 
 let activeWatchStopHandle: WatchStopHandle | null = null;
 watchEffect(() => {
-  // Clean up the previous watch if the condition changes
   if (activeWatchStopHandle) {
     activeWatchStopHandle();
     activeWatchStopHandle = null;

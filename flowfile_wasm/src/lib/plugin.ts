@@ -9,7 +9,6 @@ export interface FlowfilePluginOptions {
 
 export const FlowfileEditorPlugin: Plugin = {
   install(app: App, options?: FlowfilePluginOptions) {
-    // Check if Pinia is already installed
     const hasPinia = app.config.globalProperties.$pinia !== undefined
 
     if (!hasPinia) {
@@ -17,7 +16,6 @@ export const FlowfileEditorPlugin: Plugin = {
       app.use(pinia)
     }
 
-    // Register the component globally
     app.component('FlowfileEditor', FlowfileEditor)
   }
 }

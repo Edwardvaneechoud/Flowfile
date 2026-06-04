@@ -216,7 +216,6 @@ const versionOptions = computed(() => {
   }));
 });
 
-// Sync sqlCode with nodeData.sql_query
 watch(sqlCode, (newCode) => {
   if (nodeData.value) {
     nodeData.value.sql_query = newCode || null;
@@ -228,7 +227,6 @@ function switchMode(newMode: "table" | "sql") {
   if (!nodeData.value) return;
 
   if (newMode === "sql") {
-    // Cache table state before clearing
     cachedTableState.value = {
       catalog_table_id: nodeData.value.catalog_table_id,
       catalog_table_name: nodeData.value.catalog_table_name,
@@ -245,18 +243,15 @@ function switchMode(newMode: "table" | "sql") {
     selectedTableMeta.value = null;
     deltaVersions.value = [];
 
-    // Restore cached SQL if available
     if (cachedSqlCode.value != null) {
       sqlCode.value = cachedSqlCode.value;
       nodeData.value.sql_query = cachedSqlCode.value || null;
     }
   } else {
-    // Cache SQL state before clearing
     cachedSqlCode.value = sqlCode.value;
     nodeData.value.sql_query = null;
     sqlCode.value = "";
 
-    // Restore cached table state if available
     if (cachedTableState.value) {
       nodeData.value.catalog_table_id = cachedTableState.value.catalog_table_id;
       nodeData.value.catalog_table_name = cachedTableState.value.catalog_table_name;
@@ -389,7 +384,6 @@ async function loadNodeData(nodeId: number) {
     };
   }
 
-  // Detect mode from saved settings
   if (nodeData.value?.sql_query) {
     mode.value = "sql";
     sqlCode.value = nodeData.value.sql_query;
@@ -399,7 +393,6 @@ async function loadNodeData(nodeId: number) {
 
   dataLoaded.value = true;
 
-  // Ensure catalog data is loaded before looking up the table
   if (catalogLoadPromise) await catalogLoadPromise;
 
   if (mode.value === "table" && nodeData.value?.catalog_table_id) {

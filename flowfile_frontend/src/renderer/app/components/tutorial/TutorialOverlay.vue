@@ -9,14 +9,12 @@ const tutorialStore = useTutorialStore();
 const nodeStore = useFlowStore();
 const route = useRoute();
 
-// Only show overlay on designer page
 const isDesignerPage = computed(() => route.name === "designer");
 
 const targetRect = ref<DOMRect | null>(null);
 const tooltipPosition = ref({ x: 0, y: 0 });
 const previousNodeCount = ref<number>(0);
 
-// Compute spotlight position and size
 const spotlightStyle = computed(() => {
   if (!targetRect.value || !tutorialStore.currentStep?.target) {
     return null;
@@ -34,19 +32,16 @@ const spotlightStyle = computed(() => {
   };
 });
 
-// Check if we should show center mode (no target element)
 const isCenterMode = computed(() => {
   return !tutorialStore.currentStep?.target;
 });
 
-// Calculate tooltip position based on target and preferred position
 function calculateTooltipPosition() {
   if (!tutorialStore.currentStep) return;
 
   const position = tutorialStore.currentStep.position || "bottom";
 
   if (isCenterMode.value || position === "center") {
-    // Center the tooltip on screen
     tooltipPosition.value = {
       x: window.innerWidth / 2,
       y: window.innerHeight / 2,
@@ -87,7 +82,6 @@ function calculateTooltipPosition() {
   }
 }
 
-// Update target element position
 function updateTargetPosition() {
   if (!tutorialStore.currentStep?.target) {
     targetRect.value = null;
@@ -104,13 +98,11 @@ function updateTargetPosition() {
   }
 }
 
-// Watch for step changes and wait for elements if needed
 watch(
   () => tutorialStore.currentStep,
   async (newStep) => {
     if (!newStep) return;
 
-    // If we need to wait for an element, poll for it
     if (newStep.waitForElement) {
       const maxAttempts = 50;
       let attempts = 0;
@@ -129,7 +121,6 @@ watch(
   { immediate: true },
 );
 
-// Auto-advance when flow is created
 watch(
   () => nodeStore.flowId,
   (newFlowId, oldFlowId) => {
@@ -137,14 +128,12 @@ watch(
 
     const currentStepId = tutorialStore.currentStep?.id;
 
-    // If we're on the "confirm-create-flow" step and a flow was just created, advance
     if (
       currentStepId === "confirm-create-flow" &&
       newFlowId &&
       newFlowId > 0 &&
       (!oldFlowId || oldFlowId <= 0)
     ) {
-      // Small delay to let the UI update
       setTimeout(() => {
         tutorialStore.nextStep();
       }, 500);
@@ -152,10 +141,8 @@ watch(
   },
 );
 
-// Track if node settings was previously visible
 const nodeSettingsWasVisible = ref(false);
 
-// Auto-advance when node settings panel appears (for configure-manual-input step)
 function checkForNodeSettings() {
   if (!tutorialStore.isActive) return;
 
@@ -163,7 +150,6 @@ function checkForNodeSettings() {
   const nodeSettings = document.querySelector("#nodeSettings");
   const nodeSettingsIsVisible = nodeSettings !== null;
 
-  // If we're on "configure-manual-input" step and nodeSettings just appeared, advance
   if (
     currentStepId === "configure-manual-input" &&
     nodeSettingsIsVisible &&
@@ -177,7 +163,6 @@ function checkForNodeSettings() {
   nodeSettingsWasVisible.value = nodeSettingsIsVisible;
 }
 
-// Auto-advance when a node is added to the canvas
 function checkForNewNodes() {
   if (!tutorialStore.isActive) return;
 
@@ -185,21 +170,18 @@ function checkForNewNodes() {
   const nodes = document.querySelectorAll(".vue-flow__node");
   const currentNodeCount = nodes.length;
 
-  // If we're on a "drag" step and a new node was added, advance
   if (currentStepId === "drag-manual-input" && currentNodeCount > previousNodeCount.value) {
     setTimeout(() => {
       tutorialStore.nextStep();
     }, 300);
   }
 
-  // Track for "drag-group-by" step
   if (currentStepId === "drag-group-by" && currentNodeCount > previousNodeCount.value) {
     setTimeout(() => {
       tutorialStore.nextStep();
     }, 300);
   }
 
-  // Track for "drag-write-data" step
   if (currentStepId === "drag-write-data" && currentNodeCount > previousNodeCount.value) {
     setTimeout(() => {
       tutorialStore.nextStep();
@@ -209,17 +191,14 @@ function checkForNewNodes() {
   previousNodeCount.value = currentNodeCount;
 }
 
-// Handle window resize
 function handleResize() {
   updateTargetPosition();
 }
 
-// Handle scroll
 function handleScroll() {
   updateTargetPosition();
 }
 
-// Mutation observer to detect DOM changes
 let mutationObserver: MutationObserver | null = null;
 
 function setupMutationObserver() {
@@ -243,7 +222,6 @@ onMounted(() => {
   setupMutationObserver();
   updateTargetPosition();
 
-  // Initialize node count
   previousNodeCount.value = document.querySelectorAll(".vue-flow__node").length;
 });
 

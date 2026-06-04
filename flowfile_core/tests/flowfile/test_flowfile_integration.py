@@ -56,9 +56,7 @@ def complex_elaborate_flow(tmp_path) -> FlowGraph:
         execution_mode='Development'
     ))
     graph = handler.get_flow(1)
-    # ============================================================
     # SECTION 1: DATA SOURCES (Nodes 1-10)
-    # ============================================================
 
     # Node 1: Manual Input - Customer Data
     customer_data = [
@@ -128,9 +126,7 @@ def complex_elaborate_flow(tmp_path) -> FlowGraph:
         raw_data_format=input_schema.RawData.from_pylist(network_data)
     ))
 
-    # ============================================================
     # SECTION 2: BASIC TRANSFORMATIONS (Nodes 11-25)
-    # ============================================================
 
     # Node 11: Filter - Keep only Premium customers
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=11, node_type='filter'))
@@ -211,9 +207,7 @@ def complex_elaborate_flow(tmp_path) -> FlowGraph:
         unique_input=transform_schema.UniqueInput(columns=['Country'])
     ))
 
-    # ============================================================
     # SECTION 3: ADVANCED TRANSFORMATIONS (Nodes 26-40)
-    # ============================================================
 
     # Node 26: Group By - Aggregate sales by country
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=26, node_type='group_by'))
@@ -317,9 +311,7 @@ output_df = input_df.with_columns([
         polars_code_input=transform_schema.PolarsCodeInput(polars_code=polars_code)
     ))
 
-    # ============================================================
     # SECTION 4: JOINS (Nodes 41-50)
-    # ============================================================
     # Node 41: Regular Join - Join customers with sales
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=41, node_type='join'))
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(15, 41))
@@ -394,9 +386,7 @@ output_df = input_df.with_columns([
         auto_keep_all=True,
         depending_on_ids=[1, 4]
     ))
-    # ============================================================
     # SECTION 5: AGGREGATIONS & ANALYTICS (Nodes 51-60)
-    # ============================================================
 
     # Node 51: Record Count - Count records after join
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=51, node_type='record_count'))
@@ -412,9 +402,7 @@ output_df = input_df.with_columns([
         flow_id=1,
         node_id=52
     ))
-    # ============================================================
     # SECTION 6: UNIONS (Nodes 61-70)
-    # ============================================================
 
     # Node 61: Union - Combine multiple aggregated streams
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=61, node_type='union'))
@@ -427,9 +415,7 @@ output_df = input_df.with_columns([
         depending_on_ids=[26, 32]
     ))
 
-    # ============================================================
     # SECTION 7: OUTPUTS (Nodes 71-80)
-    # ============================================================
     # Node 71: Output - Final customer analysis
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=71, node_type='output'))
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(41, 71))
@@ -547,16 +533,12 @@ def complex_flow_summary(complex_elaborate_flow: FlowGraph) -> dict[str, Any]:
 def test_complex_flow_structure(complex_elaborate_flow: FlowGraph, complex_flow_summary):
     """Test that the complex flow has the expected structure."""
     summary = complex_flow_summary
-    # Verify we have a substantial number of nodes
     assert summary['total_nodes'] > 29, "Complex flow should have more than 30 nodes"
 
-    # Verify we have multiple starting points
     assert summary['starting_nodes'] >= 5, "Complex flow should have at least 5 starting nodes"
 
-    # Verify connections exist
     assert summary['total_connections'] > 25, "Complex flow should have more than 25 connections"
 
-    # Verify all major node types are represented
     assert summary['node_types']['manual_input'] >= 5
     assert summary['node_types']['filter'] >= 1
     assert summary['node_types']['formula'] >= 1
@@ -579,7 +561,6 @@ def test_execution_complex_flow_development(complex_elaborate_flow: FlowGraph, e
     """Test executing the complex flow to ensure all nodes run without error."""
     complex_elaborate_flow.flow_settings.execution_mode = "Development"
     complex_elaborate_flow.flow_settings.execution_location = execution_location
-    # Execute the entire flow
     results = complex_elaborate_flow.run_graph()
     handle_run_info(results)
 
@@ -588,7 +569,6 @@ def test_execution_complex_flow_performance(complex_elaborate_flow: FlowGraph, e
     """Test executing the complex flow to ensure all nodes run without error."""
     complex_elaborate_flow.flow_settings.execution_mode = "Performance"
     complex_elaborate_flow.flow_settings.execution_location = execution_location
-    # Execute the entire flow
     results = complex_elaborate_flow.run_graph()
     handle_run_info(results)
 

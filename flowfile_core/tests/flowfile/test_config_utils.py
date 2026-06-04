@@ -53,7 +53,7 @@ class TestMutableBool:
         mb = MutableBool(value=False)
         result = mb.set(True)
         assert mb.value is True
-        assert result is mb  # Returns self
+        assert result is mb
 
     def test_set_value_false(self):
         mb = MutableBool(value=True)

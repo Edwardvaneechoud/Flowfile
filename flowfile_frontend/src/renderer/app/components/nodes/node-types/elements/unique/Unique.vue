@@ -155,7 +155,6 @@ const setUniqueColumns = () => {
     .map((input) => input.old_name);
 };
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeUnique,
   onBeforeSave: () => {

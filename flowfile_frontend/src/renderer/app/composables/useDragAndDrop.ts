@@ -1,5 +1,4 @@
 // composables/useDragAndDrop.ts
-// Drag and drop composable for flow canvas
 //
 // TODO(refactor): ~867 LOC, doing 5 jobs. Plan to split into:
 //   - useNodeComponentLoader: dynamic imports + caching (~lines 148-227)
@@ -130,7 +129,6 @@ const state = {
   isDragging: ref(false),
 };
 
-// Utility function to convert snake_case to TitleCase
 function toTitleCase(str: string): string {
   return str
     .split("_")
@@ -138,7 +136,6 @@ function toTitleCase(str: string): string {
     .join("");
 }
 
-// Utility function to convert snake_case to camelCase
 function toCamelCase(str: string): string {
   const parts = str.split("_");
   return (
@@ -236,7 +233,6 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
 }
 
 async function getComponentRaw(item: string): Promise<any> {
-  // Fetch NodeTemplate to check custom_node property
   const nodeTemplate = await getNodeTemplateByItem(item);
 
   if (!nodeTemplate) {
@@ -726,10 +722,8 @@ export default function useDragAndDrop() {
     baseY: number,
     flowId: number,
   ): Promise<OperationResponse | undefined> {
-    // Map old node IDs to new node IDs
     const nodeIdMapping: Map<number, number> = new Map();
 
-    // Pre-assign all node IDs and calculate positions using relative positions
     const nodeInfos: Array<{
       node: (typeof multiCopyValue.nodes)[0];
       newNodeId: number;
@@ -742,14 +736,12 @@ export default function useDragAndDrop() {
       const newNodeId = getId();
       nodeIdMapping.set(node.nodeIdToCopyFrom, newNodeId);
 
-      // Use relative positions if available, otherwise fall back to staggered layout
       const offsetX = baseX + (node.relativeX ?? (i % 3) * 200);
       const offsetY = baseY + (node.relativeY ?? Math.floor(i / 3) * 150);
 
       nodeInfos.push({ node, newNodeId, offsetX, offsetY });
     }
 
-    // First pass: Create all UI nodes and wait for components to load
     const uiNodePromises = nodeInfos.map(async ({ node, newNodeId, offsetX, offsetY }) => {
       const component = await getComponentRaw(node.type);
       const newNode: Node = {
@@ -778,10 +770,8 @@ export default function useDragAndDrop() {
       return { node, newNodeId, offsetX, offsetY };
     });
 
-    // Wait for all UI nodes to be created
     const createdNodes = await Promise.all(uiNodePromises);
 
-    // Second pass: Copy all nodes in the backend and wait for completion
     let lastResponse: OperationResponse | undefined;
     const backendCopyPromises = createdNodes.map(async ({ node, newNodeId, offsetX, offsetY }) => {
       const nodePromise: NodePromise = {
@@ -795,22 +785,18 @@ export default function useDragAndDrop() {
       return FlowApi.copyNode(node.nodeIdToCopyFrom, multiCopyValue.flowIdToCopyFrom, nodePromise);
     });
 
-    // Wait for ALL backend copy operations to complete
     const copyResponses = await Promise.all(backendCopyPromises);
     if (copyResponses.length > 0) {
       lastResponse = copyResponses[copyResponses.length - 1];
     }
 
-    // Wait for Vue to update
     await nextTick();
 
-    // Third pass: Create connections between the new nodes (after all nodes exist)
     const connectionPromises = multiCopyValue.edges.map(async (edge) => {
       const newSourceId = nodeIdMapping.get(edge.sourceNodeId);
       const newTargetId = nodeIdMapping.get(edge.targetNodeId);
 
       if (newSourceId !== undefined && newTargetId !== undefined) {
-        // Look up the source node's output label for the edge
         const sourceNodeInfo = multiCopyValue.nodes.find(
           (n) => n.nodeIdToCopyFrom === edge.sourceNodeId,
         );
@@ -821,7 +807,6 @@ export default function useDragAndDrop() {
             ? sourceNodeInfo.nodeTemplate.output_names[outputIndex]
             : undefined;
 
-        // Create the edge in the UI
         const newEdge = {
           id: `e${newSourceId}-${newTargetId}-${edge.sourceHandle}-${edge.targetHandle}`,
           source: String(newSourceId),
@@ -832,7 +817,6 @@ export default function useDragAndDrop() {
         };
         addEdges([newEdge]);
 
-        // Create the connection in the backend
         const nodeConnection: NodeConnection = {
           input_connection: {
             node_id: newTargetId,
@@ -848,7 +832,6 @@ export default function useDragAndDrop() {
       return undefined;
     });
 
-    // Wait for all connections to be created
     const connectionResponses = await Promise.all(connectionPromises);
     // Return the last successful connection response, or the last copy response
     const validConnectionResponses = connectionResponses.filter(
@@ -888,11 +871,9 @@ export default function useDragAndDrop() {
     const parsed = parseTabularText(text);
     if (!parsed || parsed.length < 2) return undefined;
 
-    // First row is headers, rest is data
     const headers = parsed[0];
     const dataRows = parsed.slice(1);
 
-    // Build column-major RawDataFormat with inferred types
     const data: unknown[][] = headers.map((_, colIdx) => dataRows.map((row) => row[colIdx] ?? ""));
     const columns = headers.map((name, colIdx) => ({
       name: name || `Column ${colIdx + 1}`,
@@ -924,7 +905,6 @@ export default function useDragAndDrop() {
       };
       addNodes(newNode);
 
-      // Set the data on the newly created node
       await NodeApi.updateSettingsDirectly("manual_input", {
         flow_id: flowId,
         node_id: nodeId,

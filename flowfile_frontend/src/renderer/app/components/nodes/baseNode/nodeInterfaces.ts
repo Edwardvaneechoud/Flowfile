@@ -3,7 +3,6 @@
 
 import { ref } from "vue";
 
-// Re-export all types from the new location
 export * from "../../../types/node.types";
 
 // Re-export RunInformation from flow.types as it was originally defined here

@@ -1,5 +1,3 @@
-// Re-export all views for convenient imports
-
 // Auth
 export { default as LoginView } from "./LoginView/LoginView.vue";
 

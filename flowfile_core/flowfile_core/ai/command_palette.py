@@ -59,20 +59,12 @@ logger = logging.getLogger(__name__)
 
 
 SURFACE: Final[str] = "cmd_k"
-"""The :data:`SurfaceLiteral` value cmd_k emits — kept as a constant so
-call sites and test assertions stay in lock-step."""
 
 DEFAULT_TIMEOUT_SECONDS: Final[float] = 8.0
-"""Hard timeout per call. Target is sub-1s TTFB / <3s total but BYOK
-quality varies — 8s caps a slow provider before the user gives up."""
 
 DEFAULT_MAX_TOKENS: Final[int] = 1024
-"""Generous ceiling for a short imperative answer. Used when the request
-body omits ``max_tokens``."""
 
 MAX_OPS_PER_REQUEST: Final[int] = 6
-"""Upper bound on tool calls processed per request. The cmd_k preset has
-~6 tools; if the LLM emits more than that we cap to keep latency bounded."""
 
 DegradedReason = Literal[
     "timeout",
@@ -83,9 +75,7 @@ DegradedReason = Literal[
 ]
 
 
-# --------------------------------------------------------------------------- #
-# Wire types                                                                   #
-# --------------------------------------------------------------------------- #
+# Wire types
 
 
 class CommandPaletteInsertionContext(BaseModel):
@@ -168,9 +158,7 @@ class CommandPaletteResponse(BaseModel):
     refused: list[RefusedToolCall] = Field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
-# Prompt composition                                                           #
-# --------------------------------------------------------------------------- #
+# Prompt composition
 
 
 _SYSTEM_PROMPT_SUFFIX: Final[str] = (
@@ -278,9 +266,7 @@ def _build_messages_for_palette(
     ]
 
 
-# --------------------------------------------------------------------------- #
-# Provider call wrapper                                                        #
-# --------------------------------------------------------------------------- #
+# Provider call wrapper
 
 
 async def _call_provider_for_tools(
@@ -320,9 +306,7 @@ async def _call_provider_for_tools(
     return response, None
 
 
-# --------------------------------------------------------------------------- #
-# Tool-call dispatch + diff assembly                                           #
-# --------------------------------------------------------------------------- #
+# Tool-call dispatch + diff assembly
 
 
 _GRAPH_PREFIX: Final[str] = "flowfile.graph."
@@ -477,9 +461,7 @@ def _bin_tool_results_to_diff(
     )
 
 
-# --------------------------------------------------------------------------- #
-# Public entry point                                                           #
-# --------------------------------------------------------------------------- #
+# Public entry point
 
 
 async def run_command_palette(
@@ -524,7 +506,6 @@ async def run_command_palette(
     sid = session_id or "cmdk-anonymous"
     flow_id = int(graph.flow_id)
 
-    # Tool catalog preset for this surface
     tool_specs = list(build_tool_catalog(surface=SURFACE))
     if not tool_specs:
         # Defence-in-depth: ``SURFACE_PRESETS["cmd_k"]`` is non-empty, but a
@@ -538,7 +519,6 @@ async def run_command_palette(
         )
         return CommandPaletteResponse(degraded=True, reason="empty_catalog")
 
-    # Context + user instruction
     messages = _build_messages_for_palette(
         graph=graph,
         prompt=prompt,
@@ -546,7 +526,6 @@ async def run_command_palette(
         insertion_context=insertion_context,
     )
 
-    # Provider call (rate-limit scheduler acquired inside)
     response, error = await _call_provider_for_tools(
         provider=provider,
         messages=messages,

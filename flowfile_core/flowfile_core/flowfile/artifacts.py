@@ -112,11 +112,9 @@ class ArtifactContext:
             refs.append(ref)
             state.published.append(ref)
 
-            # Update the per-kernel index
             kernel_map = self._kernel_artifacts.setdefault(kernel_id, {})
             kernel_map[ref.name] = ref
 
-            # Update the reverse index
             key = (kernel_id, ref.name)
             self._publisher_index.setdefault(key, set()).add(node_id)
 
@@ -153,7 +151,6 @@ class ArtifactContext:
         kernel_map = self._kernel_artifacts.get(kernel_id, {})
         for name in artifact_names:
             kernel_map.pop(name, None)
-            # Clean up the reverse index entry but leave published intact
             key = (kernel_id, name)
             publisher_ids = self._publisher_index.pop(key, set())
 
@@ -205,10 +202,8 @@ class ArtifactContext:
             upstream_state = self._node_states.get(uid)
             if upstream_state is None:
                 continue
-            # First, remove artifacts deleted by this upstream node
             for name in upstream_state.deleted:
                 available.pop(name, None)
-            # Then, add artifacts published by this upstream node
             for ref in upstream_state.published:
                 if ref.kernel_id == kernel_id:
                     available[ref.name] = ref
@@ -279,12 +274,10 @@ class ArtifactContext:
         Clears the kernel index and availability maps.  The ``published``
         lists on node states are preserved as historical records.
         """
-        # Clean reverse index entries for this kernel
         keys_to_remove = [k for k in self._publisher_index if k[0] == kernel_id]
         for k in keys_to_remove:
             del self._publisher_index[k]
 
-        # Clean deletion origin entries for this kernel
         for nid in list(self._deletion_origins):
             self._deletion_origins[nid] = [entry for entry in self._deletion_origins[nid] if entry[0] != kernel_id]
             if not self._deletion_origins[nid]:
@@ -314,14 +307,12 @@ class ArtifactContext:
             if state is None:
                 continue
             for ref in state.published:
-                # Remove from the kernel artifact index
                 kernel_map = self._kernel_artifacts.get(ref.kernel_id)
                 if kernel_map is not None:
                     # Only remove if this ref is still the current entry
                     existing = kernel_map.get(ref.name)
                     if existing is not None and existing.source_node_id == nid:
                         del kernel_map[ref.name]
-                # Remove from the reverse publisher index
                 key = (ref.kernel_id, ref.name)
                 pub_set = self._publisher_index.get(key)
                 if pub_set is not None:

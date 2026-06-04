@@ -96,7 +96,6 @@ const emit = defineEmits<{
 const flowStore = useFlowStore()
 
 const selectedColumns = ref<string[]>([])
-// Initialize directly from props - no watch needed
 const aggCols = ref<AggColumn[]>(
   props.settings.groupby_input?.agg_cols
     ? [...props.settings.groupby_input.agg_cols]

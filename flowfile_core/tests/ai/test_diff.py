@@ -59,9 +59,7 @@ from flowfile_core.configs.settings import FEATURE_FLAG_AI
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
-# --------------------------------------------------------------------------- #
-# Shared helpers + fixtures #
-# --------------------------------------------------------------------------- #
+# Shared helpers + fixtures
 
 
 def _flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
@@ -156,9 +154,7 @@ def registered_flow() -> Iterator[FlowGraph]:
         flow_file_handler._flows.pop(flow.flow_id, None)
 
 
-# --------------------------------------------------------------------------- #
-# 1. DiffStore round-trip #
-# --------------------------------------------------------------------------- #
+# 1. DiffStore round-trip
 
 
 def test_diff_store_roundtrip() -> None:
@@ -175,9 +171,7 @@ def test_diff_store_roundtrip() -> None:
     assert diff.pop_diff(diff_id) is None
 
 
-# --------------------------------------------------------------------------- #
-# 2. collect_audit_ids preserves op order #
-# --------------------------------------------------------------------------- #
+# 2. collect_audit_ids preserves op order
 
 
 def test_collect_audit_ids_preserves_op_order() -> None:
@@ -205,9 +199,7 @@ def test_collect_audit_ids_preserves_op_order() -> None:
     assert diff.collect_audit_ids(graph_diff) == [10, 20, 30, 40]
 
 
-# --------------------------------------------------------------------------- #
-# 3. apply_diff creates exactly one history snapshot #
-# --------------------------------------------------------------------------- #
+# 3. apply_diff creates exactly one history snapshot
 
 
 def test_apply_diff_creates_single_history_snapshot() -> None:
@@ -250,9 +242,7 @@ def test_apply_diff_creates_single_history_snapshot() -> None:
     assert flow.get_node(3) is not None
 
 
-# --------------------------------------------------------------------------- #
-# 4. apply_diff rolls back on mid-batch failure #
-# --------------------------------------------------------------------------- #
+# 4. apply_diff rolls back on mid-batch failure
 
 
 def test_apply_diff_rolls_back_on_midbatch_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -297,9 +287,7 @@ def test_apply_diff_rolls_back_on_midbatch_failure(monkeypatch: pytest.MonkeyPat
     assert flow.get_history_state().undo_count == pre_undo
 
 
-# --------------------------------------------------------------------------- #
-# 5. apply_diff drift detection #
-# --------------------------------------------------------------------------- #
+# 5. apply_diff drift detection
 
 
 def test_apply_diff_drift_detected() -> None:
@@ -329,9 +317,7 @@ def test_apply_diff_drift_detected() -> None:
     assert len(flow.nodes) == pre_node_count
 
 
-# --------------------------------------------------------------------------- #
-# 5b. — diff inconsistency detection #
-# --------------------------------------------------------------------------- #
+# 5b. — diff inconsistency detection
 
 
 def test_validate_diff_rejects_phantom_connection_endpoint() -> None:
@@ -461,9 +447,7 @@ def test_apply_diff_does_not_reach_apply_path_on_inconsistent_diff(
     assert len(flow.nodes) == pre_node_count
 
 
-# --------------------------------------------------------------------------- #
-# 6. Accept route flips audit actions #
-# --------------------------------------------------------------------------- #
+# 6. Accept route flips audit actions
 
 
 def test_accept_route_flips_audit_actions(authed_client: TestClient, registered_flow: FlowGraph) -> None:
@@ -515,9 +499,7 @@ def test_accept_route_flips_audit_actions(authed_client: TestClient, registered_
     assert registered_flow.get_history_state().undo_count - pre_undo == 1
 
 
-# --------------------------------------------------------------------------- #
-# 7. Reject route — no mutation #
-# --------------------------------------------------------------------------- #
+# 7. Reject route — no mutation
 
 
 def test_reject_route_no_mutation(authed_client: TestClient, registered_flow: FlowGraph) -> None:
@@ -558,9 +540,7 @@ def test_reject_route_no_mutation(authed_client: TestClient, registered_flow: Fl
     assert diff.get_diff(diff_id) is None
 
 
-# --------------------------------------------------------------------------- #
-# 8. 404 unknown diff #
-# --------------------------------------------------------------------------- #
+# 8. 404 unknown diff
 
 
 def test_route_404_unknown_diff(authed_client: TestClient) -> None:
@@ -572,9 +552,7 @@ def test_route_404_unknown_diff(authed_client: TestClient) -> None:
     assert reject.status_code == 404
 
 
-# --------------------------------------------------------------------------- #
-# 9. 409 drift via the route #
-# --------------------------------------------------------------------------- #
+# 9. 409 drift via the route
 
 
 def test_route_409_drift(authed_client: TestClient, registered_flow: FlowGraph) -> None:
@@ -612,9 +590,7 @@ def test_route_409_drift(authed_client: TestClient, registered_flow: FlowGraph) 
     assert diff.get_diff(diff_id) is not None
 
 
-# --------------------------------------------------------------------------- #
-# 9b. — 422 diff_inconsistent via the route #
-# --------------------------------------------------------------------------- #
+# 9b. — 422 diff_inconsistent via the route
 
 
 def test_route_422_diff_inconsistent(authed_client: TestClient, registered_flow: FlowGraph) -> None:
@@ -664,9 +640,7 @@ def test_route_422_diff_inconsistent(authed_client: TestClient, registered_flow:
     assert diff.get_diff(diff_id) is not None
 
 
-# --------------------------------------------------------------------------- #
-# 10. 422 cross-flow mismatch #
-# --------------------------------------------------------------------------- #
+# 10. 422 cross-flow mismatch
 
 
 def test_route_422_cross_flow_mismatch(authed_client: TestClient, registered_flow: FlowGraph) -> None:
@@ -697,9 +671,7 @@ def test_route_422_cross_flow_mismatch(authed_client: TestClient, registered_flo
     assert diff.get_diff(diff_id) is not None
 
 
-# --------------------------------------------------------------------------- #
-# 11. 503 — feature flag off #
-# --------------------------------------------------------------------------- #
+# 11. 503 — feature flag off
 
 
 def test_route_503_when_feature_flag_off(authed_client: TestClient) -> None:
@@ -721,24 +693,18 @@ def test_route_503_when_feature_flag_off(authed_client: TestClient) -> None:
         FEATURE_FLAG_AI.set(original)
 
 
-# --------------------------------------------------------------------------- #
-# 12. Lazy litellm contract #
-# --------------------------------------------------------------------------- #
+# 12. Lazy litellm contract
 
 
 def test_lazy_litellm_contract() -> None:
-    # If litellm was already imported by a prior test, drop it.
     sys.modules.pop("litellm", None)
-    # Re-import the diff surface.
     sys.modules.pop("flowfile_core.ai.diff", None)
     from flowfile_core.ai import diff as diff_reimport  # noqa: F401
 
     assert "litellm" not in sys.modules
 
 
-# --------------------------------------------------------------------------- #
-# 13. End-to-end stage→accept #
-# --------------------------------------------------------------------------- #
+# 13. End-to-end stage→accept
 
 
 def test_end_to_end_stage_then_accept(authed_client: TestClient, registered_flow: FlowGraph) -> None:
@@ -808,9 +774,7 @@ def test_end_to_end_stage_then_accept(authed_client: TestClient, registered_flow
     _ = connection_payload  # Keep the helper exercised for the future path.
 
 
-# --------------------------------------------------------------------------- #
-# modifications bucket #
-# --------------------------------------------------------------------------- #
+# modifications bucket
 
 
 def _flow_with_orders_and_filter(flow_id: int = 1) -> FlowGraph:

@@ -95,7 +95,6 @@ class TestSaveAndLoad:
         metadata = {"name": "item", "node_id": 1, "type_name": "int", "module": "builtins"}
         persistence.save("item", 42, metadata, flow_id=0)
 
-        # Corrupt the data file
         data_path = persistence._data_path(0, "item")
         data_path.write_bytes(b"corrupted data")
 
@@ -136,7 +135,6 @@ class TestDelete:
             persistence.load("temp", flow_id=0)
 
     def test_delete_nonexistent_is_safe(self, persistence: ArtifactPersistence):
-        # Should not raise
         persistence.delete("nonexistent", flow_id=0)
 
 
@@ -201,7 +199,6 @@ class TestCleanup:
         meta = {"name": "old", "node_id": 1, "type_name": "int", "module": "builtins"}
         persistence.save("old", 1, meta, flow_id=0)
 
-        # Manually backdate the persisted_at in metadata
         meta_path = persistence._meta_path(0, "old")
         meta_data = json.loads(meta_path.read_text())
         meta_data["persisted_at"] = "2020-01-01T00:00:00+00:00"

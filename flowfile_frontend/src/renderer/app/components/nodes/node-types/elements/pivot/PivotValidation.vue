@@ -26,10 +26,8 @@ import { computed, defineProps } from "vue";
 import { PivotInput } from "../../../baseNode/nodeInput";
 import { ElPopover, ElIcon } from "element-plus";
 
-// Define props to receive pivotInput from parent
 const props = defineProps<{ pivotInput: PivotInput }>();
 
-// Computed property to determine if there are validation errors
 const showValidationMessages = computed(() => {
   return (
     !props.pivotInput.pivot_column ||

@@ -177,8 +177,6 @@ export const useTutorialStore = defineStore("tutorial", () => {
   async function onActionCompleted() {
     if (!currentStep.value) return;
 
-    // If the step has a waitForEvent, this is called when that event occurs
-    // Auto-advance to next step
     if (currentStep.value.action && currentStep.value.action !== "observe") {
       await nextStep();
     }

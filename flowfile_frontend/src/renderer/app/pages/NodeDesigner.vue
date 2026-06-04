@@ -278,7 +278,6 @@
 import { ref, watch, onMounted, computed } from "vue";
 import axios from "axios";
 
-// Child components
 import ComponentPalette from "./nodeDesigner/ComponentPalette.vue";
 import SectionCard from "./nodeDesigner/SectionCard.vue";
 import PropertyEditor from "./nodeDesigner/PropertyEditor.vue";
@@ -289,7 +288,6 @@ import NodeBrowserModal from "./nodeDesigner/NodeBrowserModal.vue";
 import NodeDesignerHelpModal from "./nodeDesigner/NodeDesignerHelpModal.vue";
 import IconSelector from "./nodeDesigner/IconSelector.vue";
 
-// Composables
 import {
   useNodeDesignerState,
   useSessionStorage,
@@ -301,7 +299,6 @@ import {
 } from "./nodeDesigner/composables";
 import type { DesignerComponent, KernelInfo } from "./nodeDesigner/types";
 
-// Initialize composables - destructure for proper TypeScript support
 const {
   nodeMetadata,
   sections,
@@ -343,10 +340,8 @@ watch(
 
 const storage = useSessionStorage(getState, setState, resetState);
 
-// Help modal state
 const showHelpModal = ref(false);
 
-// Kernel state
 const availableKernels = ref<KernelInfo[]>([]);
 
 async function fetchKernels() {
@@ -360,7 +355,6 @@ async function fetchKernels() {
 }
 
 function handleKernelChange() {
-  // Sync number_of_outputs with output_names length when kernel mode changes
   if (nodeMetadata.kernel_id) {
     nodeMetadata.number_of_outputs = nodeMetadata.output_names.length;
   }
@@ -389,7 +383,6 @@ function updateOutputName(index: number, value: string) {
   nodeMetadata.output_names[index] = value;
 }
 
-// Setup auto-save and load on mount
 watch([() => ({ ...nodeMetadata }), sections, processCode], () => storage.saveToSessionStorage(), {
   deep: true,
 });
@@ -399,7 +392,6 @@ onMounted(() => {
   fetchKernels();
 });
 
-// Event handlers
 function handleNew() {
   storage.clearSessionStorage();
 }
@@ -444,7 +436,6 @@ function handleDrop(event: DragEvent, sectionIndex: number) {
     options_string: "",
   };
 
-  // Set defaults based on type
   if (componentType === "TextInput") {
     newComponent.default = "";
     newComponent.placeholder = "";
@@ -477,25 +468,20 @@ function handlePropertyUpdate(field: string, value: any) {
   }
 }
 
-// Computed property for selected section name
 const selectedSectionName = computed(() => {
   if (selectedSectionIndex.value === null) return "";
   const section = sections.value[selectedSectionIndex.value];
   return section?.name || section?.title || "";
 });
 
-// Insert variable into process code
 function handleInsertVariable(code: string) {
-  // Find the position after "def process..." line to insert the variable
   const lines = processCode.value.split("\n");
-  let insertIndex = 1; // Default to after first line
+  let insertIndex = 1;
 
-  // Find the first non-empty, non-comment line after the def statement
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     if (trimmed.startsWith("def process")) {
       insertIndex = i + 1;
-      // Skip any immediate comments after def
       while (
         insertIndex < lines.length &&
         (lines[insertIndex].trim().startsWith("#") || lines[insertIndex].trim() === "")
@@ -506,7 +492,6 @@ function handleInsertVariable(code: string) {
     }
   }
 
-  // Insert the variable assignment
   lines.splice(insertIndex, 0, code);
   processCode.value = lines.join("\n");
 }

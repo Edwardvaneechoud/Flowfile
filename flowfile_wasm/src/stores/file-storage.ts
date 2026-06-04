@@ -11,7 +11,7 @@
  */
 
 const DB_NAME = 'flowfile_wasm_files';
-const DB_VERSION = 2; // Bumped for new store
+const DB_VERSION = 2;
 const STORE_NAME = 'fileContents';
 const DOWNLOAD_STORE_NAME = 'downloadContents';
 const SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB in bytes
@@ -63,14 +63,12 @@ class FileStorageManager {
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
 
-        // Create file contents store if it doesn't exist
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'nodeId' });
           objectStore.createIndex('timestamp', 'timestamp', { unique: false });
           objectStore.createIndex('size', 'size', { unique: false });
         }
 
-        // Create download contents store if it doesn't exist
         if (!db.objectStoreNames.contains(DOWNLOAD_STORE_NAME)) {
           const downloadStore = db.createObjectStore(DOWNLOAD_STORE_NAME, { keyPath: 'nodeId' });
           downloadStore.createIndex('timestamp', 'timestamp', { unique: false });
@@ -264,9 +262,7 @@ class FileStorageManager {
     return size >= SIZE_THRESHOLD;
   }
 
-  // ============================================================================
   // Download Content Storage (for output nodes)
-  // ============================================================================
 
   /**
    * Store download content for an output node
@@ -386,7 +382,6 @@ class FileStorageManager {
   }
 }
 
-// Export singleton instance
 export const fileStorage = new FileStorageManager();
 export { SIZE_THRESHOLD };
 export type { DownloadEntry };

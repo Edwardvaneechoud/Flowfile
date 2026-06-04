@@ -146,7 +146,6 @@ const activeTab = ref<"physical" | "virtual">("physical");
 // Track the last-used physical write mode so we can restore it when switching back
 const physicalWriteMode = ref<CatalogWriteMode>("overwrite");
 
-// Laziness check state
 const lazinessCheck = ref<{ is_optimizable: boolean; blockers: string[] } | null>(null);
 const lazinessLoading = ref(false);
 
@@ -171,7 +170,6 @@ const physicalModeDescription = computed(() => {
   return descriptions[physicalWriteMode.value] ?? null;
 });
 
-// Sync physicalWriteMode → nodeData.write_mode when in physical tab
 watch(physicalWriteMode, (newMode) => {
   if (nodeData.value && activeTab.value === "physical") {
     nodeData.value.catalog_write_settings.write_mode = newMode;

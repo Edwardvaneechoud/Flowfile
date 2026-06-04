@@ -16,12 +16,8 @@ describe('Pyodide Execution Logic', () => {
   })
 
   describe('Node Execution Python Code', () => {
-    // These tests validate the Python code structure and logic
-    // embedded in the pyodide-store.ts execution functions
-
     describe('read_csv execution', () => {
       it('should handle CSV with custom delimiter', () => {
-        // Expected Python behavior for read_csv with semicolon delimiter
         const settings = {
           received_table: {
             name: 'data.csv',
@@ -579,7 +575,6 @@ describe('Pyodide Execution Logic', () => {
         parts.push(`Column "${field}" not found.`)
         parts.push(`Available columns: ${availableColumns.join(', ')}`)
 
-        // Suggest similar columns
         const similar = availableColumns.filter(c =>
           c.toLowerCase().includes(field.toLowerCase()) ||
           field.toLowerCase().includes(c.toLowerCase())

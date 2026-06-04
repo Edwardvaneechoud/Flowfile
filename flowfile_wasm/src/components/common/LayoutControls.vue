@@ -50,7 +50,6 @@ const emit = defineEmits<{
 
 const isOpen = ref(false)
 
-// Position state
 const BUTTON_SIZE = 40
 const BOUNDARY_MARGIN = 10
 const position = ref({ x: window.innerWidth - BUTTON_SIZE - BOUNDARY_MARGIN, y: window.innerHeight - BUTTON_SIZE - BOUNDARY_MARGIN })
@@ -59,27 +58,23 @@ const hasDragged = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
 const initialPosition = ref({ x: 0, y: 0 })
 
-// Handle window resizing - reset to bottom-right corner
 const handleViewportResize = () => {
   position.value.x = window.innerWidth - BUTTON_SIZE - BOUNDARY_MARGIN
   position.value.y = window.innerHeight - BUTTON_SIZE - BOUNDARY_MARGIN
   savePosition()
 }
 
-// Computed property for dynamic panel positioning
 const panelStyle = computed(() => {
   const style: { [key: string]: string } = {}
   const isRightHalf = position.value.x > window.innerWidth / 2
   const isBottomHalf = position.value.y > window.innerHeight / 2
 
-  // Position horizontally
   if (isRightHalf) {
     style.right = '50px'
   } else {
     style.left = '50px'
   }
 
-  // Position vertically
   if (isBottomHalf) {
     style.bottom = '0px'
   } else {
@@ -89,7 +84,6 @@ const panelStyle = computed(() => {
   return style
 })
 
-// Load saved position from localStorage
 onMounted(() => {
   const savedPosition = localStorage.getItem('layoutControlsPosition')
 
@@ -115,12 +109,10 @@ onMounted(() => {
   window.addEventListener('resize', handleViewportResize)
 })
 
-// Save position to localStorage
 const savePosition = () => {
   localStorage.setItem('layoutControlsPosition', JSON.stringify(position.value))
 }
 
-// Handle mouse down - prepare for potential drag
 const handleMouseDown = (e: MouseEvent) => {
   e.preventDefault()
   hasDragged.value = false
@@ -143,7 +135,6 @@ const handleMouseDown = (e: MouseEvent) => {
   document.addEventListener('mouseup', stopDrag)
 }
 
-// Handle click - open panel only if we didn't drag
 const handleClick = (e: MouseEvent) => {
   e.preventDefault()
   e.stopPropagation()
@@ -167,7 +158,6 @@ const onDrag = (e: MouseEvent) => {
     let newX = initialPosition.value.x + deltaX
     let newY = initialPosition.value.y + deltaY
 
-    // Keep within viewport bounds
     newX = Math.max(BOUNDARY_MARGIN, Math.min(window.innerWidth - BUTTON_SIZE - BOUNDARY_MARGIN, newX))
     newY = Math.max(BOUNDARY_MARGIN, Math.min(window.innerHeight - BUTTON_SIZE - BOUNDARY_MARGIN, newY))
 
@@ -186,24 +176,20 @@ const stopDrag = () => {
   }
 }
 
-// Helper function to run an action and then close the panel
 const runAction = <T extends any[]>(action: (...args: T) => void, ...args: T) => {
   action(...args)
   isOpen.value = false
 }
 
-// Reset all panel layouts to defaults
 const resetLayout = () => {
   clearAllPanelStates()
   emit('reset-layout')
 }
 
-// Fit panels to screen
 const fitToScreen = () => {
   emit('fit-to-screen')
 }
 
-// Cleanup
 onUnmounted(() => {
   document.removeEventListener('mousemove', onDrag)
   document.removeEventListener('mouseup', stopDrag)

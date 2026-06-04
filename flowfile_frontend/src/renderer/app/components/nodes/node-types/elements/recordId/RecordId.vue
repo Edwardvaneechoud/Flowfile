@@ -81,7 +81,6 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 const nodeStore = useNodeStore();
 const nodeRecordId = ref<null | NodeRecordId>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeRecordId,
 });

@@ -24,25 +24,21 @@ import { ref } from "vue";
 
 const emit = defineEmits(["save", "dont-save"]);
 
-// Local state
 const isOpen = ref(false);
 const currentFlowId = ref<number | null>(null);
 const pendingAction = ref<"save" | "dont-save" | null>(null);
 
-// Open the modal with a specific flow ID
 const open = (flowId: number) => {
   currentFlowId.value = flowId;
   pendingAction.value = null;
   isOpen.value = true;
-  return flowId; // Return flowId for chaining if needed
+  return flowId;
 };
 
-// Close the modal
 const close = () => {
   isOpen.value = false;
 };
 
-// Handle save button click
 const handleSave = () => {
   if (currentFlowId.value !== null) {
     pendingAction.value = "save";
@@ -50,7 +46,6 @@ const handleSave = () => {
   }
 };
 
-// Handle don't save button click
 const handleDontSave = () => {
   if (currentFlowId.value !== null) {
     pendingAction.value = "dont-save";
@@ -58,7 +53,6 @@ const handleDontSave = () => {
   }
 };
 
-// After dialog has fully closed, emit the appropriate event
 const handleDialogClosed = () => {
   if (currentFlowId.value === null) return;
 
@@ -68,11 +62,9 @@ const handleDialogClosed = () => {
     emit("dont-save", currentFlowId.value);
   }
 
-  // Reset state
   pendingAction.value = null;
 };
 
-// Expose methods to parent component
 defineExpose({
   open,
   close,

@@ -88,7 +88,6 @@ const emit = defineEmits<{
   (e: "refreshFlow"): void;
 }>();
 
-// Fetch history state from API (used on mount and flow change)
 const fetchHistoryState = async () => {
   if (!(flowStore.flowId && flowStore.flowId > 0)) return;
 
@@ -136,9 +135,7 @@ const handleRedo = async () => {
   }
 };
 
-// Keyboard shortcut handler
 const handleKeyDown = (event: KeyboardEvent) => {
-  // Skip if typing in an input field or code editor
   const target = event.target as HTMLElement;
   const isInputElement =
     target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
@@ -146,16 +143,13 @@ const handleKeyDown = (event: KeyboardEvent) => {
 
   if (isInputElement || isInCodeMirror) return;
 
-  // Check for Ctrl+Z (Windows/Linux) or Cmd+Z (Mac)
   const ctrlOrCmd = IS_MAC ? event.metaKey : event.ctrlKey;
 
   if (ctrlOrCmd && event.key.toLowerCase() === "z") {
     if (event.shiftKey) {
-      // Ctrl+Shift+Z or Cmd+Shift+Z = Redo
       event.preventDefault();
       handleRedo();
     } else {
-      // Ctrl+Z or Cmd+Z = Undo
       event.preventDefault();
       handleUndo();
     }
@@ -166,7 +160,6 @@ const handleKeyDown = (event: KeyboardEvent) => {
   }
 };
 
-// Watch for flowId changes
 watch(
   () => flowStore.flowId,
   async (newId, oldId) => {

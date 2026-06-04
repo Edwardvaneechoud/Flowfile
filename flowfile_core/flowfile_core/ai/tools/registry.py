@@ -583,11 +583,6 @@ def _full_catalog() -> list[ToolSpec]:
 _AGENT_SURFACES_THAT_BLOCK_WRITERS: frozenset[str] = frozenset(
     {"agent_complex", "agent_staged", "agent_live"}
 )
-"""Agent surfaces never see add_<writer> tools in their catalog.
-Writers go to external destinations (files, DBs, cloud) and the user
-always adds them manually. ``surface=None`` (the full catalog used by
-tests / introspection) keeps everything; only the agent surfaces are
-filtered."""
 
 
 def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:

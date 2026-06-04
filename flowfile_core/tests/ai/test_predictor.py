@@ -41,9 +41,7 @@ def _flow_with_orders(flow_id: int = 100) -> FlowGraph:
     return flow
 
 
-# --------------------------------------------------------------------------- #
 # Mirror-graph predict #
-# --------------------------------------------------------------------------- #
 
 
 def test_mirror_predicts_filter_passthrough_schema() -> None:
@@ -114,9 +112,7 @@ def test_mirror_isolation_does_not_mutate_real_graph() -> None:
     assert [n.node_id for n in nodes_after] == [n.node_id for n in nodes_before]
 
 
-# --------------------------------------------------------------------------- #
 # tier handler #
-# --------------------------------------------------------------------------- #
 
 
 def test_resolve_upstream_tier_0_cached() -> None:
@@ -177,9 +173,7 @@ def test_resolve_upstream_no_callback_warns() -> None:
     assert any("schema unknown" in w for w in warnings)
 
 
-# --------------------------------------------------------------------------- #
 # Column-ref collection #
-# --------------------------------------------------------------------------- #
 
 
 def test_collect_column_refs_filter_basic() -> None:
@@ -237,9 +231,7 @@ def test_collect_column_refs_unknown_node_returns_empty() -> None:
     assert refs == []
 
 
-# --------------------------------------------------------------------------- #
 # schema_to_dict_list #
-# --------------------------------------------------------------------------- #
 
 
 def test_schema_to_dict_list_shape() -> None:

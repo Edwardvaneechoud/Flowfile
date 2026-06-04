@@ -222,7 +222,6 @@ function onDropInSection(section: 'index' | 'value') {
 }
 
 function emitUpdate() {
-  // Determine if configuration is complete
   const hasColumns = selectorMode.value === 'data_type'
     ? !!dataTypeSelector.value
     : valueColumns.value.length > 0

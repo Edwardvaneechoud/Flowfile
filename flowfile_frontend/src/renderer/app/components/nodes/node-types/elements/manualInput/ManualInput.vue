@@ -6,7 +6,7 @@
       @request-save="saveSettings"
     >
       <div class="settings-section">
-        <!-- Table Controls - Moved to top for better visibility -->
+        <!-- Table Controls -->
         <div class="controls-section controls-top">
           <div class="button-group">
             <el-button type="primary" size="small" @click="addColumn">
@@ -217,17 +217,14 @@ const dataTypes = nodeStore.getDataTypes();
 
 /**
  * Infer the best data type for a column based on its values
- * Checks all values and returns the most appropriate type
  */
 const inferDataType = (values: unknown[]): string => {
-  // Filter out null, undefined, and empty strings
   const validValues = values.filter((v) => v !== null && v !== undefined && v !== "");
 
   if (validValues.length === 0) {
     return "String";
   }
 
-  // Check if all values are booleans
   const allBooleans = validValues.every(
     (v) => typeof v === "boolean" || v === "true" || v === "false",
   );
@@ -235,7 +232,6 @@ const inferDataType = (values: unknown[]): string => {
     return "Boolean";
   }
 
-  // Check if all values are numeric
   const allNumeric = validValues.every((v) => {
     if (typeof v === "number") return true;
     if (typeof v === "string") {
@@ -246,7 +242,6 @@ const inferDataType = (values: unknown[]): string => {
   });
 
   if (allNumeric) {
-    // Check if all numeric values are integers
     const allIntegers = validValues.every((v) => {
       const num = typeof v === "number" ? v : Number(v);
       return Number.isInteger(num);
@@ -284,7 +279,6 @@ const rawDataFormat = computed((): RawDataFormat => {
   };
 });
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeManualInput,
   onBeforeSave: () => {
@@ -310,16 +304,13 @@ const populateTableFromData = (data: Record<string, unknown>[]) => {
     return;
   }
 
-  // Get column names from the first row
   const columnNames = Object.keys(data[0]);
 
-  // Collect all values for each column to infer types
   const columnValues: Record<string, unknown[]> = {};
   columnNames.forEach((name) => {
     columnValues[name] = data.map((item) => item[name]);
   });
 
-  // Create columns with inferred types
   columnNames.forEach((name, colIndex) => {
     const inferredType = inferDataType(columnValues[name]);
     columns.value.push({
@@ -329,7 +320,6 @@ const populateTableFromData = (data: Record<string, unknown>[]) => {
     });
   });
 
-  // Populate rows
   data.forEach((item, rowIndex) => {
     const row: Row = { id: rowIndex + 1, values: {} };
     columnNames.forEach((key, colIndex) => {
@@ -533,7 +523,6 @@ const handleCellKeydown = (event: KeyboardEvent, row: Row, col: Column) => {
 const applyPastedData = (data: string[][], startRowIndex: number, startColIndex: number) => {
   const maxCols = Math.max(...data.map((r) => r.length));
 
-  // Auto-create columns if needed
   while (columns.value.length < startColIndex + maxCols) {
     columns.value.push({
       id: nextColumnId,
@@ -543,7 +532,6 @@ const applyPastedData = (data: string[][], startRowIndex: number, startColIndex:
     nextColumnId++;
   }
 
-  // Auto-create rows if needed
   while (rows.value.length < startRowIndex + data.length) {
     const newRow: Row = { id: nextRowId, values: {} };
     columns.value.forEach((col) => {
@@ -553,7 +541,6 @@ const applyPastedData = (data: string[][], startRowIndex: number, startColIndex:
     nextRowId++;
   }
 
-  // Fill values
   for (let r = 0; r < data.length; r++) {
     const row = rows.value[startRowIndex + r];
     for (let c = 0; c < data[r].length; c++) {
@@ -562,7 +549,6 @@ const applyPastedData = (data: string[][], startRowIndex: number, startColIndex:
     }
   }
 
-  // Re-infer data types for affected columns
   for (let c = 0; c < maxCols; c++) {
     const col = columns.value[startColIndex + c];
     const colValues = rows.value.map((r) => r.values[col.id]);

@@ -1,18 +1,13 @@
 // Node-related TypeScript interfaces and types
-// Consolidated from features/designer/baseNode/nodeInterfaces.ts and nodeInput.ts
 
 import type { AuthMethod } from "../views/CloudConnectionView/CloudConnectionTypes";
 import type { DisplayOutput } from "./kernel.types";
 
-// ============================================================================
 // Data Type Definitions
-// ============================================================================
 
 type DataTypeGroup = "Numeric" | "String" | "Date" | "Other" | "Boolean" | "Binary" | "Complex";
 
-// ============================================================================
 // Column and Table Types
-// ============================================================================
 
 export interface FileColumn {
   name: string;
@@ -39,9 +34,7 @@ export interface TableExample {
   has_run_with_current_setup: boolean;
 }
 
-// ============================================================================
 // Node Data Types
-// ============================================================================
 
 export interface NodeData {
   flow_id: string | number;
@@ -78,9 +71,7 @@ export interface NodeResult {
   is_running: boolean;
 }
 
-// ============================================================================
 // Node Description Types
-// ============================================================================
 
 export interface NodeDescriptionResponse {
   description: string;
@@ -113,9 +104,7 @@ export interface NodeTitleInfo {
   intro: string;
 }
 
-// ============================================================================
 // Expression Types
-// ============================================================================
 
 export interface ExpressionRef {
   name: string;
@@ -127,9 +116,7 @@ export interface ExpressionsOverview {
   expressions: ExpressionRef[];
 }
 
-// ============================================================================
 // Select Input Types
-// ============================================================================
 
 export interface SelectInput {
   old_name: string;
@@ -161,9 +148,7 @@ export const createSelectInputFromName = (columnName: string, keep = true): Sele
   };
 };
 
-// ============================================================================
 // Input Table Settings
-// ============================================================================
 
 export interface InputCsvTable {
   file_type: "csv";
@@ -226,9 +211,7 @@ export function isInputParquetTable(settings: InputTableSettings): settings is I
   return settings.file_type === "parquet";
 }
 
-// ============================================================================
 // Output Table Settings
-// ============================================================================
 
 export interface OutputCsvTable {
   delimiter: string;
@@ -270,9 +253,7 @@ export interface OutputSettings {
   table_settings: OutputTableSettings;
 }
 
-// ============================================================================
 // Field Types
-// ============================================================================
 
 export interface MinimalFieldInput {
   name: string;
@@ -289,9 +270,7 @@ export interface FormulaInput {
   function: string;
 }
 
-// ============================================================================
 // Filter Types
-// ============================================================================
 
 /**
  * Supported filter comparison operators.
@@ -411,9 +390,7 @@ export interface FilterInput {
   filter_type?: string;
 }
 
-// ============================================================================
 // Aggregation Types
-// ============================================================================
 
 export interface AggColl {
   old_name: string;
@@ -426,9 +403,7 @@ export interface GroupByInput {
   agg_cols: AggColl[];
 }
 
-// ============================================================================
 // Window Function Types
-// ============================================================================
 
 export type WindowFunctionName =
   | "rolling_sum"
@@ -502,9 +477,7 @@ export interface UniqueInput {
   strategy: UniqueSorttrategy;
 }
 
-// ============================================================================
 // Join Types
-// ============================================================================
 
 export interface JoinMap {
   left_col: string;
@@ -532,18 +505,14 @@ export interface FuzzyJoinSettings {
   aggregate_output: boolean;
 }
 
-// ============================================================================
 // Sort Types
-// ============================================================================
 
 export interface SortByInput {
   column: string;
   how: string;
 }
 
-// ============================================================================
 // Text Operations Types
-// ============================================================================
 
 export interface TextToRowsInput {
   column_to_split: string;
@@ -560,9 +529,7 @@ export interface RecordIdInput {
   group_by_columns: string[];
 }
 
-// ============================================================================
 // Dynamic Rename Types
-// ============================================================================
 
 export type RenameMode = "prefix" | "suffix" | "formula" | "first_row";
 export type ColumnSelectionMode = "all" | "list" | "data_type";
@@ -585,9 +552,7 @@ export interface DynamicRenameInput {
   selected_data_type: ReadableDataTypeGroup | null;
 }
 
-// ============================================================================
 // Graph Solver Types
-// ============================================================================
 
 export interface GraphSolverInput {
   col_from: string;
@@ -595,17 +560,13 @@ export interface GraphSolverInput {
   output_column_name: string;
 }
 
-// ============================================================================
 // Polars Code Types
-// ============================================================================
 
 export interface PolarsCodeInput {
   polars_code: string;
 }
 
-// ============================================================================
 // Python Script Types
-// ============================================================================
 
 export interface CellOutput {
   stdout: string;
@@ -628,26 +589,20 @@ export interface PythonScriptInput {
   cells?: NotebookCell[];
 }
 
-// ============================================================================
 // Union Types
-// ============================================================================
 
 export interface UnionInput {
   mode: "selective" | "relaxed";
 }
 
-// ============================================================================
 // Raw Data Types
-// ============================================================================
 
 export interface RawDataFormat {
   columns?: MinimalFieldInput[] | null;
   data: unknown[][];
 }
 
-// ============================================================================
 // Received/File Table Types
-// ============================================================================
 
 export interface ReceivedTable {
   id?: number;
@@ -662,9 +617,7 @@ export interface ReceivedTable {
   table_settings: InputTableSettings;
 }
 
-// ============================================================================
 // Database Types
-// ============================================================================
 
 interface BaseConnection {
   host?: string;
@@ -708,9 +661,7 @@ export interface DatabaseWriteSettings {
   if_exists: IfExistAction;
 }
 
-// ============================================================================
 // Cloud Storage Types
-// ============================================================================
 
 interface CloudStorageSettings {
   auth_mode: AuthMethod;
@@ -740,9 +691,7 @@ export interface CloudStorageWriteSettings extends CloudStorageSettings {
   csv_encoding: CsvEncoding;
 }
 
-// ============================================================================
 // External Source Types
-// ============================================================================
 
 interface ExternalSource {
   orientation: string;
@@ -754,9 +703,7 @@ export interface SampleUsers extends ExternalSource {
   size: number;
 }
 
-// ============================================================================
 // Node Base Types
-// ============================================================================
 
 export interface OutputFieldInfo {
   name: string;
@@ -796,9 +743,7 @@ export interface NodeMultiInput extends NodeBase {
   depending_on_ids: number[] | null;
 }
 
-// ============================================================================
 // Specific Node Types
-// ============================================================================
 
 export interface NodeRead extends NodeBase {
   received_file: ReceivedTable;
@@ -1023,7 +968,6 @@ export interface NodeGoogleAnalyticsReader extends NodeBase {
   fields?: MinimalFieldInput[] | null;
 }
 
-// ============================================================================
 // REST API Reader
 
 export interface RestApiAuthSettings {
@@ -1071,9 +1015,7 @@ export interface NodeRestApiReader extends NodeBase {
   fields?: MinimalFieldInput[] | null;
 }
 
-// ============================================================================
 // ML Nodes
-// ============================================================================
 
 export type MLParamType = "boolean" | "number" | "integer" | "select";
 

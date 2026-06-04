@@ -16,9 +16,7 @@ from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.schemas import FlowParameter
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def make_graph(flow_id: int = 99, execution_location: str = "local") -> FlowGraph:
@@ -47,9 +45,7 @@ def run_and_assert_ok(graph: FlowGraph) -> None:
         raise AssertionError(f"Flow failed:\n{errors}")
 
 
-# ---------------------------------------------------------------------------
 # polars_code node
-# ---------------------------------------------------------------------------
 
 
 def test_polars_code_parameter_substituted(execution_location):
@@ -57,7 +53,6 @@ def test_polars_code_parameter_substituted(execution_location):
     graph = make_graph(101, execution_location=execution_location)
     graph.flow_settings.parameters = [FlowParameter(name="col_name", default_value="city")]
 
-    # Manual input: [{name: "Alice", city: "Amsterdam"}]
     promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="manual_input")
     graph.add_node_promise(promise)
     graph.add_manual_input(
@@ -70,7 +65,6 @@ def test_polars_code_parameter_substituted(execution_location):
         )
     )
 
-    # polars_code node that selects a column by the parameter name
     promise2 = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="polars_code")
     graph.add_node_promise(promise2)
     graph.add_polars_code(
@@ -246,7 +240,7 @@ def test_no_parameters_flow_unchanged(execution_location):
 def test_unresolved_parameter_fails_node(execution_location):
     """A ${missing} reference that has no matching parameter causes the node to fail."""
     graph = make_graph(106, execution_location=execution_location)
-    graph.flow_settings.parameters = []  # no parameters defined
+    graph.flow_settings.parameters = []
 
     promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="manual_input")
     graph.add_node_promise(promise)
@@ -278,9 +272,7 @@ def test_unresolved_parameter_fails_node(execution_location):
     assert "undefined_param" in (node_result.error or "")
 
 
-# ---------------------------------------------------------------------------
 # Issue 1: node retains example_data_generator / has_completed_last_run after run
-# ---------------------------------------------------------------------------
 
 
 def test_node_retains_example_data_after_run_with_parameter(execution_location):
@@ -324,9 +316,7 @@ def test_node_retains_example_data_after_run_with_parameter(execution_location):
     )
 
 
-# ---------------------------------------------------------------------------
 # Issue 2: lazy schema prediction with parameters
-# ---------------------------------------------------------------------------
 
 
 def test_predicted_schema_uses_parameters():
@@ -360,7 +350,6 @@ def test_predicted_schema_uses_parameters():
     )
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-    # Do NOT run the graph — test lazy prediction only
     node = graph.get_node(2)
     schema = node.get_predicted_schema(force=True)
 
@@ -409,16 +398,13 @@ def test_predicted_schema_preserves_original_code_after_lazy_eval():
     )
 
 
-# ---------------------------------------------------------------------------
 # Issue 3: read node predicted schema with parameterized file path
-# ---------------------------------------------------------------------------
 
 
 def test_read_node_predicted_schema_with_parameterized_path():
     """A read node whose file path uses ${file_name} should predict the correct
     schema (column names and types) WITHOUT running the graph, by resolving the
     parameter during lazy schema prediction."""
-    # Create a real CSV file so that the schema can be read from disk
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
         f.write("city,population\n")
         f.write("Amsterdam,900000\n")
@@ -443,7 +429,6 @@ def test_read_node_predicted_schema_with_parameterized_path():
             )
         )
 
-        # Do NOT run the graph — test lazy prediction only
         node = graph.get_node(1)
         schema = node.get_predicted_schema()
 
@@ -529,16 +514,13 @@ def test_read_node_run_with_parameterized_path(execution_location):
         os.unlink(csv_path)
 
 
-# ---------------------------------------------------------------------------
 # Issue 4: parameter change invalidates predicted schema
-# ---------------------------------------------------------------------------
 
 
 def test_parameter_change_invalidates_predicted_schema():
     """When a flow parameter value changes via the flow_settings setter,
     nodes that reference ${...} must have their predicted schema invalidated
     so the next get_predicted_schema() returns the schema for the new file."""
-    # Create two CSV files with different columns
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
         f.write("city,population\n")
         f.write("Amsterdam,900000\n")
@@ -575,7 +557,6 @@ def test_parameter_change_invalidates_predicted_schema():
             )
         )
 
-        # Predict schema — should match file A
         node = graph.get_node(1)
         schema_a = node.get_predicted_schema(force=True)
         assert schema_a is not None
@@ -583,7 +564,6 @@ def test_parameter_change_invalidates_predicted_schema():
         assert "city" in cols_a, f"Expected 'city' in schema from file A, got: {cols_a}"
         assert "population" in cols_a, f"Expected 'population' in schema from file A, got: {cols_a}"
 
-        # Change the parameter to point to file B via the setter
         graph.flow_settings = schemas.FlowSettings(
             flow_id=graph.flow_id,
             name="param_test",
@@ -593,14 +573,12 @@ def test_parameter_change_invalidates_predicted_schema():
             parameters=[FlowParameter(name="file_name", default_value=csv_b)],
         )
 
-        # Predict schema again — should now match file B
         schema_b = node.get_predicted_schema(force=True)
         assert schema_b is not None
         cols_b = [c.name for c in schema_b]
         assert "product" in cols_b, f"Expected 'product' in schema from file B, got: {cols_b}"
         assert "price" in cols_b, f"Expected 'price' in schema from file B, got: {cols_b}"
 
-        # Original ${file_name} reference must still be in setting_input
         assert node.setting_input.received_file.path == "${file_name}", (
             "Parameter reference must be preserved after invalidation"
         )

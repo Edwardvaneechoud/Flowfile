@@ -41,12 +41,10 @@ const authStore = useAuthStore();
 const isCollapse = ref(true);
 const showPasswordModal = ref(false);
 
-// Show password change modal if user must change password (not in desktop mode)
 const mustShowPasswordModal = computed(() => {
   return authStore.mustChangePassword && !authService.isInDesktopMode();
 });
 
-// Watch for changes and show modal
 watch(
   mustShowPasswordModal,
   (newVal) => {

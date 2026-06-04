@@ -67,9 +67,7 @@ from tools.migrate.legacy_schemas import (
 )
 from tools.migrate.migrate import migrate_flowfile
 
-# =============================================================================
 # FIXTURES
-# =============================================================================
 
 @pytest.fixture
 def temp_dir():
@@ -101,9 +99,7 @@ def pickle_and_migrate(temp_dir: Path, flow: FlowInformation) -> dict:
         return json.load(f)
 
 
-# =============================================================================
 # INPUT NODE TESTS
-# =============================================================================
 
 class TestReadNodeMigration:
     """Test NodeRead migrations with different file types."""
@@ -180,9 +176,7 @@ class TestReadNodeMigration:
         assert rf['table_settings']['file_type'] == 'parquet'
 
 
-# =============================================================================
 # OUTPUT NODE TESTS
-# =============================================================================
 
 class TestOutputNodeMigration:
     """Test NodeOutput migrations."""
@@ -207,7 +201,6 @@ class TestOutputNodeMigration:
         assert 'table_settings' in os
         assert os['table_settings']['delimiter'] == '|'
         assert os['table_settings']['encoding'] == 'utf-16'
-        # Old fields should be removed
         assert 'output_csv_table' not in os
 
     def test_excel_output_migration(self, temp_dir):
@@ -229,9 +222,7 @@ class TestOutputNodeMigration:
         assert os['table_settings']['sheet_name'] == 'Results'
 
 
-# =============================================================================
 # TRANSFORM NODE TESTS
-# =============================================================================
 
 class TestSelectNodeMigration:
     """Test NodeSelect migrations."""
@@ -676,9 +667,7 @@ output_df = input_df.with_columns([
         assert 'to_uppercase' in pci['polars_code']
 
 
-# =============================================================================
 # COMPLEX FLOW TESTS
-# =============================================================================
 
 class TestComplexFlowMigration:
     """Test migration of flows with multiple connected nodes."""
@@ -739,11 +728,9 @@ class TestComplexFlowMigration:
 
         data = pickle_and_migrate(temp_dir, flow)
 
-        # Verify structure (FlowfileData format)
         assert data['flowfile_name'] == 'pipeline_flow'
         assert len(data['nodes']) == 4
 
-        # Verify each node migrated correctly
         read_node = next(n for n in data['nodes'] if n['type'] == 'read')
         assert 'table_settings' in read_node['setting_input']['received_file']
 
@@ -798,7 +785,6 @@ class TestComplexFlowMigration:
 
         assert len(data['nodes']) == 3
 
-        # Verify start nodes are marked
         start_nodes = [n for n in data['nodes'] if n.get('is_start_node')]
         assert len(start_nodes) == 2
 
@@ -806,9 +792,7 @@ class TestComplexFlowMigration:
         assert join_node['setting_input']['join_input']['how'] == 'left'
 
 
-# =============================================================================
 # YAML OUTPUT TESTS
-# =============================================================================
 
 class TestYamlMigration:
     """Test YAML format output."""
@@ -833,7 +817,6 @@ class TestYamlMigration:
         with open(output_path) as f:
             data = yaml.safe_load(f)
 
-        # Verify FlowfileData format
         assert data['flowfile_version'] == '2.0'
         assert data['flowfile_id'] == 1
         assert len(data['nodes']) == 1

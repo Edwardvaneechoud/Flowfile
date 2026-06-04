@@ -143,11 +143,9 @@ class HistoryManager:
             return False
 
         try:
-            # Get the current state as FlowfileData
             flowfile_data = flow_graph.get_flowfile_data()
             snapshot_dict = flowfile_data.model_dump()
 
-            # Compute hash for duplicate detection
             current_hash = CompressedSnapshot._compute_hash(snapshot_dict)
 
             # Compare against the LAST CAPTURED snapshot (top of undo stack), not _last_snapshot_hash
@@ -159,10 +157,8 @@ class HistoryManager:
                     logger.info(f"History: Skipping duplicate snapshot for: {description}")
                     return False
 
-            # Create compressed entry
             entry = self._create_entry(snapshot_dict, action_type, description, node_id)
 
-            # Add to undo stack
             self._undo_stack.append(entry)
 
             # Real change recorded on a non-restoring path — flip the fast dirty flag.
@@ -213,7 +209,6 @@ class HistoryManager:
             return False
 
         try:
-            # Get the current (post-change) state
             current_snapshot = flow_graph.get_flowfile_data()
             current_dict = current_snapshot.model_dump()
             pre_dict = pre_snapshot.model_dump()
@@ -229,7 +224,6 @@ class HistoryManager:
             # State changed - capture the BEFORE state (compressed)
             entry = self._create_entry(pre_dict, action_type, description, node_id)
 
-            # Add to undo stack
             self._undo_stack.append(entry)
             self._last_snapshot_hash = current_hash
             # Real change confirmed on a non-restoring path — flip the fast dirty flag.
@@ -267,7 +261,6 @@ class HistoryManager:
             # Set flag to prevent capturing during restore
             self._is_restoring = True
 
-            # Get the entry to restore from
             entry = self._undo_stack.pop()
 
             # Save current state to redo stack BEFORE restoring
@@ -281,12 +274,10 @@ class HistoryManager:
             )
             self._redo_stack.append(redo_entry)
 
-            # Decompress and restore the flow graph from the snapshot
             snapshot_dict = entry.get_snapshot()
             snapshot_data = FlowfileData.model_validate(snapshot_dict)
             flow_graph.restore_from_snapshot(snapshot_data)
 
-            # Update last snapshot hash
             self._last_snapshot_hash = entry.snapshot_hash
 
             logger.info(f"Undo successful: {entry.description}")
@@ -324,7 +315,6 @@ class HistoryManager:
             # Set flag to prevent capturing during restore
             self._is_restoring = True
 
-            # Get the entry to restore from
             entry = self._redo_stack.pop()
 
             # Save current state to undo stack BEFORE restoring
@@ -338,12 +328,10 @@ class HistoryManager:
             )
             self._undo_stack.append(undo_entry)
 
-            # Decompress and restore the flow graph from the snapshot
             snapshot_dict = entry.get_snapshot()
             snapshot_data = FlowfileData.model_validate(snapshot_dict)
             flow_graph.restore_from_snapshot(snapshot_data)
 
-            # Update last snapshot hash
             self._last_snapshot_hash = entry.snapshot_hash
 
             logger.info(f"Redo successful: {entry.description}")
