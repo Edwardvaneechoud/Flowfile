@@ -14,14 +14,14 @@
 
     <!-- Performance-mode notice: per-step data isn't stored in Performance mode -->
     <div v-if="showPerfNotice" class="perf-mode-notice">
-      <el-icon class="perf-mode-notice__icon"><Odometer /></el-icon>
+      <el-icon class="perf-mode-notice__icon"><InfoFilled /></el-icon>
       <span class="perf-mode-notice__text">
         This flow ran in <strong>Performance</strong> mode, so data for each step isn't stored. To
-        inspect the data step by step, switch to
+        inspect the data step by step, select Development as 
         <button type="button" class="perf-mode-notice__link" @click="openFlowSettings">
-          Development mode
+          execution mode
         </button>
-        and run again.
+       and run again.
       </span>
       <button
         class="perf-mode-notice__dismiss"
@@ -92,7 +92,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, defineProps } from "vue";
 import { format } from "date-fns";
-import { Odometer } from "@element-plus/icons-vue";
+import { InfoFilled } from "@element-plus/icons-vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useAiStore } from "../../../stores/ai-store";
 import { useEditorStore } from "../../../stores/editor-store";

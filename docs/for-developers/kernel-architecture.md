@@ -86,6 +86,40 @@ RECOVERY_MODE="lazy|eager|clear"
 
 ---
 
+## Versioning & compatibility
+
+Flowfile does **not** define compatibility *ranges* between app and kernel versions, and performs **no runtime version handshake**. The contract is simply: each Flowfile release pins one exact kernel image tag.
+
+### Three independent version numbers
+
+| Version | Where | Example | Role |
+|---------|-------|---------|------|
+| App / root | root `pyproject.toml` | `0.11.0` | The Flowfile release |
+| Kernel **image** tag | `flowfile_core/flowfile_core/kernel/manager.py` (`_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT`) | `0.3.1` | The image the app pulls / runs |
+| Kernel **runtime API** | `kernel_runtime/__init__.py` (`__version__`) | `0.2.2` | The kernel's HTTP API version, reported by `/health` |
+
+These evolve **independently** — bumping the app does not require bumping the kernel image, and vice versa.
+
+### How the pin works
+
+- Each Flowfile version hardcodes **one exact kernel tag per flavour** (e.g. `edwardvaneechoud/flowfile-kernel-ml:0.3.1`) in `manager.py`. That single tag — not a `>=x,<y` range — is the version the app is built and tested against.
+- Core reads the running kernel's runtime version from `/health` into `KernelInfo.kernel_version` **for display only** (the "Kernel runtime" line in the Kernel Manager). There is no min/max gate and nothing that rejects or warns about an "out-of-range" kernel.
+- The only **hard** coupling is **polars**: `kernel_runtime` pins a polars (and the `polars-ds` plugin) compatible with the app's `polars >=1.8.2,<1.40`. These must be bumped together, but that compatibility is guaranteed at *image-build time* via the pinned tag — not by a runtime check.
+
+So the practical contract is "use the pinned tag." An older kernel image is **not blocked** — it simply may lack fixes or features the app expects (for example, JSON-format global-artifact deserialization was only fixed in image `0.3.1`). That gap is surfaced as a non-blocking **"Update available"** hint in the Kernel Manager (per flavour) and the kernel details modal (per kernel), rather than a hard version gate.
+
+### Shipping a kernel change
+
+Because the app only re-pulls a kernel tag it doesn't already have locally (`images.get(tag)` pulls only on a miss), a fix to `kernel_runtime/` reaches users only when the image **tag changes**:
+
+1. Bump `version` in `kernel_runtime/pyproject.toml` (CI tags the published images from it).
+2. Bump the three `_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT` tags in `manager.py` to match.
+3. Merge — CI (`docker-publish.yml`) builds and pushes `flowfile-kernel-{base,ml,lite}:<new>`. On the next kernel start the app requests the new tag, misses locally, and pulls it.
+
+For local development, build the image yourself (`docker build -t flowfile-kernel-base:local kernel_runtime/`); the `:local` tag is preferred by the resolver when the pinned registry tag isn't present, and is excluded from the version comparison (so it shows as a **local** build, not "up to date" or "update available").
+
+---
+
 ## Kernel Runtime
 
 **Location:** `kernel_runtime/kernel_runtime/main.py`

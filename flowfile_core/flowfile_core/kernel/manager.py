@@ -192,6 +192,34 @@ def newest_installed_version(repo: str, docker_client) -> tuple[str, tuple[int, 
     return best
 
 
+def _friendly_pull_error(exc: Exception, image_tag: str) -> str:
+    """Translate a raw docker pull exception into a short, user-facing message.
+
+    The raw exception (e.g. ``404 Client Error for http+docker://.../images/create``)
+    is still written to the logs via ``logger.exception``; this is only what the
+    Kernel Manager surfaces to the user.
+    """
+    text = str(exc).lower()
+    if isinstance(exc, docker.errors.ImageNotFound) or "not found" in text or "manifest" in text:
+        return f"{image_tag} isn't available on the registry yet."
+    if any(s in text for s in ("unauthorized", "denied", "authentication", "401", "403")):
+        return f"Not authorized to pull {image_tag}. Check your registry login."
+    network_markers = (
+        "timed out",
+        "timeout",
+        "connection",
+        "could not resolve",
+        "no such host",
+        "unreachable",
+    )
+    if any(s in text for s in network_markers):
+        return f"Couldn't reach the registry to pull {image_tag}. Check your connection."
+    if "no space" in text:
+        return "Not enough disk space to pull the image."
+    first = next((ln.strip() for ln in str(exc).splitlines() if ln.strip()), exc.__class__.__name__)
+    return first[:200]
+
+
 # Pip package specifier (PEP 508-ish, conservative): rejects anything with
 # shell metacharacters so we can pass the list straight into a docker build.
 # \A / \Z anchor strictly — `$` would let a trailing newline through.
@@ -866,7 +894,7 @@ class KernelManager:
                 self._pull_state.pop(image_tag, None)
             logger.info("Pulled image '%s'", image_tag)
         except Exception as exc:
-            msg = str(exc).splitlines()[0][:200] if str(exc) else exc.__class__.__name__
+            msg = _friendly_pull_error(exc, image_tag)
             with self._pull_state_lock:
                 self._pull_state[image_tag] = f"error:{msg}"
             logger.exception("Failed to pull image '%s'", image_tag)

@@ -14,7 +14,7 @@ from flowfile_core.catalog.exceptions import (
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.serializers import artifact_to_out
 from flowfile_core.catalog.validators import reject_dot_in_name
-from flowfile_core.database.models import CatalogNamespace, FlowRegistration
+from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact
 from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
     FlowRegistrationOut,
@@ -24,6 +24,24 @@ from flowfile_core.schemas.catalog_schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def bulk_enrich_artifacts(artifacts: list[GlobalArtifact]) -> list[GlobalArtifactOut]:
+    """Serialize artifacts, flagging ones whose backing blob is missing on disk
+    (filesystem backend only — exists() is one cheap stat; an S3 probe per item
+    would be a network call on every load)."""
+    from flowfile_core.artifacts import get_storage_backend
+    from shared.artifact_storage import SharedFilesystemStorage
+
+    storage = get_storage_backend()
+    fs_storage = storage if isinstance(storage, SharedFilesystemStorage) else None
+    items: list[GlobalArtifactOut] = []
+    for a in artifacts:
+        blob_exists = True
+        if fs_storage is not None and a.storage_key:
+            blob_exists = fs_storage.exists(a.storage_key)
+        items.append(artifact_to_out(a, blob_exists=blob_exists))
+    return items
 
 
 class NamespaceService:
@@ -128,23 +146,8 @@ class NamespaceService:
         namespace_artifact_map: dict[int, list[GlobalArtifactOut]] = {}
         namespace_table_map: dict[int, list[CatalogTableOut]] = {}
 
-        # Flag artifacts whose backing blob is missing on disk (filesystem backend
-        # only — exists() is one cheap stat; an S3 probe per item would be a network
-        # call on every tree load).
-        from flowfile_core.artifacts import get_storage_backend
-        from shared.artifact_storage import SharedFilesystemStorage
-
-        _storage = get_storage_backend()
-        _fs_storage = _storage if isinstance(_storage, SharedFilesystemStorage) else None
-
         def _artifacts_out(ns_id: int) -> list[GlobalArtifactOut]:
-            items: list[GlobalArtifactOut] = []
-            for a in self.repo.list_artifacts_for_namespace(ns_id):
-                blob_exists = True
-                if _fs_storage is not None and a.storage_key:
-                    blob_exists = _fs_storage.exists(a.storage_key)
-                items.append(artifact_to_out(a, blob_exists=blob_exists))
-            return items
+            return bulk_enrich_artifacts(self.repo.list_artifacts_for_namespace(ns_id))
 
         # Visualizations are surfaced as a peer of flows / tables / artifacts in
         # whatever namespace they were saved into (their own ``namespace_id``,

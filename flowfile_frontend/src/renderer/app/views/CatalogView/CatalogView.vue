@@ -53,15 +53,6 @@
                 <i class="fa-solid fa-rotate"></i>
               </button>
             </el-tooltip>
-            <el-tooltip content="SQL Editor" placement="bottom" :show-after="400">
-              <button
-                class="btn btn-ghost btn-icon btn-sm"
-                :class="{ 'btn-active': showSqlEditor }"
-                @click="showSqlEditor = !showSqlEditor"
-              >
-                <i class="fa-solid fa-code"></i>
-              </button>
-            </el-tooltip>
             <el-tooltip content="New catalog" placement="bottom" :show-after="400">
               <button class="btn btn-ghost btn-icon btn-sm" @click="showCreateNamespace = true">
                 <i class="fa-solid fa-plus"></i>
@@ -147,6 +138,7 @@
           :versions="selectedArtifactVersions"
           @close="handleCloseDetail"
           @navigate-to-flow="navigateToFlow($event)"
+          @delete-artifact="handleDeleteArtifact($event)"
         />
         <!-- Table detail view -->
         <TableDetailPanel
@@ -240,7 +232,7 @@
         </div>
         <!-- SQL Editor -->
         <SqlEditorPanel
-          v-else-if="showSqlEditor || catalogStore.activeTab === 'sql'"
+          v-else-if="catalogStore.activeTab === 'sql'"
           :initial-query="sqlInitialQuery"
         />
         <!-- Visuals (charts + dashboards) -->
@@ -562,11 +554,15 @@ const tableMenuOptions: ContextMenuOption[] = [
 
 // Right-click context menu for catalog models (artifacts)
 const artifactMenu = ref<{ artifact: GlobalArtifact; x: number; y: number } | null>(null);
-const artifactMenuOptions: ContextMenuOption[] = [
+const artifactMenuOptions = computed<ContextMenuOption[]>(() => [
   { label: "View model", action: "view" },
-  { label: "Read in flow", action: "read" },
+  {
+    label: "Read in flow",
+    action: "read",
+    disabled: artifactMenu.value?.artifact.blob_exists === false,
+  },
   { label: "Delete model", action: "delete", danger: true },
-];
+]);
 
 // Right-click context menu for catalog flows
 const flowMenu = ref<{ flow: FlowRegistration; x: number; y: number } | null>(null);
@@ -579,7 +575,6 @@ const flowMenuOptions = computed<ContextMenuOption[]>(() => [
 const flowDetailFocusRuns = ref(false);
 
 const showCreateVirtualTable = ref(false);
-const showSqlEditor = ref(false);
 const sqlInitialQuery = ref<string | undefined>(undefined);
 
 // Default namespace ID (loaded once on mount)
@@ -861,7 +856,6 @@ function quoteSqlName(name: string): string {
 
 function handleQueryTable(tableName: string) {
   sqlInitialQuery.value = `SELECT * FROM ${quoteSqlName(tableName)}`;
-  showSqlEditor.value = true;
   // Clear selected table so the SQL editor panel shows
   catalogStore.clearTableSelection();
   router.push({ name: "catalog", query: { tab: "sql" } });
@@ -1450,6 +1444,11 @@ onUnmounted(() => {
   color: var(--color-danger);
 }
 
+.catalog-view .status-badge.unavailable {
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--color-warning);
+}
+
 /* ========== Overview Table ========== */
 .catalog-view .overview-table,
 .catalog-view .runs-table,
@@ -1860,11 +1859,6 @@ onUnmounted(() => {
 .sidebar-header-actions {
   display: flex;
   gap: 4px;
-}
-
-.sidebar-header-actions .btn-active {
-  color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
 }
 
 .catalog-detail {

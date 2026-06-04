@@ -86,11 +86,14 @@
         >
           <i class="fa-solid fa-diagram-project flow-icon"></i>
           <span class="flow-name">{{ flow.name }}</span>
-          <i
+          <el-tooltip
             v-if="!flow.file_exists"
-            class="fa-solid fa-triangle-exclamation missing-icon"
-            title="Flow file not found on disk"
-          ></i>
+            content="Flow file not found on disk"
+            placement="top"
+            :show-after="300"
+          >
+            <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
+          </el-tooltip>
           <div class="flow-actions" @click.stop>
             <button
               class="action-btn star-btn"
@@ -148,11 +151,14 @@
             {{ group.versionCount }} versions
           </span>
           <span class="artifact-version">v{{ group.latest.version }}</span>
-          <i
+          <el-tooltip
             v-if="group.latest.blob_exists === false"
-            class="fa-solid fa-triangle-exclamation missing-icon"
-            title="Model data file not found on disk"
-          ></i>
+            content="Model data file not found on disk"
+            placement="top"
+            :show-after="300"
+          >
+            <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
+          </el-tooltip>
         </div>
       </TreeSection>
 
@@ -190,11 +196,14 @@
             title="Virtual Flow Table"
             >virtual</span
           >
-          <i
+          <el-tooltip
             v-if="table.table_type !== 'virtual' && table.file_exists === false"
-            class="fa-solid fa-triangle-exclamation missing-icon"
-            title="Table data file not found on disk"
-          ></i>
+            content="Table data file not found on disk"
+            placement="top"
+            :show-after="300"
+          >
+            <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
+          </el-tooltip>
           <div class="flow-actions" @click.stop>
             <button
               class="action-btn star-btn"
@@ -356,6 +365,9 @@ const groupedArtifacts = computed((): ArtifactGroup[] => {
 
 const visibleArtifacts = computed((): ArtifactGroup[] => {
   let groups = groupedArtifacts.value;
+  if (!props.showUnavailable) {
+    groups = groups.filter((g) => g.latest.blob_exists !== false);
+  }
   if (query.value) {
     groups = groups.filter((g) => g.name.toLowerCase().includes(query.value));
   }

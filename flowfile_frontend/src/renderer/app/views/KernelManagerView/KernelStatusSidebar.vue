@@ -24,11 +24,7 @@
               <span v-if="row.chip" class="km-image-row__chip">{{ row.chip }}</span>
             </div>
             <code v-if="row.subline" class="km-image-row__tag">{{ row.subline }}</code>
-            <p
-              v-if="row.state === 'error'"
-              class="km-image-row__error"
-              :title="row.errorMessage ?? undefined"
-            >
+            <p v-if="row.state === 'error'" class="km-image-row__error">
               {{ row.errorMessage }}
             </p>
           </div>
@@ -69,6 +65,14 @@
                 <i class="fa-solid fa-xmark"></i>
               </button>
             </template>
+            <span
+              v-else-if="row.state === 'installed'"
+              class="km-image-row__uptodate"
+              title="You're on the latest version"
+            >
+              <i class="fa-solid fa-circle-check"></i>
+              Up to date
+            </span>
           </div>
         </li>
       </ul>
@@ -545,9 +549,8 @@ onBeforeUnmount(stopPullPoll);
   margin: var(--spacing-0-5) 0 0;
   font-size: var(--font-size-2xs);
   color: var(--color-danger);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .km-image-row__actions {
@@ -605,6 +608,16 @@ onBeforeUnmount(stopPullPoll);
   gap: var(--spacing-1);
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+}
+
+.km-image-row__uptodate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-0-5);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-success, #2e7d32);
+  white-space: nowrap;
 }
 
 .loading-spinner--inline {

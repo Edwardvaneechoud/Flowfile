@@ -252,7 +252,7 @@ const installedFlavours = computed<Set<ImageFlavour>>(
 const isFlavourAvailable = (flavour: ImageFlavour): boolean =>
   flavour === "custom" || installedFlavours.value.has(flavour);
 
-const isExpanded = ref(false);
+const isExpanded = ref(true);
 const isSubmitting = ref(false);
 const packages = ref<string[]>([]);
 const newPackage = ref("");

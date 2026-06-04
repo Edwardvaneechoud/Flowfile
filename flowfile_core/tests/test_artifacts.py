@@ -967,6 +967,56 @@ class TestFlowDeletionWithArtifacts:
         _cleanup_registrations()
 
 
+class TestFlowArtifactsBlobExists:
+    """Tests for blob_exists on the flow-artifacts listing."""
+
+    def _create_active_artifact(self, name: str, reg_id: int) -> str:
+        """Create an active artifact and return its storage_key."""
+        prep_resp = client.post(
+            "/artifacts/prepare-upload",
+            json={
+                "name": name,
+                "source_registration_id": reg_id,
+                "serialization_format": "pickle",
+            },
+        )
+        prep_data = prep_resp.json()
+
+        staging_path = Path(prep_data["path"])
+        staging_path.parent.mkdir(parents=True, exist_ok=True)
+        test_data = b"test"
+        staging_path.write_bytes(test_data)
+
+        import hashlib
+        sha256 = hashlib.sha256(test_data).hexdigest()
+
+        client.post(
+            "/artifacts/finalize",
+            json={
+                "artifact_id": prep_data["artifact_id"],
+                "storage_key": prep_data["storage_key"],
+                "sha256": sha256,
+                "size_bytes": len(test_data),
+            },
+        )
+        return prep_data["storage_key"]
+
+    def test_flow_artifacts_flag_missing_blob(self, test_registration):
+        """blob_exists should flip to False when the backing blob is removed."""
+        storage_key = self._create_active_artifact("blob_check", test_registration)
+
+        resp = client.get(f"/catalog/flows/{test_registration}/artifacts")
+        assert resp.status_code == 200
+        assert resp.json()[0]["blob_exists"] is True
+
+        from flowfile_core.artifacts import get_storage_backend
+        get_storage_backend().delete(storage_key)
+
+        resp = client.get(f"/catalog/flows/{test_registration}/artifacts")
+        assert resp.status_code == 200
+        assert resp.json()[0]["blob_exists"] is False
+
+
 # Edge Cases and Error Handling
 
 
