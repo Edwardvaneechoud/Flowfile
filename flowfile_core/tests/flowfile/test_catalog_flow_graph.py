@@ -62,9 +62,7 @@ def clean_state():
     _cleanup()
 
 
-# ---------------------------------------------------------------------------
 # Catalog writer tests
-# ---------------------------------------------------------------------------
 
 
 class TestCatalogWriter:
@@ -74,10 +72,8 @@ class TestCatalogWriter:
         """Running a flow with a catalog_writer should create a CatalogTable row."""
         ns_id = _create_namespace()
         graph = _create_graph(execution_location=execution_location)
-        # Node 1: manual input
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
 
-        # Node 2: catalog writer
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
         graph.add_node_promise(promise)
 
@@ -99,7 +95,6 @@ class TestCatalogWriter:
 
         _run_graph(graph)
 
-        # Verify the table was registered
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             tables = repo.list_tables(namespace_id=ns_id)
@@ -167,7 +162,6 @@ class TestCatalogWriter:
 
         _run_graph(graph)
 
-        # Capture the original table id and updated_at
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             tables = repo.list_tables(namespace_id=ns_id)
@@ -175,7 +169,6 @@ class TestCatalogWriter:
             original_id = tables[0].id
             original_updated_at = tables[0].updated_at
 
-        # Run again with different data
         graph2 = _create_graph(flow_id=2, execution_location=execution_location)
         _add_manual_input(graph2, [{"name": "Diana", "age": 40, "city": "Dublin"}], node_id=1)
         promise2 = input_schema.NodePromise(flow_id=2, node_id=2, node_type="catalog_writer")
@@ -196,7 +189,6 @@ class TestCatalogWriter:
 
         _run_graph(graph2)
 
-        # Should be only one table with updated data and the SAME id
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             tables = repo.list_tables(namespace_id=ns_id)
@@ -210,7 +202,6 @@ class TestCatalogWriter:
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="triggered_flow")
 
-        # First write to create the table
         graph = _create_graph(execution_location=execution_location)
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
@@ -231,7 +222,6 @@ class TestCatalogWriter:
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
         _run_graph(graph)
 
-        # Create a schedule that triggers on this table
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             table = repo.get_table_by_name("trigger_table", ns_id)
@@ -248,7 +238,6 @@ class TestCatalogWriter:
             db.refresh(sched)
             schedule_id = sched.id
 
-        # Overwrite the table with new data
         graph2 = _create_graph(flow_id=2, execution_location=execution_location)
         _add_manual_input(graph2, [{"name": "Eve", "age": 28, "city": "Edinburgh"}], node_id=1)
         promise2 = input_schema.NodePromise(flow_id=2, node_id=2, node_type="catalog_writer")
@@ -269,7 +258,6 @@ class TestCatalogWriter:
         add_connection(graph2, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
         _run_graph(graph2)
 
-        # The schedule's trigger_table_id should still resolve to a valid table
         with get_db_context() as db:
             sched = db.get(FlowSchedule, schedule_id)
             assert sched is not None
@@ -283,7 +271,6 @@ class TestCatalogWriter:
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="reader_flow", path="/tmp/reader.yaml")
 
-        # First write
         graph = _create_graph(execution_location=execution_location)
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
@@ -304,7 +291,6 @@ class TestCatalogWriter:
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
         _run_graph(graph)
 
-        # Create a read link referencing this table
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             table = repo.get_table_by_name("linked_table", ns_id)
@@ -313,7 +299,6 @@ class TestCatalogWriter:
             db.add(link)
             db.commit()
 
-        # Overwrite the table
         graph2 = _create_graph(flow_id=2, execution_location=execution_location)
         _add_manual_input(graph2, [{"name": "Zara", "age": 22, "city": "Zurich"}], node_id=1)
         promise2 = input_schema.NodePromise(flow_id=2, node_id=2, node_type="catalog_writer")
@@ -334,19 +319,15 @@ class TestCatalogWriter:
         add_connection(graph2, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
         _run_graph(graph2)
 
-        # Read link should still exist and point to the same table ID
         with get_db_context() as db:
             link = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=reg_id).first()
             assert link is not None
-            # Table should still be valid
             table = db.get(CatalogTable, table_id)
             assert table is not None
             assert table.row_count == 1
 
 
-# ---------------------------------------------------------------------------
 # Catalog reader tests
-# ---------------------------------------------------------------------------
 
 
 class TestCatalogReader:
@@ -354,7 +335,6 @@ class TestCatalogReader:
 
     def _register_table(self, ns_id: int) -> int:
         """Register a test table via CatalogService and return its id."""
-        # Create a temp parquet file
         df = pl.DataFrame(SAMPLE_DATA)
         tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
         df.write_parquet(tmp.name)
@@ -416,9 +396,7 @@ class TestCatalogReader:
         assert len(result_df) == 3
 
 
-# ---------------------------------------------------------------------------
 # sync_catalog_read_links tests
-# ---------------------------------------------------------------------------
 
 
 class TestSyncCatalogReadLinks:
@@ -429,7 +407,6 @@ class TestSyncCatalogReadLinks:
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="reader_flow", path="/tmp/reader_flow.yaml")
 
-        # Create a catalog table to read from
         df = pl.DataFrame(SAMPLE_DATA)
         tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
         df.write_parquet(tmp.name)
@@ -446,7 +423,6 @@ class TestSyncCatalogReadLinks:
             )
         table_id = table_out.id
 
-        # Build a graph with a catalog_reader and save it
         graph = _create_graph(source_registration_id=reg_id)
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
         graph.add_node_promise(promise)
@@ -462,7 +438,6 @@ class TestSyncCatalogReadLinks:
 
         graph.save_flow(save_path)
 
-        # Verify the read link was created
         with get_db_context() as db:
             link = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=reg_id).first()
             assert link is not None
@@ -511,9 +486,7 @@ class TestSyncCatalogReadLinks:
         os.unlink(save_path)
 
 
-# ---------------------------------------------------------------------------
 # Round-trip: write → read
-# ---------------------------------------------------------------------------
 
 
 class TestCatalogRoundTrip:
@@ -523,7 +496,6 @@ class TestCatalogRoundTrip:
         """Data written by a catalog_writer should be readable by a catalog_reader."""
         ns_id = _create_namespace()
 
-        # Step 1: Write data to catalog
         write_graph = _create_graph(flow_id=1, execution_location=execution_location)
         _add_manual_input(write_graph, SAMPLE_DATA, node_id=1)
 
@@ -544,14 +516,12 @@ class TestCatalogRoundTrip:
 
         _run_graph(write_graph)
 
-        # Get the table id
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             tables = repo.list_tables(namespace_id=ns_id)
             assert len(tables) == 1
             table_id = tables[0].id
 
-        # Step 2: Read data back from catalog
         read_graph = _create_graph(flow_id=2, execution_location=execution_location)
         read_promise = input_schema.NodePromise(flow_id=2, node_id=1, node_type="catalog_reader")
         read_graph.add_node_promise(read_promise)
@@ -569,14 +539,11 @@ class TestCatalogRoundTrip:
         assert len(result_df) == 3
         assert set(result_df.columns) == {"name", "age", "city"}
 
-        # Verify actual values
         names = sorted(result_df["name"].to_list())
         assert names == ["Alice", "Bob", "Charlie"]
 
 
-# ---------------------------------------------------------------------------
 # Catalog SQL reader tests
-# ---------------------------------------------------------------------------
 
 
 class TestCatalogSqlReader:
@@ -724,7 +691,7 @@ class TestCatalogSqlReader:
         reader = input_schema.NodeCatalogReader(
             flow_id=graph.flow_id,
             node_id=1,
-            sql_query="SELEC * FORM people",  # intentionally broken SQL
+            sql_query="SELEC * FORM people",
         )
         graph.add_catalog_reader(reader)
 
@@ -877,7 +844,6 @@ class TestRegisterCatalogTable:
             dest_path = Path(tmp_dir) / "overwrite_table"
             pl.DataFrame({"a": [1]}).write_delta(str(dest_path))
 
-            # First, register the table
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
                 svc = CatalogService(repo)
@@ -890,7 +856,6 @@ class TestRegisterCatalogTable:
                 )
                 existing = repo.get_table(table_out.id)
 
-            # Overwrite with new data
             pl.DataFrame({"a": [2, 3]}).write_delta(str(dest_path), mode="overwrite")
 
             meta: dict = {
@@ -984,7 +949,6 @@ class TestHandleVirtualTableWrite:
         """Running virtual write twice should update the existing virtual table."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="vw_update_producer")
-        # First write
         graph1 = _create_graph(flow_id=1, source_registration_id=reg_id)
         _add_manual_input(graph1, SAMPLE_DATA, node_id=1)
         promise1 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="catalog_writer")
@@ -1010,7 +974,6 @@ class TestHandleVirtualTableWrite:
             assert len(tables) == 1
             original_id = tables[0].id
 
-        # Second write (update)
         graph2 = _create_graph(flow_id=2, source_registration_id=reg_id)
         _add_manual_input(graph2, [{"name": "Diana", "age": 40, "city": "Dublin"}], node_id=1)
         promise2 = input_schema.NodePromise(flow_id=2, node_id=2, node_type="catalog_writer")
@@ -1033,7 +996,6 @@ class TestHandleVirtualTableWrite:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             tables = repo.list_tables(namespace_id=ns_id)
-            # Should still be only one virtual table (updated, not duplicated)
             assert len(tables) == 1
             assert tables[0].id == original_id
 

@@ -105,43 +105,21 @@ def _regex_fast_path_classify(
 
 
 SURFACE: str = "intent_classifier"
-"""Surface bucket. The classifier routes to a Haiku-class model on
-every provider that maps this surface (see
-``provider.surface_models``). Owns its own surface key (rather than
-borrowing ``settings_autocomplete``) so audit-log filtering and
-future per-surface model tuning don't conflate the autocomplete tier
-with the chat-auto-promotion classifier."""
 
 
 DEFAULT_TIMEOUT_SECONDS: float = 5.0
-"""Hard timeout per :meth:`Provider.chat` call. The fallback on
-timeout is ``kind="chat"`` so a slow classifier degrades to "send
-the message as chat" rather than blocking the user's send."""
 
 
 DEFAULT_MAX_TOKENS: int = 96
-"""Cap the classifier's reply at ~96 tokens. Strict JSON shapes well under
-that; bigger replies almost always indicate the model ignored the format
-contract and we'll parse-fail back to ``chat`` anyway."""
 
 
 PROMOTION_CONFIDENCE_THRESHOLD: float = 0.6
-"""Minimum classifier confidence required to actually flip the route
-verdict to ``"agent"``. Used by :func:`verdict_for` (and the
-``intent_router_routes`` route layer). Below this — even on
-``kind="build"`` — the verdict stays ``"chat"`` for safety."""
 
 
 DEFAULT_HISTORY_TURNS: int = 4
-"""Last N user/assistant turns the classifier inspects. Four turns covers
-the canonical *"how do I X?"* → *"here's how"* → *"can you implement?"*
-pattern without bloating the prompt."""
 
 
 DEFAULT_HISTORY_CHARS_PER_TURN: int = 1_000
-"""Per-turn character cap. Long assistant responses (markdown explanations,
-schema dumps) get truncated with an ellipsis so the classifier sees the
-shape of the conversation, not the full content."""
 
 
 _KIND_VALUES = ("build", "chat", "ambiguous")

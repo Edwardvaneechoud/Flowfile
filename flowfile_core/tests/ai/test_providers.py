@@ -495,9 +495,7 @@ async def test_stream_yields_streamchunks_in_order() -> None:
     """
 
     async def fake_stream() -> Any:
-        # 1: content fragment
         yield _Obj(choices=[_Obj(delta=_Obj(content="thinking..."), finish_reason=None)])
-        # 2: first half of a tool call
         yield _Obj(
             choices=[
                 _Obj(
@@ -518,7 +516,6 @@ async def test_stream_yields_streamchunks_in_order() -> None:
                 )
             ]
         )
-        # 3: second half + finish marker on the next chunk
         yield _Obj(
             choices=[
                 _Obj(
@@ -536,7 +533,6 @@ async def test_stream_yields_streamchunks_in_order() -> None:
                 )
             ]
         )
-        # 4: finish — buffer flushes the complete tool call here.
         yield _Obj(choices=[_Obj(delta=_Obj(content=None), finish_reason="tool_calls")])
 
     p = provider_factory("anthropic")
@@ -545,7 +541,6 @@ async def test_stream_yields_streamchunks_in_order() -> None:
         async for chunk in p.stream([Message(role="user", content="filter big rows")]):
             chunks.append(chunk)
 
-    # Expect: 1 content delta, 1 tool_call delta (buffered until finish), 1 finish.
     content_deltas = [c.content_delta for c in chunks if c.content_delta is not None]
     tool_deltas = [c.tool_call_delta for c in chunks if c.tool_call_delta is not None]
     finish_reasons = [c.finish_reason for c in chunks if c.finish_reason is not None]

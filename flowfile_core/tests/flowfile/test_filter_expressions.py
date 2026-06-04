@@ -38,9 +38,7 @@ from flowfile_core.flowfile.filter_expressions import (
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterOperator
 
 
-# =============================================================================
 # Helper Function Tests
-# =============================================================================
 
 
 class TestIsNumericString:
@@ -138,9 +136,7 @@ class TestFormatField:
         assert _format_field("col-name") == "[col-name]"
 
 
-# =============================================================================
 # Comparison Expression Builder Tests
-# =============================================================================
 
 
 class TestComparisonExpressionBuilders:
@@ -197,9 +193,7 @@ class TestComparisonExpressionBuilders:
         assert _build_less_than_or_equals_expression("[score]", "50", True) == '[score]<="50"'
 
 
-# =============================================================================
 # String Function Expression Builder Tests
-# =============================================================================
 
 
 class TestStringFunctionExpressionBuilders:
@@ -236,9 +230,7 @@ class TestStringFunctionExpressionBuilders:
         assert result == 'right([email], 12) = "@example.com"'
 
 
-# =============================================================================
 # Null Check Expression Builder Tests
-# =============================================================================
 
 
 class TestNullCheckExpressionBuilders:
@@ -255,9 +247,7 @@ class TestNullCheckExpressionBuilders:
         assert result == "is_not_empty([name])"
 
 
-# =============================================================================
 # IN/NOT_IN Expression Builder Tests
-# =============================================================================
 
 
 class TestInExpressionBuilders:
@@ -291,7 +281,6 @@ class TestInExpressionBuilders:
     def test_in_mixed_values_with_non_numeric(self):
         """Test IN where some values are not numeric."""
         result = _build_in_expression("[code]", "A, B, 1", None)
-        # A and B are not numeric so quoted, 1 is numeric so not quoted
         assert result == '([code]="A") | ([code]="B") | ([code]=1)'
 
     def test_not_in_single_value_string(self):
@@ -317,7 +306,6 @@ class TestInExpressionBuilders:
     def test_not_in_numeric_without_field_type(self):
         """Test NOT_IN with numeric values and no field type - the original bug case."""
         result = _build_not_in_expression("[id]", "1, 2", None)
-        # Each value is checked individually, not the whole "1, 2" string
         assert result == "([id]!=1) & ([id]!=2)"
 
     def test_in_whitespace_handling(self):
@@ -326,9 +314,7 @@ class TestInExpressionBuilders:
         assert result == "([id]=1) | ([id]=2) | ([id]=3)"
 
 
-# =============================================================================
 # BETWEEN Expression Builder Tests
-# =============================================================================
 
 
 class TestBetweenExpressionBuilder:
@@ -360,9 +346,7 @@ class TestBetweenExpressionBuilder:
             _build_between_expression("[age]", "18", None, "numeric")
 
 
-# =============================================================================
 # Main build_filter_expression Function Tests
-# =============================================================================
 
 
 class TestBuildFilterExpression:
@@ -486,7 +470,6 @@ class TestBuildFilterExpression:
         """Test NOT_IN with numeric values but no field type - the original bug case."""
         bf = BasicFilter(field="id", operator=FilterOperator.NOT_IN, value="1, 2")
         result = build_filter_expression(bf, None)
-        # Should NOT quote numeric values, even when type is not specified
         assert result == "([id]!=1) & ([id]!=2)"
 
     def test_between(self):
@@ -514,9 +497,7 @@ class TestBuildFilterExpression:
         assert result == '[name]="John"'
 
 
-# =============================================================================
 # Edge Case and Regression Tests
-# =============================================================================
 
 
 class TestEdgeCases:
@@ -589,8 +570,6 @@ class TestEdgeCases:
             field="id", operator=FilterOperator.NOT_IN, value="1, 2", value2=None
         )
         result = build_filter_expression(bf, None)
-        # Should produce unquoted numeric values
         assert result == "([id]!=1) & ([id]!=2)"
-        # Should NOT produce quoted strings
         assert '"1"' not in result
         assert '"2"' not in result

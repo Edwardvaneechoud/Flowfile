@@ -126,19 +126,13 @@ def _should_force_other_after_source_add(
 _PICK_UPSTREAM_NAME = PICK_UPSTREAM_TOOL_NAME
 
 
-# --------------------------------------------------------------------------- #
-# Followup-message injection                                                   #
-# --------------------------------------------------------------------------- #
+# Followup-message injection
 
 
 FollowupAction = Literal["rejected_diff", "user_message"]
 
 
 _REJECTED_DIFF_DEFAULT_NOTE: str = "no specific reason provided"
-"""Generic rejection reason used by :func:`inject_followup_message` when the
-user clicks Reject without typing an explanation. Surfaces in the synthetic
-followup turn so the model sees *something* signalling the rejection rather
-than just an empty user message."""
 
 
 def inject_followup_message(
@@ -200,9 +194,7 @@ def inject_followup_message(
     return msg
 
 
-# --------------------------------------------------------------------------- #
-# Public entry + loop                                                          #
-# --------------------------------------------------------------------------- #
+# Public entry + loop
 
 
 async def run_planner_session(

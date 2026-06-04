@@ -61,9 +61,7 @@ data_router = APIRouter(tags=["flow_api"])
 management_router = APIRouter(prefix="/flow-api", tags=["flow_api"])
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _parse_param_schema(raw: str | None) -> list[ApiParamSpec]:
@@ -154,9 +152,7 @@ def _resolve_api_node_id(flow_path: str | None, user_id: int) -> int:
     return api_nodes[0].node_id
 
 
-# ---------------------------------------------------------------------------
 # Public data endpoint
-# ---------------------------------------------------------------------------
 
 
 @data_router.get("/api/data/{slug}")
@@ -205,9 +201,7 @@ async def run_published_flow(
         _API_RUN_SEMAPHORE.release()
 
 
-# ---------------------------------------------------------------------------
 # Management endpoints (JWT)
-# ---------------------------------------------------------------------------
 
 
 @management_router.post("/endpoints", response_model=ApiEndpointOut, status_code=status.HTTP_201_CREATED)

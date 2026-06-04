@@ -117,16 +117,13 @@ const scheduleDirtyRefresh = () => {
   }, 400);
 };
 
-// Component references
 const saveConfirmationModal = ref<InstanceType<typeof SaveConfirmationModal> | null>(null);
 const saveDialog = ref<InstanceType<typeof SaveDialog> | null>(null);
 
-// Computed properties
 const selectedFlow = computed(
   () => flows.value.find((flow) => flow.flow_id === selectedFlowId.value) || null,
 );
 
-// Load all flows from backend
 const loadFlows = async () => {
   if (isLoading.value) return;
 
@@ -135,19 +132,15 @@ const loadFlows = async () => {
     const flowsData = await getAllFlows();
     flows.value = flowsData;
 
-    // Check for stored flow ID in store
     if (nodeStore.flow_id && nodeStore.flow_id !== -1) {
-      // Verify the flow still exists
       const flowExists = flowsData.some((flow) => flow.flow_id === nodeStore.flow_id);
       if (flowExists) {
         selectedFlowId.value = nodeStore.flow_id;
       } else if (flowsData.length > 0) {
-        // Fall back to first flow if stored ID doesn't exist
         selectedFlowId.value = flowsData[0].flow_id;
         nodeStore.setFlowId(flowsData[0].flow_id);
       }
     } else if (flowsData.length > 0) {
-      // If no selected flow, default to the first one
       selectedFlowId.value = flowsData[0].flow_id;
       nodeStore.setFlowId(flowsData[0].flow_id);
     }
@@ -158,7 +151,6 @@ const loadFlows = async () => {
   }
 };
 
-// Select a flow and make it the active tab
 const selectFlow = (flowId: number) => {
   if (flowId === selectedFlowId.value) return;
 
@@ -176,7 +168,6 @@ const selectFlow = (flowId: number) => {
 
 // Show confirmation dialog before closing tab — only if the flow has unsaved changes
 const confirmCloseTab = async (flowId: number) => {
-  // Check backend for dirty state; fall back to prompting if the check fails
   try {
     const settings = await FlowApi.getFlowSettings(flowId);
     if (settings && settings.has_unsaved_changes === false) {
@@ -196,9 +187,7 @@ const confirmCloseTab = async (flowId: number) => {
   }
 };
 
-// Handle saving flow before closing
 const handleSaveAndClose = async () => {
-  // Show save dialog
   if (saveDialog.value) {
     saveDialog.value.open();
   } else {
@@ -206,7 +195,6 @@ const handleSaveAndClose = async () => {
   }
 };
 
-// After successful save, close the tab
 const handleSaveComplete = (flowId: number) => {
   saveDialogVisible.value = false;
   emit("close-tab", flowId);
@@ -215,23 +203,19 @@ const handleSaveComplete = (flowId: number) => {
   refreshDirtyState(flowId);
 };
 
-// If save is cancelled, keep the tab open
 const handleSaveCancelled = () => {
   pendingCloseFlowId.value = null;
 };
 
-// Close without saving
 const handleCloseWithoutSaving = (flowId: number) => {
   emit("close-tab", flowId);
   pendingCloseFlowId.value = null;
 };
 
-// Watch for changes to the flow ID in the store
 watch(
   () => nodeStore.flow_id,
   (newFlowId) => {
     if (newFlowId && newFlowId !== -1 && newFlowId !== selectedFlowId.value) {
-      // Verify the flow exists in our list
       const flowExists = flows.value.some((flow) => flow.flow_id === newFlowId);
       if (flowExists) {
         selectedFlowId.value = newFlowId;
@@ -249,17 +233,14 @@ watch(
   },
 );
 
-// Watch for changes to the flows array
 watch(
   () => flows.value,
   (newFlows) => {
-    // Handle case where selected flow was deleted
     if (
       selectedFlowId.value !== null &&
       !newFlows.some((flow) => flow.flow_id === selectedFlowId.value)
     ) {
       if (newFlows.length > 0) {
-        // Select the first available flow
         selectFlow(newFlows[0].flow_id);
       } else {
         selectedFlowId.value = null;
@@ -273,7 +254,6 @@ onMounted(() => {
   loadFlows();
 });
 
-// Expose methods and state for parent component
 defineExpose({
   loadFlows,
   selectedFlowId,

@@ -58,7 +58,6 @@ def test_create_group_assigns_membership():
     assert graph.get_node(1).setting_input.group_id == group.id
     assert graph.get_node(2).setting_input.group_id == group.id
     assert sorted(graph._member_node_ids(group.id)) == [1, 2]
-    # Bounds were computed from members.
     assert group.width > 0 and group.height > 0
 
 
@@ -72,7 +71,7 @@ def test_serialization_keeps_group_id_at_top_level_not_in_setting_input():
 
     dumped = data.model_dump()
     for node in dumped["nodes"]:
-        assert node["group_id"] == group.id  # top-level
+        assert node["group_id"] == group.id
         # group_id must NOT leak into the nested settings payload
         assert "group_id" not in (node["setting_input"] or {})
 
@@ -196,9 +195,7 @@ def test_collapse_toggle_is_undoable():
     assert graph._groups[group.id].collapsed is False
 
 
-# ---------------------------------------------------------------------------
 # Nested (embedded) groups
-# ---------------------------------------------------------------------------
 
 
 def test_nested_create_sets_parent_group_id():
@@ -289,9 +286,7 @@ def test_nested_groups_round_trip(temp_dir):
     assert by_name["Inner"].parent_group_id == by_name["Outer"].id
 
 
-# ---------------------------------------------------------------------------
 # Group id allocation
-# ---------------------------------------------------------------------------
 
 
 def test_next_group_id_does_not_reuse_freed_id():

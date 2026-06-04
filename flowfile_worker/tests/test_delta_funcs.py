@@ -33,9 +33,7 @@ from shared.delta_utils import format_delta_timestamp
 from shared.storage_config import storage
 
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -82,9 +80,7 @@ def worker_client(tmp_path) -> TestClient:
     return TestClient(main.app)
 
 
-# ---------------------------------------------------------------------------
 # _get_delta_size_bytes
-# ---------------------------------------------------------------------------
 
 
 class TestGetDeltaSizeBytes:
@@ -97,9 +93,7 @@ class TestGetDeltaSizeBytes:
         assert _get_delta_size_bytes(delta_path) == fs_size
 
 
-# ---------------------------------------------------------------------------
 # format_delta_timestamp
-# ---------------------------------------------------------------------------
 
 
 class TestFormatDeltaTimestamp:
@@ -122,9 +116,7 @@ class TestFormatDeltaTimestamp:
         assert "2023" in result
 
 
-# ---------------------------------------------------------------------------
 # read_table_metadata
-# ---------------------------------------------------------------------------
 
 
 class TestReadTableMetadata:
@@ -138,9 +130,7 @@ class TestReadTableMetadata:
         assert names == {"id", "value"}
 
 
-# ---------------------------------------------------------------------------
 # get_delta_history
-# ---------------------------------------------------------------------------
 
 
 class TestGetDeltaHistory:
@@ -160,9 +150,7 @@ class TestGetDeltaHistory:
         assert len(result.history) == 1
 
 
-# ---------------------------------------------------------------------------
 # read_delta_version_preview
-# ---------------------------------------------------------------------------
 
 
 class TestReadDeltaVersionPreview:
@@ -182,9 +170,7 @@ class TestReadDeltaVersionPreview:
         assert len(result.rows) == 1
 
 
-# ---------------------------------------------------------------------------
 # write_delta (multiprocessing function)
-# ---------------------------------------------------------------------------
 
 
 class TestWriteDelta:
@@ -215,7 +201,6 @@ class TestWriteDelta:
         assert result["size_bytes"] > 0
         assert len(result["schema"]) == 2
 
-        # Verify the table is readable
         df = pl.read_delta(output_path)
         assert df.height == 3
 
@@ -238,9 +223,7 @@ class TestWriteDelta:
         assert progress.value == -1
 
 
-# ---------------------------------------------------------------------------
 # materialize_catalog_table_task (now writes delta)
-# ---------------------------------------------------------------------------
 
 
 class TestMaterializeCatalogTableTask:
@@ -305,9 +288,7 @@ class TestMaterializeCatalogTableTask:
         assert progress.value == -1
 
 
-# ---------------------------------------------------------------------------
 # Worker Routes
-# ---------------------------------------------------------------------------
 
 
 class TestWorkerRoutes:

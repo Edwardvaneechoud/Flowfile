@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 TEMPLATE_DATA_BASE_URL = "https://raw.githubusercontent.com/edwardvaneechoud/flowfile/main/data/templates"
 TEMPLATE_FLOWS_BASE_URL = f"{TEMPLATE_DATA_BASE_URL}/flows"
 
-# Repo checkout path (development): data/templates/ relative to repo root
 _REPO_TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "templates"
 
 # PyInstaller bundles its own Python whose default CA-cert search paths
@@ -45,7 +44,6 @@ def _download_file(url: str, local_path: Path, timeout: int = 30) -> None:
             "template-download FAILED: url=%s dest=%s exc_type=%s exc=%s",
             url, local_path, type(e).__name__, e,
         )
-        # Clean up partial downloads.
         local_path.unlink(missing_ok=True)
         raise RuntimeError(
             f"Failed to download '{local_path.name}' from {url} "
@@ -87,13 +85,11 @@ def ensure_template_data(filenames: list[str]) -> dict[str, Path]:
 
     result: dict[str, Path] = {}
     for filename in filenames:
-        # Check repo checkout first (development)
         repo_path = _REPO_TEMPLATE_DIR / filename
         if repo_path.exists():
             logger.debug("repo hit: %s -> %s", filename, repo_path)
             result[filename] = repo_path
             continue
-        # Then check/download to cache
         local_path = data_dir / filename
         if local_path.exists():
             logger.debug("cache hit: %s", filename)
@@ -127,7 +123,6 @@ def ensure_flow_yamls(yaml_filenames: list[str]) -> Path:
         getattr(sys, "frozen", False),
     )
 
-    # Check repo checkout first (development)
     repo_flows_dir = _REPO_TEMPLATE_DIR / "flows"
     repo_dir_exists = repo_flows_dir.exists()
     repo_all_present = repo_dir_exists and all((repo_flows_dir / f).exists() for f in yaml_filenames)
@@ -138,7 +133,6 @@ def ensure_flow_yamls(yaml_filenames: list[str]) -> Path:
     if repo_all_present:
         return repo_flows_dir
 
-    # Fall back to cache directory, downloading missing files
     try:
         flows_dir = get_template_data_dir() / "flows"
         flows_dir.mkdir(parents=True, exist_ok=True)

@@ -93,7 +93,6 @@ class FlowfileHandler:
         """Get a flow by ID, optionally checking user access."""
         flow = self._flows.get(flow_id, None)
         if flow and user_id is not None:
-            # Only return the flow if user has access
             if not self.user_has_flow(user_id, flow_id):
                 return None
         return flow
@@ -104,13 +103,11 @@ class FlowfileHandler:
             if not self.user_has_flow(user_id, flow_id):
                 raise Exception(f"Flow {flow_id} not found in user's session")
             self._unregister_user_session(user_id, flow_id)
-            # Check if any user still has this flow open
             flow_still_open = any(flow_id in flows for flows in self._user_sessions.values())
             if not flow_still_open and flow_id in self._flows:
                 flow = self._flows.pop(flow_id)
                 del flow
         else:
-            # No user context - delete directly
             if flow_id in self._flows:
                 flow = self._flows.pop(flow_id)
                 del flow
@@ -159,23 +156,19 @@ class FlowfileHandler:
         old_flow_id = flow.flow_id
         new_flow_id = create_unique_id()
 
-        # 1. Clear old catalog link and assign new flow identity
         flow.flow_settings.source_registration_id = None
         flow.flow_id = new_flow_id  # propagates to child nodes + settings
 
-        # 2. Save to the new path (updates flow.flow_settings.path)
         flow.save_flow(flow_path=new_path)
 
-        # 3. Re-key in handler: remove old entry, register under new id
         self.rekey_flow(old_flow_id, new_flow_id, user_id)
 
-        # 4. Catalog registration (if callbacks provided)
         if on_catalog_register is not None:
             on_catalog_register(new_path, flow.flow_settings.name, user_id)
         if on_resolve_registration is not None:
             on_resolve_registration(flow)
 
-        # 5. Re-save to persist the resolved source_registration_id in YAML
+        # Re-save to persist the resolved source_registration_id in YAML
         flow.save_flow(flow_path=new_path)
 
         return new_flow_id

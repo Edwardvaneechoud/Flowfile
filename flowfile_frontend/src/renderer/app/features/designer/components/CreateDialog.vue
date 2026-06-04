@@ -113,7 +113,6 @@ const emit = defineEmits(["create-complete", "create-cancelled", "update:visible
 
 const isVisible = ref(props.visible);
 
-// Sidebar tab selection
 const createMode = ref<"file" | "catalog">("file");
 
 // Catalog options
@@ -129,7 +128,6 @@ watch(
   },
 );
 
-// Emit visibility + refresh catalog dir when opening
 watch(isVisible, async (newValue) => {
   if (newValue !== props.visible) {
     emit("update:visible", newValue);

@@ -99,7 +99,6 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 const nodeStore = useNodeStore();
 const nodeUnpivot = ref<NodeUnpivot | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeUnpivot,
   onBeforeSave: () => {
@@ -157,10 +156,8 @@ const onDrop = (index: number) => {
 
 const onDropInSection = (section: "index" | "value") => {
   if (draggedColumnName.value) {
-    // Remove column from any existing assignments
     removeColumnIfExists(draggedColumnName.value);
     console.log("section", unpivotInput.value.index_columns);
-    // Assign the dragged column to the appropriate section
     if (
       section === "index" &&
       !unpivotInput.value.index_columns.includes(draggedColumnName.value)

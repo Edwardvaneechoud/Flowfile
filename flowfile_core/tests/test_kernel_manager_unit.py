@@ -74,9 +74,7 @@ def _kernel(
     )
 
 
-# ----------------------------------------------------------------------------
 # Pure helpers
-# ----------------------------------------------------------------------------
 
 
 class TestValidatePackages:
@@ -182,8 +180,6 @@ class TestResolveImage:
         """When the registry default isn't local but :local is, prefer :local."""
         monkeypatch.delenv("FLOWFILE_KERNEL_IMAGE_LITE", raising=False)
         client = MagicMock()
-        # First .get() (registry default) raises ImageNotFound, then images.list
-        # returns a fake image tagged ":local".
         client.images.get.side_effect = docker.errors.ImageNotFound("not here")
         local_img = MagicMock()
         local_img.tags = ["flowfile-kernel-lite:local"]
@@ -195,13 +191,12 @@ class TestResolveImage:
 class TestResolveLocalImage:
     def test_registry_default_wins_when_present(self):
         client = MagicMock()
-        # images.get succeeds → registry tag is locally available
         client.images.get.return_value = MagicMock()
         result = _resolve_local_image(
             ImageFlavour.BASE, client, "edwardvaneechoud/flowfile-kernel-base:0.3.0"
         )
         assert result == "edwardvaneechoud/flowfile-kernel-base:0.3.0"
-        client.images.list.assert_not_called()  # short-circuited
+        client.images.list.assert_not_called()
 
     def test_prefers_local_tag_over_other_variants(self):
         client = MagicMock()
@@ -265,7 +260,6 @@ class TestImagePull:
             second = mgr.start_image_pull(ImageFlavour.LITE)
             assert first == "pulling"
             assert second == "pulling"
-            # Only one worker spawned — the second call short-circuits.
             assert thread_cls.call_count == 1
 
     def test_custom_flavour_cannot_be_pulled(self):
@@ -276,10 +270,8 @@ class TestImagePull:
     def test_do_pull_clears_state_on_success(self):
         mgr = _bare_manager()
         mgr._docker.images.pull.return_value = MagicMock()
-        # Seed state to "pulling" as if start_image_pull had been called.
         mgr._pull_state["edwardvaneechoud/flowfile-kernel-lite:0.3.0"] = "pulling"
         mgr._do_pull("edwardvaneechoud/flowfile-kernel-lite:0.3.0")
-        # Success clears the entry so the next docker-status poll shows idle.
         assert mgr.get_pull_state("edwardvaneechoud/flowfile-kernel-lite:0.3.0") is None
 
     def test_do_pull_records_error_on_failure(self):
@@ -318,9 +310,7 @@ class TestDerivedImageTag:
         assert _derived_image_tag("k1.test_99-a") == "flowfile-kernel-derived-k1.test_99-a:latest"
 
 
-# ----------------------------------------------------------------------------
 # Orphan derived-image GC
-# ----------------------------------------------------------------------------
 
 
 def _image_with_tag(tag: str, labels: dict[str, str] | None = None) -> MagicMock:
@@ -421,13 +411,10 @@ class TestRemoveOrphanDerivedImages:
 
         mgr._remove_orphan_derived_images()
 
-        # Both removals attempted; second one succeeds.
         assert mgr._docker.images.remove.call_count == 2
 
 
-# ----------------------------------------------------------------------------
 # update_kernel
-# ----------------------------------------------------------------------------
 
 
 def _run(coro):
@@ -491,7 +478,6 @@ class TestUpdateKernel:
         mgr._remove_derived_image.assert_called_once_with("k1")
         mgr._build_derived_image.assert_called_once()
         mgr._persist_kernel.assert_called_once()
-        # Persisted with the correct owner.
         assert mgr._persist_kernel.call_args.args[1] == 42
 
     def test_clears_packages_when_set_to_empty(self):
@@ -541,19 +527,15 @@ class TestUpdateKernel:
             _run(mgr.update_kernel("k1", ["numpy", "matplotlib"]))
 
         kernel = mgr._kernels["k1"]
-        # State reverted to what the user had before the edit.
         assert kernel.packages == ["pandas"]
         assert kernel.resolved_packages == old_resolved
-        # First build for new packages, then rollback build for old packages.
         assert build_calls == [["numpy", "matplotlib"], ["pandas"]]
         # We don't re-persist on failure — caller already has stale-but-correct
         # state in the DB.
         mgr._persist_kernel.assert_not_called()
 
 
-# ----------------------------------------------------------------------------
 # Sanity check: __init__'s startup sequence now calls the GC
-# ----------------------------------------------------------------------------
 
 
 class TestStartupSequence:

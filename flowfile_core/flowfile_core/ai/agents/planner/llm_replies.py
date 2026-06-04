@@ -16,15 +16,6 @@ from typing import Any
 from flowfile_core.ai.tools.executor import ToolExecutionResult
 
 _SETTINGS_REPLY_MAX_CHARS = 2000
-"""Cap on the JSON-serialised settings echo in the LLM tool reply.
-
-Empirically, simple node settings (filter, group_by, select) serialise to
-200-500 chars; complex ones (multi-column joins, formulas with long
-expressions) can exceed 1500. The cap keeps the tool reply bounded so a
-pathological staging doesn't blow the context budget. When clipped, we
-append ``... [truncated]`` so the LLM knows the echo is partial and can
-``read_node_schema`` if needed.
-"""
 
 
 def _extract_staged_settings_for_reply(result: ToolExecutionResult) -> str | None:

@@ -49,9 +49,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# --------------------------------------------------------------------------- #
-# Wire types — snapshot + drift                                                #
-# --------------------------------------------------------------------------- #
+# Wire types — snapshot + drift
 
 
 SessionStatus = Literal[
@@ -64,32 +62,8 @@ SessionStatus = Literal[
     "aborted",
     "failed",
 ]
-"""Session lifecycle. ``paused_user_action`` is the cold-start state a
-``running`` session flips to when the in-memory mirror is empty — the
-previous SSE stream is dead, the user must explicitly re-attach via
-``POST /ai/agent/{session_id}/resume?action=continue``.
-
-``awaiting_user_input`` is the post-completion sub-state when the
-planner stops with a clarifying question (no tool calls, last assistant
-message looks like a question, ``staged_results`` empty). Distinct from
-``completed`` so the frontend can render *"Agent waiting for your reply…"*
-instead of the misleading *"finished — nothing to stage"*. Both
-``awaiting_user_input`` and ``completed`` are followup-resumable via
-``POST /ai/agent/{session_id}/followup``."""
 
 PlannerSurface = Literal["agent_complex", "agent_staged", "agent_live"]
-"""``agent_staged`` covers the small-model case via a
-one-tool-per-round state machine. ``agent_complex`` covers single-shot
-full-catalog use. ``agent_live`` is a third opt-in surface that mirrors
-``agent_staged``'s state machine through fill_settings but applies
-each step LIVE to the canvas (mode="apply" not "stage"), runs the
-affected subgraph (Performance) or evaluates a sample (Development),
-and feeds the runtime observation back to the LLM as the next tool
-reply. On runtime failure the just-added node is auto-deleted and the
-LLM retries up to ``max_retries_per_step``; the canvas is always at
-the last-successful state. No staged_results bundle — every action is
-live; the chat trail's ``applied_results`` list is the equivalent
-record-of-truth for that surface."""
 SamplesMode = Literal["off", "regex"]
 
 
@@ -102,27 +76,6 @@ PlannerStage = Literal[
     "single_stage_op",
     "verify_completion",
 ]
-"""Current state in the ``agent_staged`` multi-stage state machine.
-
-Each stage exposes exactly one tool to the function-calling API so
-smaller models comply with the API rather than emitting text-JSON. The
-``agent_complex`` surface ignores this field — only the
-``agent_staged`` (and ``agent_live``) surface drives transitions
-through it.
-
-* ``classify`` — exposes ``flowfile.meta.classify_intent``; the LLM picks
-  an :data:`PlannerOpKind` value. Default at session start.
-* ``pick_type`` — add path only. Exposes ``flowfile.meta.pick_node_type``.
-* ``pick_upstream`` — add path only. Exposes
-  ``flowfile.meta.pick_upstream`` with the upstream id enum populated
-  per-turn from ``live_ids ∪ session.staged_node_ids``.
-* ``fill_settings`` — add path only. Exposes the picked node type's
-  ``flowfile.graph.add_<type>`` tool with planner-injected fields stripped
-  from its parameter schema.
-* ``single_stage_op`` — non-add path. Exposes the one matching ops tool
-  (``update_node_settings`` / ``delete_node`` / ``connect`` /
-  ``delete_connection``) per :attr:`AgentSession.picked_op_kind`.
-"""
 
 PlannerOpKind = Literal[
     "add",
@@ -132,14 +85,6 @@ PlannerOpKind = Literal[
     "disconnect",
     "other",
 ]
-"""The user-intent kind chosen by ``classify_intent`` at stage 0.
-
-``add`` advances through stages ``pick_type → pick_upstream → fill_settings``.
-``modify`` / ``delete`` / ``connect`` / ``disconnect`` advance to
-``single_stage_op`` exposing exactly one ops tool. ``other`` terminates
-the loop — the LLM's accompanying assistant content becomes the final
-response (used for clarifying questions, "what does this flow do?", etc.).
-"""
 
 
 class GraphSnapshot(BaseModel):
@@ -176,12 +121,8 @@ class DriftDetail(BaseModel):
     """
 
     missing_node_ids: list[int] = Field(default_factory=list)
-    """Nodes that existed at snapshot time and are now gone."""
     external_added_node_ids: list[int] = Field(default_factory=list)
-    """Nodes on the live flow that the agent did not stage."""
     node_types: dict[int, str] = Field(default_factory=dict)
-    """``node_type`` for each id appearing in either bucket. Snapshot-time
-    type for missing ids; live type for external-added ids."""
 
     def is_empty(self) -> bool:
         return not (self.missing_node_ids or self.external_added_node_ids)
@@ -211,20 +152,11 @@ class AgentSession(BaseModel):
     surface: PlannerSurface = "agent_staged"
     samples_mode: SamplesMode = "off"
     provider_name: str
-    """Name of the BYOK provider — used by the resume route to re-resolve
-    the same provider (and model) on continue. Stored at session-start so
-    drift-pause/resume doesn't need a provider override on the wire."""
     model_name: str | None = None
     snapshot: GraphSnapshot
     messages: list[Message] = Field(default_factory=list)
     staged_results: list[StagedToolEntry] = Field(default_factory=list)
     applied_results: list[AppliedNodeRecord] = Field(default_factory=list)
-    """Per-step applied-live record for ``surface=agent_live``.
-    Mirrors ``staged_results`` for the chat-trail rendering and the
-    audit / undo paths, but the records describe nodes ALREADY in
-    ``flow.nodes`` (not staged proposals). Empty for the other
-    surfaces; populated one entry per successful apply round on
-    ``agent_live``."""
     status: SessionStatus = "running"
     pause_reason: str | None = None
     drift_detail: DriftDetail | None = None
@@ -233,69 +165,17 @@ class AgentSession(BaseModel):
     diff_id: str | None = None
     rationale: str | None = None
     last_assistant_text: str | None = None
-    """Text content of the most recent assistant turn — used as the
-    ``GraphDiff.rationale`` when the loop completes."""
     staged_node_ids: list[int] = Field(default_factory=list)
-    """Node ids the agent has staged this session via ``add_<node_type>``
-    tool calls — used to exclude the agent's own additions from the
-    ``external_added_node_ids`` drift bucket."""
     last_added_source: tuple[str, int] | None = None
-    """``(node_type, node_id)`` of the most recent successful source-only
-    add, or ``None`` if the most recent op was anything else. Read by
-    ``planner.loop._should_force_other_after_source_add``."""
     selected_node_ids: list[int] = Field(default_factory=list)
-    """Node ids the user had selected on the canvas at session start.
-    Read by ``planner._resolve_insertion_context`` as a fallback signal
-    for the contextual upstream when the LLM does not provide an
-    explicit ``upstream_node_ids`` arg AND no in-batch staged-add chain
-    is in flight. Wired in from ``AgentStartRequest.selected_node_ids``
-    (frontend reads from the live flow store at start time)."""
     pinned_node_ids: list[int] = Field(default_factory=list)
-    """Node ids the user pinned via ``@``-mention at session start.
-    Read by ``planner._resolve_insertion_context`` as a tier below
-    selection. Currently always empty — no wire path populates it; the
-    field is structurally present so a future workstream can extract
-    ``@``-mentions from the user prompt without a schema bump."""
     stage: PlannerStage = "plan"
-    """Multi-stage state-machine surfaces (agent_staged / agent_live)
-    start at the **plan** stage where the LLM emits a short markdown
-    plan via ``flowfile.meta.emit_plan`` before the
-    classify→pick→fill cycle starts. Single-shot ``agent_complex``
-    ignores ``stage`` entirely. ``reset_stage_state`` resets to
-    ``"classify"`` (NOT ``"plan"``) so multi-node turns don't re-plan
-    after each successful add — the plan covers the whole user request
-    and only fires once at session start."""
     picked_op_kind: PlannerOpKind | None = None
-    """The op_kind chosen by ``classify_intent`` at stage 0. Drives
-    ``single_stage_op`` surface selection for non-add intents. Cleared
-    by :func:`reset_stage_state`."""
     picked_node_type: str | None = None
-    """The node type chosen by ``pick_node_type`` at stage 1. Used by
-    the planner to build a per-turn one-tool catalog for stage 3
-    (``fill_settings``). Cleared by :func:`reset_stage_state`."""
     picked_upstream_ids: list[int] = Field(default_factory=list)
-    """Primary-input upstream node ids chosen by ``pick_upstream`` at
-    stage 2. Injected into the ``add_<type>`` call's
-    ``InsertionContext`` at stage 3. Cleared by
-    :func:`reset_stage_state`."""
     picked_right_input_id: int | None = None
-    """Optional right-input node id chosen by ``pick_upstream`` at
-    stage 2 (join-shaped node types only). Injected into the
-    ``InsertionContext.right_input_node_id`` at stage 3. Cleared by
-    :func:`reset_stage_state`."""
     verify_plan_completion: bool = False
-    """Opt-in: when True, ``op_kind="other"`` at classify advances to
-    ``stage="verify_completion"`` for one extra LLM round before
-    terminating. Wired in from ``AgentStartRequest``. Default off (no
-    extra LLM round per agent run)."""
     verify_round_consumed: bool = False
-    """One-shot guard for the verify-completion gate. Set True after
-    the LLM returns from ``flowfile.meta.verify_completion``. If the
-    LLM said ``is_complete=false`` and a subsequent classify round
-    still ends with ``op_kind="other"``, the loop terminates without
-    re-entering verify (capped at one verify round per loop so a
-    stubborn ``is_complete=false`` can't ping-pong). Not reset by
-    ``reset_stage_state`` — the cap is per-session, not per-stage."""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -323,9 +203,7 @@ def reset_stage_state(session: AgentSession) -> None:
     session.picked_right_input_id = None
 
 
-# --------------------------------------------------------------------------- #
-# Snapshot capture + id-set drift detection                                    #
-# --------------------------------------------------------------------------- #
+# Snapshot capture + id-set drift detection
 
 
 def _node_type(node: object) -> str:
@@ -522,9 +400,7 @@ def detect_drift(
     )
 
 
-# --------------------------------------------------------------------------- #
-# Repository delegation — public surface stable across in-memory and disk     #
-# --------------------------------------------------------------------------- #
+# Repository delegation — public surface stable across in-memory and disk
 
 
 def _build_default_repo() -> SessionRepository:

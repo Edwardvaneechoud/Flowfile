@@ -53,7 +53,6 @@ def add_read_from_database(
     node_id = generate_node_id()
     flow_id = flow_graph.flow_id
 
-    # Determine query mode
     query_mode: Literal["table", "query"] = "query" if query else "table"
 
     settings = input_schema.NodeDatabaseReader(

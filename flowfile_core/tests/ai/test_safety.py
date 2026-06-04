@@ -99,9 +99,7 @@ from flowfile_core.ai.safety import (
     validate_column_references,
 )
 
-# ---------------------------------------------------------------------------
 # defaults
-# ---------------------------------------------------------------------------
 
 
 def test_default_sample_mode_is_off() -> None:
@@ -135,9 +133,7 @@ def test_flow_safety_config_forbids_extra_fields() -> None:
         FlowSafetyConfig(extra_attr="oops")  # type: ignore[call-arg]
 
 
-# ---------------------------------------------------------------------------
 # prepare_samples / §9.1 modes
-# ---------------------------------------------------------------------------
 
 
 def test_prepare_samples_off_returns_empty() -> None:
@@ -234,14 +230,11 @@ def test_prepare_samples_regex_preserves_non_string_scalars() -> None:
     assert out == [{"qty": 3, "active": True, "missing": None, "ts": datetime(2026, 5, 2)}]
 
 
-# ---------------------------------------------------------------------------
 # Presidio path
-# ---------------------------------------------------------------------------
 
 
 def test_prepare_samples_presidio_raises_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """If presidio_analyzer can't import, raise a clean install-hint error."""
-    # Make sure presidio_analyzer is not in sys.modules and ImportError fires.
     monkeypatch.setitem(sys.modules, "presidio_analyzer", None)
 
     cfg = FlowSafetyConfig(sample_mode="presidio")
@@ -256,7 +249,6 @@ def test_prepare_samples_presidio_uses_analyzer_when_stubbed(
     """Inject fake presidio_analyzer + presidio_anonymizer via sys.modules."""
     import types
 
-    # Build a fake analyzer module + class.
     fake_result = types.SimpleNamespace(start=0, end=4, entity_type="PERSON")
 
     class FakeAnalyzer:
@@ -308,9 +300,7 @@ def test_lazy_presidio_contract() -> None:
     assert "presidio_anonymizer" not in sys.modules
 
 
-# ---------------------------------------------------------------------------
 # Secret redaction
-# ---------------------------------------------------------------------------
 
 
 def test_redact_secrets_replaces_secretstr() -> None:
@@ -399,14 +389,11 @@ def test_redact_secrets_with_pydantic_model_dump() -> None:
     cfg = Cfg(password="abc", host="db.example.com")
     dumped = cfg.model_dump()
     out = redact_secrets(dumped)
-    # password becomes redacted; host preserved
     assert out["host"] == "db.example.com"
     assert out["password"] == SECRET_REDACTED
 
 
-# ---------------------------------------------------------------------------
 # §9.6 refusal helpers
-# ---------------------------------------------------------------------------
 
 
 def test_validate_column_references_all_present() -> None:
@@ -469,9 +456,7 @@ def test_detect_network_egress_dedupes_labels() -> None:
     assert matched == ["requests", "socket"]
 
 
-# ---------------------------------------------------------------------------
 # Public surface helpers
-# ---------------------------------------------------------------------------
 
 
 def test_scrub_text_regex_handles_clean_text() -> None:
@@ -487,9 +472,7 @@ def test_scrub_value_regex_handles_scalar() -> None:
     assert scrub_value_regex(None) is None
 
 
-# ---------------------------------------------------------------------------
 # audit re-export contract (additive constraint)
-# ---------------------------------------------------------------------------
 
 
 def test_w15_audit_reexports_intact() -> None:
@@ -499,6 +482,5 @@ def test_w15_audit_reexports_intact() -> None:
     assert record_event is safety.record_event
     assert query_events is safety.query_events
     assert update_diff_action is safety.update_diff_action
-    # Literals are imported to make sure the names resolve at import time.
     assert ResultStatus is not None
     assert DiffAction is not None

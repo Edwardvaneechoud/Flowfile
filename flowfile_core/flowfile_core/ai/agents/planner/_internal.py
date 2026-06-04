@@ -20,17 +20,10 @@ logger = logging.getLogger("flowfile_core.ai.agents.planner")
 
 
 DEFAULT_MAX_STEPS: int = 32
-"""Per-session planner-loop budget. The ``agent_staged`` surface fans
-each node-add into 4 LLM rounds (classify → pick_type → pick_upstream →
-fill_settings), so a 3-node user turn needs at least 12 rounds. Wasted
-budget is free; missed budget truncates the user's plan."""
 DEFAULT_MAX_RETRIES_PER_STEP: int = 3
 DEFAULT_MAX_TOKENS: int = 2_048
 RATIONALE_MAX_LEN: int = 500
 DEFAULT_MAX_DB_READER_OPS: int = 8
-"""Per-session budget for ``database_reader`` add/update operations.
-Limits the number of times the agent can create or modify database reader
-nodes in a single session to prevent runaway query execution."""
 
 
 PlannerEventName = Literal[
@@ -50,12 +43,6 @@ PlannerEventName = Literal[
     "error",
     "info",
 ]
-"""``awaiting_user_input`` is emitted *instead of* ``complete`` when the
-planner loop ends with no tool calls AND no staged results AND the last
-assistant message looks like a clarifying question. The session flips to
-``awaiting_user_input`` (not ``completed``) so the frontend can surface
-*"Agent waiting for your reply…"* and the followup endpoint accepts the
-user's answer for re-entry."""
 
 
 class PlannerEvent(BaseModel):

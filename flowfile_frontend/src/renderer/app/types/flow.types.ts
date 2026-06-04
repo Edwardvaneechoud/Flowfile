@@ -1,19 +1,14 @@
 // Flow-related TypeScript interfaces and types
-// Consolidated from features/designer/types.ts and nodes/nodeLogic.ts
 
 import type { NodeResult } from "./node.types";
 import type { Position } from "@vue-flow/core";
 
-// ============================================================================
 // Flow Execution Types
-// ============================================================================
 
 export type ExecutionMode = "Development" | "Performance";
 export type ExecutionLocation = "local" | "remote";
 
-// ============================================================================
 // Flow Parameters
-// ============================================================================
 
 export interface FlowParameter {
   name: string;
@@ -21,9 +16,7 @@ export interface FlowParameter {
   description: string;
 }
 
-// ============================================================================
 // Flow Settings
-// ============================================================================
 
 export interface FlowSettings {
   flow_id: number;
@@ -44,9 +37,7 @@ export interface FlowSettings {
   display_name?: string | null;
 }
 
-// ============================================================================
 // Run Information
-// ============================================================================
 
 export interface RunInformation {
   flow_id: number;
@@ -64,9 +55,7 @@ export interface RunInformationDictionary {
   [flow_id: number]: RunInformation;
 }
 
-// ============================================================================
 // History/Undo-Redo Types
-// ============================================================================
 
 export interface HistoryState {
   can_undo: boolean;
@@ -89,9 +78,7 @@ export interface OperationResponse {
   history: HistoryState;
 }
 
-// ============================================================================
 // Local File Types
-// ============================================================================
 
 export interface LocalFileInfo {
   path: string;
@@ -101,9 +88,7 @@ export interface LocalFileInfo {
   exists: boolean;
 }
 
-// ============================================================================
 // Node Template Types (for flow designer)
-// ============================================================================
 
 export interface NodeTemplate {
   name: string;
@@ -129,9 +114,7 @@ export interface NodeInput extends NodeTemplate {
   node_reference?: string;
 }
 
-// ============================================================================
 // Handle Types
-// ============================================================================
 
 export interface NodeHandle {
   id: string;
@@ -140,9 +123,7 @@ export interface NodeHandle {
   title?: string;
 }
 
-// ============================================================================
 // Input Name Info (for kernel node autocomplete)
-// ============================================================================
 
 export interface InputNameInfo {
   name: string;
@@ -150,9 +131,7 @@ export interface InputNameInfo {
   source_node_type: string;
 }
 
-// ============================================================================
 // Edge Types
-// ============================================================================
 
 export interface EdgeInput {
   id: string;
@@ -163,9 +142,7 @@ export interface EdgeInput {
   label?: string;
 }
 
-// ============================================================================
 // Vue Flow Types
-// ============================================================================
 
 export interface VueFlowInput {
   node_edges: EdgeInput[];
@@ -173,10 +150,8 @@ export interface VueFlowInput {
   groups: GroupInput[];
 }
 
-// ============================================================================
 // Node Group Types (visual containers; organizational only)
 // Mirror flowfile_core/.../schemas.py field-for-field (no OpenAPI codegen).
-// ============================================================================
 
 // mirrors schemas.GroupColor
 export type GroupColor = "slate" | "blue" | "green" | "amber" | "rose" | "violet" | "cyan";
@@ -255,9 +230,7 @@ export interface GroupOperationResponse extends OperationResponse {
   group: GroupInput | null;
 }
 
-// ============================================================================
 // Artifact Visualization Types
-// ============================================================================
 
 export interface ArtifactPublished {
   name: string;

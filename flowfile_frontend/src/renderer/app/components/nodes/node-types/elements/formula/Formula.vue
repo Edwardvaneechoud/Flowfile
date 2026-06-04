@@ -50,7 +50,6 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
 const nodeFormula = ref<NodeFormula | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeFormula,
   onBeforeSave: () => {

@@ -533,15 +533,12 @@ class CrossJoinInput(BaseModel):
     def parse_inputs(cls, data: Any) -> Any:
         """Parse flexible input formats before validation."""
         if isinstance(data, dict):
-            # Parse join_mapping
             if "join_mapping" in data:
                 data["join_mapping"] = cls._parse_join_mapping(data["join_mapping"])
 
-            # Parse left_select
             if "left_select" in data:
                 data["left_select"] = cls._parse_select(data["left_select"])
 
-            # Parse right_select
             if "right_select" in data:
                 data["right_select"] = cls._parse_select(data["right_select"])
 
@@ -550,7 +547,6 @@ class CrossJoinInput(BaseModel):
     @staticmethod
     def _parse_join_mapping(join_mapping: Any) -> list[JoinMap]:
         """Parse various join_mapping formats."""
-        # Already a list of JoinMaps
         if isinstance(join_mapping, list):
             result = []
             for jm in join_mapping:
@@ -566,7 +562,6 @@ class CrossJoinInput(BaseModel):
                     raise ValueError(f"Invalid join mapping item: {jm}")
             return result
 
-        # Single JoinMap
         if isinstance(join_mapping, JoinMap):
             return [join_mapping]
 
@@ -583,11 +578,9 @@ class CrossJoinInput(BaseModel):
     @staticmethod
     def _parse_select(select: Any) -> JoinInputs:
         """Parse various select input formats."""
-        # Already JoinInputs
         if isinstance(select, JoinInputs):
             return select
 
-        # List of SelectInput objects
         if isinstance(select, list):
             if all(isinstance(s, SelectInput) for s in select):
                 return JoinInputs(renames=select)
@@ -646,15 +639,12 @@ class JoinInput(BaseModel):
     def parse_inputs(cls, data: Any) -> Any:
         """Parse flexible input formats before validation."""
         if isinstance(data, dict):
-            # Parse join_mapping
             if "join_mapping" in data:
                 data["join_mapping"] = cls._parse_join_mapping(data["join_mapping"])
 
-            # Parse left_select
             if "left_select" in data:
                 data["left_select"] = cls._parse_select(data["left_select"])
 
-            # Parse right_select
             if "right_select" in data:
                 data["right_select"] = cls._parse_select(data["right_select"])
 
@@ -663,7 +653,6 @@ class JoinInput(BaseModel):
     @staticmethod
     def _parse_join_mapping(join_mapping: Any) -> list[JoinMap]:
         """Parse various join_mapping formats."""
-        # Already a list of JoinMaps
         if isinstance(join_mapping, list):
             result = []
             for jm in join_mapping:
@@ -679,7 +668,6 @@ class JoinInput(BaseModel):
                     raise ValueError(f"Invalid join mapping item: {jm}")
             return result
 
-        # Single JoinMap
         if isinstance(join_mapping, JoinMap):
             return [join_mapping]
 
@@ -696,11 +684,9 @@ class JoinInput(BaseModel):
     @staticmethod
     def _parse_select(select: Any) -> JoinInputs:
         """Parse various select input formats."""
-        # Already JoinInputs
         if isinstance(select, JoinInputs):
             return select
 
-        # List of SelectInput objects
         if isinstance(select, list):
             if all(isinstance(s, SelectInput) for s in select):
                 return JoinInputs(renames=select)
@@ -798,11 +784,9 @@ class FuzzyMatchInput(BaseModel):
     @staticmethod
     def _parse_select(select: Any) -> JoinInputs:
         """Parse various select input formats."""
-        # Already JoinInputs
         if isinstance(select, JoinInputs):
             return select
 
-        # List of SelectInput objects
         if isinstance(select, list):
             if all(isinstance(s, SelectInput) for s in select):
                 return JoinInputs(renames=select)
@@ -825,11 +809,9 @@ class FuzzyMatchInput(BaseModel):
     def parse_inputs(cls, data: Any) -> Any:
         """Parse flexible input formats before validation."""
         if isinstance(data, dict):
-            # Parse left_select
             if "left_select" in data:
                 data["left_select"] = cls._parse_select(data["left_select"])
 
-            # Parse right_select
             if "right_select" in data:
                 data["right_select"] = cls._parse_select(data["right_select"])
 
@@ -883,18 +865,15 @@ class AggColl(BaseModel):
     @model_validator(mode="after")
     def set_defaults(self):
         """Set default new_name and output_type based on agg function."""
-        # Set new_name
         if self.new_name is None:
             if self.agg != "groupby":
                 self.new_name = self.old_name + "_" + self.agg
             else:
                 self.new_name = self.old_name
 
-        # Set output_type
         if self.output_type is None:
             self.output_type = get_func_type_mapping(self.agg)
 
-        # Ensure old_name is a string
         self.old_name = str(self.old_name)
 
         return self
@@ -1482,7 +1461,6 @@ class JoinInputManager(JoinSelectManagerMixin):
         how: JoinKeyStrategy = "inner",
     ) -> "JoinInputManager":
         """Factory method to create JoinInput from various input formats."""
-        # Use JoinInput's own create method for parsing
         join_input = JoinInput(join_mapping=join_mapping, left_select=left_select, right_select=right_select, how=how)
 
         manager = cls(join_input)

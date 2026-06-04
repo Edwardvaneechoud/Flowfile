@@ -1,5 +1,3 @@
-# flowfile_core/tests/utils.py
-
 import platform
 import subprocess
 from contextlib import contextmanager
@@ -61,6 +59,5 @@ def run_generator():
         from time import sleep
         print(os.environ["TESTING"])
         sleep(1)
-        # Do something with the value
 
     print(os.environ["TESTING"])

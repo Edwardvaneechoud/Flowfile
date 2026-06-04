@@ -17,9 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
 # JSON serialisation helpers
-# ---------------------------------------------------------------------------
 
 
 def make_json_safe(val: object) -> object:
@@ -29,9 +27,7 @@ def make_json_safe(val: object) -> object:
     return str(val)
 
 
-# ---------------------------------------------------------------------------
 # Delta timestamp formatting
-# ---------------------------------------------------------------------------
 
 
 def format_delta_timestamp(ts: object) -> str | None:
@@ -47,14 +43,11 @@ def format_delta_timestamp(ts: object) -> str | None:
     if isinstance(ts, datetime):
         return ts.isoformat()
     if isinstance(ts, int | float):
-        # Milliseconds since epoch
         return datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
     return str(ts)
 
 
-# ---------------------------------------------------------------------------
 # Delta table size
-# ---------------------------------------------------------------------------
 
 
 def get_delta_size_bytes(path: str | Path) -> int:
@@ -77,9 +70,7 @@ def get_delta_size_bytes(path: str | Path) -> int:
         return sum(f.stat().st_size for f in Path(path).rglob("*.parquet"))
 
 
-# ---------------------------------------------------------------------------
 # Catalog path validation
-# ---------------------------------------------------------------------------
 
 
 def write_delta(df: pl.LazyFrame | pl.DataFrame, output_path: str, mode: str = "overwrite") -> bool:
@@ -189,9 +180,7 @@ def merge_into_delta(
     return True
 
 
-# ---------------------------------------------------------------------------
 # Catalog path validation
-# ---------------------------------------------------------------------------
 
 
 def validate_catalog_path(table_name: str, catalog_dir: Path) -> Path:

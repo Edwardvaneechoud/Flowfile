@@ -54,7 +54,6 @@ def parse_args():
 
 def get_temp_dir() -> str:
     """Get the appropriate temp directory path based on environment"""
-    # Check for Docker environment variable first
     docker_temp = os.getenv("TEMP_DIR")
     if docker_temp:
         return docker_temp
@@ -69,13 +68,11 @@ def get_default_worker_url(worker_port=None):
     Args:
         worker_port: Optional port override (used when passed as command line arg)
     """
-    # Check for Docker environment first
     worker_host = os.getenv("WORKER_HOST", None)
 
     if worker_port is None:
         worker_port = os.getenv("FLOWFILE_WORKER_PORT", DEFAULT_WORKER_PORT)
 
-    # Convert to int if it's a string
     worker_port = int(worker_port) if isinstance(worker_port, str) else worker_port
 
     if worker_host:

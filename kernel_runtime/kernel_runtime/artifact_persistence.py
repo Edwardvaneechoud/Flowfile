@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class RecoveryMode(str, Enum):
     LAZY = "lazy"
     EAGER = "eager"
-    CLEAR = "clear"  # Clears all persisted artifacts on startup
+    CLEAR = "clear"
 
     @classmethod
     def _missing_(cls, value: object) -> RecoveryMode | None:
@@ -51,9 +51,7 @@ def _safe_dirname(name: str) -> str:
 
     Strips leading dots to prevent hidden directories.
     """
-    # First replace unsafe characters
     safe = re.sub(r"[^\w\-.]", "_", name)
-    # Strip leading dots to prevent hidden directories
     return safe.lstrip(".")
 
 
@@ -74,9 +72,7 @@ class ArtifactPersistence:
         self._base = Path(base_path)
         self._base.mkdir(parents=True, exist_ok=True)
 
-    # ------------------------------------------------------------------
     # Paths
-    # ------------------------------------------------------------------
 
     def _artifact_dir(self, flow_id: int, name: str) -> Path:
         return self._base / str(flow_id) / _safe_dirname(name)
@@ -87,9 +83,7 @@ class ArtifactPersistence:
     def _meta_path(self, flow_id: int, name: str) -> Path:
         return self._artifact_dir(flow_id, name) / "meta.json"
 
-    # ------------------------------------------------------------------
     # Save / Load / Delete
-    # ------------------------------------------------------------------
 
     # Fields that should be persisted to meta.json (whitelist approach)
     _PERSISTABLE_FIELDS = frozenset(
@@ -120,7 +114,6 @@ class ArtifactPersistence:
         data_path = self._data_path(flow_id, name)
         data_path.write_bytes(data)
 
-        # Explicitly select only the fields we want to persist (whitelist)
         meta = {k: v for k, v in metadata.items() if k in self._PERSISTABLE_FIELDS}
         meta["checksum"] = checksum
         meta["persisted_at"] = datetime.now(timezone.utc).isoformat()
@@ -177,9 +170,7 @@ class ArtifactPersistence:
                     shutil.rmtree(child)
             logger.debug("Cleared all persisted artifacts")
 
-    # ------------------------------------------------------------------
     # Index / Discovery
-    # ------------------------------------------------------------------
 
     def list_persisted(self, flow_id: int | None = None) -> dict[tuple[int, str], dict[str, Any]]:
         """Scan disk and return ``{(flow_id, name): metadata}`` for all
@@ -218,9 +209,7 @@ class ArtifactPersistence:
                 total += path.stat().st_size
         return total
 
-    # ------------------------------------------------------------------
     # Cleanup
-    # ------------------------------------------------------------------
 
     def cleanup(
         self,

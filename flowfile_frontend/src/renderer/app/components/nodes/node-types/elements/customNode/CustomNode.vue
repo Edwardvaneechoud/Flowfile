@@ -30,7 +30,6 @@
         </div>
       </div>
 
-      <!-- Loop through each section in the settings_schema -->
       <div
         v-for="(section, sectionKey) in schema.settings_schema"
         v-show="!section.hidden"
@@ -43,7 +42,6 @@
         <p v-if="section.description" class="section-description">{{ section.description }}</p>
 
         <div class="components-container">
-          <!-- Loop through each component within the section's 'components' object -->
           <div
             v-for="(component, componentKey) in section.components"
             :key="componentKey"
@@ -128,7 +126,6 @@ import { useNodeStore } from "../../../../../stores/column-store";
 import { NodeUserDefined } from "../../../baseNode/nodeInput";
 import { NodeData, FileColumn } from "../../../baseNode/nodeInterfaces";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
-// Import individual UI components
 import MultiSelect from "./components/MultiSelect.vue";
 import ToggleSwitch from "./components/ToggleSwitch.vue";
 import TextInput from "./components/TextInput.vue";
@@ -212,7 +209,6 @@ const loadNodeData = async (nodeId: number) => {
       nodeUserDefined.value.settings = {};
     }
 
-    // Initialize kernel selection: saved setting > schema default > null
     selectedKernelId.value = nodeUserDefined.value?.kernel_id ?? schemaData.kernel_id ?? null;
     kernelRequiredError.value = !!schemaData.requires_kernel && !selectedKernelId.value;
 
@@ -246,9 +242,7 @@ const pushNodeData = async () => {
     nodeUserDefined.value.settings = formData.value;
     nodeUserDefined.value.is_user_defined = true;
     nodeUserDefined.value.is_setup = true;
-    // Pass the selected kernel to the backend
     nodeUserDefined.value.kernel_id = selectedKernelId.value;
-    // Preserve output_names from schema if available
     if (schema.value?.output_names) {
       nodeUserDefined.value.output_names = schema.value.output_names;
     }
@@ -270,13 +264,10 @@ function initializeFormData(schemaData: CustomNodeSchema, savedSettings: any) {
       const savedValue = savedSettings?.[sectionKey]?.[componentKey];
 
       if (savedValue !== undefined) {
-        // Use saved settings first (highest priority)
         data[sectionKey][componentKey] = savedValue;
       } else if (component.value !== undefined) {
-        // Use component.value from schema (second priority)
         data[sectionKey][componentKey] = component.value;
       } else {
-        // Use default value (lowest priority)
         let defaultValue = component.default ?? null;
         if (component.input_type === "array" && defaultValue === null) {
           defaultValue = [];
@@ -288,7 +279,6 @@ function initializeFormData(schemaData: CustomNodeSchema, savedSettings: any) {
   formData.value = data;
 }
 
-// Expose the methods to the parent component
 defineExpose({
   loadNodeData,
   pushNodeData,

@@ -1,9 +1,6 @@
 // Secrets management related TypeScript interfaces and types
-// Consolidated from pages/secretManager/secretTypes.ts
 
-// ============================================================================
 // Secret Types
-// ============================================================================
 
 /**
  * Interface representing a secret fetched from the backend.

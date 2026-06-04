@@ -6,7 +6,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-// Mock the pyodide store before importing flow store
 vi.mock('../../src/stores/pyodide-store', () => ({
   usePyodideStore: () => ({
     isReady: false,
@@ -17,7 +16,6 @@ vi.mock('../../src/stores/pyodide-store', () => ({
   })
 }))
 
-// Mock file storage
 vi.mock('../../src/stores/file-storage', () => ({
   fileStorage: {
     setFileContent: vi.fn().mockResolvedValue(undefined),
@@ -220,8 +218,8 @@ describe('Flow Store', () => {
     it('should set rightInputId for input-1 handle', () => {
       const store = useFlowStore()
 
-      store.addNode('read_csv', 0, 0) // Left input
-      store.addNode('read_csv', 0, 100) // Right input
+      store.addNode('read_csv', 0, 0)
+      store.addNode('read_csv', 0, 100)
       store.addNode('join', 100, 50)
 
       store.addEdge({
@@ -498,7 +496,6 @@ describe('Flow Store', () => {
       expect(joinNode?.leftInputId).toBe(1)
       expect(joinNode?.rightInputId).toBe(2)
 
-      // Should have 2 edges (one for each input)
       expect(store.edges.length).toBe(2)
     })
   })
@@ -553,7 +550,6 @@ describe('Flow Store', () => {
         targetHandle: 'input-0'
       })
 
-      // Set schema on source node
       store.nodeResults.set(1, {
         success: true,
         schema: [

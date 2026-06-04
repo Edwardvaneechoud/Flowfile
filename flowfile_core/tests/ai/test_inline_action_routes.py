@@ -57,9 +57,7 @@ from flowfile_core.configs import settings as core_settings
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
-# --------------------------------------------------------------------------- #
-# Shared fixtures #
-# --------------------------------------------------------------------------- #
+# Shared fixtures
 
 
 @pytest.fixture
@@ -113,9 +111,7 @@ def patch_get_configured_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[F
     yield fake
 
 
-# --------------------------------------------------------------------------- #
-# Flow fixtures #
-# --------------------------------------------------------------------------- #
+# Flow fixtures
 
 
 _FILTER_FLOW_ID = 9921  # avoid clashing with sibling test fixtures
@@ -238,9 +234,7 @@ def registered_polars_flow() -> Iterator[FlowGraph]:
         flow_file_handler._flows.pop(flow.flow_id, None)
 
 
-# --------------------------------------------------------------------------- #
-# 1. Happy path #
-# --------------------------------------------------------------------------- #
+# 1. Happy path
 
 
 def test_inline_action_emits_provider_chunks(
@@ -273,22 +267,16 @@ def test_inline_action_emits_provider_chunks(
     assert system_msg.content.strip(), "system prompt must not be empty"
 
     assert user_msg.role == "user"
-    # puts the failing node and its upstream in the deterministic body.
     assert "filter_eu" in user_msg.content or "node 2" in user_msg.content.lower()
-    # The action block is appended verbatim with the action name.
     assert "## Action: explain" in user_msg.content
     assert "id `2`" in user_msg.content
     assert "type `filter`" in user_msg.content
-    # The explain instruction phrase is present.
     assert "Explain in plain language" in user_msg.content
 
-    # Read-only contract: tools=None across every variant.
     assert patch_get_configured_provider.last_call_kwargs.get("tools") is None
 
 
-# --------------------------------------------------------------------------- #
-# 2. Per-action user-message distinct #
-# --------------------------------------------------------------------------- #
+# 2. Per-action user-message distinct
 
 
 @pytest.mark.parametrize(
@@ -321,9 +309,7 @@ def test_inline_action_per_action_user_message_distinct(
     assert expected_phrase in user_msg.content
 
 
-# --------------------------------------------------------------------------- #
-# 3. regenerate_code requires code-bearing node #
-# --------------------------------------------------------------------------- #
+# 3. regenerate_code requires code-bearing node
 
 
 def test_regenerate_code_requires_code_bearing_node(
@@ -347,9 +333,7 @@ def test_regenerate_code_requires_code_bearing_node(
     assert "filter" in detail
 
 
-# --------------------------------------------------------------------------- #
-# 4. regenerate_code on polars_code node → 200 #
-# --------------------------------------------------------------------------- #
+# 4. regenerate_code on polars_code node → 200
 
 
 def test_regenerate_code_on_polars_code_node_returns_200(
@@ -373,9 +357,7 @@ def test_regenerate_code_on_polars_code_node_returns_200(
     assert "type `polars_code`" in user_msg.content
 
 
-# --------------------------------------------------------------------------- #
-# 5. Flow not found → 422 #
-# --------------------------------------------------------------------------- #
+# 5. Flow not found → 422
 
 
 def test_inline_action_flow_not_found_returns_422(
@@ -395,9 +377,7 @@ def test_inline_action_flow_not_found_returns_422(
     assert "flow" in response.json()["detail"].lower()
 
 
-# --------------------------------------------------------------------------- #
-# 6. Node not found → 422 #
-# --------------------------------------------------------------------------- #
+# 6. Node not found → 422
 
 
 def test_inline_action_node_not_found_returns_422(
@@ -418,9 +398,7 @@ def test_inline_action_node_not_found_returns_422(
     assert "node" in response.json()["detail"].lower()
 
 
-# --------------------------------------------------------------------------- #
-# 7. Unknown provider → 404 #
-# --------------------------------------------------------------------------- #
+# 7. Unknown provider → 404
 
 
 def test_inline_action_unknown_provider_returns_404(
@@ -440,9 +418,7 @@ def test_inline_action_unknown_provider_returns_404(
     assert "imaginary" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 8. Provider not configured → 409 #
-# --------------------------------------------------------------------------- #
+# 8. Provider not configured → 409
 
 
 def test_inline_action_unconfigured_returns_409(
@@ -468,9 +444,7 @@ def test_inline_action_unconfigured_returns_409(
     assert "anthropic" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 9. Feature flag off → 503 #
-# --------------------------------------------------------------------------- #
+# 9. Feature flag off → 503
 
 
 def test_inline_action_disabled_returns_503(
@@ -501,9 +475,7 @@ def test_inline_action_disabled_returns_503(
     assert "AI features are disabled" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 10. Request validation #
-# --------------------------------------------------------------------------- #
+# 10. Request validation
 
 
 @pytest.mark.parametrize(
@@ -539,13 +511,10 @@ def test_inline_action_rejects_invalid_action_literal(
     )
     assert response.status_code == 422
     detail = response.json()["detail"]
-    # Pydantic surfaces the field name + the offending value.
     assert any("action" in str(item) for item in detail)
 
 
-# --------------------------------------------------------------------------- #
-# 11. samples_mode forwarded to #
-# --------------------------------------------------------------------------- #
+# 11. samples_mode forwarded to
 
 
 def test_inline_action_samples_mode_forwarded(
@@ -581,9 +550,7 @@ def test_inline_action_samples_mode_forwarded(
     assert captured["samples_mode"] == "regex"
 
 
-# --------------------------------------------------------------------------- #
-# 12. Tools=None invariant across actions #
-# --------------------------------------------------------------------------- #
+# 12. Tools=None invariant across actions
 
 
 @pytest.mark.parametrize(
@@ -609,9 +576,7 @@ def test_inline_action_tools_none_invariant(
     assert patch_get_configured_provider.last_call_kwargs.get("tools") is None
 
 
-# --------------------------------------------------------------------------- #
-# 13. Lazy-litellm contract #
-# --------------------------------------------------------------------------- #
+# 13. Lazy-litellm contract
 
 
 def test_lazy_litellm_import_for_inline_action_routes() -> None:

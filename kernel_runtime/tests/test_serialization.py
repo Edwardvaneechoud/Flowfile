@@ -24,9 +24,7 @@ from kernel_runtime.serialization import (
 )
 
 
-# ---------------------------------------------------------------------------
 # Helpers (must be defined before use in decorators)
-# ---------------------------------------------------------------------------
 
 
 def _has_polars() -> bool:
@@ -65,9 +63,7 @@ def _has_sklearn() -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
 # Format Detection Tests
-# ---------------------------------------------------------------------------
 
 
 class TestDetectFormat:
@@ -133,9 +129,7 @@ class TestDetectFormat:
         assert detect_format(model) == "joblib"
 
 
-# ---------------------------------------------------------------------------
 # Serialization Round-Trip Tests
-# ---------------------------------------------------------------------------
 
 
 class TestSerializeToFile:
@@ -149,7 +143,7 @@ class TestSerializeToFile:
         sha256 = serialize_to_file(obj, str(path), "pickle")
 
         assert path.exists()
-        assert len(sha256) == 64  # SHA-256 hex digest
+        assert len(sha256) == 64
         assert path.stat().st_size > 0
 
     def test_serialize_and_deserialize_dict(self, tmp_path):
@@ -207,7 +201,6 @@ class TestSerializeToFile:
         import numpy as np
         from sklearn.linear_model import LinearRegression
 
-        # Create and fit a simple model
         X = np.array([[1], [2], [3], [4], [5]])
         y = np.array([2, 4, 6, 8, 10])
         model = LinearRegression()
@@ -217,7 +210,6 @@ class TestSerializeToFile:
         sha256 = serialize_to_file(model, str(path), "joblib")
         result = deserialize_from_file(str(path), "joblib")
 
-        # Model should produce same predictions
         assert len(sha256) == 64
         X_test = np.array([[6], [7]])
         assert np.allclose(result.predict(X_test), model.predict(X_test))
@@ -283,9 +275,7 @@ class TestSerializeToBytes:
         assert np.array_equal(result, arr)
 
 
-# ---------------------------------------------------------------------------
 # SHA-256 Tests
-# ---------------------------------------------------------------------------
 
 
 class TestSHA256:
@@ -337,7 +327,6 @@ class TestSHA256:
 
     def test_sha256_large_file(self, tmp_path):
         """Should handle large files efficiently."""
-        # Create a 10MB file
         path = tmp_path / "large.bin"
         large_data = b"x" * (10 * 1024 * 1024)
         path.write_bytes(large_data)
@@ -347,9 +336,7 @@ class TestSHA256:
         assert len(sha256) == 64
 
 
-# ---------------------------------------------------------------------------
 # Edge Cases
-# ---------------------------------------------------------------------------
 
 
 class TestEdgeCases:
@@ -415,9 +402,7 @@ class TestEdgeCases:
         assert result == obj
 
 
-# ---------------------------------------------------------------------------
 # Pickleability Check Tests
-# ---------------------------------------------------------------------------
 
 
 class TestCheckPickleable:
@@ -427,7 +412,6 @@ class TestCheckPickleable:
         """Pickleable objects should pass validation."""
         from kernel_runtime.serialization import check_pickleable
 
-        # Should not raise
         check_pickleable({"key": "value"})
         check_pickleable([1, 2, 3])
         check_pickleable("string")
@@ -442,7 +426,6 @@ class TestCheckPickleable:
 
         obj = LocalClass()
 
-        # cloudpickle can handle local classes - should not raise
         check_pickleable(obj)
 
     def test_check_pickleable_lambda_succeeds(self):
@@ -451,17 +434,14 @@ class TestCheckPickleable:
 
         obj = lambda x: x + 1
 
-        # cloudpickle can handle lambdas - should not raise
         check_pickleable(obj)
 
     def test_check_pickleable_nested_lambda_succeeds(self):
         """Objects containing lambdas should work with cloudpickle."""
         from kernel_runtime.serialization import check_pickleable
 
-        # Dict containing a lambda
         obj = {"func": lambda x: x}
 
-        # cloudpickle can handle nested lambdas - should not raise
         check_pickleable(obj)
 
     def test_local_class_roundtrip(self):

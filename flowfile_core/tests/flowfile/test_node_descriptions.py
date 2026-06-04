@@ -10,16 +10,12 @@ import pytest
 from flowfile_core.schemas import input_schema, transform_schema
 
 
-# =============================================================================
 # Helpers
-# =============================================================================
 
 BASE_KWARGS = dict(flow_id=1, node_id=1)
 
 
-# =============================================================================
 # NodeBase (default)
-# =============================================================================
 
 class TestNodeBaseDescription:
     def test_default_returns_empty_string(self):
@@ -27,9 +23,7 @@ class TestNodeBaseDescription:
         assert node.get_default_description() == ""
 
 
-# =============================================================================
 # NodeFilter
-# =============================================================================
 
 class TestNodeFilterDescription:
     def test_basic_filter(self):
@@ -111,9 +105,7 @@ class TestNodeFilterDescription:
         assert node.get_default_description() == ""
 
 
-# =============================================================================
 # NodeJoin
-# =============================================================================
 
 class TestNodeJoinDescription:
     def test_inner_join_single_key(self):
@@ -157,9 +149,7 @@ class TestNodeJoinDescription:
         assert desc == "full join on a, b = c"
 
 
-# =============================================================================
 # NodeFuzzyMatch
-# =============================================================================
 
 class TestNodeFuzzyMatchDescription:
     def test_fuzzy_match_description(self):
@@ -177,9 +167,7 @@ class TestNodeFuzzyMatchDescription:
         assert node.get_default_description() == "Fuzzy left join on name ~ company_name"
 
 
-# =============================================================================
 # NodeFormula
-# =============================================================================
 
 class TestNodeFormulaDescription:
     def test_formula_description(self):
@@ -210,9 +198,7 @@ class TestNodeFormulaDescription:
         assert "..." in desc
 
 
-# =============================================================================
 # NodeGroupBy
-# =============================================================================
 
 class TestNodeGroupByDescription:
     def test_groupby_description(self):
@@ -233,9 +219,7 @@ class TestNodeGroupByDescription:
         assert node.get_default_description() == ""
 
 
-# =============================================================================
 # NodeSort
-# =============================================================================
 
 class TestNodeSortDescription:
     def test_sort_description(self):
@@ -253,9 +237,7 @@ class TestNodeSortDescription:
         assert node.get_default_description() == ""
 
 
-# =============================================================================
 # NodeSelect
-# =============================================================================
 
 class TestNodeSelectDescription:
     def test_select_with_renames(self):
@@ -283,9 +265,7 @@ class TestNodeSelectDescription:
         assert node.get_default_description() == ""
 
 
-# =============================================================================
 # NodeRead
-# =============================================================================
 
 class TestNodeReadDescription:
     def test_read_csv(self):
@@ -314,9 +294,7 @@ class TestNodeReadDescription:
         assert "(parquet)" in desc
 
 
-# =============================================================================
 # NodeOutput
-# =============================================================================
 
 class TestNodeOutputDescription:
     def test_output_csv(self):
@@ -332,9 +310,7 @@ class TestNodeOutputDescription:
         assert node.get_default_description() == "output.csv (csv)"
 
 
-# =============================================================================
 # NodeManualInput
-# =============================================================================
 
 class TestNodeManualInputDescription:
     def test_manual_input_with_data(self):
@@ -359,9 +335,7 @@ class TestNodeManualInputDescription:
         assert node.get_default_description() == ""
 
 
-# =============================================================================
 # NodeSample
-# =============================================================================
 
 class TestNodeSampleDescription:
     def test_sample_description(self):
@@ -369,9 +343,7 @@ class TestNodeSampleDescription:
         assert node.get_default_description() == "Sample 500 rows"
 
 
-# =============================================================================
 # NodePivot
-# =============================================================================
 
 class TestNodePivotDescription:
     def test_pivot_description(self):
@@ -391,9 +363,7 @@ class TestNodePivotDescription:
         assert node.get_default_description() == ""
 
 
-# =============================================================================
 # NodeUnpivot
-# =============================================================================
 
 class TestNodeUnpivotDescription:
     def test_unpivot_with_columns(self):
@@ -417,9 +387,7 @@ class TestNodeUnpivotDescription:
         assert node.get_default_description() == "Unpivot numeric columns"
 
 
-# =============================================================================
 # NodeUnion
-# =============================================================================
 
 class TestNodeUnionDescription:
     def test_union_relaxed(self):
@@ -434,9 +402,7 @@ class TestNodeUnionDescription:
         assert node.get_default_description() == "Union (selective)"
 
 
-# =============================================================================
 # NodeUnique
-# =============================================================================
 
 class TestNodeUniqueDescription:
     def test_unique_with_columns(self):
@@ -454,9 +420,7 @@ class TestNodeUniqueDescription:
         assert node.get_default_description() == "Unique rows (keep any)"
 
 
-# =============================================================================
 # NodeGraphSolver
-# =============================================================================
 
 class TestNodeGraphSolverDescription:
     def test_graph_solver_description(self):
@@ -469,9 +433,7 @@ class TestNodeGraphSolverDescription:
         assert node.get_default_description() == "source -> target as 'component_id'"
 
 
-# =============================================================================
 # NodeRecordId
-# =============================================================================
 
 class TestNodeRecordIdDescription:
     def test_record_id_description(self):
@@ -495,9 +457,7 @@ class TestNodeRecordIdDescription:
         assert "category" in desc
 
 
-# =============================================================================
 # NodePolarsCode
-# =============================================================================
 
 class TestNodePolarsCodeDescription:
     def test_polars_code_description(self):
@@ -519,9 +479,7 @@ class TestNodePolarsCodeDescription:
         assert node.get_default_description() == "df.filter("
 
 
-# =============================================================================
 # NodeCrossJoin
-# =============================================================================
 
 class TestNodeCrossJoinDescription:
     def test_cross_join_description(self):
@@ -534,9 +492,7 @@ class TestNodeCrossJoinDescription:
         assert node.get_default_description() == "Cross join"
 
 
-# =============================================================================
 # NodeTextToRows
-# =============================================================================
 
 class TestNodeTextToRowsDescription:
     def test_text_to_rows_description(self):
@@ -551,9 +507,7 @@ class TestNodeTextToRowsDescription:
         assert node.get_default_description() == "Split tags by ','"
 
 
-# =============================================================================
 # NodeDatabaseReader
-# =============================================================================
 
 class TestNodeDatabaseReaderDescription:
     def test_read_table(self):
@@ -581,9 +535,7 @@ class TestNodeDatabaseReaderDescription:
         assert desc.startswith("Query: SELECT * FROM users")
 
 
-# =============================================================================
 # NodeDatabaseWriter
-# =============================================================================
 
 class TestNodeDatabaseWriterDescription:
     def test_write_table(self):
@@ -598,9 +550,7 @@ class TestNodeDatabaseWriterDescription:
         assert node.get_default_description() == "Write to output_table (append)"
 
 
-# =============================================================================
 # NodeExternalSource
-# =============================================================================
 
 class TestNodeExternalSourceDescription:
     def test_external_source_description(self):
@@ -612,9 +562,7 @@ class TestNodeExternalSourceDescription:
         assert node.get_default_description() == "sample_users"
 
 
-# =============================================================================
 # User description takes priority (integration check)
-# =============================================================================
 
 class TestUserDescriptionPriority:
     def test_user_description_is_preserved(self):
@@ -629,7 +577,5 @@ class TestUserDescriptionPriority:
                 ),
             ),
         )
-        # User description is stored in the field
         assert node.description == "My custom filter description"
-        # Auto-generated description is still available
         assert node.get_default_description() == "age > 30"

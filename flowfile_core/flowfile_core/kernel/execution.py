@@ -69,7 +69,6 @@ def write_inputs_to_parquet(
     use_local = not OFFLOAD_TO_WORKER
 
     if input_names is None:
-        # Original behaviour: all inputs under "main"
         main_paths: list[str] = []
         for idx, ft in enumerate(flowfile_tables):
             local_path = os.path.join(input_dir, f"main_{idx}.parquet")
@@ -89,7 +88,6 @@ def write_inputs_to_parquet(
             main_paths.append(manager.to_kernel_path(local_path))
         return {"main": main_paths}
 
-    # Named inputs: each table gets its own key
     result: dict[str, list[str]] = {}
     all_paths: list[str] = []
     for idx, (ft, name) in enumerate(zip(flowfile_tables, input_names, strict=True)):

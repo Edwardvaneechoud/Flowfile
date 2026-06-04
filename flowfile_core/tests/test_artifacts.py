@@ -23,9 +23,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact, User
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _get_auth_token() -> str:
@@ -63,7 +61,6 @@ def _cleanup_namespaces():
 def _cleanup_registrations():
     """Remove test flow registrations and their orphaned artifacts."""
     with get_db_context() as db:
-        # Find registration IDs to clean up
         reg_ids = [
             r.id
             for r in db.query(FlowRegistration)
@@ -71,11 +68,9 @@ def _cleanup_registrations():
             .all()
         ]
         if reg_ids:
-            # Hard-delete any artifacts referencing these registrations
             db.query(GlobalArtifact).filter(
                 GlobalArtifact.source_registration_id.in_(reg_ids)
             ).delete(synchronize_session=False)
-            # Then delete the registrations
             db.query(FlowRegistration).filter(
                 FlowRegistration.id.in_(reg_ids)
             ).delete(synchronize_session=False)
@@ -93,7 +88,6 @@ def _get_local_user_id() -> int:
 
 def _create_test_namespace() -> int:
     """Create a test namespace and return its ID."""
-    # Create catalog
     cat_resp = client.post(
         "/catalog/namespaces",
         json={"name": "ArtifactTestCatalog", "description": "Test catalog for artifacts"},
@@ -114,7 +108,6 @@ def _create_test_namespace() -> int:
 
     cat_id = cat_resp.json()["id"]
 
-    # Create schema
     schema_resp = client.post(
         "/catalog/namespaces",
         json={"name": "ArtifactTestSchema", "parent_id": cat_id},
@@ -142,9 +135,7 @@ def _create_test_registration(
     return resp.json()["id"]
 
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -203,9 +194,7 @@ def artifacts_dir(tmp_path):
     return artifacts
 
 
-# ---------------------------------------------------------------------------
 # Upload Workflow Tests
-# ---------------------------------------------------------------------------
 
 
 class TestPrepareUpload:
@@ -230,7 +219,6 @@ class TestPrepareUpload:
         assert data["method"] == "file"
         assert data["storage_key"].startswith(str(data["artifact_id"]))
 
-        # Verify DB record
         with get_db_context() as db:
             artifact = db.get(GlobalArtifact, data["artifact_id"])
             assert artifact is not None
@@ -240,7 +228,6 @@ class TestPrepareUpload:
 
     def test_prepare_upload_increments_version(self, test_registration):
         """Each upload to same name should increment version."""
-        # First upload
         resp1 = client.post(
             "/artifacts/prepare-upload",
             json={
@@ -252,10 +239,8 @@ class TestPrepareUpload:
         assert resp1.status_code == 201
         assert resp1.json()["version"] == 1
 
-        # Finalize first upload to make it active
         self._finalize_artifact(resp1.json())
 
-        # Second upload - should be version 2
         resp2 = client.post(
             "/artifacts/prepare-upload",
             json={
@@ -362,7 +347,6 @@ class TestPrepareUpload:
         """Explicit namespace_id should override the registration's namespace."""
         reg_id, reg_ns_id = test_registration_with_namespace
 
-        # Create a second namespace to use as override
         cat_resp = client.post(
             "/catalog/namespaces",
             json={"name": "ArtifactTestCatalog2", "description": "Second test catalog"},
@@ -400,7 +384,6 @@ class TestPrepareUpload:
             assert artifact.namespace_id == override_ns_id
             assert artifact.namespace_id != reg_ns_id
 
-        # Cleanup extra namespace
         with get_db_context() as db:
             db.query(CatalogNamespace).filter(
                 CatalogNamespace.name.like("ArtifactTestCatalog2%")
@@ -410,7 +393,6 @@ class TestPrepareUpload:
 
     def _finalize_artifact(self, prepare_response: dict):
         """Helper to finalize an artifact upload."""
-        # Create a dummy file for testing
         path = Path(prepare_response["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
         test_data = b"test artifact data"
@@ -435,7 +417,6 @@ class TestFinalizeUpload:
 
     def test_finalize_activates_artifact(self, test_registration):
         """Finalize should activate the artifact and store metadata."""
-        # Prepare upload
         prep_resp = client.post(
             "/artifacts/prepare-upload",
             json={
@@ -447,7 +428,6 @@ class TestFinalizeUpload:
         assert prep_resp.status_code == 201
         prep_data = prep_resp.json()
 
-        # Write test data to staging path
         staging_path = Path(prep_data["path"])
         staging_path.parent.mkdir(parents=True, exist_ok=True)
         test_data = b"test artifact content for finalization"
@@ -456,7 +436,6 @@ class TestFinalizeUpload:
         import hashlib
         sha256 = hashlib.sha256(test_data).hexdigest()
 
-        # Finalize
         fin_resp = client.post(
             "/artifacts/finalize",
             json={
@@ -472,7 +451,6 @@ class TestFinalizeUpload:
         assert fin_data["artifact_id"] == prep_data["artifact_id"]
         assert fin_data["version"] == 1
 
-        # Verify DB record updated
         with get_db_context() as db:
             artifact = db.get(GlobalArtifact, prep_data["artifact_id"])
             assert artifact.status == "active"
@@ -494,7 +472,6 @@ class TestFinalizeUpload:
 
     def test_finalize_already_active_artifact(self, test_registration):
         """Finalize on already active artifact should return 400."""
-        # Create and finalize an artifact
         prep_resp = client.post(
             "/artifacts/prepare-upload",
             json={
@@ -513,7 +490,6 @@ class TestFinalizeUpload:
         import hashlib
         sha256 = hashlib.sha256(test_data).hexdigest()
 
-        # First finalize - should succeed
         client.post(
             "/artifacts/finalize",
             json={
@@ -524,7 +500,6 @@ class TestFinalizeUpload:
             },
         )
 
-        # Second finalize - should fail
         resp = client.post(
             "/artifacts/finalize",
             json={
@@ -537,9 +512,7 @@ class TestFinalizeUpload:
         assert resp.status_code == 400
 
 
-# ---------------------------------------------------------------------------
 # Retrieval Tests
-# ---------------------------------------------------------------------------
 
 
 class TestRetrieveArtifact:
@@ -624,34 +597,26 @@ class TestRetrieveArtifact:
 
     def test_get_specific_version(self):
         """Should retrieve specific version of artifact."""
-        # Create v1
         self._create_active_artifact("versioned_retrieve")
-        # Create v2
         self._create_active_artifact("versioned_retrieve")
 
-        # Get v1
         resp = client.get("/artifacts/by-name/versioned_retrieve", params={"version": 1})
         assert resp.status_code == 200
         assert resp.json()["version"] == 1
 
-        # Get v2
         resp = client.get("/artifacts/by-name/versioned_retrieve", params={"version": 2})
         assert resp.status_code == 200
         assert resp.json()["version"] == 2
 
-        # Get latest (should be v2)
         resp = client.get("/artifacts/by-name/versioned_retrieve")
         assert resp.status_code == 200
         assert resp.json()["version"] == 2
 
     def test_get_artifact_with_namespace_filter(self, test_namespace):
         """Should filter by namespace."""
-        # Create artifact in namespace
         self._create_active_artifact("ns_filtered", namespace_id=test_namespace)
-        # Create artifact without namespace
         self._create_active_artifact("ns_filtered")
 
-        # Get with namespace filter - should find namespaced one
         resp = client.get(
             "/artifacts/by-name/ns_filtered",
             params={"namespace_id": test_namespace},
@@ -659,14 +624,12 @@ class TestRetrieveArtifact:
         assert resp.status_code == 200
         assert resp.json()["namespace_id"] == test_namespace
 
-        # Get without namespace filter - should find the default one (which has no namespace)
         resp = client.get("/artifacts/by-name/ns_filtered")
         assert resp.status_code == 200
         assert resp.json()["namespace_id"] == test_namespace  # Default namespace ID for test artifacts
 
     def test_get_artifact_versions(self):
         """Should retrieve artifact with all versions."""
-        # Create multiple versions
         self._create_active_artifact("multi_version")
         self._create_active_artifact("multi_version")
         self._create_active_artifact("multi_version")
@@ -674,15 +637,13 @@ class TestRetrieveArtifact:
         resp = client.get("/artifacts/by-name/multi_version/versions")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["version"] == 3  # Latest version
+        assert data["version"] == 3
         assert len(data["all_versions"]) == 3
         versions = [v["version"] for v in data["all_versions"]]
         assert sorted(versions, reverse=True) == [3, 2, 1]
 
 
-# ---------------------------------------------------------------------------
 # Listing Tests
-# ---------------------------------------------------------------------------
 
 
 class TestListArtifacts:
@@ -761,7 +722,6 @@ class TestListArtifacts:
         self._create_active_artifact("tagged_2", tags=["ml", "dev"])
         self._create_active_artifact("tagged_3", tags=["other"])
 
-        # Filter by single tag
         resp = client.get("/artifacts/", params={"tags": ["ml"]})
         assert resp.status_code == 200
         data = resp.json()
@@ -803,19 +763,16 @@ class TestListArtifacts:
         for i in range(5):
             self._create_active_artifact(f"paginated_{i}")
 
-        # Get first page
         resp = client.get("/artifacts/", params={"limit": 2, "offset": 0})
         assert resp.status_code == 200
         page1 = resp.json()
         assert len(page1) == 2
 
-        # Get second page
         resp = client.get("/artifacts/", params={"limit": 2, "offset": 2})
         assert resp.status_code == 200
         page2 = resp.json()
         assert len(page2) == 2
 
-        # Pages should be different
         page1_ids = {a["id"] for a in page1}
         page2_ids = {a["id"] for a in page2}
         assert page1_ids.isdisjoint(page2_ids)
@@ -824,20 +781,17 @@ class TestListArtifacts:
         """Should list unique artifact names."""
         self._create_active_artifact("unique_name_1")
         self._create_active_artifact("unique_name_2")
-        self._create_active_artifact("unique_name_2")  # Create v2
+        self._create_active_artifact("unique_name_2")
 
         resp = client.get("/artifacts/names")
         assert resp.status_code == 200
         names = resp.json()
         assert "unique_name_1" in names
         assert "unique_name_2" in names
-        # Should be unique - no duplicates
         assert len(names) == len(set(names))
 
 
-# ---------------------------------------------------------------------------
 # Deletion Tests
-# ---------------------------------------------------------------------------
 
 
 class TestDeleteArtifact:
@@ -888,12 +842,10 @@ class TestDeleteArtifact:
         assert data["status"] == "deleted"
         assert data["artifact_id"] == artifact_id
 
-        # Verify it's deleted (soft delete)
         with get_db_context() as db:
             artifact = db.get(GlobalArtifact, artifact_id)
             assert artifact.status == "deleted"
 
-        # Should not be retrievable
         resp = client.get(f"/artifacts/{artifact_id}")
         assert resp.status_code == 404
 
@@ -908,7 +860,6 @@ class TestDeleteArtifact:
         assert data["status"] == "deleted"
         assert data["versions_deleted"] == 2
 
-        # Should not be retrievable
         resp = client.get("/artifacts/by-name/delete_all_versions")
         assert resp.status_code == 404
 
@@ -923,9 +874,7 @@ class TestDeleteArtifact:
         assert resp.status_code == 404
 
 
-# ---------------------------------------------------------------------------
 # Flow Deletion Cascade Tests
-# ---------------------------------------------------------------------------
 
 
 class TestFlowDeletionWithArtifacts:
@@ -971,7 +920,6 @@ class TestFlowDeletionWithArtifacts:
         resp = client.delete(f"/catalog/flows/{reg_id}")
         assert resp.status_code == 409
 
-        # Cleanup
         _cleanup_artifacts()
         _cleanup_registrations()
 
@@ -981,10 +929,8 @@ class TestFlowDeletionWithArtifacts:
         reg_id = _create_test_registration(name="ArtifactTestFlowAllow")
         artifact_id = self._create_active_artifact("deletable_artifact", reg_id)
 
-        # Delete the artifact first
         client.delete(f"/artifacts/{artifact_id}")
 
-        # Now deleting the flow should succeed
         resp = client.delete(f"/catalog/flows/{reg_id}")
         assert resp.status_code == 204
 
@@ -1001,9 +947,7 @@ class TestFlowDeletionWithArtifacts:
         _cleanup_registrations()
 
 
-# ---------------------------------------------------------------------------
 # Edge Cases and Error Handling
-# ---------------------------------------------------------------------------
 
 
 class TestEdgeCases:

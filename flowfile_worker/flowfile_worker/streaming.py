@@ -31,7 +31,6 @@ from flowfile_worker.spawner import process_manager
 
 streaming_router = APIRouter()
 
-# Maps operation type to result type for status tracking
 _POLARS_RESULT_OPERATIONS = frozenset({"store"})
 
 
@@ -39,9 +38,7 @@ def _get_result_type(operation: str) -> str:
     return "polars" if operation in _POLARS_RESULT_OPERATIONS else "other"
 
 
-# ---------------------------------------------------------------------------
 # Task context
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -70,7 +67,6 @@ def _parse_metadata(metadata: dict) -> _TaskContext:
     except (ValueError, TypeError):
         pass
 
-    # Set up cache directory and file path
     cache_dir = CACHE_DIR / str(flow_id)
     cache_dir.mkdir(parents=True, exist_ok=True)
     file_path = os.path.join(str(cache_dir), f"{task_id}.arrow")
@@ -97,9 +93,7 @@ def _register_status(ctx: _TaskContext) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
 # Subprocess management
-# ---------------------------------------------------------------------------
 
 
 def _spawn_subprocess(ctx: _TaskContext, polars_bytes: bytes) -> tuple[Process, Any, Any, Queue]:
@@ -144,9 +138,7 @@ def _set_error_status(task_id: str, msg: str) -> None:
         status_dict[task_id].error_message = msg
 
 
-# ---------------------------------------------------------------------------
 # Progress monitoring
-# ---------------------------------------------------------------------------
 
 
 async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_message, task_id: str) -> bool:
@@ -178,9 +170,7 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
     return False
 
 
-# ---------------------------------------------------------------------------
 # Result handling
-# ---------------------------------------------------------------------------
 
 
 def _update_completed_status(task_id: str, result_data: Any) -> None:
@@ -239,9 +229,7 @@ async def _send_final_error(websocket: WebSocket, task_id: str, progress, error_
         )
 
 
-# ---------------------------------------------------------------------------
 # Disconnect handling
-# ---------------------------------------------------------------------------
 
 
 def _handoff_to_background(task_id: str, p: Process, progress, error_message, queue: Queue) -> None:
@@ -255,9 +243,7 @@ def _handoff_to_background(task_id: str, p: Process, progress, error_message, qu
     ).start()
 
 
-# ---------------------------------------------------------------------------
 # Cleanup
-# ---------------------------------------------------------------------------
 
 
 def _cleanup_process(task_id: str | None, p: Process | None) -> None:
@@ -271,9 +257,7 @@ def _cleanup_process(task_id: str | None, p: Process | None) -> None:
         process_manager.remove_process(task_id)
 
 
-# ---------------------------------------------------------------------------
 # WebSocket endpoint
-# ---------------------------------------------------------------------------
 
 
 @streaming_router.websocket("/ws/submit")
@@ -299,7 +283,6 @@ async def ws_submit(websocket: WebSocket):
     queue = None
 
     try:
-        # 1. Receive metadata + binary payload
         metadata = await websocket.receive_json()
         ctx = _parse_metadata(metadata)
         task_id = ctx.task_id
@@ -307,17 +290,14 @@ async def ws_submit(websocket: WebSocket):
 
         polars_bytes = await websocket.receive_bytes()
 
-        # 2. Spawn subprocess
         p, progress, error_message, queue = _spawn_subprocess(ctx, polars_bytes)
 
-        # 3. Monitor progress (returns True if error was sent)
         had_error = await _monitor_progress(websocket, p, progress, error_message, task_id)
         if had_error:
             return
 
         p.join()
 
-        # 4. Send result or error
         with progress.get_lock():
             final = progress.value
 

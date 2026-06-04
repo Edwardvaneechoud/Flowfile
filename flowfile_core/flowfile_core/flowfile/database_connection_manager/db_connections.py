@@ -13,8 +13,6 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
     """
     Store a database connection in the database.
     """
-    # Encrypt the password
-
     existing_database_connection = get_database_connection(db, connection.connection_name, user_id)
     if existing_database_connection:
         raise ValueError(
@@ -24,7 +22,6 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
 
     password_id = store_secret(db, SecretInput(name=connection.connection_name, value=connection.password), user_id).id
 
-    # Create a new database connection object
     db_connection = DBConnectionModel(
         connection_name=connection.connection_name,
         host=connection.host,
@@ -37,7 +34,6 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
         user_id=user_id,
     )
 
-    # Add and commit the new connection to the database
     db.add(db_connection)
     db.commit()
     db.refresh(db_connection)
@@ -62,7 +58,6 @@ def update_database_connection(db: Session, connection: FullDatabaseConnection, 
     db_connection.username = connection.username
     db_connection.ssl_enabled = connection.ssl_enabled
 
-    # Update password only if a new one is provided
     password_value = connection.password.get_secret_value()
     if password_value:
         password_secret = db.query(Secret).filter(Secret.id == db_connection.password_id).first()
@@ -113,7 +108,6 @@ def get_database_connection_schema(db: Session, connection_name: str, user_id: i
     db_connection = get_database_connection(db, connection_name, user_id)
 
     if db_connection:
-        # Decrypt the password
         password_secret = db.query(Secret).filter(Secret.id == db_connection.password_id).first()
         if not password_secret:
             raise Exception("Password secret not found")
@@ -191,17 +185,13 @@ def get_all_database_connections_interface(db: Session, user_id: int) -> list[Fu
     """
     Get all database connections for a user.
     """
-    # Get the raw query results
     query_results = db.query(DBConnectionModel).filter(DBConnectionModel.user_id == user_id).all()
 
-    # Convert with explicit type assertion
     result = []
     for db_connection in query_results:
-        # Verify that we have an instance, not a type
         if isinstance(db_connection, DBConnectionModel):
             result.append(database_connection_interface_from_db_connection(db_connection))
         else:
-            # Raise an error if we somehow get a type instead of an instance
             raise TypeError(f"Expected a DBConnectionModel instance, got {type(db_connection)}")
 
     return result
@@ -302,18 +292,15 @@ def _update_cloud_secret(
 ) -> int | None:
     """Helper to update a cloud connection secret field. Returns the secret ID to use."""
     if secret_value:
-        # New value provided — update existing or create new
         if existing_secret_id:
             secret_record = db.query(Secret).filter(Secret.id == existing_secret_id).first()
             if secret_record:
                 secret_record.encrypted_value = encrypt_secret(secret_value, user_id)
                 return existing_secret_id
-        # No existing secret record, create new
         from pydantic import SecretStr
 
         new_secret = store_secret(db, SecretInput(name=secret_name, value=SecretStr(secret_value)), user_id)
         return new_secret.id
-    # Empty value — keep existing secret unchanged
     return existing_secret_id
 
 
@@ -455,7 +442,6 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         if secret_record:
             gcs_service_account_key = decrypt_secret(secret_record.encrypted_value)
 
-    # Construct the full Pydantic model
     return FullCloudStorageConnection(
         connection_name=db_connection.connection_name,
         storage_type=db_connection.storage_type,
@@ -518,7 +504,6 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
     db_connection = get_cloud_connection(db, connection_name, user_id)
 
     if db_connection:
-        # Collect all secret IDs associated with this connection
         secret_ids_to_delete = [
             db_connection.aws_secret_access_key_id,
             db_connection.aws_session_token_id,
@@ -527,13 +512,10 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
             db_connection.azure_sas_token_id,
             db_connection.gcs_service_account_key_id,
         ]
-        # Filter out None values
         secret_ids_to_delete = [id for id in secret_ids_to_delete if id is not None]
 
-        # Delete associated secrets if they exist
         if secret_ids_to_delete:
             db.query(Secret).filter(Secret.id.in_(secret_ids_to_delete)).delete(synchronize_session=False)
 
-        # Delete the connection record itself
         db.delete(db_connection)
         db.commit()

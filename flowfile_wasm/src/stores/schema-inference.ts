@@ -71,7 +71,6 @@ function inferSelectSchema(
     return inputSchema
   }
 
-  // Filter to kept columns and sort by position
   const keptColumns = selectInput
     .filter((s: SelectInput) => s.keep !== false)
     .sort((a: SelectInput, b: SelectInput) => (a.position ?? 0) - (b.position ?? 0))
@@ -105,7 +104,6 @@ function inferGroupBySchema(
 
   const result: ColumnSchema[] = []
 
-  // First add groupby columns (in order they appear)
   const groupCols = groupbyInput.agg_cols.filter((c: AggCol) => c.agg === 'groupby')
   for (const col of groupCols) {
     const inputCol = findColumn(inputSchema, col.old_name)
@@ -117,7 +115,6 @@ function inferGroupBySchema(
     }
   }
 
-  // Then add aggregation columns
   const aggCols = groupbyInput.agg_cols.filter((c: AggCol) => c.agg !== 'groupby')
   for (const col of aggCols) {
     const inputCol = findColumn(inputSchema, col.old_name)
@@ -157,19 +154,15 @@ function inferJoinSchema(
     return leftSchema
   }
 
-  // Get join key column names
   const leftKeySet = new Set(joinMapping.map((m: { left_col: string; right_col: string }) => m.left_col))
   const rightKeySet = new Set(joinMapping.map((m: { left_col: string; right_col: string }) => m.right_col))
 
-  // Get all column names from both schemas
   const leftColNames = new Set(leftSchema.map(c => c.name))
   const rightColNames = new Set(rightSchema.map(c => c.name))
 
   const result: ColumnSchema[] = []
 
-  // Add all left columns
   for (const col of leftSchema) {
-    // Check if this column exists in right schema (and is not a key column)
     const needsSuffix = rightColNames.has(col.name) && !leftKeySet.has(col.name)
     result.push({
       name: needsSuffix ? col.name + leftSuffix : col.name,
@@ -177,14 +170,12 @@ function inferJoinSchema(
     })
   }
 
-  // Add right columns that are not join keys
   for (const col of rightSchema) {
     if (rightKeySet.has(col.name)) {
       // Skip right key columns as they duplicate left keys
       continue
     }
 
-    // Check if this column exists in left schema
     const needsSuffix = leftColNames.has(col.name)
     result.push({
       name: needsSuffix ? col.name + rightSuffix : col.name,
@@ -210,7 +201,6 @@ function inferUnpivotSchema(
 
   const result: ColumnSchema[] = []
 
-  // Add index columns (these are preserved as-is)
   const indexColumns = unpivotInput.index_columns || []
   for (const colName of indexColumns) {
     const col = findColumn(inputSchema, colName)
@@ -219,10 +209,8 @@ function inferUnpivotSchema(
     }
   }
 
-  // Add the 'variable' column (contains original column names)
   result.push({ name: 'variable', data_type: 'String' })
 
-  // Add the 'value' column (type depends on unpivoted columns)
   // For simplicity, we'll use String as a safe default
   // since the actual type depends on the columns being unpivoted
   result.push({ name: 'value', data_type: 'String' })
@@ -289,15 +277,12 @@ export function inferOutputSchema(
     case 'formula':
       return null
 
-    // Select - filter/reorder columns
     case 'select':
       return inferSelectSchema(inputSchema, settings as NodeSelectSettings)
 
-    // Group by - return grouped + aggregated columns
     case 'group_by':
       return inferGroupBySchema(inputSchema, settings as NodeGroupBySettings)
 
-    // Join - merge schemas
     case 'join':
       if (!rightInputSchema || rightInputSchema.length === 0) {
         return null
@@ -341,21 +326,17 @@ export function getDownstreamNodeIds(
  * Infer a data type from a sample of string values
  */
 function inferDataTypeFromValues(values: string[]): string {
-  // Filter out empty values
   const nonEmpty = values.filter(v => v !== '' && v !== null && v !== undefined)
   if (nonEmpty.length === 0) return 'String'
 
-  // Check for booleans
   const allBooleans = nonEmpty.every(v =>
     v.toLowerCase() === 'true' || v.toLowerCase() === 'false'
   )
   if (allBooleans) return 'Boolean'
 
-  // Check for integers
   const allIntegers = nonEmpty.every(v => /^-?\d+$/.test(v.trim()))
   if (allIntegers) return 'Int64'
 
-  // Check for floats
   const allNumbers = nonEmpty.every(v => {
     const trimmed = v.trim()
     return !isNaN(parseFloat(trimmed)) && /^-?\d*\.?\d+$/.test(trimmed)
@@ -390,7 +371,6 @@ export function inferSchemaFromCsv(
     const headerLine = lines[0]
     const columnNames = headerLine.split(actualDelimiter).map(c => c.trim())
 
-    // Get sample data for type inference (up to 100 rows)
     const sampleLines = lines.slice(1, Math.min(101, lines.length))
     const sampleData: string[][] = sampleLines.map(line =>
       line.split(actualDelimiter).map(c => c.trim())
@@ -410,7 +390,6 @@ export function inferSchemaFromCsv(
     const firstLine = lines[0].split(actualDelimiter)
     const columnCount = firstLine.length
 
-    // Get sample data for type inference
     const sampleLines = lines.slice(0, Math.min(100, lines.length))
     const sampleData: string[][] = sampleLines.map(line =>
       line.split(actualDelimiter).map(c => c.trim())

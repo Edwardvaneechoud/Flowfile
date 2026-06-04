@@ -20,8 +20,6 @@ export function useGenericNodeSettings<T extends NodeBase>(nodeRef: { value: T |
   const handleGenericSettingsUpdate = (updatedNode: T) => {
     if (!nodeRef.value) return;
 
-    // Automatically sync all NodeBase properties
-    // These are common to all node types
     nodeRef.value.cache_results = updatedNode.cache_results;
     nodeRef.value.description = updatedNode.description;
     nodeRef.value.output_field_config = updatedNode.output_field_config;

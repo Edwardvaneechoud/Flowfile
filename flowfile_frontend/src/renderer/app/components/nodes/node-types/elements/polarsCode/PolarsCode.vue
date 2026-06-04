@@ -42,7 +42,6 @@ const editorChild = ref<EditorChildType | null>(null);
 const nodePolarsCode = ref<NodePolarsCode | null>(null);
 const nodeData = ref<null | NodeData>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodePolarsCode,
   onBeforeSave: () => {

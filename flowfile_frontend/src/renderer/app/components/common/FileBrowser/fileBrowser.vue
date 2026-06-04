@@ -387,14 +387,11 @@ const handleInitialFileSelection = async () => {
   error.value = null;
 
   try {
-    // Get the directory path from the full file path
     const directoryPath = path.dirname(props.initialFilePath);
     const fileName = path.basename(props.initialFilePath);
 
-    // Navigate to the directory using stateless approach
     await loadDirectoryContents(directoryPath);
 
-    // Find and select the file
     const fileToSelect = files.value.find((file) => file.name === fileName);
     if (fileToSelect) {
       selectedFile.value = fileToSelect;
@@ -559,14 +556,12 @@ defineExpose({
 const calculateSortedFiles = () => {
   return files.value
     .filter((file) => {
-      // For directories, only apply search and hidden filters
       if (file.is_directory) {
         const matchesSearch = file.name.toLowerCase().includes(searchTerm.value.toLowerCase());
         const matchesHidden = showHidden.value || !file.is_hidden;
         return matchesSearch && matchesHidden;
       }
 
-      // For files, apply all filters
       const matchesSearch = file.name.toLowerCase().includes(searchTerm.value.toLowerCase());
       const matchesHidden = showHidden.value || !file.is_hidden;
       const matchesType =
@@ -577,11 +572,9 @@ const calculateSortedFiles = () => {
       return matchesSearch && matchesHidden && matchesType;
     })
     .sort((a, b) => {
-      // Sort logic
       let comparison = 0;
       switch (sortBy.value) {
         case "size": {
-          // Add block scope with curly braces
           const aSize = a.is_directory ? a.size || 0 : a.size;
           const bSize = b.is_directory ? b.size || 0 : b.size;
           comparison = aSize - bSize;
@@ -595,7 +588,6 @@ const calculateSortedFiles = () => {
           break;
         case "name":
         default:
-          // Special handling for name to be case-insensitive
           comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
           break;
       }
@@ -607,7 +599,6 @@ const filteredFiles = computed(() => {
   return calculateSortedFiles();
 });
 
-// Watch for changes in allowedFileTypes
 watch(
   () => props.allowedFileTypes,
   () => {
@@ -624,11 +615,9 @@ watch(
   },
 );
 
-// Watch for visibility changes to auto-refresh
 watch(
   () => props.isVisible,
   async (newVisible, oldVisible) => {
-    // Refresh when becoming visible (transitioning from false to true)
     if (newVisible && !oldVisible) {
       await loadCurrentDirectory();
     }
@@ -640,7 +629,6 @@ onActivated(async () => {
   await loadCurrentDirectory();
 });
 
-// Initialize
 onMounted(async () => {
   if (props.initialFilePath) {
     await handleInitialFileSelection();

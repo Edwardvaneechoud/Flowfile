@@ -39,7 +39,6 @@ const container = ref<HTMLElement | null>(null);
 const isLoading = ref(true);
 const loadError = ref<string | null>(null);
 
-// These will be set after dynamic import
 let reactRootInstance: any = null;
 let React: any = null;
 let ReactDOMClient: any = null;
@@ -118,7 +117,6 @@ onMounted(async () => {
     );
     isLoading.value = false;
 
-    // Set the default tab if specified
     if (props.defaultTab) {
       const tab = props.defaultTab;
       const checkStore = setInterval(() => {
@@ -128,7 +126,6 @@ onMounted(async () => {
           clearInterval(checkStore);
         }
       }, 50);
-      // Stop checking after 3 seconds
       setTimeout(() => clearInterval(checkStore), 3000);
     }
   } catch (e) {

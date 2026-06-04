@@ -54,9 +54,7 @@ from flowfile_core.ai.session_store import (
 )
 from flowfile_core.ai.sessions import AgentSession, GraphSnapshot
 
-# --------------------------------------------------------------------------- #
-# Fixtures #
-# --------------------------------------------------------------------------- #
+# Fixtures
 
 
 def _make_session(
@@ -94,9 +92,7 @@ def disk_repo(tmp_path: Path) -> DiskSessionRepository:
     return DiskSessionRepository(root=tmp_path / "ai_sessions")
 
 
-# --------------------------------------------------------------------------- #
-# In-memory #
-# --------------------------------------------------------------------------- #
+# In-memory
 
 
 def test_in_memory_roundtrip(in_memory_repo: InMemorySessionRepository) -> None:
@@ -115,7 +111,6 @@ def test_in_memory_user_namespacing(in_memory_repo: InMemorySessionRepository) -
     in_memory_repo.put(sess)
     assert in_memory_repo.get(sess.session_id, user_id=2) is None
     assert in_memory_repo.pop(sess.session_id, user_id=2) is None
-    # Owner still sees it.
     assert in_memory_repo.get(sess.session_id, user_id=1) is sess
 
 
@@ -127,9 +122,7 @@ def test_in_memory_clear(in_memory_repo: InMemorySessionRepository) -> None:
     assert in_memory_repo.list_for_user(2) == []
 
 
-# --------------------------------------------------------------------------- #
-# Disk #
-# --------------------------------------------------------------------------- #
+# Disk
 
 
 def test_disk_roundtrip(disk_repo: DiskSessionRepository) -> None:
@@ -195,7 +188,6 @@ def test_partial_write_does_not_corrupt(
     path = repo._session_path(sess.flow_id, sess.session_id)
     original_bytes = path.read_bytes()
 
-    # Mutate session and patch os.replace to raise mid-write.
     mutated = sess.model_copy(update={"step_count": 99})
 
     import os as os_module
@@ -357,9 +349,7 @@ def test_clear_wipes_disk_subtree(disk_repo: DiskSessionRepository) -> None:
     assert disk_repo._root.exists()
 
 
-# --------------------------------------------------------------------------- #
-# Lazy litellm #
-# --------------------------------------------------------------------------- #
+# Lazy litellm
 
 
 def test_lazy_litellm_contract() -> None:
@@ -370,9 +360,7 @@ def test_lazy_litellm_contract() -> None:
     assert "litellm" not in sys.modules
 
 
-# --------------------------------------------------------------------------- #
-# Schema-version constant #
-# --------------------------------------------------------------------------- #
+# Schema-version constant
 
 
 def test_schema_version_constant() -> None:
@@ -394,9 +382,7 @@ def test_iter_recent_files_ordering(tmp_path: Path) -> None:
     assert [p.name for p in iterated] == ["f-2", "f-1"]
 
 
-# --------------------------------------------------------------------------- #
-# clear_for_tests fixture default — autouse from conftest #
-# --------------------------------------------------------------------------- #
+# clear_for_tests fixture default — autouse from conftest
 
 
 @pytest.fixture(autouse=True)

@@ -98,7 +98,6 @@ def save_custom_node(request: SaveCustomNodeRequest):
     3. Writes the file to the user_defined_nodes directory
     4. Attempts to load and register the new node
     """
-    # Validate file name
     file_name = request.file_name
     if not file_name.endswith(".py"):
         file_name += ".py"
@@ -108,17 +107,14 @@ def save_custom_node(request: SaveCustomNodeRequest):
     if not safe_name or safe_name == ".py":
         raise HTTPException(status_code=400, detail="Invalid file name")
 
-    # Validate Python syntax
     try:
         ast.parse(request.code)
     except SyntaxError as e:
         raise HTTPException(status_code=400, detail=f"Python syntax error at line {e.lineno}: {e.msg}") from e
 
-    # Get the directory path
     nodes_dir = storage.user_defined_nodes_directory
     file_path = nodes_dir / safe_name
 
-    # Write the file
     try:
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(request.code)
@@ -127,7 +123,6 @@ def save_custom_node(request: SaveCustomNodeRequest):
         logger.error(f"Failed to save custom node: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}") from e
 
-    # Try to load and register the node using the centralized loader
     try:
         node_class = load_single_node_from_file(file_path)
         if node_class:
@@ -150,10 +145,8 @@ def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
 
         tree = ast.parse(content)
 
-        # Find class definitions that might be custom nodes
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
-                # Look for class attributes (both annotated and simple assignments)
                 for item in node.body:
                     attr_name = None
                     value = None
@@ -172,7 +165,6 @@ def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
                                     value = item.value.value
                                 break
 
-                    # Map attribute names to info fields
                     if attr_name and value:
                         if attr_name == "node_name":
                             info.node_name = value
@@ -185,7 +177,6 @@ def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
                         elif attr_name == "node_icon":
                             info.node_icon = value
 
-                # If we found a node_name, this is likely a custom node class
                 if info.node_name:
                     break
 
@@ -213,7 +204,6 @@ def list_custom_nodes() -> list[CustomNodeInfo]:
         info = _extract_node_info_from_file(file_path)
         nodes.append(info)
 
-    # Sort by node name
     nodes.sort(key=lambda x: x.node_name or x.file_name)
     return nodes
 
@@ -224,7 +214,6 @@ def get_custom_node(file_name: str) -> dict[str, Any]:
     Get the full content and parsed metadata of a custom node file.
     This endpoint is used by the Node Designer to load an existing node for editing.
     """
-    # Sanitize file name
     if not file_name.endswith(".py"):
         file_name += ".py"
 
@@ -240,7 +229,6 @@ def get_custom_node(file_name: str) -> dict[str, Any]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}") from e
 
-    # Parse the file to extract metadata and sections
     result = {"file_name": safe_name, "content": content, "metadata": {}, "sections": [], "processCode": ""}
 
     try:
@@ -264,7 +252,6 @@ def get_custom_node(file_name: str) -> dict[str, Any]:
                                 break
 
                 if is_custom_node:
-                    # Extract metadata from both annotated and simple assignments
                     for item in node.body:
                         attr_name = None
                         value = None
@@ -289,10 +276,8 @@ def get_custom_node(file_name: str) -> dict[str, Any]:
                             elif attr_name == "number_of_outputs":
                                 result["metadata"]["number_of_outputs"] = value
 
-                    # Extract process method
                     for item in node.body:
                         if isinstance(item, ast.FunctionDef) and item.name == "process":
-                            # Get the source code of the process method
                             start_line = item.lineno - 1
                             end_line = item.end_lineno if hasattr(item, "end_lineno") else start_line + 20
                             lines = content.split("\n")
@@ -315,7 +300,6 @@ def delete_custom_node(file_name: str) -> dict[str, Any]:
     Delete a custom node Python file from the user-defined nodes directory.
     This also attempts to unregister the node from the node store.
     """
-    # Sanitize file name
     if not file_name.endswith(".py"):
         file_name += ".py"
 
@@ -325,10 +309,9 @@ def delete_custom_node(file_name: str) -> dict[str, Any]:
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Node file '{safe_name}' not found")
 
-    # Try to find and unregister the node from all stores
     try:
         info = _extract_node_info_from_file(file_path)
-        file_stem = file_path.stem  # filename without .py extension
+        file_stem = file_path.stem
         logger.info(
             f"Extracted node info: node_name='{info.node_name}', "
             f"file_name='{info.file_name}', file_stem='{file_stem}'"
@@ -350,7 +333,6 @@ def delete_custom_node(file_name: str) -> dict[str, Any]:
     except Exception as e:
         logger.warning(f"Could not unregister node: {e}")
 
-    # Delete the file
     try:
         file_path.unlink()
         logger.info(f"Deleted custom node file: {file_path}")
@@ -391,7 +373,6 @@ def list_icons() -> list[IconInfo]:
         if file_path.is_file() and file_path.suffix.lower() in ALLOWED_ICON_EXTENSIONS:
             icons.append(IconInfo(file_name=file_path.name, is_custom=True))
 
-    # Sort by file name
     icons.sort(key=lambda x: x.file_name.lower())
     return icons
 
@@ -406,17 +387,14 @@ async def upload_icon(file: UploadFile = File(...)) -> dict[str, Any]:
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
 
-    # Validate file extension
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in ALLOWED_ICON_EXTENSIONS:
         raise HTTPException(
             status_code=400, detail=f"Invalid file type. Allowed types: {', '.join(ALLOWED_ICON_EXTENSIONS)}"
         )
 
-    # Read file content
     content = await file.read()
 
-    # Validate file size
     if len(content) > MAX_ICON_SIZE:
         raise HTTPException(
             status_code=400, detail=f"File too large. Maximum size is {MAX_ICON_SIZE // (1024 * 1024)}MB"
@@ -429,12 +407,10 @@ async def upload_icon(file: UploadFile = File(...)) -> dict[str, Any]:
 
     icons_dir = storage.user_defined_nodes_icons
 
-    # Ensure the icons directory exists
     icons_dir.mkdir(parents=True, exist_ok=True)
 
     file_path = icons_dir / safe_name
 
-    # Write the file
     try:
         with open(file_path, "wb") as f:
             f.write(content)
@@ -473,11 +449,9 @@ def get_icon(file_name: str) -> FileResponse:
             logger.debug(f"Available icons: {[f.name for f in available]}")
         raise HTTPException(status_code=404, detail=f"Icon '{safe_name}' not found at {file_path}")
 
-    # Validate it's actually an icon file
     if file_path.suffix.lower() not in ALLOWED_ICON_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Invalid file type")
 
-    # Determine content type
     content_type_map = {
         ".png": "image/png",
         ".jpg": "image/jpeg",

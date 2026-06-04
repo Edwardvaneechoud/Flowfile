@@ -37,9 +37,7 @@ from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.configs import settings as core_settings
 
 
-# --------------------------------------------------------------------------- #
-# Fixtures #
-# --------------------------------------------------------------------------- #
+# Fixtures
 
 
 class _FakeProvider:
@@ -102,9 +100,7 @@ def patch_classify(monkeypatch: pytest.MonkeyPatch):
     yield state
 
 
-# --------------------------------------------------------------------------- #
-# Verdict mapping #
-# --------------------------------------------------------------------------- #
+# Verdict mapping
 
 
 def test_route_returns_agent_verdict_for_build_phrase(
@@ -296,9 +292,7 @@ def test_route_promotes_pronoun_followup_after_build_shaped_prior_turn(
     assert "group_by" in forwarded[1].content
 
 
-# --------------------------------------------------------------------------- #
-# Failure-mode tolerance #
-# --------------------------------------------------------------------------- #
+# Failure-mode tolerance
 
 
 def test_route_returns_chat_verdict_when_classifier_fails(
@@ -335,9 +329,7 @@ def test_route_returns_chat_verdict_when_classifier_fails(
     assert "failed" in payload["reason"].lower()
 
 
-# --------------------------------------------------------------------------- #
-# Provider error mapping #
-# --------------------------------------------------------------------------- #
+# Provider error mapping
 
 
 def test_route_unknown_provider_returns_404(authed_client: TestClient) -> None:
@@ -395,9 +387,7 @@ def test_route_disabled_returns_503(
     assert "AI features are disabled" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# Request validation #
-# --------------------------------------------------------------------------- #
+# Request validation
 
 
 def test_route_validates_message_present(authed_client: TestClient) -> None:
@@ -416,9 +406,7 @@ def test_route_validates_provider_present(authed_client: TestClient) -> None:
     assert response.status_code == 422
 
 
-# --------------------------------------------------------------------------- #
-# Audit-event emission #
-# --------------------------------------------------------------------------- #
+# Audit-event emission
 
 
 def test_route_emits_audit_event(
@@ -475,7 +463,6 @@ def test_route_emits_audit_event(
     assert args["reason"] == "message uses an imperative build verb"
     assert args["verdict"] == "agent"
     assert args["latency_ms"] >= 0
-    # Message preview is bounded; full message contains key tokens.
     assert "group_by" in args["message_preview"]
 
 
@@ -504,9 +491,7 @@ def test_route_audit_failure_does_not_break_response(
     assert response.json()["verdict"] == "agent"
 
 
-# --------------------------------------------------------------------------- #
-# Lazy-litellm contract #
-# --------------------------------------------------------------------------- #
+# Lazy-litellm contract
 
 
 def test_lazy_litellm_contract_for_intent_router_routes() -> None:

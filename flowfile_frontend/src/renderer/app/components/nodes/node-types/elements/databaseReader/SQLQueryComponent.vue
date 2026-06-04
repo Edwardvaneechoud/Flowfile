@@ -16,7 +16,6 @@
 </template>
 
 <script lang="ts" setup>
-// Props & Emits
 defineProps<{
   modelValue: string;
 }>();
@@ -25,7 +24,6 @@ const emit = defineEmits<{
   (e: "update:modelValue", value: string): void;
 }>();
 
-// Methods
 const onInput = (event: Event) => {
   const target = event.target as HTMLTextAreaElement;
   emit("update:modelValue", target.value);

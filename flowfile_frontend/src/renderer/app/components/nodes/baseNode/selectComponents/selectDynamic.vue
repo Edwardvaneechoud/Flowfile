@@ -169,7 +169,6 @@ const selectableContainerRef = ref<HTMLElement | null>(null);
 const nodeStore = useNodeStore();
 const dataTypes = nodeStore.getDataTypes();
 
-// Local sorted select inputs (by availability)
 const localSelectInputs = ref<SelectInput[]>(
   [...props.selectInputs].sort((a, b) =>
     a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1,
@@ -265,12 +264,10 @@ const deselectAllSelected = () => {
   selectedColumns.value = [];
 };
 
-// Check for Missing Fields
 const hasMissingFields = computed(() =>
   localSelectInputs.value.some((column) => !column.is_available),
 );
 
-// Click Outside Handler for Context Menu
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as Node;
   const container = selectableContainerRef.value;
@@ -283,7 +280,6 @@ const handleClickOutside = (event: MouseEvent) => {
     showContextMenu.value = false;
   }
 
-  // Deselect rows when the click also lands outside the table.
   if (container && !container.contains(target)) {
     selectedColumns.value = [];
   }

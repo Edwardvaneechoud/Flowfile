@@ -168,7 +168,6 @@ const showConfirmPassword = ref(false);
 const isSubmitting = ref(false);
 const serverError = ref("");
 
-// Password validation checks
 const passwordChecks = computed(() => ({
   minLength: formData.value.newPassword.length >= 8,
   hasNumber: /\d/.test(formData.value.newPassword),
@@ -190,7 +189,6 @@ const isFormValid = computed(() => {
   );
 });
 
-// Reset form when modal opens/closes
 watch(
   () => props.show,
   (newVal) => {

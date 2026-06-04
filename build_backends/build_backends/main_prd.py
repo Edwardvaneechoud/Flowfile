@@ -24,7 +24,7 @@ def shutdown_service():
     try:
         requests.post("http://0.0.0.0:63578/shutdown", headers={"accept": "application/json"}, data="")
         print("Shutdown request sent, waiting for service to stop...")
-        time.sleep(1)  # Wait 10 seconds to ensure the service is fully stopped
+        time.sleep(1)
         return True
     except requests.exceptions.RequestException as e:
         print(f"Error shutting down service: {e}")
@@ -35,10 +35,8 @@ def measure_startup_time(executable_path):
     """Measure the startup time of the executable."""
     start_time = time.time()
 
-    # Start the process
     process = subprocess.Popen([executable_path])
 
-    # Wait for the endpoint to become available
     endpoint_url = "http://0.0.0.0:63578/docs"
     if not wait_for_endpoint(endpoint_url):
         print(f"Error: Endpoint did not become available for {executable_path}")
@@ -47,7 +45,6 @@ def measure_startup_time(executable_path):
 
     elapsed_time = time.time() - start_time
 
-    # Gracefully shutdown the service
     if not shutdown_service():
         print("Failed to shutdown service gracefully, killing process...")
         process.kill()
@@ -70,21 +67,18 @@ def run_comparison_test(old_exe, new_exe, num_runs=3):
     for i in range(num_runs):
         print(f"\nRun {i + 1}/{num_runs}")
 
-        # Test old executable
         print("Testing old executable...")
         old_time = measure_startup_time(old_exe)
         if old_time is not None:
             old_times.append(old_time)
             print(f"Old startup time: {old_time:.3f} seconds")
 
-        # Test new executable
         print("Testing new executable...")
         new_time = measure_startup_time(new_exe)
         if new_time is not None:
             new_times.append(new_time)
             print(f"New startup time: {new_time:.3f} seconds")
 
-    # Print results
     print("\nResults:")
     print("-" * 50)
     if old_times:

@@ -76,53 +76,44 @@ def format_type_annotation(annotation_obj) -> str:
     str
         A properly formatted string representation of the type
     """
-    # Handle None/NoneType specially
     if annotation_obj is None or annotation_obj is type(None):
         return "None"
 
-    # Check if it's a class object like <class 'str'>
     if isinstance(annotation_obj, type):
-        # Get the module and name
         module = annotation_obj.__module__
         name = annotation_obj.__name__
 
-        # If it's a builtin type, just use the name
         if module == "builtins":
             return name
 
-        # For known types like polars itself, prefix with pl if appropriate
         if module.startswith("polars.") and name not in ["DataFrame", "LazyFrame", "Series", "Expr"]:
             return f"pl.{name}"
-        if module.startswith("polars.") and name == "DataType":  # Handle pl.DataType specifically
+        if module.startswith("polars.") and name == "DataType":
             return f"pl.{name}"
 
         return f"{name}"
 
     elif isinstance(annotation_obj, str):
-        # Match patterns like <class 'module.submodule.ClassName'>
         class_match = re.match(r"<class '([^']+)'>", annotation_obj)
         if class_match:
             full_path = class_match.group(1)
 
-            # Special case for NoneType
             if full_path == "NoneType" or full_path.endswith(".NoneType"):
                 return "None"
 
             class_name = full_path.split(".")[-1]
             return class_name
 
-    # For other cases, convert to string and remove unnecessary details
     str_rep = str(annotation_obj).replace("<class '", "").replace("'>", "")
     str_rep = str_rep.replace("polars.internals.type_aliases.", "")
     str_rep = str_rep.replace("polars.internals.datatypes.", "pl.")
     str_rep = str_rep.replace("polars.datatypes.", "pl.")
     str_rep = str_rep.replace("polars.type_aliases.", "")
-    str_rep = str_rep.replace("polars.lazyframe.frame.", "")  # For LazyFrame, LazyGroupBy if directly referenced
+    str_rep = str_rep.replace("polars.lazyframe.frame.", "")
     str_rep = str_rep.replace("flowfile_frame.group_frame.", "group_frame.")
     if str_rep == "LazyFrame":
         str_rep = "FlowFrame"
 
-    # Special case for NoneType
     if str_rep == "NoneType" or str_rep.endswith(".NoneType"):
         return "None"
 
@@ -302,7 +293,7 @@ def generate_improved_type_stub(
         "P = typing.ParamSpec('P')",
         "LazyFrameT = TypeVar('LazyFrameT', bound='LazyFrame')",
         "FlowFrameT = TypeVar('FlowFrameT', bound='FlowFrame')",
-        "Self = TypeVar('Self', bound='FlowFrame')",  # For __new__
+        "Self = TypeVar('Self', bound='FlowFrame')",
         "NoneType = type(None)",
         "",
     ]
@@ -368,7 +359,6 @@ def generate_improved_type_stub(
         content.append(f"    {attr_name}: {attr_type_str}")
     content.append("")
 
-    # Helper function for handling special methods - DEFINED HERE
     def handle_special_methods(name: str, sig: inspect.Signature) -> str | None:
         """Handle methods that need special formatting in the stub file."""
         if name == "group_by":
@@ -376,9 +366,9 @@ def generate_improved_type_stub(
                 "    def group_by(self, *by, description: Optional[str] = None, "
                 "maintain_order: bool = False, **named_by) -> group_frame.GroupByFrame: ..."
             )
-        if name == "with_columns":  # This specific one is from FlowFrame
+        if name == "with_columns":
             return (
-                "    def with_columns(self, *exprs: Union[Expr, Iterable[Expr], Any], "  # Match FlowFrame signature
+                "    def with_columns(self, *exprs: Union[Expr, Iterable[Expr], Any], "
                 "flowfile_formulas: Optional[List[str]] = None, "
                 "output_column_names: Optional[List[str]] = None, "
                 "description: Optional[str] = None, "
@@ -733,7 +723,6 @@ def _validate_emitted_imports(content: list[str]) -> None:
                 name = raw.strip()
                 if not name or name == "*":
                     continue
-                # Strip `as alias`
                 if " as " in name:
                     name = name.split(" as ", 1)[0].strip()
                 if not hasattr(module, name):
@@ -786,12 +775,10 @@ if __name__ == "__main__":
             # Assuming flow_frame.py is in a module directory like 'flowfile_frame'
             module_path_part = args.module.replace(".", os.sep)  # e.g., flowfile_frame/flow_frame
 
-            # Check if the target class's module path can be determined
             class_module_file = getattr(module_obj, "__file__", None)
             if class_module_file:
                 output_path = os.path.splitext(class_module_file)[0] + ".pyi"
             else:  # Fallback if module path is not available (e.g. some C extensions or built-ins)
-                # Try to create it in a folder structure mimicking the module path
                 path_parts = args.module.split(".")
                 class_file_name = path_parts[-1] + ".pyi"
                 if len(path_parts) > 1:

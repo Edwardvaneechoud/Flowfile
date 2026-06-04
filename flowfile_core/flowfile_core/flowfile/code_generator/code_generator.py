@@ -58,17 +58,14 @@ class FlowGraphCodeConverter:
             UnsupportedNodeError: If the graph contains nodes that cannot be converted
                 to standalone code (e.g., database nodes, explore_data, external_source).
         """
-        # Get execution order (stages of parallelizable nodes)
         stages = determine_execution_order(
             all_nodes=[node for node in self.flow_graph.nodes if node.is_correct],
             flow_starts=self.flow_graph._flow_starts + self.flow_graph.get_implicit_starter_nodes(),
         )
 
-        # Generate code for each node in topological order
         for node in (node for stage in stages for node in stage):
             self._generate_node_code(node)
 
-        # Check for unsupported nodes and raise an error with all of them listed
         if self.unsupported_nodes:
             error_messages = []
             for node_id, node_type, reason in self.unsupported_nodes:
@@ -82,7 +79,6 @@ class FlowGraphCodeConverter:
                 ),
             )
 
-        # Combine everything
         return self._build_final_code()
 
     def handle_output_node(self, node: FlowNode, var_name: str) -> None:
@@ -97,28 +93,22 @@ class FlowGraphCodeConverter:
         if isinstance(settings, input_schema.NodePromise):
             self._add_comment(f"# Skipping uninitialized node: {node.node_id}")
             return
-        # Create variable name for this node's output
-        # Use node_reference if set, otherwise default to df_{node_id}
         node_reference = getattr(settings, "node_reference", None)
         var_name = node_reference if node_reference else f"df_{node.node_id}"
         self.node_var_mapping[node.node_id] = var_name
         self.handle_output_node(node, var_name)
         if node.node_template.output > 0:
             self.last_node_var = var_name
-        # Get input variable names
         input_vars = self._get_input_vars(node)
 
-        # Check if this is a user-defined node
         if isinstance(settings, input_schema.UserDefinedNode) or getattr(settings, "is_user_defined", False):
             self._handle_user_defined(node, var_name, input_vars)
             return
 
-        # Route to appropriate handler based on node type
         handler = getattr(self, f"_handle_{node_type}", None)
         if handler:
             handler(settings, var_name, input_vars)
         else:
-            # Unknown node type - add to unsupported list
             self.unsupported_nodes.append(
                 (node.node_id, node_type, f"No code generator implemented for node type '{node_type}'")
             )
@@ -255,7 +245,6 @@ class FlowGraphCodeConverter:
             return
 
         if settings.filter_input.is_advanced():
-            # Parse the advanced filter expression
             self.imports.add(
                 "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
             )
@@ -264,7 +253,7 @@ class FlowGraphCodeConverter:
             self._add_code(")")
         else:
             basic = settings.filter_input.basic_filter
-            if basic is not None and basic.field:  # Check that filter has valid field
+            if basic is not None and basic.field:
                 filter_expr = self._create_basic_filter_expr(basic)
                 self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
             else:
@@ -322,7 +311,6 @@ class FlowGraphCodeConverter:
     def _handle_select(self, settings: input_schema.NodeSelect, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle select/rename nodes."""
         input_df = input_vars.get("main", "df")
-        # Get columns to keep and renames
         select_exprs = []
         for select_input in settings.select_input:
             if select_input.keep and select_input.is_available:
@@ -362,7 +350,6 @@ class FlowGraphCodeConverter:
         """
         left_df = input_vars.get("main", input_vars.get("main_0", "df_left"))
         right_df = input_vars.get("right", input_vars.get("main_1", "df_right"))
-        # Ensure left and right DataFrames are distinct
         if left_df == right_df:
             right_df = "df_right"
             self._add_code(f"{right_df} = {left_df}")
@@ -428,16 +415,12 @@ class FlowGraphCodeConverter:
         """
         join_input_manager = transform_schema.JoinInputManager(settings.join_input)
         join_input_manager.auto_rename()
-        # Get join keys
         left_on, right_on = self._get_join_keys(join_input_manager)
 
-        # Apply pre-join transformations
         left_df, right_df = self._apply_pre_join_transformations(join_input_manager, left_df, right_df)
-        # Handle join-specific key transformations
         left_on, right_on, reverse_action, after_join_drop_cols = self._handle_join_key_transformations(
             join_input_manager, left_df, right_df, left_on, right_on
         )
-        # Execute the join
         self._execute_join_with_post_processing(
             settings, var_name, left_df, right_df, left_on, right_on, after_join_drop_cols, reverse_action
         )
@@ -484,7 +467,6 @@ class FlowGraphCodeConverter:
             Tuple[str, str]: The same DataFrame variable names (left_df, right_df)
                 Note: DataFrames are modified via generated code, not new variables
         """
-        # Calculate renames and drops
         right_renames = {
             column.old_name: column.new_name
             for column in settings.right_select.renames
@@ -505,7 +487,6 @@ class FlowGraphCodeConverter:
             column.old_name for column in settings.right_select.renames if not column.keep and not column.join_key
         ]
 
-        # Apply transformations
         if right_renames:
             self._add_code(f"{right_df} = {right_df}.rename({right_renames})")
         if left_renames:
@@ -627,7 +608,6 @@ class FlowGraphCodeConverter:
             if ljk.keep
         ]
 
-        # Update left_on keys
         for position, left_on_key in enumerate(left_on):
             left_on_select = settings.left_select.get_select_input_on_new_name(left_on_key)
             if left_on_select and left_on_select.keep:
@@ -636,7 +616,6 @@ class FlowGraphCodeConverter:
         if join_key_duplication_command:
             self._add_code(f"{left_df} = {left_df}.with_columns([{', '.join(join_key_duplication_command)}])")
 
-        # Calculate columns to drop after join
         left_join_keys_keep = {jk.new_name for jk in settings.left_select.join_key_selects if jk.keep}
         after_join_drop_cols_right = [
             jk.new_name if jk.new_name not in left_join_keys_keep else jk.new_name + "_right"
@@ -677,7 +656,6 @@ class FlowGraphCodeConverter:
 
         join_key_rename_command = {rjk.new_name: f"__jk_{rjk.new_name}" for rjk in join_keys_to_keep_and_rename}
 
-        # Update right_on keys
         for position, right_on_key in enumerate(right_on):
             right_on_select = settings.right_select.get_select_input_on_new_name(right_on_key)
             if right_on_select and right_on_select.keep and right_on_select.new_name in left_join_keys:
@@ -688,7 +666,6 @@ class FlowGraphCodeConverter:
 
         reverse_action = {f"__jk_{rjk.new_name}": rjk.new_name for rjk in join_keys_to_keep_and_rename}
 
-        # Calculate columns to drop after join
         after_join_drop_cols_left = [jk.new_name for jk in settings.left_select.join_key_selects if not jk.keep]
         after_join_drop_cols_right = [
             jk.new_name if jk.new_name not in left_join_keys else jk.new_name + "_right"
@@ -742,18 +719,15 @@ class FlowGraphCodeConverter:
         # TODO(FlowFrame): The .collect().lazy() pattern for right joins returns a
         # pl.LazyFrame, breaking the FlowFrame chain. The FlowFrame converter may
         # need to override join handling or use framework-aware collect/lazy.
-        # Handle right join special case
         if settings.join_input.how == "right":
             self._add_code(".collect()")  # Right join needs to be collected first cause of issue with rename
 
-        # Apply post-join transformations
         if after_join_drop_cols:
             self._add_code(f".drop({after_join_drop_cols})")
 
         if reverse_action:
             self._add_code(f".rename({reverse_action})")
 
-        # Convert back to lazy for right joins
         if settings.join_input.how == "right":
             self._add_code(".lazy()")
 
@@ -763,7 +737,6 @@ class FlowGraphCodeConverter:
         """Handle group by nodes."""
         input_df = input_vars.get("main", "df")
 
-        # Separate groupby columns from aggregation columns
         group_cols = []
         agg_exprs = []
 
@@ -784,7 +757,6 @@ class FlowGraphCodeConverter:
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle formula/expression nodes."""
         input_df = input_vars.get("main", "df")
-        # Convert SQL-like formula to Polars expression
         formula = settings.function.function
         col_name = settings.function.field.name
         can_convert_to_pl_code: bool = False
@@ -854,7 +826,6 @@ class FlowGraphCodeConverter:
         if len(settings.pivot_input.index_columns) == 0:
             self._handle_pivot_no_index(settings, var_name, input_df, agg_func)
         else:
-            # Generate pivot code
             self._add_code(f"{var_name} = {input_df}.collect().pivot(")
             self._add_code(f"    values='{pivot_input.value_col}',")
             self._add_code(f"    index={pivot_input.index_columns},")
@@ -884,12 +855,10 @@ class FlowGraphCodeConverter:
 
     def _handle_union(self, settings: input_schema.NodeUnion, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle union nodes."""
-        # Get all input LazyFrame
         dfs = []
         if "main" in input_vars:
             dfs.append(input_vars["main"])
         else:
-            # Multiple main inputs
             for key, df_var in input_vars.items():
                 if key.startswith("main"):
                     dfs.append(df_var)
@@ -1075,7 +1044,6 @@ class FlowGraphCodeConverter:
         input_df = input_vars.get("main", "df")
         text_input = settings.text_to_rows_input
 
-        # First split the column
         split_expr = f'{self.framework}.col("{text_input.column_to_split}").str.split("{text_input.split_fixed_value}")'
         if text_input.output_column_name and text_input.output_column_name != text_input.column_to_split:
             split_expr = f'{split_expr}.alias("{text_input.output_column_name}")'
@@ -1096,7 +1064,6 @@ class FlowGraphCodeConverter:
         input_df = input_vars.get("main", "df")
         record_input = settings.record_id_input
         if record_input.group_by and record_input.group_by_columns:
-            # Row number within groups
             self._add_code(f"{var_name} = ({input_df}")
             self._add_code(f"    .with_columns({self.framework}.lit(1).alias('{record_input.output_column_name}'))")
             self._add_code("    .with_columns([")
@@ -1110,7 +1077,6 @@ class FlowGraphCodeConverter:
             self._add_code(f".select(['{out_col}'] + [col for col in {input_df}.columns if col != '{out_col}'])")
             self._add_code(")")
         else:
-            # Simple row number
             self._add_code(
                 f"{var_name} = {input_df}.with_row_count("
                 f"name='{record_input.output_column_name}', offset={record_input.offset})"
@@ -1160,7 +1126,6 @@ class FlowGraphCodeConverter:
         # (b) Override _handle_polars_code in FlowFrameConverter to add `import polars as pl`,
         # (c) Add LazyFrame export to the flowfile package.
         code = settings.polars_code_input.polars_code.strip()
-        # Determine function parameters based on number of inputs
         if len(input_vars) == 0:
             params = ""
             args = ""
@@ -1169,7 +1134,6 @@ class FlowGraphCodeConverter:
             input_df = list(input_vars.values())[0]
             args = input_df
         else:
-            # Multiple inputs
             param_list = []
             arg_list = []
             i = 1
@@ -1181,26 +1145,19 @@ class FlowGraphCodeConverter:
             params = ", ".join(param_list)
             args = ", ".join(arg_list)
 
-        # Check if the code is just an expression (no assignment)
         is_expression = "output_df" not in code
 
-        # Wrap the code in a function
         self._add_code("# Custom Polars code")
         self._add_code(f"def _polars_code_{var_name.replace('df_', '')}({params}):")
 
-        # Handle the code based on its structure
         if is_expression:
-            # It's just an expression, return it directly
             self._add_code(f"    return {code}")
         else:
-            # It contains assignments
             for line in code.split("\n"):
                 if line.strip():
                     self._add_code(f"    {line}")
 
-            # If no explicit return, try to detect what to return
             if "return" not in code:
-                # Try to find the last assignment
                 lines = [line.strip() for line in code.split("\n") if line.strip() and "=" in line]
                 if lines:
                     last_assignment = lines[-1]
@@ -1210,7 +1167,6 @@ class FlowGraphCodeConverter:
 
         self._add_code("")
 
-        # Call the function
         self._add_code(f"{var_name} = _polars_code_{var_name.replace('df_', '')}({args})")
         self._add_code("")
 
@@ -1220,8 +1176,6 @@ class FlowGraphCodeConverter:
         self, settings: input_schema.NodeExploreData, var_name: str, input_vars: dict[str, str]
     ) -> None:
         """Handle explore_data nodes - these are skipped as they are interactive visualization only."""
-        # explore_data is just for visualization in the UI, it doesn't transform data
-        # So we skip it in code generation but don't fail - just add a comment
         input_df = input_vars.get("main", "df")
         self._add_comment(f"# Node {settings.node_id}: Explore Data (skipped - interactive visualization only)")
         self._add_code(f"{var_name} = {input_df}  # Pass through unchanged")
@@ -1535,34 +1489,30 @@ class FlowGraphCodeConverter:
             - needs_collect: True if inputs need to be collected to DataFrame before passing to process()
             - needs_lazy: True if output needs to be converted to LazyFrame after process()
         """
-        needs_collect = True  # Default: assume needs DataFrame input
-        needs_lazy = True  # Default: assume returns DataFrame
+        needs_collect = True
+        needs_lazy = True
 
         process_method = getattr(custom_node_class, "process", None)
         if process_method is None:
             return needs_collect, needs_lazy
 
         try:
-            # Try to get type hints from the process method
             type_hints = typing.get_type_hints(process_method)
 
-            # Check return type
             return_type = type_hints.get("return")
             if return_type is not None:
                 return_type_str = str(return_type)
                 if "LazyFrame" in return_type_str:
                     needs_lazy = False
 
-            # Check input parameter types (look for *inputs parameter or first param after self)
             sig = inspect.signature(process_method)
             params = list(sig.parameters.values())
-            for param in params[1:]:  # Skip 'self'
+            for param in params[1:]:
                 if param.annotation != inspect.Parameter.empty:
                     param_type_str = str(param.annotation)
                     if "LazyFrame" in param_type_str:
                         needs_collect = False
                         break
-                # Also check the type_hints dict for this param
                 if param.name in type_hints:
                     hint_str = str(type_hints[param.name])
                     if "LazyFrame" in hint_str:
@@ -1594,7 +1544,6 @@ class FlowGraphCodeConverter:
         node_type = node.node_type
         settings = node.setting_input
 
-        # Get the custom node class from the registry
         custom_node_class = CUSTOM_NODE_STORE.get(node_type)
         if custom_node_class is None:
             self.unsupported_nodes.append(
@@ -1603,10 +1552,8 @@ class FlowGraphCodeConverter:
             self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Not found in registry")
             return
 
-        # Store the entire source file if we haven't already
         class_name = custom_node_class.__name__
         if class_name not in self.custom_node_classes:
-            # Read the entire source file - it contains everything we need
             file_source = self._read_custom_node_source_file(custom_node_class)
             if file_source:
                 # Remove import lines from the file since we handle imports separately
@@ -1615,7 +1562,6 @@ class FlowGraphCodeConverter:
                 in_multiline_import = False
                 for line in lines:
                     stripped = line.strip()
-                    # Track multi-line imports (using parentheses)
                     if stripped.startswith("import ") or stripped.startswith("from "):
                         if "(" in stripped and ")" not in stripped:
                             in_multiline_import = True
@@ -1628,12 +1574,10 @@ class FlowGraphCodeConverter:
                     if stripped.startswith("#") and not non_import_lines:
                         continue
                     non_import_lines.append(line)
-                # Remove leading empty lines
                 while non_import_lines and not non_import_lines[0].strip():
                     non_import_lines.pop(0)
                 self.custom_node_classes[class_name] = "\n".join(non_import_lines)
             else:
-                # Fallback to just the class source
                 try:
                     self.custom_node_classes[class_name] = inspect.getsource(custom_node_class)
                 except (OSError, TypeError) as e:
@@ -1645,7 +1589,6 @@ class FlowGraphCodeConverter:
                     )
                     return
 
-            # Add necessary imports
             self.imports.add(
                 "from flowfile_core.flowfile.node_designer import ("
                 "CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, "
@@ -1653,25 +1596,20 @@ class FlowGraphCodeConverter:
                 "DropdownSelector, TextArea, Toggle)"
             )
 
-        # Get settings values to initialize the node
         settings_dict = getattr(settings, "settings", {}) or {}
 
-        # Check process method signature to determine if collect/lazy is needed
         needs_collect, needs_lazy = self._check_process_method_signature(custom_node_class)
 
-        # Generate the code to instantiate and run the custom node
         _node_name_field = custom_node_class.model_fields.get("node_name", type("", (), {"default": node_type}))
         self._add_code(f"# User-defined node: {_node_name_field.default}")
         self._add_code(f"_custom_node_{node.node_id} = {class_name}()")
 
-        # If there are settings, apply them
         if settings_dict:
             self._add_code(f"_custom_node_{node.node_id}_settings = {repr(settings_dict)}")
             self._add_code(f"if _custom_node_{node.node_id}.settings_schema:")
             node_var = f"_custom_node_{node.node_id}"
             self._add_code(f"    {node_var}.settings_schema.populate_values({node_var}_settings)")
 
-        # Prepare input arguments based on whether we need to collect
         if len(input_vars) == 0:
             input_args = ""
         elif len(input_vars) == 1:
@@ -1687,7 +1625,6 @@ class FlowGraphCodeConverter:
                         arg_list.append(input_vars[key])
             input_args = ", ".join(arg_list)
 
-        # Call the process method, adding .lazy() only if needed
         if needs_lazy:
             self._add_code(f"{var_name} = _custom_node_{node.node_id}.process({input_args}).lazy()")
         else:
@@ -1706,9 +1643,6 @@ class FlowGraphCodeConverter:
 
     def _parse_filter_expression(self, expr: str) -> str:
         """Parse Flowfile filter expression to Polars expression."""
-        # This is a simplified parser - you'd need more sophisticated parsing
-        # Handle patterns like [column]>value or [column]="value"
-
         import re
 
         # Pattern: [column_name]operator"value" or [column_name]operatorvalue
@@ -1717,12 +1651,10 @@ class FlowGraphCodeConverter:
         def replace_expr(match):
             col, op, val = match.groups()
 
-            # Map operators
             op_map = {"=": "==", "!=": "!=", ">": ">", "<": "<", ">=": ">=", "<=": "<="}
 
             polars_op = op_map.get(op, op)
 
-            # Check if value is numeric
             try:
                 float(val)
                 return f'{self.framework}.col("{col}") {polars_op} {val}'
@@ -1751,13 +1683,11 @@ class FlowGraphCodeConverter:
         # Determine if value is numeric (for proper quoting)
         is_numeric = value.replace(".", "", 1).replace("-", "", 1).isnumeric() if value else False
 
-        # Get the operator
         try:
             operator = basic.get_operator()
         except (ValueError, AttributeError):
             operator = FilterOperator.from_symbol(str(basic.operator))
 
-        # Generate expression based on operator
         if operator == FilterOperator.EQUALS:
             if is_numeric:
                 return f"{col} == {value}"
@@ -1829,7 +1759,6 @@ class FlowGraphCodeConverter:
                 return f"({col} >= {value}) & ({col} <= {value2})"
             return f'({col} >= "{value}") & ({col} <= "{value2}")'
 
-        # Fallback
         return col
 
     def _get_polars_dtype(self, dtype_str: str) -> str:
@@ -1860,13 +1789,10 @@ class FlowGraphCodeConverter:
 
     def add_return_code(self, lines: list[str]) -> None:
         if self.output_nodes:
-            # Return marked output nodes
             if len(self.output_nodes) == 1:
-                # Single output
                 _, var_name = self.output_nodes[0]
                 lines.append(f"    return {var_name}")
             else:
-                # Multiple outputs - return as dictionary
                 lines.append("    return {")
                 for node_id, var_name in self.output_nodes:
                     lines.append(f'        "node_{node_id}": {var_name},')
@@ -1880,12 +1806,10 @@ class FlowGraphCodeConverter:
         """Build the final Python code."""
         lines = []
 
-        # Add imports
         lines.extend(sorted(self.imports))
         lines.append("")
         lines.append("")
 
-        # Add custom node class definitions if any
         if self.custom_node_classes:
             lines.append("# Custom Node Class Definitions")
             lines.append("# These classes are user-defined nodes that were included in the flow")
@@ -1896,7 +1820,6 @@ class FlowGraphCodeConverter:
                 lines.append("")
             lines.append("")
 
-        # Add main function
         lines.append("def run_etl_pipeline():")
         lines.append('    """')
         lines.append(f"    ETL Pipeline: {self.flow_graph.__name__}")
@@ -1904,13 +1827,11 @@ class FlowGraphCodeConverter:
         lines.append('    """')
         lines.append("    ")
 
-        # Add the generated code
         for line in self.code_lines:
             if line:
                 lines.append(f"    {line}")
             else:
                 lines.append("")
-        # Add main block
         lines.append("")
         self.add_return_code(lines)
         lines.append("")
@@ -2314,7 +2235,6 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         if len(settings.pivot_input.index_columns) == 0:
             self._handle_pivot_no_index(settings, var_name, input_df, agg_func)
         else:
-            # Generate pivot code
             self._add_code(f"{var_name} = {input_df}.pivot(")
             self._add_code(f"    values='{pivot_input.value_col}',")
             self._add_code(f"    index={pivot_input.index_columns},")
@@ -2332,12 +2252,10 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         Replaces pl. references with ff. and uses ff.FlowFrame in type hints.
         """
         code = settings.polars_code_input.polars_code.strip()
-        # Replace polars references with flowfile equivalents
         code = code.replace("pl.", "ff.")
         code = code.replace("ff.LazyFrame", "ff.FlowFrame")
         code = code.replace("ff.DataFrame", "ff.FlowFrame")
 
-        # Determine function parameters based on number of inputs
         if len(input_vars) == 0:
             params = ""
             args = ""

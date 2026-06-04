@@ -1,4 +1,3 @@
-# conftest.py
 import logging
 import os
 import platform
@@ -42,7 +41,6 @@ def is_port_in_use(port, host='localhost'):
             return False
 
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -63,7 +61,6 @@ SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # secon
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     """Setup the test database and clean up after tests"""
-    # Just use your existing init_db function to create tables and set up the database
     from flowfile_core.database.connection import engine, get_database_url
     from flowfile_core.database.init_db import init_db
     from flowfile_core.database.models import Base
@@ -72,14 +69,11 @@ def setup_test_db():
 
     yield
 
-    # Cleanup after all tests
     if os.environ.get("TESTING") == "True" and "sqlite" in get_database_url():
         logger.info(f"Trying to cleanup: {get_database_url()}")
         try:
-            # Drop all tables
             Base.metadata.drop_all(bind=engine)
 
-            # If using file-based SQLite, remove the file
             db_path = get_database_url().replace("sqlite:///", "")
             if db_path != ":memory:" and os.path.exists(db_path):
                 os.remove(db_path)
@@ -106,7 +100,6 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
     """
     logger.info("Starting flowfile_worker process...")
 
-    # Determine the appropriate command based on platform
     if platform.system() == "Windows":
         # Use shell=True on Windows
         proc = subprocess.Popen(
@@ -131,23 +124,19 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
             preexec_fn=os.setsid if hasattr(os, 'setsid') else None
         )
 
-    # Check if process started successfully
     retcode = proc.poll()
     if retcode is not None:
         logger.error(f"Process failed to start with return code {retcode}")
         return proc, False
 
-    # Wait for service to be available
     start_time = time.time()
     max_retries = STARTUP_TIMEOUT // STARTUP_CHECK_INTERVAL
 
     for i in range(max_retries):
-        # Check if process is still running
         if proc.poll() is not None:
             logger.error(f"Process terminated unexpectedly with code {proc.poll()}")
             return proc, False
 
-        # Try to connect to the service
         try:
             response = requests.get(WORKER_URL, timeout=5)
             if response.ok:
@@ -157,12 +146,10 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
         except requests.exceptions.RequestException:
             pass
 
-        # Log progress
         elapsed = time.time() - start_time
         logger.info(f"Waiting for flowfile_worker to start... ({elapsed:.1f}s / {STARTUP_TIMEOUT}s)")
         time.sleep(STARTUP_CHECK_INTERVAL)
 
-    # Timeout reached
     logger.error(f"flowfile_worker failed to start within {STARTUP_TIMEOUT} seconds")
     return proc, False
 
@@ -180,7 +167,6 @@ def stop_worker(proc: subprocess.Popen) -> None:
         logger.info("Process is already terminated")
         return
 
-    # Try graceful termination first
     try:
         if platform.system() == "Windows":
             # On Windows, send Ctrl+C
@@ -189,7 +175,6 @@ def stop_worker(proc: subprocess.Popen) -> None:
             # On Unix, terminate the entire process group
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM) if hasattr(os, 'killpg') else proc.terminate()
 
-        # Wait for process to terminate
         try:
             proc.wait(timeout=SHUTDOWN_TIMEOUT)
             logger.info("Process terminated gracefully")

@@ -95,7 +95,6 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// CSV options
 const delimiterOptions = [
   { value: ',', label: 'Comma (,)' },
   { value: ';', label: 'Semicolon (;)' },
@@ -105,7 +104,6 @@ const delimiterOptions = [
 
 const encodingOptions = ['utf-8', 'ISO-8859-1', 'ASCII']
 
-// Initialize output settings from props (CSV only in WASM)
 const outputSettings = ref<OutputSettings>({
   name: props.settings.output_settings?.name || 'output.csv',
   directory: props.settings.output_settings?.directory || '.',
@@ -119,7 +117,6 @@ const outputSettings = ref<OutputSettings>({
   polars_method: 'sink_csv'
 })
 
-// Computed properties for format-specific settings
 const csvSettings = computed(() => {
   if (outputSettings.value.table_settings.file_type === 'csv') {
     return outputSettings.value.table_settings as OutputCsvTable
@@ -127,29 +124,24 @@ const csvSettings = computed(() => {
   return { file_type: 'csv' as const, delimiter: ',', encoding: 'utf-8' }
 })
 
-// Check if this node has an input connection
 const hasInputConnection = computed(() => {
   const node = flowStore.getNode(props.nodeId)
   if (!node) return false
   return node.inputIds.length > 0 || node.leftInputId !== undefined
 })
 
-// Get download info from node result
 const downloadInfo = computed(() => {
   const result = flowStore.getNodeResult(props.nodeId)
   return result?.download
 })
 
-// Watch for settings changes from parent
 watch(() => props.settings.output_settings, (newSettings) => {
   if (newSettings) {
     outputSettings.value = { ...newSettings }
   }
 }, { deep: true })
 
-// Update functions
 function updateFileName(value: string) {
-  // Ensure .csv extension
   let name = value
   if (!name.toLowerCase().endsWith('.csv')) {
     const baseName = name.split('.')[0]
@@ -185,7 +177,6 @@ function emitUpdate() {
 async function triggerDownload() {
   if (!downloadInfo.value) return
 
-  // Retrieve content from IndexedDB
   const downloadEntry = await flowStore.getDownloadContent(props.nodeId)
   if (!downloadEntry) {
     console.error('Download content not found in storage')
@@ -212,7 +203,6 @@ async function triggerDownload() {
   // Use the current file name from settings (user may have changed it)
   const finalFileName = outputSettings.value.name || fileName
 
-  // Create download link
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url

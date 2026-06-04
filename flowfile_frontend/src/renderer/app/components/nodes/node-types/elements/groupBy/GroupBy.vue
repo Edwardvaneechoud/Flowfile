@@ -105,7 +105,6 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 const nodeStore = useNodeStore();
 const nodeGroupBy = ref<null | NodeGroupBy>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeGroupBy,
   onAfterSave: async () => {
@@ -183,7 +182,7 @@ const onDropInTable = () => {
 const openRowContextMenu = (event: MouseEvent, index: number) => {
   event.preventDefault();
   contextMenuPosition.value = { x: event.clientX, y: event.clientY };
-  contextMenuRowIndex.value = index; // Save the index of the row where the context menu was opened
+  contextMenuRowIndex.value = index;
   showContextMenuRemove.value = true;
 };
 
@@ -191,17 +190,17 @@ const removeRow = () => {
   if (contextMenuRowIndex.value !== null) {
     groupByInput.value.agg_cols.splice(contextMenuRowIndex.value, 1);
   }
-  showContextMenuRemove.value = false; // Hide the context menu after removing the row
-  contextMenuRowIndex.value = null; // Reset the saved index
+  showContextMenuRemove.value = false;
+  contextMenuRowIndex.value = null;
 };
 
-const contextMenuRowIndex = ref<number | null>(null); // New ref to keep track of which row is being interacted with
+const contextMenuRowIndex = ref<number | null>(null);
 
 const singleColumnSelected = computed(() => selectedColumns.value.length == 1);
 
 const openContextMenu = (clickedIndex: number, columnName: string, event: MouseEvent) => {
   event.preventDefault();
-  event.stopPropagation(); // Stop click event from propagating
+  event.stopPropagation();
   if (!selectedColumns.value.includes(columnName)) {
     selectedColumns.value = [columnName];
   }
@@ -221,7 +220,7 @@ const setAggregations = (aggType: AggOption | GroupByOption, columns: string[] |
       });
     });
   }
-  showContextMenu.value = false; // Hide the context menu after selection
+  showContextMenu.value = false;
   contextMenuColumn.value = null;
 };
 

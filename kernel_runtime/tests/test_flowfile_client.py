@@ -27,7 +27,6 @@ def ctx(tmp_dir: Path) -> dict:
     input_dir.mkdir()
     output_dir.mkdir()
 
-    # Write a default input parquet
     df = pl.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]})
     main_path = input_dir / "main.parquet"
     df.write_parquet(str(main_path))
@@ -59,7 +58,6 @@ class TestContextManagement:
             output_dir=str(tmp_dir),
             artifact_store=store,
         )
-        # Should not raise
         flowfile_client._get_context_value("node_id")
 
         flowfile_client._clear_context()

@@ -1,7 +1,5 @@
-# Standard library imports
 from typing import TypeVar
 
-# Third-party imports
 import polars as pl
 
 from flowfile_core.schemas import transform_schema as transform_schemas

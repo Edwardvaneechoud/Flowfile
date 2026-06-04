@@ -1,5 +1,3 @@
-// Secrets API Service - Handles secret management operations
-// Consolidated from pages/secretManager/secretApi.ts
 import axios from "../services/axios.config";
 import type { Secret, SecretInput, SecretValueResponse } from "../types";
 
@@ -60,9 +58,7 @@ export class SecretsApi {
   }
 }
 
-// ============================================================================
 // Legacy function exports for backward compatibility
-// ============================================================================
 
 export const fetchSecretsApi = SecretsApi.getAll;
 export const addSecretApi = SecretsApi.create;

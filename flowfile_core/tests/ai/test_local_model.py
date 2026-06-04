@@ -30,9 +30,7 @@ def _tmp_storage(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
         storage._base_dir = original
 
 
-# --------------------------------------------------------------------------- #
 # Platform / asset mapping                                                    #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.parametrize(
@@ -107,9 +105,7 @@ def test_extract_archive_preserves_symlinks(tmp_path):  # type: ignore[no-untype
     assert alias.resolve().exists()
 
 
-# --------------------------------------------------------------------------- #
 # Install orchestration (monkeypatched I/O)                                   #
-# --------------------------------------------------------------------------- #
 
 
 def _fake_install_io(monkeypatch) -> dict[str, int]:  # type: ignore[no-untyped-def]
@@ -176,9 +172,7 @@ def test_install_rejects_bad_gguf_header(_tmp_storage, monkeypatch):  # type: ig
     assert manager._model_path(manager.DEFAULT_MODEL_ID).exists() is False
 
 
-# --------------------------------------------------------------------------- #
 # Provider                                                                    #
-# --------------------------------------------------------------------------- #
 
 
 def test_local_provider_config():
@@ -190,9 +184,7 @@ def test_local_provider_config():
     assert isinstance(p, Provider)
 
 
-# --------------------------------------------------------------------------- #
 # Catalog                                                                      #
-# --------------------------------------------------------------------------- #
 
 
 def test_catalog_default_is_coder_3b_and_no_llama():
@@ -204,9 +196,7 @@ def test_catalog_default_is_coder_3b_and_no_llama():
     assert all("llama" not in mid for mid in manager.MODELS)
 
 
-# --------------------------------------------------------------------------- #
 # Context-window sidecar                                                       #
-# --------------------------------------------------------------------------- #
 
 
 def test_ctx_size_clamps_and_persists(_tmp_storage):  # type: ignore[no-untyped-def]
@@ -227,9 +217,7 @@ def test_ctx_size_garbage_sidecar_falls_back(_tmp_storage):  # type: ignore[no-u
     assert manager.get_ctx_size() == manager._DEFAULT_CTX_SIZE
 
 
-# --------------------------------------------------------------------------- #
 # Boot-lock: status() must stay responsive during a (blocking) cold boot       #
-# --------------------------------------------------------------------------- #
 
 
 def test_status_responsive_during_boot(_tmp_storage, monkeypatch):  # type: ignore[no-untyped-def]
@@ -296,9 +284,7 @@ def test_set_active_model_recycles_running_server(_tmp_storage, monkeypatch):  #
         manager._server = None
 
 
-# --------------------------------------------------------------------------- #
 # _spawn failure diagnostics                                                  #
-# --------------------------------------------------------------------------- #
 
 
 def test_describe_exit_decodes_signals_and_127():
@@ -345,9 +331,7 @@ def test_spawn_names_unavailable_stderr_capture(monkeypatch):  # type: ignore[no
         manager._spawn(manager.Path("llama-server"), manager.Path("m.gguf"), "qwen2.5-coder-3b")
 
 
-# --------------------------------------------------------------------------- #
 # Provider unification — local resolvable on read-only surfaces               #
-# --------------------------------------------------------------------------- #
 
 
 def test_is_resolvable_provider():
@@ -377,9 +361,7 @@ def test_get_configured_provider_returns_local_without_db():
     assert p.supports_tools is False
 
 
-# --------------------------------------------------------------------------- #
 # Route registration                                                          #
-# --------------------------------------------------------------------------- #
 
 
 def test_local_model_routes_registered():

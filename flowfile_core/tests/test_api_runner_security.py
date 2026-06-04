@@ -26,9 +26,7 @@ from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.flow_api_schema import ApiParamSpec
 from flowfile_core.schemas.schemas import FlowParameter
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -94,9 +92,7 @@ def _build_and_save_flow(path, flow_id: int = 1, orientation: str = "records") -
     graph.save_flow(str(path))
 
 
-# ---------------------------------------------------------------------------
 # #1 — injection rejection at the API seam (unit level)
-# ---------------------------------------------------------------------------
 
 
 # Each value can break out of a Polars ``'${region}'`` string literal and/or
@@ -151,9 +147,7 @@ def test_enum_values_are_not_subject_to_the_string_gate():
         api_runner._coerce(spec, "c")
 
 
-# ---------------------------------------------------------------------------
 # #1 — injection rejection end-to-end (through run_flow_as_api)
-# ---------------------------------------------------------------------------
 
 
 def test_filter_bypass_injection_rejected_end_to_end(tmp_path):
@@ -193,9 +187,7 @@ def test_read_csv_injection_cannot_exfiltrate(tmp_path):
     assert "TOPSECRET" not in repr(ok)
 
 
-# ---------------------------------------------------------------------------
 # #10 — endpoint defaults go through _coerce
-# ---------------------------------------------------------------------------
 
 
 def test_invalid_enum_default_is_rejected():
@@ -225,9 +217,7 @@ def test_valid_defaults_pass_coercion():
     assert api_runner.resolve_params(specs, {}) == {"n": "5", "r": "a", "s": "ok-value"}
 
 
-# ---------------------------------------------------------------------------
 # #5 — columns orientation pushes the limit into collect()
-# ---------------------------------------------------------------------------
 
 
 class _RecordingData:
@@ -267,9 +257,7 @@ def test_columns_orientation_without_limit_collects_all():
     assert out == {"data": {"a": [1, 2, 3]}, "row_count": 3, "orientation": "columns"}
 
 
-# ---------------------------------------------------------------------------
 # #4 — per-flow_id serialization
-# ---------------------------------------------------------------------------
 
 
 def test_flow_run_lock_is_per_flow_id_singleton():

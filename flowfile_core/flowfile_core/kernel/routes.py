@@ -259,7 +259,6 @@ async def execute_cell(kernel_id: str, request: ExecuteRequest, current_user=Dep
     if manager.get_kernel_owner(kernel_id) != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
     try:
-        # Force interactive mode for cell execution
         request.interactive = True
         manager.resolve_node_paths(request)
         return await manager.execute(kernel_id, request)
@@ -381,9 +380,7 @@ async def get_display_outputs(
         return []
 
 
-# ---------------------------------------------------------------------------
 # Artifact Persistence & Recovery endpoints
-# ---------------------------------------------------------------------------
 
 
 @router.post("/{kernel_id}/recover", response_model=RecoveryStatus)

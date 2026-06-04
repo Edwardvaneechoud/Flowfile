@@ -1,4 +1,3 @@
-// stateStore.ts
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { Z_INDEX } from "./zIndex";
@@ -142,10 +141,8 @@ export const useItemStore = defineStore("itemStore", () => {
       return;
     }
 
-    // Don't modify if item is in fullscreen
     if (items.value[id].fullScreen) return;
 
-    // Find the maximum z-index among all OTHER non-fullscreen items
     let maxZIndex = BASE_Z_INDEX - 1;
     Object.entries(items.value).forEach(([itemId, item]) => {
       if (!item.fullScreen && itemId !== id) {
@@ -153,7 +150,6 @@ export const useItemStore = defineStore("itemStore", () => {
       }
     });
 
-    // Already above all others, no change needed
     if (items.value[id].zIndex > maxZIndex) return;
 
     items.value[id].zIndex = maxZIndex + 1;
@@ -385,7 +381,6 @@ export const useItemStore = defineStore("itemStore", () => {
         items.value[id].left = items.value[id].prevLeft || 100;
         items.value[id].top = items.value[id].prevTop || 100;
 
-        // Restore all items to base, then bring this one to front
         Object.keys(items.value).forEach((otherId) => {
           items.value[otherId].zIndex = BASE_Z_INDEX;
         });
@@ -401,23 +396,18 @@ export const useItemStore = defineStore("itemStore", () => {
     writeTimers.forEach((timer) => clearTimeout(timer));
     writeTimers.clear();
 
-    // Clear all current states from localStorage (v2 keys).
     Object.keys(items.value).forEach((id) => {
       localStorage.removeItem(itemStorageKey(id));
     });
 
-    // Clear groups from localStorage
     localStorage.removeItem(groupsStorageKey);
 
-    // Reset groups
     groups.value = {};
 
-    // First pass: Reset all items to their initial state
     Object.keys(initialItemStates.value).forEach((id) => {
       const initialState = initialItemStates.value[id];
       if (!initialState) return;
 
-      // Create a fresh item state based on initial values
       const resetState: ItemLayout = {
         width: initialState.width || 400,
         height: initialState.height || 300,
@@ -433,10 +423,8 @@ export const useItemStore = defineStore("itemStore", () => {
         syncDimensions: initialState.syncDimensions,
       };
 
-      // Set the item state
       items.value[id] = resetState;
 
-      // Re-add to groups if needed
       if (resetState.group) {
         if (!groups.value[resetState.group]) {
           groups.value[resetState.group] = [];
@@ -471,10 +459,8 @@ export const useItemStore = defineStore("itemStore", () => {
       writeTimers.delete(id);
     }
 
-    // Remove from localStorage
     localStorage.removeItem(itemStorageKey(id));
 
-    // Reset to initial state
     const resetState: ItemLayout = {
       width: initialState.width || 400,
       height: initialState.height || 300,

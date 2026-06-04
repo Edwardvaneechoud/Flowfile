@@ -139,9 +139,7 @@ class UnsupportedPlatform(LocalModelError):
     """Raised when no llama.cpp build exists for this OS/arch."""
 
 
-# --------------------------------------------------------------------------- #
-# Platform + paths                                                            #
-# --------------------------------------------------------------------------- #
+# Platform + paths
 
 
 def _os_arch() -> tuple[str, str]:
@@ -292,9 +290,7 @@ def is_installed(model_id: str | None = None) -> bool:
     return _binary_installed() and _model_installed(mid)
 
 
-# --------------------------------------------------------------------------- #
-# Download + extract                                                          #
-# --------------------------------------------------------------------------- #
+# Download + extract
 
 
 def _open(url: str):
@@ -480,9 +476,7 @@ def install(model_id: str | None = None, on_progress: ProgressFn | None = None) 
         _install_lock.release()
 
 
-# --------------------------------------------------------------------------- #
-# Server lifecycle                                                            #
-# --------------------------------------------------------------------------- #
+# Server lifecycle
 
 
 @dataclass

@@ -162,7 +162,6 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
     max_pages = 1 if is_sample else max(1, pagination.max_pages)
     max_records = settings.sample_size if is_sample else pagination.max_records
 
-    # Build the static request pieces and the auth object.
     headers = dict(settings.headers)
     base_params: dict[str, str] = {k: str(v) for k, v in settings.query_params.items()}
     httpx_auth: httpx.Auth | None = None
@@ -222,7 +221,6 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
                 all_records = all_records[:max_records]
                 break
 
-            # Decide whether to fetch another page.
             if ptype == PaginationType.NONE:
                 break
             if ptype == PaginationType.OFFSET:

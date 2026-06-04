@@ -41,7 +41,6 @@ def _start_core_server() -> bool:
     """
     global _core_server_thread, _core_server_instance
 
-    # Check if already running
     try:
         with httpx.Client(timeout=2.0) as client:
             resp = client.get(f"http://localhost:{CORE_TEST_PORT}/health/status")
@@ -70,7 +69,6 @@ def _start_core_server() -> bool:
     _core_server_thread = threading.Thread(target=run_server, daemon=True)
     _core_server_thread.start()
 
-    # Wait for server to become healthy
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
@@ -111,7 +109,6 @@ def _build_kernel_image(image_tag: str) -> bool:
 
     if not dockerfile.exists():
         logger.error("Dockerfile not found at %s", dockerfile)
-        # List contents of kernel_runtime directory if it exists
         if context.exists():
             logger.error("Contents of %s: %s", context, list(context.iterdir()))
         else:
@@ -184,7 +181,6 @@ def managed_kernel(
     kernel_id = KERNEL_TEST_ID_WITH_CORE if start_core else KERNEL_TEST_ID
     container_name = f"flowfile-kernel-{kernel_id}"
 
-    # Track what we need to clean up
     core_started_by_us = False
     original_token = None
     original_core_url = None
@@ -205,7 +201,6 @@ def managed_kernel(
     import shared.storage_config as storage_module
     storage_module.storage = FlowfileStorage()
 
-    # Reset artifact storage backend singleton
     from flowfile_core.artifacts import reset_storage_backend
     reset_storage_backend()
 

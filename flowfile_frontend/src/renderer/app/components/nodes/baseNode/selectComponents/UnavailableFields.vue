@@ -14,11 +14,11 @@ import PopOver from "../../../../features/designer/editor/PopOver.vue";
 defineProps({
   iconText: {
     type: String,
-    default: "!", // Default to '!' if no input is provided
+    default: "!",
   },
   tooltipText: {
     type: String,
-    default: "Field not available", // Default tooltip text
+    default: "Field not available",
   },
 });
 </script>

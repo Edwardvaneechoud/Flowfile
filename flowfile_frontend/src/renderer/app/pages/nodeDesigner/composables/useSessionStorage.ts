@@ -38,7 +38,6 @@ export function useSessionStorage(
     resetState();
   }
 
-  // Setup auto-save watcher
   function setupAutoSave(watchSources: () => any[]) {
     watch(
       watchSources,
@@ -49,7 +48,6 @@ export function useSessionStorage(
     );
   }
 
-  // Load on mount
   function setupLoadOnMount() {
     onMounted(() => {
       loadFromSessionStorage();

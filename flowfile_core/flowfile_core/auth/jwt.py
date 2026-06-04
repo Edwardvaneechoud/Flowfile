@@ -83,7 +83,6 @@ def get_current_user_sync(token: str, db: Session):
         raise credentials_exception
 
     try:
-        # Decode token in all modes (Electron and Docker)
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
         # Reject refresh tokens used as access tokens
         if payload.get("type") == "refresh":
@@ -95,22 +94,18 @@ def get_current_user_sync(token: str, db: Session):
     except JWTError:
         raise credentials_exception from None
 
-    # In Electron mode, if token is valid, return default user (always admin in electron mode)
     if os.environ.get("FLOWFILE_MODE") == "electron":
         if token_data.username == "local_user":
             electron_user = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
             return electron_user
         else:
-            # Invalid username in token
             raise credentials_exception
     else:
-        # In Docker mode, get user from database
         user = db.query(db_models.User).filter(db_models.User.username == token_data.username).first()
         if user is None:
             raise credentials_exception
         if user.disabled:
             raise HTTPException(status_code=400, detail="Inactive user")
-        # Convert to Pydantic User model
         return User(
             username=user.username,
             id=user.id,
@@ -123,7 +118,6 @@ def get_current_user_sync(token: str, db: Session):
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    # Require token in all modes
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -134,7 +128,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         raise credentials_exception
 
     try:
-        # Decode token in all modes (Electron and Docker)
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
         # Reject refresh tokens used as access tokens
         if payload.get("type") == "refresh":
@@ -146,22 +139,18 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     except JWTError:
         raise credentials_exception from None
 
-    # In Electron mode, if token is valid, return default user (always admin in electron mode)
     if os.environ.get("FLOWFILE_MODE") == "electron":
         if token_data.username == "local_user":
             electron_user = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
             return electron_user
         else:
-            # Invalid username in token
             raise credentials_exception
     else:
-        # In Docker mode, get user from database
         user = db.query(db_models.User).filter(db_models.User.username == token_data.username).first()
         if user is None:
             raise credentials_exception
         if user.disabled:
             raise HTTPException(status_code=400, detail="Inactive user")
-        # Convert to Pydantic User model
         return User(
             username=user.username,
             id=user.id,
@@ -238,7 +227,6 @@ async def get_current_user_from_query(
         raise credentials_exception
 
     try:
-        # Decode token
         payload = jwt.decode(access_token, get_jwt_secret(), algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
@@ -247,7 +235,6 @@ async def get_current_user_from_query(
     except JWTError:
         raise credentials_exception from None
 
-    # Handle authentication based on deployment mode (same as your existing logic)
     if os.environ.get("FLOWFILE_MODE") == "electron":
         if token_data.username == "local_user":
             electron_user = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
@@ -255,13 +242,11 @@ async def get_current_user_from_query(
         else:
             raise credentials_exception
     else:
-        # In Docker mode, get user from database
         user = db.query(db_models.User).filter(db_models.User.username == token_data.username).first()
         if user is None:
             raise credentials_exception
         if user.disabled:
             raise HTTPException(status_code=400, detail="Inactive user")
-        # Convert to Pydantic User model
         return User(
             username=user.username,
             id=user.id,
@@ -297,7 +282,6 @@ async def get_user_or_internal_service(
     right user in multi-user deployments. Falls back to a synthetic
     ``_internal_service`` user when no kernel id is supplied (legacy callers).
     """
-    # First, try internal service token
     if x_internal_token:
         try:
             if verify_internal_token(x_internal_token):
@@ -343,5 +327,4 @@ async def get_user_or_internal_service(
             # Token not configured or invalid user ID - fall through to JWT auth
             pass
 
-    # Fall back to JWT auth - delegate to existing function
     return await get_current_user(token=token, db=db)

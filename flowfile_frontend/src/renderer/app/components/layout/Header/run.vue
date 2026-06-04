@@ -30,7 +30,7 @@ const props = defineProps({
   },
   persistPolling: {
     type: Boolean,
-    default: false, // RunButton doesn't need persistent polling by default
+    default: false,
   },
 });
 
@@ -49,10 +49,8 @@ const {
   pollingKey: `run_button_${props.flowId}`,
 });
 
-// Wrapper to also advance tutorial when run is clicked
 const runFlow = () => {
   executeFlow();
-  // Advance tutorial if we're on the "run-flow" step
   if (tutorialStore.isActive && tutorialStore.currentStep?.id === "run-flow") {
     setTimeout(() => {
       tutorialStore.nextStep();
@@ -62,7 +60,6 @@ const runFlow = () => {
 
 defineEmits(["logs-start", "logs-stop"]);
 
-// Expose methods if parent component needs them
 defineExpose({
   startPolling,
   stopPolling,

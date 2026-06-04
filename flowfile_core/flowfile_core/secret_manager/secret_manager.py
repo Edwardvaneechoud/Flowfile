@@ -36,7 +36,6 @@ def derive_user_key(user_id: int) -> bytes:
     """
     master_key = get_master_key().encode()
 
-    # Use HKDF to derive a user-specific key
     hkdf = HKDF(
         algorithm=hashes.SHA256(),
         length=32,  # Fernet requires 32 bytes
@@ -44,7 +43,6 @@ def derive_user_key(user_id: int) -> bytes:
         info=f"user-{user_id}".encode(),  # User-specific context
     )
 
-    # Derive raw key material and encode for Fernet
     derived_key = hkdf.derive(master_key)
     return base64.urlsafe_b64encode(derived_key)
 
@@ -100,7 +98,6 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
     Returns:
         SecretStr: The decrypted value wrapped in SecretStr
     """
-    # Check for new versioned format with embedded user_id
     if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
         # Parse: $ffsec$1${user_id}${fernet_token}
         remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]
@@ -142,7 +139,6 @@ def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
 def store_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.Secret:
     encrypted_value = encrypt_secret(secret.value.get_secret_value(), user_id)
 
-    # Store in database
     db_secret = db_models.Secret(
         name=secret.name,
         encrypted_value=encrypted_value,

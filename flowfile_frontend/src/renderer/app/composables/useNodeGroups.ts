@@ -1,4 +1,3 @@
-// composables/useNodeGroups.ts
 // Shared logic for visual node groups — labeled, resizable containers drawn around
 // nodes. Groups are organizational only: they never affect execution or results.
 //

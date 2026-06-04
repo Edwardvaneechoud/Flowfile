@@ -20,9 +20,7 @@ export interface GaFieldGroup {
   options: GaFieldOption[];
 }
 
-// ---------------------------------------------------------------------------
 // Dimensions
-// ---------------------------------------------------------------------------
 
 export const GA4_DIMENSION_GROUPS: GaFieldGroup[] = [
   {
@@ -190,9 +188,7 @@ export const GA4_DIMENSION_GROUPS: GaFieldGroup[] = [
   },
 ];
 
-// ---------------------------------------------------------------------------
 // Metrics
-// ---------------------------------------------------------------------------
 
 export const GA4_METRIC_GROUPS: GaFieldGroup[] = [
   {

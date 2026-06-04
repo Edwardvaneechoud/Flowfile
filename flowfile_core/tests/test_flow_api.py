@@ -34,9 +34,7 @@ from flowfile_core.schemas.flow_api_schema import (
 )
 from flowfile_core.schemas.schemas import FlowParameter
 
-# ---------------------------------------------------------------------------
 # Helpers / fixtures
-# ---------------------------------------------------------------------------
 
 
 def _build_and_save_flow(path, orientation: str = "records") -> None:
@@ -106,9 +104,7 @@ def _force_local_api_execution(monkeypatch):
     monkeypatch.setattr(api_runner, "get_global_execution_location", lambda: "local")
 
 
-# ---------------------------------------------------------------------------
 # Runner: execution + serialization + parameter filtering
-# ---------------------------------------------------------------------------
 
 
 def test_run_flow_as_api_records_with_param(tmp_path):
@@ -215,9 +211,7 @@ def test_serialize_falls_back_to_local_when_worker_unreachable(monkeypatch):
     assert out == {"data": [{"region": "EU", "v": 1}], "row_count": 1, "orientation": "records"}
 
 
-# ---------------------------------------------------------------------------
 # Typed parameter validation
-# ---------------------------------------------------------------------------
 
 
 def test_resolve_params_typed_coercion():
@@ -248,9 +242,7 @@ def test_boolean_coercion():
         api_runner._coerce(spec, "maybe")
 
 
-# ---------------------------------------------------------------------------
 # API keys + auth dependency
-# ---------------------------------------------------------------------------
 
 
 def test_api_key_hash_roundtrip():
@@ -328,9 +320,7 @@ def test_verify_api_key_expired(db_session):
     assert exc.value.status_code == 401
 
 
-# ---------------------------------------------------------------------------
 # Management endpoints (publish + keys)
-# ---------------------------------------------------------------------------
 
 
 def test_publish_endpoint_and_keys(db_session, tmp_path):
@@ -427,9 +417,7 @@ def test_publish_requires_api_response_node(db_session, tmp_path):
     assert exc.value.status_code == 400
 
 
-# ---------------------------------------------------------------------------
 # Public-endpoint hardening (error hiding, concurrency cap, key toggle, races)
-# ---------------------------------------------------------------------------
 
 
 def _publish_via_db(db_session, tmp_path, slug="sales"):

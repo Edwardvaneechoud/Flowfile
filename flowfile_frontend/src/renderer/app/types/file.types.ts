@@ -1,9 +1,6 @@
 // File system related TypeScript interfaces and types
-// Consolidated from features/designer/components/fileBrowser/types.ts
 
-// ============================================================================
 // File Info Types
-// ============================================================================
 
 export interface FileInfo {
   name: string;
@@ -17,9 +14,7 @@ export interface FileInfo {
   exists?: boolean;
 }
 
-// ============================================================================
 // Directory Contents Params
-// ============================================================================
 
 export interface DirectoryContentsParams {
   file_types?: string[];

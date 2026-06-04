@@ -2,7 +2,6 @@ import { NodeTemplate } from "./types";
 import { flowfileCorebaseURL } from "../../../config/constants";
 import { fetchNodeTemplates } from "../../composables/useNodes";
 
-// List of built-in icons that are bundled with the app
 const BUILTIN_ICONS = new Set([
   "Output2.png",
   "airbyte.png",
@@ -55,7 +54,6 @@ const BUILTIN_ICONS = new Set([
   "wait_for.svg",
 ]);
 
-// Default fallback icon
 const DEFAULT_ICON = "user-defined-icon.png";
 
 /**
@@ -74,12 +72,10 @@ export const getImageUrl = (name: string): string => {
     return new URL(`./assets/icons/${DEFAULT_ICON}`, import.meta.url).href;
   }
 
-  // If it's a built-in icon, use the static asset
   if (isBuiltinIcon(name)) {
     return new URL(`./assets/icons/${name}`, import.meta.url).href;
   }
 
-  // Otherwise, it's a custom icon served from the backend API (use full URL)
   return `${flowfileCorebaseURL}user_defined_components/icon/${name}`;
 };
 

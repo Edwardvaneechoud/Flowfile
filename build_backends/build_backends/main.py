@@ -15,7 +15,6 @@ def merge_directories(directories: list[str], target_dir: str, cleanup_after_mer
     Merge all files from two folders into a new target directory.
     After successful merge, removes the original folders.
     """
-    # Create target directory
     Path(target_dir).mkdir(parents=True, exist_ok=True)
     for directory in directories:
         if os.path.exists(directory):
@@ -376,12 +375,10 @@ def combine_packages():
 
 
 def main():
-    # Clean previous builds
     for dir_name in ["services_dist"]:
         if os.path.exists(dir_name):
             shutil.rmtree(dir_name)
 
-    # Common imports for both projects
     common_imports = [
         "fastexcel",
         "polars",
@@ -414,10 +411,7 @@ def main():
         "polars_expr_transformer",
     ]
 
-    # Build both projects
     builds_successful = True
-
-    # Build flowfile_worker
 
     if not build_backend(
         directory=os.path.join("flowfile_worker", "flowfile_worker"),
@@ -426,8 +420,6 @@ def main():
         hidden_imports=common_imports,
     ):
         builds_successful = False
-
-    # Build flowfile_core
 
     if not build_backend(
         directory=os.path.join("flowfile_core", "flowfile_core"),

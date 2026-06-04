@@ -78,7 +78,6 @@ def ensure_no_database_connections():
             delete_database_connection(db, connection.connection_name, 1)
 
 
-# Create an authenticated test client
 def get_test_client():
     """Get an authenticated test client"""
     token = get_auth_token()
@@ -188,7 +187,7 @@ def ensure_clean_flow() -> FlowId:
     flow_path: str = str(
         find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp/sample_flow_path.yaml"
     )
-    remove_flow(flow_path)  # Remove the flow if it exists
+    remove_flow(flow_path)
     sleep(0.1)
     r = client.post("editor/create_flow", params={"flow_path": flow_path})
     if r.status_code != 200:
@@ -991,13 +990,11 @@ def test_update_flow_with_settings_polars_code():
 
 
 def test_instant_function_result():
-    # Setup nodes
     flow_id = create_flow_with_manual_input()
     add_node(flow_id=flow_id, node_id=2, node_type="formula", pos_x=0, pos_y=0)
 
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(flow_id, connection)
-    # Await the result
     response = client.get(
         "/custom_functions/instant_result", params={"flow_id": flow_id, "node_id": 2, "func_string": "[name]"}
     )
@@ -1011,7 +1008,6 @@ def test_instant_function_result_fail():
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(flow_id, connection)
 
-    # Await the result
     response = client.get(
         "/custom_functions/instant_result", params={"flow_id": flow_id, "node_id": 2, "func_string": "name"}
     )
@@ -1072,12 +1068,10 @@ def test_python_script_node_data_before_run():
     with a predicted schema from the input, not trigger execution."""
     flow_id = create_flow_with_manual_input()  # node 1: manual_input with columns ['name', 'city']
 
-    # Add python_script node
     add_node(flow_id, 2, node_type="python_script", pos_x=200, pos_y=0)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(flow_id, connection)
 
-    # Configure python_script with some code
     settings = input_schema.NodePythonScript(
         flow_id=flow_id,
         node_id=2,
@@ -1092,16 +1086,13 @@ def test_python_script_node_data_before_run():
     r = client.post("/update_settings/", json=settings.model_dump(), params={"node_type": "python_script"})
     assert r.status_code == 200
 
-    # Request node data — this is what the frontend does when you click the node
     response = client.get("/node", params={"flow_id": flow_id, "node_id": 2})
     assert response.status_code == 200
 
     node_data = output_model.NodeData(**response.json())
 
-    # The predicted schema should include the input columns (name, city)
     assert node_data.main_output is not None
     assert node_data.main_output.columns == ["name", "city"], "Predicted schema should pass through input columns"
-    # Data should be empty since node hasn't run
     assert node_data.main_output.data == [], "Node data should be empty before run"
 
 
@@ -1154,17 +1145,14 @@ def test_node_upstream_ids_two_independent_chains():
     add_node(flow_id, 4, node_type="select", pos_x=400, pos_y=0)
     connect_node(flow_id, input_schema.NodeConnection.create_from_simple_input(3, 4))
 
-    # Node 2 should only see node 1 as upstream
     r = client.get("/flow/node_upstream_ids", params={"flow_id": flow_id, "node_id": 2})
     assert r.status_code == 200
     assert set(r.json()["upstream_node_ids"]) == {1}
 
-    # Node 4 should only see node 3 as upstream
     r = client.get("/flow/node_upstream_ids", params={"flow_id": flow_id, "node_id": 4})
     assert r.status_code == 200
     assert set(r.json()["upstream_node_ids"]) == {3}
 
-    # Start node (node 1) has no upstream
     r = client.get("/flow/node_upstream_ids", params={"flow_id": flow_id, "node_id": 1})
     assert r.status_code == 200
     assert r.json()["upstream_node_ids"] == []
@@ -1199,13 +1187,12 @@ def test_flow_cancel():
     sleep(0.5)
     while flow.latest_run_info is not None and 2 not in [n.node_id for n in flow.latest_run_info.node_step_result]:
         sleep(0.5)
-    sleep(2)  # give it some time to start up
-    # actual start of the test
+    sleep(2)
     response = client.post("/flow/cancel/", params={"flow_id": flow_id})
     assert response.status_code == 200, "Flow not canceled"
     assert flow.flow_settings.is_canceled, "Flow not requested to cancel"
     assert flow.flow_settings.is_running, "Flow stopped running to early, without waiting for all processes to cancel"
-    thread.join()  # Wait for the thread to finish
+    thread.join()
     assert flow.get_run_info().node_step_result[1].success is None, "Flow not canceled"
     assert flow.get_run_info().node_step_result[0].success, "Cancel should not reset nodes that ran before cancel"
     assert flow.flow_settings.is_running is False, "Indicator not set to false"
@@ -1803,19 +1790,16 @@ def test_flow_run_status():
     assert response.json()["end_time"] is not None, "Flow should have ended"
 
 
-# =============================================================================
 # Path Traversal Security Tests
 #
 # Note: These tests verify sandboxing behavior which is enforced in Docker/package mode.
 # In Electron mode, users have access to their local filesystem (which is expected for
 # a desktop application). Tests that check absolute path blocking use monkeypatch to
 # simulate Docker mode.
-# =============================================================================
 
 
 def test_directory_contents_in_electron_mode():
     """Test that directory_contents allows browsing any directory in Electron mode."""
-    # Default mode is electron, so this should work for any readable directory
     response = client.get("/files/directory_contents/", params={"directory": "/tmp", "include_hidden": False})
     assert response.status_code == 200, "Should be able to browse /tmp in Electron mode"
     assert isinstance(response.json(), list), "Should return a list of file info"
@@ -1846,7 +1830,6 @@ def test_directory_contents_allowed_inside_sandbox(monkeypatch):
     from flowfile_core.routes import routes
 
     monkeypatch.setattr(routes, "is_electron_mode", lambda: False)
-    # user_data_directory itself should be accessible
     response = client.get(
         "/files/directory_contents/", params={"directory": str(storage.user_data_directory), "include_hidden": False}
     )
@@ -1864,7 +1847,6 @@ def test_directory_contents_invalid_directory():
 
 def test_get_local_files_path_traversal_blocked():
     """Test that get_local_files blocks access to directories outside sandbox."""
-    # Attempt to access /etc directory (should be blocked)
     # Note: This endpoint uses SecureFileExplorer which sandboxes to user_data_directory
     response = client.get("/files/files_in_local_directory/", params={"directory": "/etc"})
     assert response.status_code == 403, "Path traversal to /etc should be blocked"
@@ -1881,7 +1863,6 @@ def test_upload_file_sanitizes_filename():
     """Test that upload_file sanitizes filenames to prevent path traversal."""
     import io
 
-    # Create a file with a malicious filename containing path traversal
     malicious_filename = "../../../etc/cron.d/evil"
     file_content = b"malicious content"
 
@@ -1890,14 +1871,12 @@ def test_upload_file_sanitizes_filename():
 
     assert response.status_code == 200, "Upload should succeed with sanitized filename"
     result = response.json()
-    # The filename should be sanitized to just 'evil' (basename without ..)
     assert result["filename"] == "evil", f"Filename should be sanitized to 'evil', got: {result['filename']}"
     assert "../" not in result["filepath"], "Filepath should not contain path traversal sequences"
     # Normalize path separators for cross-platform comparison
     normalized_filepath = result["filepath"].replace("\\", "/")
     assert normalized_filepath == "uploads/evil", f"Filepath should be 'uploads/evil', got: {result['filepath']}"
 
-    # Clean up uploaded file
     if os.path.exists(result["filepath"]):
         os.remove(result["filepath"])
 
@@ -1917,19 +1896,16 @@ def test_upload_file_sanitizes_filename_with_multiple_traversals():
     assert "../" not in result["filename"], "Filename should not contain path traversal"
     assert "/" not in result["filename"], "Filename should not contain directory separators"
 
-    # Clean up
     if os.path.exists(result["filepath"]):
         os.remove(result["filepath"])
 
 
 def test_import_flow_path_traversal_blocked(monkeypatch):
     """Test that import_flow blocks access to files outside sandbox in Docker mode."""
-    # Patch is_electron_mode to return False (simulating Docker/package mode)
     # This is needed because FLOWFILE_MODE is cached at module load time
     from flowfile_core.configs import settings
 
     monkeypatch.setattr(settings, "is_electron_mode", lambda: False)
-    # Attempt to import /etc/passwd (should be blocked in Docker mode)
     response = client.get("/import_flow/", params={"flow_path": "/etc/passwd"})
     assert response.status_code == 403, "Path traversal to /etc/passwd should be blocked in Docker mode"
     assert "Access denied" in response.json()["detail"], "Should return access denied message"
@@ -1944,7 +1920,6 @@ def test_import_flow_path_traversal_with_dots():
 
 def test_save_flow_path_traversal_blocked(monkeypatch):
     """Test that save_flow blocks saving to paths outside sandbox in Docker mode."""
-    # Patch is_electron_mode to return False (simulating Docker/package mode)
     from flowfile_core.configs import settings
 
     monkeypatch.setattr(settings, "is_electron_mode", lambda: False)
@@ -1965,11 +1940,9 @@ def test_save_flow_path_traversal_with_dots():
 
 def test_get_excel_sheet_names_path_traversal_blocked(monkeypatch):
     """Test that get_excel_sheet_names blocks access to files outside sandbox in Docker mode."""
-    # Patch is_electron_mode to return False (simulating Docker/package mode)
     from flowfile_core.configs import settings
 
     monkeypatch.setattr(settings, "is_electron_mode", lambda: False)
-    # Attempt to read /etc/passwd (should be blocked in Docker mode)
     response = client.get("/api/get_xlsx_sheet_names", params={"path": "/etc/passwd"})
     assert response.status_code == 403, "Path traversal to /etc/passwd should be blocked in Docker mode"
     assert "Access denied" in response.json()["detail"], "Should return access denied message"
@@ -1984,7 +1957,6 @@ def test_get_excel_sheet_names_path_traversal_with_dots():
 
 def test_get_available_flow_files_path_traversal_blocked():
     """Test that available_flow_files blocks access to directories outside sandbox."""
-    # Attempt to scan /etc directory (should return empty or be blocked)
     response = client.get("/files/available_flow_files", params={"path": "/etc"})
     # Should return empty list for paths outside sandbox (graceful handling)
     assert response.status_code == 200, "Should return 200 with empty list"
@@ -2006,7 +1978,6 @@ def test_get_node_reference():
     flow_id = create_flow_with_manual_input()
     response = client.get("/node/reference", params={"flow_id": flow_id, "node_id": 1})
     assert response.status_code == 200, "Node reference not retrieved"
-    # Default should be empty string
     assert response.json() == "", "Default node reference should be empty string"
 
 
@@ -2014,12 +1985,10 @@ def test_set_node_reference():
     """Test setting a node reference."""
     flow_id = create_flow_with_manual_input()
 
-    # Set a valid reference
     response = client.post("/node/reference/", params={"flow_id": flow_id, "node_id": 1}, json="my_custom_ref")
     assert response.status_code == 200, "Node reference not set"
     assert response.json() is True, "Should return True on success"
 
-    # Verify the reference was set
     response = client.get("/node/reference", params={"flow_id": flow_id, "node_id": 1})
     assert response.status_code == 200
     assert response.json() == "my_custom_ref", "Node reference should be updated"
@@ -2056,14 +2025,11 @@ def test_set_node_reference_empty_clears():
     """Test that empty string clears the node reference."""
     flow_id = create_flow_with_manual_input()
 
-    # First set a reference
     client.post("/node/reference/", params={"flow_id": flow_id, "node_id": 1}, json="my_ref")
 
-    # Then clear it with empty string
     response = client.post("/node/reference/", params={"flow_id": flow_id, "node_id": 1}, json="")
     assert response.status_code == 200, "Empty reference should be allowed"
 
-    # Verify it was cleared
     response = client.get("/node/reference", params={"flow_id": flow_id, "node_id": 1})
     assert response.json() == "", "Node reference should be empty after clearing"
 
@@ -2117,14 +2083,11 @@ def test_validate_node_reference_unique():
     """Test that validation checks uniqueness across nodes."""
     flow_id = ensure_clean_flow()
 
-    # Add two nodes
     add_node_placeholder("manual_input", flow_id=flow_id, node_id=1)
     add_node_placeholder("manual_input", flow_id=flow_id, node_id=2)
 
-    # Set reference on first node
     client.post("/node/reference/", params={"flow_id": flow_id, "node_id": 1}, json="my_unique_ref")
 
-    # Try to validate same reference for second node
     response = client.get(
         "/node/validate_reference", params={"flow_id": flow_id, "node_id": 2, "reference": "my_unique_ref"}
     )
@@ -2138,14 +2101,11 @@ def test_set_node_reference_rejects_duplicate():
     """Test that setting a duplicate reference is rejected."""
     flow_id = ensure_clean_flow()
 
-    # Add two nodes
     add_node_placeholder("manual_input", flow_id=flow_id, node_id=1)
     add_node_placeholder("manual_input", flow_id=flow_id, node_id=2)
 
-    # Set reference on first node
     client.post("/node/reference/", params={"flow_id": flow_id, "node_id": 1}, json="my_ref")
 
-    # Try to set same reference on second node
     response = client.post("/node/reference/", params={"flow_id": flow_id, "node_id": 2}, json="my_ref")
     assert response.status_code == 422, "Duplicate reference should be rejected"
     assert "already used" in response.json()["detail"].lower(), "Error should mention duplicate"
@@ -2159,19 +2119,15 @@ def test_node_reference_not_found():
     assert response.status_code == 404, "Non-existent node should return 404"
 
 
-# ---------------------------------------------------------------------------
 # /node/input_names endpoint
-# ---------------------------------------------------------------------------
 
 
 def test_get_input_names_with_reference():
     """input_names returns source node_reference when set."""
     flow_id = create_flow_with_manual_input()  # node 1
 
-    # Set a reference on node 1
     client.post("/node/reference/", params={"flow_id": flow_id, "node_id": 1}, json="orders")
 
-    # Add python_script node 2 connected to node 1
     add_node(flow_id, 2, node_type="python_script", pos_x=200, pos_y=0)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(flow_id, connection)

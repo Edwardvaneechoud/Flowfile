@@ -108,10 +108,8 @@ export const useThemeStore = defineStore("theme", {
      * Initialize theme on app startup
      */
     initialize() {
-      // Apply initial theme
       this.applyTheme();
 
-      // Listen for system theme changes
       if (typeof window !== "undefined" && window.matchMedia) {
         const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
         mediaQuery.addEventListener("change", () => {

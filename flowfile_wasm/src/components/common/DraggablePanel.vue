@@ -31,7 +31,6 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { getPanelState, savePanelState, type PanelState } from '../../stores/panel-store'
 import { usePanelZIndexStore } from '../../stores/panel-zindex-store'
 
-// Use centralized z-index store for proper state sharing
 const zIndexStore = usePanelZIndexStore()
 
 interface Props {
@@ -57,7 +56,6 @@ const props = withDefaults(defineProps<Props>(), {
 
 const panelRef = ref<HTMLElement | null>(null)
 
-// Panel state
 const width = ref(props.initialWidth)
 const height = ref(props.initialHeight)
 const left = ref(props.initialLeft)
@@ -66,15 +64,12 @@ const isMinimized = ref(false)
 const isResizing = ref(false)
 const isDragging = ref(false)
 
-// Initialize zIndex with defaultZIndex prop
 const zIndex = ref(props.defaultZIndex)
 
-// Register with the z-index store if we have a panelId
 if (props.panelId) {
   zIndexStore.registerPanel(props.panelId, props.defaultZIndex)
 }
 
-// Drag state
 const startX = ref(0)
 const startY = ref(0)
 const startWidth = ref(0)
@@ -108,7 +103,6 @@ function getContainerRect(): { width: number; height: number; left: number; top:
   return { width: window.innerWidth, height: window.innerHeight, left: 0, top: 0 }
 }
 
-// Save current panel state to storage
 function saveCurrentState() {
   if (!props.panelId) return
 
@@ -127,7 +121,6 @@ function saveCurrentState() {
   savePanelState(props.panelId, state)
 }
 
-// Detect which edges the panel is currently docked/snapped to
 function detectDockedEdges(vw: number, vh: number) {
   const panelRight = left.value + width.value
   const panelBottom = top.value + height.value
@@ -137,37 +130,30 @@ function detectDockedEdges(vw: number, vh: number) {
     right: Math.abs(panelRight - vw) <= EDGE_SNAP_THRESHOLD,
     top: top.value <= EDGE_SNAP_THRESHOLD,
     bottom: Math.abs(panelBottom - vh) <= EDGE_SNAP_THRESHOLD,
-    // Check if panel spans full width/height (stretched to edges)
     fullWidth: left.value <= EDGE_SNAP_THRESHOLD && Math.abs(panelRight - vw) <= EDGE_SNAP_THRESHOLD,
     fullHeight: top.value <= EDGE_SNAP_THRESHOLD && Math.abs(panelBottom - vh) <= EDGE_SNAP_THRESHOLD
   }
 }
 
-// Smart resize handler - maintains edge docking and proportional positioning
 function handleWindowResizeSmartly() {
   const container = getContainerRect()
   const newVw = container.width
   const newVh = container.height
 
-  // Skip if viewport didn't actually change
   if (newVw === prevViewportWidth && newVh === prevViewportHeight) {
     return
   }
 
-  // Detect current docking state before resize
   const docked = detectDockedEdges(prevViewportWidth, prevViewportHeight)
 
-  // Calculate scale factors
   const scaleX = newVw / prevViewportWidth
   const scaleY = newVh / prevViewportHeight
 
-  // Calculate new dimensions based on docking state
   let newLeft = left.value
   let newTop = top.value
   let newWidth = width.value
   let newHeight = height.value
 
-  // Handle horizontal positioning and width
   if (docked.fullWidth) {
     // Panel spans full width - maintain that
     newLeft = 0
@@ -187,7 +173,6 @@ function handleWindowResizeSmartly() {
     newLeft = Math.round(left.value * scaleX)
   }
 
-  // Handle vertical positioning and height
   if (docked.fullHeight) {
     // Panel spans full height - maintain that
     newTop = 0
@@ -249,21 +234,17 @@ function handleWindowResizeSmartly() {
     newLeft = newVw - MIN_VISIBLE_HEADER
   }
 
-  // Apply the new values
   left.value = Math.round(newLeft)
   top.value = Math.round(newTop)
   width.value = Math.round(newWidth)
   height.value = Math.round(newHeight)
 
-  // Update previous viewport dimensions
   prevViewportWidth = newVw
   prevViewportHeight = newVh
 
-  // Save the new state
   saveCurrentState()
 }
 
-// Debounced window resize handler
 function handleWindowResize() {
   if (resizeDebounceTimer) {
     clearTimeout(resizeDebounceTimer)
@@ -274,18 +255,15 @@ function handleWindowResize() {
   }, 16) // ~60fps debounce for smooth resizing
 }
 
-// Reset panel to initial position based on initialPosition prop
 function resetToInitialPosition() {
   const container = getContainerRect()
   const vh = container.height
   const vw = container.width
 
-  // Reset to initial dimensions
   width.value = props.initialWidth
   height.value = props.initialHeight
   isMinimized.value = false
 
-  // Calculate position based on initialPosition prop
   switch (props.initialPosition) {
     case 'right':
       left.value = vw - width.value
@@ -309,12 +287,10 @@ function resetToInitialPosition() {
       break
   }
 
-  // Update viewport tracking
   prevViewportWidth = vw
   prevViewportHeight = vh
 }
 
-// Handle layout reset event from LayoutControls
 function handleLayoutReset() {
   resetToInitialPosition()
 }
@@ -325,14 +301,12 @@ function initializePosition() {
   const vh = container.height
   const vw = container.width
 
-  // Initialize viewport tracking for smart resize
   prevViewportWidth = vw
   prevViewportHeight = vh
 
   return { vw, vh }
 }
 
-// Compute initial position based on prop
 onMounted(() => {
   let { vw, vh } = initializePosition()
 
@@ -347,11 +321,9 @@ onMounted(() => {
     })
   }
 
-  // Try to restore saved state first
   if (props.panelId) {
     const savedState = getPanelState(props.panelId)
     if (savedState) {
-      // Check if viewport has changed since state was saved
       const savedVw = savedState.savedViewportWidth
       const savedVh = savedState.savedViewportHeight
       const hasViewportInfo = savedVw !== undefined && savedVh !== undefined
@@ -362,17 +334,14 @@ onMounted(() => {
         // to ensure proper layout on first load with new code
         resetToInitialPosition()
 
-        // Restore zIndex if saved, and update the store
         if (savedState.zIndex !== undefined) {
           zIndex.value = savedState.zIndex
           zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
         }
 
-        // Save the new state with viewport info
         saveCurrentState()
       } else if (viewportChanged) {
         // Viewport changed - use the saved viewport dimensions for smart resize calculation
-        // First, restore the saved state temporarily
         width.value = savedState.width
         height.value = savedState.height
         left.value = savedState.left
@@ -383,10 +352,8 @@ onMounted(() => {
         prevViewportWidth = savedVw!
         prevViewportHeight = savedVh!
 
-        // Apply smart resize to recalculate position for new viewport
         handleWindowResizeSmartly()
 
-        // Restore zIndex if saved, and update the store
         if (savedState.zIndex !== undefined) {
           zIndex.value = savedState.zIndex
           zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
@@ -404,16 +371,13 @@ onMounted(() => {
         top.value = validTop
         isMinimized.value = savedState.isMinimized
 
-        // Restore zIndex if saved, and update the store
         if (savedState.zIndex !== undefined) {
           zIndex.value = savedState.zIndex
           zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
         }
       }
 
-      // Add resize listener before returning
       window.addEventListener('resize', handleWindowResize)
-      // Listen for layout reset events from LayoutControls
       window.addEventListener('layout-reset', handleLayoutReset)
       return
     }
@@ -443,9 +407,7 @@ onMounted(() => {
       break
   }
 
-  // Add window resize listener for smart panel repositioning
   window.addEventListener('resize', handleWindowResize)
-  // Listen for layout reset events from LayoutControls
   window.addEventListener('layout-reset', handleLayoutReset)
 
   // Observe container size changes (handles embedded editor resizing)
@@ -458,7 +420,6 @@ onMounted(() => {
   }
 })
 
-// Watch for changes to initialTop and update position (only if no saved state)
 watch(() => props.initialTop, (newTop) => {
   // Don't update position if panel has saved state (user has manually positioned it)
   if (props.panelId && getPanelState(props.panelId)) {
@@ -468,7 +429,6 @@ watch(() => props.initialTop, (newTop) => {
   const container = getContainerRect()
   top.value = newTop
 
-  // Adjust height for left/right panels
   if (props.initialPosition === 'left' || props.initialPosition === 'right') {
     height.value = container.height - newTop
   }
@@ -485,10 +445,8 @@ const panelStyle = computed(() => ({
 function bringToFront() {
   if (!props.panelId) return
 
-  // Use the centralized store to bring this panel to front
   const newZIndex = zIndexStore.bringToFront(props.panelId)
 
-  // Only update and save if the z-index actually changed
   if (newZIndex !== zIndex.value) {
     zIndex.value = newZIndex
     saveCurrentState()
@@ -590,17 +548,14 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', stopResize)
   window.removeEventListener('resize', handleWindowResize)
   window.removeEventListener('layout-reset', handleLayoutReset)
-  // Clean up container resize observer
   if (containerResizeObserver) {
     containerResizeObserver.disconnect()
     containerResizeObserver = null
   }
-  // Clear any pending debounce timer
   if (resizeDebounceTimer) {
     clearTimeout(resizeDebounceTimer)
     resizeDebounceTimer = null
   }
-  // Unregister from z-index store
   if (props.panelId) {
     zIndexStore.unregisterPanel(props.panelId)
   }

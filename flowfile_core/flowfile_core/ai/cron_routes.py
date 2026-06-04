@@ -49,7 +49,6 @@ def _ensure_known_provider(name: str | None) -> None:
 
 
 def _resolve_provider(db: Session, user_id: int, name: str | None, *, model: str | None):
-    # No pinned provider → return the first one configured for the user.
     if name is None:
         for candidate in PROVIDERS:
             try:

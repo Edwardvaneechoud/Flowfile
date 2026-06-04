@@ -43,9 +43,7 @@ router = APIRouter(
 )
 
 
-# ---------------------------------------------------------------------------
 # Dependency injection
-# ---------------------------------------------------------------------------
 
 
 def get_artifact_service(db: Session = Depends(get_db)) -> ArtifactService:
@@ -56,9 +54,7 @@ def get_artifact_service(db: Session = Depends(get_db)) -> ArtifactService:
     return ArtifactService(db, storage)
 
 
-# ---------------------------------------------------------------------------
 # Upload workflow
-# ---------------------------------------------------------------------------
 
 
 @router.post(
@@ -114,9 +110,7 @@ def finalize_upload(
         raise HTTPException(400, str(e)) from e
 
 
-# ---------------------------------------------------------------------------
 # Listing (placed before parameterized routes to avoid conflicts)
-# ---------------------------------------------------------------------------
 
 
 @router.get(
@@ -159,9 +153,7 @@ def list_artifact_names(
     return service.list_artifact_names(namespace_id=namespace_id)
 
 
-# ---------------------------------------------------------------------------
 # Retrieval
-# ---------------------------------------------------------------------------
 
 
 @router.get(
@@ -228,9 +220,7 @@ def get_artifact_by_id(
         raise HTTPException(404, "Artifact not found") from None
 
 
-# ---------------------------------------------------------------------------
 # Deletion
-# ---------------------------------------------------------------------------
 
 
 @router.delete(

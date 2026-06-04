@@ -1,4 +1,3 @@
-// src/main.ts
 import { createApp } from "vue";
 import stores from "./app/stores";
 import router from "./app/router";
@@ -15,7 +14,6 @@ import "@fortawesome/fontawesome-free/css/all.css";
 import "material-icons/iconfont/material-icons.css";
 import "./styles/main.css";
 
-// Import auth service and configured axios
 import authService from "./app/services/auth.service";
 import setupService from "./app/services/setup.service";
 import "./app/services/axios.config";
@@ -33,11 +31,9 @@ app.use(ElementPlus, {
   zIndex: 2000,
 });
 
-// Initialize theme before mounting app
 const themeStore = useThemeStore();
 themeStore.initialize();
 
-// Initialize auth before mounting app
 setupService
   .getSetupStatus()
   .then((status) => {
@@ -48,10 +44,8 @@ setupService
     console.log("Auth initialized:", authenticated ? "Authenticated" : "Not authenticated");
     console.log("Desktop mode:", authService.isInDesktopMode());
 
-    // Mount the app first
     app.mount("#app");
 
-    // If not authenticated and not in desktop mode, redirect to login
     if (!authenticated && !authService.isInDesktopMode()) {
       console.log("Redirecting to login page");
       router.push({ name: "login" });
@@ -64,7 +58,6 @@ setupService
     console.error("Auth initialization failed:", error);
     app.mount("#app");
 
-    // On error, if not in desktop mode, redirect to login
     if (!authService.isInDesktopMode()) {
       router.push({ name: "login" });
     }

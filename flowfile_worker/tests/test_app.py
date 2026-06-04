@@ -41,7 +41,6 @@ def create_fuzzy_data() -> models.FuzzyJoinInput:
         models.FuzzyMapping(left_col='city', right_col='city_right', threshold_score=60.0, fuzzy_type='levenshtein')
     ]
 
-    # Create the left and right DataFrames with the provided data
     left_df = pl.LazyFrame(
         data=[
             ('John', 'weert'),
@@ -76,7 +75,6 @@ def create_fuzzy_data() -> models.FuzzyJoinInput:
         flowfile_flow_id=1
     )
 
-    # Return the FuzzyJoinInput
     return models.FuzzyJoinInput(
         left_df_operation=left_serializable_object,
         right_df_operation=right_serializable_object,
@@ -97,7 +95,6 @@ def create_grouper_data():
 
 def test_external_package(create_grouper_data):
     df = create_grouper_data
-    # Send raw bytes with metadata in headers
     headers = {
         "Content-Type": "application/octet-stream",
         "X-Operation-Type": "store",
@@ -134,7 +131,6 @@ def test_add_fuzzy_join(create_fuzzy_data):
 
 def test_sample():
     lf = pl.LazyFrame({'value': [i for i in range(1000)]})
-    # Send raw bytes with metadata in headers
     headers = {
         "Content-Type": "application/octet-stream",
         "X-Operation-Type": "store_sample",
@@ -158,7 +154,6 @@ def test_polars_transformation():
     df = (pl.DataFrame([{'a': 1, 'b': 2}, {'a': 3, 'b': 4}]).lazy()
           .select((pl.col('a') + pl.col('b')).alias('total'))
           )
-    # Send raw bytes with metadata in headers
     headers = {
         "Content-Type": "application/octet-stream",
         "X-Operation-Type": "store",

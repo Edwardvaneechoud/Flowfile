@@ -61,11 +61,6 @@ class FormulaAutocompleteRequest(BaseModel):
     partial_text: str = Field(default="", max_length=2_000)
     intent: str | None = Field(default=None, max_length=500)
     provider: str | None = Field(default=None, min_length=1)
-    """When omitted, :func:`_resolve_provider` walks ``PROVIDERS`` in
-    registration order and picks the first one configured for the
-    user. The historical hardcoded default ``"google"`` was bitrot —
-    the typical user runs on Anthropic / OpenAI / OpenRouter / Groq,
-    so requests that didn't override ``provider`` 409'd."""
     model: str | None = None
     max_suggestions: int = Field(
         default=MAX_FORMULA_SUGGESTIONS,
@@ -87,9 +82,6 @@ class JoinKeyAutocompleteRequest(BaseModel):
     right_node_id: int | str
     how: str = Field(default="inner", min_length=1, max_length=32)
     provider: str | None = Field(default=None, min_length=1)
-    """See :class:`FormulaAutocompleteRequest.provider`. Falls back
-    to the user's first configured provider in
-    :func:`_resolve_provider` when omitted."""
     model: str | None = None
     max_pairs: int = Field(
         default=MAX_JOIN_KEY_PAIRS,

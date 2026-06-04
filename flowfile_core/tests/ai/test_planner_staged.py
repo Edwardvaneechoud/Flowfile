@@ -48,11 +48,9 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas
 
 
-# --------------------------------------------------------------------------- #
 # Test helpers (mirrored from test_planner.py to keep the fixture stack
 # self-contained — these tests use a different surface and a different
 # scripted-provider story, so a shared helper module would be over-engineering.)
-# --------------------------------------------------------------------------- #
 
 
 def _flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
@@ -187,9 +185,7 @@ def _reset_stores() -> Iterator[None]:
     diff_module.clear_for_tests()
 
 
-# --------------------------------------------------------------------------- #
 # Stage 0 — classify_intent #
-# --------------------------------------------------------------------------- #
 
 
 def test_stage_classify_exposes_only_classify_intent_tool() -> None:
@@ -302,9 +298,7 @@ def test_stage_classify_routes_non_add_to_single_stage_op(
     assert round2_tools[0].name == expected_surface_tool
 
 
-# --------------------------------------------------------------------------- #
 # Stage 1 — pick_node_type #
-# --------------------------------------------------------------------------- #
 
 
 def test_stage_pick_type_advances_to_pick_upstream() -> None:
@@ -312,7 +306,6 @@ def test_stage_pick_type_advances_to_pick_upstream() -> None:
     sess = _make_session(flow)
     provider = _ScriptedProvider(
         [
-            # Round 1: classify add
             _Step(
                 tool_calls=[
                     ToolCall(
@@ -322,7 +315,6 @@ def test_stage_pick_type_advances_to_pick_upstream() -> None:
                     )
                 ]
             ),
-            # Round 2: pick filter
             _Step(
                 tool_calls=[
                     ToolCall(
@@ -332,7 +324,6 @@ def test_stage_pick_type_advances_to_pick_upstream() -> None:
                     )
                 ]
             ),
-            # Round 3: terminate
             _Step(content=None, finish_reason="stop"),
         ]
     )
@@ -353,9 +344,7 @@ def test_stage_pick_type_advances_to_pick_upstream() -> None:
     assert len(enum_values) >= 30, f"expected at least 30 node types in enum, got {len(enum_values)}"
 
 
-# --------------------------------------------------------------------------- #
 # Stage 2 — pick_upstream #
-# --------------------------------------------------------------------------- #
 
 
 def test_stage_pick_upstream_enum_includes_live_and_staged_ids() -> None:
@@ -421,9 +410,7 @@ def test_stage_pick_upstream_advances_to_fill_settings() -> None:
     assert sess.stage == "fill_settings"
 
 
-# --------------------------------------------------------------------------- #
 # Stage 3 — fill_settings (stripped tool spec) #
-# --------------------------------------------------------------------------- #
 
 
 def test_build_staged_fill_tool_spec_strips_planner_injected_fields() -> None:
@@ -1150,9 +1137,7 @@ def test_stage_fill_settings_injects_session_upstream_into_insertion_context() -
     assert any(e.payload.get("completed_op") == "flowfile.graph.add_filter" for e in advances)
 
 
-# --------------------------------------------------------------------------- #
 # Multi-node turn #
-# --------------------------------------------------------------------------- #
 
 
 def test_multi_node_turn_serializes_through_two_classify_cycles() -> None:
@@ -1164,7 +1149,6 @@ def test_multi_node_turn_serializes_through_two_classify_cycles() -> None:
 
     provider = _ScriptedProvider(
         [
-            # Cycle 1: filter
             _Step(
                 tool_calls=[
                     ToolCall(
@@ -1210,7 +1194,6 @@ def test_multi_node_turn_serializes_through_two_classify_cycles() -> None:
                     )
                 ]
             ),
-            # Cycle 2: sort
             _Step(
                 tool_calls=[
                     ToolCall(
@@ -1550,9 +1533,7 @@ def test_pick_upstream_user_message_unchanged_when_no_staged_results() -> None:
     )
 
 
-# --------------------------------------------------------------------------- #
 # AgentSession.reset_stage_state #
-# --------------------------------------------------------------------------- #
 
 
 def test_reset_stage_state_clears_picked_fields() -> None:
@@ -1573,9 +1554,7 @@ def test_reset_stage_state_clears_picked_fields() -> None:
     assert sess.picked_right_input_id is None
 
 
-# --------------------------------------------------------------------------- #
 # — agent_live REPL surface #
-# --------------------------------------------------------------------------- #
 
 
 def _make_live_session(flow: FlowGraph, *, user_id: int = 1) -> sessions.AgentSession:
@@ -1862,9 +1841,7 @@ def test_agent_live_does_not_use_staged_results() -> None:
     assert live_ids == [1, 2, 3], live_ids
 
 
-# --------------------------------------------------------------------------- #
 # — opt-in verify-completion gate #
-# --------------------------------------------------------------------------- #
 
 
 def test_verify_completion_stage_loops_back_to_classify() -> None:
@@ -2026,11 +2003,9 @@ def test_verify_completion_skipped_when_flag_off() -> None:
     assert sess.verify_round_consumed is False
 
 
-# --------------------------------------------------------------------------- #
 # — refuse unrequested wires from freshly-staged source nodes #
 # into pre-existing live nodes (planner audit_meta builder + executor #
 # backstop end-to-end) #
-# --------------------------------------------------------------------------- #
 
 
 def test_connect_from_staged_source_to_live_is_refused_end_to_end() -> None:
@@ -2082,7 +2057,6 @@ def test_connect_from_staged_source_to_live_is_refused_end_to_end() -> None:
 
     provider = _ScriptedProvider(
         [
-            # Round 1 — classify("connect")
             _Step(
                 tool_calls=[
                     ToolCall(
@@ -2108,7 +2082,6 @@ def test_connect_from_staged_source_to_live_is_refused_end_to_end() -> None:
                 content="Wiring the new lookup into the orders node.",
                 finish_reason="tool_calls",
             ),
-            # Round 3 — terminate
             _Step(content=None, finish_reason="stop"),
         ]
     )

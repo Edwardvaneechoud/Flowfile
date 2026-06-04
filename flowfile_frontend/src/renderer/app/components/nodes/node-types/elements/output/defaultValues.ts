@@ -40,7 +40,6 @@ export function createDefaultOutputSettings(): OutputSettings {
   };
 }
 
-// Helper functions for creating specific table settings
 export function createCsvTableSettings(): OutputCsvTable {
   return {
     file_type: "csv",

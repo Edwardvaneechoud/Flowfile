@@ -109,7 +109,6 @@ def aws_access_key_connection():
     return minio_connection
 
 
-# Bundle test cases with CloudStorageReadSettings
 S3_READ_TEST_CASES = [
     S3TestReadCase(
         id="single_parquet_file",
@@ -257,19 +256,15 @@ def test_read_from_s3_with_aws_keys(test_case: S3TestReadCase, aws_access_key_co
     """Test reading various file formats and configurations from S3."""
     if test_case.read_settings.file_format == "delta":
         aws_access_key_connection.aws_allow_unsafe_html = True
-    # Create settings with the bundled read_settings
     settings = CloudStorageReadSettingsInternal(
         connection=aws_access_key_connection,
         read_settings=test_case.read_settings
     )
-    # Log test details
     logger.info(f"Testing scenario: {test_case.id}")
     logger.info(f"Resource path: {test_case.read_settings.resource_path}")
     logger.info(f"File format: {test_case.read_settings.file_format}")
-    # Create FlowDataEngine
 
     flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
-    # Basic assertions
     assert flow_data_engine is not None
     assert flow_data_engine.lazy is True
     assert flow_data_engine.schema is not None
@@ -357,7 +352,6 @@ def test_read_from_s3_with_env_vars(test_case: S3TestReadCase, s3_env_vars):
     """
     Tests reading various file formats from S3 using environment variables for authentication.
     """
-    # Create a connection object that relies on environment variables
     connection = FullCloudStorageConnection(
         connection_name="minio-test-env-vars",
         storage_type="s3",
@@ -382,15 +376,12 @@ def test_read_from_s3_with_env_vars(test_case: S3TestReadCase, s3_env_vars):
     assert flow_data_engine.lazy is True
     assert flow_data_engine.schema is not None
     assert len(flow_data_engine.columns) > 0, "Should have at least one column"
-    # Note: You may want to adjust this assertion to be more specific if possible
     assert flow_data_engine.get_number_of_records(force_calculate=True) != 6_666_666
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_read_parquet_single():
     """Test reading a Parquet file from S3 using AWS CLI credentials."""
-    # Create settings using AWS CLI authentication
-    # No access keys needed - will use ~/.aws/credentials
     settings = CloudStorageReadSettingsInternal(
         connection=FullCloudStorageConnection(
             connection_name="minio-test",

@@ -146,17 +146,14 @@ async function handleFileUpload(event: Event) {
       },
     });
 
-    // Select the newly uploaded icon
     emit("update:modelValue", response.data.file_name);
 
-    // Reload icon list
     await loadIcons();
   } catch (error: any) {
     const errorMsg = error.response?.data?.detail || error.message || "Failed to upload icon";
     alert(`Error uploading icon: ${errorMsg}`);
   }
 
-  // Reset the input
   target.value = "";
 }
 
@@ -166,12 +163,10 @@ async function deleteIcon(iconName: string) {
   try {
     await axios.delete(`/user_defined_components/delete-icon/${iconName}`);
 
-    // If the deleted icon was selected, reset to default
     if (props.modelValue === iconName) {
       emit("update:modelValue", "user-defined-icon.png");
     }
 
-    // Reload icon list
     await loadIcons();
   } catch (error: any) {
     const errorMsg = error.response?.data?.detail || error.message || "Failed to delete icon";

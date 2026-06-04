@@ -36,7 +36,6 @@ def _parse_inputs_as_iterable(
     if not inputs:
         return []
 
-    # Treat elements of a single iterable as separate inputs
     if len(inputs) == 1 and _is_iterable(inputs[0]):
         return list(inputs[0])
 
@@ -52,7 +51,6 @@ def ensure_inputs_as_iterable(inputs: Any | Iterable[Any]) -> list[Any]:
     """Convert inputs to list, treating strings as single items."""
     if inputs is None or (hasattr(inputs, "__len__") and len(inputs) == 0):
         return []
-    # Treat strings/bytes as atomic items, everything else check if iterable
     if isinstance(inputs, str | bytes) or not _is_iterable(inputs):
         return [inputs]
 
@@ -95,17 +93,13 @@ def stringify_values(v: Any) -> str:
     All other types are converted to their string representation.
     """
     if isinstance(v, str):
-        # Escape any existing double quotes in the string
         escaped_str = v.replace('"', '\\"')
         return '"' + escaped_str + '"'
     elif isinstance(v, bool):
-        # Handle booleans explicitly (returns "True" or "False")
         return str(v)
     elif isinstance(v, int | float | complex | type(None)):
-        # Handle numbers and None explicitly
         return str(v)
     else:
-        # Handle any other types
         return str(v)
 
 

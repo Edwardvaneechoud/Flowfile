@@ -25,7 +25,6 @@ def safe_eval_pl_type(type_string: str):
       - With pl. prefix: pl.List(pl.Int64)
       - Without pl. prefix: List(Int64)
     """
-    # Define allowed names in the evaluation namespace
     safe_dict = {
         # Keep pl module for backwards compatibility with pl.X format
         "pl": pl,

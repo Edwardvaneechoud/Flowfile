@@ -158,13 +158,11 @@ class SharedFilesystemStorage(ArtifactStorageBackend):
         if not staging_path.exists():
             raise FileNotFoundError(f"Staged file not found: {staging_path}")
 
-        # Verify integrity
         actual_sha256 = self._compute_sha256(staging_path)
         if actual_sha256 != expected_sha256:
             staging_path.unlink()  # Clean up failed upload
             raise ValueError(f"SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}")
 
-        # Move to permanent location
         # Use rename for atomicity when on same filesystem, fall back to
         # shutil.move for cross-filesystem moves (e.g., Docker with multiple volumes)
         final_path = self.permanent / storage_key

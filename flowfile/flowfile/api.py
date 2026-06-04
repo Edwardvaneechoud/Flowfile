@@ -19,7 +19,6 @@ import requests
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
 
-# Configuration
 FLOWFILE_HOST: str = os.environ.get("FLOWFILE_HOST", "127.0.0.1")
 FLOWFILE_PORT: int = int(os.environ.get("FLOWFILE_PORT", 63578))
 FLOWFILE_BASE_URL: str = f"http://{FLOWFILE_HOST}:{FLOWFILE_PORT}"
@@ -29,7 +28,6 @@ POETRY_PATH: str = os.environ.get("POETRY_PATH", "poetry")
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-# Global variable to track the managed server process
 _server_process: Popen | None = None
 
 
@@ -51,7 +49,6 @@ def stop_flowfile_server_process() -> None:
     if _server_process and _server_process.poll() is None:
         logger.info(f"Stopping managed Flowfile server process (PID: {_server_process.pid})...")
 
-        # Windows-specific handling
         if platform.system() == "Windows":
             try:
                 # On Windows, use subprocess to kill the process tree
@@ -61,7 +58,6 @@ def stop_flowfile_server_process() -> None:
                 logger.info("Server process terminated (Windows).")
             except Exception as e:
                 logger.error(f"Error during Windows process termination: {e}")
-                # Fallback to standard terminate/kill
                 try:
                     _server_process.terminate()
                     _server_process.wait(timeout=2)
@@ -69,9 +65,7 @@ def stop_flowfile_server_process() -> None:
                     _server_process.kill()
                     _server_process.wait()
         else:
-            # Unix-like systems
             try:
-                # Try SIGTERM first
                 _server_process.terminate()
                 _server_process.wait(timeout=5)
                 logger.info("Server process terminated gracefully.")
@@ -85,7 +79,6 @@ def stop_flowfile_server_process() -> None:
 
         _server_process = None
 
-        # Wait for the port to be released
         max_wait = 10
         start_time = time.time()
         while time.time() - start_time < max_wait:
@@ -104,20 +97,16 @@ def is_poetry_environment() -> bool:
     2. If VIRTUAL_ENV points to a poetry environment
     3. If POETRY_ACTIVE environment variable is set
     """
-    # Check if explicitly set via env variable
     if FORCE_POETRY:
         return True
 
-    # Check if POETRY_ACTIVE is set
     if os.environ.get("POETRY_ACTIVE", "").lower() in ("true", "1", "yes"):
         return True
 
-    # Check if we're in a poetry virtual environment
     venv_path = os.environ.get("VIRTUAL_ENV", "")
     if venv_path and ("poetry" in venv_path.lower() or Path(venv_path).joinpath(".poetry-venv").exists()):
         return True
 
-    # Look for pyproject.toml with poetry section
     cwd = Path.cwd()
     for parent in [cwd, *cwd.parents]:
         pyproject = parent / "pyproject.toml"
@@ -159,7 +148,6 @@ def build_server_command(module_name: str) -> list[str]:
         else:
             logger.warning(f"Poetry command not found at '{POETRY_PATH}'. Falling back to Python module.")
 
-    # Case 2: Fallback to direct script execution
     logger.info("Falling back to direct script execution.")
     scripts_dir = Path(sys.executable).parent
     command: list[str]
@@ -226,11 +214,9 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> tup
         logger.warning("Server process object exists but API not responding. Attempting to restart.")
         stop_flowfile_server_process()
 
-    # Build command automatically based on environment detection
     command = build_server_command(module_name)
     logger.info(f"Starting server with command: {' '.join(command)}")
     try:
-        # Windows-specific subprocess creation
         if platform.system() == "Windows":
             # Use CREATE_NEW_PROCESS_GROUP flag on Windows
             _server_process = Popen(

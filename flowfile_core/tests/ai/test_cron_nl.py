@@ -23,9 +23,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.configs import settings as core_settings
 
-# --------------------------------------------------------------------------- #
-# Fakes #
-# --------------------------------------------------------------------------- #
+# Fakes
 
 
 class _FakeProvider:
@@ -92,9 +90,7 @@ def _payload(cron_expression: str, explanation: str | None = None) -> str:
     return json.dumps(obj)
 
 
-# --------------------------------------------------------------------------- #
-# 1. Surface vocabulary lockstep #
-# --------------------------------------------------------------------------- #
+# 1. Surface vocabulary lockstep
 
 
 def test_cron_surface_in_lockstep() -> None:
@@ -135,9 +131,7 @@ def test_cron_surface_in_lockstep() -> None:
         assert "cron" in provider_cls.surface_models, f"{provider_cls.__name__} missing cron in surface_models"
 
 
-# --------------------------------------------------------------------------- #
-# 2. Generation logic #
-# --------------------------------------------------------------------------- #
+# 2. Generation logic
 
 
 @pytest.mark.asyncio
@@ -249,9 +243,7 @@ async def test_markdown_fenced_json_is_unwrapped() -> None:
     assert resp.cron_expression == "*/15 * * * *"
 
 
-# --------------------------------------------------------------------------- #
-# 3. Routes #
-# --------------------------------------------------------------------------- #
+# 3. Routes
 
 
 @pytest.fixture
@@ -317,9 +309,7 @@ def test_route_generate_cron_503_when_flag_off(authed_client: TestClient) -> Non
     assert response.status_code == 503
 
 
-# --------------------------------------------------------------------------- #
-# 4. Lazy-litellm contract #
-# --------------------------------------------------------------------------- #
+# 4. Lazy-litellm contract
 
 
 def test_lazy_litellm_contract() -> None:

@@ -29,9 +29,7 @@ from flowfile_core.schemas import input_schema, schemas
 pytestmark = pytest.mark.kernel
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _run(coro):
@@ -98,9 +96,7 @@ def _handle_run_info(run_info: RunInformation):
         raise ValueError(f"Graph should run successfully:\n{errors}")
 
 
-# ---------------------------------------------------------------------------
 # Tests — Global Artifacts via direct kernel execution
-# ---------------------------------------------------------------------------
 
 
 class TestGlobalArtifactsKernelRuntime:
@@ -135,7 +131,6 @@ print(f"Published artifact with ID: {artifact_id}")
         """publish_global then get_global retrieves the same data."""
         manager, kernel_id = kernel_manager_with_core
 
-        # Publish an artifact
         publish_code = '''
 data = {"model_type": "random_forest", "n_estimators": 100, "accuracy": 0.92}
 artifact_id = flowfile_ctx.publish_global("rf_model_test", data)
@@ -155,7 +150,6 @@ print(f"artifact_id={artifact_id}")
         )
         assert result.success, f"Publish failed: {result.error}"
 
-        # Retrieve it
         get_code = '''
 retrieved = flowfile_ctx.get_global("rf_model_test")
 assert retrieved["model_type"] == "random_forest", f"Got {retrieved}"
@@ -212,7 +206,6 @@ print(f"Published with tags, id={artifact_id}")
         """list_global_artifacts returns published artifacts."""
         manager, kernel_id = kernel_manager_with_core
 
-        # Publish two artifacts
         setup_code = '''
 flowfile_ctx.publish_global("list_test_a", {"value": 1})
 flowfile_ctx.publish_global("list_test_b", {"value": 2})
@@ -232,7 +225,6 @@ print("Published two artifacts")
         )
         assert result.success, f"Setup failed: {result.error}"
 
-        # List artifacts
         list_code = '''
 artifacts = flowfile_ctx.list_global_artifacts()
 names = [a.name for a in artifacts]
@@ -259,7 +251,6 @@ print(f"Found {len(artifacts)} artifacts")
         """delete_global_artifact removes an artifact."""
         manager, kernel_id = kernel_manager_with_core
 
-        # Publish then delete
         code = '''
 # Publish
 flowfile_ctx.publish_global("to_delete", {"temp": True})
@@ -362,9 +353,7 @@ print("Versioning works correctly!")
         assert "Versioning works correctly!" in result.stdout
 
 
-# ---------------------------------------------------------------------------
 # Tests — Global Artifacts via FlowGraph python_script nodes
-# ---------------------------------------------------------------------------
 
 
 class TestGlobalArtifactsFlowGraph:
@@ -383,7 +372,6 @@ class TestGlobalArtifactsFlowGraph:
         try:
             graph = _create_graph(source_registration_id=test_registration)
 
-            # Node 1: input data
             data = [{"x": 1, "y": 2}]
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
@@ -396,7 +384,6 @@ class TestGlobalArtifactsFlowGraph:
                 )
             )
 
-            # Node 2: publish global artifact
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             )
@@ -424,7 +411,6 @@ flowfile_ctx.publish_output(df)
             run_info = graph.run_graph()
             _handle_run_info(run_info)
 
-            # Verify the global artifact was published by retrieving it
             verify_code = '''
 model = flowfile_ctx.get_global("flow_published_model")
 assert model["trained_on"] == "flow_data"
@@ -457,7 +443,6 @@ print("Flow-published global artifact verified!")
         _kernel_mod._manager = manager
 
         try:
-            # Flow 1: Publish a global artifact
             graph1 = _create_graph(flow_id=1, source_registration_id=test_registration)
 
             data1 = [{"val": 100}]
@@ -499,7 +484,6 @@ flowfile_ctx.publish_output(df)
             run_info1 = graph1.run_graph()
             _handle_run_info(run_info1)
 
-            # Flow 2: Use the global artifact from Flow 1
             graph2 = _create_graph(flow_id=2)
 
             data2 = [{"other": "data"}]
@@ -548,7 +532,6 @@ flowfile_ctx.publish_output(result)
             run_info2 = graph2.run_graph()
             _handle_run_info(run_info2)
 
-            # Verify the result includes the global artifact value
             result = graph2.get_node(2).get_resulting_data()
             df = result.data_frame
             if hasattr(df, "collect"):
@@ -560,9 +543,7 @@ flowfile_ctx.publish_output(result)
             _kernel_mod._manager = _prev
 
 
-# ---------------------------------------------------------------------------
 # Tests — Complex Object Types
-# ---------------------------------------------------------------------------
 
 
 class TestGlobalArtifactsComplexTypes:
@@ -732,9 +713,7 @@ print("Custom class roundtrip successful!")
         assert "Custom class roundtrip successful!" in result.stdout
 
 
-# ---------------------------------------------------------------------------
 # Tests — Error Handling
-# ---------------------------------------------------------------------------
 
 
 class TestGlobalArtifactsErrorHandling:

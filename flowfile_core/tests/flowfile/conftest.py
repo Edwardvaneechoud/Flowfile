@@ -64,9 +64,7 @@ def sqlite_db(tmp_path):
     yield db_path
 
 
-# ---------------------------------------------------------------------------
 # Shared catalog test helpers
-# ---------------------------------------------------------------------------
 
 CATALOG_SAMPLE_DATA = [
     {"name": "Alice", "age": 30, "city": "Amsterdam"},

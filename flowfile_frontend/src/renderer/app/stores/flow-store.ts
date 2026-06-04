@@ -71,7 +71,6 @@ export const useFlowStore = defineStore("flow", {
       } catch (error) {
         console.warn("Failed to store flow ID in session storage:", error);
       }
-      // Reset history state when flow changes
       this.historyState = { ...defaultHistoryState };
       this.artifactData = { ...defaultArtifactData };
     },
@@ -93,7 +92,6 @@ export const useFlowStore = defineStore("flow", {
       useEditorStore().bumpGraphVersion();
     },
 
-    // Reset history state
     resetHistoryState() {
       this.historyState = { ...defaultHistoryState };
     },

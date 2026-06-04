@@ -75,7 +75,6 @@ class FlowfileColumn:
         if self.size is not None:
             lines.append(f"  Non-Nulls: {self.size}")
 
-        # Calculate and display nulls if possible
         if self.size is not None and self.number_of_empty_values is not None:
             total_entries = self.size + self.number_of_empty_values
             if total_entries > 0:
@@ -104,7 +103,6 @@ class FlowfileColumn:
         # --- Conditional Examples Section ---
         if self.example_values:
             example_str = str(self.example_values)
-            # Truncate long example strings for cleaner display
             if len(example_str) > 70:
                 example_str = example_str[:67] + "..."
             lines.append(f"  Examples: {example_str}")

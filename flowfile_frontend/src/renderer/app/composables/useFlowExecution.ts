@@ -1,5 +1,3 @@
-// composables/useFlowExecution.ts
-// Core flow execution composable for managing flow runs and polling
 import { ref, onUnmounted, Ref, markRaw, type Component } from "vue";
 import axios from "axios";
 import { ElNotification } from "element-plus";
@@ -61,7 +59,6 @@ class FlowExecutionState {
   }
 
   clearAll() {
-    // Clear all intervals
     this.pollingIntervals.forEach((interval) => clearInterval(interval));
     this.pollingIntervals.clear();
     this.activeExecutions.clear();
@@ -114,13 +111,11 @@ export function useFlowExecution(
   const localPollingInterval = ref<number | null>(null);
   const isExecuting = ref(false);
 
-  // Get the actual flow ID value
   const getFlowId = () => {
     if (typeof flowId === "function") return flowId();
     return typeof flowId === "number" ? flowId : flowId.value;
   };
 
-  // Generate a unique key for this flow's polling
   const getPollingKey = (suffix = "") => {
     const customKey = options.pollingKey || `flow_${getFlowId()}`;
     return suffix ? `${customKey}_${suffix}` : customKey;
@@ -145,7 +140,6 @@ export function useFlowExecution(
     }
   };
 
-  // Notification helper
   const showNotification = (
     title: string,
     message: string,
@@ -168,14 +162,12 @@ export function useFlowExecution(
     const key = getPollingKey(pollingKeySuffix);
 
     if (options.persistPolling) {
-      // Use global state for persistent polling
       const existingInterval = state.getPollingInterval(key);
       if (existingInterval === null && pollingConfig.enabled) {
         const interval = setInterval(checkFn, pollingConfig.interval || 2000) as unknown as number;
         state.setPollingInterval(key, interval);
       }
     } else {
-      // Use local polling that will be cleaned up on unmount
       if (localPollingInterval.value === null && pollingConfig.enabled) {
         localPollingInterval.value = setInterval(
           checkFn,
@@ -197,7 +189,6 @@ export function useFlowExecution(
     }
   };
 
-  // Check if any polling is active for this flow
   const isPollingActive = (pollingKeySuffix = ""): boolean => {
     if (options.persistPolling) {
       const key = getPollingKey(pollingKeySuffix);
@@ -206,7 +197,6 @@ export function useFlowExecution(
     return localPollingInterval.value !== null;
   };
 
-  // Create notification config based on run information
   const createNotificationConfig = (runInfo: RunInformation): NotificationConfig => ({
     title: runInfo.success ? "Success" : "Error",
     message: runInfo.success
@@ -215,7 +205,6 @@ export function useFlowExecution(
     type: runInfo.success ? "success" : "error",
   });
 
-  // Check run status
   const checkRunStatus = async (customSuccessMessage?: string, pollingKeySuffix = "") => {
     try {
       const response = await updateRunStatus(getFlowId(), nodeStore);
@@ -227,7 +216,6 @@ export function useFlowExecution(
         isExecuting.value = false;
         state.setExecutionState(getPollingKey(pollingKeySuffix), false);
 
-        // Update log viewer visibility after successful run
         editorStore.setShowFlowResult(true);
         editorStore.updateLogViewerVisibility(true);
 
@@ -260,14 +248,12 @@ export function useFlowExecution(
     }
   };
 
-  // HTML escape helper
   const escapeHtml = (text: string): string => {
     const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
   };
 
-  // Run entire flow
   const runFlow = async () => {
     const flowSettings: FlowSettings | null = await FlowApi.getFlowSettings(getFlowId());
     if (!flowSettings) {
@@ -326,11 +312,9 @@ export function useFlowExecution(
     }
   };
 
-  // Trigger fetch for a specific node
   const triggerNodeFetch = async (nodeId: number) => {
     const pollingKeySuffix = `node_${nodeId}`;
 
-    // Check if already fetching this node
     if (isPollingActive(pollingKeySuffix)) {
       console.log(`Node ${nodeId} fetch already in progress`);
       return;
@@ -377,7 +361,6 @@ export function useFlowExecution(
     }
   };
 
-  // Cancel flow execution
   const cancelFlow = async () => {
     try {
       await axios.post("/flow/cancel/", null, {
@@ -389,11 +372,8 @@ export function useFlowExecution(
       editorStore.isRunning = false;
       isExecuting.value = false;
 
-      // Stop all polling for this flow
       stopPolling();
-      // Also stop any node-specific polling if using persistent polling
       if (options.persistPolling) {
-        // Clear any node-specific polling
         for (let i = 0; i < 100; i++) {
           // Assuming max 100 nodes
           state.clearPollingInterval(getPollingKey(`node_${i}`));
@@ -405,7 +385,6 @@ export function useFlowExecution(
     }
   };
 
-  // Cleanup on unmount - only clean up local polling
   onUnmounted(() => {
     if (!options.persistPolling && localPollingInterval.value !== null) {
       clearInterval(localPollingInterval.value);

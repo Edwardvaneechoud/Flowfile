@@ -11,9 +11,7 @@ from typing import Any
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from tools.migrate.legacy_schemas import LEGACY_CLASS_MAP
 
-# =============================================================================
 # LEGACY PICKLE LOADING
-# =============================================================================
 
 
 class LegacyUnpickler(pickle.Unpickler):
@@ -51,9 +49,7 @@ def load_flowfile_pickle(path: str) -> Any:
         return LegacyUnpickler(f).load()
 
 
-# =============================================================================
 # DATACLASS DETECTION AND MIGRATION
-# =============================================================================
 
 
 def _is_dataclass_instance(obj: Any) -> bool:
@@ -78,9 +74,7 @@ def _migrate_dataclass_to_basemodel(obj: Any, model_class: type) -> Any:
     return model_class.model_validate(data)
 
 
-# =============================================================================
 # NODE-SPECIFIC COMPATIBILITY FUNCTIONS
-# =============================================================================
 
 
 def ensure_compatibility_node_read(node_read: input_schema.NodeRead):
@@ -90,7 +84,6 @@ def ensure_compatibility_node_read(node_read: input_schema.NodeRead):
 
     received_file = node_read.received_file
 
-    # Ensure fields list exists
     if not hasattr(received_file, "fields"):
         received_file.fields = []
 
@@ -99,7 +92,6 @@ def ensure_compatibility_node_read(node_read: input_schema.NodeRead):
         if not isinstance(received_file.table_settings, dict):
             return
 
-    # Determine file_type - use existing or infer from attributes
     file_type = getattr(received_file, "file_type", None)
     if file_type is None:
         path = getattr(received_file, "path", "") or ""
@@ -112,15 +104,12 @@ def ensure_compatibility_node_read(node_read: input_schema.NodeRead):
         else:
             file_type = "csv"
 
-    # Build table_settings based on file_type, extracting old flat attributes
     table_settings_dict = _build_input_table_settings(received_file, file_type)
 
-    # Re-validate the entire ReceivedTable to get proper Pydantic model
     received_file_dict = received_file.model_dump()
     received_file_dict["file_type"] = file_type
     received_file_dict["table_settings"] = table_settings_dict
 
-    # Create new validated ReceivedTable and replace
     new_received_file = input_schema.ReceivedTable.model_validate(received_file_dict)
     node_read.received_file = new_received_file
 
@@ -175,7 +164,6 @@ def _build_input_table_settings(received_file: Any, file_type: str) -> dict:
             "type_inference": getattr(received_file, "type_inference", False),
         }
 
-    # Default to csv settings
     return {"file_type": "csv", "delimiter": ",", "encoding": "utf-8", "has_headers": True}
 
 
@@ -191,19 +179,15 @@ def ensure_compatibility_node_output(node_output: input_schema.NodeOutput):
         if not isinstance(output_settings.table_settings, dict):
             return
 
-    # Migrate from old separate fields to new table_settings
     file_type = getattr(output_settings, "file_type", "csv")
     table_settings_dict = _build_output_table_settings(output_settings, file_type)
 
-    # Re-validate the entire OutputSettings to get proper Pydantic model
     output_settings_dict = output_settings.model_dump()
     output_settings_dict["table_settings"] = table_settings_dict
 
-    # Remove old fields if they exist
     for old_field in ["output_csv_table", "output_parquet_table", "output_excel_table"]:
         output_settings_dict.pop(old_field, None)
 
-    # Create new validated OutputSettings and replace
     new_output_settings = input_schema.OutputSettings.model_validate(output_settings_dict)
     node_output.output_settings = new_output_settings
 
@@ -250,7 +234,6 @@ def ensure_compatibility_node_groupby(node_groupby: input_schema.NodeGroupBy):
     if not _is_dataclass_instance(groupby_input):
         return
 
-    # Migrate each AggColl in agg_cols
     agg_cols = getattr(groupby_input, "agg_cols", []) or []
     new_agg_cols = []
     for agg_col in agg_cols:
@@ -260,7 +243,6 @@ def ensure_compatibility_node_groupby(node_groupby: input_schema.NodeGroupBy):
         else:
             new_agg_cols.append(agg_col)
 
-    # Create new validated GroupByInput and replace
     new_groupby_input = transform_schema.GroupByInput(agg_cols=new_agg_cols)
     node_groupby.groupby_input = new_groupby_input
 
@@ -281,18 +263,15 @@ def ensure_compatibility_node_filter(node_filter: input_schema.NodeFilter):
     if not _is_dataclass_instance(filter_input):
         return
 
-    # Build the new FilterInput data with field name mappings
     filter_data = {
         # filter_type -> mode
         "mode": getattr(filter_input, "filter_type", "basic"),
         "advanced_filter": getattr(filter_input, "advanced_filter", ""),
     }
 
-    # Handle BasicFilter migration
     basic_filter = getattr(filter_input, "basic_filter", None)
     if basic_filter is not None:
         if _is_dataclass_instance(basic_filter):
-            # Map old field names to new ones
             basic_filter_data = {
                 "field": getattr(basic_filter, "field", ""),
                 # filter_type -> operator
@@ -304,7 +283,6 @@ def ensure_compatibility_node_filter(node_filter: input_schema.NodeFilter):
         else:
             filter_data["basic_filter"] = basic_filter
 
-    # Create new validated FilterInput and replace
     new_filter_input = transform_schema.FilterInput.model_validate(filter_data)
     node_filter.filter_input = new_filter_input
 
@@ -314,7 +292,6 @@ def ensure_compatibility_node_select(node_select: input_schema.NodeSelect):
     if not hasattr(node_select, "select_input"):
         return
 
-    # Handle dataclass -> BaseModel migration for select_input items
     if node_select.select_input:
         new_select_input = []
         needs_migration = any(_is_dataclass_instance(si) for si in node_select.select_input)
@@ -328,7 +305,6 @@ def ensure_compatibility_node_select(node_select: input_schema.NodeSelect):
                     new_select_input.append(si)
             node_select.select_input = new_select_input
 
-    # Ensure position attributes exist
     if any(not hasattr(select_input, "position") for select_input in node_select.select_input):
         for _index, select_input in enumerate(node_select.select_input):
             select_input.position = _index
@@ -348,7 +324,6 @@ def ensure_compatibility_node_joins(node_settings: input_schema.NodeFuzzyMatch |
     if not hasattr(join_input, "right_select") or not hasattr(join_input, "left_select"):
         return
 
-    # Handle dataclass -> BaseModel migration for join_mapping
     if hasattr(join_input, "join_mapping") and join_input.join_mapping:
         new_mapping = []
         for jm in join_input.join_mapping:
@@ -359,7 +334,6 @@ def ensure_compatibility_node_joins(node_settings: input_schema.NodeFuzzyMatch |
                 new_mapping.append(jm)
         join_input.join_mapping = new_mapping
 
-    # Handle dataclass -> BaseModel migration for renames in selects
     for select_attr in ["right_select", "left_select"]:
         select = getattr(join_input, select_attr, None)
         if select is None:
@@ -379,7 +353,6 @@ def ensure_compatibility_node_joins(node_settings: input_schema.NodeFuzzyMatch |
     right_renames = getattr(join_input.right_select, "renames", []) or []
     left_renames = getattr(join_input.left_select, "renames", []) or []
 
-    # Ensure position attributes exist
     if any(not hasattr(r, "position") for r in right_renames + left_renames):
         for _index, select_input in enumerate(right_renames + left_renames):
             select_input.position = _index
@@ -411,7 +384,6 @@ def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
     - depending_on_id (single) -> depending_on_ids (list)
     - PolarsCodeInput from dataclass to BaseModel
     """
-    # Handle depending_on_id -> depending_on_ids migration
     if hasattr(node_polars, "depending_on_id"):
         old_id = getattr(node_polars, "depending_on_id", None)
         if not hasattr(node_polars, "depending_on_ids") or node_polars.depending_on_ids is None:
@@ -420,7 +392,6 @@ def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
             else:
                 node_polars.depending_on_ids = []
 
-    # Handle PolarsCodeInput dataclass -> BaseModel migration
     if hasattr(node_polars, "polars_code_input") and node_polars.polars_code_input is not None:
         polars_code_input = node_polars.polars_code_input
 

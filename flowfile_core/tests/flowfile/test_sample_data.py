@@ -64,7 +64,6 @@ class TestCreateFakeDataRaw:
         for record in records:
             assert "ID" in record
             assert "Name" in record
-            # Other fields should not be present
             assert "City" not in record
             assert "Phone" not in record
 

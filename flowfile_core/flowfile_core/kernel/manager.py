@@ -117,7 +117,6 @@ def _resolve_local_image(
     2. ``flowfile-kernel-<flavour>:local`` (docker-compose dev build convention)
     3. Any other tag of the ``flowfile-kernel-<flavour>`` repo, newest first
     """
-    # 1. Registry default available locally
     try:
         docker_client.images.get(registry_default)
         return registry_default
@@ -126,7 +125,6 @@ def _resolve_local_image(
     except docker.errors.APIError:
         return None
 
-    # 2 + 3: any locally-built variant under the conventional repo name
     repo_name = f"flowfile-kernel-{flavour.value}"
     try:
         images = docker_client.images.list(name=repo_name)
@@ -354,9 +352,7 @@ class KernelManager:
     def shared_volume_path(self) -> str:
         return self._shared_volume
 
-    # ------------------------------------------------------------------
     # Docker-in-Docker helpers
-    # ------------------------------------------------------------------
 
     def _detect_docker_network(self) -> str | None:
         """Auto-detect the Docker network this container is connected to.
@@ -541,9 +537,7 @@ class KernelManager:
 
         return run_kwargs
 
-    # ------------------------------------------------------------------
     # Database persistence helpers
-    # ------------------------------------------------------------------
 
     def _restore_kernels_from_db(self) -> None:
         """Load persisted kernel configs from the database on startup."""
@@ -605,9 +599,7 @@ class KernelManager:
         except Exception as exc:
             logger.warning("Could not remove kernel '%s' from database: %s", kernel_id, exc)
 
-    # ------------------------------------------------------------------
     # Scratch FlowRegistration management
-    # ------------------------------------------------------------------
     #
     # Each kernel owns an auto-created FlowRegistration row that gets used as
     # ``source_registration_id`` whenever a publish call has no real flow in
@@ -717,9 +709,7 @@ class KernelManager:
         self._provision_scratch_flow(kernel_id, user_id)
         return self._scratch_flow_ids.get(kernel_id)
 
-    # ------------------------------------------------------------------
     # Port allocation
-    # ------------------------------------------------------------------
 
     def _reclaim_running_containers(self) -> None:
         """Discover running flowfile-kernel containers and reclaim their ports."""
@@ -776,13 +766,7 @@ class KernelManager:
                 return port
         raise RuntimeError(f"No available ports in range {_BASE_PORT}-{_BASE_PORT + _PORT_RANGE - 1}")
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
     # Image discovery and pulling
-    # ------------------------------------------------------------------
 
     def resolve_local_image(self, flavour: ImageFlavour) -> str | None:
         """Public accessor for the local-image fallback resolver.
@@ -846,9 +830,7 @@ class KernelManager:
                 self._pull_state[image_tag] = f"error:{msg}"
             logger.exception("Failed to pull image '%s'", image_tag)
 
-    # ------------------------------------------------------------------
     # Derived image build (per-kernel, packages baked in)
-    # ------------------------------------------------------------------
 
     def _build_derived_image(self, kernel: KernelInfo) -> str:
         """Build a derived image with the kernel's extra packages baked in.
@@ -1099,7 +1081,6 @@ class KernelManager:
         if not self._kernel_volume:
             env["FLOWFILE_HOST_CATALOG_TABLES_DIR"] = self._catalog_tables_dir
         env["FLOWFILE_KERNEL_CATALOG_TABLES_DIR"] = self.to_kernel_path(self._catalog_tables_dir)
-        # Persistence settings from kernel config
         env["KERNEL_ID"] = kernel_id
         env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
         env["PERSISTENCE_PATH"] = self.to_kernel_path(os.path.join(self._shared_volume, "artifacts"))
@@ -1375,9 +1356,7 @@ class KernelManager:
                 kernel.container_id = None
         logger.info("All kernels have been shut down")
 
-    # ------------------------------------------------------------------
     # Execution
-    # ------------------------------------------------------------------
 
     def _check_oom_killed(self, kernel_id: str) -> bool:
         """Check if the kernel container was killed due to an out-of-memory condition."""
@@ -1645,9 +1624,7 @@ class KernelManager:
             response.raise_for_status()
             return response.json()
 
-    # ------------------------------------------------------------------
     # Artifact Persistence & Recovery
-    # ------------------------------------------------------------------
 
     async def recover_artifacts(self, kernel_id: str) -> RecoveryStatus:
         """Trigger manual artifact recovery on a running kernel."""
@@ -1724,9 +1701,7 @@ class KernelManager:
             response.raise_for_status()
             return response.json()
 
-    # ------------------------------------------------------------------
     # Queries
-    # ------------------------------------------------------------------
 
     async def list_kernels(self, user_id: int | None = None) -> list[KernelInfo]:
         if user_id is not None:
@@ -1739,9 +1714,7 @@ class KernelManager:
     def get_kernel_owner(self, kernel_id: str) -> int | None:
         return self._kernel_owners.get(kernel_id)
 
-    # ------------------------------------------------------------------
     # Internal helpers
-    # ------------------------------------------------------------------
 
     def _get_kernel_or_raise(self, kernel_id: str) -> KernelInfo:
         kernel = self._kernels.get(kernel_id)

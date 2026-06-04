@@ -49,21 +49,15 @@ logger = logging.getLogger(__name__)
 
 
 SCHEMA_VERSION: str = "ai_session.v1"
-"""Top-level on-disk schema tag. Bumped only by an explicit
-migration workstream."""
 
 DEFAULT_LRU_SIZE: int = 32
-"""How many recently-touched sessions the disk repo keeps in memory."""
 
 DEFAULT_ARCHIVE_CAP: int = 50
-"""FIFO cap on archived (closed) sessions per flow_id."""
 
 _LOCK_TIMEOUT_SECONDS: float = 2.0
 
 
-# --------------------------------------------------------------------------- #
-# Protocol                                                                     #
-# --------------------------------------------------------------------------- #
+# Protocol
 
 
 class SessionRepository(Protocol):
@@ -94,9 +88,7 @@ class SessionRepository(Protocol):
         """Tests-only — wipe in-memory cache and any disk subtree owned."""
 
 
-# --------------------------------------------------------------------------- #
-# In-memory repository                                                         #
-# --------------------------------------------------------------------------- #
+# In-memory repository
 
 
 class InMemorySessionRepository:
@@ -140,9 +132,7 @@ class InMemorySessionRepository:
             self._items.clear()
 
 
-# --------------------------------------------------------------------------- #
-# Disk repository                                                              #
-# --------------------------------------------------------------------------- #
+# Disk repository
 
 
 _TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "aborted", "failed"})
@@ -447,9 +437,7 @@ class DiskSessionRepository:
                 )
 
 
-# --------------------------------------------------------------------------- #
-# Buffered iterator helper                                                     #
-# --------------------------------------------------------------------------- #
+# Buffered iterator helper
 
 
 def iter_recent_files(directory: Path, *, limit: int | None = None) -> Iterator[Path]:

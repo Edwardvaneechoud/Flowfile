@@ -325,7 +325,6 @@ const handleCanvasClick = (event: any | PointerEvent) => {
     x: event.x,
     y: event.y,
   };
-  // Clear any browser text selection when clicking on canvas
   window.getSelection()?.removeAllRanges();
 };
 
@@ -682,7 +681,6 @@ const handleNodeChange = async (nodeChangesEvent: any) => {
       lastResponse = await deleteNode(flowStore.flowId, nodeChangeId);
     }
   }
-  // Update history state from the last response
   if (lastResponse?.history) {
     flowStore.updateHistoryState(lastResponse.history);
   }
@@ -722,7 +720,6 @@ const handleEdgeChange = async (edgeChangesEvent: any) => {
       lastResponse = await deleteConnection(flowStore.flowId, nodeConnection);
     }
   }
-  // Update history state from the last response
   if (lastResponse?.history) {
     flowStore.updateHistoryState(lastResponse.history);
   }
@@ -731,7 +728,6 @@ const handleEdgeChange = async (edgeChangesEvent: any) => {
 const handleDrop = async (event: DragEvent) => {
   if (!nodeStore.isRunning) {
     const response = await onDrop(event, flowStore.flowId);
-    // Update history state from response
     if (response?.history) {
       flowStore.updateHistoryState(response.history);
     }
@@ -845,7 +841,6 @@ const copyValue = async (x: number, y: number) => {
       flowPosition.y,
       flowStore.flowId,
     );
-    // Update history state from response
     if (response?.history) {
       flowStore.updateHistoryState(response.history);
     }
@@ -865,7 +860,6 @@ const copyValue = async (x: number, y: number) => {
     flowId: flowStore.flowId,
   };
   const response = await createCopyNode(nodeCopyInput);
-  // Update history state from response
   if (response?.history) {
     flowStore.updateHistoryState(response.history);
   }

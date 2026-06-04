@@ -43,7 +43,6 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
     Callable
         A wrapper method appropriate for FlowFrame.
     """
-    # Determine if the original method returns a LazyFrame based on known method names
     lazyframe_returning_methods = {
         "drop",
         "select",
@@ -112,7 +111,6 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
 
         processed = process_callable_args(args, kwargs)
 
-        # Build the code
         operation_code = f"input_df.{method_name}({processed.params_repr})"
 
         if processed.function_sources:
@@ -122,17 +120,14 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         else:
             code = "output_df = " + operation_code
 
-        # Use provided description or generate a default one
         if description is None:
             description = f"{method_name.replace('_', ' ').title()} operation"
 
         self._add_polars_code(new_node_id, code, description)
 
         if returns_lazyframe:
-            # Return a new FlowFrame with the result
             return self._create_child_frame(new_node_id)
         else:
-            # For methods that don't return a LazyFrame, return the result directly
             return getattr(self.data, method_name)(*args, **kwargs)
 
     return wrapper
@@ -155,15 +150,12 @@ def add_lazyframe_methods(cls):
     Type
         The modified class.
     """
-    # Get methods already defined in the class (including inherited methods)
     existing_methods = set(dir(cls))
 
-    # Skip properties and private methods
     skip_methods = {
         name for name in dir(pl.LazyFrame) if name.startswith("_") or isinstance(getattr(pl.LazyFrame, name), property)
     }
 
-    # Add all public LazyFrame methods that don't already exist
     for name in dir(pl.LazyFrame):
         if name in existing_methods or name in skip_methods:
             continue

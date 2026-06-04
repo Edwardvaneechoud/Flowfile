@@ -110,7 +110,6 @@ def test_write_df_to_gcs(test_case: GCSWorkerWriteCase, gcs_connection_settings)
     try:
         write_df_to_cloud(df, cloud_storage_write_settings, logger)
 
-        # Verify the object exists in fake-gcs-server
         client = get_gcs_client()
         bucket = client.bucket("worker-test-bucket")
 

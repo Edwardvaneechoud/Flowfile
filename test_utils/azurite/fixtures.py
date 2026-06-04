@@ -56,7 +56,6 @@ def is_azurite_available() -> bool:
     if not is_azurite_reachable():
         logger.info(f"Azurite is not reachable at {AZURITE_BLOB_ENDPOINT}")
         return False
-    # Verify test data exists
     try:
         client = get_blob_service_client()
         container_client = client.get_container_client("test-container")

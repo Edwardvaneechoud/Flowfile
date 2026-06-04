@@ -106,7 +106,6 @@ import { GridApi } from "@ag-grid-community/core"
 import { ModuleRegistry } from "@ag-grid-community/core"
 import { ClientSideRowModelModule } from "@ag-grid-community/client-side-row-model"
 
-// Register AG Grid modules
 ModuleRegistry.registerModules([ClientSideRowModelModule])
 
 const props = defineProps<{
@@ -129,7 +128,6 @@ const hasData = computed(() => {
   return result.value?.data && result.value.data.data && result.value.data.data.length > 0
 })
 
-// Default column definition for AG Grid
 const defaultColDef = {
   editable: false,
   filter: true,
@@ -139,7 +137,6 @@ const defaultColDef = {
   flex: 1,
 }
 
-// Build schema map for data types
 const schemaMap = computed(() => {
   const map = new Map<string, ColumnSchema>()
   if (result.value?.schema) {
@@ -148,7 +145,6 @@ const schemaMap = computed(() => {
   return map
 })
 
-// Convert data to AG Grid format with data type tooltips
 const columnDefs = computed(() => {
   if (!result.value?.data?.columns) return []
 
@@ -165,7 +161,6 @@ const columnDefs = computed(() => {
   })
 })
 
-// Convert row data to AG Grid format (array of objects)
 const rowData = computed(() => {
   if (!result.value?.data?.columns || !result.value?.data?.data) return []
 
@@ -187,19 +182,16 @@ const onExpandedGridReady = (params: { api: GridApi }) => {
   expandedGridApi.value = params.api
 }
 
-// Toggle expanded view
 const toggleExpanded = () => {
   isExpanded.value = !isExpanded.value
 }
 
-// Auto-size columns
 const autoSizeColumns = () => {
   if (expandedGridApi.value) {
     expandedGridApi.value.autoSizeAllColumns()
   }
 }
 
-// Calculate dynamic grid height
 const calculateGridHeight = () => {
   const rowCount = rowData.value.length
   // These values must match the AG Grid CSS variables in main.css

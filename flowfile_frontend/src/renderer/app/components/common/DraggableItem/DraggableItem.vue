@@ -217,7 +217,7 @@ const itemState = ref(
   itemStore.items[props.id] || {
     width: props.initialWidth || 400,
     height: props.initialHeight || 300,
-    left: props.initialLeft || 100, // Used corrected prop
+    left: props.initialLeft || 100,
     top: props.initialTop || 100,
     group: props.group,
     syncDimensions: props.syncDimensions,
@@ -670,15 +670,11 @@ const applyStickyPosition = () => {
 
     case "free":
     default: {
-      // For free-positioned items, ensure they stay within viewport bounds
-      // and maintain relative positioning when window resizes
       if (prevWindowWidth.value > 0 && prevWindowHeight.value > 0) {
-        // Calculate if item was positioned relative to right edge (more than 50% from left)
         const wasRightAligned = itemState.value.left > prevWindowWidth.value / 2;
         const wasBottomAligned = itemState.value.top > prevWindowHeight.value / 2;
 
         if (wasRightAligned) {
-          // Maintain distance from right edge
           const distanceFromRight =
             prevWindowWidth.value - itemState.value.left - itemState.value.width;
           itemState.value.left = Math.max(
@@ -688,7 +684,6 @@ const applyStickyPosition = () => {
         }
 
         if (wasBottomAligned) {
-          // Maintain distance from bottom edge
           const distanceFromBottom =
             prevWindowHeight.value - itemState.value.top - itemState.value.height;
           itemState.value.top = Math.max(
@@ -698,7 +693,6 @@ const applyStickyPosition = () => {
         }
       }
 
-      // Clamp to ensure item stays visible
       const minVisible = 100; // Minimum visible pixels
       itemState.value.left = Math.max(
         0,
@@ -709,7 +703,6 @@ const applyStickyPosition = () => {
         Math.min(itemState.value.top, newWindowHeight - minVisible),
       );
 
-      // Clamp width/height if they exceed viewport
       if (itemState.value.width > newWindowWidth) {
         itemState.value.width = newWindowWidth - 20;
       }
@@ -720,11 +713,9 @@ const applyStickyPosition = () => {
     }
   }
 
-  // Update tracked window dimensions
   prevWindowWidth.value = newWindowWidth;
   prevWindowHeight.value = newWindowHeight;
 
-  // Save the new position
   savePositionAndSize();
 };
 
@@ -760,7 +751,6 @@ const observeParentResize = () => {
   }
 };
 
-// Handle window resize events directly
 const handleWindowResize = () => {
   handleResize();
 };
@@ -825,7 +815,6 @@ onMounted(() => {
   prevWindowWidth.value = window.innerWidth;
   prevWindowHeight.value = window.innerHeight;
 
-  // Calculate initial values based on props
   const initialWidth = calculateWidth();
   const initialHeight = calculateHeight();
   const initialLeft = props.initialLeft || 100;
@@ -844,11 +833,9 @@ onMounted(() => {
     syncDimensions: props.syncDimensions,
   });
 
-  // Check if there's a saved state
   const hasSavedState = itemStore.hasSavedState(props.id);
 
   if (!hasSavedState) {
-    // No saved state, use initial values
     itemStore.setItemState(props.id, {
       width: initialWidth,
       height: initialHeight,
@@ -862,21 +849,18 @@ onMounted(() => {
     });
     itemState.value = itemStore.items[props.id];
 
-    // Apply sticky position after DOM is ready
     if (props.initialPosition !== "free") {
       nextTick(() => {
         applyStickyPosition();
       });
     }
   } else {
-    // Load saved state
     loadPositionAndSize();
     // Saved width/height/left/top from a different viewport size can place
     // the panel partially or fully off-screen. Clamp before first paint.
     clampStateToViewport(itemState.value);
     itemStore.setItemState(props.id, { ...itemState.value });
 
-    // If the saved state has a sticky position, re-apply it
     if (itemState.value.stickynessPosition && itemState.value.stickynessPosition !== "free") {
       nextTick(() => {
         applyStickyPosition();
@@ -885,7 +869,6 @@ onMounted(() => {
   }
 
   layoutResetHandler = () => {
-    // Get the updated state from the store
     itemState.value = { ...itemStore.items[props.id] };
 
     // Ensure stickynessPosition is restored from initial state (props.initialPosition)

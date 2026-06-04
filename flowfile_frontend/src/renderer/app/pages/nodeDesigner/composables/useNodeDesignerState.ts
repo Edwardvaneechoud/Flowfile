@@ -6,18 +6,14 @@ import type { DesignerSection, DesignerComponent, NodeMetadata } from "../types"
 import { defaultNodeMetadata, defaultProcessCode } from "../constants";
 
 export function useNodeDesignerState() {
-  // Node metadata
   const nodeMetadata = reactive<NodeMetadata>({ ...defaultNodeMetadata });
 
-  // Sections state
   const sections = ref<DesignerSection[]>([]);
   const selectedSectionIndex = ref<number | null>(null);
   const selectedComponentIndex = ref<number | null>(null);
 
-  // Python code for process method
   const processCode = ref(defaultProcessCode);
 
-  // Computed: currently selected component
   const selectedComponent = computed(() => {
     if (selectedSectionIndex.value !== null && selectedComponentIndex.value !== null) {
       return (
@@ -27,7 +23,6 @@ export function useNodeDesignerState() {
     return null;
   });
 
-  // Computed: can save (basic validation)
   const canSave = computed(() => {
     return nodeMetadata.node_name.trim() !== "" && nodeMetadata.node_category.trim() !== "";
   });
@@ -87,7 +82,6 @@ export function useNodeDesignerState() {
     selectedComponentIndex.value = sections.value[sectionIndex].components.length - 1;
   }
 
-  // Reset state
   function resetState() {
     Object.assign(nodeMetadata, defaultNodeMetadata);
     sections.value = [];
@@ -96,7 +90,6 @@ export function useNodeDesignerState() {
     selectedComponentIndex.value = null;
   }
 
-  // Get state for serialization
   function getState() {
     return {
       nodeMetadata: { ...nodeMetadata },
@@ -105,7 +98,6 @@ export function useNodeDesignerState() {
     };
   }
 
-  // Set state from serialized data
   function setState(state: {
     nodeMetadata?: Partial<NodeMetadata>;
     sections?: DesignerSection[];

@@ -25,9 +25,7 @@ from kernel_runtime.flowfile_client import (
 )
 
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -69,9 +67,7 @@ def mock_artifact_response():
     }
 
 
-# ---------------------------------------------------------------------------
 # publish_global Tests
-# ---------------------------------------------------------------------------
 
 
 class TestPublishGlobal:
@@ -93,11 +89,9 @@ class TestPublishGlobal:
 
     def test_publish_dict_object(self, mock_httpx_client, tmp_path):
         """Should publish a dict object successfully."""
-        # Setup mock
         mock_client = MagicMock()
         mock_httpx_client.return_value.__enter__.return_value = mock_client
 
-        # Mock prepare response
         prepare_response = MagicMock()
         prepare_response.json.return_value = {
             "artifact_id": 1,
@@ -108,34 +102,28 @@ class TestPublishGlobal:
         }
         prepare_response.raise_for_status = MagicMock()
 
-        # Mock finalize response
         finalize_response = MagicMock()
         finalize_response.status_code = 200
         finalize_response.raise_for_status = MagicMock()
 
         mock_client.post.side_effect = [prepare_response, finalize_response]
 
-        # Create staging dir
         (tmp_path / "staging").mkdir(parents=True, exist_ok=True)
 
-        # Test
         obj = {"key": "value", "number": 42}
         artifact_id = publish_global("test_artifact", obj)
 
         assert artifact_id == 1
 
-        # Verify prepare-upload was called
         calls = mock_client.post.call_args_list
         assert len(calls) == 2
 
-        # Check prepare call
         prepare_call = calls[0]
         assert "prepare-upload" in prepare_call[0][0]
         prepare_json = prepare_call[1]["json"]
         assert prepare_json["name"] == "test_artifact"
         assert prepare_json["serialization_format"] == "pickle"
 
-        # Check finalize call
         finalize_call = calls[1]
         assert "finalize" in finalize_call[0][0]
         finalize_json = finalize_call[1]["json"]
@@ -165,7 +153,6 @@ class TestPublishGlobal:
         mock_client.post.side_effect = [prepare_response, finalize_response]
 
         (tmp_path).mkdir(parents=True, exist_ok=True)
-
         publish_global(
             "test",
             {"data": 1},
@@ -205,9 +192,7 @@ class TestPublishGlobal:
 
         mock_client.post.side_effect = [prepare_response, finalize_response]
 
-        # Mock serialize_to_file to return a fake SHA256
         mock_serialize.return_value = "a" * 64
-        # Mock os.path.getsize since the file doesn't actually exist
         mock_getsize.return_value = 1024
 
         (tmp_path).mkdir(parents=True, exist_ok=True)
@@ -228,7 +213,6 @@ class TestPublishGlobal:
         mock_client = MagicMock()
         mock_httpx_client.return_value.__enter__.return_value = mock_client
 
-        # Setup mock responses
         staging_path = tmp_path / "staging" / "1_local_class.pkl"
         mock_client.post.side_effect = [
             MagicMock(
@@ -250,7 +234,6 @@ class TestPublishGlobal:
 
         obj = LocalClass()
 
-        # cloudpickle can handle local classes - should succeed
         artifact_id = publish_global("local_class", obj)
         assert artifact_id == 1
 
@@ -259,7 +242,6 @@ class TestPublishGlobal:
         mock_client = MagicMock()
         mock_httpx_client.return_value.__enter__.return_value = mock_client
 
-        # Setup mock responses
         staging_path = tmp_path / "staging" / "1_lambda_func.pkl"
         mock_client.post.side_effect = [
             MagicMock(
@@ -277,14 +259,11 @@ class TestPublishGlobal:
 
         obj = lambda x: x + 1
 
-        # cloudpickle can handle lambdas - should succeed
         artifact_id = publish_global("lambda_func", obj)
         assert artifact_id == 1
 
 
-# ---------------------------------------------------------------------------
 # get_global Tests
-# ---------------------------------------------------------------------------
 
 
 class TestGetGlobal:
@@ -295,7 +274,6 @@ class TestGetGlobal:
         mock_client = MagicMock()
         mock_httpx_client.return_value.__enter__.return_value = mock_client
 
-        # Create test artifact file
         artifact_path = tmp_path / "artifacts" / "1" / "test.pkl"
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -303,7 +281,6 @@ class TestGetGlobal:
         with open(artifact_path, "wb") as f:
             pickle.dump({"key": "value"}, f)
 
-        # Mock response
         get_response = MagicMock()
         get_response.status_code = 200
         get_response.json.return_value = {
@@ -323,7 +300,6 @@ class TestGetGlobal:
 
         assert result == {"key": "value"}
 
-        # Verify correct endpoint called
         get_call = mock_client.get.call_args
         assert "by-name/test_artifact" in get_call[0][0]
 
@@ -395,9 +371,7 @@ class TestGetGlobal:
         assert get_call[1]["params"]["namespace_id"] == 5
 
 
-# ---------------------------------------------------------------------------
 # list_global_artifacts Tests
-# ---------------------------------------------------------------------------
 
 
 class TestListGlobalArtifacts:
@@ -470,9 +444,7 @@ class TestListGlobalArtifacts:
         assert get_call[1]["params"]["tags"] == ["ml", "production"]
 
 
-# ---------------------------------------------------------------------------
 # delete_global_artifact Tests
-# ---------------------------------------------------------------------------
 
 
 class TestDeleteGlobalArtifact:
@@ -499,13 +471,11 @@ class TestDeleteGlobalArtifact:
         mock_client = MagicMock()
         mock_httpx_client.return_value.__enter__.return_value = mock_client
 
-        # Mock get to retrieve artifact ID
         get_response = MagicMock()
         get_response.status_code = 200
         get_response.json.return_value = {"id": 42}
         get_response.raise_for_status = MagicMock()
 
-        # Mock delete
         delete_response = MagicMock()
         delete_response.raise_for_status = MagicMock()
 
@@ -514,11 +484,9 @@ class TestDeleteGlobalArtifact:
 
         delete_global_artifact("test", version=1)
 
-        # Should get artifact to find ID first
         get_call = mock_client.get.call_args
         assert get_call[1]["params"]["version"] == 1
 
-        # Then delete by ID
         delete_call = mock_client.delete.call_args
         assert "/42" in delete_call[0][0]
 
@@ -536,9 +504,7 @@ class TestDeleteGlobalArtifact:
             delete_global_artifact("nonexistent")
 
 
-# ---------------------------------------------------------------------------
 # Integration Tests (with actual serialization)
-# ---------------------------------------------------------------------------
 
 
 class TestGlobalArtifactIntegration:
@@ -583,7 +549,6 @@ class TestGlobalArtifactIntegration:
 
         artifact_file = artifacts_dir / "1" / "test.pkl"
 
-        # Setup prepare response
         prepare_response = MagicMock()
         prepare_response.json.return_value = {
             "artifact_id": 1,
@@ -594,26 +559,22 @@ class TestGlobalArtifactIntegration:
         }
         prepare_response.raise_for_status = MagicMock()
 
-        # Setup finalize response
         finalize_response = MagicMock()
         finalize_response.status_code = 200
         finalize_response.raise_for_status = MagicMock()
 
         mock_client.post.side_effect = [prepare_response, finalize_response]
 
-        # Publish
         original_obj = {"nested": {"data": [1, 2, 3]}, "value": 42}
         artifact_id = publish_global("test_roundtrip", original_obj)
 
         assert artifact_id == 1
 
-        # Move file to artifacts dir (simulating finalize)
         staging_file = staging_dir / "1_test.pkl"
         if staging_file.exists():
             artifact_file.parent.mkdir(parents=True, exist_ok=True)
             staging_file.rename(artifact_file)
 
-        # Setup get response
         get_response = MagicMock()
         get_response.status_code = 200
         get_response.json.return_value = {
@@ -629,15 +590,12 @@ class TestGlobalArtifactIntegration:
 
         mock_client.get.return_value = get_response
 
-        # Retrieve
         retrieved = get_global("test_roundtrip")
 
         assert retrieved == original_obj
 
 
-# ---------------------------------------------------------------------------
 # Interactive mode Tests
-# ---------------------------------------------------------------------------
 
 
 class TestPublishGlobalInteractiveMode:

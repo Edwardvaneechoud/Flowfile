@@ -167,7 +167,6 @@ const connectionToDelete = ref<KafkaConnectionOut | null>(null);
 const activeConnection = ref<KafkaConnectionCreate | undefined>(undefined);
 const editingConnectionId = ref<number | null>(null);
 
-// Fetch connections
 const fetchConnections = async () => {
   isLoading.value = true;
   try {
@@ -180,7 +179,6 @@ const fetchConnections = async () => {
   }
 };
 
-// Show add modal
 const showAddModal = () => {
   isEditing.value = false;
   editingConnectionId.value = null;
@@ -188,7 +186,6 @@ const showAddModal = () => {
   dialogVisible.value = true;
 };
 
-// Show edit modal
 const showEditModal = (connection: KafkaConnectionOut) => {
   isEditing.value = true;
   editingConnectionId.value = connection.id;
@@ -208,13 +205,11 @@ const showEditModal = (connection: KafkaConnectionOut) => {
   dialogVisible.value = true;
 };
 
-// Show delete confirmation
 const showDeleteModal = (connection: KafkaConnectionOut) => {
   connectionToDelete.value = connection;
   deleteDialogVisible.value = true;
 };
 
-// Handle form submit
 const handleFormSubmit = async (connection: KafkaConnectionCreate) => {
   isSubmitting.value = true;
   try {
@@ -235,7 +230,6 @@ const handleFormSubmit = async (connection: KafkaConnectionCreate) => {
   }
 };
 
-// Handle test connection
 const handleTestConnection = async (connectionId: number) => {
   testingConnectionId.value = connectionId;
   try {
@@ -252,7 +246,6 @@ const handleTestConnection = async (connectionId: number) => {
   }
 };
 
-// Handle delete connection
 const handleDeleteConnection = async () => {
   if (!connectionToDelete.value) return;
 
@@ -270,7 +263,6 @@ const handleDeleteConnection = async () => {
   }
 };
 
-// Dialog close handlers
 const handleCloseDialog = (done: () => void) => {
   if (isSubmitting.value) return;
   done();
@@ -281,7 +273,6 @@ const handleCloseDeleteDialog = (done: () => void) => {
   done();
 };
 
-// Load connections on mount
 onMounted(() => {
   fetchConnections();
 });

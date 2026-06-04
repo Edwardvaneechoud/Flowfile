@@ -32,9 +32,7 @@ mysql_available = pytest.mark.skipif(
 )
 
 
-# ============================================================================
 # URI Construction Tests (no Docker required)
-# ============================================================================
 
 
 class TestMySQLURIConstruction:
@@ -82,9 +80,7 @@ class TestMySQLURIConstruction:
         assert get_sqlalchemy_uri(sqlite_uri) == sqlite_uri
 
 
-# ============================================================================
 # MySQL Type Mapping Tests (no Docker required)
-# ============================================================================
 
 
 class TestMySQLTypeMappings:
@@ -139,9 +135,7 @@ class TestMySQLTypeMappings:
         assert get_polars_type("bit") == pl.Boolean
 
 
-# ============================================================================
 # MySQL Integration Tests (Docker required)
-# ============================================================================
 
 
 @mysql_available

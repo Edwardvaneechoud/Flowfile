@@ -84,19 +84,16 @@ const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
 
-// Check if this node has an input connection
 const hasInputConnection = computed(() => {
   const node = flowStore.getNode(props.nodeId)
   if (!node) return false
   return node.inputIds.length > 0 || node.leftInputId !== undefined
 })
 
-// Computed property for available columns only (for display)
 const availableColumns = computed(() => {
   return localColumns.value.filter(col => col.is_available !== false)
 })
 
-// Initialize from settings immediately if available
 function initFromSettings() {
   if (props.settings.select_input && props.settings.select_input.length > 0) {
     localColumns.value = props.settings.select_input.map((col: any, idx: number) => ({
@@ -111,7 +108,6 @@ function initFromSettings() {
 }
 initFromSettings()
 
-// Watch for settings changes from the store (schema propagation updates)
 watch(() => props.settings.select_input, (newSelectInput) => {
   if (newSelectInput && newSelectInput.length > 0) {
     // Preserve user changes (keep, new_name) while updating availability
@@ -131,9 +127,7 @@ watch(() => props.settings.select_input, (newSelectInput) => {
   }
 }, { deep: true })
 
-// Watch for input columns becoming available (only if we don't have settings yet)
 watch(columns, (newColumns) => {
-  // Only initialize from columns if we don't have any local columns yet
   if (newColumns.length > 0 && localColumns.value.length === 0) {
     localColumns.value = newColumns.map((col, idx) => ({
       old_name: col.name,
@@ -147,7 +141,6 @@ watch(columns, (newColumns) => {
   }
 }, { immediate: true })
 
-// Helper to find column index by name
 function findColumnIndex(name: string): number {
   return localColumns.value.findIndex(c => c.old_name === name)
 }
@@ -189,7 +182,6 @@ function onDrop(targetColumnName: string) {
   const item = localColumns.value.splice(sourceIndex, 1)[0]
   localColumns.value.splice(targetIndex, 0, item)
 
-  // Update positions
   localColumns.value.forEach((col, idx) => {
     col.position = idx
   })
@@ -199,7 +191,6 @@ function onDrop(targetColumnName: string) {
 }
 
 function selectAll() {
-  // Only select available columns
   localColumns.value.forEach(col => {
     if (col.is_available) {
       col.keep = true
@@ -209,7 +200,6 @@ function selectAll() {
 }
 
 function deselectAll() {
-  // Only deselect available columns
   localColumns.value.forEach(col => {
     if (col.is_available) {
       col.keep = false

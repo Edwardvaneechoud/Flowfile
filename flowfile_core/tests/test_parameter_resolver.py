@@ -11,9 +11,7 @@ from flowfile_core.flowfile.parameter_resolver import (
 )
 
 
-# ---------------------------------------------------------------------------
 # resolve_parameters
-# ---------------------------------------------------------------------------
 
 
 def test_simple_substitution():
@@ -44,9 +42,7 @@ def test_adjacent_params():
     assert result == "helloworld"
 
 
-# ---------------------------------------------------------------------------
 # resolve_node_settings
-# ---------------------------------------------------------------------------
 
 
 class SimpleSettings(BaseModel):
@@ -71,13 +67,12 @@ def test_resolve_node_settings_returns_new_instance():
     settings = SimpleSettings(path="${dir}/file.csv")
     resolved = resolve_node_settings(settings, {"dir": "/data"})
     assert resolved is not settings
-    assert settings.path == "${dir}/file.csv"  # original unchanged
+    assert settings.path == "${dir}/file.csv"
 
 
 def test_resolve_node_settings_no_params_returns_same():
     settings = SimpleSettings(path="${dir}/file.csv")
     result = resolve_node_settings(settings, {})
-    # Empty dict — no substitution, returns original unchanged
     assert result is settings
 
 
@@ -102,13 +97,10 @@ def test_resolve_node_settings_raises_on_unresolved():
 def test_resolve_node_settings_non_pydantic_passthrough():
     obj = {"path": "${dir}/file"}
     result = resolve_node_settings(obj, {"dir": "/data"})
-    # Non-pydantic objects are returned unchanged
     assert result is obj
 
 
-# ---------------------------------------------------------------------------
 # apply_parameters_in_place / restore_parameters
-# ---------------------------------------------------------------------------
 
 
 def test_apply_in_place_mutates_and_restores():
@@ -143,7 +135,6 @@ def test_apply_in_place_raises_and_rolls_back_on_unresolved():
     settings = SimpleSettings(path="${unknown}/data.csv")
     with pytest.raises(ValueError, match="unknown"):
         apply_parameters_in_place(settings, {"other": "value"})
-    # Original value must be restored after failed substitution
     assert settings.path == "${unknown}/data.csv"
 
 
@@ -151,4 +142,4 @@ def test_apply_in_place_no_params_returns_empty():
     settings = SimpleSettings(path="${dir}/file.csv")
     restorations = apply_parameters_in_place(settings, {})
     assert restorations == []
-    assert settings.path == "${dir}/file.csv"  # unchanged
+    assert settings.path == "${dir}/file.csv"

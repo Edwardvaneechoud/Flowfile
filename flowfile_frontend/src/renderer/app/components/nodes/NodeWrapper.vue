@@ -49,7 +49,6 @@
       </div>
     </div>
     <div ref="nodeEl" class="custom-node" @contextmenu.prevent="showContextMenu">
-      <!-- Use GenericNode if nodeTemplate exists, otherwise use the component directly -->
       <generic-node
         v-if="data.nodeTemplate"
         :node-id="data.id"
@@ -249,7 +248,6 @@ const isRunning = ref<boolean>(false);
 
 const CHAR_LIMIT = 100;
 
-// Define the data structure for VueFlow node data
 interface NodeData {
   id: number;
   label: string;
@@ -286,7 +284,6 @@ const showContextMenu = async (event: MouseEvent) => {
   contextMenuY.value = event.clientY;
   showMenu.value = true;
 
-  // Load the current cache state
   try {
     const nodeData = await nodeStore.getNodeData(props.data.id, true);
     if (nodeData && nodeData.setting_input) {

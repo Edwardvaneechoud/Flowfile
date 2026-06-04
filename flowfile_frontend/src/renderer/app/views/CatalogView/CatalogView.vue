@@ -1114,7 +1114,6 @@ onMounted(async () => {
   } catch {
     // Not critical — leave null
   }
-  // Poll active runs every 20 seconds
   pollInterval = setInterval(pollActiveRuns, 20_000);
 });
 

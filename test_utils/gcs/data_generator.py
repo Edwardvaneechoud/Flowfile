@@ -127,7 +127,6 @@ def populate_test_data(bucket_name: str = "test-bucket"):
     except Exception as e:
         logger.error(f"Failed to create Delta Lake table (non-fatal): {e}")
 
-    # Verify: list all blobs in the bucket and log them
     _log_bucket_contents(client, bucket_name)
     logger.info("All GCS test data populated successfully.")
 

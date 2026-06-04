@@ -41,9 +41,7 @@ from flowfile_core.database.models import (
 from flowfile_core.schemas.catalog_schema import DeltaTableHistory, DeltaVersionCommit
 from shared.delta_utils import format_delta_timestamp
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _get_auth_token() -> str:
@@ -96,9 +94,7 @@ def _make_namespace() -> tuple[int, int]:
         return cat.id, schema.id
 
 
-# ---------------------------------------------------------------------------
 # format_delta_timestamp
-# ---------------------------------------------------------------------------
 
 
 class TestFormatDeltaTimestamp:
@@ -131,9 +127,7 @@ class TestFormatDeltaTimestamp:
         assert result is not None
 
 
-# ---------------------------------------------------------------------------
 # _parse_delta_history
-# ---------------------------------------------------------------------------
 
 
 class TestParseDeltaHistory:
@@ -163,9 +157,7 @@ class TestParseDeltaHistory:
         assert result[0].operation is None
 
 
-# ---------------------------------------------------------------------------
 # CatalogMaterializationResult
-# ---------------------------------------------------------------------------
 
 
 class TestCatalogMaterializationResult:
@@ -191,9 +183,7 @@ class TestCatalogMaterializationResult:
         assert result.storage_format == "parquet"
 
 
-# ---------------------------------------------------------------------------
 # register_table_from_data (with pre-computed metadata)
-# ---------------------------------------------------------------------------
 
 
 class TestRegisterTableFromData:
@@ -276,9 +266,7 @@ class TestRegisterTableFromData:
         assert table_out.column_count == 3
 
 
-# ---------------------------------------------------------------------------
 # register_table_from_parquet (backward compat alias)
-# ---------------------------------------------------------------------------
 
 
 class TestRegisterTableFromParquetAlias:
@@ -290,7 +278,6 @@ class TestRegisterTableFromParquetAlias:
 
         def fake_register_from_data(self_, **kwargs):
             calls.append(kwargs)
-            # Return a minimal mock
             return type("FakeOut", (), {
                 "name": kwargs["name"], "row_count": 0, "column_count": 0,
                 "size_bytes": 0, "schema_columns": [],
@@ -313,9 +300,7 @@ class TestRegisterTableFromParquetAlias:
         assert calls[0]["table_path"] == "/tmp/compat.parquet"
 
 
-# ---------------------------------------------------------------------------
 # overwrite_table_data (with pre-computed delta metadata)
-# ---------------------------------------------------------------------------
 
 
 class TestOverwriteTableDataDelta:
@@ -323,7 +308,6 @@ class TestOverwriteTableDataDelta:
         """When all metadata is provided, overwrite should not read the file."""
         _, schema_id = _make_namespace()
 
-        # Disable push triggers for simplicity
         monkeypatch.setattr(CatalogService, "_fire_table_trigger_schedules", lambda *a, **kw: 0)
 
         delta_dir = tmp_path / "overwrite_delta"
@@ -406,9 +390,7 @@ class TestOverwriteTableDataDelta:
             assert updated.file_path == str(new_dir)
 
 
-# ---------------------------------------------------------------------------
 # resolve_write_destination
-# ---------------------------------------------------------------------------
 
 
 class TestResolveWriteDestination:
@@ -597,9 +579,7 @@ class TestResolveWriteDestination:
         assert delta_mode == "upsert"
 
 
-# ---------------------------------------------------------------------------
 # resolve_table_file_path
-# ---------------------------------------------------------------------------
 
 
 class TestResolveTableFilePath:
@@ -648,9 +628,7 @@ class TestResolveTableFilePath:
             assert svc.resolve_table_file_path(table_name="no_such_table") is None
 
 
-# ---------------------------------------------------------------------------
 # get_table_history (non-delta fallback)
-# ---------------------------------------------------------------------------
 
 
 class TestGetTableHistory:
@@ -724,9 +702,7 @@ class TestGetTableHistory:
                 svc.get_table_history(999999)
 
 
-# ---------------------------------------------------------------------------
 # get_table_preview (delta + version)
-# ---------------------------------------------------------------------------
 
 
 class TestGetTablePreviewDelta:
@@ -815,9 +791,7 @@ class TestGetTablePreviewDelta:
         assert len(preview_v1.rows) == 2
 
 
-# ---------------------------------------------------------------------------
 # table_exists in _table_to_out (delta-aware)
-# ---------------------------------------------------------------------------
 
 
 class TestTableExistsInOutput:
@@ -863,9 +837,7 @@ class TestTableExistsInOutput:
         assert out.file_exists is False
 
 
-# ---------------------------------------------------------------------------
 # Worker materialization now returns delta format
-# ---------------------------------------------------------------------------
 
 
 class TestMaterializeWorkerDeltaResponse:
@@ -909,9 +881,7 @@ class TestMaterializeWorkerDeltaResponse:
         assert table_out.schema_columns[0].name == "col_x"
 
 
-# ---------------------------------------------------------------------------
 # API: GET /catalog/tables/{id}/history
-# ---------------------------------------------------------------------------
 
 
 class TestHistoryEndpoint:
@@ -944,9 +914,7 @@ class TestHistoryEndpoint:
         assert data["history"] == []
 
 
-# ---------------------------------------------------------------------------
 # API: GET /catalog/tables/{id}/preview?version=...
-# ---------------------------------------------------------------------------
 
 
 class TestPreviewVersionEndpoint:
@@ -980,9 +948,7 @@ class TestPreviewVersionEndpoint:
         assert len(data["rows"]) == 3
 
 
-# ---------------------------------------------------------------------------
 # DB migration: storage_format column
-# ---------------------------------------------------------------------------
 
 
 class TestStorageFormatColumn:

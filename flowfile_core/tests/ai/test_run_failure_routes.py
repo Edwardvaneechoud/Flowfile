@@ -51,9 +51,7 @@ from flowfile_core.configs import settings as core_settings
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
 
-# --------------------------------------------------------------------------- #
-# Shared fixtures #
-# --------------------------------------------------------------------------- #
+# Shared fixtures
 
 
 @pytest.fixture
@@ -107,9 +105,7 @@ def patch_get_configured_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[F
     yield fake
 
 
-# --------------------------------------------------------------------------- #
-# Flow fixture #
-# --------------------------------------------------------------------------- #
+# Flow fixture
 
 
 _FLOW_ID = 9923  # avoid clashing with any flow another test left around
@@ -194,9 +190,7 @@ def registered_flow() -> Iterator[FlowGraph]:
         flow_file_handler._flows.pop(flow.flow_id, None)
 
 
-# --------------------------------------------------------------------------- #
-# 1. Happy path #
-# --------------------------------------------------------------------------- #
+# 1. Happy path
 
 
 def test_explain_run_failure_emits_provider_chunks(
@@ -224,32 +218,23 @@ def test_explain_run_failure_emits_provider_chunks(
     assert 'event: done\ndata: {"finish_reason": "stop"}' in body
     assert body.index("Looks like ") < body.index("the column was renamed.") < body.index("done")
 
-    # Assert the messages that reach the provider:
     captured = patch_get_configured_provider.last_call_kwargs["messages"]
     assert len(captured) == 2
     system_msg, user_msg = captured
 
     assert system_msg.role == "system"
-    #'s assemble_system_prompt(surface="explain") concatenates base + assist;
-    # both files carry the schema-grounding contract phrase.
     assert system_msg.content.strip(), "system prompt must not be empty"
 
     assert user_msg.role == "user"
-    # renders subgraph + node settings + schemas; the failing node and its
-    # upstream are present.
     assert "filter_eu" in user_msg.content or "node 2" in user_msg.content.lower()
-    # The failure block is appended verbatim.
     assert "## Failure" in user_msg.content
     assert error_text in user_msg.content
     assert "read-only assist" in user_msg.content
 
-    # Read-only contract: tools=None.
     assert patch_get_configured_provider.last_call_kwargs.get("tools") is None
 
 
-# --------------------------------------------------------------------------- #
-# 2. Client-supplied error wins #
-# --------------------------------------------------------------------------- #
+# 2. Client-supplied error wins
 
 
 def test_explain_run_failure_client_error_message_wins(
@@ -272,9 +257,7 @@ def test_explain_run_failure_client_error_message_wins(
     assert "freshly captured client-side error" in user_msg.content
 
 
-# --------------------------------------------------------------------------- #
-# 3. Server reads latest_run_info when client omits it #
-# --------------------------------------------------------------------------- #
+# 3. Server reads latest_run_info when client omits it
 
 
 def test_explain_run_failure_reads_latest_run_info(
@@ -297,9 +280,7 @@ def test_explain_run_failure_reads_latest_run_info(
     assert "recorded-side error from prior run" in user_msg.content
 
 
-# --------------------------------------------------------------------------- #
-# 4. No recorded failure → 422 #
-# --------------------------------------------------------------------------- #
+# 4. No recorded failure → 422
 
 
 def test_explain_run_failure_no_recorded_failure_returns_422(
@@ -320,9 +301,7 @@ def test_explain_run_failure_no_recorded_failure_returns_422(
     assert "no recorded failure" in response.json()["detail"].lower()
 
 
-# --------------------------------------------------------------------------- #
-# 5. Flow not found → 422 #
-# --------------------------------------------------------------------------- #
+# 5. Flow not found → 422
 
 
 def test_explain_run_failure_flow_not_found_returns_422(
@@ -342,9 +321,7 @@ def test_explain_run_failure_flow_not_found_returns_422(
     assert "flow" in response.json()["detail"].lower()
 
 
-# --------------------------------------------------------------------------- #
-# 6. Node not found → 422 #
-# --------------------------------------------------------------------------- #
+# 6. Node not found → 422
 
 
 def test_explain_run_failure_node_not_found_returns_422(
@@ -365,9 +342,7 @@ def test_explain_run_failure_node_not_found_returns_422(
     assert "node" in response.json()["detail"].lower()
 
 
-# --------------------------------------------------------------------------- #
-# 7. Unknown provider → 404 #
-# --------------------------------------------------------------------------- #
+# 7. Unknown provider → 404
 
 
 def test_explain_run_failure_unknown_provider_returns_404(
@@ -387,9 +362,7 @@ def test_explain_run_failure_unknown_provider_returns_404(
     assert "imaginary" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 8. Provider not configured → 409 #
-# --------------------------------------------------------------------------- #
+# 8. Provider not configured → 409
 
 
 def test_explain_run_failure_unconfigured_returns_409(
@@ -415,9 +388,7 @@ def test_explain_run_failure_unconfigured_returns_409(
     assert "anthropic" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 9. Feature flag off → 503 #
-# --------------------------------------------------------------------------- #
+# 9. Feature flag off → 503
 
 
 def test_explain_run_failure_disabled_returns_503(
@@ -448,9 +419,7 @@ def test_explain_run_failure_disabled_returns_503(
     assert "AI features are disabled" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------- #
-# 10. Request validation #
-# --------------------------------------------------------------------------- #
+# 10. Request validation
 
 
 @pytest.mark.parametrize(
@@ -468,13 +437,10 @@ def test_explain_run_failure_validates_required_fields(
     response = authed_client.post("/ai/explain_run_failure", json=payload)
     assert response.status_code == 422
     detail = response.json()["detail"]
-    # Pydantic surfaces the missing field name in the error structure.
     assert any(missing_field in str(item) for item in detail)
 
 
-# --------------------------------------------------------------------------- #
-# 11. Lazy-litellm contract #
-# --------------------------------------------------------------------------- #
+# 11. Lazy-litellm contract
 
 
 def test_lazy_litellm_import_for_run_failure_routes() -> None:

@@ -7,7 +7,6 @@ export const gettingStartedTutorial: Tutorial = {
   name: "Getting Started with Flowfile",
   description: "Learn how to create your first data flow - from input to output",
   steps: [
-    // Step 1: Welcome
     {
       id: "welcome",
       title: "Welcome to Flowfile!",
@@ -30,7 +29,6 @@ export const gettingStartedTutorial: Tutorial = {
       showPrevButton: false,
     },
 
-    // Step 2: Click Create button (instantly creates a flow)
     {
       id: "click-quick-create",
       title: "Create a New Flow",
@@ -46,7 +44,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 3: Explore the canvas
     {
       id: "explore-canvas",
       title: "Your Flow Canvas",
@@ -61,7 +58,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 0,
     },
 
-    // Step 5: Explore the node list
     {
       id: "node-list",
       title: "Available Nodes",
@@ -82,7 +78,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 5: Find Manual Input
     {
       id: "find-manual-input",
       title: "Input Sources",
@@ -103,7 +98,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 6: Highlight Manual Input node
     {
       id: "drag-manual-input",
       title: "Drag Manual Input to Canvas",
@@ -119,7 +113,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 7: Node added - click to configure
     {
       id: "configure-manual-input",
       title: "Configure Your Data",
@@ -135,7 +128,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 8,
     },
 
-    // Step 8: Show node settings with sample data suggestion
     {
       id: "node-settings",
       title: "Add Sample Data",
@@ -159,13 +151,11 @@ export const gettingStartedTutorial: Tutorial = {
       showNextButton: true,
       highlightPadding: 4,
       onExit: () => {
-        // Close the node settings panel by deselecting the node
         const nodeStore = useNodeStore();
         nodeStore.nodeId = -1;
       },
     },
 
-    // Step 9: Explore transformations
     {
       id: "transformations-overview",
       title: "Transformation Nodes",
@@ -186,7 +176,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 10: Aggregations - More prominent Group By explanation
     {
       id: "aggregations-overview",
       title: "Let's Aggregate Your Data!",
@@ -206,7 +195,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 11: Drag Group By node
     {
       id: "drag-group-by",
       title: "Add Group By Node",
@@ -224,7 +212,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 12: Connect nodes with grouping context
     {
       id: "connect-nodes",
       title: "Connect Your Nodes",
@@ -244,13 +231,11 @@ export const gettingStartedTutorial: Tutorial = {
       showNextButton: true,
       highlightPadding: 0,
       onExit: () => {
-        // Close the node settings panel by deselecting the node
         const nodeStore = useNodeStore();
         nodeStore.nodeId = -1;
       },
     },
 
-    // Step 13: Write data (output operations)
     {
       id: "output-overview",
       title: "Write Your Results",
@@ -269,7 +254,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 13: Drag Write data node
     {
       id: "drag-write-data",
       title: "Add Write Data Node",
@@ -286,7 +270,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 14: Connect and configure nodes
     {
       id: "configure-write-data",
       title: "Connect and Configure Your Nodes",
@@ -303,13 +286,11 @@ export const gettingStartedTutorial: Tutorial = {
       action: "observe",
       showNextButton: true,
       onExit: () => {
-        // Close the node settings panel by deselecting the node
         const nodeStore = useNodeStore();
         nodeStore.nodeId = -1;
       },
     },
 
-    // Step 15: Execution settings
     {
       id: "execution-settings",
       title: "Configure Execution Mode",
@@ -325,7 +306,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 16: Run the flow
     {
       id: "run-flow",
       title: "Run Your Flow",
@@ -346,7 +326,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 16: View results and explore pipeline
     {
       id: "view-results",
       title: "Explore Your Results",
@@ -366,7 +345,6 @@ export const gettingStartedTutorial: Tutorial = {
       showNextButton: true,
     },
 
-    // Step 17: Save the flow
     {
       id: "save-flow",
       title: "Save Your Flow",
@@ -381,7 +359,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 18: YAML format explanation
     {
       id: "yaml-format",
       title: "Flows are Saved as YAML",
@@ -402,7 +379,6 @@ export const gettingStartedTutorial: Tutorial = {
       centerInScreen: true,
     },
 
-    // Step 19: Generate code
     {
       id: "generate-code",
       title: "Generate Python Code",
@@ -423,7 +399,6 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 20: Code preview
     {
       id: "code-preview",
       title: "Your Python Code",
@@ -442,7 +417,6 @@ export const gettingStartedTutorial: Tutorial = {
       showNextButton: true,
     },
 
-    // Step 21: Keyboard shortcuts
     {
       id: "keyboard-shortcuts",
       title: "Keyboard Shortcuts",
@@ -462,7 +436,6 @@ export const gettingStartedTutorial: Tutorial = {
       showNextButton: true,
     },
 
-    // Step 22: Completion
     {
       id: "completion",
       title: "Congratulations!",

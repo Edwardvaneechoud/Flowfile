@@ -39,24 +39,19 @@ def construct_sql_uri(
     Raises:
         ValueError: If insufficient information is provided
     """
-    # If URL is explicitly provided, return it directly
     if url:
         return url
 
-    # For SQLite, we handle differently since it uses a file path
     if database_type.lower() == "sqlite":
-        # For SQLite, database is the path to the file
         path = database or host or "./database.db"
         # Strip sqlite:/// prefix if the full URI was passed as the path
         if path.startswith("sqlite:///"):
             path = path[len("sqlite:///"):]
         return f"sqlite:///{path}"
 
-    # Validate that minimum required fields are present for other databases
     if not host:
         raise ValueError("Host is required to create a URI")
 
-    # Create credential part if username is provided
     credentials = ""
     if username:
         credentials = username
@@ -65,16 +60,13 @@ def construct_sql_uri(
             credentials += f":{encoded_password}"
         credentials += "@"
 
-    # Add port if specified
     port_section = f":{port}" if port else ""
 
-    # Create base URI
     if database:
         base_uri = f"{database_type}://{credentials}{host}{port_section}/{database}"
     else:
         base_uri = f"{database_type}://{credentials}{host}{port_section}"
 
-    # Add any additional connection parameters
     if kwargs:
         params = "&".join(f"{key}={quote_plus(str(value))}" for key, value in kwargs.items())
         base_uri += f"?{params}"

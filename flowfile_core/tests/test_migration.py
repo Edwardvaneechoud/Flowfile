@@ -393,7 +393,6 @@ class TestExistingCatalogDb:
         db_path = tmp_path / "catalog.db"
         _run_migration(db_path, monkeypatch)
 
-        # Insert a row after first migration
         engine = create_engine(f"sqlite:///{db_path}")
         with engine.connect() as conn:
             conn.execute(
@@ -405,7 +404,6 @@ class TestExistingCatalogDb:
             conn.commit()
         engine.dispose()
 
-        # Run again — should not fail or duplicate
         _run_migration(db_path, monkeypatch)
 
         engine = create_engine(f"sqlite:///{db_path}")
@@ -419,7 +417,6 @@ class TestExistingCatalogDb:
         db_path = tmp_path / "catalog.db"
         _run_migration(db_path, monkeypatch)
 
-        # Now create a legacy DB with data
         legacy = tmp_path / "old.db"
         create_legacy_db(
             legacy,
@@ -432,7 +429,6 @@ class TestExistingCatalogDb:
             },
         )
 
-        # Run migration again — catalog exists, so legacy should be ignored
         _run_migration(db_path, monkeypatch, legacy_path=legacy)
 
         engine = create_engine(f"sqlite:///{db_path}")
@@ -450,7 +446,6 @@ class TestTopologicalSort:
         """Tables with no FK dependencies should appear before dependent tables."""
         from flowfile_core.database.migration import _compute_table_order
 
-        # Create a mock inspector
         class MockInspector:
             def get_foreign_keys(self, table_name):
                 fks = {

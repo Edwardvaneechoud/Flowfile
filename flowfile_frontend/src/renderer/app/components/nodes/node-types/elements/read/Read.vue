@@ -94,7 +94,6 @@ const receivedTable = ref<ReceivedTable | null>(null);
 const dataLoaded = ref(false);
 const modalVisibleForOpen = ref(false);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeRead,
   onBeforeSave: () => {
@@ -106,10 +105,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
     return true;
   },
 });
-
-// ---------------------------------------------------------------------------
-// Manual path input
-// ---------------------------------------------------------------------------
 
 // Use a plain ref so the input is always editable (writable computed resets
 // on every keystroke when receivedTable is null, making the field unusable)
@@ -166,7 +161,6 @@ function handleManualPathChange(path: string) {
   }
 }
 
-// Default table settings factories
 function createDefaultCsvSettings(): InputCsvTable {
   return {
     file_type: "csv",

@@ -35,9 +35,7 @@ def _empty_flow(flow_id: int = 1) -> FlowGraph:
     )
 
 
-# --------------------------------------------------------------------------- #
 # extract_flow_json                                                           #
-# --------------------------------------------------------------------------- #
 
 
 def test_extract_flow_json_direct():
@@ -80,9 +78,7 @@ def test_extract_flow_json_rejects_empty():
         oneshot.extract_flow_json("")
 
 
-# --------------------------------------------------------------------------- #
 # _plan_insertions                                                            #
-# --------------------------------------------------------------------------- #
 
 
 def test_plan_insertions_linear_toposort_and_ids():
@@ -119,9 +115,7 @@ def test_plan_insertions_join_splits_right_input():
     assert j.right_input_id != j.upstream_ids[0]
 
 
-# --------------------------------------------------------------------------- #
 # _stage_flow (integration against a real flow)                               #
-# --------------------------------------------------------------------------- #
 
 
 def test_stage_flow_builds_diff():
@@ -197,9 +191,7 @@ def test_stage_flow_skips_writer_nodes():
     assert any("output" in w for w in result["warnings"])
 
 
-# --------------------------------------------------------------------------- #
 # _build_simple_diff (light path — no executor / no validation at build)      #
-# --------------------------------------------------------------------------- #
 
 
 def test_build_simple_diff_applies_to_real_flow():
@@ -267,9 +259,7 @@ def test_build_simple_diff_no_usable_nodes_raises():
         oneshot._build_simple_diff(flow=flow, flow_id=1, spec=spec)
 
 
-# --------------------------------------------------------------------------- #
 # generate_flow end-to-end (stub provider — no network, no model)             #
-# --------------------------------------------------------------------------- #
 
 
 def test_generate_flow_simple_with_stub_provider():

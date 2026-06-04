@@ -1,4 +1,3 @@
-// Polars code editor autocompletion values
 export const polarsCompletionVals = [
   // Polars basics
   { label: 'pl', type: 'variable', info: 'Polars main module' },

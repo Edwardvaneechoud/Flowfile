@@ -34,10 +34,8 @@ const props = defineProps({
 });
 const emit = defineEmits(["update-editor-string", "validation-error"]);
 
-// Track validation errors
 const validationError = ref<string | null>(null);
 
-// Polars-specific autocompletions
 const polarsCompletions: CompletionSource = (context: any) => {
   let word = context.matchBefore(/\w*/);
   if (word?.from == word?.to && !context.explicit) {
@@ -49,17 +47,13 @@ const polarsCompletions: CompletionSource = (context: any) => {
   };
 };
 
-// Custom keymap for tab handling
-
 const tabKeymap = keymap.of([
   {
     key: "Tab",
     run: (view: EditorView): boolean => {
-      // If there's an active completion, accept it
       if (acceptCompletion(view)) {
         return true;
       }
-      // If no completion is active, perform normal tab indentation
       return indentMore(view);
     },
   },
@@ -83,11 +77,9 @@ const insertTextAtCursor = (text: string) => {
   }
 };
 
-// Define reactive data
 const code = ref(props.editorString);
 const view = shallowRef<EditorView | null>(null);
 
-// Extensions configuration
 const extensions: Extension[] = [
   python(),
   oneDark,
@@ -99,13 +91,12 @@ const extensions: Extension[] = [
   EditorState.tabSize.of(4),
   autocompletion({
     override: [polarsCompletions],
-    defaultKeymap: true, // Enable default keymap for arrow navigation
+    defaultKeymap: true,
     closeOnBlur: false,
   }),
-  Prec.highest(tabKeymap), // Tab keymap with highest precedence
+  Prec.highest(tabKeymap),
 ];
 
-// Rest of the component code remains the same...
 const handleReady = (payload: { view: EditorView }) => {
   view.value = payload.view;
 };

@@ -4,8 +4,6 @@ from pydantic import BaseModel, Field, SecretStr, computed_field
 
 from flowfile_core.flowfile.node_designer._type_registry import normalize_type_spec
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
-
-# Public API import
 from flowfile_core.types import DataType, TypeSpec
 
 InputType = Literal["text", "number", "secret", "array", "date", "boolean"]
@@ -30,7 +28,6 @@ class ActionOption(NamedTuple):
     """The display label shown in the UI."""
 
 
-# Type alias for action specifications - accepts strings or ActionOption tuples
 ActionSpec = str | ActionOption
 
 
@@ -135,7 +132,6 @@ class ColumnSelector(FlowfileInComponent):
     multiple: bool = False
     input_type: InputType = "text"
 
-    # Normalized output: either "ALL" or list of DataType enums
     data_type_filter_input: TypeSpec = Field(default="ALL", alias="data_types", repr=False, exclude=True)
 
     class Config:
@@ -317,12 +313,10 @@ class Section(BaseModel):
         """
         components = {}
 
-        # Get from extra fields
         for key, value in getattr(self, "__pydantic_extra__", {}).items():
             if isinstance(value, FlowfileInComponent):
                 components[key] = value
 
-        # Get from defined fields (excluding metadata)
         for field_name in self.model_fields:
             if field_name not in {"title", "description", "hidden"}:
                 value = getattr(self, field_name, None)
@@ -359,7 +353,6 @@ class SecretSelector(FlowfileInComponent):
     input_type: InputType = "secret"
     name_prefix: str | None = None
 
-    # Private fields for runtime context
     _user_id: int | None = None
     _accessed_secrets: set | None = None  # Reference to node's tracking set
 
@@ -461,23 +454,18 @@ class ColumnActionInput(FlowfileInComponent):
     component_type: Literal["ColumnActionInput"] = "ColumnActionInput"
     input_type: InputType = "array"
 
-    # Configurable actions - list of action names or ActionOption tuples
     actions: list[ActionSpec] = Field(default_factory=list)
     """Actions available for selection. Can be strings or ActionOption(value, label) tuples."""
 
-    # Template for auto-generating output names
-    # Supports placeholders: {column}, {action}
     output_name_template: str = "{column}_{action}"
     """Template for generating default output names. Use {column} and {action} placeholders."""
 
-    # Optional grouping/ordering support
     show_group_by: bool = False
     """Whether to show the group by column selector."""
 
     show_order_by: bool = False
     """Whether to show the order by column selector."""
 
-    # Type filtering for column selection
     data_type_filter_input: TypeSpec = Field(default="ALL", alias="data_types", repr=False, exclude=True)
     """Filter columns by data type. Defaults to ALL."""
 
@@ -486,7 +474,6 @@ class ColumnActionInput(FlowfileInComponent):
 
     def __init__(self, **data):
         super().__init__(**data)
-        # Initialize value if not set
         if self.value is None:
             self.value = {
                 "rows": [],
@@ -515,7 +502,6 @@ class ColumnActionInput(FlowfileInComponent):
         Serializes the component for the frontend.
         """
         data = super().model_dump(**kwargs)
-        # Normalize actions to list of {value, label} objects for frontend
         normalized_actions = []
         for action in self.actions:
             if isinstance(action, tuple):

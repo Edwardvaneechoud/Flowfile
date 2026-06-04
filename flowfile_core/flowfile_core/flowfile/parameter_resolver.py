@@ -25,9 +25,7 @@ def resolve_parameters(text: str, params: dict[str, str]) -> str:
     return _PARAM_PATTERN.sub(lambda m: params.get(m.group(1), m.group(0)), text)
 
 
-# ---------------------------------------------------------------------------
 # In-place mutation (used by _execute_single_node)
-# ---------------------------------------------------------------------------
 
 
 def apply_parameters_in_place(obj: Any, params: dict[str, str]) -> _Restorations:
@@ -48,7 +46,6 @@ def apply_parameters_in_place(obj: Any, params: dict[str, str]) -> _Restorations
     restorations: _Restorations = []
     _apply_recursive(obj, params, restorations)
 
-    # Validate: no unresolved refs should remain
     unresolved = find_unresolved_in_model(obj)
     if unresolved:
         # Roll back before raising so the node is left in a clean state
@@ -122,9 +119,7 @@ def find_unresolved_in_model(obj: Any) -> set[str]:
     return found
 
 
-# ---------------------------------------------------------------------------
 # Legacy helper kept for tests / external callers
-# ---------------------------------------------------------------------------
 
 
 def _walk_and_resolve(obj: Any, params: dict[str, str]) -> Any:

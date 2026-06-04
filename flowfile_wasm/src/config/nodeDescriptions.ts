@@ -1,4 +1,3 @@
-// Node descriptions for settings panel titles
 export interface NodeDescription {
   title: string
   intro: string

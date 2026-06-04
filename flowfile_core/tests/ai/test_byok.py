@@ -108,7 +108,6 @@ def local_user_id() -> int:
 def _cleanup_credential_rows() -> Iterator[None]:
     """Each test starts with empty credential + their owned secret rows."""
     with get_db_context() as db:
-        # Wipe any test-leftover ai_* secrets first to avoid orphan rows.
         creds = db.query(AiProviderCredential).all()
         secret_ids = [c.api_key_secret_id for c in creds if c.api_key_secret_id is not None]
         db.query(AiProviderCredential).delete()
@@ -161,7 +160,7 @@ def test_credentials_table_exists_after_alembic() -> None:
         "api_key_secret_id",
         "api_base",
         "default_model",
-        "models",  #
+        "models",
         "last_tested_at",
         "last_test_status",
         "last_test_error",
@@ -214,14 +213,12 @@ def test_upsert_rotates_existing_secret_in_place(local_user_id: int) -> None:
 
         secret = db.query(Secret).filter(Secret.id == original_secret_id).first()
         assert secret is not None
-        # Secret name follows the convention.
         assert secret.name.startswith(f"ai:openai:api_key:{local_user_id}:")
 
 
 def test_upsert_keeps_key_when_api_key_is_none(local_user_id: int) -> None:
     with get_db_context() as db:
         upsert_provider_credential(db, local_user_id, "groq", _input(api_key="gsk-keep"))
-        # Partial update: only change default_model.
         upsert_provider_credential(
             db, local_user_id, "groq", _input(api_key=None, default_model="llama-3.1-70b-versatile")
         )
@@ -321,9 +318,7 @@ def test_get_configured_provider_falls_back_to_env(local_user_id: int, monkeypat
     monkeypatch.setenv("ANTHROPIC_API_KEY", "env-fallback-key")
     with get_db_context() as db:
         provider = get_configured_provider(db, local_user_id, "anthropic")
-        # No row → no api_key passed; litellm reads env on its own.
         assert provider.api_key is None
-        # Surface fallback should still resolve.
         assert stub.last_kwargs["api_key"] is None
 
 
@@ -333,12 +328,10 @@ def test_get_configured_provider_resolution_order(local_user_id: int, monkeypatc
         upsert_provider_credential(
             db, local_user_id, "anthropic", _input(api_key="k", default_model="claude-haiku-4-5")
         )
-        # Stored default_model wins over surface map.
         get_configured_provider(db, local_user_id, "anthropic", surface="agent_complex")
         assert stub.last_kwargs["model"] == "claude-haiku-4-5"
         assert stub.last_kwargs["surface"] is None
 
-        # Explicit model wins over both stored default and surface.
         get_configured_provider(db, local_user_id, "anthropic", surface="agent_complex", model="claude-opus-4-7")
         assert stub.last_kwargs["model"] == "claude-opus-4-7"
 
@@ -370,7 +363,6 @@ def test_detect_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert detect_env_fallback("anthropic") is False
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     assert detect_env_fallback("anthropic") is True
-    # Ollama never reports env_fallback (no env var concept).
     assert detect_env_fallback("ollama") is False
 
 
@@ -380,7 +372,6 @@ def test_detect_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_routes_list_providers_enriches_status(
     authed_client: TestClient, local_user_id: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Clear all known env vars so we can shape statuses precisely.
     for env in (
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
@@ -401,7 +392,6 @@ def test_routes_list_providers_enriches_status(
     assert items["anthropic"]["status"] == "configured"
     assert items["openai"]["status"] == "env_fallback"
     assert items["google"]["status"] == "unconfigured"
-    # Class metadata is included.
     assert items["anthropic"]["supports_tools"] is True
     assert "cmd_k" in items["anthropic"]["surfaces"]
 
@@ -535,7 +525,6 @@ def test_update_test_status_round_trip(local_user_id: int) -> None:
 
 def test_update_test_status_missing_id_is_noop(local_user_id: int) -> None:
     with get_db_context() as db:
-        # Should not raise.
         update_test_status(db, 999_999, ok=True)
 
 
@@ -612,7 +601,6 @@ def test_upsert_clears_models_via_flag_and_via_empty_list(local_user_id: int) ->
             db, local_user_id, "openrouter", _input(api_key="or-x", models=["a", "b"])
         )
 
-        # Clear via flag.
         upsert_provider_credential(
             db, local_user_id, "openrouter", _input(api_key=None, clear_models=True)
         )
@@ -620,7 +608,6 @@ def test_upsert_clears_models_via_flag_and_via_empty_list(local_user_id: int) ->
         assert cred is not None
         assert to_public(cred).models is None
 
-        # Re-set, then clear via empty list.
         upsert_provider_credential(
             db, local_user_id, "openrouter", _input(api_key=None, models=["a"])
         )
@@ -640,7 +627,6 @@ def test_upsert_keeps_models_when_payload_models_is_none(local_user_id: int) -> 
         upsert_provider_credential(
             db, local_user_id, "openrouter", _input(api_key="or-x", models=["a", "b"])
         )
-        # Update only default_model — models should survive.
         upsert_provider_credential(
             db,
             local_user_id,

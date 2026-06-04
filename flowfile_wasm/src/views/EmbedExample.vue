@@ -96,7 +96,6 @@ Diana,diana@example.com,Dublin`
   }
 ])
 
-// Build the inputData map reactively from the editable datasets
 const inputData = computed<InputDataMap>(() => {
   const map: InputDataMap = {}
   for (const ds of datasets) {
@@ -126,7 +125,6 @@ interface OutputResult {
 const outputResults = ref<OutputResult[]>([])
 
 function handleOutput(data: OutputData) {
-  // Replace if same nodeId, else append
   const existing = outputResults.value.findIndex(o => o.nodeId === data.nodeId)
   const entry: OutputResult = {
     nodeId: data.nodeId,

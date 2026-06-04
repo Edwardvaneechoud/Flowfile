@@ -13,9 +13,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.utils import (
     get_sqlalchemy_uri,
 )
 
-# ============================================================================
 # URI Construction Tests
-# ============================================================================
 
 
 class TestSQLiteURIConstruction:
@@ -47,9 +45,7 @@ class TestSQLiteURIConstruction:
         assert get_sqlalchemy_uri(sqlite_uri) == sqlite_uri
 
 
-# ============================================================================
 # SQLite Integration Tests (no Docker required)
-# ============================================================================
 
 
 class TestSQLiteIntegration:
@@ -173,9 +169,7 @@ class TestSQLiteIntegration:
             sql_source.validate()
 
 
-# ============================================================================
 # SQLite Type Mapping Tests
-# ============================================================================
 
 
 class TestSQLiteTypeMappings:

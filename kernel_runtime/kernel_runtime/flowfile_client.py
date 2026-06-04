@@ -85,7 +85,6 @@ def _set_context(
             "interactive": interactive,
         }
     )
-    # Create a reusable HTTP client for log callbacks
     if log_callback_url:
         _log_client.set(httpx.Client(timeout=httpx.Timeout(5.0)))
     else:
@@ -204,10 +203,8 @@ def list_artifacts() -> list[ArtifactInfo]:
 
 # ===== Global Artifacts APIs =====
 
-# Core URL for global artifact API calls
 _CORE_URL = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578")
 
-# Shared path inside container for file-based storage
 _SHARED_PATH = os.environ.get("FLOWFILE_SHARED_PATH", "/shared")
 
 
@@ -302,7 +299,6 @@ def publish_global(
     if serialization_format in ("pickle", "joblib"):
         check_pickleable(obj)
 
-    # Get context for lineage tracking
     try:
         flow_id = _get_context_value("flow_id")
         node_id = _get_context_value("node_id")
@@ -327,7 +323,6 @@ def publish_global(
         )
         return -1
 
-    # Get kernel ID from environment
     kernel_id = os.environ.get("FLOWFILE_KERNEL_ID")
 
     # 1. Request upload target from Core
@@ -697,7 +692,6 @@ def display(obj: Any, title: str = "") -> None:
     displays = _displays.get([])
 
     if _is_matplotlib_figure(obj):
-        # Render matplotlib figure to PNG
         buf = io.BytesIO()
         obj.savefig(buf, format="png", dpi=150, bbox_inches="tight")
         buf.seek(0)
@@ -710,7 +704,6 @@ def display(obj: Any, title: str = "") -> None:
             }
         )
     elif _is_plotly_figure(obj):
-        # Render plotly figure to HTML
         html = obj.to_html(include_plotlyjs="cdn", full_html=False)
         displays.append(
             {
@@ -720,7 +713,6 @@ def display(obj: Any, title: str = "") -> None:
             }
         )
     elif _is_pil_image(obj):
-        # Render PIL image to PNG
         buf = io.BytesIO()
         obj.save(buf, format="PNG")
         buf.seek(0)
@@ -733,7 +725,6 @@ def display(obj: Any, title: str = "") -> None:
             }
         )
     elif _is_html_string(obj):
-        # Store HTML string directly
         displays.append(
             {
                 "mime_type": "text/html",
@@ -742,7 +733,6 @@ def display(obj: Any, title: str = "") -> None:
             }
         )
     else:
-        # Fall back to plain text
         displays.append(
             {
                 "mime_type": "text/plain",

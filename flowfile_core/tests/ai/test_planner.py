@@ -52,9 +52,7 @@ from flowfile_core.ai.tools.registry import SURFACE_PRESETS
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas
 
-# --------------------------------------------------------------------------- #
 # Test helpers #
-# --------------------------------------------------------------------------- #
 
 
 def _flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
@@ -219,9 +217,7 @@ async def _drain(gen) -> list[PlannerEvent]:
     return out
 
 
-# --------------------------------------------------------------------------- #
 # Fixtures #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.fixture(autouse=True)
@@ -233,9 +229,7 @@ def _reset_stores() -> Iterator[None]:
     diff_module.clear_for_tests()
 
 
-# --------------------------------------------------------------------------- #
 # Lazy-litellm contract + surface lockstep #
-# --------------------------------------------------------------------------- #
 
 
 def test_lazy_litellm_contract() -> None:
@@ -255,9 +249,7 @@ def test_surface_lockstep() -> None:
     assert SURFACE_TO_LEVEL["agent_staged"] == "planner"
 
 
-# --------------------------------------------------------------------------- #
 # Pure helpers #
-# --------------------------------------------------------------------------- #
 
 
 def test_allocate_node_id_collision_free() -> None:
@@ -323,9 +315,7 @@ def test_resolve_insertion_context_falls_back_to_live_node() -> None:
     assert ambiguous is None
 
 
-# --------------------------------------------------------------------------- #
 # settings-field hint, selection, pin, ambiguity refusal #
-# --------------------------------------------------------------------------- #
 
 
 def test_insertion_uses_settings_field_when_no_upstream_param() -> None:
@@ -476,9 +466,7 @@ def test_in_batch_staged_wins_over_selection() -> None:
     assert ambiguous is None
 
 
-# --------------------------------------------------------------------------- #
 # Loop happy-path #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -520,17 +508,14 @@ async def test_happy_path_multi_step_chains_upstream() -> None:
 
     provider = _ScriptedProvider(
         [
-            # Step 1: add filter
             _Step(
                 tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
                 finish_reason="tool_calls",
             ),
-            # Step 2: add select on top of the filter
             _Step(
                 tool_calls=[ToolCall(id="t2", name="flowfile.graph.add_select", arguments=_select_args())],
                 finish_reason="tool_calls",
             ),
-            # Step 3: done
             _Step(tool_calls=[], content="all done", finish_reason="stop"),
         ]
     )
@@ -591,9 +576,7 @@ async def test_w62_chained_agent_stages_have_non_overlapping_coords() -> None:
     assert diff.additions[1].settings["pos_x"] == coord_b[0]
 
 
-# --------------------------------------------------------------------------- #
 # Surface routing #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -624,9 +607,7 @@ async def test_surface_agent_complex_uses_full_catalog_from_step_one() -> None:
     assert "flowfile.meta.pick_category" not in first_tools
 
 
-# --------------------------------------------------------------------------- #
 # Retry on rejection #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -689,9 +670,7 @@ async def test_three_consecutive_rejections_fail() -> None:
     assert any(e.event == "error" and "rejected" in str(e.payload).lower() for e in events)
 
 
-# --------------------------------------------------------------------------- #
 # Drift #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -879,9 +858,7 @@ async def test_external_drift_still_detected_after_one_stage() -> None:
         assert sid not in sess.drift_detail.external_added_node_ids
 
 
-# --------------------------------------------------------------------------- #
 # Abort #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -898,9 +875,7 @@ async def test_abort_during_run_emits_abort_event() -> None:
     assert "abort" in names
 
 
-# --------------------------------------------------------------------------- #
 # Misc edge cases #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -1029,9 +1004,7 @@ async def test_resume_from_paused_drift_resnapshots() -> None:
     assert sess.pause_reason is None
 
 
-# --------------------------------------------------------------------------- #
 # Step narration, op_kind classification, meta-op suppression #
-# --------------------------------------------------------------------------- #
 
 
 def test_w38_classify_op_kind_meta() -> None:
@@ -1263,9 +1236,7 @@ async def test_w38_rejected_event_carries_op_kind_for_ui_styling() -> None:
     assert payload["arg_summary"] is not None
 
 
-# --------------------------------------------------------------------------- #
 # self-loop prevention + resume staged_results hygiene #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -1483,9 +1454,7 @@ async def test_audit_row_for_add_includes_node_id_instrumentation() -> None:
     assert meta["staged_node_ids_at_stage"] == []
 
 
-# --------------------------------------------------------------------------- #
 # planner sees the per-node-type catalog block in its system prompt #
-# --------------------------------------------------------------------------- #
 
 
 def test_w56_planner_system_prompt_includes_node_catalog() -> None:
@@ -1523,9 +1492,7 @@ def test_w56_planner_system_prompt_includes_node_catalog() -> None:
     assert catalog_idx > pointer_idx, "catalog block must follow the pointer line"
 
 
-# --------------------------------------------------------------------------- #
 # planner prompt warns against the redundant-connect pattern #
-# --------------------------------------------------------------------------- #
 
 
 def test_w70_planner_prompt_warns_against_redundant_connect() -> None:
@@ -1555,9 +1522,7 @@ def test_w70_planner_prompt_warns_against_redundant_connect() -> None:
     assert "## Connection discipline" in prompt_staged_single_op
 
 
-# --------------------------------------------------------------------------- #
 # Post-completion followup re-entry #
-# --------------------------------------------------------------------------- #
 
 
 def test_w49_looks_like_question_trailing_qmark() -> None:
@@ -1853,9 +1818,7 @@ async def test_w49_followup_synthetic_rejection_appears_in_conversation() -> Non
     assert "please use the read node directly" in rejection_msgs[-1].content
 
 
-# --------------------------------------------------------------------------- #
 # modification dispatch #
-# --------------------------------------------------------------------------- #
 
 
 def _make_flow_with_filter(flow_id: int = 1) -> FlowGraph:
@@ -2036,9 +1999,7 @@ async def test_planner_modification_does_not_pollute_staged_node_ids_when_chaine
     assert {m.node_id for m in diff.modifications} == {2, 3}
 
 
-# --------------------------------------------------------------------------- #
 # staged settings echo in tool reply #
-# --------------------------------------------------------------------------- #
 
 
 def test_summarise_echoes_staged_settings_for_add() -> None:

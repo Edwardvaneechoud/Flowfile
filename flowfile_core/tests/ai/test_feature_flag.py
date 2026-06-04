@@ -171,7 +171,6 @@ def test_env_var_parsing(monkeypatch: pytest.MonkeyPatch, env_value: str, expect
     module after setting the env var to observe the resolution rule used in
     production startup."""
     monkeypatch.setenv("FEATURE_FLAG_AI", env_value)
-    # Reload settings so the module-level expression re-evaluates.
     importlib.reload(core_settings)
     try:
         assert bool(core_settings.FEATURE_FLAG_AI) is expected
@@ -223,7 +222,6 @@ def test_no_litellm_pulled_in_by_feature_flag() -> None:
     every request."""
     import sys
 
-    # Wipe any cached imports.
     for mod_name in list(sys.modules):
         if mod_name.startswith("litellm") or mod_name == "flowfile_core.ai.feature_flag":
             del sys.modules[mod_name]

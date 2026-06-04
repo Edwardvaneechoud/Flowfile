@@ -77,7 +77,6 @@ def test_graph_tree(capsys):
         )
         flow.add_manual_input(data)
 
-    # Add union node
     union_node = input_schema.NodeUnion(
         flow_id=1,
         node_id=5,
@@ -89,7 +88,6 @@ def test_graph_tree(capsys):
         connection = input_schema.NodeConnection.create_from_simple_input(i, 5, 'main')
         add_connection(flow, connection)
 
-    # Add group by node
     groupby_node = input_schema.NodeGroupBy(
         flow_id=1,
         node_id=6,

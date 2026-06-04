@@ -2,7 +2,6 @@ import { DirectiveBinding, ObjectDirective } from "vue";
 
 const ClickOutsideDirective: ObjectDirective = {
   beforeMount(el: HTMLElement, binding: DirectiveBinding) {
-    // Type assertion to bypass TypeScript's type checking
     const element = el as any;
 
     element.clickOutsideEvent = (event: Event) => {

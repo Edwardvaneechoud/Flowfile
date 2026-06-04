@@ -132,7 +132,6 @@ const emit = defineEmits<{
   (e: "cancel"): void;
 }>();
 
-// Create a default connection object
 const defaultConnection = (): FullDatabaseConnection => ({
   connectionName: "",
   databaseType: "postgresql",
@@ -145,12 +144,10 @@ const defaultConnection = (): FullDatabaseConnection => ({
   url: "",
 });
 
-// Initialize connection with props or default values
 const connection = ref<FullDatabaseConnection>(
   props.initialConnection ? { ...props.initialConnection } : defaultConnection(),
 );
 
-// Watch for changes in initialConnection prop
 watch(
   () => props.initialConnection,
   (newVal) => {
@@ -160,7 +157,6 @@ watch(
   },
 );
 
-// Update default port when database type changes
 watch(
   () => connection.value.databaseType,
   (newType, oldType) => {
@@ -183,7 +179,6 @@ const showPassword = ref(false);
 
 const isSqlite = computed(() => isFileBased(connection.value.databaseType as DatabaseType));
 
-// Computed property to determine if the form is valid
 const isValid = computed(() => {
   if (isSqlite.value) {
     return !!connection.value.connectionName && !!connection.value.database;
@@ -196,7 +191,6 @@ const isValid = computed(() => {
   );
 });
 
-// Computed property for the submit button text
 const submitButtonText = computed(() => {
   if (props.isSubmitting) {
     return "Saving...";
@@ -204,7 +198,6 @@ const submitButtonText = computed(() => {
   return props.initialConnection ? "Update Connection" : "Create Connection";
 });
 
-// Submit form
 const submitForm = () => {
   if (isValid.value) {
     emit("submit", connection.value);

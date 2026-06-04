@@ -17,7 +17,6 @@ onMounted(() => {
   isDismissed.value = localStorage.getItem(DISMISSED_KEY) === "true";
 });
 
-// Only show when on designer page, no flow is open, tutorial is not active, and not dismissed
 const showButton = computed(() => {
   const isDesignerPage = route.name === "designer";
   const hasNoFlow = !nodeStore.flow_id || nodeStore.flow_id <= 0;

@@ -133,7 +133,6 @@ const nodeJoin = ref<NodeJoin | null>(null);
 const aiSuggesting = ref(false);
 const aiSuggestNotice = ref<string>("");
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeJoin,
 });
@@ -230,7 +229,6 @@ const suggestJoinKeys = async () => {
     const mapping = nodeJoin.value.join_input.join_mapping;
     let filled = 0;
     for (const pair of pairs) {
-      // Find the next empty row, or append a new one.
       const emptyIdx = mapping.findIndex(
         (m) => (!m.left_col || m.left_col === "") && (!m.right_col || m.right_col === ""),
       );

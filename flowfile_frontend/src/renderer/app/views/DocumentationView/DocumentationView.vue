@@ -11,7 +11,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-// Dynamically set the URL
 const docsUrl = computed(() =>
   import.meta.env.MODE === "development"
     ? "http://127.0.0.1:8000/"

@@ -42,11 +42,6 @@ logger = logging.getLogger(__name__)
 
 
 _MAX_SAMPLE_ROWS: int = 3
-"""Cap on the number of sample rows surfaced in the observation
-block. The LLM doesn't need a full dataset preview — three rows is
-enough to confirm shape and spot-check values without flooding the
-prompt. Performance-bounded too: ``collect(n_records=3)`` short-
-circuits at three on streamable plans."""
 
 
 @dataclass
@@ -63,24 +58,9 @@ class ObservationResult:
     node_id: int
     node_type: str
     output_schema: list[dict[str, Any]] = field(default_factory=list)
-    """Each entry: ``{"name": str, "data_type": str}``. Same shape
-    as the predictor's persisted predicted_output_schema and the
-    staged_node_payload's predicted_schema, so the LLM sees a
-    consistent column-shape across surfaces."""
     sample_rows: list[dict[str, Any]] = field(default_factory=list)
-    """At most :data:`_MAX_SAMPLE_ROWS` representative rows. Empty
-    on failure or when the executor couldn't materialise data
-    (e.g. dynamic node + Development mode → schema-only)."""
     error_message: str = ""
-    """Cleaned-up runtime error text (Pydantic / Polars exception
-    messages, truncated) the LLM consumes on its next round. Empty
-    on success."""
     error_kind: str = ""
-    """Short category label for the error, e.g.
-    ``"ColumnNotFoundError"`` / ``"TypeError"`` / ``"OverflowError"``,
-    extracted from the exception type. Empty on success. Used for
-    audit / log filtering — the LLM sees the full
-    ``error_message`` in the prompt."""
 
 
 async def observe_after_apply(flow: Any, node_id: int) -> ObservationResult:

@@ -184,14 +184,12 @@ const highlightPlugin = ViewPlugin.fromClass(
       const regexColumn = /\[[^\]]+\]/g;
       const regexString = /(["'])(?:(?=(\\?))\2.)*?\1/g;
 
-      // Collect all matches first, then sort them
       const matches = [];
 
       for (let { from, to } of view.visibleRanges) {
         const text = doc.sliceString(from, to);
         let match;
 
-        // Collect function matches
         regexFunction.lastIndex = 0;
         while ((match = regexFunction.exec(text)) !== null) {
           const start = from + match.index;
@@ -199,7 +197,6 @@ const highlightPlugin = ViewPlugin.fromClass(
           matches.push({ start, end, type: "function" });
         }
 
-        // Collect column matches
         regexColumn.lastIndex = 0;
         while ((match = regexColumn.exec(text)) !== null) {
           const start = from + match.index;
@@ -207,7 +204,6 @@ const highlightPlugin = ViewPlugin.fromClass(
           matches.push({ start, end, type: "column" });
         }
 
-        // Collect string matches
         regexString.lastIndex = 0;
         while ((match = regexString.exec(text)) !== null) {
           const start = from + match.index;
@@ -216,10 +212,8 @@ const highlightPlugin = ViewPlugin.fromClass(
         }
       }
 
-      // Sort matches by their 'from' position
       matches.sort((a, b) => a.start - b.start);
 
-      // Add decorations in sorted order
       for (const match of matches) {
         if (match.type === "function") {
           builder.add(match.start, match.end, Decoration.mark({ class: "cm-function" }));

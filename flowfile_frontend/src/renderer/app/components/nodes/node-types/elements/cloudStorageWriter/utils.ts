@@ -11,11 +11,11 @@ export const createNodeCloudStorageWriter = (
   nodeId: number,
 ): NodeCloudStorageWriter => {
   const cloudStorageWriteSettings: CloudStorageWriteSettings = {
-    auth_mode: "aws-cli", // Default to local credentials
+    auth_mode: "aws-cli",
     connection_name: undefined,
     resource_path: "",
     write_mode: "overwrite",
-    file_format: "parquet", // Parquet is a common, efficient default
+    file_format: "parquet",
     parquet_compression: "snappy",
     csv_delimiter: ",",
     csv_encoding: "utf8",

@@ -59,9 +59,7 @@ class FlowScheduler:
 
         logger.info("Scheduler %s targeting %s", self._holder_id, url)
 
-    # ------------------------------------------------------------------
     # Public API (called from core's lifespan)
-    # ------------------------------------------------------------------
 
     async def start(self) -> None:
         """Start the background polling loop. Can only be called once."""
@@ -94,9 +92,7 @@ class FlowScheduler:
         self._release_lock()
         logger.info("Scheduler %s stopped", self._holder_id)
 
-    # ------------------------------------------------------------------
     # Main loop
-    # ------------------------------------------------------------------
 
     async def _run_loop(self) -> None:
         while not self._stopping:
@@ -121,9 +117,7 @@ class FlowScheduler:
             else:
                 logger.info("Tick complete — no schedules due")
 
-    # ------------------------------------------------------------------
     # Lock management
-    # ------------------------------------------------------------------
 
     def _acquire_lock(self, db: Session) -> bool:
         """Try to acquire or refresh the advisory lock.
@@ -144,7 +138,6 @@ class FlowScheduler:
             db.commit()
             return True
 
-        # Another holder — check staleness
         if lock.heartbeat_at is not None:
             elapsed = (now - lock.heartbeat_at.replace(tzinfo=timezone.utc)).total_seconds()
             if elapsed > STALE_THRESHOLD:
@@ -167,9 +160,7 @@ class FlowScheduler:
         except Exception:
             logger.exception("Failed to release scheduler lock")
 
-    # ------------------------------------------------------------------
     # Interval schedules
-    # ------------------------------------------------------------------
 
     def _process_interval_schedules(self, db: Session) -> int:
         schedules: list[FlowSchedule] = (
@@ -197,9 +188,7 @@ class FlowScheduler:
                 launched += 1
         return launched
 
-    # ------------------------------------------------------------------
     # Cron schedules
-    # ------------------------------------------------------------------
 
     def _process_cron_schedules(self, db: Session) -> int:
         """Evaluate cron schedules and launch those whose next fire time has passed.
@@ -283,9 +272,7 @@ class FlowScheduler:
                 logger.debug("Cron schedule %s not due yet (next_run=%s local)", sched.id, next_run)
         return launched
 
-    # ------------------------------------------------------------------
     # Table-trigger schedules
-    # ------------------------------------------------------------------
 
     def _process_table_trigger_schedules(self, db: Session) -> int:
         """Detect table changes and launch table_trigger flows (poll path).
@@ -352,9 +339,7 @@ class FlowScheduler:
                     launched += 1
         return launched
 
-    # ------------------------------------------------------------------
     # Table-set-trigger schedules
-    # ------------------------------------------------------------------
 
     def _process_table_set_trigger_schedules(self, db: Session) -> int:
         schedules: list[FlowSchedule] = (
@@ -366,7 +351,6 @@ class FlowScheduler:
 
         launched = 0
         for sched in schedules:
-            # Load linked table IDs from the join table
             trigger_links: list[ScheduleTriggerTable] = (
                 db.query(ScheduleTriggerTable).filter(ScheduleTriggerTable.schedule_id == sched.id).all()
             )
@@ -377,7 +361,6 @@ class FlowScheduler:
 
             last_triggered = sched.last_triggered_at.replace(tzinfo=timezone.utc) if sched.last_triggered_at else None
 
-            # Check if ALL tables have been updated since last trigger
             all_updated = True
             for tid in table_ids:
                 table: CatalogTable | None = db.get(CatalogTable, tid)
@@ -405,9 +388,7 @@ class FlowScheduler:
                     launched += 1
         return launched
 
-    # ------------------------------------------------------------------
     # Launch helpers
-    # ------------------------------------------------------------------
 
     def _has_active_run(self, db: Session, registration_id: int) -> bool:
         return (

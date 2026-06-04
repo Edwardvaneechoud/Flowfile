@@ -38,7 +38,7 @@ def create_default_local_user(db: Session):
             email="local@flowfile.app",
             full_name="Local User",
             hashed_password=hashed_password,
-            must_change_password=False,  # Local user doesn't need to change password
+            must_change_password=False,
         )
         db.add(local_user)
         db.commit()
@@ -52,15 +52,12 @@ def create_docker_admin_user(db: Session):
     Only runs when FLOWFILE_MODE=docker.
     Reads FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD from environment.
     """
-    # Only run in Docker mode
     if os.environ.get("FLOWFILE_MODE") != "docker":
         return False
 
-    # Read environment variables
     admin_username = os.environ.get("FLOWFILE_ADMIN_USER")
     admin_password = os.environ.get("FLOWFILE_ADMIN_PASSWORD")
 
-    # Skip if either is not set
     if not admin_username or not admin_password:
         logger.warning(
             "Docker mode detected but FLOWFILE_ADMIN_USER or FLOWFILE_ADMIN_PASSWORD "
@@ -68,11 +65,9 @@ def create_docker_admin_user(db: Session):
         )
         return False
 
-    # Check if user already exists
     existing_user = db.query(db_models.User).filter(db_models.User.username == admin_username).first()
 
     if existing_user:
-        # Ensure existing admin user has is_admin=True
         if not existing_user.is_admin:
             existing_user.is_admin = True
             db.commit()
@@ -81,7 +76,6 @@ def create_docker_admin_user(db: Session):
             logger.info(f"Admin user '{admin_username}' already exists with admin privileges.")
         return False
 
-    # Create user with hashed password and admin privileges
     hashed_password = get_password_hash(admin_password)
     admin_user = db_models.User(
         username=admin_username,
@@ -89,7 +83,7 @@ def create_docker_admin_user(db: Session):
         full_name="Admin User",
         hashed_password=hashed_password,
         is_admin=True,
-        must_change_password=True,  # Force password change on first login
+        must_change_password=True,
     )
     db.add(admin_user)
     db.commit()

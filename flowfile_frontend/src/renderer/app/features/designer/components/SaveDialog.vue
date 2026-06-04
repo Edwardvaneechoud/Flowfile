@@ -158,7 +158,6 @@ const emit = defineEmits(["save-complete", "save-cancelled", "update:visible"]);
 const isVisible = ref(props.visible);
 const initialPath = ref("");
 
-// Sidebar tab selection
 const saveMode = ref<"file" | "catalog">("file");
 
 // Catalog options
@@ -195,7 +194,6 @@ watch(
   },
 );
 
-// When visibility changes, update the initialPath and file selection
 watch(isVisible, async (newValue) => {
   if (newValue !== props.visible) {
     emit("update:visible", newValue);
@@ -206,7 +204,6 @@ watch(isVisible, async (newValue) => {
   }
 });
 
-// Emit cancelled when closed without saving
 watch(isVisible, (newValue) => {
   if (!newValue) {
     emit("save-cancelled", props.flowId);
@@ -234,7 +231,6 @@ const updateInitialPath = async () => {
   try {
     const settings = await getFlowSettings(props.flowId);
     if (settings?.path) {
-      // Pre-fill catalog flow name from current file name (strip extension)
       const fileName = settings.path.split(/[/\\]/).pop() ?? "";
       catalogFlowName.value = fileName.replace(/\.(yaml|yml|json)$/i, "");
 

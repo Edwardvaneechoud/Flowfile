@@ -1,13 +1,4 @@
 <script setup lang="ts">
-// Right-aligned designer header cluster.
-//
-// Layout: [Ask AI ⌘K] [<> Code] [▶ Run] | [⚙] [👁/—]
-//
-// Ask AI / Code / Run / Settings live here so the cluster reads as one
-// unified action set, matching the target mockup. The results toggle
-// (formerly in status.vue) tucks in at the right end as an icon-only
-// button — too useful to drop, small enough to coexist.
-//
 // Keyboard shortcuts (Cmd+E, Cmd+,) reach this cluster via DesignerView's
 // canvas event handlers binding `@run` / `@open-settings` to the
 // rightCluster ref's exposed runFlow / openSettings methods.

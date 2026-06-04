@@ -169,7 +169,6 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
 const nodeCloudStorageReader = ref<NodeCloudStorageReader | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeCloudStorageReader,
 });
@@ -179,12 +178,10 @@ const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null)
 
 const handleFileFormatChange = () => {
   resetFields();
-  // Set default values for format-specific options
   if (nodeCloudStorageReader.value) {
     const format = nodeCloudStorageReader.value.cloud_storage_settings.file_format;
 
     if (format === "csv") {
-      // Set CSV defaults
       if (nodeCloudStorageReader.value.cloud_storage_settings.csv_has_header === undefined) {
         nodeCloudStorageReader.value.cloud_storage_settings.csv_has_header = true;
       }
@@ -195,14 +192,12 @@ const handleFileFormatChange = () => {
         nodeCloudStorageReader.value.cloud_storage_settings.csv_encoding = "utf8";
       }
     } else {
-      // Clear CSV-specific settings
       nodeCloudStorageReader.value.cloud_storage_settings.csv_has_header = undefined;
       nodeCloudStorageReader.value.cloud_storage_settings.csv_delimiter = undefined;
       nodeCloudStorageReader.value.cloud_storage_settings.csv_encoding = undefined;
     }
 
     if (format !== "delta") {
-      // Clear Delta-specific settings
       nodeCloudStorageReader.value.cloud_storage_settings.delta_version = undefined;
     }
   }
@@ -226,7 +221,7 @@ const resetFields = () => {
 const setConnectionOnConnectionName = async (connectionName: string | null) => {
   selectedConnection.value =
     connectionInterfaces.value.find(
-      (connectionInterface) => connectionInterface.connectionName === connectionName, // Use '===' for strict equality
+      (connectionInterface) => connectionInterface.connectionName === connectionName,
     ) || null;
 };
 

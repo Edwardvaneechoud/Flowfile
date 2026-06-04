@@ -16,7 +16,6 @@
 <script setup lang="ts">
 import { defineProps } from "vue";
 
-// Remove unused ref and function
 const props = defineProps({
   title: {
     type: String,

@@ -59,9 +59,7 @@ def temp_dir():
         yield Path(tmpdir)
 
 
-# =============================================================================
 # SELECT INPUT SERIALIZATION TESTS
-# =============================================================================
 
 class TestSelectInputSerialization:
     """Test that SelectInput internal fields are removed from YAML and reconstructed on load."""
@@ -85,7 +83,6 @@ class TestSelectInputSerialization:
         connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
         add_connection(flow, connection)
 
-        # Create select with all internal fields set
         select_input = transform_schema.SelectInput(
             old_name='name',
             new_name='full_name',
@@ -105,11 +102,9 @@ class TestSelectInputSerialization:
         )
         flow.add_select(node_select)
 
-        # Save to YAML
         yaml_path = temp_dir / "select_test.yaml"
         flow.save_flow(str(yaml_path))
 
-        # Parse YAML and check fields
         with open(yaml_path) as f:
             data = yaml.safe_load(f)
 
@@ -119,11 +114,9 @@ class TestSelectInputSerialization:
         assert len(select_items) == 1
         item = select_items[0]
 
-        # Verify internal fields are NOT present
         for field in self.INTERNAL_FIELDS:
             assert field not in item, f"Internal field '{field}' should not be in YAML"
 
-        # Verify user-relevant fields ARE present
         assert item['old_name'] == 'name'
         assert item['new_name'] == 'full_name'
 
@@ -246,24 +239,20 @@ class TestSelectInputSerialization:
         )
         flow.add_select(node_select)
 
-        # Save and reload
         yaml_path = temp_dir / "select_test.yaml"
         flow.save_flow(str(yaml_path))
         loaded_flow = open_flow(yaml_path)
 
-        # Verify loaded select inputs
         loaded_node = loaded_flow.get_node(2)
         loaded_inputs = loaded_node.setting_input.select_input
 
         assert len(loaded_inputs) == 2
 
-        # Check first input (renamed)
         name_input = next(i for i in loaded_inputs if i.old_name == 'name')
         assert name_input.new_name == 'full_name'
         assert name_input.keep == True
         assert name_input.is_altered == True  # Reconstructed because old_name != new_name
 
-        # Check second input (dropped)
         age_input = next(i for i in loaded_inputs if i.old_name == 'age')
         assert age_input.keep == False
         assert age_input.new_name == 'age'
@@ -303,9 +292,7 @@ class TestSelectInputSerialization:
         assert 'data_type_change' not in item, "data_type_change is internal and should not be in YAML"
 
 
-# =============================================================================
 # JOIN INPUT SERIALIZATION TESTS
-# =============================================================================
 
 class TestJoinInputSerialization:
     """Test that JoinInput uses 'select' key instead of 'renames' in YAML."""
@@ -314,10 +301,8 @@ class TestJoinInputSerialization:
         """Verify join uses 'select' key instead of 'renames'."""
         flow = create_graph(flow_id=400)
 
-        # Left table
         add_manual_input(flow, data=[{'id': 1, 'name': 'John'}], node_id=1)
 
-        # Right table
         add_node_promise(flow, 'manual_input', node_id=2)
         right_input = input_schema.NodeManualInput(
             flow_id=flow.flow_id,
@@ -326,7 +311,6 @@ class TestJoinInputSerialization:
         )
         flow.add_manual_input(right_input)
 
-        # Add join
         add_node_promise(flow, 'join', node_id=3)
         left_conn = input_schema.NodeConnection.create_from_simple_input(1, 3)
         add_connection(flow, left_conn)
@@ -362,13 +346,11 @@ class TestJoinInputSerialization:
         join_node = next(n for n in data['nodes'] if n['type'] == 'join')
         join_input = join_node['setting_input']['join_input']
 
-        # Verify 'select' key is used, not 'renames'
         assert 'select' in join_input['left_select'], "Should use 'select' key"
         assert 'renames' not in join_input['left_select'], "Should not have 'renames' key"
         assert 'select' in join_input['right_select'], "Should use 'select' key"
         assert 'renames' not in join_input['right_select'], "Should not have 'renames' key"
 
-        # Verify internal fields are excluded from select items
         for item in join_input['left_select']['select']:
             assert 'join_key' not in item
             assert 'is_available' not in item
@@ -419,12 +401,10 @@ class TestJoinInputSerialization:
         )
         flow.add_join(join_settings)
 
-        # Save and reload
         yaml_path = temp_dir / "join_test.yaml"
         flow.save_flow(str(yaml_path))
         loaded_flow = open_flow(yaml_path)
 
-        # Verify join settings
         loaded_join = loaded_flow.get_node(3)
         assert loaded_join.setting_input.join_input.how == 'left'
 
@@ -439,9 +419,7 @@ class TestJoinInputSerialization:
         assert dept_input.keep == True
 
 
-# =============================================================================
 # OUTPUT SETTINGS SERIALIZATION TESTS
-# =============================================================================
 
 class TestOutputSettingsSerialization:
     """Test OutputSettings YAML serialization."""
@@ -478,10 +456,8 @@ class TestOutputSettingsSerialization:
         output_node = next(n for n in data['nodes'] if n['type'] == 'output')
         output_settings = output_node['setting_input']['output_settings']
 
-        # file_type should be at top level
         assert output_settings['file_type'] == 'csv'
 
-        # table_settings should NOT have file_type (if present)
         if 'table_settings' in output_settings:
             assert 'file_type' not in output_settings['table_settings'], \
                 "file_type should not be duplicated in table_settings"
@@ -588,25 +564,20 @@ class TestOutputSettingsSerialization:
         )
         flow.add_output(output_settings)
 
-        # Save and reload
         yaml_path = temp_dir / "output_test.yaml"
         flow.save_flow(str(yaml_path))
         loaded_flow = open_flow(yaml_path)
 
-        # Verify output settings
         loaded_output = loaded_flow.get_node(2)
         assert loaded_output.setting_input.output_settings.file_type == 'parquet'
         assert loaded_output.setting_input.output_settings.name == 'output.parquet'
-        # table_settings should be reconstructed with correct type
         assert isinstance(
             loaded_output.setting_input.output_settings.table_settings,
             input_schema.OutputParquetTable
         )
 
 
-# =============================================================================
 # CROSS JOIN SERIALIZATION TESTS
-# =============================================================================
 
 class TestCrossJoinSerialization:
     """Test CrossJoinInput YAML serialization."""
@@ -663,9 +634,7 @@ class TestCrossJoinSerialization:
         print(yaml.dump(cross_join_input, default_flow_style=False))
 
 
-# =============================================================================
 # FUZZY MATCH SERIALIZATION TESTS
-# =============================================================================
 
 class TestFuzzyMatchSerialization:
     """Test FuzzyMatchInput YAML serialization."""
@@ -727,13 +696,11 @@ class TestFuzzyMatchSerialization:
         fuzzy_node = next(n for n in data['nodes'] if n['type'] == 'fuzzy_match')
         fuzzy_input = fuzzy_node['setting_input']['join_input']
 
-        # Verify structure
         assert 'select' in fuzzy_input['left_select']
         assert 'select' in fuzzy_input['right_select']
         assert fuzzy_input['how'] == 'inner'
         assert fuzzy_input['aggregate_output'] == False
 
-        # Verify join_mapping has fuzzy-specific fields
         mapping = fuzzy_input['join_mapping'][0]
         assert mapping['left_col'] == 'name'
         assert mapping['right_col'] == 'name'
@@ -789,12 +756,10 @@ class TestFuzzyMatchSerialization:
         )
         flow.add_fuzzy_match(fuzzy_settings)
 
-        # Save and reload
         yaml_path = temp_dir / "fuzzy_test.yaml"
         flow.save_flow(str(yaml_path))
         loaded_flow = open_flow(yaml_path)
 
-        # Verify
         loaded_fuzzy = loaded_flow.get_node(3)
         join_input = loaded_fuzzy.setting_input.join_input
 
@@ -806,9 +771,7 @@ class TestFuzzyMatchSerialization:
         assert join_input.join_mapping[0].fuzzy_type == 'jaro_winkler'
 
 
-# =============================================================================
 # COMPREHENSIVE YAML STRUCTURE TESTS
-# =============================================================================
 
 class TestYamlStructure:
     """Test overall YAML structure and cleanliness."""
@@ -867,7 +830,6 @@ class TestYamlStructure:
         connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
         add_connection(flow, connection)
 
-        # Simple select - just keeping column with same name
         select_input = transform_schema.SelectInput(old_name='x')
         node_select = input_schema.NodeSelect(
             flow_id=flow.flow_id,
@@ -900,7 +862,6 @@ class TestNodePromiseSerialization:
         """Verify NodePromise becomes setting_input: null in YAML."""
         flow = create_graph(flow_id=900)
 
-        # Add a configured input node
         add_manual_input(flow, data=[{'x': 1}], node_id=1)
 
         # Add an unconfigured filter node (just the promise)
@@ -918,10 +879,8 @@ class TestNodePromiseSerialization:
 
         data = yaml.safe_load(content)
 
-        # Find the filter node
         filter_node = next(n for n in data['nodes'] if n['type'] == 'filter')
 
-        # Verify node exists but setting_input is null
         assert filter_node['id'] == 2
         assert filter_node['type'] == 'filter'
         assert filter_node['setting_input'] is None, "NodePromise should serialize as null"
@@ -934,7 +893,6 @@ class TestNodePromiseSerialization:
         """Compare record_count (configured, minimal) vs NodePromise (unconfigured)."""
         flow = create_graph(flow_id=903)
 
-        # Input node
         add_manual_input(flow, data=[{'x': 1}], node_id=1)
 
         # Configured record_count node (has settings but minimal)
@@ -961,7 +919,6 @@ class TestNodePromiseSerialization:
 
         data = yaml.safe_load(content)
 
-        # Find nodes
         record_count_node = next(n for n in data['nodes'] if n['type'] == 'record_count')
         filter_node = next(n for n in data['nodes'] if n['type'] == 'filter')
 
@@ -982,7 +939,6 @@ class TestNodePromiseSerialization:
 
         add_manual_input(flow, data=[{'x': 1}], node_id=1)
 
-        # Add unconfigured nodes
         add_node_promise(flow, 'filter', node_id=2)
         connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
         add_connection(flow, connection)
@@ -991,7 +947,6 @@ class TestNodePromiseSerialization:
         connection2 = input_schema.NodeConnection.create_from_simple_input(2, 3)
         add_connection(flow, connection2)
 
-        # Save and reload
         yaml_path = temp_dir / "promise_roundtrip.yaml"
         flow.save_flow(str(yaml_path))
 
@@ -1001,7 +956,6 @@ class TestNodePromiseSerialization:
 
         loaded_flow = open_flow(yaml_path)
 
-        # Verify unconfigured nodes loaded with is_setup=False
         filter_node = loaded_flow.get_node(2)
         assert filter_node is not None, "Filter node should exist"
         assert filter_node.setting_input.is_setup == False, "Unconfigured node should have is_setup=False"
@@ -1011,7 +965,6 @@ class TestNodePromiseSerialization:
         assert select_node is not None, "Select node should exist"
         assert select_node.setting_input.is_setup == False
 
-        # Verify connections preserved
         assert filter_node.main_input is not None
         assert filter_node.main_input[0].node_id == 1
 
@@ -1063,13 +1016,11 @@ class TestNodePromiseSerialization:
 
         data = yaml.safe_load(content)
 
-        # Summary
         print("\n=== Node Summary ===")
         for node in data['nodes']:
             has_settings = node['setting_input'] is not None
             print(f"Node {node['id']} ({node['type']}): setting_input={'present' if has_settings else 'null'}")
 
-        # Check configured nodes have settings
         select_node = next(n for n in data['nodes'] if n['type'] == 'select')
         assert select_node['setting_input'] is not None
         assert 'select_input' in select_node['setting_input']
@@ -1077,14 +1028,12 @@ class TestNodePromiseSerialization:
         record_count_node = next(n for n in data['nodes'] if n['type'] == 'record_count')
         assert record_count_node['setting_input'] is not None
 
-        # Check unconfigured nodes have null settings
         filter_node = next(n for n in data['nodes'] if n['type'] == 'filter')
         assert filter_node['setting_input'] is None
 
         output_node = next(n for n in data['nodes'] if n['type'] == 'output')
         assert output_node['setting_input'] is None
 
-        # Verify round-trip
         loaded_flow = open_flow(yaml_path)
 
         print("\n=== After roundtrip ===")
@@ -1099,9 +1048,7 @@ class TestNodePromiseSerialization:
         assert loaded_flow.get_node(5).setting_input.is_setup == False  # output (NodePromise)
 
 
-# =============================================================================
 # USER DEFINED NODE SERIALIZATION TESTS
-# =============================================================================
 
 class TestUserDefinedNodeSerialization:
     """Test that user-defined/custom nodes serialize and deserialize correctly."""
@@ -1174,7 +1121,6 @@ class TestUserDefinedNodeSerialization:
         flow = create_graph(flow_id=1000)
         add_manual_input(flow, data=[{'a': 1}, {'a': 2}], node_id=1)
 
-        # Add user-defined node
         add_node_promise(flow, UserDefinedNode().item, node_id=2)
         add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
@@ -1190,7 +1136,6 @@ class TestUserDefinedNodeSerialization:
             user_defined_node_settings=node_settings
         )
 
-        # Save to YAML
         yaml_path = temp_dir / "user_defined_test.yaml"
         flow.save_flow(str(yaml_path))
 
@@ -1201,7 +1146,6 @@ class TestUserDefinedNodeSerialization:
 
         data = yaml.safe_load(content)
 
-        # Find the user-defined node
         custom_node = next(n for n in data['nodes'] if n['id'] == 2)
 
         assert custom_node['setting_input'] is not None
@@ -1237,7 +1181,6 @@ class TestUserDefinedNodeSerialization:
             user_defined_node_settings=node_settings
         )
 
-        # Save and reload
         yaml_path = temp_dir / "user_defined_roundtrip.yaml"
         flow.save_flow(str(yaml_path))
 
@@ -1247,7 +1190,6 @@ class TestUserDefinedNodeSerialization:
 
         loaded_flow = open_flow(yaml_path)
 
-        # Verify node exists
         loaded_node = loaded_flow.get_node(2)
         assert loaded_node is not None, "User-defined node should exist"
         assert loaded_node.setting_input.is_user_defined == True
@@ -1284,16 +1226,13 @@ class TestUserDefinedNodeSerialization:
             user_defined_node_settings=node_settings
         )
 
-        # Save and reload
         yaml_path = temp_dir / "user_defined_execution.yaml"
         flow.save_flow(str(yaml_path))
         loaded_flow = open_flow(yaml_path)
 
-        # Execute the loaded flow
         run_result = loaded_flow.run_graph()
         assert run_result.success, f"Flow should execute successfully: {run_result}"
 
-        # Verify output
         result_data = loaded_flow.get_node(2).get_resulting_data()
         expected_data = FlowDataEngine({
             "a": [1, 2],
@@ -1356,7 +1295,6 @@ class TestUserDefinedNodeSerialization:
 
         data = yaml.safe_load(content)
 
-        # Verify node types
         nodes_by_id = {n['id']: n for n in data['nodes']}
 
         # Regular node
@@ -1369,7 +1307,6 @@ class TestUserDefinedNodeSerialization:
         # Record count (minimal settings)
         assert nodes_by_id[4]['setting_input'] is not None
 
-        # Roundtrip
         loaded_flow = open_flow(yaml_path)
 
         assert loaded_flow.get_node(2).setting_input.is_setup
@@ -1406,7 +1343,6 @@ class TestUserDefinedNodeSerialization:
         assert custom_node['setting_input'] is None, \
             "Unconfigured user-defined node should serialize as null"
 
-        # Roundtrip
         loaded_flow = open_flow(yaml_path)
         loaded_node = loaded_flow.get_node(2)
 
@@ -1414,9 +1350,7 @@ class TestUserDefinedNodeSerialization:
             "Unconfigured user-defined node should have is_setup=False"
 
 
-# =============================================================================
 # MAX PARALLEL WORKERS YAML PERSISTENCE TESTS
-# =============================================================================
 
 class TestMaxParallelWorkersYaml:
     """Test that max_parallel_workers is correctly stored and loaded from YAML."""

@@ -19,8 +19,6 @@ import re
 from typing import Any
 
 _FORMULA_NAME_PATTERNS: tuple[tuple[str, int], ...] = (
-    # Phrase forms the user typically uses to name a derived column.
-    # Each pattern is (regex, group index) — group 1 captures the name.
     (r"\bas\s+([A-Za-z_][A-Za-z0-9_]*)\b", 1),
     (r"\ba\s+([A-Za-z_][A-Za-z0-9_]*)\s+column\b", 1),
     (r"\bcolumn\s+(?:called|named)\s+([A-Za-z_][A-Za-z0-9_]*)\b", 1),

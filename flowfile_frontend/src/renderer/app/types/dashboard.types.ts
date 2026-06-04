@@ -1,5 +1,4 @@
 // Dashboards — TS mirror of flowfile_core/schemas/catalog_schema.py
-// (DashboardTile / DashboardGrid / DashboardFilter / DashboardLayout / Dashboard).
 
 export type DashboardTileType = "viz" | "text";
 

@@ -21,12 +21,10 @@ def get_database_path() -> Path | None:
     return None
 
 
-# Create database engine
 engine = create_engine(
     get_database_url(), connect_args={"check_same_thread": False} if "sqlite" in get_database_url() else {}
 )
 
-# Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

@@ -197,7 +197,6 @@ def test_update_manual_input(raw_data, execution_location):
                                               raw_data_format=input_schema.RawData.from_pylist(raw_data))
     graph.add_manual_input(input_file)
     assert graph.get_node(1).get_resulting_data().columns == ["name", "city"]
-    # Add a fixed column to table data and extract it in the raw data
     new_data = (graph.get_node(1).get_resulting_data().apply_flowfile_formula(func='100', col_name='new').to_raw_data())
     existing_setting_inputs = graph.get_node(1).setting_input
     new_settings = deepcopy(existing_setting_inputs)
@@ -971,7 +970,6 @@ def test_read_handle_complex_data_types():
         for col in graph.get_node(1).schema
     ]
 
-    # Create and add the select node settings
     select_settings = input_schema.NodeSelect(
         flow_id=1,
         node_id=2,
@@ -1039,7 +1037,6 @@ def test_text_to_rows(execution_location):
 def test_polars_code(execution_location):
     graph = create_graph(execution_location=execution_location)
     file_path = str(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/data/fake_data.parquet")
-    # Add read node with test data
     read_node = input_schema.NodeRead(
         flow_id=graph.flow_id,
         node_id=1,
@@ -1051,7 +1048,6 @@ def test_polars_code(execution_location):
     )
     graph.add_read(read_node)
 
-    # Add polars code node
     polars_node = input_schema.NodePolarsCode(
         flow_id=graph.flow_id,
         node_id=2,
@@ -1062,17 +1058,13 @@ def test_polars_code(execution_location):
     )
     graph.add_polars_code(polars_node)
 
-    # Connect nodes
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-    # Run and verify
     run_info = graph.run_graph()
     handle_run_info(run_info)
 
-    # Verify the transformation worked
     result = graph.get_node(2).get_resulting_data()
     assert result is not None
-    # Check that Email column is uppercase
     emails = result.to_dict()["Email"]
     assert all(email == email.upper() for email in emails if email)
 
@@ -1288,7 +1280,6 @@ def test_add_database_writer_sqlite(sqlite_db, execution_location):
     lf = node.get_resulting_data()
     assert lf.count() > 0, 'Should be able to get data frame after running'
 
-    # Verify data was actually written to SQLite by reading it back
     import polars as pl
     written_df = pl.read_database_uri("SELECT * FROM test_write_table", conn_str)
     assert len(written_df) == 3, f'Expected 3 rows written, got {len(written_df)}'
@@ -1768,7 +1759,6 @@ def test_fuzzy_match_schema_predict(flow_logger, execution_location):
     def test_func(*args, **kwargs):
         raise ValueError('This is a test error')
     node._function = test_func
-    # enforce to calculate the data based on the schema
     predicted_data = node.get_predicted_resulting_data()
     assert predicted_data.columns == ['name', 'name_right', 'name_vs_name_right_levenshtein']
     input_data = [{'name': 'eduward', 'other_field': 'test'},
@@ -1781,7 +1771,7 @@ def test_fuzzy_match_schema_predict(flow_logger, execution_location):
     flow_logger.info(str(len(predicted_data.columns)))
     flow_logger.warning(str(predicted_data.collect()))
     assert len(predicted_data.columns) == 5
-    node._function = org_func  # Restore the original function
+    node._function = org_func
     result = node.get_resulting_data()
     assert result.columns == predicted_data.columns
 
@@ -1833,8 +1823,6 @@ def test_no_data_available_performance_with_cache():
     )
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=3))
 
-    #  Initial graph to test with
-
     node = graph.get_node(3)
     first_table_example = node.get_table_example(True)
     assert len(first_table_example.data) == 0, 'Since running in performance mode there is no data expected'
@@ -1842,7 +1830,6 @@ def test_no_data_available_performance_with_cache():
         'Since performance mode does not trigger explicit run of the example data, it should not have example data'
     assert not first_table_example.has_run_with_current_setup, "There should be no run with current setup"
 
-    # Trigger a fetch operation for our data
     data=graph.trigger_fetch_node(3)
     graph.get_run_info()
     after_fetch_table_example = node.get_table_example(True)
@@ -1866,15 +1853,12 @@ def test_no_data_available_performance_with_cache():
     assert not after_change_before_run_table_example.has_run_with_current_setup, "After change there should be no run with current setup"
     after_fetch_after_change_data = [row["titleCity"] for row in after_change_before_run_table_example.data]
     assert after_fetch_data == after_fetch_after_change_data, 'Data should be the same after change without run'
-    # Validate that the impact of running the graph again
     graph.run_graph()
     after_change_after_run_table_example = node.get_table_example(True)
     assert len(after_change_after_run_table_example.data) == 0, 'Since running in performance mode there is no data expected'
     assert not after_change_after_run_table_example.has_example_data, \
         'Since performance mode does not trigger explicit run of the example data, it should not have example data'
     assert not after_change_after_run_table_example.has_run_with_current_setup, "There should be no run with current setup"
-
-    # Fetch again
 
     graph.trigger_fetch_node(3)
     after_change_and_fetch_table_example = node.get_table_example(True)
@@ -1886,10 +1870,8 @@ def test_no_data_available_performance_with_cache():
 
     assert after_second_fetch_data != after_fetch_data, 'Data should be different after run'
 
-    # Run again
     graph.run_graph()
 
-    # Fetch again
     graph.trigger_fetch_node(3)
 
 
@@ -1941,9 +1923,7 @@ def test_fetch_before_run_debug(execution_location):
     assert len(example_data_after_run) > 0, "There should be data after fetch operation"
 
 
-# ---------------------------------------------------------------------------
 # FlowGraph — ArtifactContext integration
-# ---------------------------------------------------------------------------
 
 
 class TestFlowGraphArtifactContext:
@@ -1962,7 +1942,6 @@ class TestFlowGraphArtifactContext:
         data = [{"a": 1}]
         graph = create_graph()
         add_manual_input(graph, data, node_id=1)
-        # Add node 2 depending on node 1
         node_promise = input_schema.NodePromise(flow_id=1, node_id=2, node_type="sample")
         graph.add_node_promise(node_promise)
         graph.add_sample(input_schema.NodeSample(flow_id=1, node_id=2, depending_on_id=1))
@@ -1977,13 +1956,11 @@ class TestFlowGraphArtifactContext:
         graph = create_graph()
         add_manual_input(graph, data, node_id=1)
 
-        # Node 2 depends on 1
         node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="sample")
         graph.add_node_promise(node_promise_2)
         graph.add_sample(input_schema.NodeSample(flow_id=1, node_id=2, depending_on_id=1))
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-        # Node 3 depends on 2
         node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="sample")
         graph.add_node_promise(node_promise_3)
         graph.add_sample(input_schema.NodeSample(flow_id=1, node_id=3, depending_on_id=2))
@@ -2034,20 +2011,15 @@ class TestFlowGraphArtifactContext:
         graph = create_graph()
         add_manual_input(graph, data, node_id=1)
 
-        # Pre-populate artifact_context
         graph.artifact_context.record_published(99, "test", [{"name": "old"}])
         assert len(graph.artifact_context.get_published_by_node(99)) == 1
 
-        # Run graph
         graph.run_graph()
 
-        # Context should be cleared
         assert graph.artifact_context.get_published_by_node(99) == []
 
 
-# ---------------------------------------------------------------------------
 # Parametrized local/remote execution tests
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.skipif(
@@ -2245,9 +2217,7 @@ class TestLocalWriteOutputUnit:
             assert os.path.exists(path), f"excel not written for shape={shape}"
 
 
-# ============================================================================
 # Multi-output framework + random_split node
-# ============================================================================
 
 
 def _add_random_split_to_graph(
@@ -2610,9 +2580,7 @@ def test_downstream_predicted_data_uses_correct_upstream_handle():
     assert [c.name for c in predicted.schema] == ["name_col"]
 
 
-# ============================================================================
 # Filter node: split_mode (dual pass/fail outputs)
-# ============================================================================
 
 
 def _add_filter_to_graph(

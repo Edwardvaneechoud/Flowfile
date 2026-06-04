@@ -44,7 +44,6 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
 const nodeCrossJoin = ref<NodeCrossJoin | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeCrossJoin,
 });

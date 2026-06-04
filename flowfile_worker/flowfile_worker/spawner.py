@@ -7,7 +7,6 @@ from time import sleep
 from flowfile_worker import funcs, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.process_manager import ProcessManager
 
-# Initialize ProcessManager
 process_manager = ProcessManager()
 
 flowfile_node_id_type = int | str
@@ -40,7 +39,6 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
             with status_dict_lock:
                 status_dict[task_id].progress = current_progress
 
-                # Check if the task has been cancelled via status_dict
                 if status_dict[task_id].status == "Cancelled":
                     p.terminate()
                     break
@@ -57,7 +55,6 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         with status_dict_lock:
             status = status_dict[task_id]
             if status.status != "Cancelled":
-                # Read progress value with lock to ensure consistency
                 with progress.get_lock():
                     final_progress = progress.value
                 if final_progress == 100:
@@ -76,7 +73,7 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         if p.is_alive():
             p.terminate()
         p.join()
-        process_manager.remove_process(task_id)  # Remove from process manager
+        process_manager.remove_process(task_id)
         del p, progress, error_message
         gc.collect()
 
@@ -164,7 +161,7 @@ def start_generic_process(
     p: Process = mp_context.Process(target=process_task, kwargs=kwargs)
     p.start()
 
-    process_manager.add_process(task_id, p)  # Add process to process manager
+    process_manager.add_process(task_id, p)
     handle_task(
         task_id=task_id, p=p, progress=kwargs["progress"], error_message=kwargs["error_message"], q=kwargs["queue"]
     )
@@ -303,5 +300,5 @@ def start_fuzzy_process(
     p: Process = mp_context.Process(target=funcs.fuzzy_join_task, args=args)
     p.start()
 
-    process_manager.add_process(task_id, p)  # Add process to process manager
+    process_manager.add_process(task_id, p)
     handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)

@@ -15,12 +15,8 @@ import pytest
 from pydantic import SecretStr
 
 from flowfile_core.auth.models import SecretInput
-
-# Flow graph imports for integration tests
 from flowfile_core.configs.node_store import add_to_custom_node_store
 from flowfile_core.database import models as db_models
-
-# Database and secret manager imports
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
@@ -42,9 +38,7 @@ from flowfile_core.secret_manager.secret_manager import (
     store_secret,
 )
 
-# =============================================================================
 # Test Utilities
-# =============================================================================
 
 def create_flowfile_handler() -> FlowfileHandler:
     handler = FlowfileHandler()
@@ -125,9 +119,7 @@ def get_test_user_id() -> int:
         raise ValueError("local_user not found - ensure setup_test_db fixture ran")
 
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 @pytest.fixture
 def test_user_id() -> int:
@@ -151,7 +143,6 @@ def stored_secret(test_user_id) -> tuple[str, str]:
 
     yield secret_name, secret_value
 
-    # Cleanup
     with get_db_context() as db:
         db_secret = db.query(db_models.Secret).filter(
             db_models.Secret.name == secret_name,
@@ -212,11 +203,9 @@ def SecretUsingNode():
 
             input_df = inputs[0]
 
-            # Access the secret using .secret_value property (consistent with other .value patterns)
             api_key = self.settings_schema.config.api_key.secret_value
 
             if api_key is None:
-                # No secret configured, pass through
                 return input_df
 
             # Use the secret (just mark that we authenticated, don't leak the secret!)
@@ -228,9 +217,7 @@ def SecretUsingNode():
     return APIConnectorNode
 
 
-# =============================================================================
 # Tests for SecretSelector UI Component
-# =============================================================================
 
 class TestSecretSelector:
     """Tests for the SecretSelector UI component."""
@@ -281,9 +268,7 @@ class TestSecretSelector:
         assert selector.value == "my_api_key_secret"
 
 
-# =============================================================================
 # Tests for NodeSettings Helper Methods
-# =============================================================================
 
 class TestNodeSettingsHelperMethods:
     """Tests for the get_value and get_all_components methods."""
@@ -338,9 +323,7 @@ class TestNodeSettingsHelperMethods:
         assert components == {}
 
 
-# =============================================================================
 # Tests for CustomNodeBase and NodeSettings Secret Context
-# =============================================================================
 
 class TestCustomNodeBaseSecretMethods:
     """Tests for secret-related methods on CustomNodeBase and NodeSettings."""
@@ -392,9 +375,8 @@ class TestCustomNodeBaseSecretMethods:
         node._accessed_secrets = {"secret1", "secret2"}
 
         accessed = node.get_accessed_secrets()
-        accessed.add("secret3")  # Modify the copy
+        accessed.add("secret3")
 
-        # Original should be unchanged
         assert "secret3" not in node._accessed_secrets
 
     def test_get_secret_names(self, node_class_with_secrets):
@@ -442,7 +424,6 @@ class TestNodeSettingsSecretContext:
             accessed_secrets=accessed_secrets
         )
 
-        # Check that both SecretSelectors got the context
         assert settings_with_multiple_secrets.config.api_key._user_id == 42
         assert settings_with_multiple_secrets.config.db_password._user_id == 42
 
@@ -454,7 +435,6 @@ class TestNodeSettingsSecretContext:
             accessed_secrets=accessed_secrets
         )
 
-        # Both should reference the same set
         assert settings_with_multiple_secrets.config.api_key._accessed_secrets is accessed_secrets
         assert settings_with_multiple_secrets.config.db_password._accessed_secrets is accessed_secrets
 
@@ -466,7 +446,6 @@ class TestNodeSettingsSecretContext:
             accessed_secrets=accessed_secrets
         )
 
-        # TextInput should not have these attributes set
         regular = settings_with_multiple_secrets.config.regular_input
         assert not hasattr(regular, '_user_id') or getattr(regular, '_user_id', None) is None
 
@@ -486,7 +465,6 @@ class TestSecretSelectorSecretValue:
         """Tests that secret_value returns None when no secret name is set."""
         selector = SecretSelector(label="API Key")
         selector.set_execution_context(user_id=test_user_id, accessed_secrets=set())
-        # Don't set a value
 
         result = selector.secret_value
         assert result is None
@@ -504,7 +482,6 @@ class TestSecretSelectorSecretValue:
 
         assert result is not None
         assert result.get_secret_value() == secret_value
-        # Check that the secret was tracked
         assert secret_value in accessed_secrets
 
     def test_secret_value_not_found_raises(self, test_user_id):
@@ -525,16 +502,12 @@ class TestSecretSelectorSecretValue:
         selector.set_execution_context(user_id=test_user_id, accessed_secrets=accessed_secrets)
         selector.set_value(secret_name)
 
-        # Access the secret
         _ = selector.secret_value
 
-        # The actual decrypted value should be in the tracking set
         assert secret_value in accessed_secrets
 
 
-# =============================================================================
 # Tests for Secret Manager Functions
-# =============================================================================
 
 class TestSecretManagerIntegration:
     """Tests for the secret manager functions with real database."""
@@ -545,22 +518,18 @@ class TestSecretManagerIntegration:
         secret_value = "test-secret-value-12345"
 
         try:
-            # Store
             with get_db_context() as db:
                 secret_input = SecretInput(name=secret_name, value=SecretStr(secret_value))
                 stored = store_secret(db, secret_input, test_user_id)
                 assert stored.name == secret_name
 
-            # Retrieve
             encrypted = get_encrypted_secret(test_user_id, secret_name)
             assert encrypted is not None
 
-            # Decrypt
             decrypted = decrypt_secret(encrypted)
             assert decrypted.get_secret_value() == secret_value
 
         finally:
-            # Cleanup
             with get_db_context() as db:
                 db_secret = db.query(db_models.Secret).filter(
                     db_models.Secret.name == secret_name,
@@ -583,12 +552,10 @@ class TestSecretManagerIntegration:
         decrypted = decrypt_secret(encrypted)
 
         assert decrypted.get_secret_value() == original
-        assert encrypted != original  # Should be different
+        assert encrypted != original
 
 
-# =============================================================================
 # Integration Tests with Flow Graph
-# =============================================================================
 
 class TestSecretAccessFlowGraphIntegration:
     """Integration tests for secret access in flow graph execution."""
@@ -619,7 +586,6 @@ class TestSecretAccessFlowGraphIntegration:
         result = graph.get_node(2).get_resulting_data()
         result_dict = result.to_dict()
 
-        # Should have the auth_status column showing successful authentication
         assert "auth_status" in result_dict
         assert result_dict["auth_status"] == ["auth_success", "auth_success"]
 
@@ -630,7 +596,6 @@ class TestSecretAccessFlowGraphIntegration:
         graph = create_graph()
         add_manual_input(graph, [{"id": 1}, {"id": 2}], node_id=1)
 
-        # Don't set api_key
         settings = {
             "config": {
                 "prefix": "test_"
@@ -648,7 +613,6 @@ class TestSecretAccessFlowGraphIntegration:
         result = graph.get_node(2).get_resulting_data()
         result_dict = result.to_dict()
 
-        # Should just pass through without auth_status column
         assert "id" in result_dict
         assert result_dict["id"] == [1, 2]
         assert "auth_status" not in result_dict
@@ -674,13 +638,10 @@ class TestSecretAccessFlowGraphIntegration:
 
         run_result = graph.run_graph()
 
-        # Should fail because secret doesn't exist
         assert not run_result.success
 
 
-# =============================================================================
 # Security-Focused Tests
-# =============================================================================
 
 class TestSecurityBehavior:
     """Tests focused on security properties."""
@@ -689,11 +650,9 @@ class TestSecurityBehavior:
         """Tests that SecretStr is used properly to prevent exposure."""
         secret_str = SecretStr("my-secret")
 
-        # repr should not show the value
         assert "my-secret" not in repr(secret_str)
         assert "my-secret" not in str(secret_str)
 
-        # Only get_secret_value reveals it
         assert secret_str.get_secret_value() == "my-secret"
 
     def test_encrypted_value_differs_from_original(self, test_user_id):
@@ -706,7 +665,6 @@ class TestSecurityBehavior:
                 secret_input = SecretInput(name=secret_name, value=SecretStr(secret_value))
                 stored = store_secret(db, secret_input, test_user_id)
 
-                # The encrypted value should not contain the plaintext
                 assert secret_value not in stored.encrypted_value
         finally:
             with get_db_context() as db:
@@ -728,9 +686,7 @@ class TestSecurityBehavior:
 
         result = selector.secret_value
 
-        # Should be SecretStr, not str
         assert isinstance(result, SecretStr)
-        # The actual value should only be accessible via get_secret_value()
         assert secret_value not in str(result)
         assert secret_value not in repr(result)
 

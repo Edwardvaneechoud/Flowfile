@@ -228,7 +228,6 @@ const { triggerNodeFetch, isPollingActive } = useFlowExecution(
   },
 );
 
-// Computed property for dynamic grid height
 const gridHeightComputed = computed(() => {
   if (showFetchButton.value) {
     return "80px";
@@ -236,7 +235,6 @@ const gridHeightComputed = computed(() => {
   return gridHeight.value || "100%";
 });
 
-// Custom overlay template to hide "no rows" message when fetch button is available
 const overlayNoRowsTemplate = computed(() => {
   if (showFetchButton.value) {
     return "<span></span>";
@@ -245,13 +243,11 @@ const overlayNoRowsTemplate = computed(() => {
   return undefined;
 });
 
-// Artifact data for the currently selected node
 const nodeArtifacts = computed(() => {
   if (currentNodeId.value == null) return null;
   return flowStore.getNodeArtifactSummary(currentNodeId.value);
 });
 
-// Reset to data tab and default output when the selected node changes
 watch(
   () => currentNodeId.value,
   () => {
@@ -310,7 +306,6 @@ const buildTsvFromRows = (rows: Record<string, any>[]): string => {
 const onGridReady = (params: { api: GridApi }) => {
   gridApi.value = params.api;
 
-  // Optionally, you can also programmatically control the overlay
   if (showFetchButton.value) {
     gridApi.value.hideOverlay();
   }
@@ -338,7 +333,6 @@ async function downloadData(nodeId: number) {
 
     if (resp) {
       dataPreview.value = resp;
-      // Always set up columns
       const _cd: Array<{ field: string; headerName: string; resizable: boolean }> = [];
       const _columns = dataPreview.value.table_schema;
 
@@ -363,15 +357,12 @@ async function downloadData(nodeId: number) {
 
       columnDefs.value = _cd;
 
-      // Check if data has been run
       if (resp.has_example_data === false) {
         showFetchButton.value = true;
-        // Show empty grid with just headers
         rowData.value = [];
         showTable.value = true;
         dataAvailable.value = false;
       } else {
-        // Load the actual data
         if (dataPreview.value) {
           rowData.value = dataPreview.value.data;
           dataLength.value = dataPreview.value.number_of_records;
@@ -390,21 +381,17 @@ async function downloadData(nodeId: number) {
 async function handleFetchData() {
   if (currentNodeId.value !== null) {
     try {
-      // Check if already fetching this node
       if (isPollingActive(`node_${currentNodeId.value}`)) {
         console.log("Fetch already in progress for this node");
         return;
       }
 
-      // Use the composable to trigger node fetch with proper state management
       await triggerNodeFetch(currentNodeId.value);
 
-      // Set up a watcher for when the fetch completes
       // Since polling is persistent, we need to check periodically
       const checkInterval = setInterval(async () => {
         if (!isPollingActive(`node_${currentNodeId.value}`)) {
           clearInterval(checkInterval);
-          // Reload the data once fetch is complete
           await downloadData(currentNodeId.value!);
         }
       }, 1000);

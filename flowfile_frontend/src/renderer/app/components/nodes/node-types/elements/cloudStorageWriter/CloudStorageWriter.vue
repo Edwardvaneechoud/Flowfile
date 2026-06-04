@@ -163,7 +163,6 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
 const nodeCloudStorageWriter = ref<NodeCloudStorageWriter | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeCloudStorageWriter,
 });
@@ -176,12 +175,10 @@ const handleFileFormatChange = () => {
     const settings = nodeCloudStorageWriter.value.cloud_storage_settings;
     const format = settings.file_format;
 
-    // If the newly selected format is NOT delta, force write_mode to 'overwrite'
     if (format !== "delta") {
       settings.write_mode = "overwrite";
     }
 
-    // Set defaults for newly selected formats
     if (format === "parquet" && !settings.parquet_compression) {
       settings.parquet_compression = "snappy";
     } else if (format === "csv" && !settings.csv_delimiter) {

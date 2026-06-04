@@ -131,14 +131,12 @@ const handleAction = (actionId: string): void => {
   props.onClose();
 };
 
-// Close the menu when clicking outside
 const handleClickOutside = (event: MouseEvent) => {
   if (menuRef.value && !menuRef.value.contains(event.target as Node)) {
     props.onClose();
   }
 };
 
-// Close the menu when pressing Escape
 const handleKeyDown = (event: KeyboardEvent) => {
   if (event.key === "Escape") {
     props.onClose();

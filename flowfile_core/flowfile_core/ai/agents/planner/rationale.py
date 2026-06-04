@@ -64,10 +64,6 @@ _QUESTION_TOKENS: tuple[str, ...] = (
     "shall we",
     "did you mean",
 )
-"""Interrogative tokens used by :func:`_looks_like_question` when an
-assistant message is missing a trailing ``?`` (the model occasionally drops
-it, especially on shorter clarifying turns). Lower-cased substring match —
-``"do you want"`` and ``"do you have"`` are both covered by ``"do you"``."""
 
 
 def _looks_like_question(text: str | None) -> bool:

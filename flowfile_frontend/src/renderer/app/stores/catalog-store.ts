@@ -303,11 +303,9 @@ export const useCatalogStore = defineStore("catalog", {
           await CatalogApi.addTableFavorite(tableId);
         }
         table.is_favorite = !table.is_favorite;
-        // Update selected table if it matches
         if (this.selectedTable && this.selectedTable.id === tableId) {
           this.selectedTable.is_favorite = table.is_favorite;
         }
-        // Update in allTables
         const allTable = this.allTables.find((t) => t.id === tableId);
         if (allTable) allTable.is_favorite = table.is_favorite;
         await this.loadStats();

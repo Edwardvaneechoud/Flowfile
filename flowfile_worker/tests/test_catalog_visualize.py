@@ -84,9 +84,7 @@ def _wait_dead(handle, deadline: float = 5.0) -> bool:
     return not handle.process.is_alive()
 
 
-# ======================================================================
 # 1-12: registry-level unit tests (no FastAPI)
-# ======================================================================
 
 
 def test_spawn_on_first_request(tmp_path):
@@ -436,13 +434,7 @@ def test_request_queue_full_returns_503(tmp_path, monkeypatch):
         # Warm the child so spawn isn't on the busy path.
         reg.execute(src, "execute", _AGG_PAYLOAD, 100)
         handle = reg._sessions[src.session_key]
-        # Drain the response queue to ensure the child is idle.
-        # Now block the child by filling its request_q without ever awaiting a response.
-        # Simpler: simulate "queue full" by pre-filling the bounded queue.
-        # The current child is idle waiting on get(); fill the queue while it's
-        # consuming one — so put two items: child eats one immediately, second
-        # blocks slot. This is racy; instead, manually replace request_q with a
-        # tiny fake to exercise the queue.Full path deterministically.
+        # Replace request_q with a tiny fake to exercise the queue.Full path deterministically.
         import queue as _q
 
         class _Full:
@@ -517,9 +509,7 @@ def test_polars_gw_not_in_parent_sys_modules(tmp_path):
     assert "polars_gw" not in sys.modules, "polars_gw leaked into FastAPI parent process"
 
 
-# ======================================================================
 # Existing HTTP-level tests (kept; flipped manager → registry)
-# ======================================================================
 
 
 @pytest.mark.worker

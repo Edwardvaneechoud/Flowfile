@@ -35,9 +35,7 @@ from flowfile_core.schemas.flow_api_schema import (
 router = APIRouter(prefix="/api-consumers", tags=["api_consumers"])
 
 
-# ---------------------------------------------------------------------------
 # Ownership helpers (mirror flow_api._get_owned_endpoint)
-# ---------------------------------------------------------------------------
 
 
 def _scope(current_user) -> int | None:
@@ -75,9 +73,7 @@ def _endpoints_out(db: Session, endpoints: list[db_models.FlowApiEndpoint]) -> l
     return [_endpoint_out(ep, reg_by_id.get(ep.registration_id)) for ep in endpoints]
 
 
-# ---------------------------------------------------------------------------
 # Consumer CRUD
-# ---------------------------------------------------------------------------
 
 
 @router.post("", response_model=ApiConsumerOut, status_code=status.HTTP_201_CREATED)
@@ -139,9 +135,7 @@ def delete_consumer(
     api_consumer_manager.delete_consumer(db, consumer)
 
 
-# ---------------------------------------------------------------------------
 # Grants (which flows a consumer may call)
-# ---------------------------------------------------------------------------
 
 
 @router.get("/{consumer_id}/endpoints", response_model=list[ApiEndpointOut])
@@ -199,9 +193,7 @@ def revoke_endpoint(
     api_consumer_manager.revoke_endpoint(db, consumer, endpoint_id)
 
 
-# ---------------------------------------------------------------------------
 # Keys
-# ---------------------------------------------------------------------------
 
 
 @router.get("/{consumer_id}/keys", response_model=list[ApiKeyOut])

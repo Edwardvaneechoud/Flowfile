@@ -295,11 +295,9 @@ describe("acceptance criteria — full round-trip", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Per-flow scoping. The chat trail is keyed by `flow_id` so switching
 // flows shows the right conversation; localStorage is the default
 // surface so the trail survives Electron app restart.
-// ---------------------------------------------------------------------------
 
 describe("chatPersistenceKey", () => {
   it("formats a real flow id as the v1-suffixed key", () => {

@@ -14,9 +14,7 @@ from pathlib import Path
 
 import pytest
 
-# =============================================================================
 # FIXTURES
-# =============================================================================
 
 @pytest.fixture
 def temp_dir():
@@ -25,9 +23,7 @@ def temp_dir():
         yield Path(tmpdir)
 
 
-# =============================================================================
 # OLD -> NEW SCHEMA TRANSFORMATION TESTS
-# =============================================================================
 
 class TestReceivedTableTransformation:
     """Test transformation of OLD flat ReceivedTable to NEW nested table_settings."""
@@ -37,7 +33,6 @@ class TestReceivedTableTransformation:
         from tools.migrate.legacy_schemas import FlowInformation, FlowSettings, NodeInformation, NodeRead, ReceivedTable
         from tools.migrate.migrate import migrate_flowfile
 
-        # OLD format: flat fields
         received = ReceivedTable(
             name='data.csv',
             path='/path/to/data.csv',
@@ -75,11 +70,9 @@ class TestReceivedTableTransformation:
         read_node = data['nodes'][0]
         received_file = read_node['setting_input']['received_file']
 
-        # Verify NEW structure has table_settings
         assert 'table_settings' in received_file
         ts = received_file['table_settings']
 
-        # Verify values migrated correctly
         assert ts['file_type'] == 'csv'
         assert ts['delimiter'] == ';'
         assert ts['encoding'] == 'latin-1'
@@ -95,7 +88,6 @@ class TestReceivedTableTransformation:
         from tools.migrate.legacy_schemas import FlowInformation, FlowSettings, NodeInformation, NodeRead, ReceivedTable
         from tools.migrate.migrate import migrate_flowfile
 
-        # OLD format: flat fields
         received = ReceivedTable(
             name='data.xlsx',
             path='/path/to/data.xlsx',
@@ -131,7 +123,6 @@ class TestReceivedTableTransformation:
         read_node = data['nodes'][0]
         received_file = read_node['setting_input']['received_file']
 
-        # Verify NEW structure
         assert received_file['file_type'] == 'excel'
         assert 'table_settings' in received_file
         ts = received_file['table_settings']
@@ -198,7 +189,6 @@ class TestOutputSettingsTransformation:
         )
         from tools.migrate.migrate import migrate_flowfile
 
-        # OLD format: separate table objects
         output_settings = OutputSettings(
             name='result.csv',
             directory='/output',
@@ -229,13 +219,11 @@ class TestOutputSettingsTransformation:
         output_node = data['nodes'][0]
         os = output_node['setting_input']['output_settings']
 
-        # Verify NEW structure
         assert 'table_settings' in os
         assert os['table_settings']['file_type'] == 'csv'
         assert os['table_settings']['delimiter'] == '|'
         assert os['table_settings']['encoding'] == 'utf-16'
 
-        # Verify OLD fields removed
         assert 'output_csv_table' not in os
         assert 'output_parquet_table' not in os
         assert 'output_excel_table' not in os
@@ -285,9 +273,7 @@ class TestOutputSettingsTransformation:
         assert os['table_settings']['sheet_name'] == 'Results'
 
 
-# =============================================================================
 # NODE TYPE MIGRATION TESTS
-# =============================================================================
 
 class TestNodeTypeMigration:
     """Test that all node types can be migrated correctly."""
@@ -404,7 +390,6 @@ class TestNodeTypeMigration:
         data = self._create_and_migrate(temp_dir, 'join', node)
         join_input = data['nodes'][0]['setting_input']['join_input']
 
-        # Verify migration added empty renames lists
         assert join_input['left_select'] == {'renames': []}
         assert join_input['right_select'] == {'renames': []}
 
@@ -447,9 +432,7 @@ class TestNodeTypeMigration:
         assert 'output_df' in polars_node['setting_input']['polars_code_input']['polars_code']
 
 
-# =============================================================================
 # LEGACY SCHEMA VALIDATION TESTS
-# =============================================================================
 
 class TestLegacySchemas:
     """Test that legacy schemas can be instantiated correctly."""
@@ -467,12 +450,10 @@ class TestLegacySchemas:
             sheet_name='Sheet1',  # Excel field at top level (OLD style)
         )
 
-        # OLD style: all fields at top level
         assert rt.delimiter == ';'
         assert rt.encoding == 'latin-1'
         assert rt.sheet_name == 'Sheet1'
 
-        # Verify no table_settings (OLD style)
         assert not hasattr(rt, 'table_settings')
 
     def test_output_settings_has_separate_tables(self):
@@ -487,11 +468,9 @@ class TestLegacySchemas:
             output_excel_table=OutputExcelTable(sheet_name='Data'),
         )
 
-        # OLD style: separate table objects
         assert os.output_csv_table.delimiter == '|'
         assert os.output_excel_table.sheet_name == 'Data'
 
-        # Verify no unified table_settings (OLD style)
         assert not hasattr(os, 'table_settings')
 
     def test_legacy_class_map_completeness(self):
@@ -518,9 +497,7 @@ class TestLegacySchemas:
             assert cls_name in LEGACY_CLASS_MAP, f"Missing {cls_name}"
 
 
-# =============================================================================
 # ROUND TRIP TESTS
-# =============================================================================
 
 class TestRoundTrip:
     """Test complete pickle -> YAML -> validation round trips."""
@@ -594,17 +571,14 @@ class TestRoundTrip:
 
         output_path = migrate_flowfile(pickle_path, format='yaml')
 
-        # Load and validate YAML
         with open(output_path) as f:
             data = yaml.safe_load(f)
 
-        # Verify FlowfileData format
         assert data['flowfile_version'] == '2.0'
         assert data['flowfile_name'] == 'complex_flow'
         assert data['flowfile_id'] == 1
         assert len(data['nodes']) == 3
 
-        # Verify transformations applied
         read_node = next(n for n in data['nodes'] if n['type'] == 'read')
         assert 'table_settings' in read_node['setting_input']['received_file']
 
@@ -612,7 +586,6 @@ class TestRoundTrip:
         assert 'table_settings' in output_node['setting_input']['output_settings']
         assert output_node['setting_input']['output_settings']['table_settings']['delimiter'] == ';'
 
-        # Verify start node is marked
         start_nodes = [n for n in data['nodes'] if n.get('is_start_node')]
         assert len(start_nodes) == 1
         assert start_nodes[0]['id'] == 1

@@ -20,10 +20,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-# =============================================================================
 # OLD INPUT/OUTPUT SCHEMAS (before table_settings migration)
-# These mirror the structure that exists in old pickle files
-# =============================================================================
 
 
 class MinimalFieldInfo(BaseModel):
@@ -66,7 +63,6 @@ class OutputSettings(BaseModel):
     file_type: str
     fields: list[str] | None = Field(default_factory=list)
     write_mode: str = "overwrite"
-    # OLD: Separate fields for each output type
     output_csv_table: OutputCsvTable | None = Field(default_factory=OutputCsvTable)
     output_parquet_table: OutputParquetTable = Field(default_factory=OutputParquetTable)
     output_excel_table: OutputExcelTable = Field(default_factory=OutputExcelTable)
@@ -113,9 +109,7 @@ class ReceivedTable(BaseModel):
     type_inference: bool = False
 
 
-# =============================================================================
 # FLOW AND NODE SCHEMAS (Pydantic - structure unchanged, just re-exported)
-# =============================================================================
 
 
 class FlowGraphConfig(BaseModel):
@@ -364,9 +358,7 @@ class FlowInformation(BaseModel):
     node_connections: list[tuple[int, int]] = Field(default_factory=list)
 
 
-# =============================================================================
 # TRANSFORM SCHEMAS (dataclasses - these changed from @dataclass to BaseModel)
-# =============================================================================
 
 
 @dataclass
@@ -606,10 +598,7 @@ class SampleInput:
     seed: int | None = None
 
 
-# =============================================================================
 # CLASS NAME MAPPING for pickle.Unpickler.find_class
-# Maps class names to their legacy implementations for unpickling
-# =============================================================================
 
 LEGACY_CLASS_MAP = {
     # Transform schema dataclasses
@@ -678,5 +667,4 @@ LEGACY_CLASS_MAP = {
 }
 
 
-# Export all classes
 __all__ = list(LEGACY_CLASS_MAP.keys()) + ["LEGACY_CLASS_MAP"]

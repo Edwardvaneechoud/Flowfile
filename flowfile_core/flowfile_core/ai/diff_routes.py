@@ -53,9 +53,7 @@ _DELETE_NODE_NAME = "flowfile.graph.delete_node"
 _DELETE_CONNECTION_NAME = "flowfile.graph.delete_connection"
 
 
-# --------------------------------------------------------------------------- #
-# Request / response shapes                                                    #
-# --------------------------------------------------------------------------- #
+# Request / response shapes
 
 
 class StagedToolResult(BaseModel):
@@ -121,9 +119,7 @@ class RejectDiffResponse(BaseModel):
     audit_ids_updated: list[int]
 
 
-# --------------------------------------------------------------------------- #
-# Helpers                                                                      #
-# --------------------------------------------------------------------------- #
+# Helpers
 
 
 def _resolve_flow(flow_id: int):
@@ -178,9 +174,7 @@ def _flip_audit_actions(audit_ids: list[int], action: audit.DiffAction) -> list[
     return updated
 
 
-# --------------------------------------------------------------------------- #
-# Routes                                                                       #
-# --------------------------------------------------------------------------- #
+# Routes
 
 
 @router.post("/diff/stage", response_model=StageDiffResponse, tags=["ai"])

@@ -14,7 +14,7 @@ export const createManualInput = (
     pos_y: pos_y,
     cache_input: false,
     raw_data_format: { columns: [], data: [] } as RawDataFormat,
-    cache_results: false, // Add the missing property 'cache_results'
+    cache_results: false,
   });
   return nodeManualInput;
 };

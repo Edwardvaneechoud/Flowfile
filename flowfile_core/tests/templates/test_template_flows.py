@@ -71,7 +71,6 @@ class TestTemplateFlowExecution:
         resolved = _replace_data_dir_placeholder(flow_dict, template_data_dir)
         flowfile_data = FlowfileData.model_validate(resolved)
 
-        # Write resolved flow to a temp YAML and open it
         temp_yaml = tmp_path / f"{template_yaml_path.stem}.yaml"
         with open(temp_yaml, "w", encoding="utf-8") as f:
             yaml.dump(flowfile_data.model_dump(), f, default_flow_style=False, allow_unicode=True)

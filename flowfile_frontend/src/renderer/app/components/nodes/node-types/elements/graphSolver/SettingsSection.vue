@@ -15,7 +15,7 @@
 <script lang="ts" setup>
 defineProps({
   title: { type: String, required: true },
-  item: { type: String, required: true }, // Changed to a single item
+  item: { type: String, required: true },
 });
 
 const emit = defineEmits(["removeItem"]);

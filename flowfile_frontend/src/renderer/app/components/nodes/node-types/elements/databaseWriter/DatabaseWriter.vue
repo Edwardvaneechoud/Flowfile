@@ -191,14 +191,12 @@ const tablesAreLoading = ref(false);
 const schemaSelectRef = ref();
 const tableSelectRef = ref();
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeData,
   onBeforeSave: () => {
     if (!nodeData.value) {
       return false;
     }
-    // Clean up settings based on connection_mode before saving
     if (nodeData.value.database_write_settings.connection_mode === "reference") {
       nodeData.value.database_write_settings.database_connection = undefined;
     } else {
@@ -208,7 +206,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   },
 });
 
-// Load node data from the store
 const loadNodeData = async (nodeId: number) => {
   try {
     const fetchedNodeData = await nodeStore.getNodeData(nodeId, false);
@@ -226,7 +223,6 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-// Simple reset fields function (minimal)
 const resetFields = () => {
   availableSchemas.value = [];
   availableTables.value = [];
@@ -329,7 +325,6 @@ watch(
   { deep: true },
 );
 
-// Fetch available database connections
 const fetchConnections = async () => {
   connectionsAreLoading.value = true;
   try {

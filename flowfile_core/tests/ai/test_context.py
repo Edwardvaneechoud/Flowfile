@@ -43,9 +43,7 @@ from flowfile_core.ai.context import (
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
-# --------------------------------------------------------------------------- #
-# Test fixtures #
-# --------------------------------------------------------------------------- #
+# Test fixtures
 
 
 def _flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
@@ -188,9 +186,7 @@ def cold_dynamic_flow() -> FlowGraph:
     return flow
 
 
-# --------------------------------------------------------------------------- #
-# 1. Subgraph extraction #
-# --------------------------------------------------------------------------- #
+# 1. Subgraph extraction
 
 
 def test_extract_subgraph_pinned_only(linear_flow: FlowGraph) -> None:
@@ -228,9 +224,7 @@ def test_extract_subgraph_unknown_pin_returns_empty(linear_flow: FlowGraph) -> N
     assert snapshot.edges == []
 
 
-# --------------------------------------------------------------------------- #
-# 2. Node projection #
-# --------------------------------------------------------------------------- #
+# 2. Node projection
 
 
 def test_snapshot_node_known_schema(linear_flow: FlowGraph) -> None:
@@ -265,9 +259,7 @@ def test_snapshot_node_samples_off_by_default(linear_flow: FlowGraph) -> None:
     assert all(c.sample is None for c in (snap.schema_columns or []))
 
 
-# --------------------------------------------------------------------------- #
-# 3. Layered system-prompt assembly #
-# --------------------------------------------------------------------------- #
+# 3. Layered system-prompt assembly
 
 
 @pytest.mark.parametrize("surface", list(get_args(SurfaceLiteral)))
@@ -279,7 +271,6 @@ def test_assemble_system_prompt_per_surface(surface: SurfaceLiteral) -> None:
 
 def test_assemble_system_prompt_concatenates_base_and_suffix() -> None:
     text = assemble_system_prompt("explain")
-    # Base claims should appear plus the assist suffix.
     assert "Schema-grounded" in text
     assert "Assist mode" in text
 
@@ -297,9 +288,7 @@ def test_surface_to_level_covers_every_surface() -> None:
         assert SURFACE_TO_LEVEL[surface] in levels, surface
 
 
-# --------------------------------------------------------------------------- #
-# 4. Token estimator + budget #
-# --------------------------------------------------------------------------- #
+# 4. Token estimator + budget
 
 
 def test_estimate_tokens_within_tolerance() -> None:
@@ -509,9 +498,7 @@ def test_apply_budget_truncation_step_order() -> None:
         assert report.columns_truncated > 0
 
 
-# --------------------------------------------------------------------------- #
-# 5. Mentions #
-# --------------------------------------------------------------------------- #
+# 5. Mentions
 
 
 def test_parse_mentions_single_node() -> None:
@@ -589,9 +576,7 @@ def test_resolve_mentions_by_id_string(linear_flow: FlowGraph) -> None:
     assert resolved.node_ids == (2,)
 
 
-# --------------------------------------------------------------------------- #
-# 6. End-to-end render_prompt_context #
-# --------------------------------------------------------------------------- #
+# 6. End-to-end render_prompt_context
 
 
 def test_render_prompt_context_produces_messages(linear_flow: FlowGraph) -> None:
@@ -645,9 +630,7 @@ def test_render_user_message_handles_empty_subgraph() -> None:
     assert "(empty)" in text
 
 
-# --------------------------------------------------------------------------- #
-# 6b. — prospective schema resolution in #
-# --------------------------------------------------------------------------- #
+# 6b. — prospective schema resolution in
 
 
 def test_render_prompt_context_resolves_static_upstream_via_callback(
@@ -778,9 +761,7 @@ def test_render_prompt_context_d012_clean(
     assert filter_snap.schema_status == "known"
 
 
-# --------------------------------------------------------------------------- #
-# 7. Lazy-import contract #
-# --------------------------------------------------------------------------- #
+# 7. Lazy-import contract
 
 
 def test_lazy_litellm_import_for_context() -> None:
@@ -811,9 +792,7 @@ def test_lazy_litellm_import_for_context() -> None:
             sys.modules[mod_name] = mod
 
 
-# --------------------------------------------------------------------------- #
-# 8. BudgetReport dataclass defaults #
-# --------------------------------------------------------------------------- #
+# 8. BudgetReport dataclass defaults
 
 
 def test_budget_report_dataclass_defaults() -> None:
@@ -829,9 +808,7 @@ def test_budget_report_dataclass_defaults() -> None:
     assert report.columns_truncated == 0
 
 
-# --------------------------------------------------------------------------- #
-# per-node-type catalog block in assemble_system_prompt #
-# --------------------------------------------------------------------------- #
+# per-node-type catalog block in assemble_system_prompt
 
 
 _W56_CATALOG_HEADER = "## Tool catalog"
@@ -900,9 +877,7 @@ def test_w56_read_only_surfaces_do_not_get_tool_catalog(surface: SurfaceLiteral)
     assert _W56_CATALOG_HEADER not in text, f"{surface} should not include the agent-shaped Tool catalog block"
 
 
-# --------------------------------------------------------------------------- #
-# v2 — node-reference block on read-only / advisory surfaces #
-# --------------------------------------------------------------------------- #
+# v2 — node-reference block on read-only / advisory surfaces
 #
 # Motivated by the live transcript where the chat surface (uses
 # surface="explain" → assist level) hallucinated a non-existent
@@ -1065,9 +1040,7 @@ def test_w56_catalog_block_renders_descriptions_in_stable_order() -> None:
     assert headings == sorted(headings), "catalog headings out of order — prompt cache will thrash"
 
 
-# --------------------------------------------------------------------------- #
-# sample fetch must use cached endpoint, not _predicted_data_getter #
-# --------------------------------------------------------------------------- #
+# sample fetch must use cached endpoint, not _predicted_data_getter
 
 
 def test_render_prompt_context_default_samples_mode_is_off(linear_flow: FlowGraph) -> None:
@@ -1216,9 +1189,7 @@ def test_render_prompt_context_no_lazyframe_collect_on_random_split_upstream(
     assert snapshot_ids == [1, 2]
 
 
-# --------------------------------------------------------------------------- #
-# — palette label vs node_type disambiguation #
-# --------------------------------------------------------------------------- #
+# — palette label vs node_type disambiguation
 
 
 def test_pick_type_prompt_warns_against_palette_labels() -> None:
@@ -1294,9 +1265,7 @@ def test_classify_stage_now_includes_palette_disambiguation() -> None:
     assert "sort_data" in text and "``sort``" in text
 
 
-# --------------------------------------------------------------------------- #
-# — formula description + on-demand function list #
-# --------------------------------------------------------------------------- #
+# — formula description + on-demand function list
 
 
 def test_formula_node_docs_uses_flowfile_expression_syntax() -> None:
@@ -1861,16 +1830,14 @@ def test_verify_completion_stage_prompt_renders() -> None:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Honest runtime-failure reporting — direct response to the 2026-05-09 #
-# dogfood where the agent hit ``UnpredictableSchema`` on sql_query, #
-# hallucinated *"the kernel couldn't be found"* (not in the error text), #
-# and falsely told the user *"I added a sql_query node"* after the host had #
-# already auto-undone it. The fix has two pieces: (1) generic guidance in #
-# stage_fill_settings.md teaching the LLM to read the ``✗`` observation #
-# block honestly, and (2) a conditional Development-mode caveat for #
-# sql_query / polars_code that pre-warns the LLM before the failure. #
-# --------------------------------------------------------------------------- #
+# Honest runtime-failure reporting — direct response to the 2026-05-09
+# dogfood where the agent hit ``UnpredictableSchema`` on sql_query,
+# hallucinated *"the kernel couldn't be found"* (not in the error text),
+# and falsely told the user *"I added a sql_query node"* after the host had
+# already auto-undone it. The fix has two pieces: (1) generic guidance in
+# stage_fill_settings.md teaching the LLM to read the ``✗`` observation
+# block honestly, and (2) a conditional Development-mode caveat for
+# sql_query / polars_code that pre-warns the LLM before the failure.
 
 
 def test_fill_settings_prompt_includes_runtime_feedback_section() -> None:

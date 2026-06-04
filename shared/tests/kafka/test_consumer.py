@@ -35,9 +35,7 @@ def _settings(topic: str, **overrides) -> KafkaReadSettings:
     return KafkaReadSettings(**defaults)
 
 
-# ---------------------------------------------------------------------------
 # Basic consumer tests
-# ---------------------------------------------------------------------------
 
 
 class TestReadKafkaSource:
@@ -126,9 +124,7 @@ class TestReadKafkaSource:
         assert set(df["_kafka_key"].to_list()) == {"k1", "k2"}
 
 
-# ---------------------------------------------------------------------------
 # Spill-to-IPC tests
-# ---------------------------------------------------------------------------
 
 
 class TestSpillToIpc:
@@ -314,9 +310,7 @@ class TestSpillFlushOverThreshold:
             os.unlink(spill_path)
 
 
-# ---------------------------------------------------------------------------
 # commit_offsets tests
-# ---------------------------------------------------------------------------
 
 
 class TestCommitOffsets:
@@ -328,15 +322,12 @@ class TestCommitOffsets:
 
         group = _unique_group()
 
-        # Consume all 10 without committing
         settings = _settings(kafka_topic, group_id=group)
         df, result = read_kafka_source(settings, commit=False)
         assert result.messages_consumed == 10
 
-        # Manually commit offsets for only the first 5
         commit_offsets(settings, {0: 5})
 
-        # Re-consume with the same group — should get the remaining 5
         df2, result2 = read_kafka_source(settings)
         assert result2.messages_consumed == 5
         assert df2.height == 5

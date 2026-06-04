@@ -80,7 +80,6 @@ const FILE_SIZE_LIMIT_MB = 200
 const FILE_SIZE_WARNING = FILE_SIZE_WARNING_MB * 1024 * 1024  // 100MB
 const FILE_SIZE_LIMIT = FILE_SIZE_LIMIT_MB * 1024 * 1024      // 200MB
 
-// Support both new schema (NodeReadSettings) and legacy (ReadCsvSettings)
 const localSettings = ref<NodeReadSettings>({
   node_id: props.nodeId,
   cache_results: true,
@@ -103,10 +102,8 @@ const localSettings = ref<NodeReadSettings>({
   file_name: ''
 })
 
-// Get table settings helper
 const tableSettings = computed(() => localSettings.value.received_file?.table_settings)
 
-// Load settings on mount
 onMounted(() => {
   loadSettings(props.settings)
 })
@@ -114,7 +111,6 @@ onMounted(() => {
 function loadSettings(settings: NodeSettings) {
   const s = settings as any
 
-  // Copy base properties
   localSettings.value.node_id = s.node_id ?? props.nodeId
   localSettings.value.is_setup = s.is_setup ?? false
   localSettings.value.description = s.description ?? ''
@@ -122,13 +118,11 @@ function loadSettings(settings: NodeSettings) {
   localSettings.value.pos_y = s.pos_y ?? 0
   localSettings.value.cache_results = s.cache_results ?? true
 
-  // Handle new schema (received_file) or old schema (received_table)
   const receivedFile = s.received_file || s.received_table
   if (receivedFile) {
     localSettings.value.received_file = receivedFile
     localSettings.value.file_name = s.file_name ?? receivedFile.name ?? ''
   }
-  // Handle legacy schema (direct properties)
   else if (s.file_name !== undefined || s.has_headers !== undefined) {
     localSettings.value.file_name = s.file_name ?? ''
     localSettings.value.received_file = {
@@ -163,10 +157,8 @@ async function handleFileSelect(event: Event) {
   fileWarning.value = ''
   fileName.value = file.name
 
-  // Validate file size
   if (file.size > FILE_SIZE_LIMIT) {
     fileError.value = `File too large (${formatFileSize(file.size)}). Maximum size is ${FILE_SIZE_LIMIT_MB}MB. Large files can freeze your browser.`
-    // Reset input so user can select again
     input.value = ''
     return
   }
@@ -179,7 +171,6 @@ async function handleFileSelect(event: Event) {
     const content = await file.text()
     flowStore.setFileContent(props.nodeId, content)
 
-    // Update settings
     localSettings.value.file_name = file.name
     if (localSettings.value.received_file) {
       localSettings.value.received_file.name = file.name
@@ -205,11 +196,9 @@ function updateTableSetting(key: string, value: any) {
   }
   emitUpdate()
 
-  // Re-infer schema if delimiter or has_headers changed and we have file content
   if (key === 'delimiter' || key === 'has_headers') {
     const content = flowStore.fileContents.get(props.nodeId)
     if (content) {
-      // Re-set the file content to trigger schema re-inference with new settings
       // The settings need to be updated first, so we delay slightly
       setTimeout(() => {
         flowStore.setFileContent(props.nodeId, content)

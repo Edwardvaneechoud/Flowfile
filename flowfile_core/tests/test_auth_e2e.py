@@ -62,16 +62,14 @@ def docker_image(docker_client, project_root):
     print(f"Building Docker image from: {project_root}")
     print(f"{'='*60}")
 
-    # Build the image
     image, build_logs = docker_client.images.build(
         path=str(project_root),
         dockerfile="flowfile_core/Dockerfile",
         tag="flowfile-core:e2e-test",
-        rm=True,  # Remove intermediate containers
-        forcerm=True,  # Always remove intermediate containers
+        rm=True,
+        forcerm=True,
     )
 
-    # Print build logs
     for log in build_logs:
         if "stream" in log:
             print(log["stream"].strip())
@@ -82,7 +80,6 @@ def docker_image(docker_client, project_root):
 
     yield image
 
-    # Cleanup: Remove the test image
     print(f"\nRemoving test image: {image.tags}")
     docker_client.images.remove(image.id, force=True)
 
@@ -113,7 +110,6 @@ def running_container(docker_client, docker_image, project_root):
     print(f"Starting Docker container...")
     print(f"{'='*60}")
 
-    # Environment variables for Docker mode with admin user
     environment = {
         "FLOWFILE_MODE": "docker",
         "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
@@ -139,12 +135,10 @@ def running_container(docker_client, docker_image, project_root):
     try:
         print(f"Container started: {container.name} (ID: {container.short_id})")
 
-        # Wait for the service to be ready
         service_url = f"http://localhost:{FLOWFILE_CORE_PORT}/docs"
         print(f"\nWaiting for service at {service_url}...")
 
         if not wait_for_service(service_url):
-            # Print container logs for debugging
             try:
                 logs = container.logs(tail=200).decode("utf-8", errors="replace")
                 print(f"\nContainer logs:\n{logs}")
@@ -156,7 +150,6 @@ def running_container(docker_client, docker_image, project_root):
         print(f"Container is ready!")
         print(f"{'='*60}\n")
 
-        # Give it a moment to fully initialize
         time.sleep(3)
 
         yield container
@@ -208,7 +201,6 @@ class TestDockerE2EAuthentication:
 
     def test_authentication_endpoint_exists(self):
         """Test that the authentication endpoint exists."""
-        # Try to access without credentials (should fail in Docker mode)
         response = requests.post(f"{self.base_url}/auth/token", timeout=10)
         # Should get 422 (validation error) or 401 (unauthorized)
         assert response.status_code in [401, 422]
@@ -229,7 +221,6 @@ class TestDockerE2EAuthentication:
         assert data["token_type"] == "bearer"
         assert len(data["access_token"]) > 0
 
-        # Store token for subsequent tests
         self.token = data["access_token"]
 
     def test_login_with_invalid_password(self):
@@ -265,7 +256,6 @@ class TestDockerE2EAuthentication:
 
     def test_authenticated_request(self):
         """Test making an authenticated request with the token."""
-        # First login to get a token
         login_response = requests.post(
             f"{self.base_url}/auth/token",
             data={"username": TEST_ADMIN_USERNAME, "password": TEST_ADMIN_PASSWORD},
@@ -275,11 +265,9 @@ class TestDockerE2EAuthentication:
         assert login_response.status_code == 200
         token = login_response.json()["access_token"]
 
-        # Try to access a protected endpoint
         headers = {"Authorization": f"Bearer {token}"}
         response = requests.get(f"{self.base_url}/auth/users/me", headers=headers, timeout=10)
 
-        # Should succeed with valid token
         assert response.status_code == 200
         user_data = response.json()
         assert user_data["username"] == TEST_ADMIN_USERNAME
@@ -288,7 +276,6 @@ class TestDockerE2EAuthentication:
         """Test that protected endpoints reject requests without token."""
         response = requests.get(f"{self.base_url}/auth/users/me", timeout=10)
 
-        # Should fail without authentication
         assert response.status_code in [401, 403]
 
     def test_container_logs_show_admin_user_creation(self):
@@ -306,7 +293,6 @@ class TestDockerE2EWithoutAdminCredentials:
         print(f"Testing container without admin credentials...")
         print(f"{'='*60}")
 
-        # Environment without admin credentials
         environment = {
             "FLOWFILE_MODE": "docker",
             "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
@@ -327,7 +313,6 @@ class TestDockerE2EWithoutAdminCredentials:
         )
 
         try:
-            # Poll container logs until the expected warning appears or timeout
             timeout = 60
             interval = 2
             start_time = time.time()
@@ -343,7 +328,6 @@ class TestDockerE2EWithoutAdminCredentials:
 
             if "FLOWFILE_ADMIN_USER" not in logs and "FLOWFILE_ADMIN_PASSWORD" not in logs:
                 print(f"\nContainer logs (warning never appeared):\n{logs}")
-            # Should contain warning about missing admin credentials
             assert "FLOWFILE_ADMIN_USER" in logs or "FLOWFILE_ADMIN_PASSWORD" in logs
             assert "not set" in logs or "warning" in logs.lower()
 

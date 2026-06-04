@@ -70,13 +70,11 @@ class InputExcelTable(InputTableBase):
         return self
 
 
-# Create the discriminated union (similar to OutputTableSettings)
 InputTableSettings = Annotated[
     InputCsvTable | InputJsonTable | InputParquetTable | InputExcelTable, Field(discriminator="file_type")
 ]
 
 
-# Now create the main ReceivedTable model
 class ReceivedTable(BaseModel):
     """Model for defining a table received from an external source."""
 
@@ -99,7 +97,6 @@ class ReceivedTable(BaseModel):
         """Creates an instance from a file path string."""
         filename = Path(path).name
 
-        # Create appropriate table_settings based on file_type
         settings_map = {
             "csv": InputCsvTable(),
             "json": InputJsonTable(),
@@ -134,7 +131,6 @@ class ReceivedTable(BaseModel):
         """Ensures table_settings matches the file_type."""
         if v is None:
             file_type = info.data.get("file_type", "csv")
-            # Create default based on file_type
             settings_map = {
                 "csv": InputCsvTable(),
                 "json": InputJsonTable(),
@@ -143,7 +139,6 @@ class ReceivedTable(BaseModel):
             }
             return settings_map.get(file_type, InputCsvTable())
 
-        # If it's a dict, add file_type if missing
         if isinstance(v, dict) and "file_type" not in v:
             v["file_type"] = info.data.get("file_type", "csv")
 

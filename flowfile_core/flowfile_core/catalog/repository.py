@@ -395,7 +395,6 @@ class SQLAlchemyCatalogRepository:
         return reg
 
     def delete_flow(self, registration_id: int) -> None:
-        # Clean up related records first
         self._db.query(FlowFavorite).filter_by(registration_id=registration_id).delete()
         self._db.query(FlowFollow).filter_by(registration_id=registration_id).delete()
         # Remove published API endpoints and their keys. SQLite FK enforcement is
@@ -846,7 +845,6 @@ class SQLAlchemyCatalogRepository:
         if not uuids:
             return {fid: (0, None) for fid in flow_ids}
 
-        # Query 1: counts per flow_uuid
         count_rows = (
             self._db.query(FlowRun.flow_uuid, func.count(FlowRun.id).label("cnt"))
             .filter(FlowRun.flow_uuid.in_(uuids))
@@ -855,7 +853,6 @@ class SQLAlchemyCatalogRepository:
         )
         counts = {uuid: cnt for uuid, cnt in count_rows}
 
-        # Query 2: last run per flow_uuid using a subquery for max started_at
         subq = (
             self._db.query(
                 FlowRun.flow_uuid,

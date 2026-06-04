@@ -119,7 +119,6 @@ export const useFileBrowserStore = defineStore("fileBrowser", {
       if (!this.contexts[context]) {
         this.contexts[context] = { currentPath: "", lastUsedPath: "" };
       }
-      // Only set if no path is stored yet
       if (!this.contexts[context].currentPath && defaultPath) {
         this.contexts[context].currentPath = defaultPath;
       }

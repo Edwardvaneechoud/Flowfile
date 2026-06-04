@@ -63,7 +63,6 @@ def create_database_connection(
     """
     user_id = get_current_user_id()
 
-    # Convert password to SecretStr if it's a plain string
     if isinstance(password, str):
         password = SecretStr(password)
 
@@ -115,7 +114,6 @@ def create_database_connection_if_not_exists(
     """
     get_current_user_id()
 
-    # Check if connection already exists
     existing = get_database_connection_by_name(connection_name)
     if existing:
         return existing

@@ -232,11 +232,9 @@ watch(
   },
 );
 
-// Password visibility toggles
 const showSaslPassword = ref(false);
 const showSslKey = ref(false);
 
-// Computed visibility flags
 const showSaslFields = computed(() => {
   const protocol = connection.value.security_protocol;
   return protocol === "SASL_PLAINTEXT" || protocol === "SASL_SSL";
@@ -247,7 +245,6 @@ const showSslFields = computed(() => {
   return protocol === "SSL" || protocol === "SASL_SSL";
 });
 
-// Extra config key-value entries
 const extraConfigEntries = ref<{ key: string; value: string }[]>([]);
 
 const syncExtraConfigEntries = () => {
@@ -273,7 +270,6 @@ const removeExtraConfigEntry = (index: number) => {
   extraConfigEntries.value.splice(index, 1);
 };
 
-// Sync extra config entries back to connection on submit
 const syncExtraConfigToConnection = () => {
   const validEntries = extraConfigEntries.value.filter((e) => e.key.trim() !== "");
   if (validEntries.length > 0) {
@@ -283,7 +279,6 @@ const syncExtraConfigToConnection = () => {
   }
 };
 
-// Set SASL defaults when protocol changes to SASL
 watch(
   () => connection.value.security_protocol,
   (newProtocol: KafkaSecurityProtocol) => {

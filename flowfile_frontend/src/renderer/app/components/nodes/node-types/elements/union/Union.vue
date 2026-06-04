@@ -25,7 +25,6 @@ const nodeData = ref<null | NodeData>(null);
 const unionInput = ref<UnionInput>({ mode: "relaxed" });
 const nodeUnion = ref<NodeUnion | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeUnion,
 });

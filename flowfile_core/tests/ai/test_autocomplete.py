@@ -61,9 +61,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.configs import settings as core_settings
 
-# --------------------------------------------------------------------------- #
-# Fakes #
-# --------------------------------------------------------------------------- #
+# Fakes
 
 
 class _FakeColumn:
@@ -158,9 +156,7 @@ def _scheduler() -> RateLimitScheduler:
     return RateLimitScheduler(time_source=lambda: 0.0, sleep=lambda *_a, **_k: asyncio.sleep(0))
 
 
-# --------------------------------------------------------------------------- #
-# 1. Surface vocabulary lockstep #
-# --------------------------------------------------------------------------- #
+# 1. Surface vocabulary lockstep
 
 
 def test_settings_autocomplete_surface_in_lockstep() -> None:
@@ -170,19 +166,14 @@ def test_settings_autocomplete_surface_in_lockstep() -> None:
     from flowfile_core.ai.context import builder as ctx_builder
     from flowfile_core.ai.tools import registry as tool_registry
 
-    # 1. SurfaceLiteral covers it (W22 +, both)
     assert "settings_autocomplete" in tool_registry.get_args(tool_registry.SurfaceLiteral)
     assert "settings_autocomplete" in ctx_builder.SURFACE_TO_LEVEL
     assert ctx_builder.SURFACE_TO_LEVEL["settings_autocomplete"] == "copilot"
 
-    # 2. SURFACE_PRESETS has the empty frozenset
     assert tool_registry.SURFACE_PRESETS["settings_autocomplete"] == frozenset()
 
-    # 3. _check_preset_coverage succeeds at import (already ran on first
-    #  import, but call it explicitly so the test is self-contained).
     tool_registry._check_preset_coverage()  # must not raise
 
-    # 4. Six providers all carry the surface in their `surface_models`
     from flowfile_core.ai.providers import (
         AnthropicProvider,
         GoogleProvider,
@@ -204,16 +195,13 @@ def test_settings_autocomplete_surface_in_lockstep() -> None:
             "settings_autocomplete" in provider_cls.surface_models
         ), f"{provider_cls.__name__} missing settings_autocomplete in surface_models"
 
-    # 5. Budget table has an entry — and it's smaller than cmd_k
     auto_budget = ctx_budget.surface_budget("settings_autocomplete")
     cmd_k_budget = ctx_budget.surface_budget("cmd_k")
     assert auto_budget[0] <= cmd_k_budget[0]
     assert auto_budget[1] <= cmd_k_budget[1]
 
 
-# --------------------------------------------------------------------------- #
-# 2. Column reference extraction #
-# --------------------------------------------------------------------------- #
+# 2. Column reference extraction
 
 
 def test_extract_column_refs_pl_col() -> None:
@@ -246,9 +234,7 @@ def test_extract_column_refs_complex_marks_incomplete() -> None:
     assert complete is True
 
 
-# --------------------------------------------------------------------------- #
-# 3. Formula suggestions: filtering + degraded #
-# --------------------------------------------------------------------------- #
+# 3. Formula suggestions: filtering + degraded
 
 
 def _formula_payload(suggestions: list[dict[str, Any]]) -> str:
@@ -286,7 +272,6 @@ async def test_suggest_formula_drops_hallucinated_columns() -> None:
     )
     assert isinstance(response, FormulaSuggestionsResponse)
     assert response.degraded is False
-    # Only the valid one survives, with verified=True.
     assert len(response.suggestions) == 1
     assert response.suggestions[0].insert_text == 'pl.col("a") + pl.col("b")'
     assert response.suggestions[0].verified is True
@@ -360,9 +345,7 @@ async def test_suggest_formula_degrades_when_upstream_missing() -> None:
     assert provider.last_call_kwargs == {}
 
 
-# --------------------------------------------------------------------------- #
-# 4. Join keys: filtering + degraded #
-# --------------------------------------------------------------------------- #
+# 4. Join keys: filtering + degraded
 
 
 def _join_payload(pairs: list[dict[str, Any]]) -> str:
@@ -423,9 +406,7 @@ async def test_suggest_join_keys_degrades_when_either_schema_none() -> None:
     assert provider.last_call_kwargs == {}
 
 
-# --------------------------------------------------------------------------- #
-# 5. Provider call wiring #
-# --------------------------------------------------------------------------- #
+# 5. Provider call wiring
 
 
 @pytest.mark.asyncio
@@ -442,7 +423,6 @@ async def test_response_format_threaded_through() -> None:
         provider=provider,
         scheduler=_scheduler(),
     )
-    # JSON-mode kwarg must reach the provider.
     assert provider.last_call_kwargs.get("response_format") == {"type": "json_object"}
     # Tools must be None — autocomplete is text-only.
     assert provider.last_call_kwargs.get("tools") is None
@@ -530,9 +510,7 @@ async def test_markdown_fenced_json_is_unwrapped() -> None:
     assert response.suggestions[0].verified is True
 
 
-# --------------------------------------------------------------------------- #
-# 6. Routes #
-# --------------------------------------------------------------------------- #
+# 6. Routes
 
 
 @pytest.fixture
@@ -565,7 +543,6 @@ def test_route_formula_404_on_unknown_provider(authed_client: TestClient) -> Non
 
 
 def test_route_formula_409_on_unconfigured_provider(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Pretend the flow exists.
     monkeypatch.setattr(
         autocomplete_routes.flow_file_handler,
         "get_flow",
@@ -639,9 +616,7 @@ def test_route_join_keys_happy_path(authed_client: TestClient, monkeypatch: pyte
     assert body["key_pairs"][0]["left_col"] == "user_id"
 
 
-# --------------------------------------------------------------------------- #
-# 7. Lazy-litellm contract #
-# --------------------------------------------------------------------------- #
+# 7. Lazy-litellm contract
 
 
 def test_lazy_litellm_contract() -> None:

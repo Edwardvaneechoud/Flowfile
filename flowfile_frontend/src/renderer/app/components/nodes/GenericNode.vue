@@ -22,8 +22,6 @@ import NodeButton from "./baseNode/nodeButton.vue";
 import { toTitleCase } from "../../views/DesignerView/utils";
 import type { NodeTemplate } from "../../types";
 
-// Import all components in the elements folder at build time
-// This tells Vite to include all these files in the bundle
 const drawerModules = import.meta.glob("./node-types/elements/**/*.vue");
 
 interface Props {
@@ -36,20 +34,16 @@ interface Props {
 
 const props = defineProps<Props>();
 
-// Use shallowRef for the drawer component (calculated once)
 const drawerComponent = shallowRef(null);
 
-// Initialize the drawer component once on mount
 onMounted(() => {
   loadDrawerComponent();
 });
 
-// Helper to convert snake_case to camelCase
 const toCamelCase = (str: string): string => {
   return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 };
 
-// Function to load the drawer component
 const loadDrawerComponent = () => {
   try {
     let componentName;
@@ -63,10 +57,8 @@ const loadDrawerComponent = () => {
       folderName = toCamelCase(props.nodeData.item.toLowerCase());
     }
 
-    // Build the expected path
     const componentPath = `./node-types/elements/${folderName}/${componentName}.vue`;
 
-    // Check if the component exists
     const componentLoader = drawerModules[componentPath];
 
     if (!componentLoader) {
@@ -78,7 +70,6 @@ const loadDrawerComponent = () => {
       return;
     }
 
-    // Create the async component
     drawerComponent.value = markRaw(
       defineAsyncComponent({
         loader: componentLoader as () => Promise<any>,
@@ -99,7 +90,6 @@ const loadDrawerComponent = () => {
   }
 };
 
-// These can remain as computed since they're lightweight
 const imageSrc = computed(() => {
   return props.nodeData?.image || "default.png";
 });
@@ -116,10 +106,9 @@ const nodeTitleInfo = computed(() => {
   };
 });
 
-// Error handling for component loading issues
 onErrorCaptured((error) => {
   console.error("Error in GenericNode component:", error);
-  return false; // Propagate the error
+  return false;
 });
 </script>
 

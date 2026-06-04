@@ -997,9 +997,7 @@ describe("aiDiffTypes — buildAdditionNodeTypes", () => {
   });
 });
 
-// --------------------------------------------------------------------------- #
-// Modifications round-trip                                                     #
-// --------------------------------------------------------------------------- #
+// Modifications round-trip
 
 const sampleModificationStageRequest = (): StageDiffRequestShape => ({
   session_id: "sess-mod",
@@ -1111,13 +1109,11 @@ describe("ai-diff-store — modifications", () => {
   });
 });
 
-// --------------------------------------------------------------------------- #
-// Stale diff (404) — accept/reject after the backend has lost the diff,        #
-// typically because ``flowfile_core`` was restarted between staging and the    #
-// user clicking Accept/Reject. The store clears the staged diff, surfaces a    #
-// transient toast via ``staleNotice``, and drops the agent store's persisted   #
-// ``lastResult.diff_payload`` so a refresh doesn't re-hydrate the dead diff.   #
-// --------------------------------------------------------------------------- #
+// Stale diff (404) — accept/reject after the backend has lost the diff,
+// typically because ``flowfile_core`` was restarted between staging and the
+// user clicking Accept/Reject. The store clears the staged diff, surfaces a
+// transient toast via ``staleNotice``, and drops the agent store's persisted
+// ``lastResult.diff_payload`` so a refresh doesn't re-hydrate the dead diff.
 
 describe("ai-diff-store — stale diff (404 from accept)", () => {
   it("clears currentDiff and surfaces a toast when accept 404s", async () => {

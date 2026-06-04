@@ -28,7 +28,6 @@ const dataLoaded = ref(false);
 const nodeData = ref<null | NodeData>(null);
 const nodeRecordCount = ref<NodeBase | null>(null);
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeRecordCount,
 });

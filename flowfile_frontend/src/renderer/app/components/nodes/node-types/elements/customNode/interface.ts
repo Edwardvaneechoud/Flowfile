@@ -60,20 +60,17 @@ export interface SecretSelectorComponent extends BaseComponent {
   name_prefix?: string;
 }
 
-// Generic column action row structure
 export interface ColumnActionRow {
   column: string;
   action: string;
   output_name: string;
 }
 
-// Action option structure from backend
 export interface ActionOption {
   value: string;
   label: string;
 }
 
-// Generic column action input value structure
 export interface ColumnActionValue {
   rows: ColumnActionRow[];
   group_by_columns: string[];
@@ -96,7 +93,7 @@ export interface SectionComponent {
   title?: string;
   description?: string;
   hidden?: boolean;
-  components: Record<string, UIComponent>; // Sections contain other UI components
+  components: Record<string, UIComponent>;
 }
 
 export interface SettingsSchema {
@@ -117,7 +114,6 @@ export type UIComponent =
 export type NodeTypeLiteral = "process" | "input" | "output";
 export type TransformTypeLiteral = "wide" | "long" | "explode";
 
-// The final, top-level schema for a custom node
 export interface CustomNodeSchema {
   node_name: string;
   node_category: string;

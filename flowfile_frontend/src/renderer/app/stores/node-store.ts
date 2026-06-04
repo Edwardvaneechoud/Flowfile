@@ -342,14 +342,12 @@ export const useNodeStore = defineStore("node", {
 
         if (result === true) {
           editorStore.bumpGraphVersion();
-          // Update nodeReference on the VueFlow node data
           const vf = flowStore.vueFlowInstance;
           if (vf) {
             const node = vf.findNode(String(nodeId));
             if (node?.data) {
               node.data.nodeReference = reference;
             }
-            // Reactively update edge labels for outgoing edges
             if (editorStore.showEdgeLabels) {
               const nodeIdStr = String(nodeId);
               for (const edge of vf.getEdges.value) {

@@ -162,12 +162,10 @@ def test_execution_uses_worker_fetcher_and_stamps_schema(monkeypatch):
 
     df = graph.get_node(1).get_resulting_data().data_frame.collect()
 
-    # The fetch went through the (faked) worker fetcher, not an in-core HTTP call.
     assert _FakeFetcher.last["settings"].url == "https://x/api"
     assert _FakeFetcher.last["settings"].auth.bearer_token_encrypted is not None
     assert df.height == 3
     assert sorted(df["id"].to_list()) == [1, 2, 3]
-    # The fetched schema is stamped onto the node for downstream introspection.
     assert node.fields is not None
     assert {f.name for f in node.fields} == {"id", "name"}
 
@@ -246,7 +244,7 @@ def test_execution_aligns_fetched_frame_to_cached_schema(monkeypatch):
     _add_reader(graph, node)
 
     df = graph.get_node(1).get_resulting_data().data_frame.collect()
-    assert df.columns == ["id", "name", "extra"]  # cached schema order, missing col added
+    assert df.columns == ["id", "name", "extra"]
     assert df["extra"].null_count() == 2
 
 
@@ -267,7 +265,6 @@ def test_read_api_builds_graph_and_executes_via_worker(monkeypatch):
 
     assert df.height == 3
     assert sorted(df["id"].to_list()) == [1, 2, 3]
-    # auth dict coerced + secret encrypted + routed by auth_type to the worker settings
     settings = _FakeFetcher.last["settings"]
     assert settings.url == "https://x/api"
     assert settings.auth.bearer_token_encrypted is not None

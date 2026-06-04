@@ -93,7 +93,6 @@ const notifyError = (title: string, message: string) =>
 
 const router = useRouter();
 
-// Extract API functions
 const getAllFlows = FlowApi.getAllFlows;
 const importSavedFlow = FlowApi.importFlow;
 const closeFlow = FlowApi.closeFlow;
@@ -127,7 +126,6 @@ const fetchActiveFlows = async () => {
     const flows = await getAllFlows();
     flowsActive.value = flows;
 
-    // Refresh the flow selector when active flows change
     if (flowSelector.value) {
       await flowSelector.value.loadFlows();
     }
@@ -171,23 +169,18 @@ const handleCloseFlow = async (flowId: number) => {
   try {
     console.log("Closing flow:", flowId);
 
-    // Check if we're closing the currently active flow
     const isCurrentFlow = nodeStore.flow_id === flowId;
 
-    // Call the API to close the flow
     await closeFlow(flowId);
 
-    // Clean up any flow-related data in the store
     nodeStore.clearFlowResults(flowId);
     nodeStore.clearFlowDescriptionCache(flowId);
     isSwitching.value = true;
 
-    // Refresh the flows list
     await fetchActiveFlows();
 
     if (isCurrentFlow) {
       if (flowsActive.value.length > 0) {
-        // Switch to the first available flow
         const newFlowId = flowsActive.value[0].flow_id;
         console.log("Switching to flow:", newFlowId);
         await handleFlowChange(newFlowId);
@@ -232,7 +225,7 @@ const refreshFlow = async () => {
   isSwitching.value = true;
   try {
     console.log("refreshFlow");
-    await fetchActiveFlows(); // Refresh flows list
+    await fetchActiveFlows();
     // Same flowId — watcher won't fire, so trigger reload explicitly.
     if (canvasFlow.value && flowsActive.value.length > 0) {
       await canvasFlow.value.reloadCurrentFlow();

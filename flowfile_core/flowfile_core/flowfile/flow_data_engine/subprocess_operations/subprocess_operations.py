@@ -494,7 +494,6 @@ def get_results(file_ref: str) -> Status | None:
 
 
 def results_exists(file_ref: str):
-    # Skip worker check if worker communication is disabled
     if not OFFLOAD_TO_WORKER:
         return False
 
@@ -522,7 +521,6 @@ def clear_task_from_worker(file_ref: str) -> bool:
     """
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
-    # Skip worker call if worker communication is disabled
     if not OFFLOAD_TO_WORKER:
         return False
 
@@ -691,7 +689,6 @@ class BaseFetcher:
             self._handle_cancellation()
 
         except Exception as e:
-            # Catch any unexpected errors
             logger.exception("Unexpected error in fetch thread")
             self._handle_error(-1, f"Unexpected error: {e}")
 
@@ -758,16 +755,13 @@ class BaseFetcher:
             except Exception:
                 pass
 
-        # Cancel on the worker side
         try:
             cancel_task(self.file_ref)
         except Exception as e:
             logger.error(f"Failed to cancel task on worker: {str(e)}")
 
-        # Signal the thread to stop
         self._stop_event.set()
 
-        # Wait for thread to finish
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5.0)
             if self._thread.is_alive():
@@ -790,12 +784,10 @@ class BaseFetcher:
                     self._running = True
                 self._start_thread()
 
-        # Wait for completion
         with self._condition:
             while self._running:
                 self._condition.wait()
 
-        # Check for errors
         with self._lock:
             if self._error_description is not None:
                 raise Exception(self._error_description)
@@ -853,7 +845,6 @@ class BaseFetcher:
                 self._started = True
             self.status = status
         else:
-            # Non-blocking: open connection, send task, receive in background
             ws = streaming_start(
                 task_id=self.file_ref,
                 operation_type=operation_type,
@@ -910,7 +901,6 @@ class ExternalDfFetcher(BaseFetcher):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
 
-        # Try WebSocket streaming first (blocking or non-blocking)
         try:
             self._execute_streaming(
                 operation_type=operation_type,
@@ -954,7 +944,6 @@ class ExternalSampler(BaseFetcher):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
 
-        # Try WebSocket streaming first (blocking or non-blocking)
         try:
             self._execute_streaming(
                 operation_type="store_sample",
@@ -1214,7 +1203,6 @@ def fetch_unique_values(lf: pl.LazyFrame) -> list[str]:
         ['A', 'B', 'C']
     """
     try:
-        # Try external source first if lf is provided
         try:
             external_df_fetcher = ExternalDfFetcher(lf=lf, flow_id=1, node_id=-1)
             if external_df_fetcher.status.status == "Completed":

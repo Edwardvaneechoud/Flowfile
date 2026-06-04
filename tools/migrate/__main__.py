@@ -65,12 +65,10 @@ Examples:
 
     args = parser.parse_args()
 
-    # Validate input path
     if not args.path.exists():
         print(f"Error: Path not found: {args.path}", file=sys.stderr)
         sys.exit(1)
 
-    # Dry run mode
     if args.dry_run:
         if args.path.is_file():
             print(f"Would migrate: {args.path}")
@@ -84,7 +82,6 @@ Examples:
                 print(f"  - {f}")
         sys.exit(0)
 
-    # Check for yaml dependency
     if args.format == "yaml":
         try:
             import yaml  # noqa: F401
@@ -93,7 +90,6 @@ Examples:
             print("Install with: pip install pyyaml", file=sys.stderr)
             sys.exit(1)
 
-    # Run migration
     try:
         if args.path.is_file():
             migrate_flowfile(args.path, args.output, args.format)

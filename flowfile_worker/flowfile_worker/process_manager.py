@@ -27,7 +27,6 @@ class ProcessManager:
         with self.lock:
             process = self.process_dict.get(task_id)
             if process:
-                # Terminate and remove the process
                 process.terminate()
                 process.join()
                 self.process_dict.pop(task_id, None)

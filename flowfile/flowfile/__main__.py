@@ -16,7 +16,6 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    # Disable worker communication for CLI execution
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
     OFFLOAD_TO_WORKER.set(False)
@@ -50,7 +49,6 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
         _complete_run_if_needed(run_id, success=False, nodes_completed=0)
         return 1
 
-    # Apply --param overrides
     if param_overrides:
         override_dict: dict[str, str] = {}
         for raw in param_overrides:
@@ -59,7 +57,6 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
                 return 1
             key, _, value = raw.partition("=")
             override_dict[key.strip()] = value.strip()
-        # Update matching parameters; add new ones if they don't exist yet
         existing = {p.name: p for p in flow.flow_settings.parameters}
         from flowfile_core.schemas.schemas import FlowParameter
 
@@ -99,7 +96,6 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
         _complete_run_if_needed(run_id, success=False, nodes_completed=0)
         return 1
 
-    # Report results back to the pre-created run record
     _complete_run_if_needed(
         run_id,
         success=result.success,
@@ -107,7 +103,6 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
         number_of_nodes=result.number_of_nodes,
     )
 
-    # Display results
     print("-" * 40)
     if result.success:
         duration = ""
@@ -170,7 +165,6 @@ def main():
     )
     parser.add_argument("--run-id", type=int, default=None, help="Pre-created run ID for scheduled runs")
 
-    # Parse arguments
     args = parser.parse_args()
 
     if args.command == "run" and args.component:
@@ -198,7 +192,6 @@ def main():
                 sys.exit(1)
             sys.exit(run_flow(args.file_path, param_overrides=args.params, run_id=args.run_id))
     else:
-        # Default action - show info
         from importlib.metadata import PackageNotFoundError, version
 
         try:

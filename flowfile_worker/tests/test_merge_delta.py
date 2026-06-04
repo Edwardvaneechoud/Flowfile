@@ -69,7 +69,6 @@ class TestMergeDeltaUpsert:
         output_path = str(tmp_path / "upsert_table")
         _create_delta_table(output_path, pl.DataFrame({"id": [1, 2], "val": ["old_a", "old_b"]}))
 
-        # Upsert: update id=1, insert id=3
         lf = pl.LazyFrame({"id": [1, 3], "val": ["new_a", "c"]})
         progress, error_message, queue = _make_helpers()
 
@@ -156,7 +155,6 @@ class TestMergeDeltaUpdate:
         output_path = str(tmp_path / "update_table")
         _create_delta_table(output_path, pl.DataFrame({"id": [1, 2, 3], "val": ["a", "b", "c"]}))
 
-        # Update id=2 only, id=4 should NOT be inserted
         lf = pl.LazyFrame({"id": [2, 4], "val": ["updated_b", "d"]})
         progress, error_message, queue = _make_helpers()
 
@@ -234,7 +232,6 @@ class TestMergeDeltaDelete:
         output_path = str(tmp_path / "delete_table")
         _create_delta_table(output_path, pl.DataFrame({"id": [1, 2, 3], "val": ["a", "b", "c"]}))
 
-        # Delete rows matching id=1 and id=3
         lf = pl.LazyFrame({"id": [1, 3], "val": ["a", "c"]})
         progress, error_message, queue = _make_helpers()
 

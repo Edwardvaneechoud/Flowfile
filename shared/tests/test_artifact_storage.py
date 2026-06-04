@@ -21,9 +21,7 @@ from shared.artifact_storage import (
 )
 
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -46,9 +44,7 @@ def sample_sha256(sample_data) -> str:
     return hashlib.sha256(sample_data).hexdigest()
 
 
-# ---------------------------------------------------------------------------
 # Upload Target Tests
-# ---------------------------------------------------------------------------
 
 
 class TestPrepareUpload:
@@ -65,7 +61,6 @@ class TestPrepareUpload:
 
     def test_staging_directory_created(self, storage, tmp_path):
         """Should create staging directory if it doesn't exist."""
-        # Storage creates directories in __init__
         assert (tmp_path / "staging").exists()
 
     def test_different_artifacts_get_different_paths(self, storage):
@@ -83,9 +78,7 @@ class TestPrepareUpload:
         assert target.storage_key == "42/data.parquet"
 
 
-# ---------------------------------------------------------------------------
 # Finalize Upload Tests
-# ---------------------------------------------------------------------------
 
 
 class TestFinalizeUpload:
@@ -97,21 +90,16 @@ class TestFinalizeUpload:
         """Should move file from staging to permanent storage."""
         target = storage.prepare_upload(artifact_id=1, filename="test.pkl")
 
-        # Write data to staging location
         Path(target.path).write_bytes(sample_data)
 
-        # Finalize
         size = storage.finalize_upload(target.storage_key, sample_sha256)
 
-        # Staging file should be gone
         assert not Path(target.path).exists()
 
-        # Permanent file should exist
         permanent_path = tmp_path / "artifacts" / "1" / "test.pkl"
         assert permanent_path.exists()
         assert permanent_path.read_bytes() == sample_data
 
-        # Size should be correct
         assert size == len(sample_data)
 
     def test_sha256_verification_success(self, storage, sample_data, sample_sha256):
@@ -119,7 +107,6 @@ class TestFinalizeUpload:
         target = storage.prepare_upload(artifact_id=1, filename="test.pkl")
         Path(target.path).write_bytes(sample_data)
 
-        # Should not raise
         size = storage.finalize_upload(target.storage_key, sample_sha256)
         assert size == len(sample_data)
 
@@ -133,7 +120,6 @@ class TestFinalizeUpload:
         with pytest.raises(ValueError, match="SHA-256 mismatch"):
             storage.finalize_upload(target.storage_key, wrong_sha256)
 
-        # Staging file should be cleaned up
         assert not Path(target.path).exists()
 
     def test_file_not_found(self, storage):
@@ -153,9 +139,7 @@ class TestFinalizeUpload:
         assert artifact_dir.is_dir()
 
 
-# ---------------------------------------------------------------------------
 # Download Source Tests
-# ---------------------------------------------------------------------------
 
 
 class TestPrepareDownload:
@@ -163,12 +147,10 @@ class TestPrepareDownload:
 
     def test_returns_download_source(self, storage, tmp_path, sample_data, sample_sha256):
         """Should return a DownloadSource with correct path."""
-        # First upload an artifact
         target = storage.prepare_upload(artifact_id=1, filename="test.pkl")
         Path(target.path).write_bytes(sample_data)
         storage.finalize_upload(target.storage_key, sample_sha256)
 
-        # Get download source
         source = storage.prepare_download(target.storage_key)
 
         assert isinstance(source, DownloadSource)
@@ -187,9 +169,7 @@ class TestPrepareDownload:
         assert Path(source.path).read_bytes() == sample_data
 
 
-# ---------------------------------------------------------------------------
 # Delete Tests
-# ---------------------------------------------------------------------------
 
 
 class TestDelete:
@@ -210,7 +190,6 @@ class TestDelete:
 
     def test_delete_nonexistent_is_idempotent(self, storage):
         """Deleting nonexistent file should not raise."""
-        # Should not raise
         storage.delete("999/nonexistent.pkl")
 
     def test_removes_empty_parent_directory(self, storage, tmp_path, sample_data, sample_sha256):
@@ -224,14 +203,12 @@ class TestDelete:
 
         storage.delete(target.storage_key)
 
-        # Directory should be removed if empty
         assert not artifact_dir.exists()
 
     def test_preserves_directory_with_other_files(
         self, storage, tmp_path, sample_data, sample_sha256
     ):
         """Should preserve artifact directory if other files exist."""
-        # Create two artifacts in same directory
         target1 = storage.prepare_upload(artifact_id=1, filename="file1.pkl")
         target2 = storage.prepare_upload(artifact_id=1, filename="file2.pkl")
 
@@ -241,20 +218,15 @@ class TestDelete:
         storage.finalize_upload(target1.storage_key, sample_sha256)
         storage.finalize_upload(target2.storage_key, sample_sha256)
 
-        # Delete first file
         storage.delete(target1.storage_key)
 
-        # Directory should still exist (has file2)
         artifact_dir = tmp_path / "artifacts" / "1"
         assert artifact_dir.exists()
 
-        # file2 should still exist
         assert (artifact_dir / "file2.pkl").exists()
 
 
-# ---------------------------------------------------------------------------
 # Exists Tests
-# ---------------------------------------------------------------------------
 
 
 class TestExists:
@@ -285,9 +257,7 @@ class TestExists:
         assert storage.exists(target.storage_key) is False
 
 
-# ---------------------------------------------------------------------------
 # SHA-256 Computation Tests
-# ---------------------------------------------------------------------------
 
 
 class TestSHA256Computation:
@@ -307,7 +277,6 @@ class TestSHA256Computation:
 
     def test_handles_large_files(self, storage, tmp_path):
         """Should handle large files efficiently using chunked reading."""
-        # Create a 5MB file
         large_data = b"x" * (5 * 1024 * 1024)
         expected_sha256 = hashlib.sha256(large_data).hexdigest()
 
@@ -319,9 +288,7 @@ class TestSHA256Computation:
         assert result == expected_sha256
 
 
-# ---------------------------------------------------------------------------
 # Integration Tests
-# ---------------------------------------------------------------------------
 
 
 class TestFullWorkflow:
@@ -329,12 +296,10 @@ class TestFullWorkflow:
 
     def test_upload_download_roundtrip(self, storage, sample_data, sample_sha256):
         """Complete upload and download should preserve data."""
-        # Upload
         target = storage.prepare_upload(artifact_id=1, filename="roundtrip.pkl")
         Path(target.path).write_bytes(sample_data)
         storage.finalize_upload(target.storage_key, sample_sha256)
 
-        # Download
         source = storage.prepare_download(target.storage_key)
         downloaded_data = Path(source.path).read_bytes()
 
@@ -347,17 +312,14 @@ class TestFullWorkflow:
         sha_v1 = hashlib.sha256(data_v1).hexdigest()
         sha_v2 = hashlib.sha256(data_v2).hexdigest()
 
-        # Upload v1 (artifact_id=1)
         target1 = storage.prepare_upload(artifact_id=1, filename="model.pkl")
         Path(target1.path).write_bytes(data_v1)
         storage.finalize_upload(target1.storage_key, sha_v1)
 
-        # Upload v2 (artifact_id=2)
         target2 = storage.prepare_upload(artifact_id=2, filename="model.pkl")
         Path(target2.path).write_bytes(data_v2)
         storage.finalize_upload(target2.storage_key, sha_v2)
 
-        # Both should be retrievable
         source1 = storage.prepare_download(target1.storage_key)
         source2 = storage.prepare_download(target2.storage_key)
 
@@ -377,7 +339,6 @@ class TestFullWorkflow:
                 Path(target.path).write_bytes(data)
                 storage.finalize_upload(target.storage_key, sha256)
 
-                # Verify
                 source = storage.prepare_download(target.storage_key)
                 return Path(source.path).read_bytes() == data
             except Exception:
@@ -390,9 +351,7 @@ class TestFullWorkflow:
         assert all(results)
 
 
-# ---------------------------------------------------------------------------
 # Error Handling Tests
-# ---------------------------------------------------------------------------
 
 
 class TestErrorHandling:
@@ -400,12 +359,10 @@ class TestErrorHandling:
 
     def test_invalid_storage_key_format(self, storage, tmp_path, sample_data, sample_sha256):
         """Should handle unusual storage key formats gracefully."""
-        # Create a valid artifact first
         target = storage.prepare_upload(artifact_id=1, filename="test.pkl")
         Path(target.path).write_bytes(sample_data)
         storage.finalize_upload(target.storage_key, sample_sha256)
 
-        # These should not crash
         assert storage.exists("invalid") is False
         assert storage.exists("") is False
 

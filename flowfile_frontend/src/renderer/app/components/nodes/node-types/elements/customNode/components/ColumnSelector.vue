@@ -49,12 +49,10 @@ const props = defineProps({
 defineEmits(["update:modelValue"]);
 
 const filteredColumns = computed(() => {
-  // If data_types is "ALL" or not specified, return all columns
   if (!props.schema.data_types || props.schema.data_types === "ALL") {
     return props.incomingColumns;
   }
 
-  // Filter columns based on data types
   if (Array.isArray(props.schema.data_types)) {
     return props.incomingColumns.filter((column) => {
       return props.schema.data_types.includes(column.data_type);

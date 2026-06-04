@@ -61,11 +61,9 @@ class CompressedSnapshot:
             snapshot_dict: The flow state dictionary to compress.
             compression_level: Compression level 1-9 (higher = smaller but slower).
         """
-        # Pickle and compress the snapshot
         pickled = pickle.dumps(snapshot_dict, protocol=pickle.HIGHEST_PROTOCOL)
         self._compressed_data = zlib.compress(pickled, level=compression_level)
 
-        # Pre-compute hash for fast comparison
         self._hash = self._compute_hash(snapshot_dict)
 
     @classmethod
@@ -82,7 +80,6 @@ class CompressedSnapshot:
         """Compute a fast structural hash of the snapshot."""
         nodes = snapshot_dict.get("nodes", [])
 
-        # Build tuple of node signatures for hashing
         node_signatures = []
         for n in sorted(nodes, key=lambda x: x.get("id", 0)):
             sig = (

@@ -1,15 +1,4 @@
 // Frontend API surface for the AI subsystem.
-//
-// This is a re-export shim around five seams:
-//   - `streamChat` for the read-only chat stream.
-//   - `streamRunFailureExplanation` for "Fix with AI" on a failed node.
-//   - `streamGenerateDocumentation` for the canvas-level "Generate
-//     documentation" action.
-//   - `fetchFormulaSuggestions` / `fetchJoinKeySuggestions` for
-//     settings autocomplete — fast non-streaming JSON.
-//   - the BYOK provider listing reused so the chat panel can pick a
-//     configured provider without forcing the user back to the
-//     settings tab.
 
 import axios from "../services/axios.config";
 import { fetchAiProviders } from "../views/AiProvidersView/api";
@@ -50,10 +39,8 @@ export {
 };
 export { AiDisabledError, AI_DISABLED_DETAIL };
 
-// --------------------------------------------------------------------------
 // Settings autocomplete — non-streaming JSON wrappers around
 // /ai/autocomplete/{formula,join_keys}.
-// --------------------------------------------------------------------------
 
 export interface FormulaSuggestion {
   insertText: string;
@@ -267,12 +254,8 @@ export const generateCronExpression = async (
   }
 };
 
-// --------------------------------------------------------------------------
 // Edge ghost-node suggestions — non-streaming JSON wrapper around
-// /ai/suggest_next_node. Matches the autocomplete shape: a hover-fast
-// synchronous call with a degraded fallback when the LLM can't produce
-// a schema-grounded result.
-// --------------------------------------------------------------------------
+// /ai/suggest_next_node.
 
 export interface SchemaColumn {
   name: string;
@@ -374,12 +357,10 @@ export const fetchNextNodeSuggestions = async (
   }
 };
 
-// --------------------------------------------------------------------------
 // Cmd+K command palette — non-streaming JSON wrapper around
 // /ai/command_palette. Returns the staged GraphDiff in the same shape
 // `useAiDiffStore.setCurrentDiff(...)` expects, so the frontend
 // composes the existing diff panel without a follow-up GET.
-// --------------------------------------------------------------------------
 
 import type { GraphDiffPayload } from "../features/ai/aiDiffTypes";
 
@@ -493,12 +474,10 @@ export const submitCommandPalette = async (
   }
 };
 
-// --------------------------------------------------------------------------
 // Multi-turn planner agent — non-streaming sibling endpoints. The SSE
 // start + resume-continue paths live in services/aiStreamClient.ts;
 // this file owns the JSON-only abort / discard-resume / status-snapshot
 // fetches.
-// --------------------------------------------------------------------------
 
 export interface AgentDriftDetail {
   missingNodeIds: number[];

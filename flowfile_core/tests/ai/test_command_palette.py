@@ -41,9 +41,7 @@ from flowfile_core.ai.tools import build_tool_catalog
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
-# --------------------------------------------------------------------------- #
-# Test helpers #
-# --------------------------------------------------------------------------- #
+# Test helpers
 
 
 def _flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
@@ -181,9 +179,7 @@ def _clear_diff_store() -> None:
     clear_for_tests()
 
 
-# --------------------------------------------------------------------------- #
-# 1. Surface vocabulary lockstep #
-# --------------------------------------------------------------------------- #
+# 1. Surface vocabulary lockstep
 
 
 def test_cmd_k_surface_in_lockstep() -> None:
@@ -197,7 +193,6 @@ def test_cmd_k_surface_in_lockstep() -> None:
     assert "cmd_k" in ctx_builder.SURFACE_TO_LEVEL
     assert ctx_builder.SURFACE_TO_LEVEL["cmd_k"] == "copilot"
     assert "cmd_k" in tool_registry.SURFACE_PRESETS
-    # cmd_k preset is non-empty (~6 tools per).
     assert tool_registry.SURFACE_PRESETS["cmd_k"]
     tool_registry._check_preset_coverage()  # must not raise
 
@@ -221,9 +216,7 @@ def test_cmd_k_surface_in_lockstep() -> None:
         assert "cmd_k" in provider_cls.surface_models, f"{provider_cls.__name__} missing cmd_k in surface_models"
 
 
-# --------------------------------------------------------------------------- #
-# 2. Provider-call wiring: tools must be passed #
-# --------------------------------------------------------------------------- #
+# 2. Provider-call wiring: tools must be passed
 
 
 @pytest.mark.asyncio
@@ -267,9 +260,7 @@ async def test_tools_match_cmd_k_preset_size() -> None:
     assert len(provider.last_call_kwargs["tools"]) == len(expected)
 
 
-# --------------------------------------------------------------------------- #
-# 3. Server-assigned id injection #
-# --------------------------------------------------------------------------- #
+# 3. Server-assigned id injection
 
 
 @pytest.mark.asyncio
@@ -280,7 +271,6 @@ async def test_node_id_assigned_server_side() -> None:
     that doesn't collide with any existing node.
     """
     flow = _flow_with_orders()
-    # LLM sends node_id=0 and flow_id=0 placeholders.
     bad_args = _filter_settings_for_region(node_id=0)
     bad_args["flow_id"] = 0
     bad_args["node_id"] = 0
@@ -330,9 +320,7 @@ async def test_multi_op_sequence_assigns_distinct_ids() -> None:
     assert ids == [2, 3]
 
 
-# --------------------------------------------------------------------------- #
-# 4. Happy path: diff registered + accept-ready #
-# --------------------------------------------------------------------------- #
+# 4. Happy path: diff registered + accept-ready
 
 
 @pytest.mark.asyncio
@@ -372,9 +360,7 @@ async def test_happy_path_single_op_registers_diff() -> None:
     assert stored.additions[0].node_type == "filter"
 
 
-# --------------------------------------------------------------------------- #
-# 5. Read-only tool calls dropped silently #
-# --------------------------------------------------------------------------- #
+# 5. Read-only tool calls dropped silently
 
 
 @pytest.mark.asyncio
@@ -410,9 +396,7 @@ async def test_read_only_tool_calls_dropped() -> None:
     assert all(r.tool_name != "flowfile.schema.read_node_schema" for r in response.refused)
 
 
-# --------------------------------------------------------------------------- #
-# 6. Soft failure paths #
-# --------------------------------------------------------------------------- #
+# 6. Soft failure paths
 
 
 @pytest.mark.asyncio
@@ -501,9 +485,7 @@ async def test_degrades_when_all_calls_refused() -> None:
     assert response.refused[0].refusal_reason == "unknown_columns"
 
 
-# --------------------------------------------------------------------------- #
-# 7. Partial refusal still stages the valid ops #
-# --------------------------------------------------------------------------- #
+# 7. Partial refusal still stages the valid ops
 
 
 @pytest.mark.asyncio
@@ -537,9 +519,7 @@ async def test_partial_refusal_stages_valid_ops() -> None:
     assert refused.refusal_reason == "unknown_columns"
 
 
-# --------------------------------------------------------------------------- #
-# 8. Insertion context flows from the request #
-# --------------------------------------------------------------------------- #
+# 8. Insertion context flows from the request
 
 
 @pytest.mark.asyncio
@@ -617,9 +597,7 @@ async def test_insertion_context_threaded_into_executor() -> None:
     assert staged.insertion_context.pos_y == 400.0
 
 
-# --------------------------------------------------------------------------- #
-# 9. Lazy-litellm contract #
-# --------------------------------------------------------------------------- #
+# 9. Lazy-litellm contract
 
 
 def test_lazy_litellm_contract() -> None:

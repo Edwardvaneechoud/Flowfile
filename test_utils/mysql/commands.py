@@ -11,7 +11,6 @@ import sys
 
 from . import fixtures
 
-# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -26,7 +25,6 @@ def start_mysql():
 
     This function is the entry point for the 'start_mysql' Poetry script.
     """
-    # Check if Docker is available first
     if not fixtures.is_docker_available():
         logger.warning("Docker is not available. Cannot start MySQL container.")
         print("\n" + "=" * 50)
@@ -60,7 +58,6 @@ def stop_mysql():
 
     This function is the entry point for the 'stop_mysql' Poetry script.
     """
-    # Check if Docker is available first
     if not fixtures.is_docker_available():
         logger.warning("Docker is not available. No MySQL container to stop.")
         return 0

@@ -24,9 +24,7 @@ from flowfile_core.schemas import input_schema, schemas
 pytestmark = pytest.mark.kernel
 
 
-# ---------------------------------------------------------------------------
 # Helpers (same pattern as test_flowfile.py)
-# ---------------------------------------------------------------------------
 
 
 def _run(coro):
@@ -65,9 +63,7 @@ def _handle_run_info(run_info: RunInformation):
         raise ValueError(f"Graph should run successfully:\n{errors}")
 
 
-# ---------------------------------------------------------------------------
 # Tests — kernel runtime (direct manager interaction)
-# ---------------------------------------------------------------------------
 
 
 class TestKernelRuntime:
@@ -119,7 +115,6 @@ class TestKernelRuntime:
         """publish_artifact stores an object; list_artifacts returns metadata."""
         manager, kernel_id = kernel_manager
 
-        # Clear any leftover artifacts from previous tests
         _run(manager.clear_artifacts(kernel_id))
 
         result: ExecuteResult = _run(
@@ -141,7 +136,6 @@ class TestKernelRuntime:
         manager, kernel_id = kernel_manager
         shared = manager.shared_volume_path
 
-        # Prepare input parquet
         input_dir = os.path.join(shared, "test_rw", "inputs")
         output_dir = os.path.join(shared, "test_rw", "outputs")
         os.makedirs(input_dir, exist_ok=True)
@@ -171,7 +165,6 @@ flowfile_ctx.publish_output(df)
         assert result.success, f"Kernel execution failed: {result.error}"
         assert len(result.output_paths) > 0
 
-        # Verify output
         out_path = os.path.join(output_dir, "main.parquet")
         assert os.path.exists(out_path), f"Expected output parquet at {out_path}"
         df_out = pl.read_parquet(out_path)
@@ -257,9 +250,7 @@ flowfile_ctx.publish_output(merged)
         assert result.execution_time_ms > 0
 
 
-# ---------------------------------------------------------------------------
 # Tests — python_script node in FlowGraph
-# ---------------------------------------------------------------------------
 
 
 class TestPythonScriptNode:
@@ -282,7 +273,6 @@ class TestPythonScriptNode:
         try:
             graph = _create_graph()
 
-            # Node 1: manual input
             data = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
             node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
             graph.add_node_promise(node_promise)
@@ -294,7 +284,6 @@ class TestPythonScriptNode:
                 )
             )
 
-            # Node 2: python_script
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             graph.add_node_promise(node_promise_2)
 
@@ -427,7 +416,6 @@ flowfile_ctx.publish_output(df)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
         run_info = graph.run_graph()
-        # Should fail because no kernel is selected
         assert not run_info.success
 
     def test_python_script_without_worker(self, kernel_manager: tuple[KernelManager, str]):
@@ -449,7 +437,6 @@ flowfile_ctx.publish_output(df)
         try:
             graph = _create_graph(execution_location="local")
 
-            # Node 1: manual input
             data = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
             node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
             graph.add_node_promise(node_promise)
@@ -461,7 +448,6 @@ flowfile_ctx.publish_output(df)
                 )
             )
 
-            # Node 2: python_script passthrough
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             graph.add_node_promise(node_promise_2)
 
@@ -499,9 +485,7 @@ flowfile_ctx.publish_output(df)
             _kernel_mod._manager = _prev
 
 
-# ---------------------------------------------------------------------------
 # Tests — ArtifactContext integration (requires real kernel container)
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactContextIntegration:
@@ -577,7 +561,6 @@ flowfile_ctx.publish_output(df)
                 )
             )
 
-            # Node 2: publishes artifact
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             graph.add_node_promise(node_promise_2)
             code_publish = """
@@ -595,7 +578,6 @@ flowfile_ctx.publish_output(df)
             )
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-            # Node 3: reads artifact (downstream of node 2)
             node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
             graph.add_node_promise(node_promise_3)
             code_consume = """
@@ -616,7 +598,6 @@ flowfile_ctx.publish_output(df)
             run_info = graph.run_graph()
             _handle_run_info(run_info)
 
-            # Node 3 should have "trained_model" available
             available = graph.artifact_context.get_available_for_node(3)
             assert "trained_model" in available
 
@@ -661,7 +642,6 @@ flowfile_ctx.publish_output(df)
             )
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-            # First run
             run_info = graph.run_graph()
             _handle_run_info(run_info)
             assert len(graph.artifact_context.get_published_by_node(2)) >= 1
@@ -670,11 +650,9 @@ flowfile_ctx.publish_output(df)
             run_info2 = graph.run_graph()
             _handle_run_info(run_info2)
 
-            # Should still have the artifact from this run, but no leftover state
             published = graph.artifact_context.get_published_by_node(2)
             names = [r.name for r in published]
             assert "run_artifact" in names
-            # Verify it's exactly one entry (not duplicated from first run)
             assert names.count("run_artifact") == 1
 
         finally:
@@ -776,9 +754,7 @@ flowfile_ctx.publish_output(df)
             d = graph.artifact_context.to_dict()
             assert "nodes" in d
             assert "kernels" in d
-            # Should have at least node 2 in nodes
             assert "2" in d["nodes"]
-            # Kernel should be tracked
             assert kernel_id in d["kernels"]
 
         finally:
@@ -795,7 +771,6 @@ flowfile_ctx.publish_output(df)
         try:
             graph = _create_graph()
 
-            # Node 1: input data with features and target
             data = [
                 {"x1": 1.0, "x2": 2.0, "y": 5.0},
                 {"x1": 2.0, "x2": 3.0, "y": 8.0},
@@ -811,7 +786,6 @@ flowfile_ctx.publish_output(df)
                 )
             )
 
-            # Node 2: train model (least-squares fit) and publish as artifact
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             graph.add_node_promise(node_promise_2)
             train_code = """
@@ -835,7 +809,6 @@ flowfile_ctx.publish_output(df)
             )
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-            # Node 3: load model and apply predictions
             node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
             graph.add_node_promise(node_promise_3)
             apply_code = """
@@ -863,19 +836,15 @@ flowfile_ctx.publish_output(result)
             run_info = graph.run_graph()
             _handle_run_info(run_info)
 
-            # Verify model was published and tracked
             published = graph.artifact_context.get_published_by_node(2)
             assert any(r.name == "linear_model" for r in published)
 
-            # Verify node 3 had the model available
             available = graph.artifact_context.get_available_for_node(3)
             assert "linear_model" in available
 
-            # Verify predictions were produced
             node_3 = graph.get_node(3)
             result_df = node_3.get_resulting_data().data_frame.collect()
             assert "predicted_y" in result_df.columns
-            # The predictions should be close to the actual y values
             preds = result_df["predicted_y"].to_list()
             actuals = result_df["y"].to_list()
             for pred, actual in zip(preds, actuals):
@@ -898,7 +867,6 @@ flowfile_ctx.publish_output(result)
         try:
             graph = _create_graph()
 
-            # Node 1: input data
             data = [{"val": 1}]
             node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
             graph.add_node_promise(node_promise)
@@ -909,7 +877,6 @@ flowfile_ctx.publish_output(result)
                 )
             )
 
-            # Node 2 (node_a): publish artifact_model v1
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             graph.add_node_promise(node_promise_2)
             code_a = """
@@ -927,7 +894,6 @@ flowfile_ctx.publish_output(df)
             )
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-            # Node 3 (node_b): read artifact_model, use it, then delete it
             node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
             graph.add_node_promise(node_promise_3)
             code_b = """
@@ -947,7 +913,6 @@ flowfile_ctx.publish_output(df)
             )
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
 
-            # Node 4 (node_c): publish new artifact_model v2
             node_promise_4 = input_schema.NodePromise(flow_id=1, node_id=4, node_type="python_script")
             graph.add_node_promise(node_promise_4)
             code_c = """
@@ -965,7 +930,6 @@ flowfile_ctx.publish_output(df)
             )
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 4))
 
-            # Node 5 (node_d): read artifact_model — should get v2
             node_promise_5 = input_schema.NodePromise(flow_id=1, node_id=5, node_type="python_script")
             graph.add_node_promise(node_promise_5)
             code_d = """
@@ -987,12 +951,9 @@ flowfile_ctx.publish_output(df)
             run_info = graph.run_graph()
             _handle_run_info(run_info)
 
-            # Verify artifact context tracks the flow correctly
-            # Node 4 re-published artifact_model
             published_4 = graph.artifact_context.get_published_by_node(4)
             assert any(r.name == "artifact_model" for r in published_4)
 
-            # Node 5 should see artifact_model as available (from node 4)
             available_5 = graph.artifact_context.get_available_for_node(5)
             assert "artifact_model" in available_5
             assert available_5["artifact_model"].source_node_id == 4
@@ -1021,7 +982,6 @@ flowfile_ctx.publish_output(df)
                 )
             )
 
-            # Node 2: publishes artifact
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             graph.add_node_promise(node_promise_2)
             code_publish = """
@@ -1039,7 +999,6 @@ flowfile_ctx.publish_output(df)
             )
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-            # Node 3: tries to publish same name without deleting — should fail
             node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
             graph.add_node_promise(node_promise_3)
             code_dup = """
@@ -1059,7 +1018,6 @@ flowfile_ctx.publish_output(df)
 
             run_info = graph.run_graph()
 
-            # Node 3 should have failed
             node_3_result = next(
                 r for r in run_info.node_step_result if r.node_id == 3
             )
@@ -1080,7 +1038,6 @@ flowfile_ctx.publish_output(df)
         try:
             graph = _create_graph()
 
-            # Node 1: first input dataset
             data_a = [{"id": 1, "value": "alpha"}, {"id": 2, "value": "beta"}]
             node_promise_1 = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
             graph.add_node_promise(node_promise_1)
@@ -1091,7 +1048,6 @@ flowfile_ctx.publish_output(df)
                 )
             )
 
-            # Node 2: second input dataset (same schema, different rows)
             data_b = [{"id": 3, "value": "gamma"}, {"id": 4, "value": "delta"}]
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="manual_input")
             graph.add_node_promise(node_promise_2)
@@ -1102,7 +1058,6 @@ flowfile_ctx.publish_output(df)
                 )
             )
 
-            # Node 3: python_script that reads all inputs (union) and outputs the result
             node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
             graph.add_node_promise(node_promise_3)
 
@@ -1122,14 +1077,12 @@ flowfile_ctx.publish_output(df)
                 )
             )
 
-            # Connect both inputs to node 3
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
 
             run_info = graph.run_graph()
             _handle_run_info(run_info)
 
-            # Verify the output contains all rows from both inputs
             result = graph.get_node(3).get_resulting_data()
             assert result is not None
             df = result.data_frame
@@ -1154,7 +1107,6 @@ flowfile_ctx.publish_output(df)
         try:
             graph = _create_graph()
 
-            # Node 1: users dataset
             users = [{"user_id": 1, "name": "Alice"}, {"user_id": 2, "name": "Bob"}]
             node_promise_1 = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
             graph.add_node_promise(node_promise_1)
@@ -1165,7 +1117,6 @@ flowfile_ctx.publish_output(df)
                 )
             )
 
-            # Node 2: scores dataset
             scores = [{"user_id": 1, "score": 95}, {"user_id": 2, "score": 87}]
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="manual_input")
             graph.add_node_promise(node_promise_2)
@@ -1176,7 +1127,6 @@ flowfile_ctx.publish_output(df)
                 )
             )
 
-            # Node 3: python_script that reads first input and passes it through
             # Since all inputs go under "main", read_first gets just the first
             node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
             graph.add_node_promise(node_promise_3)
@@ -1208,16 +1158,13 @@ flowfile_ctx.publish_output(df)
             df = result.data_frame
             if hasattr(df, "collect"):
                 df = df.collect()
-            # read_first returns only the first input's data
             assert len(df) == 2
 
         finally:
             _kernel_mod._manager = _prev
 
 
-# ---------------------------------------------------------------------------
 # Tests — debug mode artifact persistence
-# ---------------------------------------------------------------------------
 
 
 class TestDebugModeArtifactPersistence:
@@ -1245,7 +1192,6 @@ class TestDebugModeArtifactPersistence:
         try:
             graph = _create_graph()
 
-            # Node 1: input data
             data = [
                 {"x1": 1.0, "x2": 2.0, "y": 5.0},
                 {"x1": 2.0, "x2": 3.0, "y": 8.0},
@@ -1263,7 +1209,6 @@ class TestDebugModeArtifactPersistence:
                 )
             )
 
-            # Node 2: train model and publish as artifact
             node_promise_2 = input_schema.NodePromise(
                 flow_id=1, node_id=2, node_type="python_script",
             )
@@ -1292,7 +1237,6 @@ flowfile_ctx.publish_output(df)
                 input_schema.NodeConnection.create_from_simple_input(1, 2),
             )
 
-            # Node 3: read model artifact and produce predictions
             node_promise_3 = input_schema.NodePromise(
                 flow_id=1, node_id=3, node_type="python_script",
             )
@@ -1326,14 +1270,12 @@ flowfile_ctx.publish_output(result)
             run_info_1 = graph.run_graph()
             _handle_run_info(run_info_1)
 
-            # Verify artifact was published and predictions were produced
             published = graph.artifact_context.get_published_by_node(2)
             assert any(r.name == "linear_model" for r in published)
             node_3_df = graph.get_node(3).get_resulting_data().data_frame.collect()
             assert "predicted_y" in node_3_df.columns
 
             # ---- Change Node 3's code (simulates user editing the consumer) ----
-            # The new code still reads the same artifact but adds an extra column.
             apply_code_v2 = """
 import numpy as np
 import polars as pl
@@ -1359,13 +1301,10 @@ flowfile_ctx.publish_output(result)
                 )
             )
 
-            # Verify the execution state before second run:
-            # Node 2 (producer) should still be up-to-date
             node_2 = graph.get_node(2)
             assert node_2._execution_state.has_run_with_current_setup, (
                 "Producer node should be up-to-date (will be skipped)"
             )
-            # Node 3 (consumer) should need re-execution
             node_3 = graph.get_node(3)
             assert not node_3._execution_state.has_run_with_current_setup, (
                 "Consumer node should be invalidated (will re-run)"
@@ -1378,13 +1317,11 @@ flowfile_ctx.publish_output(result)
             run_info_2 = graph.run_graph()
             _handle_run_info(run_info_2)
 
-            # Verify the producer's artifact metadata is still tracked
             published_after = graph.artifact_context.get_published_by_node(2)
             assert any(r.name == "linear_model" for r in published_after), (
                 "Producer's artifact metadata should be preserved when skipped"
             )
 
-            # Verify the consumer ran with the new code (has residual column)
             node_3_df_v2 = graph.get_node(3).get_resulting_data().data_frame.collect()
             assert "predicted_y" in node_3_df_v2.columns
             assert "residual" in node_3_df_v2.columns, (
@@ -1411,7 +1348,6 @@ flowfile_ctx.publish_output(result)
         try:
             graph = _create_graph()
 
-            # Node 1: input data
             data = [{"val": 10}, {"val": 20}, {"val": 30}]
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input"),
@@ -1423,7 +1359,6 @@ flowfile_ctx.publish_output(result)
                 )
             )
 
-            # Node 2: publish two artifacts (model + scaler)
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"),
             )
@@ -1446,7 +1381,6 @@ flowfile_ctx.publish_output(df)
                 input_schema.NodeConnection.create_from_simple_input(1, 2),
             )
 
-            # Node 3: read both artifacts
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script"),
             )
@@ -1473,7 +1407,6 @@ flowfile_ctx.publish_output(result)
                 input_schema.NodeConnection.create_from_simple_input(2, 3),
             )
 
-            # First run
             _handle_run_info(graph.run_graph())
 
             # Change the consumer's code — also use the scaler now
@@ -1501,13 +1434,11 @@ flowfile_ctx.publish_output(result)
             # Second run — producer skipped, consumer re-runs
             _handle_run_info(graph.run_graph())
 
-            # Both artifacts should still be accessible
             published = graph.artifact_context.get_published_by_node(2)
             names = {r.name for r in published}
             assert "model" in names
             assert "scaler" in names
 
-            # Consumer should have the new column
             df_out = graph.get_node(3).get_resulting_data().data_frame.collect()
             assert "scaled" in df_out.columns
             assert "normalized" in df_out.columns
@@ -1529,7 +1460,6 @@ flowfile_ctx.publish_output(result)
         try:
             graph = _create_graph()
 
-            # Node 1: input
             data = [{"val": 1}]
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input"),
@@ -1541,7 +1471,6 @@ flowfile_ctx.publish_output(result)
                 )
             )
 
-            # Node 2: publish artifact v1
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"),
             )
@@ -1563,7 +1492,6 @@ flowfile_ctx.publish_output(df)
                 input_schema.NodeConnection.create_from_simple_input(1, 2),
             )
 
-            # Node 3: read artifact
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script"),
             )
@@ -1586,7 +1514,6 @@ flowfile_ctx.publish_output(df)
                 input_schema.NodeConnection.create_from_simple_input(2, 3),
             )
 
-            # First run
             _handle_run_info(graph.run_graph())
 
             published = graph.artifact_context.get_published_by_node(2)
@@ -1617,7 +1544,6 @@ flowfile_ctx.publish_output(df)
             # with "already exists".
             _handle_run_info(graph.run_graph())
 
-            # Artifact should be the new version
             published_v2 = graph.artifact_context.get_published_by_node(2)
             assert any(r.name == "model" for r in published_v2)
 
@@ -1638,7 +1564,6 @@ flowfile_ctx.publish_output(df)
         try:
             graph = _create_graph()
 
-            # Node 1: input data
             data = [{"x1": 1, "x2": 2, "y": 5}, {"x1": 3, "x2": 4, "y": 11}]
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input"),
@@ -1650,7 +1575,6 @@ flowfile_ctx.publish_output(df)
                 )
             )
 
-            # Node 2: publish artifact
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"),
             )
@@ -1672,7 +1596,6 @@ flowfile_ctx.publish_output(df)
                 input_schema.NodeConnection.create_from_simple_input(1, 2),
             )
 
-            # Node 3: read artifact, use it, then delete it
             graph.add_node_promise(
                 input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script"),
             )
@@ -1698,10 +1621,8 @@ flowfile_ctx.delete_artifact("linear_model")
                 input_schema.NodeConnection.create_from_simple_input(2, 3),
             )
 
-            # First run — everything works
             _handle_run_info(graph.run_graph())
 
-            # Verify node 3 produced output
             df_out = graph.get_node(3).get_resulting_data().data_frame.collect()
             assert "c0" in df_out.columns
 
@@ -1731,7 +1652,6 @@ flowfile_ctx.delete_artifact("linear_model")
             # because the artifact was deleted on the first run.
             _handle_run_info(graph.run_graph())
 
-            # Consumer should have the new columns
             df_out2 = graph.get_node(3).get_resulting_data().data_frame.collect()
             assert "c0" in df_out2.columns
             assert "c1" in df_out2.columns
@@ -1740,9 +1660,7 @@ flowfile_ctx.delete_artifact("linear_model")
             _kernel_mod._manager = _prev
 
 
-# ---------------------------------------------------------------------------
 # Tests — auto-restart stopped/errored kernels
-# ---------------------------------------------------------------------------
 
 
 class TestKernelAutoRestart:
@@ -1754,12 +1672,10 @@ class TestKernelAutoRestart:
 
         manager, kernel_id = kernel_manager
 
-        # Stop the kernel
         _run(manager.stop_kernel(kernel_id))
         kernel = _run(manager.get_kernel(kernel_id))
         assert kernel.state == KernelState.STOPPED
 
-        # execute_sync should auto-restart and succeed
         result = manager.execute_sync(
             kernel_id,
             ExecuteRequest(
@@ -1772,7 +1688,6 @@ class TestKernelAutoRestart:
         assert result.success
         assert "restarted!" in result.stdout
 
-        # Kernel should be IDLE again
         kernel = _run(manager.get_kernel(kernel_id))
         assert kernel.state == KernelState.IDLE
 
@@ -1782,12 +1697,10 @@ class TestKernelAutoRestart:
 
         manager, kernel_id = kernel_manager
 
-        # Stop the kernel
         _run(manager.stop_kernel(kernel_id))
         kernel = _run(manager.get_kernel(kernel_id))
         assert kernel.state == KernelState.STOPPED
 
-        # execute should auto-restart and succeed
         result = _run(
             manager.execute(
                 kernel_id,
@@ -1802,7 +1715,6 @@ class TestKernelAutoRestart:
         assert result.success
         assert "async restarted!" in result.stdout
 
-        # Kernel should be IDLE again
         kernel = _run(manager.get_kernel(kernel_id))
         assert kernel.state == KernelState.IDLE
 
@@ -1812,16 +1724,13 @@ class TestKernelAutoRestart:
 
         manager, kernel_id = kernel_manager
 
-        # Stop the kernel
         _run(manager.stop_kernel(kernel_id))
         kernel = _run(manager.get_kernel(kernel_id))
         assert kernel.state == KernelState.STOPPED
 
-        # clear_node_artifacts_sync should auto-restart and succeed
         result = manager.clear_node_artifacts_sync(kernel_id, node_ids=[1, 2, 3])
         assert result is not None
 
-        # Kernel should be IDLE again
         kernel = _run(manager.get_kernel(kernel_id))
         assert kernel.state == KernelState.IDLE
 
@@ -1836,12 +1745,10 @@ class TestKernelAutoRestart:
         _kernel_mod._manager = manager
 
         try:
-            # Stop the kernel first
             _run(manager.stop_kernel(kernel_id))
             kernel = _run(manager.get_kernel(kernel_id))
             assert kernel.state == KernelState.STOPPED
 
-            # Create a flow with a python_script node
             graph = _create_graph()
 
             data = [{"val": 42}]
@@ -1876,11 +1783,9 @@ flowfile_ctx.publish_output(df)
 
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-            # Run the graph — kernel should auto-restart
             run_info = graph.run_graph()
             _handle_run_info(run_info)
 
-            # Verify execution succeeded
             result = graph.get_node(2).get_resulting_data()
             assert result is not None
             df = result.data_frame
@@ -1889,7 +1794,6 @@ flowfile_ctx.publish_output(df)
             assert len(df) == 1
             assert df["val"].to_list() == [42]
 
-            # Kernel should be IDLE
             kernel = _run(manager.get_kernel(kernel_id))
             assert kernel.state == KernelState.IDLE
 
@@ -1897,9 +1801,7 @@ flowfile_ctx.publish_output(df)
             _kernel_mod._manager = _prev
 
 
-# ---------------------------------------------------------------------------
 # Tests — cancel python_script node execution
-# ---------------------------------------------------------------------------
 
 
 class TestPythonScriptNodeCancellation:
@@ -1922,7 +1824,6 @@ class TestPythonScriptNodeCancellation:
         try:
             graph = _create_graph(flow_id=999)
 
-            # Node 1: trivial input
             graph.add_node_promise(input_schema.NodePromise(flow_id=999, node_id=1, node_type="manual_input"))
             graph.add_manual_input(
                 input_schema.NodeManualInput(
@@ -1932,7 +1833,6 @@ class TestPythonScriptNodeCancellation:
                 )
             )
 
-            # Node 2: python_script that sleeps long enough to be cancelled
             graph.add_node_promise(input_schema.NodePromise(flow_id=999, node_id=2, node_type="python_script"))
             code = "import time; time.sleep(30)"
             graph.add_python_script(
@@ -1958,18 +1858,15 @@ class TestPythonScriptNodeCancellation:
             time.sleep(3)
             graph.cancel()
 
-            # The thread should finish well before the 30 s sleep
             t.join(timeout=15)
             assert not t.is_alive(), "Graph execution did not stop after cancel"
 
             run_info = run_info_holder[0]
             assert run_info is not None
 
-            # The python_script node should be marked cancelled
             node = graph.get_node(2)
             assert node.node_stats.is_canceled is True
 
-            # Kernel should still be usable after the interrupt
             result = _run(
                 manager.execute(
                     kernel_id,

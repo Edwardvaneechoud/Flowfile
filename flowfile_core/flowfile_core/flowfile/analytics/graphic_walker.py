@@ -31,10 +31,8 @@ def convert_ff_column_to_gw_field(flow_file_column: FlowfileColumn) -> gw_schema
     """
     semantic_type = get_semantic_type(flow_file_column.data_type)
 
-    # Determine the analytic type based on the semantic type
     analytic_type = get_analytic_type(semantic_type)
 
-    # Create and return a new GraphicWalkerField instance
     return gw_schema.MutField(
         fid=flow_file_column.name,
         name=flow_file_column.name,

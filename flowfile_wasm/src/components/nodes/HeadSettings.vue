@@ -38,7 +38,6 @@ const emit = defineEmits<{
   (e: 'update:settings', settings: HeadSettings): void
 }>()
 
-// Initialize directly from props
 const sampleSize = ref(props.settings.sample_size || props.settings.head_input?.n || 1000)
 const presets = [10, 100, 500, 1000, 5000, 10000]
 

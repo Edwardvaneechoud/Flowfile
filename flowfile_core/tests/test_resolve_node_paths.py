@@ -14,9 +14,7 @@ from flowfile_core.kernel.models import ExecuteRequest
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.schemas import FlowSettings
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _make_manager(shared_volume: str) -> KernelManager:
@@ -51,9 +49,7 @@ def _create_inputs(tmp_path: Path, flow_id: int, node_id: int, filenames: list[s
     return input_dir
 
 
-# ---------------------------------------------------------------------------
 # resolve_node_paths
-# ---------------------------------------------------------------------------
 
 
 class TestResolveNodePaths:
@@ -185,16 +181,13 @@ class TestResolveNodePaths:
         req = ExecuteRequest(node_id=2, code="", flow_id=1)
         mgr.resolve_node_paths(req)
 
-        # In local mode to_kernel_path replaces _shared_volume with /shared
         for paths in req.input_paths.values():
             for p in paths:
                 assert p.startswith("/shared/")
         assert req.output_dir.startswith("/shared/")
 
 
-# ---------------------------------------------------------------------------
 # FlowSettings.show_edge_labels
-# ---------------------------------------------------------------------------
 
 
 class TestFlowSettingsShowEdgeLabels:
@@ -221,9 +214,7 @@ class TestFlowSettingsShowEdgeLabels:
         assert settings.show_edge_labels is False
 
 
-# ---------------------------------------------------------------------------
 # write_inputs_to_parquet
-# ---------------------------------------------------------------------------
 
 
 def _mock_fetcher(has_error=False, error_description=None):
@@ -252,7 +243,6 @@ class TestWriteInputsToParquet:
 
         assert list(result.keys()) == ["main"]
         assert len(result["main"]) == 2
-        # Paths should be kernel-translated
         for p in result["main"]:
             assert p.startswith("/shared/")
 
@@ -418,9 +408,7 @@ class TestWriteParquetLocally:
         assert os.path.exists(output_path)
 
 
-# ---------------------------------------------------------------------------
 # NodePythonScript / UserDefinedNode output_names
-# ---------------------------------------------------------------------------
 
 
 class TestOutputNamesSchema:
@@ -448,9 +436,7 @@ class TestOutputNamesSchema:
         assert node.output_names == ["out1", "out2"]
 
 
-# ---------------------------------------------------------------------------
 # NodeBase.node_reference validator
-# ---------------------------------------------------------------------------
 
 
 class TestNodeReferenceValidator:

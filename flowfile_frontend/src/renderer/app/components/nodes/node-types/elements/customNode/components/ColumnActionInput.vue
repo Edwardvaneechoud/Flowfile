@@ -186,7 +186,6 @@ const filteredColumns = computed(() => {
   return props.incomingColumns;
 });
 
-// Initialize local value from props
 watch(
   () => props.modelValue,
   (newValue) => {
@@ -206,7 +205,6 @@ const emitUpdate = () => {
   emit("update:modelValue", { ...localValue.value });
 };
 
-// Generate output name from template
 const generateOutputName = (column: string, action: string): string => {
   return props.schema.output_name_template.replace("{column}", column).replace("{action}", action);
 };

@@ -24,7 +24,6 @@ REDPANDA_IMAGE = os.environ.get("TEST_REDPANDA_IMAGE", "docker.redpanda.com/redp
 
 BOOTSTRAP_SERVERS = f"{REDPANDA_HOST}:{REDPANDA_PORT}"
 
-# Operating system detection
 IS_MACOS = os.uname().sysname == "Darwin" if hasattr(os, "uname") else False
 IS_WINDOWS = os.name == "nt"
 
@@ -92,7 +91,6 @@ def start_redpanda_container() -> bool:
         logger.info("Container %s is already running", REDPANDA_CONTAINER_NAME)
         return True
 
-    # Remove any stopped container with the same name
     subprocess.run(
         ["docker", "rm", "-f", REDPANDA_CONTAINER_NAME],
         capture_output=True,
@@ -133,7 +131,6 @@ def start_redpanda_container() -> bool:
             logger.info("Redpanda is ready at %s", BOOTSTRAP_SERVERS)
             return True
 
-        # Log container status for debugging
         logs_result = subprocess.run(
             ["docker", "logs", "--tail", "30", REDPANDA_CONTAINER_NAME],
             capture_output=True,
@@ -187,9 +184,7 @@ def managed_redpanda() -> Generator[dict[str, str | int], None, None]:
             stop_redpanda_container()
 
 
-# ---------------------------------------------------------------------------
 # Topic helpers
-# ---------------------------------------------------------------------------
 
 
 def create_topic(topic_name: str, num_partitions: int = 1) -> None:
@@ -199,7 +194,7 @@ def create_topic(topic_name: str, num_partitions: int = 1) -> None:
     futures = admin.create_topics([NewTopic(topic_name, num_partitions=num_partitions, replication_factor=1)])
     for topic, future in futures.items():
         try:
-            r = future.result()  # raises on failure
+            r = future.result()
             logger.info("Created topic: %s (%d partitions)", topic, num_partitions)
         except KafkaException as e:
             if e.args[0].code() == KafkaError.TOPIC_ALREADY_EXISTS:

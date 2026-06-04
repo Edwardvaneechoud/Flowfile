@@ -10,7 +10,6 @@ import type { FlowNode, FlowEdge } from '../../src/types'
 describe('Code Generation', () => {
   const { generateCode } = useCodeGeneration()
 
-  // Helper to create a basic node
   function createNode(id: number, type: string, settings: any, inputIds: number[] = []): FlowNode {
     return {
       id,
@@ -32,7 +31,6 @@ describe('Code Generation', () => {
     }
   }
 
-  // Helper to create edges
   function createEdges(connections: [number, number][]): FlowEdge[] {
     return connections.map(([from, to]) => ({
       id: `e${from}-${to}`,
@@ -403,12 +401,10 @@ describe('Code Generation', () => {
         edges: createEdges([[1, 2], [2, 3], [3, 4]])
       })
 
-      // Check execution order
       expect(code.indexOf('df_1')).toBeLessThan(code.indexOf('df_2'))
       expect(code.indexOf('df_2')).toBeLessThan(code.indexOf('df_3'))
       expect(code.indexOf('df_3')).toBeLessThan(code.indexOf('df_4'))
 
-      // Check all operations present
       expect(code).toContain('scan_csv')
       expect(code).toContain('.filter(')
       expect(code).toContain('.select(')
@@ -565,7 +561,6 @@ describe('Code Generation', () => {
     it('should use node_reference in downstream node references', () => {
       const nodes = new Map<number, FlowNode>()
 
-      // Input node with custom reference
       const inputNode = createNode(1, 'manual_input', {
         raw_data_format: {
           columns: [
@@ -578,7 +573,6 @@ describe('Code Generation', () => {
       inputNode.node_reference = 'source_data'
       nodes.set(1, inputNode)
 
-      // Filter node with custom reference
       const filterNode = createNode(2, 'filter', {
         filter_input: {
           mode: 'basic',
@@ -606,7 +600,6 @@ describe('Code Generation', () => {
     it('should work with mixed nodes (with and without node_reference)', () => {
       const nodes = new Map<number, FlowNode>()
 
-      // First node: custom reference
       const inputNode = createNode(1, 'manual_input', {
         raw_data_format: {
           columns: [{ name: 'id', data_type: 'Int64' }],
@@ -616,7 +609,6 @@ describe('Code Generation', () => {
       inputNode.node_reference = 'custom_input'
       nodes.set(1, inputNode)
 
-      // Second node: no custom reference (should use df_2)
       nodes.set(2, createNode(2, 'filter', {
         filter_input: {
           mode: 'basic',
@@ -637,7 +629,6 @@ describe('Code Generation', () => {
     it('should use node_reference in join operations', () => {
       const nodes = new Map<number, FlowNode>()
 
-      // Left input with custom reference
       const leftNode = createNode(1, 'manual_input', {
         raw_data_format: {
           columns: [
@@ -650,7 +641,6 @@ describe('Code Generation', () => {
       leftNode.node_reference = 'left_table'
       nodes.set(1, leftNode)
 
-      // Right input with custom reference
       const rightNode = createNode(2, 'manual_input', {
         raw_data_format: {
           columns: [
@@ -663,7 +653,6 @@ describe('Code Generation', () => {
       rightNode.node_reference = 'right_table'
       nodes.set(2, rightNode)
 
-      // Join node with custom reference
       const joinNode = createNode(3, 'join', {
         join_input: {
           how: 'inner',
@@ -694,13 +683,13 @@ describe('Code Generation', () => {
     it('should fall back to df_{node_id} when node_reference is empty', () => {
       const nodes = new Map<number, FlowNode>()
       const node = createNode(1, 'manual_input', {
-        node_reference: '',  // Empty string
+        node_reference: '',
         raw_data_format: {
           columns: [{ name: 'id', data_type: 'Int64' }],
           data: [[1, 2, 3]]
         }
       })
-      node.node_reference = ''  // Also set on FlowNode
+      node.node_reference = ''
       nodes.set(1, node)
 
       const code = generateCode({ nodes, edges: [] })

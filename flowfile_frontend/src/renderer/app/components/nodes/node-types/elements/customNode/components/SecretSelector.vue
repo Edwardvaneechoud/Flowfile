@@ -1,5 +1,3 @@
-// SecretSelector.vue - Component for selecting secrets in custom nodes
-
 <template>
   <div class="component-container">
     <label class="listbox-subtitle">

@@ -420,9 +420,7 @@ def _parse_arguments(raw: str | dict[str, Any]) -> dict[str, Any]:
     return parsed
 
 
-# ---------------------------------------------------------------------------
 # Telemetry + prompt-log hooks
-# ---------------------------------------------------------------------------
 #
 # Imports below are kept inside the helper functions for the same reason as
 # ``litellm`` — keeping ``providers/_litellm_base`` cheap to import. The

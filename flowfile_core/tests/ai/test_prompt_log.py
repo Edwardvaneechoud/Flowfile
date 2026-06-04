@@ -59,9 +59,7 @@ from flowfile_core.ai.providers.base import (
 from flowfile_core.configs import settings as core_settings
 
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -132,9 +130,7 @@ def _make_entry(**overrides: Any) -> PromptLogEntry:
     return PromptLogEntry(**base)
 
 
-# ---------------------------------------------------------------------------
 # Lazy contract
-# ---------------------------------------------------------------------------
 
 
 def test_module_lazy_imports_litellm() -> None:
@@ -156,9 +152,7 @@ def test_module_lazy_imports_litellm() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
 # is_logging_enabled / is_scrubbing_enabled
-# ---------------------------------------------------------------------------
 
 
 def test_is_logging_enabled_reads_live_value(logging_on: None) -> None:
@@ -173,9 +167,7 @@ def test_is_scrubbing_enabled_reads_live_value(scrub_on: None) -> None:
     assert is_scrubbing_enabled() is False
 
 
-# ---------------------------------------------------------------------------
 # Write path
-# ---------------------------------------------------------------------------
 
 
 def test_log_prompt_writes_one_line_per_call(
@@ -238,9 +230,7 @@ def test_log_prompt_swallows_io_error(monkeypatch: pytest.MonkeyPatch) -> None:
     log_prompt(_make_entry())
 
 
-# ---------------------------------------------------------------------------
 # Truncation
-# ---------------------------------------------------------------------------
 
 
 def _big_message(role: str, kb: int) -> dict[str, Any]:
@@ -310,9 +300,7 @@ def test_truncation_skipped_when_under_threshold(
     assert payload["truncated"] is False
 
 
-# ---------------------------------------------------------------------------
 # Scrubbing
-# ---------------------------------------------------------------------------
 
 
 def test_scrub_runs_on_user_and_tool_only(
@@ -354,9 +342,7 @@ def test_scrub_off_by_default(isolated_log_dir: Path, logging_on: None) -> None:
     assert "alice@example.com" in payload["messages"][0]["content"]
 
 
-# ---------------------------------------------------------------------------
 # build_entry_from_chat / build_entry_from_stream
-# ---------------------------------------------------------------------------
 
 
 def test_build_entry_from_chat_round_trip() -> None:
@@ -448,9 +434,7 @@ def test_build_entry_from_stream_aggregates_response() -> None:
     assert entry.usage is None  # not populated for stream path in v0
 
 
-# ---------------------------------------------------------------------------
 # tail / grep
-# ---------------------------------------------------------------------------
 
 
 def test_tail_returns_last_n_entries(

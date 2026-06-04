@@ -55,9 +55,7 @@ from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas
 
-# --------------------------------------------------------------------------- #
 # Helpers — minimal flow + scripted provider #
-# --------------------------------------------------------------------------- #
 
 
 def _flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
@@ -133,9 +131,7 @@ def _filter_args() -> dict[str, Any]:
     }
 
 
-# --------------------------------------------------------------------------- #
 # Fixtures #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.fixture
@@ -209,9 +205,7 @@ def patch_provider(monkeypatch: pytest.MonkeyPatch) -> _FakeProvider:
     return fake
 
 
-# --------------------------------------------------------------------------- #
 # Tests #
-# --------------------------------------------------------------------------- #
 
 
 def test_running_session_survives_restart(
@@ -311,7 +305,6 @@ def test_resume_with_last_event_id_replays_buffered(
                 break
     assert sid is not None
 
-    # Verify multiple frames landed in the buffer.
     buffered = list(
         disk_replay_buffer.read_after(flow_id=1, session_id=sid, event_id=None)
     )

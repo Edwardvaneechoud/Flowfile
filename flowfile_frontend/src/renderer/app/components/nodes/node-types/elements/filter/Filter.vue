@@ -137,11 +137,9 @@ const updateNodeOutputHandles = () => {
   }
 };
 
-// Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeFilter,
   onBeforeSave: () => {
-    // Prepare filter data before saving
     if (nodeFilter.value) {
       if (isAdvancedFilter.value) {
         updateAdvancedFilter();

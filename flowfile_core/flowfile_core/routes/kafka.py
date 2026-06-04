@@ -48,9 +48,7 @@ except PackageNotFoundError:
 router = APIRouter(prefix="/kafka", tags=["kafka"])
 
 
-# ---------------------------------------------------------------------------
 # Connection management
-# ---------------------------------------------------------------------------
 
 
 @router.post("/connections", response_model=KafkaConnectionOut)
@@ -161,9 +159,7 @@ def infer_kafka_topic_schema(
         raise HTTPException(status_code=400, detail="Schema inference failed. Check server logs for details.") from None
 
 
-# ---------------------------------------------------------------------------
 # Consumer group management (offsets tracked by broker)
-# ---------------------------------------------------------------------------
 
 
 @router.get("/sync/{sync_name}/offsets", response_model=dict[int, int])
@@ -196,9 +192,7 @@ def reset_sync_offsets_route(
         raise HTTPException(status_code=400, detail=str(e)) from None
 
 
-# ---------------------------------------------------------------------------
 # Kafka sync flow creation
-# ---------------------------------------------------------------------------
 
 
 def _ensure_sync_namespace(service: CatalogService, owner_id: int) -> int:
@@ -303,12 +297,10 @@ def create_kafka_sync(
     Generates a flow YAML with a ``kafka_source`` → ``catalog_writer`` pipeline,
     saves it to disk, and registers it in the catalog.
     """
-    # Validate connection
     db_conn = get_kafka_connection(db, body.kafka_connection_id, current_user.id)
     if db_conn is None:
         raise HTTPException(status_code=404, detail="Kafka connection not found")
 
-    # Infer topic schema for the fields list
     consumer_config = build_consumer_config(db, db_conn, current_user.id)
     settings = KafkaReadSettings.from_consumer_config(
         consumer_config,
@@ -333,7 +325,6 @@ def create_kafka_sync(
         # Group may not exist yet — that's fine, first run will create it
         logger.debug("No existing consumer group '%s' to reset (new group will be created on first run)", sync_group_id)
 
-    # Save path
     flow_name = f"sync-{body.sync_name}"
     flow_path = storage.flows_directory / f"{flow_name}.yaml"
     if flow_path.exists():
@@ -360,7 +351,6 @@ def create_kafka_sync(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 
-    # Build and write YAML
     flow_data = _build_sync_flow_data(
         body,
         connection_name=db_conn.connection_name,

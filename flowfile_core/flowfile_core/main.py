@@ -45,7 +45,6 @@ from shared.storage_config import storage
 
 storage.cleanup_directories()
 
-# Set default mode to electron if not already set (allows Docker mode override)
 if "FLOWFILE_MODE" not in os.environ:
     os.environ["FLOWFILE_MODE"] = "electron"
 
@@ -112,7 +111,6 @@ def _shutdown_local_model():
         print(f"Error stopping local model: {exc}")
 
 
-# Initialize FastAPI with metadata
 app = FastAPI(
     title="Flowfile Backend",
     version="0.1",
@@ -120,8 +118,6 @@ app = FastAPI(
     lifespan=shutdown_handler,
 )
 
-# Configure CORS
-#
 # The Tauri 2 desktop shell loads the renderer from a custom protocol — the
 # exact origin differs per OS (`tauri://localhost` on macOS/iOS, `http://tauri.localhost`
 # on Linux, `https://tauri.localhost` on Windows/Android). A regex covers all
@@ -182,7 +178,6 @@ async def shutdown(background_tasks: BackgroundTasks):
     to terminate cleanly. A background task is used to trigger the shutdown
     after the HTTP response has been sent.
     """
-    # Use a background task to trigger the shutdown after the response is sent
     background_tasks.add_task(trigger_shutdown)
     return {"message": "Server is shutting down"}
 
@@ -217,7 +212,6 @@ def run(host: str = None, port: int = None):
     """
     global server_instance
 
-    # Use values from settings if not explicitly provided
     if host is None:
         host = SERVER_HOST
     if port is None:
@@ -225,7 +219,6 @@ def run(host: str = None, port: int = None):
     print(f"Starting server on {host}:{port}")
     print(f"Worker configured at {WORKER_URL} (host: {WORKER_HOST}, port: {WORKER_PORT})")
 
-    # Setup signal handlers
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -236,7 +229,7 @@ def run(host: str = None, port: int = None):
         loop="asyncio",
     )
     server = uvicorn.Server(config)
-    server_instance = server  # Store server instance globally
+    server_instance = server
 
     # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.
     start_parent_death_watcher(lambda: setattr(server, "should_exit", True))

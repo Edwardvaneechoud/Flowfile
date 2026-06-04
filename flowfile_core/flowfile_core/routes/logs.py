@@ -68,10 +68,8 @@ async def stream_log_file(
     last_active = time.monotonic()
     try:
         async with aiofiles.open(log_file_path) as file:
-            # Ensure we start at the beginning
             await file.seek(0)
             while is_running_callable():
-                # Immediately check if shutdown has been triggered
                 if ServerRun.exit:
                     yield await format_sse_message("Server is shutting down. Closing connection.")
                     break
@@ -80,16 +78,14 @@ async def stream_log_file(
                 if line:
                     formatted_message = await format_sse_message(line.strip())
                     yield formatted_message
-                    last_active = time.monotonic()  # Reset idle timer on activity
+                    last_active = time.monotonic()
                 else:
-                    # Check for idle timeout
                     if time.monotonic() - last_active > idle_timeout:
                         yield await format_sse_message("Connection timed out due to inactivity.")
                         break
                     # Allow the event loop to process other tasks (like signals)
                     await asyncio.sleep(0.1)
 
-            # Optionally, read any final lines
             while True:
                 if ServerRun.exit:
                     break

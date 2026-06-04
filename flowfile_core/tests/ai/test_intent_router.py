@@ -59,9 +59,7 @@ from flowfile_core.ai.providers.base import ChatResponse, Message, Usage
 from flowfile_core.ai.scheduler import RateLimitScheduler
 
 
-# --------------------------------------------------------------------------- #
-# Fakes #
-# --------------------------------------------------------------------------- #
+# Fakes
 
 
 class _FakeProvider:
@@ -128,9 +126,7 @@ def _payload(kind: str, confidence: float, reason: str) -> str:
     return json.dumps({"kind": kind, "confidence": confidence, "reason": reason})
 
 
-# --------------------------------------------------------------------------- #
-# LLM dispatch + history #
-# --------------------------------------------------------------------------- #
+# LLM dispatch + history
 
 
 @pytest.mark.asyncio
@@ -144,7 +140,6 @@ async def test_classify_intent_calls_llm_with_user_message() -> None:
     assert classification.kind == "chat"
     assert classification.confidence == pytest.approx(0.9)
 
-    # Wire shape: system + user; tools=None; JSON response_format.
     messages = provider.last_call_kwargs["messages"]
     assert provider.last_call_kwargs["tools"] is None
     assert provider.last_call_kwargs["response_format"] == {"type": "json_object"}
@@ -206,14 +201,12 @@ async def test_classify_intent_history_is_bounded() -> None:
     )
 
     sent = provider.last_call_kwargs["messages"]
-    # system (classifier's own) + DEFAULT_HISTORY_TURNS history + 1 user = 6
     assert len(sent) == 1 + DEFAULT_HISTORY_TURNS + 1
     # First message after system is "msg-2" (oldest of the trailing 4); the
     # earlier "msg-1" / "resp-1" + the stale system entry were dropped.
     assert sent[1].content == "msg-2"
     assert sent[2].content == "resp-2"
     assert sent[3].content == "msg-3"
-    # Long assistant content was clipped to the per-turn cap.
     assert len(sent[4].content) <= DEFAULT_HISTORY_CHARS_PER_TURN
     assert sent[4].content.endswith("...")
     assert sent[-1].content == "follow-up"
@@ -237,9 +230,7 @@ async def test_classify_intent_promotes_build_with_history() -> None:
     assert verdict_for(classification) == "agent"
 
 
-# --------------------------------------------------------------------------- #
-# Direct-request patterns (no history) — pattern (1) of the build bullet #
-# --------------------------------------------------------------------------- #
+# Direct-request patterns (no history) — pattern (1) of the build bullet
 
 
 @pytest.mark.asyncio
@@ -292,21 +283,16 @@ def test_system_prompt_covers_direct_request_patterns() -> None:
     prior build-shaped context). The user-visible behavior change in
     the auto-mode classifier rests on these examples."""
     prompt = intent_router._LLM_SYSTEM_PROMPT
-    # Pattern (1) framing.
     assert "DIRECT REQUEST" in prompt
     assert "BARE CONFIRMATION" in prompt
     assert "courtesy, not a real question" in prompt
-    # The three direct-request shapes called out in the prompt.
     assert "can you add a sort node" in prompt
     assert "I want you to add a filter" in prompt
     assert "implement a left join" in prompt
-    # The narrowed context-decisive sentence.
     assert "ONLY for the bare-confirmation case" in prompt
 
 
-# --------------------------------------------------------------------------- #
-# Failure modes #
-# --------------------------------------------------------------------------- #
+# Failure modes
 
 
 @pytest.mark.asyncio
@@ -387,9 +373,7 @@ async def test_classify_intent_no_provider_falls_back() -> None:
     assert "no provider" in classification.reason.lower()
 
 
-# --------------------------------------------------------------------------- #
-# Verdict mapping #
-# --------------------------------------------------------------------------- #
+# Verdict mapping
 
 
 def test_verdict_for_promotes_only_high_confidence_build() -> None:
@@ -418,9 +402,7 @@ def test_verdict_for_promotes_only_high_confidence_build() -> None:
     assert verdict_for(ambiguous) == "chat"
 
 
-# --------------------------------------------------------------------------- #
-# Lazy-litellm contract #
-# --------------------------------------------------------------------------- #
+# Lazy-litellm contract
 
 
 def test_lazy_litellm_contract_for_intent_router() -> None:
@@ -430,9 +412,7 @@ def test_lazy_litellm_contract_for_intent_router() -> None:
     assert "litellm" not in sys.modules
 
 
-# --------------------------------------------------------------------------- #
-# Surface key — round 4 #
-# --------------------------------------------------------------------------- #
+# Surface key — round 4
 
 
 def test_intent_classifier_has_dedicated_surface_key() -> None:
@@ -460,18 +440,15 @@ def test_intent_classifier_surface_in_lockstep_across_providers() -> None:
     )
     from flowfile_core.ai.tools import registry as tool_registry
 
-    # 1. SurfaceLiteral coverage in both modules that declare it.
     assert "intent_classifier" in ctx_builder.SURFACE_TO_LEVEL
     assert "intent_classifier" in tool_registry.get_args(tool_registry.SurfaceLiteral)
 
-    # 2. SURFACE_PRESETS — empty frozenset because the classifier never
+    # SURFACE_PRESETS — empty frozenset because the classifier never
     # invokes tools (single-shot strict-JSON judgement).
     assert tool_registry.SURFACE_PRESETS["intent_classifier"] == frozenset()
 
-    # 3. _check_preset_coverage stays consistent.
     tool_registry._check_preset_coverage()
 
-    # 4. Every provider class carries an entry.
     for provider_cls in (
         AnthropicProvider,
         OpenAIProvider,
@@ -484,7 +461,7 @@ def test_intent_classifier_surface_in_lockstep_across_providers() -> None:
             f"{provider_cls.__name__} missing intent_classifier in surface_models"
         )
 
-    # 5. Budget table has an entry — strictly smaller than ``cmd_k`` because
+    # Budget table has an entry — strictly smaller than ``cmd_k`` because
     # the classifier prompt is tighter (system + ≤4 turns + current message).
     classifier_budget = ctx_budget.surface_budget("intent_classifier")
     cmd_k_budget = ctx_budget.surface_budget("cmd_k")

@@ -1,5 +1,3 @@
-# Fixed custom_node.py with proper type hints
-
 import inspect
 import textwrap
 from typing import Any, TypeVar
@@ -74,7 +72,6 @@ def _convert_value(value: Any) -> Any:
         return value
 
 
-# Type variable for the Section factory
 T = TypeVar("T", bound=Section)
 
 
@@ -150,14 +147,11 @@ class NodeSettings(BaseModel):
         Returns:
             The `NodeSettings` instance with updated component values.
         """
-        # Handle both extra fields and defined fields
         all_sections = {}
 
-        # Get extra fields
         extra_fields = getattr(self, "__pydantic_extra__", {})
         all_sections.update(extra_fields)
 
-        # Get defined fields that are Sections
         for field_name in self.model_fields:
             field_value = getattr(self, field_name, None)
             if isinstance(field_value, Section):
@@ -183,7 +177,6 @@ class NodeSettings(BaseModel):
         Returns:
             The current value of the field, or None if not found.
         """
-        # Check direct model fields
         if field_name in self.model_fields:
             component = getattr(self, field_name, None)
             if component is not None:
@@ -191,7 +184,6 @@ class NodeSettings(BaseModel):
                     return component.value
                 return component
 
-        # Check pydantic extra fields
         extras = getattr(self, "__pydantic_extra__", {}) or {}
         if field_name in extras:
             component = extras[field_name]
@@ -199,7 +191,6 @@ class NodeSettings(BaseModel):
                 return component.value
             return component
 
-        # Check within sections (both in model_fields and extras)
         all_fields = {**{k: getattr(self, k) for k in self.model_fields}, **extras}
         for value in all_fields.values():
             if isinstance(value, Section):
@@ -221,7 +212,6 @@ class NodeSettings(BaseModel):
         """
         components = {}
 
-        # Get from model fields
         for field_name in self.model_fields:
             value = getattr(self, field_name, None)
             if isinstance(value, FlowfileInComponent):
@@ -229,7 +219,6 @@ class NodeSettings(BaseModel):
             elif isinstance(value, Section):
                 components.update(value.get_components())
 
-        # Get from extra fields
         extras = getattr(self, "__pydantic_extra__", {}) or {}
         for field_name, value in extras.items():
             if isinstance(value, FlowfileInComponent):
@@ -550,7 +539,6 @@ class CustomNodeBase(BaseModel):
                 body_start = i + 1
                 break
         body_lines = lines[body_start:]
-        # Dedent the body
         body = textwrap.dedent("\n".join(body_lines))
 
         # Transform 'return <expr>' into 'result = <expr>' so the script

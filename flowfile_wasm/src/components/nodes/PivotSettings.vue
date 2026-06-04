@@ -104,7 +104,6 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// Local state initialized from props
 const indexColumns = ref<string[]>(
   props.settings.pivot_input?.index_columns
     ? [...props.settings.pivot_input.index_columns]
@@ -118,13 +117,11 @@ const aggregations = ref<string[]>(
     : ['sum']
 )
 
-// Context menu state
 const showContextMenu = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const selectedColumn = ref<string>('')
 const contextMenuOptions = ref<ContextMenuOption[]>([])
 
-// Drag and drop state
 const draggedColumnName = ref<string | null>(null)
 
 const availableAggregations = ['sum', 'count', 'min', 'max', 'n_unique', 'mean', 'median', 'first', 'last', 'concat']
@@ -214,7 +211,6 @@ function removeColumn(type: 'index' | 'pivot' | 'value', column: string) {
 function toggleAggregation(agg: string) {
   const idx = aggregations.value.indexOf(agg)
   if (idx !== -1) {
-    // Don't allow removing last aggregation
     if (aggregations.value.length > 1) {
       aggregations.value.splice(idx, 1)
     }
@@ -224,7 +220,6 @@ function toggleAggregation(agg: string) {
   emitUpdate()
 }
 
-// Drag and drop handlers
 function onDragStart(columnName: string, event: DragEvent) {
   draggedColumnName.value = columnName
   event.dataTransfer?.setData('text/plain', columnName)

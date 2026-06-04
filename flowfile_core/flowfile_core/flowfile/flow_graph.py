@@ -180,14 +180,11 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(self: "FlowGraph", *args, **kwargs):
-            # Skip history capture if tracking is disabled
             if not self.flow_settings.track_history:
                 return func(self, *args, **kwargs)
 
-            # Get the first argument (settings input) from args or kwargs
             settings_input = args[0] if args else next(iter(kwargs.values()), None)
 
-            # Extract node info from the settings input
             node_id = getattr(settings_input, "node_id", None) if settings_input else None
             node_type = (
                 getattr(settings_input, "node_type", func.__name__.replace("add_", ""))
@@ -195,13 +192,10 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
                 else func.__name__.replace("add_", "")
             )
 
-            # Capture state before the operation
             pre_snapshot = self.get_flowfile_data()
 
-            # Execute the actual method
             result = func(self, *args, **kwargs)
 
-            # Record history if state changed
             self._history_manager.capture_if_changed(
                 self, pre_snapshot, action_type, description_template.format(node_type=node_type), node_id
             )
@@ -352,9 +346,7 @@ def get_cloud_connection_settings(
     return cloud_connection_settings
 
 
-# ---------------------------------------------------------------------------
 # Catalog writer/reader helpers (extracted for testability)
-# ---------------------------------------------------------------------------
 
 
 def _resolve_virtual_table(
@@ -607,7 +599,6 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
     versions: list[SourceTableVersion] = []
     seen_table_ids: set[int] = set()
 
-    # Collect all catalog_reader table IDs first
     table_ids: list[int] = []
     for node in graph.nodes:
         if node.node_type != "catalog_reader":
@@ -921,7 +912,6 @@ class FlowGraph:
         self.depends_on = {}
         self.artifact_context = ArtifactContext()
 
-        # Initialize history manager for undo/redo support
         from flowfile_core.flowfile.history_manager import HistoryManager
         from flowfile_core.schemas.history_schema import HistoryConfig
 
@@ -1078,10 +1068,8 @@ class FlowGraph:
         original_flow_id = self._flow_id
         original_source_registration_id = self._flow_settings.source_registration_id
 
-        # Convert snapshot to FlowInformation
         flow_info = _flowfile_data_to_flow_information(snapshot)
 
-        # Clear current state
         self._node_db.clear()
         self._node_ids.clear()
         self._flow_starts.clear()
@@ -1096,10 +1084,8 @@ class FlowGraph:
             self._flow_settings.source_registration_id = original_source_registration_id
         self.__name__ = flow_info.flow_name or self.__name__
 
-        # Determine node insertion order
         ingestion_order = determine_insertion_order(flow_info)
 
-        # First pass: Create all nodes as promises
         for node_id in ingestion_order:
             node_info = flow_info.data[node_id]
             node_promise = input_schema.NodePromise(
@@ -1113,11 +1099,9 @@ class FlowGraph:
                 node_promise.cache_results = node_info.setting_input.cache_results
             self.add_node_promise(node_promise)
 
-        # Second pass: Apply settings using add_<node_type> methods
         for node_id in ingestion_order:
             node_info = flow_info.data[node_id]
             if node_info.is_setup and node_info.setting_input is not None:
-                # Update flow_id in setting_input
                 if hasattr(node_info.setting_input, "flow_id"):
                     node_info.setting_input.flow_id = original_flow_id
 
@@ -1133,7 +1117,6 @@ class FlowGraph:
                     if add_method:
                         add_method(node_info.setting_input)
 
-        # Third pass: Restore connections
         for node_id in ingestion_order:
             node_info = flow_info.data[node_id]
             from_node = self.get_node(node_id)
@@ -1149,7 +1132,6 @@ class FlowGraph:
                 if output_node_info is None:
                     continue
 
-                # Determine connection type
                 is_left_input = (output_node_info.left_input_id == node_id) and (
                     to_node.left_input is None or to_node.left_input.node_id != node_id
                 )
@@ -1480,7 +1462,6 @@ class FlowGraph:
         self.flow_logger.info("Applying layered layout...")
         start_time = time()
         try:
-            # Calculate new positions for all nodes
             new_positions = calculate_layered_layout(
                 self, y_spacing=y_spacing, x_spacing=x_spacing, initial_y=initial_y
             )
@@ -1489,7 +1470,6 @@ class FlowGraph:
                 self.flow_logger.warning("Layout calculation returned no positions.")
                 return
 
-            # Apply the new positions to the setting_input of each node
             updated_count = 0
             for node_id, (pos_x, pos_y) in new_positions.items():
                 node = self.get_node(node_id)
@@ -1548,47 +1528,34 @@ class FlowGraph:
             self.flow_logger.info("Empty flow graph")
             return
 
-        # Build node information
         node_info = build_node_info(self.nodes)
 
-        # Calculate depths for all nodes
         for node_id in node_info:
             calculate_depth(node_id, node_info)
 
-        # Group nodes by depth
         depth_groups, max_depth = group_nodes_by_depth(node_info)
 
-        # Sort nodes within each depth group
         for depth in depth_groups:
             depth_groups[depth].sort()
 
-        # Create the main flow visualization
         lines = ["=" * 80, "Flow Graph Visualization", "=" * 80, ""]
 
-        # Track which nodes connect to what
         merge_points = define_node_connections(node_info)
 
-        # Build the flow paths
-
-        # Find the maximum label length for each depth level
         max_label_length = {}
         for depth in range(max_depth + 1):
             if depth in depth_groups:
                 max_len = max(len(node_info[nid].label) for nid in depth_groups[depth])
                 max_label_length[depth] = max_len
 
-        # Draw the paths
         drawn_nodes = set()
         merge_drawn = set()
 
-        # Group paths by their merge points
         paths_by_merge = {}
         standalone_paths = []
 
-        # Build flow paths
         paths = build_flow_paths(node_info, self._flow_starts, merge_points)
 
-        # Define paths to merge and standalone paths
         for path in paths:
             if len(path) > 1 and path[-1] in merge_points and len(merge_points[path[-1]]) > 1:
                 merge_id = path[-1]
@@ -1598,13 +1565,10 @@ class FlowGraph:
             else:
                 standalone_paths.append(path)
 
-        # Draw merged paths
         draw_merged_paths(node_info, merge_points, paths_by_merge, merge_drawn, drawn_nodes, lines)
 
-        # Draw standlone paths
         draw_standalone_paths(drawn_nodes, standalone_paths, lines, node_info)
 
-        # Add undrawn nodes
         add_un_drawn_nodes(drawn_nodes, node_info, lines)
 
         try:
@@ -1618,7 +1582,6 @@ class FlowGraph:
         except Exception as e:
             lines.append(f"  Could not determine execution order: {e}")
 
-        # Print everything
         output = "\n".join(lines)
 
         print(output)
@@ -1667,11 +1630,9 @@ class FlowGraph:
             custom_node: The custom node instance to add.
             user_defined_node_settings: The settings for the user-defined node.
         """
-        # Enforce kernel selection when executing a kernel-required custom node
         if custom_node.requires_kernel and not user_defined_node_settings.kernel_id:
             raise ValueError("Kernel selection is required to execute this custom node.")
 
-        # Propagate kernel_id from the schema settings if present
         kernel_id = user_defined_node_settings.kernel_id or custom_node.kernel_id
         output_names = user_defined_node_settings.output_names or custom_node.output_names
 
@@ -1743,28 +1704,24 @@ class FlowGraph:
 
         self.artifact_context.clear_nodes({node_id})
 
-        # Compute available artifacts
         self.artifact_context.compute_available(
             node_id=node_id,
             kernel_id=kernel_id,
             upstream_node_ids=self._get_upstream_node_ids(node_id),
         )
 
-        # Prepare shared directories
         shared_base = manager.shared_volume_path
         input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
         output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
         os.makedirs(input_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
 
-        # Resolve named input keys and write inputs to parquet
         node = self.get_node(node_id)
         input_names = self._resolve_input_names(node, len(flow_data_engine))
         input_paths = write_inputs_to_parquet(
             flow_data_engine, manager, input_dir, flow_id, node_id, input_names=input_names
         )
 
-        # Build request and execute on the kernel
         request = build_execute_request(
             node_id=node_id,
             code=code,
@@ -1790,7 +1747,6 @@ class FlowGraph:
         if not result.success:
             raise RuntimeError(f"Kernel execution failed: {result.error}")
 
-        # Record artifacts
         if result.artifacts_published:
             self.artifact_context.record_published(
                 node_id=node_id,
@@ -1804,7 +1760,6 @@ class FlowGraph:
                 artifact_names=result.artifacts_deleted,
             )
 
-        # Read outputs and populate named outputs on the FlowNode
         primary_result: FlowDataEngine | None = None
         for i, name in enumerate(output_names):
             output_path = os.path.join(output_dir, f"{name}.parquet")
@@ -1863,9 +1818,9 @@ class FlowGraph:
         node = self.get_node(pivot_settings.node_id)
 
         def schema_callback():
-            input_data = node.singular_main_input.get_resulting_data()  # get from the previous step the data
-            input_data.lazy = True  # ensure the dataset is lazy
-            input_lf = input_data.data_frame  # get the lazy frame
+            input_data = node.singular_main_input.get_resulting_data()
+            input_data.lazy = True
+            input_lf = input_data.data_frame
             return pre_calculate_pivot_schema(input_data.schema, pivot_settings.pivot_input, input_lf=input_lf)
 
         node.schema_callback = schema_callback
@@ -2178,7 +2133,6 @@ class FlowGraph:
             schema_callback=schema_callback,
         )
 
-        # Override the template output count when multiple outputs are configured
         output_names = node_python_script.output_names
         if len(output_names) > 1:
             node = self.get_node(node_python_script.node_id)
@@ -3197,8 +3151,6 @@ class FlowGraph:
         Returns:
             The created or updated FlowNode object.
         """
-        # Wrap schema_callback with output_field_config support
-        # If the node has output_field_config enabled, use it for schema prediction
         output_field_config = getattr(setting_input, "output_field_config", None) if setting_input else None
 
         logger.info(
@@ -3222,7 +3174,6 @@ class FlowGraph:
             else:
                 logger.debug(f"add_node_step: output_field_config present for node {node_id} but disabled")
 
-            # Even if schema_callback is None, create a wrapped one for output_field_config
             schema_callback = create_schema_callback_with_output_config(schema_callback, output_field_config)
             logger.info(
                 f"add_node_step: schema_callback {'created' if schema_callback else 'failed'} for node {node_id}"
@@ -3744,7 +3695,6 @@ class FlowGraph:
                 )
                 lf = result if isinstance(result, pl.LazyFrame) else result.lazy()
                 fl = FlowDataEngine(lf)
-                # Store deferred commit info for post-stage commit
                 if kafka_result.messages_consumed > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
                         kafka_read_settings,
@@ -3758,7 +3708,6 @@ class FlowGraph:
                 external_kafka_fetcher = ExternalKafkaFetcher(kafka_read_settings, wait_on_completion=False)
                 node._fetch_cached_df = external_kafka_fetcher
                 fl = FlowDataEngine(external_kafka_fetcher.get_result())
-                # Fetch deferred offset data from worker sidecar
                 offsets_data = fetch_kafka_offsets(external_kafka_fetcher.file_ref)
                 if offsets_data and offsets_data.get("messages_consumed", 0) > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
@@ -4243,18 +4192,17 @@ class FlowGraph:
             if start_hash != node.hash:
                 logger.info("Hash changed, updating schema")
                 if len(received_file.fields) > 0:
-                    # If the file has fields defined, we can use them to create the schema
+
                     def schema_callback():
                         return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
 
                 elif input_file.received_file.file_type in ("csv", "json", "parquet"):
-                    # everything that can be scanned by polars
+
                     def schema_callback():
                         input_data = FlowDataEngine.create_from_path(input_file.received_file)
                         return input_data.schema
 
                 elif input_file.received_file.file_type in ("xlsx", "excel"):
-                    # If the file is an Excel file, we need to use the openpyxl engine to read the schema
                     schema_callback = get_xlsx_schema_callback(
                         engine="openpyxl",
                         file_path=received_file.file_path,
@@ -4361,7 +4309,6 @@ class FlowGraph:
         for writer in catalog_writers:
             _, reasons = writer.check_upstream_laziness()
             all_reasons.extend(reasons)
-        # Deduplicate while preserving order
         seen: set[str] = set()
         unique: list[str] = []
         for r in all_reasons:
@@ -4500,9 +4447,7 @@ class FlowGraph:
         finally:
             self.flow_settings.is_running = False
 
-    # ------------------------------------------------------------------
     # Artifact helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _resolve_input_names(node: FlowNode | None, table_count: int) -> list[str] | None:
@@ -4735,7 +4680,6 @@ class FlowGraph:
             self.artifact_context.clear_nodes(nodes_to_clear)
 
         if rerun_node_ids:
-            # Clear the actual kernel-side artifacts for re-running nodes
             kernel_node_map = self._group_rerun_nodes_by_kernel(rerun_node_ids)
             for kid, node_ids_for_kernel in kernel_node_map.items():
                 try:
@@ -4787,13 +4731,11 @@ class FlowGraph:
             is_local = self.flow_settings.execution_location == "local"
             max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
             if len(nodes_to_run) == 1 or max_workers == 1:
-                # Single node or parallelism disabled — run sequentially
                 stage_results = [
                     self._execute_single_node(node, performance_mode, run_info_lock, params or None)
                     for node in nodes_to_run
                 ]
             else:
-                # Multiple independent nodes — run in parallel
                 stage_results: list[tuple[NodeResult, FlowNode]] = []
                 workers = min(max_workers, len(nodes_to_run))
                 with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -4806,7 +4748,6 @@ class FlowGraph:
                     for future in as_completed(futures):
                         stage_results.append(future.result())
 
-            # After the stage completes, propagate failures to downstream nodes
             for node_result, node in stage_results:
                 if not node_result.success:
                     failed_node_ids.add(node.node_id)
@@ -5149,11 +5090,10 @@ class FlowGraph:
                 try:
                     pos_x = node_info.data.pos_x
                     pos_y = node_info.data.pos_y
-                    # Basic node structure
                     result["Home"]["data"][str(node_id)] = {
                         "id": node_info.id,
                         "name": node_info.type,
-                        "data": {},  # Additional data can go here
+                        "data": {},
                         "class": node_info.type,
                         "html": node_info.type,
                         "typenode": "vue",
@@ -5164,7 +5104,6 @@ class FlowGraph:
                     }
                 except Exception as e:
                     logger.error(e)
-            # Add outputs to the node based on `outputs` in your backend data
             if node_info.outputs:
                 outputs = {o: 0 for o in node_info.outputs}
                 for o in node_info.outputs:
@@ -5189,7 +5128,6 @@ class FlowGraph:
             else:
                 result["Home"]["data"][str(node_id)]["outputs"] = {"output_1": {"connections": []}}
 
-            # Add input to the node based on `depending_on_id` in your backend data
             if (
                 node_info.left_input_id is not None
                 or node_info.right_input_id is not None
@@ -5274,7 +5212,6 @@ def combine_existing_settings_and_new_settings(setting_input: Any, new_settings:
     """
     copied_setting_input = deepcopy(setting_input)
 
-    # Update only attributes that exist on new_settings
     fields_to_update = ("node_id", "pos_x", "pos_y", "description", "flow_id")
 
     for field in fields_to_update:

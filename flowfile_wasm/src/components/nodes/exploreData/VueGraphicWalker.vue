@@ -38,7 +38,6 @@ const container = ref<HTMLElement | null>(null)
 const isLoading = ref(true)
 const loadError = ref<string | null>(null)
 
-// These will be set after dynamic import
 let reactRootInstance: any = null
 let React: any = null
 let ReactDOMClient: any = null
