@@ -29,6 +29,10 @@ async function getAuthToken(request: APIRequestContext): Promise<string> {
   return tokenData.access_token;
 }
 
+async function authPost(request: APIRequestContext, url: string, token: string) {
+  return request.post(url, { headers: { Authorization: `Bearer ${token}` } });
+}
+
 // Inject auth into localStorage before navigating so the SPA boots authed.
 async function navigateWithAuth(page: any, token: string, targetUrl: string) {
   await page.goto(targetUrl);
@@ -134,5 +138,120 @@ test.describe("Canvas Overlay Behaviour", () => {
       return el ? getComputedStyle(el).position : null;
     });
     expect(cssPosition).toBe("absolute");
+  });
+
+  test("python script expanded editor dialog teleports to body and covers the viewport", async ({
+    page,
+    request,
+  }) => {
+    // Regression guard for the WKWebView (Tauri) clipping bug: rendered in
+    // place, the dialog's fixed overlay is clipped to the node-settings
+    // panel's overflow chain. append-to-body must keep the overlay a direct
+    // child of <body>.
+    const flowName = `Overlay_Dialog_Test_${Date.now()}`;
+    const createResponse = await authPost(
+      request,
+      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      authToken,
+    );
+    expect(createResponse.ok()).toBe(true);
+    const flowId = await createResponse.json();
+
+    try {
+      const addNodeResponse = await authPost(
+        request,
+        // pos_x clears the left Data-actions palette (~230px wide) so the
+        // node is clickable and not under the panel's resize bar.
+        `${API_URL}/editor/add_node/?flow_id=${flowId}&node_id=1&node_type=python_script&pos_x=600&pos_y=300`,
+        authToken,
+      );
+      expect(addNodeResponse.ok()).toBe(true);
+
+      await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
+      await page.waitForSelector("main", { timeout: 10000 });
+
+      // Session restore can reopen other flows and leave one of them active —
+      // explicitly activate this test's flow tab before touching the canvas.
+      const flowTab = page.getByText(flowName, { exact: true });
+      await flowTab.first().waitFor({ state: "visible", timeout: 10000 });
+      await flowTab.first().click();
+
+      const node = page.locator('.vue-flow__node[data-id="1"]');
+      await node.waitFor({ state: "visible", timeout: 10000 });
+      await node.dblclick();
+
+      const expandButton = page.locator('button[title="Expand Editor"]');
+      await expandButton.waitFor({ state: "visible", timeout: 10000 });
+      await expandButton.click();
+
+      await page.waitForSelector(".expanded-editor-dialog", { timeout: 10000 });
+
+      const overlayState = await page.evaluate(() => {
+        const dialog = document.querySelector(".expanded-editor-dialog");
+        const overlay = dialog?.closest(".el-overlay");
+        if (!overlay) return null;
+        const rect = overlay.getBoundingClientRect();
+        return {
+          parentIsBody: overlay.parentElement === document.body,
+          coversViewport:
+            rect.width >= window.innerWidth - 1 && rect.height >= window.innerHeight - 1,
+        };
+      });
+
+      expect(overlayState).not.toBeNull();
+      expect(overlayState!.parentIsBody).toBe(true);
+      expect(overlayState!.coversViewport).toBe(true);
+    } finally {
+      await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
+    }
+  });
+
+  test("palette drag sets an explicit drag image", async ({ page, request }) => {
+    // WebKit (Tauri's WKWebView) shows no default drag preview for
+    // user-select:none elements, so onDragStart must call setDragImage with a
+    // DOM-attached clone. Chromium can't render the OS drag preview in a
+    // screenshot, so assert the contract instead.
+    const flowName = `Drag_Image_Test_${Date.now()}`;
+    const createResponse = await authPost(
+      request,
+      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      authToken,
+    );
+    expect(createResponse.ok()).toBe(true);
+    const flowId = await createResponse.json();
+
+    try {
+      await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
+      await page.waitForSelector("main", { timeout: 10000 });
+      const flowTab = page.getByText(flowName, { exact: true });
+      await flowTab.first().waitFor({ state: "visible", timeout: 10000 });
+      await flowTab.first().click();
+      await page.waitForSelector(".node-item", { timeout: 10000 });
+
+      const result = await page.evaluate(() => {
+        const calls: { attached: boolean }[] = [];
+        const original = DataTransfer.prototype.setDragImage;
+        DataTransfer.prototype.setDragImage = function (image: Element, x: number, y: number) {
+          calls.push({ attached: document.contains(image) });
+          return original.call(this, image, x, y);
+        };
+        try {
+          const item = document.querySelector(".node-item");
+          if (!item) return null;
+          const event = new DragEvent("dragstart", { bubbles: true, cancelable: true });
+          Object.defineProperty(event, "dataTransfer", { value: new DataTransfer() });
+          item.dispatchEvent(event);
+          return { called: calls.length > 0, attached: calls[0]?.attached ?? false };
+        } finally {
+          DataTransfer.prototype.setDragImage = original;
+        }
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.called).toBe(true);
+      expect(result!.attached).toBe(true);
+    } finally {
+      await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
+    }
   });
 });

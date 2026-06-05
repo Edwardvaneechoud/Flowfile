@@ -51,6 +51,7 @@
         v-model="modalVisibleForOpen"
         title="Select a file to Read"
         width="70%"
+        append-to-body
         :close-on-click-modal="false"
       >
         <file-browser
