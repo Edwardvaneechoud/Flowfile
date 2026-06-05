@@ -57,6 +57,7 @@ import { autocompletion, acceptCompletion } from "@codemirror/autocomplete";
 import { indentMore, indentLess } from "@codemirror/commands";
 
 import type { NotebookCell } from "../../../../../types/node.types";
+import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import CellOutput from "./CellOutput.vue";
 import {
   catalogRefChainCompletions,
@@ -188,6 +189,7 @@ const cellExtensions: Extension[] = [
     defaultKeymap: true,
     closeOnBlur: false,
   }),
+  bodyTooltips(),
   Prec.highest(notebookKeymap),
   Prec.high(tabKeymap),
 ];

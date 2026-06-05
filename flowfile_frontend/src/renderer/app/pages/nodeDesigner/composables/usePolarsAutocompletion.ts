@@ -13,6 +13,7 @@ import {
   acceptCompletion,
 } from "@codemirror/autocomplete";
 import { indentMore, indentLess } from "@codemirror/commands";
+import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import type { DesignerSection } from "../types";
 import { toSnakeCase } from "./useCodeGeneration";
 
@@ -438,6 +439,7 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       defaultKeymap: true,
       closeOnBlur: false,
     }),
+    bodyTooltips(),
     Prec.highest(tabKeymap),
   ];
 

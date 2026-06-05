@@ -22,6 +22,7 @@ import { Codemirror } from "vue-codemirror";
 import { autocompletion, CompletionSource, CompletionContext } from "@codemirror/autocomplete";
 import axios from "axios";
 
+import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import { createAiCompletionSource } from "./aiCompletions";
 
 interface Props {
@@ -253,6 +254,7 @@ const extensions: Extension[] = [
     activateOnTyping: true,
     icons: false,
   }),
+  bodyTooltips(),
   highlightPlugin,
 ];
 

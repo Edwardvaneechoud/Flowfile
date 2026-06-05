@@ -206,6 +206,78 @@ test.describe("Canvas Overlay Behaviour", () => {
     }
   });
 
+  test("notebook autocomplete tooltip mounts on body, escaping the panel overflow chain", async ({
+    page,
+    request,
+  }) => {
+    // Regression guard for the WKWebView (Tauri) clipping bug: CodeMirror
+    // renders tooltips inside the editor DOM, where WebKit flips them to
+    // position:absolute and the node-settings panel's overflow chain clips
+    // them. tooltips({ parent: document.body }) must mount them on <body>.
+    // getBoundingClientRect reports full size even when paint-clipped, so the
+    // ancestry assertion is the real guard (and regresses in Chromium too).
+    const flowName = `Overlay_CM_Tooltip_Test_${Date.now()}`;
+    const createResponse = await authPost(
+      request,
+      `${API_URL}/editor/create_flow/?name=${flowName}`,
+      authToken,
+    );
+    expect(createResponse.ok()).toBe(true);
+    const flowId = await createResponse.json();
+
+    try {
+      const addNodeResponse = await authPost(
+        request,
+        `${API_URL}/editor/add_node/?flow_id=${flowId}&node_id=1&node_type=python_script&pos_x=600&pos_y=300`,
+        authToken,
+      );
+      expect(addNodeResponse.ok()).toBe(true);
+
+      await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
+      await page.waitForSelector("main", { timeout: 10000 });
+
+      const flowTab = page.getByText(flowName, { exact: true });
+      await flowTab.first().waitFor({ state: "visible", timeout: 10000 });
+      await flowTab.first().click();
+
+      const node = page.locator('.vue-flow__node[data-id="1"]');
+      await node.waitFor({ state: "visible", timeout: 10000 });
+      await node.dblclick();
+
+      const cellContent = page.locator(".node-settings-body .cell-editor-wrapper .cm-content");
+      await cellContent.first().waitFor({ state: "visible", timeout: 10000 });
+      await cellContent.first().click();
+
+      // flowfileApiCompletions is a static, client-side source triggered by
+      // `flowfile_ctx.` — no backend round-trip needed for the tooltip.
+      await page.keyboard.type("flowfile_ctx.");
+
+      const tooltip = page.locator(".cm-tooltip-autocomplete");
+      await tooltip.first().waitFor({ state: "visible", timeout: 10000 });
+
+      const result = await page.evaluate(() => {
+        const tip = document.querySelector(".cm-tooltip-autocomplete");
+        if (!tip) return null;
+        return {
+          inSettingsPanel: !!tip.closest(".node-settings-body"),
+          inEditor: !!tip.closest(".cm-editor"),
+          // CM inserts the tooltip into a position:relative container that is
+          // a direct child of <body>.
+          containerOnBody: tip.parentElement?.parentElement === document.body,
+          optionCount: tip.querySelectorAll("ul > li").length,
+        };
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.inSettingsPanel).toBe(false);
+      expect(result!.inEditor).toBe(false);
+      expect(result!.containerOnBody).toBe(true);
+      expect(result!.optionCount).toBeGreaterThan(1);
+    } finally {
+      await authPost(request, `${API_URL}/editor/close_flow/?flow_id=${flowId}`, authToken);
+    }
+  });
+
   test("palette drag sets an explicit drag image", async ({ page, request }) => {
     // WebKit (Tauri's WKWebView) shows no default drag preview for
     // user-select:none elements, so onDragStart must call setDragImage with a

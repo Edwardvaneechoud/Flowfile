@@ -27,6 +27,7 @@ import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { autocompletion, CompletionSource, acceptCompletion } from "@codemirror/autocomplete";
 import { indentMore, indentLess } from "@codemirror/commands";
+import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import { polarsCompletionVals } from "./pythonEditor/polarsCompletions";
 
 const props = defineProps({
@@ -94,6 +95,7 @@ const extensions: Extension[] = [
     defaultKeymap: true,
     closeOnBlur: false,
   }),
+  bodyTooltips(),
   Prec.highest(tabKeymap),
 ];
 
