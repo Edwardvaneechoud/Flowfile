@@ -1,6 +1,6 @@
 {
   "name": "Flowfile",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "A tool for designing and executing data flows",
   "scripts": {
     "dev": "tauri dev",
