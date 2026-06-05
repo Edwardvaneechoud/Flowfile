@@ -82,6 +82,7 @@
       v-model="showFileSelectionModal"
       title="Select directory or file to write to"
       width="70%"
+      append-to-body
       :close-on-click-modal="false"
     >
       <file-browser

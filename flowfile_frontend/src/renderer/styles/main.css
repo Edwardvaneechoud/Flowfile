@@ -624,6 +624,9 @@ button {
   border: 1px solid var(--color-border-primary) !important;
   color: var(--color-text-primary) !important;
   box-shadow: var(--shadow-lg) !important;
+  /* Body-mounted via tooltips({parent}); must beat draggable panels (100000),
+     high-z-index dialogs (200001) and el-popper (200010) */
+  z-index: 200020 !important;
 }
 
 .cm-tooltip-autocomplete {

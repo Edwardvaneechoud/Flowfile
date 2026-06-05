@@ -302,10 +302,35 @@ export default function useDragAndDrop() {
     document.body.style.userSelect = dragging ? "none" : "";
   });
 
+  // WebKit (Tauri's WKWebView, Safari) renders no default drag preview for
+  // elements with user-select: none (.node-item has it), so the palette drag
+  // shows nothing in the desktop app. Snapshot a selectable clone instead —
+  // explicit and identical across engines.
+  function setPaletteDragImage(event: DragEvent) {
+    const source = (event.target as HTMLElement | null)?.closest?.(".node-item");
+    if (!(source instanceof HTMLElement) || !event.dataTransfer) return;
+    const rect = source.getBoundingClientRect();
+    const ghost = source.cloneNode(true) as HTMLElement;
+    ghost.style.position = "absolute";
+    ghost.style.top = "-1000px";
+    ghost.style.left = "-1000px";
+    ghost.style.width = `${rect.width}px`;
+    ghost.style.margin = "0";
+    ghost.style.pointerEvents = "none";
+    ghost.style.backgroundColor = "var(--color-background-primary)";
+    ghost.style.userSelect = "auto";
+    ghost.style.webkitUserSelect = "auto";
+    document.body.appendChild(ghost);
+    event.dataTransfer.setDragImage(ghost, event.clientX - rect.left, event.clientY - rect.top);
+    // The engine captures the image after the dragstart task completes.
+    setTimeout(() => ghost.remove(), 0);
+  }
+
   function onDragStart(event: DragEvent, nodeTemplate: NodeTemplate) {
     if (event.dataTransfer) {
       event.dataTransfer.setData("application/vueflow", JSON.stringify(nodeTemplate));
       event.dataTransfer.effectAllowed = "move";
+      setPaletteDragImage(event);
     }
 
     draggedType.value = nodeTemplate.item;

@@ -155,6 +155,16 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "Often the last step before 'output' or 'database_writer' to shape the "
         "final column list."
     ),
+    "dynamic_rename": (
+        "Rename many columns at once with a single rule: add a prefix or "
+        "suffix, evaluate a formula over each current name (``[column_name]``, "
+        "e.g. ``uppercase([column_name])``), or promote the first data row to "
+        "headers. Applies to all columns, a listed subset, or one data type. "
+        "Don't use for renaming specific columns to specific names — that's "
+        "'select'. Example: "
+        '{"dynamic_rename_input": {"rename_mode": "prefix", "prefix": "src_", '
+        '"selection_mode": "all"}}.'
+    ),
     "sort": (
         "Order rows by one or more columns ascending or descending. Use when the "
         "user wants 'sorted by X', 'top N by Y' (sort then 'sample'), or 'order by'. "
@@ -588,6 +598,16 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "user_id, find the `email` row, uncheck Keep. Pitfall: 'Select "
         "data' does not compute new columns — for that use 'Formula'. It "
         "also doesn't filter rows — that's 'Filter data'."
+    ),
+    "dynamic_rename": (
+        "Settings panel: 'Rename mode' (Prefix / Suffix / Formula / First "
+        "row), the matching value field, and 'Apply to' (All columns / "
+        "Specific columns / By data type); a 'Preview' shows Original → "
+        "Renamed. Worked example: 'prefix every column with raw_' → drag "
+        "'Rename columns' from Transformations, Rename mode=Prefix, "
+        "Prefix=raw_. Pitfall: to rename specific columns one-by-one use "
+        "'Select data'; in First row mode the new names are read at run "
+        "time and the first row is dropped from the data."
     ),
     "sort": (
         "Settings panel: a 'Columns' list where the user adds sort keys, "

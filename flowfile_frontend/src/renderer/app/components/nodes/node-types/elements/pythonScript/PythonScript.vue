@@ -216,12 +216,16 @@
     <FlowfileApiHelp v-if="showHelp" @close="showHelp = false" />
 
     <!-- Expanded Editor Dialog -->
+    <!-- append-to-body: rendered in place, the fixed overlay sits inside the panel's
+         overflow:auto chain, which WKWebView (Tauri) clips it to. high-z-index-dialog
+         lifts the teleported overlay above the draggable panels (_modals.css :has() rule). -->
     <el-dialog
       v-model="showExpandedEditor"
       title="Python Script"
       fullscreen
+      append-to-body
       :close-on-click-modal="false"
-      class="expanded-editor-dialog"
+      class="expanded-editor-dialog high-z-index-dialog"
     >
       <template #header>
         <div class="expanded-dialog-header">

@@ -19,6 +19,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "manual_input": input_schema.NodeManualInput,
     "filter": input_schema.NodeFilter,
     "formula": input_schema.NodeFormula,
+    "dynamic_rename": input_schema.NodeDynamicRename,
     "select": input_schema.NodeSelect,
     "sort": input_schema.NodeSort,
     "record_id": input_schema.NodeRecordId,

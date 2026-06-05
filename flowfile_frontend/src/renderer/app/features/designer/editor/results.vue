@@ -17,11 +17,11 @@
       <el-icon class="perf-mode-notice__icon"><InfoFilled /></el-icon>
       <span class="perf-mode-notice__text">
         This flow ran in <strong>Performance</strong> mode, so data for each step isn't stored. To
-        inspect the data step by step, select Development as 
+        inspect the data step by step, select Development as
         <button type="button" class="perf-mode-notice__link" @click="openFlowSettings">
           execution mode
         </button>
-       and run again.
+        and run again.
       </span>
       <button
         class="perf-mode-notice__dismiss"

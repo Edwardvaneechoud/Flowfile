@@ -19,12 +19,13 @@ the node type:
 
 The 22+1 explicit ``static`` set covers everything in
 ``NODE_TYPE_TO_SETTINGS_CLASS`` whose schema is derivable from
-``(settings, upstream_schema)`` without code execution. The 8-entry ``dynamic``
+``(settings, upstream_schema)`` without code execution. The 9-entry ``dynamic``
 set names the nodes whose schema callback either reads the upstream lazy frame
-(``pivot``) or executes user code (``polars_code`` / ``python_script`` /
-``sql_query``) or expands rows in non-deterministic ways (``unpivot`` /
-``text_to_rows`` / ``graph_solver``). ``user_defined`` is dynamic because the
-underlying class is runtime-registered.
+(``pivot``, and ``dynamic_rename`` whose ``first_row`` mode promotes data
+values to column names) or executes user code (``polars_code`` /
+``python_script`` / ``sql_query``) or expands rows in non-deterministic ways
+(``unpivot`` / ``text_to_rows`` / ``graph_solver``). ``user_defined`` is
+dynamic because the underlying class is runtime-registered.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "filter": "static",
     "formula": "static",
     "select": "static",
+    "dynamic_rename": "dynamic",
     "sort": "static",
     "record_id": "static",
     "sample": "static",

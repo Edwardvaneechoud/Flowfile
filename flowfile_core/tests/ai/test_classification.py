@@ -18,6 +18,7 @@ def test_every_known_node_type_classified() -> None:
 
 def test_dynamic_set_matches_design() -> None:
     expected_dynamic = {
+        "dynamic_rename",
         "pivot",
         "unpivot",
         "text_to_rows",
