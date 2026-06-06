@@ -81,6 +81,7 @@ export class FlowApi {
   static async createFlow(
     flowPath: string | null = null,
     name: string | null = null,
+    namespaceId: number | null = null,
   ): Promise<number> {
     const response = await axios.post(
       "/editor/create_flow/",
@@ -90,6 +91,7 @@ export class FlowApi {
         params: {
           flow_path: flowPath,
           name: name,
+          namespace_id: namespaceId,
         },
       },
     );

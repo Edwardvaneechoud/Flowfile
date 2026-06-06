@@ -49,6 +49,7 @@ from flowfile_core.flowfile.catalog_helpers import (
     find_registration_by_name,
     find_registration_by_path,
     find_registration_by_registration_id,
+    namespace_exists,
     register_flow_in_namespace,
     resolve_source_registration_id,
     sync_api_compatibility,
@@ -876,8 +877,17 @@ def get_generated_flowframe_code(flow_id: int) -> str:
 
 
 @router.post("/editor/create_flow/", tags=["editor"])
-def create_flow(flow_path: str = None, name: str = None, current_user=Depends(get_current_active_user)):
-    """Creates a new, empty flow file at the specified path and registers a session for it."""
+def create_flow(
+    flow_path: str = None,
+    name: str = None,
+    namespace_id: int = None,
+    current_user=Depends(get_current_active_user),
+):
+    """Creates a new, empty flow file at the specified path and registers a session for it.
+
+    When ``namespace_id`` is provided, the flow is registered in that catalog
+    namespace instead of the default (``General > Local Flows``).
+    """
     if flow_path is not None and name is None:
         name = Path(flow_path).stem
     elif flow_path is not None and name is not None:
@@ -896,10 +906,34 @@ def create_flow(flow_path: str = None, name: str = None, current_user=Depends(ge
         if not flow_path_ref.parent.exists():
             raise HTTPException(422, "The directory does not exist")
     user_id = current_user.id if current_user else None
+    if namespace_id is not None and not namespace_exists(namespace_id):
+        raise HTTPException(404, "Namespace not found")
+    if namespace_id is not None and flow_path is not None:
+        # Pre-validate before add_flow writes any YAML so a rejected create
+        # leaves no orphaned file or session behind.
+        reg_name = name or Path(flow_path).stem
+        existing_by_name = find_registration_by_name(reg_name, namespace_id)
+        if existing_by_name is not None and existing_by_name.flow_path != flow_path:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"A flow named '{reg_name}' already exists in this namespace. "
+                    "Choose a different name or namespace."
+                ),
+            )
+        existing_by_path = find_registration_by_path(flow_path)
+        if existing_by_path is not None and existing_by_path.namespace_id != namespace_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Flow path {flow_path} is already registered in another namespace",
+            )
     flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id)
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        auto_register_flow(flow.flow_settings.path, name or flow.flow_settings.name, user_id)
+        try:
+            register_flow_in_namespace(flow.flow_settings.path, name or flow.flow_settings.name, user_id, namespace_id)
+        except (FlowPathNamespaceCollision, FlowNameNamespaceCollision) as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
         resolve_source_registration_id(flow)
     return flow_id
 

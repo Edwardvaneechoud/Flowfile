@@ -35,9 +35,9 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.1"
-_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.1"
-_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.3.1"
+_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.2"
+_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.2"
+_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.3.2"
 
 
 def _envvar_or_default(name: str, default: str) -> str:
@@ -334,6 +334,21 @@ def _is_port_available(port: int) -> bool:
             return False
 
 
+def _rebase_to_posix(local_path: str, host_prefix: str, container_prefix: str) -> str | None:
+    """Rebase *local_path* under *host_prefix* onto *container_prefix* as a POSIX path.
+
+    Normalizes backslashes so Windows host paths produce pure-POSIX container
+    paths. Returns None when *local_path* is not under *host_prefix*.
+    """
+    p = local_path.replace("\\", "/").rstrip("/")
+    base = host_prefix.replace("\\", "/").rstrip("/")
+    if p == base:
+        return container_prefix
+    if p.startswith(base + "/"):
+        return container_prefix + "/" + p[len(base) + 1 :]
+    return None
+
+
 class KernelManager:
     def __init__(self, shared_volume_path: str | None = None):
         self._docker = docker.from_env()
@@ -492,17 +507,22 @@ class KernelManager:
         In Docker-in-Docker mode the volume is mounted at the same path in all
         containers, so paths are identical.  In local mode the host shared dir is
         bind-mounted at ``/shared`` and the host catalog_tables dir at
-        ``/catalog_tables``; we swap whichever prefix matches.
+        ``/catalog_tables``; we swap whichever prefix matches, always producing
+        a pure-POSIX path (Windows host paths contain backslashes the Linux
+        container would treat as literal filename characters).
         """
         if self._kernel_volume:
             # Same volume, same mount point — no translation needed
             return local_path
         # Local mode: try each known prefix
-        normalized = os.path.normpath(local_path)
-        catalog_norm = os.path.normpath(self._catalog_tables_dir)
-        if normalized == catalog_norm or normalized.startswith(catalog_norm + os.sep):
-            return local_path.replace(self._catalog_tables_dir, "/catalog_tables", 1)
-        return local_path.replace(self._shared_volume, "/shared", 1)
+        for host_prefix, container_prefix in (
+            (self._catalog_tables_dir, "/catalog_tables"),
+            (self._shared_volume, "/shared"),
+        ):
+            rebased = _rebase_to_posix(local_path, host_prefix, container_prefix)
+            if rebased is not None:
+                return rebased
+        return local_path
 
     def resolve_node_paths(self, request: "ExecuteRequest") -> None:
         """Populate ``input_paths`` and ``output_dir`` from ``flow_id``/``node_id``.

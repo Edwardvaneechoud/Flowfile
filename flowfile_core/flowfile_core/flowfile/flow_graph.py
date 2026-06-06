@@ -110,7 +110,12 @@ from flowfile_core.kafka.connection_manager import (
     get_kafka_connection_by_name,
 )
 from flowfile_core.kernel import get_kernel_manager
-from flowfile_core.kernel.execution import build_execute_request, forward_kernel_logs, write_inputs_to_parquet
+from flowfile_core.kernel.execution import (
+    build_execute_request,
+    forward_kernel_logs,
+    read_kernel_outputs,
+    write_inputs_to_parquet,
+)
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import (
@@ -1758,6 +1763,10 @@ class FlowGraph:
         output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
         os.makedirs(input_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
+        # Stale outputs from a prior run would mask missing publishes in read_kernel_outputs
+        for stale in os.listdir(output_dir):
+            if stale.endswith(".parquet"):
+                os.remove(os.path.join(output_dir, stale))
 
         node = self.get_node(node_id)
         input_names = self._resolve_input_names(node, len(flow_data_engine))
@@ -1803,16 +1812,9 @@ class FlowGraph:
                 artifact_names=result.artifacts_deleted,
             )
 
-        primary_result: FlowDataEngine | None = None
-        for i, name in enumerate(output_names):
-            output_path = os.path.join(output_dir, f"{name}.parquet")
-            if os.path.exists(output_path):
-                fde = FlowDataEngine(pl.scan_parquet(output_path))
-                handle = f"output-{i}"
-                if node is not None:
-                    node._named_outputs[handle] = fde
-                if i == 0:
-                    primary_result = fde
+        primary_result = read_kernel_outputs(
+            output_dir=output_dir, output_names=output_names, result=result, node=node
+        )
 
         if primary_result is not None:
             return primary_result
