@@ -1,5 +1,5 @@
 import re
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from typing import Any, Literal
 
 import polars as pl
@@ -16,6 +16,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.utils import (
 )
 from flowfile_core.schemas.input_schema import DatabaseSettings, MinimalFieldInfo
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
+from shared.db_reader import read_sql_with_fallback
 
 QueryMode = Literal["table", "query"]
 
@@ -304,11 +305,13 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         table_name: str = None,
         schema_name: str = None,
         fields: list[MinimalFieldInfo] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ):
         BaseSqlSource.__init__(self, query=query, table_name=table_name, schema_name=schema_name, fields=fields)
 
         self.connection_string = connection_string
         self.read_result = None
+        self.cancel_check = cancel_check
 
     def get_initial_data(self) -> list[dict[str, Any]]:
         return []
@@ -348,7 +351,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         if self.query_mode == "table":
             query = f"{self.query} LIMIT {n}"
             try:
-                df = pl.read_database_uri(query, self.connection_string)
+                df = read_sql_with_fallback(query, self.connection_string, logger, cancel_check=self.cancel_check)
                 return (r for r in df.to_dicts())
             except Exception as e:
                 logger.error(f"Error with query: {query}")
@@ -365,7 +368,9 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
 
     def get_pl_df(self) -> pl.DataFrame:
         if self.read_result is None:
-            self.read_result = pl.read_database_uri(self.query, self.connection_string)
+            self.read_result = read_sql_with_fallback(
+                self.query, self.connection_string, logger, cancel_check=self.cancel_check
+            )
         return self.read_result
 
     def get_flow_file_columns(self) -> list[FlowfileColumn]:
@@ -443,7 +448,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
             List of FlowfileColumn objects
         """
         try:
-            df = pl.read_database_uri(query, self.connection_string)
+            df = read_sql_with_fallback(query, self.connection_string, logger, cancel_check=self.cancel_check)
             columns = [FlowfileColumn.create_from_polars_dtype(column_name, pl.String()) for column_name in df.columns]
             return columns
         except Exception as e:
@@ -516,6 +521,8 @@ def _resolve_connection_string(database_settings: DatabaseSettings, user_id: int
         database=database_connection.database,
         username=database_connection.username,
         password=password,
+        ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
+        connect_timeout=10,
     )
 
 

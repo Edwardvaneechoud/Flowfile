@@ -11,6 +11,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     SqlSource,
     UnsafeSQLError,
+    _resolve_connection_string,
     create_sql_source_from_db_settings,
     get_polars_type,
     get_query_columns,
@@ -327,6 +328,51 @@ def test_create_sql_source_from_db_settings_connection_reference():
         sql_source.validate()
     except Exception as e:
         raise AssertionError(f"Validation failed: {e}")
+
+
+def test_resolve_connection_string_ssl_reference():
+    database_connection = FullDatabaseConnection(
+        database_type="postgresql",
+        username="testuser",
+        host="localhost",
+        port=5433,
+        database="testdb",
+        password="testpass",
+        connection_name="ssl_test_connection",
+        ssl_enabled=True,
+    )
+    if get_local_database_connection("ssl_test_connection", 1) is None:
+        with get_db_context() as db:
+            store_database_connection(db, connection=database_connection, user_id=1)
+
+    database_settings = DatabaseSettings(
+        database_connection_name="ssl_test_connection",
+        schema_name="public",
+        table_name="movies",
+        connection_mode="reference",
+    )
+    uri = _resolve_connection_string(database_settings, user_id=1)
+    assert "sslmode=require" in uri
+    assert "connect_timeout=10" in uri
+    assert uri.count("?") == 1
+
+
+def test_resolve_connection_string_inline_no_ssl():
+    ensure_password_is_available()
+    database_connection = DatabaseConnection(
+        database_type="postgresql",
+        username="testuser",
+        password_ref="test_database_pw",
+        host="localhost",
+        port=5433,
+        database="testdb",
+    )
+    database_settings = DatabaseSettings(
+        database_connection=database_connection, schema_name="public", table_name="movies", connection_mode="inline"
+    )
+    uri = _resolve_connection_string(database_settings, user_id=1)
+    assert "sslmode" not in uri
+    assert "connect_timeout=10" in uri
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")

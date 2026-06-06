@@ -1281,7 +1281,7 @@ class FlowNode:
             except Exception:
                 logger.exception("Failed to interrupt kernel execution for kernel '%s'", kernel_id)
         else:
-            logger.warning("No external process to cancel")
+            logger.info("No external process to cancel; signalling in-process cancellation")
         self.node_stats.is_canceled = True
         self._execution_state.is_canceled = True
 
