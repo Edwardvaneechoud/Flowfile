@@ -75,6 +75,19 @@ def test_sqlalchemy_win_marks_uri_connectorx_skipped(calls, monkeypatch):
     assert calls["sa"] == 2
 
 
+def test_sqlalchemy_first_stores_no_plaintext_uri(calls, monkeypatch):
+    def hanging_cx(query, uri):
+        calls["cx"] += 1
+        time.sleep(20)
+        return CX_DF
+
+    monkeypatch.setattr(db_reader, "_read_connectorx", hanging_cx)
+    uri = "postgresql://user:s3cr3t-pw@h/db"
+    read_sql_with_fallback("SELECT 1", uri, logger, hedge_delay=0.2)
+    assert uri not in db_reader._sqlalchemy_first
+    assert all("s3cr3t-pw" not in entry for entry in db_reader._sqlalchemy_first)
+
+
 def test_connectorx_error_falls_back_before_hedge_delay(calls, monkeypatch):
     def failing_cx(query, uri):
         calls["cx"] += 1

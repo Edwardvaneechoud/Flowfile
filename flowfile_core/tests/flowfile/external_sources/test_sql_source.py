@@ -1,6 +1,11 @@
+import threading
+import time
+
 import polars as pl
 import pytest
 from sqlalchemy import create_engine
+
+from shared.db_reader import DatabaseReadCancelledError
 
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -373,6 +378,35 @@ def test_resolve_connection_string_inline_no_ssl():
     uri = _resolve_connection_string(database_settings, user_id=1)
     assert "sslmode" not in uri
     assert "connect_timeout=10" in uri
+
+
+def test_sql_source_get_pl_df_honors_cancel_check(monkeypatch):
+    """A hanging local read aborts promptly when the flow's cancel flag flips.
+
+    Covers the end-to-end wiring (SqlSource -> read_sql_with_fallback -> cancel_check)
+    that backs local-mode cancellation; no live database required.
+    """
+    from shared import db_reader
+
+    def hanging_read(query, uri):
+        time.sleep(20)
+        return pl.DataFrame()
+
+    monkeypatch.setattr(db_reader, "_read_connectorx", hanging_read)
+    monkeypatch.setattr(db_reader, "_read_sqlalchemy", hanging_read)
+
+    canceled = {"v": False}
+    source = SqlSource(
+        connection_string="postgresql://u@h/d",
+        query="SELECT 1",
+        cancel_check=lambda: canceled["v"],
+    )
+    threading.Timer(0.3, lambda: canceled.__setitem__("v", True)).start()
+
+    start = time.monotonic()
+    with pytest.raises(DatabaseReadCancelledError):
+        source.get_pl_df()
+    assert time.monotonic() - start < 5
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")

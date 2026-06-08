@@ -7,7 +7,10 @@ URI-building logic across services.
 
 from __future__ import annotations
 
+import logging
 from urllib.parse import quote_plus
+
+logger = logging.getLogger(__name__)
 
 # Database types speaking the postgres wire protocol, where libpq-style
 # sslmode/connect_timeout query params are valid (pymysql rejects unknown params).
@@ -81,6 +84,12 @@ def construct_sql_uri(
             query_params["sslmode"] = "require"
         if connect_timeout is not None:
             query_params["connect_timeout"] = str(connect_timeout)
+    elif ssl_enabled:
+        logger.warning(
+            "ssl_enabled was requested but database_type %r is not in the postgres family; "
+            "no SSL parameter was applied and the connection may be unencrypted.",
+            database_type,
+        )
     query_params.update(kwargs)
 
     if query_params:

@@ -10,6 +10,7 @@ seconds it races a SQLAlchemy read in parallel, returning the first success.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
@@ -25,7 +26,8 @@ _POLL_INTERVAL_SECONDS = 0.25
 
 # URIs where a hedged SQLAlchemy read won (connectorx hung or lost): skip
 # connectorx for the rest of this process. Worker children exit per task, so this
-# mainly helps the long-lived core process in local execution mode.
+# mainly helps the long-lived core process in local execution mode. Stored as
+# hashes — never the raw URI, which embeds the plaintext password.
 _sqlalchemy_first: set[str] = set()
 _sqlalchemy_first_lock = threading.Lock()
 
@@ -71,9 +73,13 @@ def _read_sqlalchemy(query: str, uri: str) -> pl.DataFrame:
         engine.dispose()
 
 
+def _uri_key(uri: str) -> str:
+    return hashlib.sha256(uri.encode()).hexdigest()
+
+
 def _mark_sqlalchemy_first(uri: str) -> None:
     with _sqlalchemy_first_lock:
-        _sqlalchemy_first.add(uri)
+        _sqlalchemy_first.add(_uri_key(uri))
 
 
 def read_sql_with_fallback(
@@ -94,7 +100,7 @@ def read_sql_with_fallback(
     """
     delay = HEDGE_DELAY_SECONDS if hedge_delay is None else hedge_delay
     with _sqlalchemy_first_lock:
-        use_connectorx = uri not in _sqlalchemy_first
+        use_connectorx = _uri_key(uri) not in _sqlalchemy_first
 
     cx = _Attempt("connectorx", lambda: _read_connectorx(query, uri)).start() if use_connectorx else None
     sa: _Attempt | None = None

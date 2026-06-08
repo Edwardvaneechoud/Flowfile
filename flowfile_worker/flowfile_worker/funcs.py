@@ -186,6 +186,7 @@ def fuzzy_join_task(
         with progress.get_lock():
             progress.value = -1
         flowfile_logger.error(f"Error during fuzzy join operation: {str(e)}")
+        return
     lf = pl.scan_ipc(file_path)
     number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f"Number of records after fuzzy match: {number_of_records}")

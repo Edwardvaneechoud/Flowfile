@@ -9,7 +9,7 @@ from flowfile_worker.external_sources.s3_source.models import (
     CloudStorageWriteSettings,
     WriteSettings,
 )
-from flowfile_worker.funcs import generic_task, write_to_cloud_storage
+from flowfile_worker.funcs import fuzzy_join_task, generic_task, write_to_cloud_storage
 
 logger = getLogger(__name__)
 
@@ -63,4 +63,18 @@ def test_generic_task_error_returns_early(tmp_path):
     generic_task(boom, progress, error_message, queue, missing_file, 1, 1)
     assert progress.value == -1
     assert "kaboom" in error_message.value.decode().rstrip("\x00")
+    assert queue.empty()
+
+
+def test_fuzzy_join_task_error_returns_early(tmp_path):
+    """A failing fuzzy join must set progress=-1 and not fall through to scan a missing IPC file."""
+    progress = mp_context.Value('i', 0)
+    error_message = mp_context.Array('c', 1024)
+    queue = Queue(maxsize=1)
+    missing_file = str(tmp_path / "never_written.arrow")
+
+    # Undeserializable bytes make the task raise before any IPC file is written.
+    fuzzy_join_task(b"not-arrow", b"not-arrow", [], error_message, missing_file, progress, queue, 1, 1)
+    assert progress.value == -1
+    assert error_message.value.decode().rstrip("\x00") != ""
     assert queue.empty()
