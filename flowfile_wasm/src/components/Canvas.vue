@@ -146,6 +146,20 @@
           @update:settings="updateSettings"
         />
       </NodeSettingsWrapper>
+
+      <!-- Sticky Apply footer: runs the node and refreshes its preview, mirroring
+           the main editor's NodeSettingsDrawer. Settings are already applied live,
+           so this re-executes to surface the result. -->
+      <template #footer>
+        <button
+          class="apply-btn"
+          :class="{ applied: justApplied }"
+          :disabled="isApplying"
+          @click="applyNodeSettings"
+        >
+          {{ isApplying ? 'Applying…' : justApplied ? 'Applied ✓' : 'Apply' }}
+        </button>
+      </template>
     </DraggablePanel>
 
     <!-- Data Preview Panel (hidden for explore_data nodes which have their own preview) -->
@@ -227,7 +241,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
+import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent, watch } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
@@ -310,6 +324,11 @@ const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
+
+// Apply-button state for the node settings panel footer.
+const isApplying = ref(false)
+const justApplied = ref(false)
+let appliedTimer: ReturnType<typeof setTimeout> | null = null
 
 const nodeTypes: Record<string, any> = {
   'flow-node': markRaw(FlowNode)
@@ -555,6 +574,36 @@ function updateSettings(settings: NodeSettings) {
     flowStore.updateNodeSettings(selectedNodeId.value, settings)
   }
 }
+
+// Apply: settings already update live in the store, so this re-executes the
+// selected node and refreshes its preview (the main editor's Apply does the
+// equivalent push + run), with a brief "Applied ✓" confirmation.
+async function applyNodeSettings() {
+  const node = selectedNode.value
+  if (!node || isApplying.value) return
+
+  isApplying.value = true
+  try {
+    const result = await flowStore.executeNode(node.id)
+    if (result.success && node.type !== 'explore_data') {
+      await flowStore.fetchNodePreview(node.id, { maxRows: 100 })
+    }
+    justApplied.value = true
+    if (appliedTimer) clearTimeout(appliedTimer)
+    appliedTimer = setTimeout(() => { justApplied.value = false }, 1500)
+  } finally {
+    isApplying.value = false
+  }
+}
+
+// Reset the "Applied" confirmation when switching to a different node.
+watch(selectedNodeId, () => {
+  justApplied.value = false
+  if (appliedTimer) {
+    clearTimeout(appliedTimer)
+    appliedTimer = null
+  }
+})
 
 function getSettingsComponent(type: string) {
   const components: Record<string, any> = {
@@ -880,6 +929,43 @@ onUnmounted(() => {
 .node-name {
   font-size: 13px;
   color: var(--text-primary);
+}
+
+/* Node settings Apply button (mirrors the main editor's primary Apply) */
+.apply-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  height: 28px;
+  padding: 0 14px;
+  background: var(--color-accent);
+  color: #fff;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.apply-btn:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.apply-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.apply-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.apply-btn.applied {
+  background: var(--color-success);
+  border-color: var(--color-success);
 }
 
 /* Data preview styles */

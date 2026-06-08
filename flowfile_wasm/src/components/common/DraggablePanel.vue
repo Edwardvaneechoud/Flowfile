@@ -18,6 +18,11 @@
     <div v-if="!isMinimized" class="panel-content">
       <slot></slot>
     </div>
+    <!-- Optional sticky footer (e.g. node-settings Apply bar), pinned below the
+         scrolling content. Only rendered when a `footer` slot is provided. -->
+    <div v-if="!isMinimized && $slots.footer" class="panel-footer">
+      <slot name="footer"></slot>
+    </div>
     <!-- Resize handles -->
     <div v-if="!isMinimized" class="resize-handle right" @mousedown.stop="startResize('right')"></div>
     <div v-if="!isMinimized" class="resize-handle bottom" @mousedown.stop="startResize('bottom')"></div>
@@ -628,8 +633,19 @@ onUnmounted(() => {
 
 .panel-content {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 12px;
+}
+
+.panel-footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
 }
 
 .resize-handle {

@@ -29,7 +29,7 @@
           <span class="tooltip-text">{{ statusTooltip }}</span>
         </div>
         <button :class="['node-button', { selected: isSelected }]" @click="onClick">
-          <img :src="iconUrl" :alt="data.label" width="50" height="50" />
+          <img :src="iconUrl" :alt="data.label" width="40" height="40" />
         </button>
       </div>
 
@@ -427,8 +427,8 @@ onUnmounted(() => {
 .tooltip-text {
   visibility: hidden;
   width: 120px;
-  background-color: #333;
-  color: #fff;
+  background-color: var(--color-gray-800);
+  color: var(--color-text-inverse);
   text-align: center;
   border-radius: 6px;
   padding: 5px 0;
@@ -452,18 +452,17 @@ onUnmounted(() => {
   border-radius: 10px;
   border-width: 0px;
   cursor: pointer;
-  padding: 4px;
-  transition: all 0.2s;
+  transition: all var(--transition-normal);
 }
 
 .node-button:hover {
-  background-color: #c8c8c8;
+  background-color: var(--color-background-hover);
   transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .node-button.selected {
-  border: 2px solid var(--accent-color);
+  border: 2px solid var(--color-accent);
 }
 
 .node-button img {
