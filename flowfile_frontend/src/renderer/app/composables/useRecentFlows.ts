@@ -7,6 +7,9 @@ export interface RecentFlow {
   // Dotted catalog location ("General.default.my_flow") for flows opened or
   // created via the catalog; shown on the welcome screen instead of the path.
   catalogRef?: string;
+  // Catalog registration id (when the flow is registered) — enables the
+  // "View in catalog" context-menu action. Resolved by refreshCatalogRefs.
+  catalogId?: number;
 }
 
 const STORAGE_KEY = "flowfile.recentFlows";
@@ -34,7 +37,9 @@ export function parseStored(raw: string | null): RecentFlow[] {
         typeof (f as RecentFlow).name === "string" &&
         typeof (f as RecentFlow).lastOpened === "number" &&
         ((f as RecentFlow).catalogRef === undefined ||
-          typeof (f as RecentFlow).catalogRef === "string"),
+          typeof (f as RecentFlow).catalogRef === "string") &&
+        ((f as RecentFlow).catalogId === undefined ||
+          typeof (f as RecentFlow).catalogId === "number"),
     );
   } catch {
     return [];
@@ -73,13 +78,14 @@ export function useRecentFlows() {
   function recordFlow(entry: { path: string; name?: string; catalogRef?: string }): void {
     if (!entry.path) return;
     // Re-records without explicit metadata (e.g. reopening from the recents
-    // list) keep the name/catalogRef captured on the original open.
+    // list) keep the name/catalogRef/catalogId captured on the original open.
     const existing = recentFlows.value.find((f) => f.path === entry.path);
     recentFlows.value = upsertRecent(recentFlows.value, {
       path: entry.path,
       name: entry.name || existing?.name || basenameNoExt(entry.path),
       lastOpened: Date.now(),
       catalogRef: entry.catalogRef ?? existing?.catalogRef,
+      catalogId: existing?.catalogId,
     });
     persist(recentFlows.value);
   }
@@ -109,15 +115,20 @@ export function useRecentFlows() {
         CatalogApi.getFlows(),
         CatalogApi.getNamespaceTree(),
       ]);
-      const refByPath = new Map<string, string>();
+      // id resolves whenever the flow is registered; ref only when it also
+      // sits under a namespace.
+      const byPath = new Map<string, { id: number; ref?: string }>();
       for (const reg of flows) {
-        if (reg.namespace_id === null) continue;
-        const nsPath = findNamespacePath(tree, reg.namespace_id);
-        if (nsPath.length) refByPath.set(reg.flow_path, `${nsPath.join(".")}.${reg.name}`);
+        const nsPath = reg.namespace_id !== null ? findNamespacePath(tree, reg.namespace_id) : [];
+        byPath.set(reg.flow_path, {
+          id: reg.id,
+          ref: nsPath.length ? `${nsPath.join(".")}.${reg.name}` : undefined,
+        });
       }
       recentFlows.value = recentFlows.value.map((f) => {
-        const ref = refByPath.get(f.path);
-        return ref === f.catalogRef ? f : { ...f, catalogRef: ref };
+        const match = byPath.get(f.path);
+        if (match?.ref === f.catalogRef && match?.id === f.catalogId) return f;
+        return { ...f, catalogRef: match?.ref, catalogId: match?.id };
       });
       persist(recentFlows.value);
     } catch {
@@ -125,5 +136,23 @@ export function useRecentFlows() {
     }
   }
 
-  return { recentFlows, recordFlow, removeFlow, loadRecentFlows, refreshCatalogRefs };
+  // Record from a flow-settings object (the shape getFlowSettings returns and
+  // HeaderButtons' loadFlowSettings populates); no-op when there's no path.
+  // Centralizes the path-guard + entry shape so the create-flow recorders in
+  // HomeView and HeaderButtons can't drift apart.
+  function recordFlowFromSettings(
+    settings: { path?: string | null; name?: string } | null | undefined,
+    catalogRef?: string,
+  ): void {
+    if (settings?.path) recordFlow({ path: settings.path, name: settings.name, catalogRef });
+  }
+
+  return {
+    recentFlows,
+    recordFlow,
+    recordFlowFromSettings,
+    removeFlow,
+    loadRecentFlows,
+    refreshCatalogRefs,
+  };
 }

@@ -24,13 +24,14 @@ import { createFlow, getFlowSettings } from "../../components/nodes/nodeLogic";
 import { useNodeStore } from "../../stores/column-store";
 import { useRecentFlows } from "../../composables/useRecentFlows";
 import { useFlowOpener } from "../../composables/useFlowOpener";
+import { isDesktop } from "../../../lib/desktop";
 import { useTutorialStore } from "../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../components/tutorial/tutorials";
 
 const router = useRouter();
 const nodeStore = useNodeStore();
 const tutorialStore = useTutorialStore();
-const { recentFlows, recordFlow, refreshCatalogRefs } = useRecentFlows();
+const { recentFlows, recordFlowFromSettings, refreshCatalogRefs } = useRecentFlows();
 const { openFlow } = useFlowOpener();
 
 const openDialogVisible = ref(false);
@@ -53,7 +54,9 @@ const handleKeyDown = (event: KeyboardEvent) => {
   if (key === "o") {
     event.preventDefault();
     openDialogVisible.value = true;
-  } else if (key === "n") {
+  } else if (key === "n" && isDesktop) {
+    // Browsers reserve Cmd/Ctrl+N (new window) and don't deliver a preventable
+    // keydown, so the hint and this branch are desktop-only (matches the tile).
     event.preventDefault();
     handleQuickCreate();
   }
@@ -73,10 +76,7 @@ const browseTemplates = () => router.push({ name: "templates" });
 
 const recordCreatedFlow = async (flowId: number, catalogRef?: string) => {
   try {
-    const settings = await getFlowSettings(flowId);
-    if (settings?.path) {
-      recordFlow({ path: settings.path, name: settings.name, catalogRef });
-    }
+    recordFlowFromSettings(await getFlowSettings(flowId), catalogRef);
   } catch (error) {
     console.warn("Failed to record created flow as recent:", error);
   }

@@ -306,7 +306,7 @@ import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
-const { recordFlow } = useRecentFlows();
+const { recordFlowFromSettings } = useRecentFlows();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -367,9 +367,7 @@ const handleCreateComplete = async (flowId: number, catalogRef?: string) => {
 // flow_id watcher's concurrent call, so this costs no extra request.
 const recordCurrentFlowAsRecent = async (catalogRef?: string) => {
   await loadFlowSettings();
-  if (flowSettings.value?.path) {
-    recordFlow({ path: flowSettings.value.path, name: flowSettings.value.name, catalogRef });
-  }
+  recordFlowFromSettings(flowSettings.value, catalogRef);
 };
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);

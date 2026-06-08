@@ -136,6 +136,11 @@ function openDocs() {
   color: var(--color-accent);
 }
 
+.about-link:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
 .about-license {
   margin: var(--spacing-3) 0 0;
   font-size: var(--font-size-xs);

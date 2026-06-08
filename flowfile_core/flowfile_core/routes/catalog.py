@@ -317,9 +317,10 @@ def update_flow(
 @handle_catalog_exceptions()
 def delete_flow(
     flow_id: int,
+    delete_file: bool = False,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    service.delete_flow(registration_id=flow_id)
+    service.delete_flow(registration_id=flow_id, delete_file=delete_file)
 
 
 @router.get(
@@ -638,10 +639,11 @@ def update_table(
 @handle_catalog_exceptions()
 def delete_table(
     table_id: int,
+    delete_file: bool = False,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    service.delete_table(table_id)
+    service.delete_table(table_id, delete_file=delete_file)
 
 
 @router.get("/tables/{table_id}/preview", response_model=CatalogTablePreview)

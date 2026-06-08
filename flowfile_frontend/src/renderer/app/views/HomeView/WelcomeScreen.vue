@@ -58,21 +58,38 @@
         <h2 class="welcome-section-title">Recent flows</h2>
         <ul v-if="recentFlows.length" class="recent-list">
           <li v-for="flow in recentFlows" :key="flow.path">
-            <button class="recent-row" :title="flow.path" @click="emit('open-recent', flow.path)">
-              <i
-                v-if="flow.catalogRef"
-                class="fa-solid fa-folder-tree recent-icon recent-icon--catalog"
-              ></i>
-              <span v-else class="material-icons recent-icon">description</span>
-              <span class="recent-name">{{ flow.name }}</span>
-              <span class="recent-loc">
-                <span v-if="flow.catalogRef" class="recent-catalog-ref">
-                  {{ flow.catalogRef }}
+            <el-dropdown class="recent-dropdown" trigger="contextmenu" placement="bottom-start">
+              <button class="recent-row" :title="flow.path" @click="emit('open-recent', flow.path)">
+                <i
+                  v-if="flow.catalogRef"
+                  class="fa-solid fa-folder-tree recent-icon recent-icon--catalog"
+                ></i>
+                <span v-else class="material-icons recent-icon">description</span>
+                <span class="recent-name">{{ flow.name }}</span>
+                <span class="recent-loc">
+                  <span v-if="flow.catalogRef" class="recent-catalog-ref">
+                    {{ flow.catalogRef }}
+                  </span>
+                  <span v-else class="recent-path">{{ flow.path }}</span>
                 </span>
-                <span v-else class="recent-path">{{ flow.path }}</span>
-              </span>
-              <span class="recent-time">{{ relativeTime(flow.lastOpened) }}</span>
-            </button>
+                <span class="recent-time">{{ relativeTime(flow.lastOpened) }}</span>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="emit('open-recent', flow.path)">
+                    <span class="material-icons recent-menu-icon">open_in_new</span>
+                    Open flow
+                  </el-dropdown-item>
+                  <el-dropdown-item
+                    :disabled="flow.catalogId === undefined"
+                    @click="viewInCatalog(flow)"
+                  >
+                    <span class="material-icons recent-menu-icon">folder_open</span>
+                    View in catalog
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </li>
         </ul>
         <p v-else class="recent-empty">Flows you create or open will show up here.</p>
@@ -194,6 +211,11 @@ const goSchedules = () => router.push({ name: "catalog", query: { tab: "schedule
 const goSecrets = () => router.push({ name: "connections", query: { tab: "secrets" } });
 const goDocs = () => router.push({ name: "documentation" });
 
+const viewInCatalog = (flow: RecentFlow) => {
+  if (flow.catalogId === undefined) return;
+  router.push({ name: "catalog", query: { tab: "catalog", flowId: String(flow.catalogId) } });
+};
+
 const relativeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 const RELATIVE_STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["year", 31536000000],
@@ -252,12 +274,6 @@ function relativeTime(timestamp: number): string {
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
   letter-spacing: -0.01em;
-}
-
-.welcome-tagline {
-  margin: 0;
-  font-size: var(--font-size-base);
-  color: var(--color-text-secondary);
 }
 
 /* Section labels */
@@ -346,7 +362,7 @@ function relativeTime(timestamp: number): string {
 
 .welcome-tile--primary .tile-icon {
   background-color: var(--color-accent);
-  color: #ffffff;
+  color: var(--color-text-inverse);
 }
 
 .tile-icon .material-icons {
@@ -414,6 +430,18 @@ function relativeTime(timestamp: number): string {
   gap: var(--spacing-2);
 }
 
+/* el-dropdown defaults to inline-block; keep the row full-width. */
+.recent-dropdown {
+  display: block;
+  width: 100%;
+}
+
+.recent-menu-icon {
+  font-size: 16px;
+  margin-right: var(--spacing-2);
+  vertical-align: middle;
+}
+
 .recent-row {
   display: flex;
   align-items: center;
@@ -457,6 +485,10 @@ function relativeTime(timestamp: number): string {
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
   flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .recent-loc {

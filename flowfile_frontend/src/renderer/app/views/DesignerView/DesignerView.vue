@@ -43,17 +43,13 @@
           Create a new flow, open an existing one, or head back to Home.
         </p>
         <div class="empty-state-actions">
-          <button class="es-btn es-btn--primary" @click="createFlowDialog">
+          <button class="es-btn es-btn--primary" @click="openQuickCreateDialog">
             <span class="material-icons">add</span>
             Create new flow
           </button>
           <button class="es-btn" @click="openFlowDialog">
             <span class="material-icons">folder_open</span>
             Open existing flow
-          </button>
-          <button class="es-btn" @click="openQuickCreateDialog">
-            <span class="material-icons">bolt</span>
-            Quick create
           </button>
           <button class="es-btn" @click="browseTemplates">
             <span class="material-icons">layers</span>
@@ -239,10 +235,6 @@ const refreshFlow = async () => {
   } finally {
     isSwitching.value = false;
   }
-};
-
-const createFlowDialog = () => {
-  headerButtons.value?.openCreateDialog();
 };
 
 const openFlowDialog = () => {
@@ -571,13 +563,13 @@ onMounted(async () => {
 .es-btn--primary {
   background-color: var(--color-accent);
   border-color: var(--color-accent);
-  color: #ffffff;
+  color: var(--color-text-inverse);
 }
 
 .es-btn--primary:hover {
   background-color: var(--color-accent-hover);
   border-color: var(--color-accent-hover);
-  color: #ffffff;
+  color: var(--color-text-inverse);
 }
 
 .es-btn--ghost {
