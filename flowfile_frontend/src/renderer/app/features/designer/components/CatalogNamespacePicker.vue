@@ -25,7 +25,7 @@
 import { ref, onMounted, watch } from "vue";
 import NamespaceTreeItem from "./NamespaceTreeItem.vue";
 import { CatalogApi } from "../../../api";
-import { filterSelectableNamespaces } from "../../../types";
+import { filterSelectableNamespaces, findNamespacePath } from "../../../types";
 import type { NamespaceTree } from "../../../types";
 
 const props = defineProps<{
@@ -99,11 +99,19 @@ const handleSelect = (namespaceId: number) => {
   emit("select", namespaceId);
 };
 
+// Dotted ancestry label for a namespace (e.g. "General.default"), used to
+// build catalog references like "General.default.my_flow" for the recents list.
+const getNamespacePath = (id: number | null): string | null => {
+  if (id === null) return null;
+  const path = findNamespacePath(tree.value, id);
+  return path.length ? path.join(".") : null;
+};
+
 onMounted(() => {
   loadTree();
 });
 
-defineExpose({ reload: loadTree });
+defineExpose({ reload: loadTree, getNamespacePath });
 </script>
 
 <style scoped>

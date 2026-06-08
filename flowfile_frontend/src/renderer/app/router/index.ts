@@ -3,6 +3,7 @@ import AppLayout from "../layouts/AppLayout.vue";
 import authService from "../services/auth.service";
 import setupService from "../services/setup.service";
 import { useAuthStore } from "../stores/auth-store";
+import { FlowApi } from "../api";
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -27,9 +28,26 @@ const routes: Array<RouteRecordRaw> = [
     meta: { requiresAuth: true },
     children: [
       {
+        // App entry: resume into the designer when flows are already open
+        // (matches the pre-Home startup behavior); land on Home only when
+        // nothing is open. The component is an unreachable fallback — the
+        // guard always redirects.
         path: "",
         name: "main",
-        redirect: { name: "designer" },
+        component: () => import("../views/HomeView/HomeView.vue"),
+        beforeEnter: async (_to, _from, next) => {
+          try {
+            const flows = await FlowApi.getAllFlows();
+            next({ name: flows.length > 0 ? "designer" : "home" });
+          } catch {
+            next({ name: "home" });
+          }
+        },
+      },
+      {
+        path: "home",
+        name: "home",
+        component: () => import("../views/HomeView/HomeView.vue"),
       },
       {
         path: "designer",
@@ -169,7 +187,7 @@ router.beforeEach(async (to, _from, next) => {
     }
   } else {
     if (isSetupPage) {
-      next({ name: "designer" });
+      next({ name: "home" });
       return;
     }
   }
@@ -179,13 +197,13 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   if (hideInElectron && authService.isInDesktopMode()) {
-    next({ name: "designer" });
+    next({ name: "home" });
     return;
   }
 
   const dockerOnly = to.matched.some((record) => record.meta.dockerOnly);
   if (dockerOnly && authService.isInDesktopMode()) {
-    next({ name: "designer" });
+    next({ name: "home" });
     return;
   }
 
@@ -201,7 +219,7 @@ router.beforeEach(async (to, _from, next) => {
     }
   } else {
     if (to.name === "login" && (authService.isInDesktopMode() || authService.isAuthenticated())) {
-      next({ name: "designer" });
+      next({ name: "home" });
     } else {
       next();
     }
