@@ -112,6 +112,7 @@ from flowfile_core.kafka.connection_manager import (
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import (
     build_execute_request,
+    clear_stale_parquets,
     forward_kernel_logs,
     read_kernel_outputs,
     write_inputs_to_parquet,
@@ -1763,10 +1764,8 @@ class FlowGraph:
         output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
         os.makedirs(input_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
-        # Stale outputs from a prior run would mask missing publishes in read_kernel_outputs
-        for stale in os.listdir(output_dir):
-            if stale.endswith(".parquet"):
-                os.remove(os.path.join(output_dir, stale))
+        clear_stale_parquets(input_dir)
+        clear_stale_parquets(output_dir)
 
         node = self.get_node(node_id)
         input_names = self._resolve_input_names(node, len(flow_data_engine))
@@ -1818,6 +1817,11 @@ class FlowGraph:
 
         if primary_result is not None:
             return primary_result
+        if not flow_data_engine:
+            node_logger.warning(
+                "Script published no outputs — call flowfile_ctx.publish_output(df, name=...) "
+                "to return data; resulting in an empty table."
+            )
         return flow_data_engine[0] if flow_data_engine else FlowDataEngine(pl.LazyFrame())
 
     def _make_kernel_user_defined_func(

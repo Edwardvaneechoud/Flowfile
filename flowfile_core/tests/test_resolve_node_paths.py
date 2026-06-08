@@ -10,7 +10,12 @@ import pytest
 
 from flowfile_core.configs.utils import MutableBool
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.kernel.execution import _write_parquet_locally, read_kernel_outputs, write_inputs_to_parquet
+from flowfile_core.kernel.execution import (
+    _write_parquet_locally,
+    clear_stale_parquets,
+    read_kernel_outputs,
+    write_inputs_to_parquet,
+)
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult
 from flowfile_core.schemas import input_schema
@@ -670,3 +675,26 @@ class TestOutputNamesValidator:
     def test_user_defined_node_rejects_unsafe(self):
         with pytest.raises(Exception, match="lowercase letters, digits, and underscores"):
             input_schema.UserDefinedNode(flow_id=1, node_id=1, settings={}, output_names=["foo/bar"])
+
+
+class TestClearStaleParquets:
+    """Unit tests for kernel.execution.clear_stale_parquets."""
+
+    def test_removes_stale_parquets(self, tmp_path: Path):
+        (tmp_path / "old_input_0.parquet").write_bytes(b"stale")
+        (tmp_path / "main.parquet").write_bytes(b"stale")
+
+        clear_stale_parquets(str(tmp_path))
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_leaves_non_parquet_files(self, tmp_path: Path):
+        (tmp_path / "main.parquet").write_bytes(b"stale")
+        (tmp_path / "notes.txt").write_text("keep me")
+
+        clear_stale_parquets(str(tmp_path))
+
+        assert [p.name for p in tmp_path.iterdir()] == ["notes.txt"]
+
+    def test_missing_dir_is_noop(self, tmp_path: Path):
+        clear_stale_parquets(str(tmp_path / "does_not_exist"))

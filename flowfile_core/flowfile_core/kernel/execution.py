@@ -27,6 +27,21 @@ def _assert_safe_name(name: str) -> None:
         raise ValueError(f"Unsafe input/output name rejected: {name!r}")
 
 
+def clear_stale_parquets(dir_path: str) -> None:
+    """Remove leftover ``*.parquet`` files from a prior run in *dir_path*.
+
+    Stale outputs would mask missing publishes in read_kernel_outputs; stale
+    inputs would be picked up as ghost inputs by resolve_node_paths (the
+    interactive /execute and /execute_cell routes scan the whole input dir).
+    No-op when the directory does not exist.
+    """
+    if not os.path.isdir(dir_path):
+        return
+    for stale in os.listdir(dir_path):
+        if stale.endswith(".parquet"):
+            os.remove(os.path.join(dir_path, stale))
+
+
 def _write_parquet_locally(lf: pl.LazyFrame | pl.DataFrame, output_path: str) -> None:
     """Collect a LazyFrame and write it to a parquet file locally.
 
