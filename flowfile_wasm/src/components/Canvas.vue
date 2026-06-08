@@ -181,6 +181,19 @@
 
         <!-- Data grid -->
         <template v-else-if="selectedNodeResult?.success && selectedNodeResult?.data">
+          <!-- Multi-output selector (only for nodes with >1 output; dormant today) -->
+          <div v-if="hasMultipleOutputs" class="output-selector">
+            <span class="output-selector__label">Output:</span>
+            <button
+              v-for="output in selectedNodeOutputs"
+              :key="output.id"
+              class="output-selector__button"
+              :class="{ active: output.id === selectedOutputHandle }"
+              @click="selectOutput(output.id)"
+            >
+              <span class="output-selector__letter">{{ output.label }}</span>
+            </button>
+          </div>
           <div class="preview-header">
             <span class="row-count">{{ selectedNodeResult.data.total_rows }} rows</span>
             <span class="col-count">{{ selectedNodeResult.data.columns?.length }} columns</span>
@@ -211,9 +224,16 @@
           {{ selectedNodeResult.error }}
         </div>
 
-        <!-- Empty state -->
+        <!-- Empty state with fetch-to-run button -->
         <div v-else class="no-data">
-          No data available. Run the flow to see results.
+          <p class="no-data-text">This node hasn't produced data yet. Fetch it to preview the output.</p>
+          <button
+            class="fetch-data-button"
+            :disabled="isFetching || isExecuting || !pyodideReady"
+            @click="handleFetchData"
+          >
+            {{ isFetching ? 'Fetching…' : 'Fetch data' }}
+          </button>
         </div>
       </div>
     </DraggablePanel>
@@ -247,6 +267,7 @@ import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/c
 import { MiniMap } from '@vue-flow/minimap'
 import { Controls } from '@vue-flow/controls'
 import { useFlowStore } from '../stores/flow-store'
+import { usePyodideStore } from '../stores/pyodide-store'
 import { storeToRefs } from 'pinia'
 import type { NodeSettings, FlowEdge, ColumnSchema, NodeResult } from '../types'
 import type { ToolbarConfig, NodeCategoryConfig } from '../lib/types'
@@ -312,6 +333,7 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
 
 const flowStore = useFlowStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
+const { isReady: pyodideReady } = storeToRefs(usePyodideStore())
 
 const { hasSeenDemo } = useDemo()
 
@@ -329,6 +351,10 @@ const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
 const isApplying = ref(false)
 const justApplied = ref(false)
 let appliedTimer: ReturnType<typeof setTimeout> | null = null
+
+// Data-preview state: fetch-to-run + (dormant) multi-output selector.
+const isFetching = ref(false)
+const selectedOutputHandle = ref('output-0')
 
 const nodeTypes: Record<string, any> = {
   'flow-node': markRaw(FlowNode)
@@ -596,9 +622,10 @@ async function applyNodeSettings() {
   }
 }
 
-// Reset the "Applied" confirmation when switching to a different node.
+// Reset the "Applied" confirmation and preview output selection when switching nodes.
 watch(selectedNodeId, () => {
   justApplied.value = false
+  selectedOutputHandle.value = 'output-0'
   if (appliedTimer) {
     clearTimeout(appliedTimer)
     appliedTimer = null
@@ -632,6 +659,45 @@ const isPreviewLoading = computed(() => {
   if (selectedNodeId.value === null) return false
   return flowStore.isPreviewLoading(selectedNodeId.value)
 })
+
+// Fetch-to-run: execute the selected node, then materialize its preview. No
+// polling needed (everything runs in-browser), unlike the main editor.
+async function handleFetchData() {
+  if (selectedNodeId.value === null || isFetching.value) return
+  const nodeId = selectedNodeId.value
+  isFetching.value = true
+  try {
+    const result = await flowStore.executeNode(nodeId)
+    if (result.success) {
+      const node = flowNodes.value.get(nodeId)
+      const maxRows = node?.type === 'explore_data' ? 1000 : 100
+      await flowStore.fetchNodePreview(nodeId, { maxRows })
+    }
+    emit('execution-complete', nodeResults.value)
+  } finally {
+    isFetching.value = false
+  }
+}
+
+// Multi-output selector (parity with the main editor). NOTE: dormant for now —
+// no built-in WASM node has >1 output and the Pyodide engine keeps one frame per
+// node_id, so this renders only if outputs>1 and selecting a handle does not yet
+// re-query data. Real per-output preview needs engine changes (per-(node,handle)
+// frames + fetchNodePreview(handle) + per-handle NodeResult).
+const selectedNodeOutputs = computed(() => {
+  if (!selectedNode.value) return []
+  const def = findNodeDef(selectedNode.value.type)
+  const count = def?.outputs ?? 1
+  if (count <= 1) return []
+  return Array.from({ length: count }, (_, i) => ({
+    id: `output-${i}`,
+    label: String.fromCharCode(65 + i)
+  }))
+})
+const hasMultipleOutputs = computed(() => selectedNodeOutputs.value.length > 1)
+function selectOutput(handle: string) {
+  selectedOutputHandle.value = handle
+}
 
 const columnDefs = computed<ColDef[]>(() => {
   const result = selectedNodeResult.value
@@ -1030,10 +1096,103 @@ onUnmounted(() => {
 }
 
 .no-data {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
   color: var(--text-secondary);
   text-align: center;
   padding: 40px 20px;
   font-size: 13px;
+}
+
+.no-data-text {
+  margin: 0;
+  max-width: 280px;
+}
+
+/* Fetch-to-run CTA (accent/primary, consistent with the settings Apply button) */
+.fetch-data-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 110px;
+  height: 32px;
+  padding: 0 18px;
+  background: var(--accent-color);
+  color: #fff;
+  border: 1px solid var(--accent-color);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.fetch-data-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.fetch-data-button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.fetch-data-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Multi-output (A/B/C) selector — parity-shaped, dormant for current nodes */
+.output-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  flex-shrink: 0;
+}
+
+.output-selector__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.output-selector__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.output-selector__button:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-color);
+}
+
+.output-selector__button.active {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #fff;
+}
+
+.output-selector__letter {
+  line-height: 1;
 }
 
 /* AG Grid Theme Overrides - ensure proper colors in both themes */
