@@ -16,6 +16,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
+from urllib.parse import urlsplit, urlunsplit
 
 import polars as pl
 
@@ -24,10 +25,10 @@ from shared.sql_utils import get_sqlalchemy_uri
 HEDGE_DELAY_SECONDS: float = float(os.environ.get("FLOWFILE_DB_READ_HEDGE_DELAY", "8"))
 _POLL_INTERVAL_SECONDS = 0.25
 
-# URIs where a hedged SQLAlchemy read won (connectorx hung or lost): skip
-# connectorx for the rest of this process. Worker children exit per task, so this
-# mainly helps the long-lived core process in local execution mode. Stored as
-# hashes — never the raw URI, which embeds the plaintext password.
+# Connection endpoints where a hedged SQLAlchemy read won (connectorx hung or
+# lost): skip connectorx for the rest of this process. Worker children exit per
+# task, so this mainly helps the long-lived core process in local execution mode.
+# Keyed by a hash of the endpoint only — the password is never part of the input.
 _sqlalchemy_first: set[str] = set()
 _sqlalchemy_first_lock = threading.Lock()
 
@@ -74,7 +75,17 @@ def _read_sqlalchemy(query: str, uri: str) -> pl.DataFrame:
 
 
 def _uri_key(uri: str) -> str:
-    return hashlib.sha256(uri.encode()).hexdigest()
+    # Key on the connection endpoint, never the password: connectorx-hostility is a
+    # property of the server/pooler, not the credentials, so the secret adds nothing
+    # to the identity and is kept out of this (fast, in-memory) hash input.
+    parts = urlsplit(uri)
+    if parts.password:
+        host = parts.hostname or ""
+        if parts.port is not None:
+            host = f"{host}:{parts.port}"
+        netloc = f"{parts.username}@{host}" if parts.username else host
+        parts = parts._replace(netloc=netloc)
+    return hashlib.sha256(urlunsplit(parts).encode(), usedforsecurity=False).hexdigest()
 
 
 def _mark_sqlalchemy_first(uri: str) -> None:
