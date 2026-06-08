@@ -6,8 +6,9 @@
         <h1 class="welcome-title">Flowfile</h1>
       </header>
 
-      <section aria-label="Start">
-        <h2 class="welcome-section-title">Start</h2>
+      <section aria-label="Start building">
+        <h2 class="welcome-section-title welcome-section-title--tight">Start building</h2>
+        <p class="welcome-section-sub">Three ways to start a visual data flow</p>
         <div class="welcome-primary">
           <article class="welcome-tile welcome-tile--primary">
             <button class="tile-main" @click="emit('create')">
@@ -284,6 +285,16 @@ function relativeTime(timestamp: number): string {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--color-text-tertiary);
+}
+
+.welcome-section-title--tight {
+  margin-bottom: var(--spacing-1);
+}
+
+.welcome-section-sub {
+  margin: 0 0 var(--spacing-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 /* Primary action tiles. Explicit column counts (not auto-fit) so no row is
