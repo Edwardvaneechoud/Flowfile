@@ -18,6 +18,7 @@ import type {
   NodeExternalDataSettings,
   NodeReadFromCatalogSettings,
   NodeExternalOutputSettings,
+  NodeWriteToCatalogSettings,
   NodeFilterSettings,
   NodeSelectSettings,
   NodeGroupBySettings
@@ -1853,6 +1854,52 @@ result
           break
         }
 
+        case 'write_to_catalog': {
+          // Write the input result to the persistent Catalog as a reusable table.
+          // Materialize to CSV via execute_output (same as external_output), then
+          // persist the CSV through addCatalogDataset (IndexedDB-backed).
+          const inputId = node.inputIds[0]
+          if (!inputId) {
+            return { success: false, error: 'No input connected' }
+          }
+          const settings = node.settings as NodeWriteToCatalogSettings
+          const tableName = (settings.dataset_name || '').trim()
+          if (!tableName) {
+            return { success: false, error: 'No catalog table name set. Open the node settings and name the table.' }
+          }
+          const outputSettings = {
+            output_settings: {
+              name: `${tableName}.csv`,
+              directory: '.',
+              file_type: 'csv',
+              write_mode: 'overwrite',
+              table_settings: {
+                file_type: 'csv',
+                delimiter: ',',
+                encoding: 'utf-8'
+              },
+              polars_method: 'sink_csv'
+            }
+          }
+          const writeResult = await runPythonWithResult(`
+import json
+result = execute_output(${nodeId}, ${inputId}, json.loads(${toPythonJson(outputSettings)}))
+result
+`)
+          if (writeResult?.success && writeResult?.download) {
+            // Persist + make it appear in the Catalog (reactive, survives flow switches).
+            await addCatalogDataset(tableName, writeResult.download.content)
+            result = {
+              success: true,
+              schema: writeResult.schema,
+              data: writeResult.data
+            }
+          } else {
+            result = writeResult
+          }
+          break
+        }
+
         default:
           return { success: false, error: `Unknown node type: ${node.type}` }
       }
@@ -2158,6 +2205,12 @@ result
           ...base,
           output_name: 'result'
         } as NodeExternalOutputSettings
+
+      case 'write_to_catalog':
+        return {
+          ...base,
+          dataset_name: ''
+        } as NodeWriteToCatalogSettings
 
       default:
         return base as NodeSettings

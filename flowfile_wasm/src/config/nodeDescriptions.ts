@@ -71,6 +71,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   external_output: {
     title: 'External Output',
     intro: 'Send the result data back to the host application via the output callback. Use this to return processed data from the embedded editor.'
+  },
+  write_to_catalog: {
+    title: 'Write to Catalog',
+    intro: 'Save the flow result as a reusable table in the Catalog. Name the table, then run the flow — it can be read back with a Read from Catalog node and persists across flows.'
   }
 }
 

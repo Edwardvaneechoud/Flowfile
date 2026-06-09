@@ -130,7 +130,8 @@ const iconMap: Record<string, string> = {
   pivot: 'pivot.png',
   unpivot: 'unpivot.png',
   output: 'output.png',
-  external_output: 'external_output.svg'
+  external_output: 'external_output.svg',
+  write_to_catalog: 'database_writer.svg'
 }
 
 interface NodeData {

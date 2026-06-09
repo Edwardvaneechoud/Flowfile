@@ -344,11 +344,17 @@ export interface NodeExternalOutputSettings extends NodeSingleInput {
   output_name: string
 }
 
+export interface NodeWriteToCatalogSettings extends NodeSingleInput {
+  /** Name of the catalog table to write the result to (created/overwritten on run) */
+  dataset_name: string
+}
+
 // Union type for all node settings
 export type NodeSettings =
   | NodeReadSettings
   | NodeManualInputSettings
   | NodeExternalDataSettings
+  | NodeReadFromCatalogSettings
   | NodeFilterSettings
   | NodeSelectSettings
   | NodeSortSettings
@@ -362,6 +368,7 @@ export type NodeSettings =
   | NodeUnpivotSettings
   | NodeOutputSettings
   | NodeExternalOutputSettings
+  | NodeWriteToCatalogSettings
 
 // FLOWFILE DATA STRUCTURE (for save/load - matches flowfile_core/schemas/schemas.py)
 
@@ -527,6 +534,7 @@ export const NODE_TYPES = {
   explore_data: 'explore_data',  // Matches flowfile_core's 'explore_data' type
   output: 'output',
   external_output: 'external_output',
+  write_to_catalog: 'write_to_catalog',
 } as const
 
 export type NodeType = typeof NODE_TYPES[keyof typeof NODE_TYPES]

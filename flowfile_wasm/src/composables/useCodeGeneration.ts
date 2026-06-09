@@ -19,6 +19,7 @@ import type {
   NodeManualInputSettings,
   NodeExternalDataSettings,
   NodeOutputSettings,
+  NodeWriteToCatalogSettings,
   PolarsCodeSettings,
   FilterOperator,
   AggType
@@ -213,6 +214,9 @@ class FlowToPolarsConverter {
       case 'external_output':
         this.handleExternalOutput(varName, inputVars)
         break
+      case 'write_to_catalog':
+        this.handleWriteToCatalog(node.settings as NodeWriteToCatalogSettings, varName, inputVars)
+        break
       default:
         this.unsupportedNodes.push({
           id: node.id,
@@ -314,6 +318,17 @@ class FlowToPolarsConverter {
     const inputDf = inputVars.main || 'df'
     this.addComment(`# External output — collect result for downstream use`)
     this.addCode(`${varName} = ${inputDf}.collect()`)
+    this.addCode('')
+  }
+
+  private handleWriteToCatalog(settings: NodeWriteToCatalogSettings, varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    const name = (settings.dataset_name || '').trim() || 'catalog_table'
+    // The browser Catalog has no standalone equivalent; the closest is writing
+    // the table to a CSV file named after it.
+    this.addComment(`# Write to Catalog table "${name}" (browser catalog → CSV file in standalone code)`)
+    this.addCode(`${inputDf}.sink_csv("${name}.csv", separator=",")`)
+    this.addCode(`${varName} = ${inputDf}  # Reference for potential downstream use`)
     this.addCode('')
   }
 
