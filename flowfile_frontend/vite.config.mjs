@@ -1,4 +1,5 @@
 import Path from 'path';
+import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import vuePlugin from '@vitejs/plugin-vue';
 import { defineConfig } from 'vite';
@@ -13,9 +14,16 @@ const __dirname = Path.dirname(fileURLToPath(import.meta.url));
 // requests stay same-origin (mirrors the nginx setup in Docker / web mode).
 const CORE_PORT = 63578;
 
+// Web-mode fallback for the app version shown on the welcome screen; the
+// desktop shell reports its real version via the get_app_version command.
+const pkg = JSON.parse(readFileSync(Path.join(__dirname, 'package.json'), 'utf-8'));
+
 export default defineConfig({
     root: Path.join(__dirname, 'src', 'renderer'),
     publicDir: 'public',
+    define: {
+        __APP_VERSION__: JSON.stringify(pkg.version),
+    },
     // Pin the dep-optimization cache to a stable path under the repo so it
     // doesn't get confused by parallel Vite instances (`npm run dev:web` vs
     // `tauri dev` invoking `npm run dev:web` as `beforeDevCommand`).

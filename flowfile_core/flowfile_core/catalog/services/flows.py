@@ -183,8 +183,12 @@ class FlowRegistrationService:
         flow = self.repo.update_flow(flow)
         return self.enrich_flow_registration(flow, requesting_user_id)
 
-    def delete_flow(self, registration_id: int) -> None:
-        """Delete a flow and its related favourites/follows."""
+    def delete_flow(self, registration_id: int, delete_file: bool = False) -> None:
+        """Delete a flow and its related favourites/follows.
+
+        When ``delete_file`` is set, also remove the flow file from disk — but
+        only once no other registration still points at the same path.
+        """
         flow = self.repo.get_flow(registration_id)
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
@@ -193,7 +197,16 @@ class FlowRegistrationService:
         if artifact_count > 0:
             raise FlowHasArtifactsError(registration_id, artifact_count)
 
+        flow_path = flow.flow_path
         self.repo.delete_flow(registration_id)
+
+        if delete_file and flow_path and self.repo.count_flows_by_path(flow_path) == 0:
+            try:
+                os.remove(flow_path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logger.warning("Failed to delete flow file %s", flow_path, exc_info=True)
 
     def get_flow(self, registration_id: int, user_id: int) -> FlowRegistrationOut:
         """Get an enriched flow registration."""

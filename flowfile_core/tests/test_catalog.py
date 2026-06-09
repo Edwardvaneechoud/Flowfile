@@ -207,6 +207,49 @@ class TestFlowRegistration:
         resp = client.delete(f"/catalog/flows/{created['id']}")
         assert resp.status_code == 204
 
+    def test_delete_flow_removes_file_when_requested(self, tmp_path):
+        ns_id = self._make_namespace()
+        flow_file = tmp_path / "to_delete.yaml"
+        flow_file.write_text("flow: {}")
+        created = client.post(
+            "/catalog/flows",
+            json={"name": "df", "flow_path": str(flow_file), "namespace_id": ns_id},
+        ).json()
+        resp = client.delete(f"/catalog/flows/{created['id']}", params={"delete_file": True})
+        assert resp.status_code == 204
+        assert not flow_file.exists()
+
+    def test_delete_flow_keeps_file_by_default(self, tmp_path):
+        ns_id = self._make_namespace()
+        flow_file = tmp_path / "keep.yaml"
+        flow_file.write_text("flow: {}")
+        created = client.post(
+            "/catalog/flows",
+            json={"name": "kf", "flow_path": str(flow_file), "namespace_id": ns_id},
+        ).json()
+        resp = client.delete(f"/catalog/flows/{created['id']}")
+        assert resp.status_code == 204
+        assert flow_file.exists()
+
+    def test_delete_flow_keeps_file_while_another_registration_points_at_it(self, tmp_path):
+        ns_id = self._make_namespace()
+        flow_file = tmp_path / "shared.yaml"
+        flow_file.write_text("flow: {}")
+        a = client.post(
+            "/catalog/flows",
+            json={"name": "a", "flow_path": str(flow_file), "namespace_id": ns_id},
+        ).json()
+        b = client.post(
+            "/catalog/flows",
+            json={"name": "b", "flow_path": str(flow_file), "namespace_id": ns_id},
+        ).json()
+        # Deleting one registration must not delete the file while another still points at it.
+        client.delete(f"/catalog/flows/{a['id']}", params={"delete_file": True})
+        assert flow_file.exists()
+        # Deleting the last registration removes the file.
+        client.delete(f"/catalog/flows/{b['id']}", params={"delete_file": True})
+        assert not flow_file.exists()
+
     def test_delete_flow_detaches_runs_preserves_uuid(self):
         """Deleting a flow nulls FlowRun.registration_id but preserves flow_uuid.
 
@@ -1724,3 +1767,69 @@ class TestCronSchedules:
         )
         assert bad_tz.status_code == 200, bad_tz.text
         assert bad_tz.json()["valid"] is False
+
+
+# Catalog table storage-deletion tests
+
+
+class TestCatalogTableStorageDeletion:
+    """delete_table only removes Flowfile-managed storage; external files are kept."""
+
+    def _make_namespace(self) -> int:
+        cat = client.post("/catalog/namespaces", json={"name": "TC"}).json()
+        schema = client.post("/catalog/namespaces", json={"name": "TS", "parent_id": cat["id"]}).json()
+        return schema["id"]
+
+    def _insert_table(self, namespace_id: int, file_path: str, storage_format: str) -> int:
+        with get_db_context() as db:
+            owner_id = db.query(User).first().id
+            table = CatalogTable(
+                name=f"t_{file_path.split('/')[-1]}",
+                namespace_id=namespace_id,
+                owner_id=owner_id,
+                file_path=file_path,
+                storage_format=storage_format,
+            )
+            db.add(table)
+            db.commit()
+            return table.id
+
+    def test_delete_managed_table_removes_storage(self):
+        from shared.storage_config import storage
+
+        ns_id = self._make_namespace()
+        managed_dir = storage.catalog_tables_directory / "test_managed_tbl"
+        managed_dir.mkdir(parents=True, exist_ok=True)
+        (managed_dir / "data.parquet").write_bytes(b"x")
+        table_id = self._insert_table(ns_id, str(managed_dir), "delta")
+
+        resp = client.delete(f"/catalog/tables/{table_id}", params={"delete_file": True})
+        assert resp.status_code == 204
+        assert not managed_dir.exists()
+
+    def test_delete_external_table_preserves_storage(self, tmp_path):
+        ns_id = self._make_namespace()
+        external = tmp_path / "my_own_data.parquet"
+        external.write_bytes(b"x")
+        table_id = self._insert_table(ns_id, str(external), "parquet")
+
+        resp = client.delete(f"/catalog/tables/{table_id}", params={"delete_file": True})
+        assert resp.status_code == 204
+        assert external.exists()  # external/user-owned file must never be deleted
+
+    def test_delete_managed_table_keeps_storage_without_flag(self):
+        from shared.storage_config import storage
+
+        ns_id = self._make_namespace()
+        managed_dir = storage.catalog_tables_directory / "test_keep_tbl"
+        managed_dir.mkdir(parents=True, exist_ok=True)
+        (managed_dir / "data.parquet").write_bytes(b"x")
+        table_id = self._insert_table(ns_id, str(managed_dir), "delta")
+
+        resp = client.delete(f"/catalog/tables/{table_id}")  # delete_file defaults False
+        assert resp.status_code == 204
+        assert managed_dir.exists()
+        # cleanup
+        import shutil
+
+        shutil.rmtree(managed_dir, ignore_errors=True)

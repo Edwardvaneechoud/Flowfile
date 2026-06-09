@@ -9,6 +9,7 @@
           size="small"
           placeholder="Enter table name"
         />
+        <p v-if="tableNameError" class="field-error">{{ tableNameError }}</p>
       </div>
 
       <div class="catalog-field">
@@ -119,8 +120,10 @@
 
 <script lang="ts" setup>
 import { ref, computed, onMounted, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
+import { validateCatalogName } from "../../../../../composables/catalogNameValidation";
 import { CatalogApi } from "../../../../../api/catalog.api";
 import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
 import axios from "../../../../../services/axios.config";
@@ -135,8 +138,18 @@ const nodeData = ref<NodeCatalogWriter | null>(null);
 const fullNodeData = ref<NodeData | null>(null);
 const dataLoaded = ref(false);
 
+const tableNameError = computed(() =>
+  validateCatalogName(nodeData.value?.catalog_write_settings.table_name ?? "", "Table"),
+);
+
 const { saveSettings, pushNodeData } = useNodeSettings({
   nodeRef: nodeData,
+  onBeforeSave: () => {
+    if (tableNameError.value) {
+      ElMessage.error(tableNameError.value);
+      return false;
+    }
+  },
 });
 
 const catalogNamespaces = ref<{ id: number; label: string }[]>([]);
@@ -297,6 +310,12 @@ defineExpose({
   font-size: 12px;
   font-weight: 500;
   color: var(--color-text-secondary);
+}
+
+.field-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--el-color-danger);
 }
 
 .writer-tabs {

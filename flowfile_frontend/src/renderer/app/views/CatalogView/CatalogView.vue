@@ -446,8 +446,8 @@
 //   - useModalState composable: 8 dialog refs at lines 472-490
 //   - 19 async handlers: move into catalog-store.ts as Pinia actions (~lines 657-927)
 //   - useRouteSync composable: applyRouteToStore (~lines 930-993)
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { computed, h, onMounted, onUnmounted, ref, watch } from "vue";
+import { ElCheckbox, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -861,22 +861,47 @@ function handleQueryTable(tableName: string) {
   router.push({ name: "catalog", query: { tab: "sql" } });
 }
 
-async function handleDeleteTable(tableId: number) {
+// Confirm dialog with an "also delete from disk" checkbox (default on). Returns
+// the checkbox state on confirm, or null when the user cancels.
+async function confirmDeleteWithFile(opts: {
+  title: string;
+  question: string;
+  fileLabel: string;
+}): Promise<{ deleteFile: boolean } | null> {
+  const deleteFile = ref(true);
   try {
     await ElMessageBox.confirm(
-      "Are you sure you want to delete this table? The materialized data will be removed.",
-      "Delete Table",
-      {
-        confirmButtonText: "Delete",
-        cancelButtonText: "Cancel",
-        type: "warning",
-      },
+      () =>
+        h("div", [
+          h("p", { style: "margin: 0 0 12px" }, opts.question),
+          h(
+            ElCheckbox,
+            {
+              modelValue: deleteFile.value,
+              "onUpdate:modelValue": (v: boolean | string | number) =>
+                (deleteFile.value = Boolean(v)),
+            },
+            () => opts.fileLabel,
+          ),
+        ]),
+      opts.title,
+      { confirmButtonText: "Delete", cancelButtonText: "Cancel", type: "warning" },
     );
   } catch {
-    return; // User cancelled
+    return null; // User cancelled
   }
+  return { deleteFile: deleteFile.value };
+}
+
+async function handleDeleteTable(tableId: number) {
+  const result = await confirmDeleteWithFile({
+    title: "Delete Table",
+    question: "Delete this table from the catalog?",
+    fileLabel: "Also delete the table data from disk",
+  });
+  if (!result) return;
   try {
-    await CatalogApi.deleteTable(tableId);
+    await CatalogApi.deleteTable(tableId, result.deleteFile);
     catalogStore.clearTableSelection();
     await Promise.all([
       catalogStore.loadTree(),
@@ -914,21 +939,14 @@ async function handleDeleteArtifact(artifact: GlobalArtifact) {
 }
 
 async function handleDeleteFlow(flowId: number) {
+  const result = await confirmDeleteWithFile({
+    title: "Delete Flow",
+    question: "Delete this flow from the catalog? Run history will also be removed.",
+    fileLabel: "Also delete the flow file from disk",
+  });
+  if (!result) return;
   try {
-    await ElMessageBox.confirm(
-      "Are you sure you want to delete this flow registration? Run history will also be removed.",
-      "Delete Flow",
-      {
-        confirmButtonText: "Delete",
-        cancelButtonText: "Cancel",
-        type: "warning",
-      },
-    );
-  } catch {
-    return; // User cancelled
-  }
-  try {
-    await CatalogApi.deleteFlow(flowId);
+    await CatalogApi.deleteFlow(flowId, result.deleteFile);
     catalogStore.selectedFlowId = null;
     await Promise.all([
       catalogStore.loadTree(),

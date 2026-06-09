@@ -35,25 +35,31 @@
     <!-- Empty state when initial load completed but no flows are active. -->
     <div v-else-if="flowsActive.length === 0" class="empty-state">
       <div class="empty-state-content">
-        <span class="material-icons empty-icon">account_tree</span>
-        <h2>No Active Flows</h2>
-        <p>There are currently no active flows in the system.</p>
-        <el-button type="primary" class="action-button" @click="createFlowDialog">
-          <span class="material-icons">add_circle</span>
-          Create new flow
-        </el-button>
-        <el-button type="primary" class="action-button" @click="openFlowDialog">
-          <span class="material-icons">folder_open</span>
-          Open existing flow
-        </el-button>
-        <el-button type="primary" class="action-button" @click="openQuickCreateDialog">
-          <span class="material-icons">folder_open</span>
-          Quick create
-        </el-button>
-        <el-button type="primary" class="action-button" @click="browseTemplates">
-          <span class="material-icons">layers</span>
-          Browse Templates
-        </el-button>
+        <span class="empty-state-badge">
+          <span class="material-icons">account_tree</span>
+        </span>
+        <h2 class="empty-state-heading">No Active Flows</h2>
+        <p class="empty-state-text">
+          Create a new flow, open an existing one, or head back to Home.
+        </p>
+        <div class="empty-state-actions">
+          <button class="es-btn es-btn--primary" @click="openQuickCreateDialog">
+            <span class="material-icons">add</span>
+            Create new flow
+          </button>
+          <button class="es-btn" @click="openFlowDialog">
+            <span class="material-icons">folder_open</span>
+            Open existing flow
+          </button>
+          <button class="es-btn" @click="browseTemplates">
+            <span class="material-icons">layers</span>
+            Browse Templates
+          </button>
+          <button class="es-btn es-btn--ghost" @click="goHome">
+            <span class="material-icons">home</span>
+            Go to Home
+          </button>
+        </div>
       </div>
     </div>
     <div v-else class="canvas-wrap">
@@ -77,7 +83,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from "vue";
 import { useRouter } from "vue-router";
-import { ElNotification } from "element-plus";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import RightActionCluster from "../../components/layout/Header/RightActionCluster.vue";
 import CanvasFlow from "./Canvas.vue";
@@ -87,14 +92,11 @@ import { FlowApi } from "../../api";
 import { fetchNodes } from "../../features/designer/utils";
 import type { NodeTemplate, FlowSettings } from "../../types";
 import { useNodeStore } from "../../stores/column-store";
-
-const notifyError = (title: string, message: string) =>
-  ElNotification({ title, message, type: "error", position: "top-left" });
+import { useFlowOpener } from "../../composables/useFlowOpener";
 
 const router = useRouter();
 
 const getAllFlows = FlowApi.getAllFlows;
-const importSavedFlow = FlowApi.importFlow;
 const closeFlow = FlowApi.closeFlow;
 
 const flowsActive = ref<FlowSettings[]>([]);
@@ -111,6 +113,7 @@ const nodeOptions = ref<NodeTemplate[]>([]);
 const initialLoadComplete = ref(false);
 
 const nodeStore = useNodeStore();
+const { openFlow: openFlowFromPath } = useFlowOpener();
 
 // Hide undo/redo when no flow is loaded — same gating as the Save button.
 const hasOpenFlow = computed(() => !!nodeStore.flow_id && nodeStore.flow_id > 0);
@@ -136,30 +139,25 @@ const fetchActiveFlows = async () => {
   }
 };
 
-const openFlow = (eventData: { message: string; flowPath: string }) => {
-  reloadCanvas(eventData.flowPath);
+const openFlow = (eventData: {
+  message: string;
+  flowPath: string;
+  flowName?: string;
+  catalogRef?: string;
+}) => {
+  reloadCanvas(eventData.flowPath, { name: eventData.flowName, catalogRef: eventData.catalogRef });
 };
 
-const reloadCanvas = async (flowPath: string) => {
+const reloadCanvas = async (flowPath: string, meta?: { name?: string; catalogRef?: string }) => {
   isSwitching.value = true;
   try {
-    const flowId = await importSavedFlow(flowPath);
-    if (flowId === undefined) {
-      notifyError(
-        "Couldn't open flow",
-        `Server returned no flow id for ${flowPath}. The file may be missing or unreadable.`,
-      );
-      return;
-    }
-    // setFlowId triggers the Canvas watcher which loads the flow.
-    nodeStore.setFlowId(flowId);
+    // openFlow owns importFlow + setFlowId + the recents record/prune contract.
+    const flowId = await openFlowFromPath(flowPath, meta);
+    if (flowId === null) return;
     if (headerButtons.value) {
       await headerButtons.value.loadFlowSettings();
     }
     await fetchActiveFlows();
-  } catch (error: any) {
-    const detail = error?.response?.data?.detail ?? error?.message ?? String(error);
-    notifyError("Couldn't open flow", `Failed to open ${flowPath}: ${detail}`);
   } finally {
     isSwitching.value = false;
   }
@@ -239,26 +237,20 @@ const refreshFlow = async () => {
   }
 };
 
-const createFlowDialog = () => {
-  if (headerButtons.value) {
-    headerButtons.value.openCreateDialog();
-  }
-};
-
 const openFlowDialog = () => {
-  if (headerButtons.value) {
-    headerButtons.value.openOpenDialog();
-  }
+  headerButtons.value?.openOpenDialog();
 };
 
 const openQuickCreateDialog = () => {
-  if (headerButtons.value) {
-    headerButtons.value.handleQuickCreate();
-  }
+  headerButtons.value?.handleQuickCreate();
 };
 
 const browseTemplates = () => {
   router.push({ name: "templates" });
+};
+
+const goHome = () => {
+  router.push({ name: "home" });
 };
 
 const initialSetup = async () => {
@@ -502,32 +494,93 @@ onMounted(async () => {
 .empty-state-content {
   text-align: center;
   padding: var(--spacing-8);
+  max-width: 720px;
 }
 
-.empty-icon {
-  font-size: var(--font-size-4xl);
-  color: var(--color-gray-400);
+.empty-state-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--border-radius-xl);
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent);
   margin-bottom: var(--spacing-4);
 }
 
-.empty-state h2 {
+.empty-state-badge .material-icons {
+  font-size: 28px;
+}
+
+.empty-state-heading {
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
-  margin-bottom: var(--spacing-2);
 }
 
-.empty-state p {
-  color: var(--color-text-secondary);
-  margin-bottom: var(--spacing-6);
+.empty-state-text {
+  margin: 0 0 var(--spacing-6);
+  font-size: var(--font-size-base);
+  color: var(--color-text-tertiary);
 }
 
-.action-button {
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spacing-2);
+}
+
+.es-btn {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-2);
-  margin: 0 var(--spacing-2);
+  gap: var(--spacing-1-5);
+  height: 38px;
+  padding: 0 var(--spacing-4);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-lg);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  transition: all var(--transition-fast);
 }
 
-.action-button .material-icons {
-  font-size: var(--font-size-2xl);
+.es-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  box-shadow: var(--shadow-xs);
+}
+
+.es-btn .material-icons {
+  font-size: 18px;
+}
+
+.es-btn--primary {
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+.es-btn--primary:hover {
+  background-color: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+  color: var(--color-text-inverse);
+}
+
+.es-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.es-btn--ghost:hover {
+  border-color: transparent;
+  background-color: var(--color-background-tertiary);
+  color: var(--color-accent);
 }
 </style>

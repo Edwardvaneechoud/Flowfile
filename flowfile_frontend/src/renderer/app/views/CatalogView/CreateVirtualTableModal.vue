@@ -11,6 +11,7 @@
         <div class="form-group">
           <label class="field-label">Table name</label>
           <input v-model="name" class="input-field" placeholder="Table name" />
+          <p v-if="nameError" class="field-error">{{ nameError }}</p>
         </div>
         <div class="form-group">
           <label class="field-label">Description</label>
@@ -84,6 +85,7 @@ import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { validateCatalogName } from "../../composables/catalogNameValidation";
 import type { CatalogTable, FlowRegistration } from "../../types";
 
 const props = defineProps<{
@@ -114,8 +116,10 @@ const schemaNamespaces = computed(() => {
   return result;
 });
 
+const nameError = computed(() => validateCatalogName(name.value, "Table"));
+
 const canSubmit = computed(() => {
-  return name.value.trim() && selectedFlowId.value !== null;
+  return name.value.trim() && !nameError.value && selectedFlowId.value !== null;
 });
 
 watch(
@@ -253,6 +257,12 @@ async function submit() {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.field-error {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--el-color-danger);
 }
 
 select.input-field {
