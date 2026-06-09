@@ -1219,7 +1219,7 @@ dependencies = [
 
 [[package]]
 name = "flowfile"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "dirs 5.0.1",
  "log",
