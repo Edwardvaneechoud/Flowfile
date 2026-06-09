@@ -150,6 +150,13 @@ class NodeExecutor:
             self._sync_state_to_legacy(state)
             self.state_provider.save_state(self.node.node_id, self.node.parent_uuid, state)
         except Exception as e:
+            if state.is_canceled:
+                # Cancelled mid-run (e.g. a cancel_check-aborted DB read): record a clean
+                # cancellation instead of a failure, and skip the error/retry path.
+                node_logger.info("Node execution cancelled")
+                state.reset_results_only()
+                self._sync_state_to_legacy(state)
+                return
             self._handle_error(state, e, run_location, effective_performance_mode, retry, node_logger)
 
     def _decide_execution(
