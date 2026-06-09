@@ -15,6 +15,9 @@ describe('FileStorageManager', () => {
     for (const d of await fileStorage.getAllCatalogDatasets()) {
       await fileStorage.deleteCatalogDataset(d.name)
     }
+    for (const f of await fileStorage.getAllSavedFlows()) {
+      await fileStorage.deleteSavedFlow(f.id)
+    }
   })
 
   describe('shouldUseIndexedDB', () => {
@@ -341,6 +344,85 @@ describe('FileStorageManager', () => {
       const all = await fileStorage.getAllCatalogDatasets()
       expect(all).toHaveLength(1)
       expect(all[0].content).toBe('v2')
+    })
+  })
+
+  // v5 (additive): the persistent flow library (stable uuid identity).
+  describe('Saved Flows (v5)', () => {
+    it('stores, lists newest-modified-first, gets, and deletes saved flows', async () => {
+      await fileStorage.putSavedFlow({ id: 'a', name: 'A', description: '', createdAt: 100, updatedAt: 100, nodeCount: 2, snapshot: { nodes: [] } })
+      await fileStorage.putSavedFlow({ id: 'b', name: 'B', description: 'desc', createdAt: 150, updatedAt: 200, nodeCount: 3, snapshot: { nodes: [] }, fileContents: { 1: 'x,y' } })
+
+      const all = await fileStorage.getAllSavedFlows()
+      expect(all.map((f) => f.id)).toEqual(['b', 'a']) // newest updatedAt first
+
+      const b = await fileStorage.getSavedFlow('b')
+      expect(b?.description).toBe('desc')
+      expect(b?.fileContents).toEqual({ 1: 'x,y' })
+
+      await fileStorage.deleteSavedFlow('a')
+      expect((await fileStorage.getAllSavedFlows()).map((f) => f.id)).toEqual(['b'])
+    })
+
+    it('upserts by id without duplicating (rename is non-lossy)', async () => {
+      await fileStorage.putSavedFlow({ id: 'x', name: 'X', description: '', createdAt: 1, updatedAt: 1, nodeCount: 0, snapshot: {} })
+      await fileStorage.putSavedFlow({ id: 'x', name: 'X renamed', description: '', createdAt: 1, updatedAt: 5, nodeCount: 0, snapshot: {} })
+      const all = await fileStorage.getAllSavedFlows()
+      expect(all).toHaveLength(1)
+      expect(all[0].name).toBe('X renamed')
+      expect(all[0].createdAt).toBe(1)
+    })
+
+    it('duplicates a saved flow under a new id', async () => {
+      await fileStorage.putSavedFlow({ id: 'src', name: 'Src', description: 'd', createdAt: 1, updatedAt: 1, nodeCount: 4, snapshot: { nodes: [1] } })
+      const clone = await fileStorage.duplicateSavedFlow('src', 'copy', 'Src (copy)')
+      expect(clone?.id).toBe('copy')
+      expect(clone?.name).toBe('Src (copy)')
+      expect(clone?.nodeCount).toBe(4)
+      expect((await fileStorage.getAllSavedFlows()).map((f) => f.id).sort()).toEqual(['copy', 'src'])
+    })
+
+    it('migrates legacy recent flows into the library once', async () => {
+      localStorage.removeItem('flowfile_wasm_savedflows_migrated_v5')
+      await fileStorage.putRecentFlow({ id: 'flow:Legacy', name: 'Legacy', savedAt: 1234, nodeCount: 5, snapshot: { nodes: [] }, fileContents: { 2: 'a' } })
+
+      await (fileStorage as unknown as { migrateRecentFlowsToSavedFlows(): Promise<void> }).migrateRecentFlowsToSavedFlows()
+
+      const migrated = (await fileStorage.getAllSavedFlows()).find((f) => f.name === 'Legacy')
+      expect(migrated).toBeTruthy()
+      expect(migrated!.createdAt).toBe(1234)
+      expect(migrated!.updatedAt).toBe(1234)
+      expect(migrated!.nodeCount).toBe(5)
+      expect(migrated!.id).not.toBe('flow:Legacy') // synthesized stable uuid
+      expect(localStorage.getItem('flowfile_wasm_savedflows_migrated_v5')).toBe('1')
+    })
+
+    it('self-heals a DB stuck at a version that lacks the savedFlows store', async () => {
+      // Tear down the live connection and drop the DB.
+      const mgr = fileStorage as unknown as { db: IDBDatabase | null; initPromise: Promise<void> | null }
+      mgr.db?.close()
+      mgr.db = null
+      mgr.initPromise = null
+      await new Promise<void>((res) => {
+        const r = indexedDB.deleteDatabase('flowfile_wasm_files')
+        r.onsuccess = () => res()
+        r.onerror = () => res()
+        r.onblocked = () => res()
+      })
+
+      // Recreate the DB at v5 WITHOUT the savedFlows store — i.e. a version bump
+      // that landed before the store-creation code existed.
+      await new Promise<void>((res, rej) => {
+        const open = indexedDB.open('flowfile_wasm_files', 5)
+        open.onupgradeneeded = () => { open.result.createObjectStore('fileContents', { keyPath: 'nodeId' }) }
+        open.onsuccess = () => { open.result.close(); res() }
+        open.onerror = () => rej(open.error)
+      })
+
+      // A saved-flows op now must succeed: init() detects the missing store and
+      // reopens at the next version to create it.
+      await fileStorage.putSavedFlow({ id: 'heal', name: 'H', description: '', createdAt: 1, updatedAt: 1, nodeCount: 0, snapshot: {} })
+      expect((await fileStorage.getAllSavedFlows()).map((f) => f.id)).toContain('heal')
     })
   })
 })

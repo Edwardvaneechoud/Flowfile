@@ -52,7 +52,7 @@
               <span class="recent-loc">
                 <span class="recent-meta">{{ flow.nodeCount }} node{{ flow.nodeCount === 1 ? '' : 's' }}</span>
               </span>
-              <span class="recent-time">{{ relativeTime(flow.savedAt) }}</span>
+              <span class="recent-time">{{ relativeTime(flow.updatedAt) }}</span>
               <span
                 class="recent-delete"
                 title="Remove from recents"
@@ -73,7 +73,7 @@
             <span class="explore-icon"><span class="material-icons">account_tree</span></span>
             <span class="explore-text">
               <span class="explore-label">Data Catalog</span>
-              <span class="explore-desc">Tables, favorites &amp; run history</span>
+              <span class="explore-desc">Flows, tables &amp; run history</span>
             </span>
           </button>
           <button class="explore-tile" @click="goRuns">
@@ -132,9 +132,9 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { useDesignerUiStore } from '../../stores/designer-ui-store'
-import type { RecentFlow } from '../../stores/recent-flows-store'
+import type { SavedFlow } from '../../stores/saved-flows-store'
 
-defineProps<{ recentFlows: RecentFlow[] }>()
+defineProps<{ recentFlows: SavedFlow[] }>()
 
 const emit = defineEmits<{
   (e: 'create'): void

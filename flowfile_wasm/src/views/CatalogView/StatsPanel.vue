@@ -4,28 +4,35 @@
 
     <div class="stats-grid">
       <button class="stat-card" @click="emit('open-tab', 'catalog')">
-        <span class="material-icons stat-icon">table_chart</span>
+        <i class="fa-solid fa-diagram-project stat-icon"></i>
+        <span class="stat-info">
+          <span class="stat-value">{{ flows }}</span>
+          <span class="stat-label">Flows</span>
+        </span>
+      </button>
+      <button class="stat-card" @click="emit('open-tab', 'catalog')">
+        <i class="fa-solid fa-table stat-icon"></i>
         <span class="stat-info">
           <span class="stat-value">{{ tables }}</span>
           <span class="stat-label">Tables</span>
         </span>
       </button>
       <button class="stat-card" @click="emit('open-tab', 'runs')">
-        <span class="material-icons stat-icon">play_arrow</span>
+        <i class="fa-solid fa-play stat-icon"></i>
         <span class="stat-info">
           <span class="stat-value">{{ runs }}</span>
           <span class="stat-label">Total Runs</span>
         </span>
       </button>
       <button class="stat-card" @click="emit('open-tab', 'runs')">
-        <span class="material-icons stat-icon success">check_circle</span>
+        <i class="fa-solid fa-circle-check stat-icon success"></i>
         <span class="stat-info">
           <span class="stat-value">{{ success }}</span>
           <span class="stat-label">Successful</span>
         </span>
       </button>
       <button class="stat-card" @click="emit('open-tab', 'favorites')">
-        <span class="material-icons stat-icon">star</span>
+        <i class="fa-solid fa-star stat-icon"></i>
         <span class="stat-info">
           <span class="stat-value">{{ favorites }}</span>
           <span class="stat-label">Favorites</span>
@@ -37,21 +44,21 @@
       <h3>Getting Started</h3>
       <div class="info-cards">
         <button class="info-card" @click="emit('open-tab', 'catalog')">
-          <div class="info-card-header"><span class="material-icons">account_tree</span><h4>Tables</h4></div>
-          <p>Loaded CSV files, host-provided datasets, and executed node outputs are
-            tracked here — preview their schema and data centrally.</p>
+          <div class="info-card-header"><i class="fa-solid fa-folder-tree"></i><h4>Flows &amp; Tables</h4></div>
+          <p>Your saved flows live alongside catalog tables and datasets — open, rename,
+            duplicate, or preview them, all from one catalog.</p>
         </button>
         <button class="info-card" @click="emit('open-tab', 'runs')">
-          <div class="info-card-header"><span class="material-icons">history</span><h4>Run History</h4></div>
+          <div class="info-card-header"><i class="fa-solid fa-clock-rotate-left"></i><h4>Run History</h4></div>
           <p>Every flow run is recorded with its status, duration, and node progress so
             you can see what happened across this session.</p>
         </button>
         <button class="info-card" @click="emit('open-tab', 'favorites')">
-          <div class="info-card-header"><span class="material-icons">star</span><h4>Favorites</h4></div>
+          <div class="info-card-header"><i class="fa-solid fa-star"></i><h4>Favorites</h4></div>
           <p>Star the tables you reach for most to pin them to the Favorites tab.</p>
         </button>
         <button class="info-card" @click="emit('go-designer')">
-          <div class="info-card-header"><span class="material-icons">device_hub</span><h4>Designer</h4></div>
+          <div class="info-card-header"><i class="fa-solid fa-diagram-project"></i><h4>Designer</h4></div>
           <p>Build and run flows on the canvas. Outputs you produce appear here as tables.</p>
         </button>
       </div>
@@ -60,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{ tables: number; runs: number; success: number; favorites: number }>()
+defineProps<{ flows: number; tables: number; runs: number; success: number; favorites: number }>()
 const emit = defineEmits<{
   (e: 'open-tab', tab: 'catalog' | 'favorites' | 'runs'): void
   (e: 'go-designer'): void
@@ -135,7 +142,7 @@ const emit = defineEmits<{
   margin-bottom: var(--spacing-2);
   color: var(--color-primary);
 }
-.info-card-header .material-icons { font-size: 18px; }
+.info-card-header i { font-size: 16px; }
 .info-card-header h4 { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text-primary); }
 .info-card p { margin: 0; font-size: var(--font-size-sm); color: var(--color-text-secondary); line-height: 1.5; }
 </style>

@@ -4,22 +4,10 @@
     <div class="detail-header">
       <div class="detail-title">
         <span class="detail-icon" :class="`detail-icon--${item.kind}`">
-          <!-- file -->
-          <svg v-if="item.kind === 'file'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-          </svg>
-          <!-- external dataset -->
-          <svg v-else-if="item.kind === 'external'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>
-          </svg>
-          <!-- catalog table (uploaded) -->
-          <svg v-else-if="item.kind === 'catalog'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>
-          </svg>
-          <!-- node output -->
-          <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>
-          </svg>
+          <i v-if="item.kind === 'file'" class="fa-solid fa-file"></i>
+          <i v-else-if="item.kind === 'external'" class="fa-solid fa-database"></i>
+          <i v-else-if="item.kind === 'catalog'" class="fa-solid fa-table"></i>
+          <i v-else class="fa-solid fa-chart-column"></i>
         </span>
         <h2 class="detail-name">{{ item.name }}</h2>
         <span class="kind-badge" :class="`kind-badge--${item.kind}`">{{ kindLabel }}</span>
@@ -29,9 +17,7 @@
 
     <!-- Unavailable banner -->
     <div v-if="item.unavailable" class="missing-banner">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-      </svg>
+      <i class="fa-solid fa-triangle-exclamation"></i>
       <div>
         <strong>File not loaded</strong>
         <p>This input references a file whose contents aren't available in the browser. Re-select the file in the node.</p>
@@ -228,7 +214,7 @@ async function downloadOutput() {
   color: var(--color-accent);
 }
 
-.detail-icon svg { width: 18px; height: 18px; }
+.detail-icon i { font-size: 15px; }
 
 .detail-name {
   margin: 0;
@@ -265,7 +251,7 @@ async function downloadOutput() {
   color: var(--color-warning-dark);
 }
 
-.missing-banner svg { width: 20px; height: 20px; flex-shrink: 0; margin-top: 2px; }
+.missing-banner i { font-size: 17px; flex-shrink: 0; margin-top: 2px; }
 .missing-banner strong { font-size: var(--font-size-sm); }
 .missing-banner p { margin: 2px 0 0; font-size: var(--font-size-xs); }
 

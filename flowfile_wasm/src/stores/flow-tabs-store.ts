@@ -21,6 +21,8 @@ const FLOW_TABS_KEY = 'flowfile_wasm_tabs'
 export interface FlowTab {
   id: string
   name: string
+  /** Stable library id of the tab's flow, or null if never saved. */
+  flowId: string | null
   /** Graph snapshot (FlowfileData). Fresh for inactive tabs; for the active tab
    *  the live flow-store is the source of truth (re-captured on switch-away). */
   snapshot: FlowStateSnapshot['snapshot']
@@ -70,6 +72,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
         return {
           id: t.id,
           name: t.name,
+          flowId: t.flowId,
           snapshot: t.snapshot,
           nodeIdCounter: t.nodeIdCounter,
           fileContents: small
@@ -87,6 +90,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
     if (!tab) return
     const snap = flowStore.captureSnapshot()
     tab.name = snap.name
+    tab.flowId = snap.flowId
     tab.snapshot = snap.snapshot
     tab.fileContents = snap.fileContents
     tab.nodeIdCounter = snap.nodeIdCounter
@@ -106,6 +110,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
           tabs.value = parsed.tabs.map((t) => ({
             id: t.id || genId(),
             name: t.name || 'Untitled Flow',
+            flowId: t.flowId ?? null,
             snapshot: t.snapshot,
             fileContents: t.fileContents || {},
             nodeIdCounter: t.nodeIdCounter ?? 0
@@ -127,7 +132,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
     const snap = flowStore.captureSnapshot()
     const id = genId()
     tabs.value = [
-      { id, name: snap.name, snapshot: snap.snapshot, fileContents: snap.fileContents, nodeIdCounter: snap.nodeIdCounter }
+      { id, name: snap.name, flowId: snap.flowId, snapshot: snap.snapshot, fileContents: snap.fileContents, nodeIdCounter: snap.nodeIdCounter }
     ]
     activeTabId.value = id
     persist()
@@ -142,6 +147,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
     activeTabId.value = id
     flowStore.loadFromSnapshot({
       name: target.name,
+      flowId: target.flowId,
       snapshot: target.snapshot,
       fileContents: target.fileContents,
       nodeIdCounter: target.nodeIdCounter
@@ -157,7 +163,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
     flowStore.currentFlowName = name
     const snap = flowStore.captureSnapshot()
     const id = genId()
-    tabs.value.push({ id, name, snapshot: snap.snapshot, fileContents: {}, nodeIdCounter: snap.nodeIdCounter })
+    tabs.value.push({ id, name, flowId: snap.flowId, snapshot: snap.snapshot, fileContents: {}, nodeIdCounter: snap.nodeIdCounter })
     activeTabId.value = id
     persist()
   }
@@ -183,6 +189,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
       if (previous) {
         flowStore.loadFromSnapshot({
           name: previous.name,
+          flowId: previous.flowId,
           snapshot: previous.snapshot,
           fileContents: previous.fileContents,
           nodeIdCounter: previous.nodeIdCounter
@@ -195,6 +202,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
     tabs.value.push({
       id,
       name: snap.name,
+      flowId: snap.flowId,
       snapshot: snap.snapshot,
       fileContents: snap.fileContents,
       nodeIdCounter: snap.nodeIdCounter
@@ -218,6 +226,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
     tabs.value.push({
       id,
       name: snap.name,
+      flowId: snap.flowId,
       snapshot: snap.snapshot,
       fileContents: snap.fileContents,
       nodeIdCounter: snap.nodeIdCounter
@@ -247,13 +256,14 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
       flowStore.currentFlowName = name
       const snap = flowStore.captureSnapshot()
       const newId = genId()
-      tabs.value.push({ id: newId, name, snapshot: snap.snapshot, fileContents: {}, nodeIdCounter: snap.nodeIdCounter })
+      tabs.value.push({ id: newId, name, flowId: snap.flowId, snapshot: snap.snapshot, fileContents: {}, nodeIdCounter: snap.nodeIdCounter })
       activeTabId.value = newId
     } else if (wasActive) {
       const next = tabs.value[Math.min(idx, tabs.value.length - 1)]
       activeTabId.value = next.id
       flowStore.loadFromSnapshot({
         name: next.name,
+        flowId: next.flowId,
         snapshot: next.snapshot,
         fileContents: next.fileContents,
         nodeIdCounter: next.nodeIdCounter
@@ -282,6 +292,17 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
     }
   }
 
+  /** Sync the active tab's library identity + name to the live flow (after a
+   *  first save mints currentFlowId), so the tab tracks the same library entry. */
+  function syncActiveIdentity(): void {
+    const tab = activeTab.value
+    if (tab) {
+      tab.name = flowStore.currentFlowName
+      tab.flowId = flowStore.currentFlowId
+      persist()
+    }
+  }
+
   return {
     tabs,
     activeTabId,
@@ -294,6 +315,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
     openFile,
     closeTab,
     renameTab,
-    syncActiveName
+    syncActiveName,
+    syncActiveIdentity
   }
 })

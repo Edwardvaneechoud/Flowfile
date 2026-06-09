@@ -1235,6 +1235,48 @@ def execute_explore_data(node_id: int, input_id: int, settings: Dict) -> Dict:
             del df
             gc.collect()
 
+
+def prepare_visual_data(csv_content: str, max_rows: int = GW_MAX_ROWS) -> Dict:
+    """Build a Graphic Walker payload from a CSV string for the catalog Visuals
+    feature. Standalone (no LazyFrame store): parse the dataset, derive fields
+    from its schema, and materialise up to max_rows JSON-safe rows. Mirrors
+    execute_explore_data's field/row extraction without the DAG plumbing.
+    """
+    df = None
+    try:
+        import io
+        lf = pl.read_csv(io.StringIO(csv_content)).lazy()
+        schema = lf.collect_schema()
+        fields = _gw_build_fields(schema)
+
+        try:
+            total_rows = lf.select(pl.len()).collect().item()
+        except Exception:
+            total_rows = None
+
+        truncated = bool(total_rows is not None and total_rows > max_rows)
+        df = lf.head(max_rows).collect()
+        rows = [_gw_prepare_row(r) for r in df.to_dicts()]
+
+        return {
+            "success": True,
+            "fields": fields,
+            "data": rows,
+            "row_info": {
+                "total_rows": total_rows,
+                "loaded_rows": len(rows),
+                "truncated": truncated,
+                "max_rows": max_rows,
+            },
+        }
+    except Exception as e:
+        return {"success": False, "error": f"Failed to prepare visualization data: {e}"}
+    finally:
+        if df is not None:
+            del df
+            gc.collect()
+
+
 def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute pivot node - converts data from long to wide format
     Note: Pivot requires collecting data due to dynamic column creation.

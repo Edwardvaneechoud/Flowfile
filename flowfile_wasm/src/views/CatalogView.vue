@@ -9,22 +9,22 @@
         :class="{ active: activeTab === tab.key }"
         @click="setTab(tab.key)"
       >
-        <span class="material-icons">{{ tab.icon }}</span>
+        <i class="fa-solid" :class="tab.icon"></i>
         <span>{{ tab.label }}</span>
         <span v-if="tab.badge !== null" class="tab-badge">{{ tab.badge }}</span>
       </button>
       <div class="tab-spacer"></div>
       <button class="catalog-tab info-btn" title="Refresh" @click="refresh">
-        <span class="material-icons">refresh</span>
+        <i class="fa-solid fa-arrows-rotate"></i>
       </button>
     </div>
 
-    <!-- Catalog / Favorites: sidebar + detail -->
-    <div v-if="activeTab !== 'runs'" class="catalog-body">
+    <!-- Catalog (flows + tables in one selection) / Favorites: sidebar + detail -->
+    <div v-if="activeTab === 'catalog' || activeTab === 'favorites'" class="catalog-body">
       <aside class="catalog-sidebar">
         <div class="sidebar-filters">
           <button class="upload-btn" @click="triggerUpload">
-            <span class="material-icons">upload_file</span>
+            <i class="fa-solid fa-file-arrow-up"></i>
             <span>Upload table</span>
           </button>
           <input
@@ -34,7 +34,7 @@
             style="display: none"
             @change="handleUpload"
           />
-          <input v-model="search" type="text" class="search-input" placeholder="Search tables..." />
+          <input v-model="search" type="text" class="search-input" placeholder="Search catalog..." />
         </div>
         <div class="sidebar-scroll">
           <div v-for="group in displayGroups" :key="group.key" class="source-group">
@@ -49,7 +49,7 @@
                 :class="{ 'is-selected': item.id === selectedId, unavailable: item.unavailable }"
                 @click="selectedId = item.id"
               >
-                <span class="item-status" :class="`item-status--${item.status || 'pending'}`"></span>
+                <i class="fa-solid item-type-icon" :class="item.kind === 'flow' ? 'fa-diagram-project' : 'fa-table'"></i>
                 <span class="item-name">{{ item.name }}</span>
                 <span class="item-meta">{{ itemMeta(item) }}</span>
                 <button
@@ -58,7 +58,15 @@
                   title="Delete catalog table"
                   @click.stop="deleteCatalogTable(item)"
                 >
-                  <span class="material-icons">delete_outline</span>
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+                <button
+                  v-else-if="item.kind === 'flow'"
+                  class="item-icon-btn item-delete"
+                  title="Delete flow"
+                  @click.stop="deleteFlowItem(item)"
+                >
+                  <i class="fa-solid fa-trash"></i>
                 </button>
                 <button
                   class="item-icon-btn item-star"
@@ -66,7 +74,7 @@
                   :title="favoritesStore.isFavorite(item.id) ? 'Remove favorite' : 'Add favorite'"
                   @click.stop="favoritesStore.toggle(item.id)"
                 >
-                  <span class="material-icons">{{ favoritesStore.isFavorite(item.id) ? 'star' : 'star_border' }}</span>
+                  <i :class="favoritesStore.isFavorite(item.id) ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
                 </button>
               </li>
             </ul>
@@ -76,9 +84,16 @@
       </aside>
 
       <section class="catalog-detail">
-        <CatalogDetailPanel v-if="selected" :item="selected" />
+        <FlowDetailPanel
+          v-if="selectedFlow"
+          :flow-id="selectedFlow.flowId!"
+          @deleted="selectedId = null"
+          @select="selectedId = $event"
+        />
+        <CatalogDetailPanel v-else-if="selected" :item="selected" />
         <StatsPanel
           v-else
+          :flows="flowItems.length"
           :tables="items.length"
           :runs="runHistoryStore.total"
           :success="runHistoryStore.successCount"
@@ -88,6 +103,11 @@
         />
       </section>
     </div>
+
+    <!-- Visuals: charts + dashboards combined behind a sub-toggle -->
+    <section v-else-if="activeTab === 'visuals'" class="catalog-panel-host">
+      <VisualsPanel />
+    </section>
 
     <!-- Run History: full width -->
     <section v-else class="catalog-body catalog-body--full">
@@ -107,16 +127,22 @@ import { inferSchemaFromCsv } from '../stores/schema-inference'
 import CatalogDetailPanel from '../components/catalog/CatalogDetailPanel.vue'
 import StatsPanel from './CatalogView/StatsPanel.vue'
 import RunHistoryTable from './CatalogView/RunHistoryTable.vue'
+import FlowDetailPanel from './CatalogView/FlowDetailPanel.vue'
+import VisualsPanel from './CatalogView/VisualsPanel.vue'
+import { useSavedFlowsStore } from '../stores/saved-flows-store'
+import { useVisualsStore } from '../stores/visuals-store'
 import type { CatalogItem } from '../components/catalog/types'
 import type { DataPreview } from '../types'
 
-type TabKey = 'catalog' | 'favorites' | 'runs'
+type TabKey = 'catalog' | 'favorites' | 'visuals' | 'runs'
 
 const route = useRoute()
 const router = useRouter()
 const flowStore = useFlowStore()
 const favoritesStore = useFavoritesStore()
 const runHistoryStore = useRunHistoryStore()
+const savedFlowsStore = useSavedFlowsStore()
+const visualsStore = useVisualsStore()
 const { externalDatasets, catalogDatasets } = storeToRefs(flowStore)
 
 const search = ref('')
@@ -204,10 +230,29 @@ const items = computed<CatalogItem[]>(() => {
   return out
 })
 
+// Saved flows as catalog entries (kind 'flow'). Flows and tables live in one
+// catalog, mirroring the full app's namespace tree (FLOWS / TABLES sections).
+const flowItems = computed<CatalogItem[]>(() =>
+  savedFlowsStore.flows.map((f) => ({
+    id: `flow-${f.id}`,
+    kind: 'flow',
+    name: f.name,
+    subtitle: f.description || 'Flow',
+    flowId: f.id,
+    nodeCount: f.nodeCount,
+    createdAt: f.createdAt,
+    updatedAt: f.updatedAt,
+    description: f.description
+  }))
+)
+
+const allItems = computed(() => [...flowItems.value, ...items.value])
+
 const tabs = computed(() => [
-  { key: 'catalog' as TabKey, label: 'Catalog', icon: 'account_tree', badge: items.value.length },
-  { key: 'favorites' as TabKey, label: 'Favorites', icon: 'star', badge: favoritesStore.count },
-  { key: 'runs' as TabKey, label: 'Run History', icon: 'history', badge: runHistoryStore.total }
+  { key: 'catalog' as TabKey, label: 'Catalog', icon: 'fa-folder-tree', badge: flowItems.value.length + items.value.length },
+  { key: 'favorites' as TabKey, label: 'Favorites', icon: 'fa-star', badge: favoritesStore.count },
+  { key: 'visuals' as TabKey, label: 'Visuals', icon: 'fa-chart-pie', badge: visualsStore.count },
+  { key: 'runs' as TabKey, label: 'Run History', icon: 'fa-clock-rotate-left', badge: runHistoryStore.total }
 ])
 
 const displayGroups = computed(() => {
@@ -217,21 +262,33 @@ const displayGroups = computed(() => {
     (!onlyFavorites || favoritesStore.isFavorite(i.id)) &&
     (!q || i.name.toLowerCase().includes(q) || (i.subtitle?.toLowerCase().includes(q) ?? false))
 
+  const flows = flowItems.value.filter(match)
   const byKind = (kind: CatalogItem['kind']) => items.value.filter((i) => i.kind === kind && match(i))
 
   return [
-    { key: 'catalog', label: 'Catalog tables', items: byKind('catalog'), emptyText: onlyFavorites ? 'No favorited tables.' : 'Upload a CSV to add a catalog table.' },
+    { key: 'flows', label: 'Flows', items: flows, emptyText: onlyFavorites ? 'No favorited flows.' : 'Build a flow in the Designer and click Save.' },
+    { key: 'catalog', label: 'Tables', items: byKind('catalog'), emptyText: onlyFavorites ? 'No favorited tables.' : 'Upload a CSV to add a catalog table.' },
     { key: 'external', label: 'External datasets', items: byKind('external'), emptyText: onlyFavorites ? 'No favorited datasets.' : 'No external datasets provided.' }
   ]
 })
 
-const selected = computed(() => items.value.find((i) => i.id === selectedId.value) ?? null)
+const selected = computed(() => allItems.value.find((i) => i.id === selectedId.value) ?? null)
+const selectedFlow = computed(() => (selected.value?.kind === 'flow' ? selected.value : null))
 
 function itemMeta(item: CatalogItem): string {
+  if (item.kind === 'flow') return `${item.nodeCount ?? 0} node${item.nodeCount === 1 ? '' : 's'}`
   if (item.unavailable) return 'missing'
   if (item.rows != null) return `${item.rows.toLocaleString()} rows`
   if (item.columns != null) return `${item.columns} cols`
   return ''
+}
+
+function deleteFlowItem(item: CatalogItem) {
+  if (!item.flowId) return
+  if (!confirm(`Delete "${item.name}"? This cannot be undone.`)) return
+  void savedFlowsStore.remove(item.flowId)
+  if (favoritesStore.isFavorite(item.id)) favoritesStore.toggle(item.id)
+  if (selectedId.value === item.id) selectedId.value = null
 }
 
 function triggerUpload() {
@@ -272,20 +329,25 @@ function setTab(tab: TabKey) {
 
 function syncTabFromQuery() {
   const q = route.query.tab
-  activeTab.value = q === 'runs' || q === 'favorites' ? q : 'catalog'
+  const valid: TabKey[] = ['catalog', 'favorites', 'visuals', 'runs']
+  activeTab.value = typeof q === 'string' && valid.includes(q as TabKey) ? (q as TabKey) : 'catalog'
 }
 
 watch(() => route.query.tab, syncTabFromQuery)
 
-onMounted(() => {
+onMounted(async () => {
   syncTabFromQuery()
   runHistoryStore.refresh()
-  // Prune favorites whose item no longer exists.
-  favoritesStore.clearMissing(new Set(items.value.map((i) => i.id)))
+  visualsStore.refresh()
+  await savedFlowsStore.refresh()
+  // Prune favorites whose item no longer exists (flows + tables). Runs after the
+  // flow list loads so persisted flow favorites aren't dropped.
+  favoritesStore.clearMissing(new Set(allItems.value.map((i) => i.id)))
 })
 
 function refresh() {
   runHistoryStore.refresh()
+  savedFlowsStore.refresh()
 }
 </script>
 
@@ -321,7 +383,7 @@ function refresh() {
   border-radius: var(--border-radius-md);
   transition: all var(--transition-fast);
 }
-.catalog-tab .material-icons { font-size: 16px; }
+.catalog-tab i { font-size: 14px; }
 .catalog-tab:hover { background: var(--color-background-hover); color: var(--color-text-primary); }
 .catalog-tab.active { background: var(--color-background-primary); color: var(--color-primary); box-shadow: var(--shadow-xs); }
 
@@ -343,6 +405,7 @@ function refresh() {
 /* Body */
 .catalog-body { display: flex; flex: 1; overflow: hidden; }
 .catalog-body--full { display: block; overflow-y: auto; padding: var(--spacing-5) var(--spacing-6); }
+.catalog-panel-host { flex: 1; min-height: 0; overflow: hidden; }
 
 .catalog-sidebar {
   width: 320px;
@@ -398,6 +461,7 @@ function refresh() {
 .item-status--failure { background: var(--color-danger); }
 .item-status--pending { background: var(--color-text-muted); }
 
+.item-type-icon { font-size: 14px; width: 16px; text-align: center; color: var(--color-text-secondary); flex-shrink: 0; }
 .item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-primary); }
 .item-meta { font-size: var(--font-size-xs); color: var(--color-text-muted); flex-shrink: 0; }
 
@@ -420,7 +484,7 @@ function refresh() {
 .item-star.active { color: var(--color-warning); }
 .item-star:hover { color: var(--color-warning); }
 .item-delete:hover { color: var(--color-danger); }
-.item-icon-btn .material-icons { font-size: 16px; }
+.item-icon-btn i { font-size: 14px; }
 
 /* Upload table button */
 .upload-btn {
@@ -440,7 +504,7 @@ function refresh() {
   transition: all var(--transition-fast);
 }
 .upload-btn:hover { background: var(--color-accent); color: #fff; }
-.upload-btn .material-icons { font-size: 18px; }
+.upload-btn i { font-size: 15px; }
 
 /* Detail */
 .catalog-detail { flex: 1; overflow-y: auto; padding: var(--spacing-5) var(--spacing-6); }

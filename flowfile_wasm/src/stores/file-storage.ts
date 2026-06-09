@@ -11,13 +11,25 @@
  */
 
 const DB_NAME = 'flowfile_wasm_files';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_NAME = 'fileContents';
 const DOWNLOAD_STORE_NAME = 'downloadContents';
 const RECENT_FLOWS_STORE = 'recentFlows';
 const RUN_HISTORY_STORE = 'runHistory';
 const CATALOG_DATASETS_STORE = 'catalogDatasets';
+const SAVED_FLOWS_STORE = 'savedFlows';
+const SAVED_FLOWS_MIGRATED_KEY = 'flowfile_wasm_savedflows_migrated_v5';
 const SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB in bytes
+
+// Every object store the app expects. init() self-heals if any is missing.
+const REQUIRED_STORES = [
+  STORE_NAME,
+  DOWNLOAD_STORE_NAME,
+  RECENT_FLOWS_STORE,
+  RUN_HISTORY_STORE,
+  CATALOG_DATASETS_STORE,
+  SAVED_FLOWS_STORE,
+];
 
 interface FileEntry {
   nodeId: number;
@@ -36,19 +48,20 @@ interface DownloadEntry {
   timestamp: number;
 }
 
-/** A saved/opened flow surfaced on the Home page's Recent Flows list. */
+/** Legacy v3 store, superseded by savedFlows; retained only as a migration source. */
 interface RecentFlowEntry {
   id: string;
   name: string;
   savedAt: number;
   nodeCount: number;
-  snapshot: unknown; // FlowfileData JSON (typed in recent-flows-store)
+  snapshot: unknown; // FlowfileData JSON
   fileContents?: Record<number, string>; // small input CSVs so reopen restores data
 }
 
 /** A per-run summary surfaced in the Catalog Run History tab + overview stats. */
 interface RunHistoryEntry {
   id: string;
+  flowId?: string; // stable library id, for joining a run back to a saved flow
   flowName: string;
   startedAt: number;
   durationMs: number;
@@ -56,6 +69,22 @@ interface RunHistoryEntry {
   nodesCompleted: number;
   success: boolean;
   error?: string | null;
+}
+
+/**
+ * A flow saved to the persistent in-browser library (the WASM analogue of the
+ * full app's catalog flow_registrations). Keyed by a stable uuid `id` so rename
+ * is non-lossy and re-saving updates the same entry.
+ */
+interface SavedFlowEntry {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: number;
+  updatedAt: number;
+  nodeCount: number;
+  snapshot: unknown; // FlowfileData JSON
+  fileContents?: Record<number, string>; // small input CSVs so reopen restores data
 }
 
 /** A CSV table uploaded directly in the Catalog (read by the Read-from-Catalog node). */
@@ -68,58 +97,82 @@ class FileStorageManager {
   private db: IDBDatabase | null = null;
   private initPromise: Promise<void> | null = null;
 
+  /** Create any object store that doesn't exist yet (additive, idempotent). */
+  private createStores(db: IDBDatabase): void {
+    if (!db.objectStoreNames.contains(STORE_NAME)) {
+      const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'nodeId' });
+      objectStore.createIndex('timestamp', 'timestamp', { unique: false });
+      objectStore.createIndex('size', 'size', { unique: false });
+    }
+    if (!db.objectStoreNames.contains(DOWNLOAD_STORE_NAME)) {
+      const downloadStore = db.createObjectStore(DOWNLOAD_STORE_NAME, { keyPath: 'nodeId' });
+      downloadStore.createIndex('timestamp', 'timestamp', { unique: false });
+    }
+    // v3: recent flows (legacy, kept as a migration source) + run history.
+    if (!db.objectStoreNames.contains(RECENT_FLOWS_STORE)) {
+      const recentStore = db.createObjectStore(RECENT_FLOWS_STORE, { keyPath: 'id' });
+      recentStore.createIndex('savedAt', 'savedAt', { unique: false });
+    }
+    if (!db.objectStoreNames.contains(RUN_HISTORY_STORE)) {
+      const runStore = db.createObjectStore(RUN_HISTORY_STORE, { keyPath: 'id' });
+      runStore.createIndex('startedAt', 'startedAt', { unique: false });
+    }
+    // v4: user-uploaded catalog datasets.
+    if (!db.objectStoreNames.contains(CATALOG_DATASETS_STORE)) {
+      db.createObjectStore(CATALOG_DATASETS_STORE, { keyPath: 'name' });
+    }
+    // v5: the persistent flow library (stable uuid identity).
+    if (!db.objectStoreNames.contains(SAVED_FLOWS_STORE)) {
+      const savedStore = db.createObjectStore(SAVED_FLOWS_STORE, { keyPath: 'id' });
+      savedStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+    }
+  }
+
   /**
-   * Initialize IndexedDB connection
+   * Open the IndexedDB connection, self-healing any missing object store. A
+   * store added after a DB_VERSION bump can leave a DB stuck at that version
+   * WITHOUT the store (onupgradeneeded won't re-run) — so after opening we
+   * verify every required store exists and, if one is missing, reopen at the
+   * next version to trigger an upgrade that creates it. If the on-disk version
+   * is already ahead of DB_VERSION, we reopen without a version to match it.
    */
   private async init(): Promise<void> {
     if (this.db) return;
-
-    if (this.initPromise) {
-      return this.initPromise;
-    }
+    if (this.initPromise) return this.initPromise;
 
     this.initPromise = new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      const openAt = (version?: number) => {
+        const request = version === undefined ? indexedDB.open(DB_NAME) : indexedDB.open(DB_NAME, version);
 
-      request.onerror = () => {
-        console.error('Failed to open IndexedDB:', request.error);
-        reject(request.error);
+        request.onupgradeneeded = () => this.createStores(request.result);
+
+        request.onerror = () => {
+          // VersionError: the DB drifted ahead of DB_VERSION (a prior self-heal).
+          // Retry without a version to open at whatever version exists.
+          if (version !== undefined) {
+            openAt();
+            return;
+          }
+          console.error('Failed to open IndexedDB:', request.error);
+          reject(request.error);
+        };
+
+        request.onsuccess = () => {
+          const db = request.result;
+          if (REQUIRED_STORES.some((s) => !db.objectStoreNames.contains(s))) {
+            const next = db.version + 1;
+            db.close();
+            openAt(next);
+            return;
+          }
+          this.db = db;
+          resolve();
+          // One-time backfill of the new library store from legacy recent flows.
+          void this.migrateRecentFlowsToSavedFlows();
+        };
       };
 
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve();
-      };
-
-      request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result;
-
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'nodeId' });
-          objectStore.createIndex('timestamp', 'timestamp', { unique: false });
-          objectStore.createIndex('size', 'size', { unique: false });
-        }
-
-        if (!db.objectStoreNames.contains(DOWNLOAD_STORE_NAME)) {
-          const downloadStore = db.createObjectStore(DOWNLOAD_STORE_NAME, { keyPath: 'nodeId' });
-          downloadStore.createIndex('timestamp', 'timestamp', { unique: false });
-        }
-
-        // v3 (additive): recent flows + run history for the Home/Catalog shell.
-        if (!db.objectStoreNames.contains(RECENT_FLOWS_STORE)) {
-          const recentStore = db.createObjectStore(RECENT_FLOWS_STORE, { keyPath: 'id' });
-          recentStore.createIndex('savedAt', 'savedAt', { unique: false });
-        }
-        if (!db.objectStoreNames.contains(RUN_HISTORY_STORE)) {
-          const runStore = db.createObjectStore(RUN_HISTORY_STORE, { keyPath: 'id' });
-          runStore.createIndex('startedAt', 'startedAt', { unique: false });
-        }
-
-        // v4 (additive): user-uploaded catalog datasets.
-        if (!db.objectStoreNames.contains(CATALOG_DATASETS_STORE)) {
-          db.createObjectStore(CATALOG_DATASETS_STORE, { keyPath: 'name' });
-        }
-      };
+      openAt(DB_VERSION);
     });
 
     return this.initPromise;
@@ -587,8 +640,103 @@ class FileStorageManager {
       req.onerror = () => reject(req.error);
     });
   }
+
+  // ── Saved flows (the persistent flow library) ─────────────────────────────
+
+  async putSavedFlow(entry: SavedFlowEntry): Promise<void> {
+    await this.init();
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([SAVED_FLOWS_STORE], 'readwrite');
+      const req = tx.objectStore(SAVED_FLOWS_STORE).put(entry);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async getSavedFlow(id: string): Promise<SavedFlowEntry | null> {
+    await this.init();
+    return new Promise<SavedFlowEntry | null>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([SAVED_FLOWS_STORE], 'readonly');
+      const req = tx.objectStore(SAVED_FLOWS_STORE).get(id);
+      req.onsuccess = () => resolve((req.result as SavedFlowEntry) ?? null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** All saved flows, newest-modified first. The library is never pruned. */
+  async getAllSavedFlows(): Promise<SavedFlowEntry[]> {
+    const all = await this.getAllFromStore<SavedFlowEntry>(SAVED_FLOWS_STORE);
+    return all.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  async deleteSavedFlow(id: string): Promise<void> {
+    await this.init();
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([SAVED_FLOWS_STORE], 'readwrite');
+      const req = tx.objectStore(SAVED_FLOWS_STORE).delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Clone a saved flow under a new id + name (Save-As semantics). */
+  async duplicateSavedFlow(id: string, newId: string, newName: string): Promise<SavedFlowEntry | null> {
+    const source = await this.getSavedFlow(id);
+    if (!source) return null;
+    const now = Date.now();
+    const clone: SavedFlowEntry = { ...source, id: newId, name: newName, createdAt: now, updatedAt: now };
+    await this.putSavedFlow(clone);
+    return clone;
+  }
+
+  /**
+   * One-time backfill: copy legacy `recentFlows` rows into `savedFlows`,
+   * synthesizing a stable uuid + timestamps. Guarded by a localStorage flag so
+   * it runs once, and skipped if the library already has entries. Best-effort.
+   */
+  private async migrateRecentFlowsToSavedFlows(): Promise<void> {
+    try {
+      if (localStorage.getItem(SAVED_FLOWS_MIGRATED_KEY)) return;
+      if (!this.db?.objectStoreNames.contains(RECENT_FLOWS_STORE)) {
+        localStorage.setItem(SAVED_FLOWS_MIGRATED_KEY, '1');
+        return;
+      }
+      const existing = await this.getAllFromStore<SavedFlowEntry>(SAVED_FLOWS_STORE);
+      if (existing.length === 0) {
+        const legacy = await this.getAllFromStore<RecentFlowEntry>(RECENT_FLOWS_STORE);
+        for (const r of legacy) {
+          const id = globalThis.crypto?.randomUUID?.() ?? `mig-${r.id}-${r.savedAt}`;
+          await this.putSavedFlow({
+            id,
+            name: r.name,
+            description: '',
+            createdAt: r.savedAt,
+            updatedAt: r.savedAt,
+            nodeCount: r.nodeCount,
+            snapshot: r.snapshot,
+            fileContents: r.fileContents,
+          });
+        }
+      }
+      localStorage.setItem(SAVED_FLOWS_MIGRATED_KEY, '1');
+    } catch (e) {
+      console.warn('[file-storage] savedFlows migration failed:', e);
+    }
+  }
 }
 
 export const fileStorage = new FileStorageManager();
 export { SIZE_THRESHOLD };
-export type { DownloadEntry, RecentFlowEntry, RunHistoryEntry, CatalogDatasetEntry };
+export type { DownloadEntry, RecentFlowEntry, RunHistoryEntry, CatalogDatasetEntry, SavedFlowEntry };

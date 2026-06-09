@@ -29,7 +29,7 @@
           <span class="tooltip-text">{{ statusTooltip }}</span>
         </div>
         <button :class="['node-button', { selected: isSelected }]" @click="onClick">
-          <img :src="iconUrl" :alt="data.label" width="40" height="40" />
+          <img :src="iconUrl" :alt="data.label" width="40" />
         </button>
       </div>
 
@@ -112,12 +112,13 @@ import { computed, ref, onUnmounted, nextTick, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import type { NodeResult } from '../../types'
 import { useFlowStore } from '../../stores/flow-store'
+import { iconUrls } from '../../utils/iconUrls'
 
 const iconMap: Record<string, string> = {
   read: 'input_data.png',
   manual_input: 'manual_input.png',
   external_data: 'external_data.svg',
-  read_from_catalog: 'database_reader.svg',
+  read_from_catalog: 'catalog_reader.svg',
   filter: 'filter.png',
   select: 'select.png',
   group_by: 'group_by.png',
@@ -131,7 +132,7 @@ const iconMap: Record<string, string> = {
   unpivot: 'unpivot.png',
   output: 'output.png',
   external_output: 'external_output.svg',
-  write_to_catalog: 'database_writer.svg'
+  write_to_catalog: 'catalog_writer.svg'
 }
 
 interface NodeData {
@@ -196,7 +197,7 @@ const isSelected = computed(() => flowStore.selectedNodeId === props.data.id)
 
 const iconUrl = computed(() => {
   const iconFile = iconMap[props.data.type] || 'view.png'
-  return new URL(`../../assets/icons/${iconFile}`, import.meta.url).href
+  return iconUrls[iconFile] || new URL(`../../assets/icons/${iconFile}`, import.meta.url).href
 })
 
 const statusClass = computed(() => {

@@ -15,10 +15,20 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             <span>Open</span>
           </button>
-          <button class="action-btn" title="Save flow" @click="handleSave">
+          <button class="action-btn" title="Save flow to the catalog" @click="handleSave">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
             <span>Save</span>
           </button>
+          <button class="action-btn" title="Export flow to file" @click="uiStore.actions?.exportFile()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Export</span>
+          </button>
+          <transition name="fade">
+            <span v-if="savedFlash" class="save-flash">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              Saved
+            </span>
+          </transition>
         </div>
 
         <div class="designer-header__right">
@@ -49,6 +59,12 @@
 
     <DocsModal :is-open="uiStore.showDocs" @close="uiStore.showDocs = false" />
     <AboutDialog v-model:visible="uiStore.showAbout" :version="version" />
+    <SaveFlowModal
+      :is-open="showSaveModal"
+      :initial-name="saveModalName"
+      @save="onSaveModal"
+      @close="showSaveModal = false"
+    />
 
     <!-- Prominent demo button for first-time visitors on Home and the designer
          canvas (mirrors the original app's prominent demo). Loads then opens the
@@ -68,12 +84,14 @@ import { storeToRefs } from 'pinia'
 import IconRail from '../components/layout/IconRail.vue'
 import FlowTabs from '../components/FlowTabs.vue'
 import DocsModal from '../components/DocsModal.vue'
+import SaveFlowModal from '../components/SaveFlowModal.vue'
 import DemoButton from '../components/DemoButton.vue'
 import AboutDialog from './HomeView/AboutDialog.vue'
 import { usePyodideStore } from '../stores/pyodide-store'
 import { useThemeStore } from '../stores/theme-store'
 import { useFlowStore } from '../stores/flow-store'
 import { useFlowTabsStore } from '../stores/flow-tabs-store'
+import { useSavedFlowsStore } from '../stores/saved-flows-store'
 import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { useDemo } from '../composables/useDemo'
 
@@ -83,6 +101,7 @@ const pyodideStore = usePyodideStore()
 const themeStore = useThemeStore()
 const flowStore = useFlowStore()
 const flowTabsStore = useFlowTabsStore()
+const savedFlowsStore = useSavedFlowsStore()
 const uiStore = useDesignerUiStore()
 const { isReady: pyodideReady } = storeToRefs(pyodideStore)
 const { isExecuting } = storeToRefs(flowStore)
@@ -112,10 +131,35 @@ async function handleOpenChange(event: Event) {
   }
 }
 
-// Save the active flow, then keep its tab label in sync with the saved name.
+// Save the active flow into the catalog. New/untitled flows open the
+// "Save to catalog" dialog to pick a name; flows already in the catalog re-save
+// silently. After a save, sync the tab's identity/name and flash a confirmation.
+const savedFlash = ref(false)
+const showSaveModal = ref(false)
+const saveModalName = ref('')
+
+function afterSave() {
+  flowTabsStore.syncActiveIdentity()
+  void savedFlowsStore.refresh() // keep the catalog list in sync immediately
+  savedFlash.value = true
+  setTimeout(() => (savedFlash.value = false), 1600)
+}
+
 async function handleSave() {
-  await uiStore.actions?.save()
-  flowTabsStore.syncActiveName()
+  const named = flowStore.currentFlowName && flowStore.currentFlowName !== 'Untitled Flow'
+  if (flowStore.currentFlowId && named) {
+    await flowStore.saveToLibrary()
+    afterSave()
+    return
+  }
+  saveModalName.value = named ? flowStore.currentFlowName : ''
+  showSaveModal.value = true
+}
+
+async function onSaveModal(name: string) {
+  showSaveModal.value = false
+  await flowStore.saveToLibrary(name)
+  afterSave()
 }
 
 // The prominent demo button loads into the live (active) flow; reflect its name
@@ -211,6 +255,19 @@ if (shouldAutoLoadDemo) {
   color: var(--color-accent);
 }
 .action-btn.active svg { color: var(--color-accent); }
+
+/* Transient "Saved" confirmation next to the Save button */
+.save-flash {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-success);
+}
+.save-flash svg { width: 15px; height: 15px; }
+.fade-enter-active, .fade-leave-active { transition: opacity var(--transition-fast); }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
 
 /* Purple Run button (mirrors the full app) */
 .action-btn--run {

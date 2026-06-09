@@ -39,7 +39,14 @@ vi.mock('../../src/stores/file-storage', () => ({
     getAllRecentFlows: vi.fn().mockResolvedValue([]),
     putRecentFlow: vi.fn().mockResolvedValue(undefined),
     pruneRecentFlows: vi.fn().mockResolvedValue(undefined),
-    getRecentFlow: vi.fn().mockResolvedValue(null)
+    getRecentFlow: vi.fn().mockResolvedValue(null),
+    getAllSavedFlows: vi.fn().mockResolvedValue([]),
+    getSavedFlow: vi.fn().mockResolvedValue(null),
+    putSavedFlow: vi.fn().mockResolvedValue(undefined),
+    deleteSavedFlow: vi.fn().mockResolvedValue(undefined),
+    duplicateSavedFlow: vi.fn().mockResolvedValue(null),
+    putRun: vi.fn().mockResolvedValue(undefined),
+    pruneRuns: vi.fn().mockResolvedValue(undefined)
   }
 }))
 

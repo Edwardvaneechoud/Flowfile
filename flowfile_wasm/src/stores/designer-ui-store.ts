@@ -11,7 +11,10 @@ import { ref } from 'vue'
 
 export interface DesignerActions {
   run: () => void | Promise<void>
-  save: () => void | Promise<void>
+  /** Save to the in-browser library. Resolves false if the user cancelled. */
+  save: () => boolean | void | Promise<boolean | void>
+  /** Export the flow to a downloaded .yaml/.json file. */
+  exportFile: () => void | Promise<void>
   open: () => void
   clear: () => void
 }

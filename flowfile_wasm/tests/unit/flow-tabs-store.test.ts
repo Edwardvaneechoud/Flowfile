@@ -33,7 +33,14 @@ vi.mock('../../src/stores/file-storage', () => ({
     getAllRecentFlows: vi.fn().mockResolvedValue([]),
     putRecentFlow: vi.fn().mockResolvedValue(undefined),
     pruneRecentFlows: vi.fn().mockResolvedValue(undefined),
-    getRecentFlow: vi.fn().mockResolvedValue(null)
+    getRecentFlow: vi.fn().mockResolvedValue(null),
+    getAllSavedFlows: vi.fn().mockResolvedValue([]),
+    getSavedFlow: vi.fn().mockResolvedValue(null),
+    putSavedFlow: vi.fn().mockResolvedValue(undefined),
+    deleteSavedFlow: vi.fn().mockResolvedValue(undefined),
+    duplicateSavedFlow: vi.fn().mockResolvedValue(null),
+    putRun: vi.fn().mockResolvedValue(undefined),
+    pruneRuns: vi.fn().mockResolvedValue(undefined)
   }
 }))
 
@@ -106,6 +113,36 @@ describe('Flow Tabs Store', () => {
     expect(flow.nodes.size).toBe(1)
     expect(flow.getNode(id)).toBeDefined()
     expect(flow.hasFileContent(id)).toBe(true)
+  })
+
+  it('round-trips the stable flow id through snapshot capture/restore', () => {
+    const flow = useFlowStore()
+    flow.addNode('filter', 0, 0)
+    flow.currentFlowId = 'lib-123'
+
+    const snap = flow.captureSnapshot()
+    expect(snap.flowId).toBe('lib-123')
+
+    flow.clearFlow()
+    expect(flow.currentFlowId).toBe(null)
+
+    flow.loadFromSnapshot(snap)
+    expect(flow.currentFlowId).toBe('lib-123')
+  })
+
+  it('carries flow id across tabs (capture on switch-away, restore on return)', () => {
+    const tabs = useFlowTabsStore()
+    const flow = useFlowStore()
+    tabs.init()
+    const tabA = tabs.activeTabId
+    flow.addNode('filter', 0, 0)
+    flow.currentFlowId = 'lib-A'
+
+    tabs.newTab() // tab B, blank → no id
+    expect(flow.currentFlowId).toBe(null)
+
+    tabs.switchTab(tabA)
+    expect(flow.currentFlowId).toBe('lib-A')
   })
 
   it('closeTab removes a tab and always keeps one open', () => {

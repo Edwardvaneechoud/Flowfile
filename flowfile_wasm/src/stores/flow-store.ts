@@ -35,6 +35,8 @@ const STORAGE_VERSION = '2'  // Increment when storage format changes
  */
 export interface FlowStateSnapshot {
   name: string
+  /** Stable library id, or null for a flow not yet saved to the library. */
+  flowId: string | null
   snapshot: FlowfileData
   fileContents: Record<number, string>
   nodeIdCounter: number
@@ -115,8 +117,15 @@ export const useFlowStore = defineStore('flow', () => {
   const isExecuting = ref(false)
   const executionError = ref<string | null>(null)
   const nodeIdCounter = ref(0)
-  // Name of the flow currently open (drives Recent Flows + Run History + header).
+  // Name of the flow currently open (drives the library + Run History + header).
   const currentFlowName = ref<string>('Untitled Flow')
+  // Stable library id of the flow currently open, or null until first saved.
+  // Re-saving updates this entry; rename keeps it (non-lossy).
+  const currentFlowId = ref<string | null>(null)
+
+  function genFlowId(): string {
+    return globalThis.crypto?.randomUUID?.() ?? `flow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  }
 
   // File content storage for CSV nodes
   const fileContents = ref<Map<number, string>>(new Map())
@@ -263,6 +272,11 @@ export const useFlowStore = defineStore('flow', () => {
 
           const maxId = Math.max(0, ...data.nodes.map(n => n.id))
           nodeIdCounter.value = state.nodeIdCounter ?? maxId
+
+          // Restore the active flow's library identity + name (safety net for a
+          // page reload; the tabs store also carries these per tab).
+          if (typeof state.currentFlowName === 'string') currentFlowName.value = state.currentFlowName
+          if (typeof state.currentFlowId === 'string') currentFlowId.value = state.currentFlowId
         }
         // Fallback: legacy format (version 1)
         else if (state.nodes) {
@@ -401,6 +415,8 @@ export const useFlowStore = defineStore('flow', () => {
         fileContents: smallFiles,
         largeFileNodeIds,
         nodeIdCounter: nodeIdCounter.value,
+        currentFlowName: currentFlowName.value,
+        currentFlowId: currentFlowId.value,
         // Save schemas separately for quick reload
         nodeSchemas: Array.from(nodeResults.value.entries()).map(([id, result]) => [id, result.schema])
       }
@@ -929,6 +945,44 @@ export const useFlowStore = defineStore('flow', () => {
       await fileStorage.deleteCatalogDataset(name)
     } catch (err) {
       console.warn('[flow-store] failed to delete catalog dataset:', err)
+    }
+  }
+
+  /**
+   * Materialise a catalog (or external) dataset into a Graphic Walker payload
+   * for the Visuals feature: parse the CSV in Pyodide and return its fields +
+   * up to GW_MAX_ROWS JSON-safe rows. Pyodide must already be ready (the caller
+   * gates on it). Bridges the CSV via `_temp_content`, like the read node.
+   */
+  async function loadDatasetForVisual(name: string): Promise<{
+    success: boolean
+    fields?: Record<string, unknown>[]
+    data?: Record<string, unknown>[]
+    rowInfo?: Record<string, unknown>
+    error?: string
+  }> {
+    const content = getCatalogDatasetContent(name) ?? getExternalDatasetContent(name)
+    if (content === undefined) {
+      return { success: false, error: `Dataset "${name}" is not in the catalog.` }
+    }
+    const { runPythonWithResult, setGlobal, deleteGlobal } = pyodideStore
+    setGlobal('_temp_content', content)
+    try {
+      const result = await runPythonWithResult(`
+result = prepare_visual_data(_temp_content)
+result
+`)
+      if (!result?.success) {
+        return { success: false, error: result?.error ?? 'Failed to load dataset.' }
+      }
+      return {
+        success: true,
+        fields: result.fields ?? [],
+        data: result.data ?? [],
+        rowInfo: result.row_info,
+      }
+    } finally {
+      deleteGlobal('_temp_content')
     }
   }
 
@@ -2204,6 +2258,7 @@ result
         const nodesCompleted = Array.from(nodeResults.value.values()).filter(r => r.success === true).length
         await fileStorage.putRun({
           id: (globalThis.crypto?.randomUUID?.() ?? `run-${runStartedAt}`),
+          flowId: currentFlowId.value ?? undefined,
           flowName: currentFlowName.value,
           startedAt: runStartedAt,
           durationMs: Date.now() - runStartedAt,
@@ -2512,6 +2567,9 @@ result
       dirtyNodes.value.clear()
       selectedNodeId.value = null
       currentFlowName.value = (data as any)?.flowfile_name || 'Untitled Flow'
+      // Raw FlowfileData (file/template/snapshot) carries no library identity;
+      // callers that restore a saved flow set currentFlowId afterwards.
+      currentFlowId.value = null
 
       fileStorage.clearAll().catch(err => {
         console.error('Failed to clear IndexedDB:', err)
@@ -2600,49 +2658,60 @@ result
     }
   }
 
-  /**
-   * Persist a flow snapshot to the Recent Flows list (IndexedDB). Small input
-   * CSVs are bundled so reopening restores data; large files are omitted (and
-   * re-flagged via getMissingFileNodes on reopen). Deduped by name. Best-effort.
-   */
-  async function recordRecentFlow(flowName: string, data: FlowfileData): Promise<void> {
-    try {
-      const smallFiles: Record<number, string> = {}
-      for (const [nid, content] of fileContents.value) {
-        if (new Blob([content]).size < SIZE_THRESHOLD) smallFiles[nid] = content
-      }
-      await fileStorage.putRecentFlow({
-        id: `flow:${flowName}`,
-        name: flowName,
-        savedAt: Date.now(),
-        nodeCount: nodes.value.size,
-        snapshot: data,
-        fileContents: Object.keys(smallFiles).length ? smallFiles : undefined
-      })
-      await fileStorage.pruneRecentFlows(8)
-    } catch (e) {
-      console.warn('[flow-store] failed to record recent flow:', e)
+  /** Bundle the in-memory input CSVs that are small enough to persist inline. */
+  function collectSmallFileContents(): Record<number, string> {
+    const smallFiles: Record<number, string> = {}
+    for (const [nid, content] of fileContents.value) {
+      if (new Blob([content]).size < SIZE_THRESHOLD) smallFiles[nid] = content
     }
+    return smallFiles
   }
 
   /**
-   * Download the current flow as a file
+   * Persist the active flow to the in-browser library (IndexedDB), the WASM
+   * analogue of the full app's catalog registration. Upserts by currentFlowId
+   * (minting one on first save) so re-saving updates the same entry and rename
+   * is non-lossy. Does NOT download a file — see exportFlowfile for that.
+   */
+  async function saveToLibrary(name?: string): Promise<{ id: string; name: string }> {
+    await runBeforeExportHooks()
+    if (!currentFlowId.value) currentFlowId.value = genFlowId()
+    if (name) currentFlowName.value = name
+    const flowName = currentFlowName.value || 'Untitled Flow'
+    // Deep-clone to a plain object: exportToFlowfile carries reactive (Proxy)
+    // arrays/objects that IndexedDB's structured clone rejects (DataCloneError).
+    const data = JSON.parse(JSON.stringify(exportToFlowfile(flowName))) as FlowfileData
+
+    const existing = await fileStorage.getSavedFlow(currentFlowId.value)
+    const now = Date.now()
+    const smallFiles = collectSmallFileContents()
+    await fileStorage.putSavedFlow({
+      id: currentFlowId.value,
+      name: flowName,
+      description: existing?.description ?? '',
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      nodeCount: nodes.value.size,
+      snapshot: data,
+      fileContents: Object.keys(smallFiles).length ? smallFiles : undefined
+    })
+    return { id: currentFlowId.value, name: flowName }
+  }
+
+  /**
+   * Export the current flow as a downloaded file (yaml/json). File output only —
+   * persisting to the library is saveToLibrary's job.
    * @param name - Optional name for the flow
    * @param format - 'yaml' or 'json' (default: 'yaml' for flowfile_core compatibility)
    */
-  async function downloadFlowfile(name?: string, format: 'yaml' | 'json' = 'yaml') {
+  async function exportFlowfile(name?: string, format: 'yaml' | 'json' = 'yaml') {
     // Flush any pending state from open explore_data panels so saved chart
     // specs end up in the exported node settings.
     await runBeforeExportHooks()
 
-    const flowName = name || `flow_${new Date().toISOString().slice(0, 10)}`
+    const flowName = name || currentFlowName.value || `flow_${new Date().toISOString().slice(0, 10)}`
     const data = exportToFlowfile(flowName)
     currentFlowName.value = flowName
-
-    // Record into Recent Flows (Home page) so it can be reopened in-browser.
-    // Snapshot the flow JSON + small input CSVs (large files are omitted and
-    // re-flagged via getMissingFileNodes on reopen). Fire-and-forget.
-    void recordRecentFlow(flowName, data)
 
     let content: string
     let mimeType: string
@@ -2674,6 +2743,9 @@ result
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }
+
+  // Back-compat alias (older callers / the embeddable Canvas toolbar).
+  const downloadFlowfile = exportFlowfile
 
   /**
    * Validate flowfile data using Pydantic schemas (via Pyodide)
@@ -2749,8 +2821,6 @@ result
   
       const imported = importFromFlowfile(data)
       if (imported) {
-        // Surface opened flows in Recent Flows too (Home page).
-        void recordRecentFlow(currentFlowName.value, data)
         const missingFiles = getMissingFileNodes()
         return { success: true, missingFiles }
       }
@@ -2788,6 +2858,7 @@ result
     selectedNodeId.value = null
     nodeIdCounter.value = 0
     currentFlowName.value = 'Untitled Flow'
+    currentFlowId.value = null
     sessionStorage.removeItem(STORAGE_KEY)
 
     fileStorage.clearAll().catch(err => {
@@ -2810,6 +2881,7 @@ result
     for (const [nid, content] of fileContents.value) fc[nid] = content
     return {
       name: currentFlowName.value,
+      flowId: currentFlowId.value,
       snapshot: exportToFlowfile(currentFlowName.value),
       fileContents: fc,
       nodeIdCounter: nodeIdCounter.value
@@ -2830,6 +2902,8 @@ result
     }
     nodeIdCounter.value = snap.nodeIdCounter
     currentFlowName.value = snap.name
+    // importFromFlowfile cleared the id; restore the snapshot's library identity.
+    currentFlowId.value = snap.flowId ?? null
     return true
   }
 
@@ -2860,6 +2934,7 @@ result
     isExecuting,
     executionError,
     currentFlowName,
+    currentFlowId,
     fileContents,
 
     // Getters
@@ -2901,6 +2976,7 @@ result
     getCatalogDatasetNames,
     getCatalogDatasetContent,
     removeCatalogDataset,
+    loadDatasetForVisual,
     selectNode,
     executeNode,
     executeFlow,
@@ -2927,6 +3003,8 @@ result
     importFromFlowfile,
     captureSnapshot,
     loadFromSnapshot,
+    saveToLibrary,
+    exportFlowfile,
     downloadFlowfile,
     loadFlowfile,
     validateFlowfileData,

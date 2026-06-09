@@ -1,11 +1,11 @@
 <template>
   <WelcomeScreen
-    :recent-flows="recentFlowsStore.recentFlows"
+    :recent-flows="savedFlowsStore.recent"
     @create="handleCreate"
     @open="handleOpen"
     @browse-templates="handleBrowseTemplates"
     @open-recent="handleOpenRecent"
-    @remove-recent="recentFlowsStore.remove"
+    @remove-recent="savedFlowsStore.remove"
   />
   <input
     ref="fileInput"
@@ -29,20 +29,20 @@ import { useRouter } from 'vue-router'
 import WelcomeScreen from './HomeView/WelcomeScreen.vue'
 import TemplatesGallery from '../components/TemplatesGallery.vue'
 import { useFlowTabsStore } from '../stores/flow-tabs-store'
-import { useRecentFlowsStore } from '../stores/recent-flows-store'
+import { useSavedFlowsStore } from '../stores/saved-flows-store'
 import { useTemplates } from '../composables/useTemplates'
 import type { FlowTemplate } from '../config/templates'
 
 const router = useRouter()
 const flowTabsStore = useFlowTabsStore()
-const recentFlowsStore = useRecentFlowsStore()
+const savedFlowsStore = useSavedFlowsStore()
 const { isLoading, loadError, loadTemplate } = useTemplates()
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const showTemplates = ref(false)
 
 onMounted(() => {
-  recentFlowsStore.refresh()
+  savedFlowsStore.refresh()
 })
 
 const goDesigner = () => router.push({ name: 'designer' })
@@ -64,7 +64,6 @@ async function onFileChange(event: Event) {
   if (!file) return
   const result = await flowTabsStore.openFile(file)
   if (result.success) {
-    await recentFlowsStore.refresh()
     goDesigner()
   } else {
     alert('Failed to load flow file. Please check the file format.')
@@ -84,7 +83,7 @@ async function onSelectTemplate(template: FlowTemplate) {
 }
 
 async function handleOpenRecent(id: string) {
-  const ok = await flowTabsStore.openWith(() => recentFlowsStore.openRecent(id))
+  const ok = await savedFlowsStore.open(id)
   if (ok) goDesigner()
 }
 </script>

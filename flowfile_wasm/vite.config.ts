@@ -47,6 +47,6 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['pyodide'],
-    include: ['react', 'react-dom/client', '@kanaries/graphic-walker']
+    include: ['react', 'react-dom/client', '@kanaries/graphic-walker', 'grid-layout-plus']
   }
 })

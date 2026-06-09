@@ -4,15 +4,15 @@
 
     <div class="summary-cards">
       <div class="summary-card">
-        <span class="material-icons summary-icon">history</span>
+        <i class="fa-solid fa-clock-rotate-left summary-icon"></i>
         <div class="summary-info"><span class="summary-value">{{ runs.length }}</span><span class="summary-label">Total</span></div>
       </div>
       <div class="summary-card">
-        <span class="material-icons summary-icon success">check_circle</span>
+        <i class="fa-solid fa-circle-check summary-icon success"></i>
         <div class="summary-info"><span class="summary-value">{{ successCount }}</span><span class="summary-label">Successful</span></div>
       </div>
       <div class="summary-card">
-        <span class="material-icons summary-icon failure">cancel</span>
+        <i class="fa-solid fa-circle-xmark summary-icon failure"></i>
         <div class="summary-info"><span class="summary-value">{{ failureCount }}</span><span class="summary-label">Failed</span></div>
       </div>
     </div>
@@ -28,7 +28,7 @@
       <div v-for="run in runs" :key="run.id" class="table-row">
         <div class="col-status">
           <span class="status-badge" :class="run.success ? 'is-success' : 'is-failure'">
-            <span class="material-icons">{{ run.success ? 'check_circle' : 'cancel' }}</span>
+            <i :class="run.success ? 'fa-solid fa-circle-check' : 'fa-solid fa-circle-xmark'"></i>
             {{ run.success ? 'Success' : 'Failed' }}
           </span>
         </div>
@@ -40,7 +40,7 @@
     </div>
 
     <div v-else class="runs-empty">
-      <span class="material-icons">history</span>
+      <i class="fa-solid fa-clock-rotate-left"></i>
       <p>No runs yet. Run a flow in the Designer and it'll show up here.</p>
     </div>
   </div>
@@ -134,7 +134,7 @@ function formatDuration(ms: number): string {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
 }
-.status-badge .material-icons { font-size: 13px; }
+.status-badge i { font-size: 11px; }
 .status-badge.is-success { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .status-badge.is-failure { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 
@@ -150,6 +150,6 @@ function formatDuration(ms: number): string {
   border-radius: var(--border-radius-md);
   text-align: center;
 }
-.runs-empty .material-icons { font-size: 32px; opacity: 0.6; }
+.runs-empty i { font-size: 28px; opacity: 0.6; }
 .runs-empty p { margin: 0; font-size: var(--font-size-sm); }
 </style>

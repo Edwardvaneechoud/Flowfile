@@ -57,9 +57,13 @@
           <span class="btn-text">{{ isExecuting ? 'Running...' : 'Run' }}</span>
         </button>
         <div v-if="effectiveToolbar.showRun" class="toolbar-divider"></div>
-        <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="handleSaveFlow" title="Save Flow">
+        <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="handleSaveFlow" title="Save flow to the catalog">
           <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-          <span class="btn-text">Save</span>
+          <span class="btn-text">{{ savedFlash ? 'Saved' : 'Save' }}</span>
+        </button>
+        <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="handleExportFlow" title="Export flow to file">
+          <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="btn-text">Export</span>
         </button>
         <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="triggerLoadFlow" title="Load Flow">
           <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -433,6 +437,8 @@ const searchQuery = ref('')
 const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
+// Brief "Saved" confirmation on the toolbar Save button (lib/embed mode).
+const savedFlash = ref(false)
 
 // Apply-button state for the node settings panel footer.
 const isApplying = ref(false)
@@ -474,7 +480,7 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'read', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 },
       { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1 },
       { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1 },
-      { type: 'read_from_catalog', name: 'Read from Catalog', icon: 'database_reader.svg', inputs: 0, outputs: 1 }
+      { type: 'read_from_catalog', name: 'Read from Catalog', icon: 'catalog_reader.svg', inputs: 0, outputs: 1 }
     ]
   },
   {
@@ -511,7 +517,7 @@ const nodeCategories = ref<NodeCategory[]>([
     nodes: [
       { type: 'explore_data', name: 'Explore Data', icon: 'explore_data.png', inputs: 1, outputs: 0 },
       { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0 },
-      { type: 'write_to_catalog', name: 'Write to Catalog', icon: 'database_writer.svg', inputs: 1, outputs: 0 },
+      { type: 'write_to_catalog', name: 'Write to Catalog', icon: 'catalog_writer.svg', inputs: 1, outputs: 0 },
       { type: 'external_output', name: 'External Output', icon: 'external_output.svg', inputs: 1, outputs: 0 }
     ]
   }
@@ -999,11 +1005,30 @@ async function handleRunFlow() {
   emit('execution-complete', nodeResults.value)
 }
 
-async function handleSaveFlow() {
-  const name = prompt('Enter flow name:', 'my_flow')
-  if (name) {
-    await flowStore.downloadFlowfile(name)
+// Save the flow to the in-browser library (no file download). Prompts for a
+// name only on first save of an untitled flow; re-saves update the same entry.
+async function handleSaveFlow(): Promise<boolean> {
+  const needsName = !flowStore.currentFlowId || flowStore.currentFlowName === 'Untitled Flow'
+  let name = flowStore.currentFlowName
+  if (needsName) {
+    const entered = prompt('Save flow as:', name && name !== 'Untitled Flow' ? name : 'my_flow')
+    if (!entered) return false
+    name = entered
   }
+  await flowStore.saveToLibrary(name)
+  savedFlash.value = true
+  setTimeout(() => (savedFlash.value = false), 1600)
+  return true
+}
+
+// Export the flow to a downloaded file (separate from library save).
+async function handleExportFlow() {
+  let name = flowStore.currentFlowName
+  if (!name || name === 'Untitled Flow') {
+    name = prompt('Export flow as:', 'my_flow') || ''
+    if (!name) return
+  }
+  await flowStore.downloadFlowfile(name)
 }
 
 function triggerLoadFlow() {
@@ -1092,6 +1117,7 @@ onMounted(async () => {
   uiStore.registerActions({
     run: handleRunFlow,
     save: handleSaveFlow,
+    exportFile: handleExportFlow,
     open: triggerLoadFlow,
     clear: handleClearFlow
   })
@@ -1201,8 +1227,9 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
-  background: var(--bg-tertiary);
+  height: 32px;
+  padding: 8px 16px;
+  background: var(--bg-muted);
   cursor: pointer;
   user-select: none;
 }
@@ -1213,7 +1240,7 @@ onUnmounted(() => {
 
 .category-title {
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--text-primary);
 }
 
@@ -1230,7 +1257,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  height: 32px;
+  padding: 8px 16px;
   cursor: grab;
   user-select: none;
   border-bottom: 1px solid var(--border-light);

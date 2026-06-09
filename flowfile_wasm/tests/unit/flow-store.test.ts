@@ -17,6 +17,7 @@ vi.mock('../../src/stores/pyodide-store', () => ({
 }))
 
 vi.mock('../../src/stores/file-storage', () => ({
+  SIZE_THRESHOLD: 5 * 1024 * 1024,
   fileStorage: {
     setFileContent: vi.fn().mockResolvedValue(undefined),
     getFileContent: vi.fn().mockResolvedValue(null),
@@ -24,7 +25,11 @@ vi.mock('../../src/stores/file-storage', () => ({
     getDownloadContent: vi.fn().mockResolvedValue(null),
     setDownloadContent: vi.fn().mockResolvedValue(undefined),
     clearAll: vi.fn().mockResolvedValue(undefined),
-    shouldUseIndexedDB: vi.fn().mockReturnValue(false)
+    shouldUseIndexedDB: vi.fn().mockReturnValue(false),
+    getSavedFlow: vi.fn().mockResolvedValue(null),
+    putSavedFlow: vi.fn().mockResolvedValue(undefined),
+    putRun: vi.fn().mockResolvedValue(undefined),
+    pruneRuns: vi.fn().mockResolvedValue(undefined)
   }
 }))
 
@@ -628,6 +633,41 @@ describe('Flow Store', () => {
       expect(store.nodeList.map(n => n.type)).toContain('read_csv')
       expect(store.nodeList.map(n => n.type)).toContain('filter')
       expect(store.nodeList.map(n => n.type)).toContain('select')
+    })
+  })
+
+  describe('Save to catalog vs Export', () => {
+    it('saveToLibrary mints a stable id and does NOT download a file', async () => {
+      const store = useFlowStore()
+      store.addNode('filter', 0, 0)
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+      expect(store.currentFlowId).toBe(null)
+      const res = await store.saveToLibrary('My Flow')
+
+      expect(res.id).toBeTruthy()
+      expect(store.currentFlowId).toBe(res.id)
+      expect(store.currentFlowName).toBe('My Flow')
+      expect(clickSpy).not.toHaveBeenCalled()
+
+      // Re-saving keeps the same id (non-lossy).
+      const again = await store.saveToLibrary('My Flow Renamed')
+      expect(again.id).toBe(res.id)
+
+      clickSpy.mockRestore()
+    })
+
+    it('exportFlowfile downloads a file', async () => {
+      const store = useFlowStore()
+      store.addNode('filter', 0, 0)
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+      ;(URL as any).createObjectURL = vi.fn(() => 'blob:mock')
+      ;(URL as any).revokeObjectURL = vi.fn()
+
+      await store.exportFlowfile('My Flow')
+      expect(clickSpy).toHaveBeenCalled()
+
+      clickSpy.mockRestore()
     })
   })
 })
