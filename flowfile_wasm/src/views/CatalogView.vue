@@ -35,10 +35,6 @@
             @change="handleUpload"
           />
           <input v-model="search" type="text" class="search-input" placeholder="Search tables..." />
-          <label class="unavailable-toggle">
-            <input v-model="showUnavailable" type="checkbox" />
-            <span>Show unavailable</span>
-          </label>
         </div>
         <div class="sidebar-scroll">
           <div v-for="group in displayGroups" :key="group.key" class="source-group">
@@ -111,8 +107,8 @@ import { inferSchemaFromCsv } from '../stores/schema-inference'
 import CatalogDetailPanel from '../components/catalog/CatalogDetailPanel.vue'
 import StatsPanel from './CatalogView/StatsPanel.vue'
 import RunHistoryTable from './CatalogView/RunHistoryTable.vue'
-import type { CatalogItem, CatalogStatus } from '../components/catalog/types'
-import type { DataPreview, NodeResult } from '../types'
+import type { CatalogItem } from '../components/catalog/types'
+import type { DataPreview } from '../types'
 
 type TabKey = 'catalog' | 'favorites' | 'runs'
 
@@ -121,32 +117,12 @@ const router = useRouter()
 const flowStore = useFlowStore()
 const favoritesStore = useFavoritesStore()
 const runHistoryStore = useRunHistoryStore()
-// `getNode` (used in the items computed) establishes the reactive dep on nodes.
-const { nodeResults, fileContents, externalDatasets, catalogDatasets } = storeToRefs(flowStore)
+const { externalDatasets, catalogDatasets } = storeToRefs(flowStore)
 
 const search = ref('')
-const showUnavailable = ref(true)
 const selectedId = ref<string | null>(null)
 const activeTab = ref<TabKey>('catalog')
 const uploadInput = ref<HTMLInputElement | null>(null)
-
-const SOURCE_TYPES = new Set(['read', 'manual_input', 'external_data', 'read_from_catalog'])
-const TYPE_LABELS: Record<string, string> = {
-  read: 'Read CSV', manual_input: 'Manual Input', external_data: 'External Data',
-  read_from_catalog: 'Read from Catalog',
-  filter: 'Filter', select: 'Select', sort: 'Sort', polars_code: 'Polars Code',
-  unique: 'Unique', head: 'Take Sample', join: 'Join', group_by: 'Group By',
-  pivot: 'Pivot', unpivot: 'Unpivot', explore_data: 'Explore Data',
-  output: 'Write Data', external_output: 'External Output'
-}
-const typeLabel = (t: string) => TYPE_LABELS[t] || t
-
-function statusOf(result?: NodeResult): CatalogStatus {
-  if (!result) return 'pending'
-  if (result.success === true) return 'success'
-  if (result.success === false) return 'failure'
-  return 'pending'
-}
 
 function byteSize(content: string): number {
   return new Blob([content]).size
@@ -184,49 +160,8 @@ function parseCsvHead(content: string, maxRows = 20): DataPreview | null {
   return { columns, data, total_rows: Math.max(0, nonEmpty.length - 1) }
 }
 
-function inputName(nodeId: number): string {
-  const node = flowStore.getNode(nodeId)
-  if (!node) return `Node #${nodeId}`
-  const s = (node.settings ?? {}) as Record<string, any>
-  if (node.type === 'read') return s.received_file?.name || s.file_name || node.description || `CSV #${nodeId}`
-  if (node.type === 'external_data') return s.dataset_name || node.description || `External #${nodeId}`
-  if (node.type === 'manual_input') return node.description || `Manual input #${nodeId}`
-  return node.description || typeLabel(node.type)
-}
-
 const items = computed<CatalogItem[]>(() => {
   const out: CatalogItem[] = []
-
-  for (const [nodeId, content] of fileContents.value) {
-    const node = flowStore.getNode(nodeId)
-    if (!node) continue
-    const result = nodeResults.value.get(nodeId)
-    out.push({
-      id: `file-${nodeId}`,
-      kind: 'file',
-      name: inputName(nodeId),
-      subtitle: typeLabel(node.type),
-      nodeId,
-      schema: result?.schema ?? inferSchemaFromCsv(content) ?? undefined,
-      rows: result?.data?.total_rows ?? null,
-      columns: result?.schema?.length ?? null,
-      sizeBytes: byteSize(content),
-      status: statusOf(result),
-      preview: result?.data ?? parseCsvHead(content)
-    })
-  }
-
-  for (const mf of flowStore.getMissingFileNodes()) {
-    out.push({
-      id: `missing-${mf.nodeId}`,
-      kind: 'file',
-      name: mf.fileName || `Node #${mf.nodeId}`,
-      subtitle: 'File not loaded',
-      nodeId: mf.nodeId,
-      unavailable: true,
-      status: 'failure'
-    })
-  }
 
   for (const [name, content] of externalDatasets.value) {
     const schema = inferSchemaFromCsv(content) ?? undefined
@@ -261,23 +196,10 @@ const items = computed<CatalogItem[]>(() => {
     })
   }
 
-  for (const [nodeId, result] of nodeResults.value) {
-    const node = flowStore.getNode(nodeId)
-    if (!node || SOURCE_TYPES.has(node.type)) continue
-    out.push({
-      id: `out-${nodeId}`,
-      kind: 'output',
-      name: node.description?.trim() || typeLabel(node.type),
-      subtitle: `#${nodeId} · ${typeLabel(node.type)}`,
-      nodeId,
-      schema: result.schema,
-      rows: result.data?.total_rows ?? result.download?.row_count ?? null,
-      columns: result.schema?.length ?? null,
-      status: statusOf(result),
-      preview: result.data ?? null,
-      download: result.download
-    })
-  }
+  // The catalog lists only persistent data sources (uploaded catalog tables +
+  // host-provided external datasets). Flow-bound data — a read node's loaded
+  // CSV and transient node outputs — is intentionally NOT listed here, so the
+  // catalog never changes when a flow is opened, closed, or switched.
 
   return out
 })
@@ -292,7 +214,6 @@ const displayGroups = computed(() => {
   const q = search.value.trim().toLowerCase()
   const onlyFavorites = activeTab.value === 'favorites'
   const match = (i: CatalogItem) =>
-    (showUnavailable.value || !i.unavailable) &&
     (!onlyFavorites || favoritesStore.isFavorite(i.id)) &&
     (!q || i.name.toLowerCase().includes(q) || (i.subtitle?.toLowerCase().includes(q) ?? false))
 
@@ -300,9 +221,7 @@ const displayGroups = computed(() => {
 
   return [
     { key: 'catalog', label: 'Catalog tables', items: byKind('catalog'), emptyText: onlyFavorites ? 'No favorited tables.' : 'Upload a CSV to add a catalog table.' },
-    { key: 'file', label: 'Loaded files', items: byKind('file'), emptyText: onlyFavorites ? 'No favorited files.' : 'No CSV files loaded yet.' },
-    { key: 'external', label: 'External datasets', items: byKind('external'), emptyText: onlyFavorites ? 'No favorited datasets.' : 'No external datasets provided.' },
-    { key: 'output', label: 'Node outputs', items: byKind('output'), emptyText: onlyFavorites ? 'No favorited outputs.' : 'Run nodes to populate outputs.' }
+    { key: 'external', label: 'External datasets', items: byKind('external'), emptyText: onlyFavorites ? 'No favorited datasets.' : 'No external datasets provided.' }
   ]
 })
 
@@ -452,16 +371,6 @@ function refresh() {
   color: var(--color-text-primary);
 }
 .search-input:focus { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-focus-ring-accent); }
-
-.unavailable-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-.unavailable-toggle input { accent-color: var(--color-accent); }
 
 .sidebar-scroll { flex: 1; overflow-y: auto; padding: var(--spacing-3); }
 .source-group { margin-bottom: var(--spacing-4); }

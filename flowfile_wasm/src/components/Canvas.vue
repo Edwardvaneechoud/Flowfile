@@ -110,6 +110,7 @@
             @edit="handleEditNode"
             @view-data="handleViewData"
             @copy="handleCopyNode"
+            @save-to-catalog="handleSaveToCatalog"
           />
         </template>
         <MiniMap />
@@ -722,6 +723,36 @@ async function handleViewData(nodeId: number) {
 
 function handleCopyNode(nodeId: number) {
   flowStore.copyNode(nodeId)
+}
+
+// Persist a source node's loaded CSV as a reusable catalog table. The catalog
+// is the cross-flow store, so this bridges flow-bound data into it.
+async function handleSaveToCatalog(nodeId: number) {
+  const content = flowStore.getFileContent(nodeId)
+  if (!content) {
+    alert('This node has no loaded data to save. Run or load the node first.')
+    return
+  }
+  const node = flowStore.getNode(nodeId)
+  const s = (node?.settings ?? {}) as Record<string, any>
+  const defaultName =
+    (s.received_file?.name as string) ||
+    (s.file_name as string) ||
+    (s.dataset_name as string) ||
+    node?.description ||
+    `table_${nodeId}`
+  const cleanName = String(defaultName).replace(/\.[^.]+$/, '').trim() || `table_${nodeId}`
+  const name = window.prompt('Save as catalog table named:', cleanName)
+  if (name === null) return
+  const trimmed = name.trim()
+  if (!trimmed) return
+  if (
+    flowStore.getCatalogDatasetNames().includes(trimmed) &&
+    !window.confirm(`A catalog table named "${trimmed}" already exists. Replace it?`)
+  ) {
+    return
+  }
+  await flowStore.addCatalogDataset(trimmed, content)
 }
 
 function updateSettings(settings: NodeSettings) {

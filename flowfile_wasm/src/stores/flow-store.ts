@@ -808,6 +808,16 @@ export const useFlowStore = defineStore('flow', () => {
     invalidatePreviewCache(nodeId)
   }
 
+  /** Whether a node currently has loaded CSV content in memory. */
+  function hasFileContent(nodeId: number): boolean {
+    return fileContents.value.has(nodeId)
+  }
+
+  /** Get a node's loaded CSV content (in-memory), if any. */
+  function getFileContent(nodeId: number): string | undefined {
+    return fileContents.value.get(nodeId)
+  }
+
   /**
    * Set external datasets available from the host application.
    * Called by FlowfileEditor when inputData prop changes.
@@ -2566,6 +2576,8 @@ result
     addEdge,
     removeEdge,
     setFileContent,
+    hasFileContent,
+    getFileContent,
     externalDatasets,
     setExternalDatasets,
     getExternalDatasetNames,
