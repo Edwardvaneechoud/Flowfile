@@ -11,9 +11,11 @@
  */
 
 const DB_NAME = 'flowfile_wasm_files';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_NAME = 'fileContents';
 const DOWNLOAD_STORE_NAME = 'downloadContents';
+const RECENT_FLOWS_STORE = 'recentFlows';
+const RUN_HISTORY_STORE = 'runHistory';
 const SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB in bytes
 
 interface FileEntry {
@@ -31,6 +33,28 @@ interface DownloadEntry {
   mimeType: string;
   rowCount: number;
   timestamp: number;
+}
+
+/** A saved/opened flow surfaced on the Home page's Recent Flows list. */
+interface RecentFlowEntry {
+  id: string;
+  name: string;
+  savedAt: number;
+  nodeCount: number;
+  snapshot: unknown; // FlowfileData JSON (typed in recent-flows-store)
+  fileContents?: Record<number, string>; // small input CSVs so reopen restores data
+}
+
+/** A per-run summary surfaced in the Catalog Run History tab + overview stats. */
+interface RunHistoryEntry {
+  id: string;
+  flowName: string;
+  startedAt: number;
+  durationMs: number;
+  nodesTotal: number;
+  nodesCompleted: number;
+  success: boolean;
+  error?: string | null;
 }
 
 class FileStorageManager {
@@ -72,6 +96,16 @@ class FileStorageManager {
         if (!db.objectStoreNames.contains(DOWNLOAD_STORE_NAME)) {
           const downloadStore = db.createObjectStore(DOWNLOAD_STORE_NAME, { keyPath: 'nodeId' });
           downloadStore.createIndex('timestamp', 'timestamp', { unique: false });
+        }
+
+        // v3 (additive): recent flows + run history for the Home/Catalog shell.
+        if (!db.objectStoreNames.contains(RECENT_FLOWS_STORE)) {
+          const recentStore = db.createObjectStore(RECENT_FLOWS_STORE, { keyPath: 'id' });
+          recentStore.createIndex('savedAt', 'savedAt', { unique: false });
+        }
+        if (!db.objectStoreNames.contains(RUN_HISTORY_STORE)) {
+          const runStore = db.createObjectStore(RUN_HISTORY_STORE, { keyPath: 'id' });
+          runStore.createIndex('startedAt', 'startedAt', { unique: false });
         }
       };
     });
@@ -380,8 +414,135 @@ class FileStorageManager {
       };
     });
   }
+
+  // ── Recent flows (Home page) ──────────────────────────────────────────────
+
+  /** Generic helper: read all rows from a store sorted desc by a numeric field. */
+  private getAllFromStore<T>(storeName: string): Promise<T[]> {
+    return this.init().then(
+      () =>
+        new Promise<T[]>((resolve, reject) => {
+          if (!this.db) {
+            reject(new Error('IndexedDB not initialized'));
+            return;
+          }
+          const tx = this.db.transaction([storeName], 'readonly');
+          const req = tx.objectStore(storeName).getAll();
+          req.onsuccess = () => resolve(req.result as T[]);
+          req.onerror = () => reject(req.error);
+        }),
+    );
+  }
+
+  async putRecentFlow(entry: RecentFlowEntry): Promise<void> {
+    await this.init();
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([RECENT_FLOWS_STORE], 'readwrite');
+      const req = tx.objectStore(RECENT_FLOWS_STORE).put(entry);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async getAllRecentFlows(): Promise<RecentFlowEntry[]> {
+    const all = await this.getAllFromStore<RecentFlowEntry>(RECENT_FLOWS_STORE);
+    return all.sort((a, b) => b.savedAt - a.savedAt);
+  }
+
+  async getRecentFlow(id: string): Promise<RecentFlowEntry | null> {
+    await this.init();
+    return new Promise<RecentFlowEntry | null>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([RECENT_FLOWS_STORE], 'readonly');
+      const req = tx.objectStore(RECENT_FLOWS_STORE).get(id);
+      req.onsuccess = () => resolve((req.result as RecentFlowEntry) ?? null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async deleteRecentFlow(id: string): Promise<void> {
+    await this.init();
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([RECENT_FLOWS_STORE], 'readwrite');
+      const req = tx.objectStore(RECENT_FLOWS_STORE).delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Keep only the newest `max` recent flows. */
+  async pruneRecentFlows(max = 8): Promise<void> {
+    const all = await this.getAllRecentFlows();
+    const toDelete = all.slice(max);
+    await Promise.all(toDelete.map((e) => this.deleteRecentFlow(e.id)));
+  }
+
+  // ── Run history (Catalog) ─────────────────────────────────────────────────
+
+  async putRun(entry: RunHistoryEntry): Promise<void> {
+    await this.init();
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([RUN_HISTORY_STORE], 'readwrite');
+      const req = tx.objectStore(RUN_HISTORY_STORE).put(entry);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async getAllRuns(): Promise<RunHistoryEntry[]> {
+    const all = await this.getAllFromStore<RunHistoryEntry>(RUN_HISTORY_STORE);
+    return all.sort((a, b) => b.startedAt - a.startedAt);
+  }
+
+  /** Keep only the newest `max` runs. */
+  async pruneRuns(max = 50): Promise<void> {
+    const all = await this.getAllRuns();
+    const toDelete = all.slice(max);
+    if (!toDelete.length) return;
+    await this.init();
+    await new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([RUN_HISTORY_STORE], 'readwrite');
+      const store = tx.objectStore(RUN_HISTORY_STORE);
+      toDelete.forEach((e) => store.delete(e.id));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async clearRuns(): Promise<void> {
+    await this.init();
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([RUN_HISTORY_STORE], 'readwrite');
+      const req = tx.objectStore(RUN_HISTORY_STORE).clear();
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
 }
 
 export const fileStorage = new FileStorageManager();
 export { SIZE_THRESHOLD };
-export type { DownloadEntry };
+export type { DownloadEntry, RecentFlowEntry, RunHistoryEntry };

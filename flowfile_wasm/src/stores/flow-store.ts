@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
 import yaml from 'js-yaml'
 import { inferOutputSchema, isSourceNode, inferSchemaFromCsv, inferSchemaFromRawData } from './schema-inference'
-import { fileStorage } from './file-storage'
+import { fileStorage, SIZE_THRESHOLD } from './file-storage'
 import type {
   FlowNode,
   FlowEdge,
@@ -101,6 +101,8 @@ export const useFlowStore = defineStore('flow', () => {
   const isExecuting = ref(false)
   const executionError = ref<string | null>(null)
   const nodeIdCounter = ref(0)
+  // Name of the flow currently open (drives Recent Flows + Run History + header).
+  const currentFlowName = ref<string>('Untitled Flow')
 
   // File content storage for CSV nodes
   const fileContents = ref<Map<number, string>>(new Map())
@@ -1806,6 +1808,7 @@ result
     previewCache.value.clear()
     dirtyNodes.value.clear()    // Clear all dirty flags (will be re-set if execution fails)
 
+    const runStartedAt = Date.now()
     try {
       await cleanupOrphanedData()
 
@@ -1843,6 +1846,24 @@ result
       console.error('Flow execution error:', error)
     } finally {
       isExecuting.value = false
+
+      // Record a per-run summary for the Catalog Run History (client-side only).
+      try {
+        const nodesCompleted = Array.from(nodeResults.value.values()).filter(r => r.success === true).length
+        await fileStorage.putRun({
+          id: (globalThis.crypto?.randomUUID?.() ?? `run-${runStartedAt}`),
+          flowName: currentFlowName.value,
+          startedAt: runStartedAt,
+          durationMs: Date.now() - runStartedAt,
+          nodesTotal: nodes.value.size,
+          nodesCompleted,
+          success: !executionError.value,
+          error: executionError.value
+        })
+        await fileStorage.pruneRuns(50)
+      } catch (e) {
+        console.warn('[flow-store] failed to record run history:', e)
+      }
     }
   }
 
@@ -2125,6 +2146,7 @@ result
       previewCache.value.clear()
       dirtyNodes.value.clear()
       selectedNodeId.value = null
+      currentFlowName.value = (data as any)?.flowfile_name || 'Untitled Flow'
 
       fileStorage.clearAll().catch(err => {
         console.error('Failed to clear IndexedDB:', err)
@@ -2208,6 +2230,31 @@ result
   }
 
   /**
+   * Persist a flow snapshot to the Recent Flows list (IndexedDB). Small input
+   * CSVs are bundled so reopening restores data; large files are omitted (and
+   * re-flagged via getMissingFileNodes on reopen). Deduped by name. Best-effort.
+   */
+  async function recordRecentFlow(flowName: string, data: FlowfileData): Promise<void> {
+    try {
+      const smallFiles: Record<number, string> = {}
+      for (const [nid, content] of fileContents.value) {
+        if (new Blob([content]).size < SIZE_THRESHOLD) smallFiles[nid] = content
+      }
+      await fileStorage.putRecentFlow({
+        id: `flow:${flowName}`,
+        name: flowName,
+        savedAt: Date.now(),
+        nodeCount: nodes.value.size,
+        snapshot: data,
+        fileContents: Object.keys(smallFiles).length ? smallFiles : undefined
+      })
+      await fileStorage.pruneRecentFlows(8)
+    } catch (e) {
+      console.warn('[flow-store] failed to record recent flow:', e)
+    }
+  }
+
+  /**
    * Download the current flow as a file
    * @param name - Optional name for the flow
    * @param format - 'yaml' or 'json' (default: 'yaml' for flowfile_core compatibility)
@@ -2219,6 +2266,12 @@ result
 
     const flowName = name || `flow_${new Date().toISOString().slice(0, 10)}`
     const data = exportToFlowfile(flowName)
+    currentFlowName.value = flowName
+
+    // Record into Recent Flows (Home page) so it can be reopened in-browser.
+    // Snapshot the flow JSON + small input CSVs (large files are omitted and
+    // re-flagged via getMissingFileNodes on reopen). Fire-and-forget.
+    void recordRecentFlow(flowName, data)
 
     let content: string
     let mimeType: string
@@ -2325,6 +2378,8 @@ result
   
       const imported = importFromFlowfile(data)
       if (imported) {
+        // Surface opened flows in Recent Flows too (Home page).
+        void recordRecentFlow(currentFlowName.value, data)
         const missingFiles = getMissingFileNodes()
         return { success: true, missingFiles }
       }
@@ -2361,6 +2416,7 @@ result
     dirtyNodes.value.clear()
     selectedNodeId.value = null
     nodeIdCounter.value = 0
+    currentFlowName.value = 'Untitled Flow'
     sessionStorage.removeItem(STORAGE_KEY)
 
     fileStorage.clearAll().catch(err => {
@@ -2394,6 +2450,7 @@ result
     selectedNodeId,
     isExecuting,
     executionError,
+    currentFlowName,
     fileContents,
 
     // Getters

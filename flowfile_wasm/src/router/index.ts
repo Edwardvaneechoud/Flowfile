@@ -4,13 +4,18 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
-      // Persistent app shell (header + nav tabs). Stays mounted across child
-      // route changes so Pyodide/theme init and flow state persist.
+      // Persistent app shell (icon rail). Stays mounted across child route
+      // changes so Pyodide/theme init and flow state persist.
       path: '/',
       component: () => import('../views/AppLayout.vue'),
       children: [
         {
           path: '',
+          name: 'home',
+          component: () => import('../views/HomeView.vue')
+        },
+        {
+          path: 'designer',
           name: 'designer',
           component: () => import('../views/AppPage.vue')
         },
@@ -22,7 +27,7 @@ const router = createRouter({
       ]
     },
     {
-      // Standalone embedded-editor example — intentionally header-less, so it
+      // Standalone embedded-editor example — intentionally rail-less, so it
       // stays a sibling of the layout (not a child).
       path: '/embed-example',
       name: 'embed-example',

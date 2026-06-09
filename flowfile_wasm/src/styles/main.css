@@ -48,6 +48,14 @@
   --color-accent-light: #22d3ee;
   --color-accent-subtle: #ecfeff;
 
+  /* Run-button purple + primary aliases (mirror the full app so ported
+     catalog/run-button CSS resolves). */
+  --color-accent-purple: #667eea;
+  --color-accent-purple-hover: #4f5fcc;
+  --color-primary: var(--light-blue);
+  --color-primary-dark: var(--primary-blue);
+  --color-primary-light-9: var(--color-accent-subtle);
+
   /* Legacy alias */
   --light-blue: #0891b2;
   --light-blue-hover: #0e7490;
