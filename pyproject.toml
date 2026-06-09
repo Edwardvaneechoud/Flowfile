@@ -200,6 +200,10 @@ known-first-party = ["flowfile", "flowfile_core", "flowfile_worker", "flowfile_f
     "S101",  # Use of assert detected (assert is standard in pytest)
 ]
 "test_utils/**/*" = ["E501"]
+# The in-browser Pyodide execution engine (flowfile_wasm/src/pyodide/engine/). Only
+# E501 is relaxed: the node executors carry long, user-facing error strings (same
+# rationale as the tests convention above). Everything else is linted normally.
+"flowfile_wasm/src/pyodide/engine/*.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

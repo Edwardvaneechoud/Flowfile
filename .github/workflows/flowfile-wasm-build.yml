@@ -43,3 +43,24 @@ jobs:
       - name: Run tests
         working-directory: flowfile_wasm
         run: npm run test:run
+
+  python-engine-tests:
+    # Runs the in-browser Pyodide engine (src/pyodide/engine.py) under CPython
+    # with the exact Polars/Pydantic versions Pyodide v0.27.7 bundles, so engine
+    # logic regressions are caught before they reach a user's browser.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned engine test deps
+        run: pip install -r flowfile_wasm/tests/python/requirements.txt
+
+      - name: Run Python engine tests
+        run: python -m pytest flowfile_wasm/tests/python -v
