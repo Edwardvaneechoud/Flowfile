@@ -164,5 +164,31 @@ if __name__ == "__main__":
 
 These examples provide a clear overview of the type of high-quality, executable Python code produced by Flowfile's Code Generator.
 
+## Project Export
+
+For more complex flows — especially flows that contain **notebook (Python script) nodes** or **custom user-defined nodes** — a single generated script becomes hard to read. The third export mode, **Project**, exports the flow as a structured multi-file Python project instead:
+
+```
+my_flow/
+├── pyproject.toml          # project metadata, pinned flowfile/polars dependencies
+├── README.md               # flow description, node overview, how to run
+├── main.py                 # entry point: python main.py
+├── pipeline.py             # the FlowFrame pipeline (run_etl_pipeline())
+├── flowfile_ctx.py         # local stand-in for the kernel flowfile_ctx API
+├── notebooks/
+│   └── node_05_clean_data.py   # one module per notebook node, code kept verbatim
+└── custom_nodes/
+    └── my_custom_node.py       # user-defined node classes, source kept verbatim
+```
+
+Key points:
+
+* **Notebook nodes are exported** (they are not supported by the single-file modes). Each one becomes its own module with the cell structure preserved via `# %%` markers, and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
+* **Custom nodes get their own modules** under `custom_nodes/` instead of being inlined into the script.
+* The pipeline itself uses the **FlowFrame API** (`import flowfile as ff`).
+* Server-backed `flowfile_ctx` APIs (global artifacts, catalog access) raise `NotImplementedError` in the exported project; the export panel and the generated README list these limitations per node.
+
+From the Code panel you can either **download the project as a .zip** or **save it directly into a folder** using the built-in file browser.
+
 !!! info "Future Direction"
     In a future release, generated code will use the FlowFrame API directly for all operations, enabling round-trip editing between code and canvas.

@@ -1541,17 +1541,31 @@ class FlowGraphCodeConverter:
 
     def _handle_user_defined(self, node: FlowNode, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle user-defined custom nodes by including their class definition and calling process()."""
-        node_type = node.node_type
-        settings = node.setting_input
+        custom_node_class = self._lookup_custom_node_class(node)
+        if custom_node_class is None:
+            return
+        if not self._register_custom_node_source(node, custom_node_class):
+            return
+        self._emit_user_defined_call(node, custom_node_class, var_name, input_vars)
 
+    def _lookup_custom_node_class(self, node: FlowNode) -> type | None:
+        """Resolve a user-defined node's class from the registry, recording unsupported on miss."""
+        node_type = node.node_type
         custom_node_class = CUSTOM_NODE_STORE.get(node_type)
         if custom_node_class is None:
             self.unsupported_nodes.append(
                 (node.node_id, node_type, f"User-defined node type '{node_type}' not found in the custom node registry")
             )
             self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Not found in registry")
-            return
+        return custom_node_class
 
+    def _register_custom_node_source(self, node: FlowNode, custom_node_class: type) -> bool:
+        """Capture the custom node's class source for inlining into the generated script.
+
+        Returns False (after recording the node as unsupported) when the
+        source cannot be retrieved.
+        """
+        node_type = node.node_type
         class_name = custom_node_class.__name__
         if class_name not in self.custom_node_classes:
             file_source = self._read_custom_node_source_file(custom_node_class)
@@ -1587,7 +1601,7 @@ class FlowGraphCodeConverter:
                     self._add_comment(
                         f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable"
                     )
-                    return
+                    return False
 
             self.imports.add(
                 "from flowfile_core.flowfile.node_designer import ("
@@ -1595,12 +1609,19 @@ class FlowGraphCodeConverter:
                 "IncomingColumns, ColumnSelector, NumericInput, TextInput, "
                 "DropdownSelector, TextArea, Toggle)"
             )
+        return True
 
+    def _emit_user_defined_call(
+        self, node: FlowNode, custom_node_class: type, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Emit the instantiation, settings population, and process() call for a custom node."""
+        settings = node.setting_input
+        class_name = custom_node_class.__name__
         settings_dict = getattr(settings, "settings", {}) or {}
 
         needs_collect, needs_lazy = self._check_process_method_signature(custom_node_class)
 
-        _node_name_field = custom_node_class.model_fields.get("node_name", type("", (), {"default": node_type}))
+        _node_name_field = custom_node_class.model_fields.get("node_name", type("", (), {"default": node.node_type}))
         self._add_code(f"# User-defined node: {_node_name_field.default}")
         self._add_code(f"_custom_node_{node.node_id} = {class_name}()")
 

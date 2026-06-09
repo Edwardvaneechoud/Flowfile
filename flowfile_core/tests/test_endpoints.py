@@ -1439,6 +1439,58 @@ def test_editor_code_to_polars():
     assert result.columns == ["name"], "Colum name should name"
 
 
+def test_editor_code_to_project():
+    flow_id = create_flow_with_manual_input_and_select()
+    v = client.get("/editor/code_to_project", params={"flow_id": flow_id})
+    assert v.status_code == 200, "Request should be successful"
+    manifest = v.json()
+    paths = {f["path"] for f in manifest["files"]}
+    assert {"pipeline.py", "main.py", "pyproject.toml", "README.md"} <= paths
+    assert manifest["project_name"]
+
+
+def test_editor_code_to_project_unknown_flow():
+    v = client.get("/editor/code_to_project", params={"flow_id": 999999})
+    assert v.status_code == 404, "Unknown flow should return 404"
+
+
+def test_editor_code_to_project_zip():
+    import io
+    import zipfile
+
+    flow_id = create_flow_with_manual_input_and_select()
+    v = client.get("/editor/code_to_project/zip", params={"flow_id": flow_id})
+    assert v.status_code == 200, "Request should be successful"
+    assert v.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(v.content)) as archive:
+        assert any(name.endswith("pipeline.py") for name in archive.namelist())
+
+
+def test_editor_code_to_project_save(tmp_path):
+    flow_id = create_flow_with_manual_input_and_select()
+    body = {"flow_id": flow_id, "target_directory": str(tmp_path), "overwrite": False}
+    v = client.post("/editor/code_to_project/save", json=body)
+    assert v.status_code == 200, "Save should succeed"
+    saved_to = Path(v.json()["saved_to"])
+    assert (saved_to / "pipeline.py").exists()
+    assert (saved_to / "main.py").exists()
+
+    conflict = client.post("/editor/code_to_project/save", json=body)
+    assert conflict.status_code == 409, "Existing project dir without overwrite should conflict"
+
+    overwrite = client.post("/editor/code_to_project/save", json={**body, "overwrite": True})
+    assert overwrite.status_code == 200, "Overwrite should succeed"
+
+
+def test_editor_code_to_project_save_missing_directory():
+    flow_id = create_flow_with_manual_input_and_select()
+    v = client.post(
+        "/editor/code_to_project/save",
+        json={"flow_id": flow_id, "target_directory": "/nonexistent/dir/for/project", "overwrite": False},
+    )
+    assert v.status_code == 404, "Missing target directory should return 404"
+
+
 def test_copy_node_not_run():
     flow_id = create_flow_with_manual_input_and_select()
     flow = flow_file_handler.get_flow(flow_id)

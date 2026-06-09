@@ -58,6 +58,10 @@ from flowfile_core.flowfile.code_generator.code_generator import (
     export_flow_to_flowframe,
     export_flow_to_polars,
 )
+from flowfile_core.flowfile.code_generator.project_exporter import (
+    export_flow_to_project,
+    project_to_zip_bytes,
+)
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_database_connection,
     get_all_database_connections_interface,
@@ -873,6 +877,64 @@ def get_generated_flowframe_code(flow_id: int) -> str:
         return export_flow_to_flowframe(flow)
     except UnsupportedNodeError as e:
         raise HTTPException(422, str(e)) from e
+
+
+def _export_project_manifest(flow_id: int) -> output_model.ProjectExportManifest:
+    """(Internal) Export a flow as a project manifest, mapping errors to HTTP statuses."""
+    flow = flow_file_handler.get_flow(int(flow_id))
+    if flow is None:
+        raise HTTPException(404, "could not find the flow")
+    try:
+        return export_flow_to_project(flow)
+    except UnsupportedNodeError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@router.get("/editor/code_to_project", tags=[], response_model=output_model.ProjectExportManifest)
+def get_generated_project(flow_id: int) -> output_model.ProjectExportManifest:
+    """Generates a multi-file Python project (FlowFrame code) representing the flow."""
+    return _export_project_manifest(flow_id)
+
+
+@router.get("/editor/code_to_project/zip", tags=[])
+def download_generated_project(flow_id: int) -> Response:
+    """Generates the project export and returns it as a zip archive."""
+    manifest = _export_project_manifest(flow_id)
+    return Response(
+        content=project_to_zip_bytes(manifest),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{manifest.project_name}.zip"'},
+    )
+
+
+@router.post("/editor/code_to_project/save", tags=[], response_model=output_model.ProjectSaveResponse)
+def save_generated_project(request: output_model.ProjectSaveRequest) -> output_model.ProjectSaveResponse:
+    """Generates the project export and writes it into a directory on the server.
+
+    The target directory is validated with the same sandbox rules as the file
+    browser (unrestricted in Electron mode, sandboxed to the user data
+    directory otherwise). Files are written under
+    ``<target_directory>/<project_name>/``; existing project directories are
+    rejected with 409 unless ``overwrite`` is set. Existing files are only
+    overwritten file-by-file, never deleted.
+    """
+    manifest = _export_project_manifest(request.flow_id)
+    sandbox_root = None if is_electron_mode() else storage.user_data_directory
+    try:
+        explorer = SecureFileExplorer(request.target_directory, sandbox_root)
+    except PermissionError:
+        raise HTTPException(403, "Access denied: path is outside the allowed directory") from None
+    target_dir = explorer.current_path
+    if not target_dir.exists() or not target_dir.is_dir():
+        raise HTTPException(404, "Target directory does not exist")
+    project_dir = target_dir / manifest.project_name
+    if project_dir.exists() and not request.overwrite:
+        raise HTTPException(409, f"'{project_dir}' already exists. Enable overwrite to replace its files.")
+    for file in manifest.files:
+        file_path = project_dir / file.path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(file.content, encoding="utf-8")
+    return output_model.ProjectSaveResponse(saved_to=str(project_dir), file_count=len(manifest.files))
 
 
 @router.post("/editor/create_flow/", tags=["editor"])
@@ -1863,6 +1925,7 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     then creates a flow from the template definition.
     """
     import logging as _logging
+
     import yaml
 
     from flowfile_core.templates import get_template_flowfile_data, get_template_required_files
