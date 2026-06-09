@@ -10,6 +10,8 @@ describe('FileStorageManager', () => {
   afterEach(async () => {
     await fileStorage.clearAll()
     await fileStorage.clearAllDownloads()
+    await fileStorage.pruneRecentFlows(0)
+    await fileStorage.clearRuns()
   })
 
   describe('shouldUseIndexedDB', () => {
@@ -273,6 +275,48 @@ describe('FileStorageManager', () => {
   describe('SIZE_THRESHOLD constant', () => {
     it('should be 5MB', () => {
       expect(SIZE_THRESHOLD).toBe(5 * 1024 * 1024)
+    })
+  })
+
+  // v3 (additive) stores backing the Home / Catalog shell.
+  describe('Recent Flows (v3)', () => {
+    it('stores, lists newest-first, gets, and deletes recent flows', async () => {
+      await fileStorage.putRecentFlow({ id: 'flow:A', name: 'A', savedAt: 100, nodeCount: 2, snapshot: { nodes: [] } })
+      await fileStorage.putRecentFlow({ id: 'flow:B', name: 'B', savedAt: 200, nodeCount: 3, snapshot: { nodes: [] }, fileContents: { 1: 'x,y' } })
+
+      const all = await fileStorage.getAllRecentFlows()
+      expect(all.map((f) => f.id)).toEqual(['flow:B', 'flow:A']) // newest first
+
+      const b = await fileStorage.getRecentFlow('flow:B')
+      expect(b?.name).toBe('B')
+      expect(b?.fileContents).toEqual({ 1: 'x,y' })
+
+      await fileStorage.deleteRecentFlow('flow:A')
+      expect((await fileStorage.getAllRecentFlows()).map((f) => f.id)).toEqual(['flow:B'])
+    })
+
+    it('upserts by id and prunes to the newest max', async () => {
+      for (let i = 0; i < 12; i++) {
+        await fileStorage.putRecentFlow({ id: `flow:${i}`, name: `f${i}`, savedAt: i, nodeCount: 0, snapshot: {} })
+      }
+      await fileStorage.pruneRecentFlows(8)
+      const all = await fileStorage.getAllRecentFlows()
+      expect(all).toHaveLength(8)
+      expect(all[0].id).toBe('flow:11') // highest savedAt kept
+    })
+  })
+
+  describe('Run History (v3)', () => {
+    it('stores runs newest-first and clears them', async () => {
+      await fileStorage.putRun({ id: 'r1', flowName: 'A', startedAt: 100, durationMs: 50, nodesTotal: 3, nodesCompleted: 3, success: true })
+      await fileStorage.putRun({ id: 'r2', flowName: 'B', startedAt: 200, durationMs: 80, nodesTotal: 2, nodesCompleted: 1, success: false, error: 'boom' })
+
+      const runs = await fileStorage.getAllRuns()
+      expect(runs.map((r) => r.id)).toEqual(['r2', 'r1'])
+      expect(runs[0].success).toBe(false)
+
+      await fileStorage.clearRuns()
+      expect(await fileStorage.getAllRuns()).toEqual([])
     })
   })
 })
