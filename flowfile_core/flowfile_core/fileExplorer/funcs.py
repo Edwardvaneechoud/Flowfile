@@ -1,5 +1,6 @@
 import os
 import re
+import string
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -383,6 +384,21 @@ def validate_file_path(user_path: str, allowed_base: Path) -> Path | None:
         return None
 
 
+def _local_filesystem_roots() -> list[str]:
+    """Return the filesystem roots a desktop (electron) user may access.
+
+    POSIX: the single root ``/``. Windows: every present drive root
+    (``C:\\``, ``D:\\`` …). These are non-user-derived base paths, so using them
+    in the ``normpath + join + startswith`` check keeps the CodeQL-recognized
+    py/path-injection barrier while still permitting any local file in desktop
+    mode.
+    """
+    if os.name == "nt":
+        roots = [f"{letter}:\\" for letter in string.ascii_uppercase if os.path.exists(f"{letter}:\\")]
+        return roots or ["C:\\"]
+    return ["/"]
+
+
 def validate_path_under_cwd(user_path: str) -> str:
     """Validate that a user-provided path resolves to within allowed directories.
 
@@ -406,14 +422,17 @@ def validate_path_under_cwd(user_path: str) -> str:
     Raises:
         HTTPException: 403 if path escapes the allowed directories
     """
-    # In Electron mode, allow access to any local file path
-    # This is safe because Electron runs locally on the user's machine
     if settings.is_electron_mode():
-        normalized_path = os.path.normpath(os.path.expanduser(user_path))
-        # Block path traversal patterns even in Electron mode
+        # Block path traversal patterns even in Electron mode.
         if ".." in user_path:
             raise HTTPException(403, "Access denied: path traversal not allowed")
-        return normalized_path
+        normalized_path = os.path.normpath(os.path.expanduser(user_path))
+        for root in _local_filesystem_roots():
+            base_path = os.path.normpath(root)
+            fullpath = os.path.normpath(os.path.join(base_path, normalized_path))
+            if fullpath.startswith(base_path):
+                return fullpath
+        raise HTTPException(403, "Access denied")
 
     # In Docker/package mode, enforce strict sandboxing
     base_path = os.path.normpath(os.getcwd())

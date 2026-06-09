@@ -733,7 +733,13 @@ def test_create_flow_registers_in_selected_namespace():
 
 def test_create_flow_without_namespace_auto_registers_local_flows():
     """Regression guard: create_flow without namespace_id keeps auto-registering under Local Flows."""
+    from flowfile_core.database.init_db import init_db
     from flowfile_core.database.models import CatalogNamespace, FlowRegistration
+
+    # Earlier catalog test files wipe all CatalogNamespace rows via autouse fixtures,
+    # so the seeded "General > Local Flows" may be gone by the time this runs. Re-seed
+    # (idempotent) so auto-registration has a namespace to land in.
+    init_db()
 
     base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
     flow_path = str(base_dir / "ns_create_default.yaml")
@@ -2052,6 +2058,40 @@ def test_get_excel_sheet_names_path_traversal_with_dots():
     # .. patterns are blocked in all modes
     response = client.get("/api/get_xlsx_sheet_names", params={"path": "../../../etc/passwd"})
     assert response.status_code == 403, "Path traversal with .. should be blocked"
+
+
+def test_validate_path_under_cwd_electron_allows_any_local_path(monkeypatch):
+    """In electron (desktop) mode, validate_path_under_cwd permits any local
+    absolute path and returns it normalized.
+
+    Regression guard for the py/path-injection fix: the electron branch now routes
+    the value through a normpath+startswith barrier (CodeQL-recognized sanitizer),
+    and that must NOT change desktop behavior of allowing any local file.
+    """
+    from flowfile_core.configs import settings
+    from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
+
+    monkeypatch.setattr(settings, "is_electron_mode", lambda: True)
+
+    abs_path = str(storage.user_data_directory / "some_local_flow.yaml")
+    result = validate_path_under_cwd(abs_path)
+    assert os.path.isabs(result), "An absolute local path must stay absolute in desktop mode"
+    assert result == os.path.normpath(abs_path), "An already-normalized absolute path is returned unchanged"
+
+
+def test_validate_path_under_cwd_electron_blocks_dot_dot(monkeypatch):
+    """In electron mode, .. traversal must still be rejected with a 403 (the
+    blocklist is kept on top of the normpath+startswith barrier)."""
+    from fastapi import HTTPException
+
+    from flowfile_core.configs import settings
+    from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
+
+    monkeypatch.setattr(settings, "is_electron_mode", lambda: True)
+
+    with pytest.raises(HTTPException) as exc_info:
+        validate_path_under_cwd(os.path.join("a", "..", "..", "etc", "passwd"))
+    assert exc_info.value.status_code == 403
 
 
 def test_get_available_flow_files_path_traversal_blocked():
