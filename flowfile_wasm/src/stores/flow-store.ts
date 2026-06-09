@@ -27,6 +27,18 @@ import type {
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
 
+/**
+ * A full, self-contained snapshot of a flow's live state — graph (FlowfileData),
+ * in-memory CSV file contents (by node id), the node-id counter, and the flow
+ * name. Used by the multi-flow tabs store to stash/restore tabs.
+ */
+export interface FlowStateSnapshot {
+  name: string
+  snapshot: FlowfileData
+  fileContents: Record<number, string>
+  nodeIdCounter: number
+}
+
 // Preview cache limits to prevent memory bloat
 const PREVIEW_CACHE_MAX_SIZE = 20  // Max number of cached previews in TypeScript
 const PREVIEW_CACHE_MAX_AGE_MS = 5 * 60 * 1000  // 5 minutes max age
@@ -2248,6 +2260,12 @@ result
         console.error('Failed to clear IndexedDB:', err)
       })
 
+      // Reset the Pyodide engine so LazyFrames/schemas keyed by node_id from a
+      // previously loaded flow can't leak into this one (node ids are reused).
+      if (pyodideStore.isReady) {
+        pyodideStore.runPython('clear_all()').catch(err => console.error('clear_all failed on import:', err))
+      }
+
       let maxId = 0
 
       for (const flowfileNode of data.nodes) {
@@ -2518,6 +2536,44 @@ result
     fileStorage.clearAll().catch(err => {
       console.error('Failed to clear IndexedDB:', err)
     })
+
+    // Reset the Pyodide engine so the next flow's (reused) node ids start clean.
+    if (pyodideStore.isReady) {
+      pyodideStore.runPython('clear_all()').catch(err => console.error('clear_all failed on clear:', err))
+    }
+  }
+
+  /**
+   * Snapshot the full live flow state (graph + in-memory file contents + id
+   * counter + name). Used by the multi-flow tabs store to stash a tab before
+   * switching away. Lossless for in-session round-trips.
+   */
+  function captureSnapshot(): FlowStateSnapshot {
+    const fc: Record<number, string> = {}
+    for (const [nid, content] of fileContents.value) fc[nid] = content
+    return {
+      name: currentFlowName.value,
+      snapshot: exportToFlowfile(currentFlowName.value),
+      fileContents: fc,
+      nodeIdCounter: nodeIdCounter.value
+    }
+  }
+
+  /**
+   * Restore a previously captured snapshot into the live flow. Replaces the
+   * current flow entirely (importFromFlowfile clears state + resets the Pyodide
+   * engine), then re-applies the snapshot's file contents and id counter. Does
+   * NOT re-execute — the graph + inputs are restored, results are cleared.
+   */
+  function loadFromSnapshot(snap: FlowStateSnapshot): boolean {
+    const ok = importFromFlowfile(snap.snapshot)
+    if (!ok) return false
+    for (const [nid, content] of Object.entries(snap.fileContents)) {
+      setFileContent(Number(nid), content)
+    }
+    nodeIdCounter.value = snap.nodeIdCounter
+    currentFlowName.value = snap.name
+    return true
   }
 
   function updateNodeFile(nodeId: number, fileName: string, content: string) {
@@ -2610,6 +2666,8 @@ result
     // Import/Export (FlowfileData format)
     exportToFlowfile,
     importFromFlowfile,
+    captureSnapshot,
+    loadFromSnapshot,
     downloadFlowfile,
     loadFlowfile,
     validateFlowfileData,

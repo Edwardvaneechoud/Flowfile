@@ -20,12 +20,12 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import WelcomeScreen from './HomeView/WelcomeScreen.vue'
-import { useFlowStore } from '../stores/flow-store'
+import { useFlowTabsStore } from '../stores/flow-tabs-store'
 import { useRecentFlowsStore } from '../stores/recent-flows-store'
 import { useDemo } from '../composables/useDemo'
 
 const router = useRouter()
-const flowStore = useFlowStore()
+const flowTabsStore = useFlowTabsStore()
 const recentFlowsStore = useRecentFlowsStore()
 const { loadDemo } = useDemo()
 
@@ -37,8 +37,9 @@ onMounted(() => {
 
 const goDesigner = () => router.push({ name: 'designer' })
 
+// All Home actions open in a (new) tab so existing open flows are preserved.
 function handleCreate() {
-  flowStore.clearFlow()
+  flowTabsStore.newTab()
   goDesigner()
 }
 
@@ -51,7 +52,7 @@ async function onFileChange(event: Event) {
   const file = input.files?.[0]
   input.value = '' // allow re-selecting the same file
   if (!file) return
-  const result = await flowStore.loadFlowfile(file)
+  const result = await flowTabsStore.openFile(file)
   if (result.success) {
     await recentFlowsStore.refresh()
     goDesigner()
@@ -61,12 +62,15 @@ async function onFileChange(event: Event) {
 }
 
 async function handleBrowseTemplates() {
-  await loadDemo(false)
-  goDesigner()
+  const ok = await flowTabsStore.openWith(async () => {
+    await loadDemo(false)
+    return true
+  })
+  if (ok) goDesigner()
 }
 
 async function handleOpenRecent(id: string) {
-  const ok = await recentFlowsStore.openRecent(id)
+  const ok = await flowTabsStore.openWith(() => recentFlowsStore.openRecent(id))
   if (ok) goDesigner()
 }
 </script>

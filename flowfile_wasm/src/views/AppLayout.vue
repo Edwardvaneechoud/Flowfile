@@ -7,19 +7,18 @@
            registry that Canvas populates on mount. -->
       <header v-if="route.name === 'designer'" class="designer-header">
         <div class="designer-header__left">
-          <button class="action-btn" title="New flow" @click="uiStore.actions?.clear()">
+          <button class="action-btn" title="New flow (opens a new tab)" @click="flowTabsStore.newTab()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
             <span>New</span>
           </button>
-          <button class="action-btn" title="Open flow" @click="uiStore.actions?.open()">
+          <button class="action-btn" title="Open flow in a new tab" @click="triggerOpen">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             <span>Open</span>
           </button>
-          <button class="action-btn" title="Save flow" @click="uiStore.actions?.save()">
+          <button class="action-btn" title="Save flow" @click="handleSave">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
             <span>Save</span>
           </button>
-          <span class="designer-flow-name">{{ flowName }}</span>
         </div>
 
         <div class="designer-header__right">
@@ -34,6 +33,17 @@
         </div>
       </header>
 
+      <!-- Open-flow file input (Open → new tab) -->
+      <input
+        ref="openInput"
+        type="file"
+        accept=".yaml,.yml,.json,.flowfile"
+        style="display: none"
+        @change="handleOpenChange"
+      />
+
+      <FlowTabs v-if="route.name === 'designer'" />
+
       <main class="app-page"><router-view /></main>
     </div>
 
@@ -46,22 +56,24 @@
     <DemoButton
       v-if="(route.name === 'home' || route.name === 'designer') && !shouldAutoLoadDemo && !hasSeenDemo && !hasDismissedDemo && pyodideReady"
       prominent
-      @loaded="router.push({ name: 'designer' })"
+      @loaded="onDemoLoaded"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import IconRail from '../components/layout/IconRail.vue'
+import FlowTabs from '../components/FlowTabs.vue'
 import DocsModal from '../components/DocsModal.vue'
 import DemoButton from '../components/DemoButton.vue'
 import AboutDialog from './HomeView/AboutDialog.vue'
 import { usePyodideStore } from '../stores/pyodide-store'
 import { useThemeStore } from '../stores/theme-store'
 import { useFlowStore } from '../stores/flow-store'
+import { useFlowTabsStore } from '../stores/flow-tabs-store'
 import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { useDemo } from '../composables/useDemo'
 
@@ -70,20 +82,55 @@ const router = useRouter()
 const pyodideStore = usePyodideStore()
 const themeStore = useThemeStore()
 const flowStore = useFlowStore()
+const flowTabsStore = useFlowTabsStore()
 const uiStore = useDesignerUiStore()
 const { isReady: pyodideReady } = storeToRefs(pyodideStore)
-const { isExecuting, currentFlowName: flowName } = storeToRefs(flowStore)
+const { isExecuting } = storeToRefs(flowStore)
 const { hasSeenDemo, hasDismissedDemo, loadDemo } = useDemo()
 
 const version = __APP_VERSION__
 const urlParams = new URLSearchParams(window.location.search)
 const shouldAutoLoadDemo = urlParams.get('demo') === 'true'
 
+const openInput = ref<HTMLInputElement | null>(null)
+
+function triggerOpen() {
+  openInput.value?.click()
+}
+
+async function handleOpenChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  const result = await flowTabsStore.openFile(file)
+  if (!result.success) {
+    alert('Failed to load flow file. Please check the file format.')
+  } else if (result.missingFiles?.length) {
+    const names = result.missingFiles.map((m) => m.fileName).join(', ')
+    alert(`Flow opened. Some input files need to be re-loaded: ${names}`)
+  }
+}
+
+// Save the active flow, then keep its tab label in sync with the saved name.
+async function handleSave() {
+  await uiStore.actions?.save()
+  flowTabsStore.syncActiveName()
+}
+
+// The prominent demo button loads into the live (active) flow; reflect its name
+// on the active tab and open the designer.
+function onDemoLoaded() {
+  flowTabsStore.syncActiveName()
+  router.push({ name: 'designer' })
+}
+
 // Pyodide + theme init are idempotent and run here once; the layout stays
 // mounted across Home / Designer / Catalog navigation, so nothing re-initializes
 // and flow state persists.
 onMounted(async () => {
   themeStore.initialize()
+  flowTabsStore.init()
   await pyodideStore.initialize()
 })
 
@@ -91,6 +138,7 @@ if (shouldAutoLoadDemo) {
   watch(pyodideReady, async (ready) => {
     if (ready) {
       await loadDemo(false)
+      flowTabsStore.syncActiveName()
       router.push({ name: 'designer' })
     }
   }, { immediate: true })
@@ -137,19 +185,6 @@ if (shouldAutoLoadDemo) {
   gap: var(--spacing-2);
 }
 
-.designer-flow-name {
-  margin-left: var(--spacing-3);
-  padding-left: var(--spacing-3);
-  border-left: 1px solid var(--color-border-light);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-secondary);
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .action-btn {
   display: flex;
   align-items: center;
@@ -192,7 +227,6 @@ if (shouldAutoLoadDemo) {
 .action-btn--run:disabled { opacity: 0.6; cursor: not-allowed; }
 
 @media (max-width: 768px) {
-  .designer-flow-name { display: none; }
   .action-btn span { display: none; }
   .action-btn { padding: 0 var(--spacing-2); }
 }
