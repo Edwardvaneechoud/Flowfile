@@ -22,6 +22,6 @@ class ServerRun:
 try:
     __version__ = version("Flowfile")
 except PackageNotFoundError:
-    __version__ = "0.11.2"
+    __version__ = "0.11.3"
 
 flow_file_handler = FlowfileHandler()
