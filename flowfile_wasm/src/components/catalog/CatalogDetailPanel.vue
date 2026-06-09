@@ -175,7 +175,7 @@ async function fetchPreview() {
   if (props.item.nodeId == null || isFetching.value) return
   isFetching.value = true
   try {
-    const result = await flowStore.executeNode(props.item.nodeId)
+    const result = await flowStore.executeNodeWithUpstream(props.item.nodeId)
     if (result.success) {
       await flowStore.fetchNodePreview(props.item.nodeId, { maxRows: 100 })
     }

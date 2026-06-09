@@ -493,6 +493,8 @@ export interface NodeResult {
   error?: string
   data?: DataPreview
   schema?: ColumnSchema[]
+  schemaResolved?: boolean  // false = output schema is data-dependent (e.g. pivot) and only known after a run
+
   execution_time?: number
   download?: DownloadInfo  // For output nodes - contains downloadable file data
   graphic_walker_input?: GraphicWalkerInput  // For explore_data nodes - full dataset + fields + saved specs

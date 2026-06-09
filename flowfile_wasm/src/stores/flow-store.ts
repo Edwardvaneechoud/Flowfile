@@ -457,6 +457,13 @@ export const useFlowStore = defineStore('flow', () => {
     debouncedPropagateSchemas()
   }, { deep: true })
 
+  // Re-run schema propagation once Pyodide finishes warming up, so column
+  // pickers fill in automatically without requiring a manual run. Until then,
+  // propagateSchemasTS() provides instant (less precise) source/inference paint.
+  watch(() => pyodideStore.isReady, (ready) => {
+    if (ready) debouncedPropagateSchemas()
+  })
+
   // Watch for node settings changes to trigger schema propagation
   watch(
     () => {
@@ -525,6 +532,16 @@ export const useFlowStore = defineStore('flow', () => {
     if (!node?.rightInputId) return []
     const result = nodeResults.value.get(node.rightInputId)
     return result?.schema || []
+  }
+
+  // Whether this node's input schema is fully known without a run. False when an
+  // upstream output is data-dependent (e.g. pivot) and only known after running.
+  const isInputSchemaResolved = (nodeId: number): boolean => {
+    const node = nodes.value.get(nodeId)
+    if (!node) return true
+    const inputId = node.leftInputId || node.inputIds[0]
+    if (!inputId) return true
+    return nodeResults.value.get(inputId)?.schemaResolved !== false
   }
 
   // Actions
@@ -1208,11 +1225,137 @@ gc.collect()
   }
 
   /**
-   * Propagate schemas through the flow graph
-   * This updates nodeResults with inferred schemas for all nodes that can be computed
-   * For polars_code/formula nodes, lazy execution is used when input data is available
+   * Propagate schemas through the flow graph.
+   * When Pyodide is ready, the Polars engine is the authority: an always-on,
+   * data-free pass builds the real lazy chain on empty (0-row) frames and reads
+   * collect_schema() for every node (mirrors flowfile_core's create_from_schema).
+   * Before Pyodide is ready, falls back to instant TypeScript inference.
    */
   async function propagateSchemas() {
+    if (!pyodideStore.isReady) {
+      await propagateSchemasTS()
+      return
+    }
+
+    const order = getExecutionOrder()
+
+    // Tiny JSON payload — graph shape + source schemas only, never CSV content.
+    const graphNodes: Record<number, {
+      type: string
+      input_ids: number[]
+      left: number | null
+      right: number | null
+      settings: unknown
+    }> = {}
+    const sourceSchemas: Record<number, ColumnSchema[]> = {}
+
+    for (const nodeId of order) {
+      const node = nodes.value.get(nodeId)
+      if (!node) continue
+      graphNodes[nodeId] = {
+        type: node.type,
+        input_ids: node.inputIds,
+        left: node.leftInputId ?? null,
+        right: node.rightInputId ?? null,
+        settings: node.settings
+      }
+      if (isSourceNode(node.type)) {
+        const schema = getSourceSchemaForPropagation(node)
+        if (schema && schema.length > 0) sourceSchemas[nodeId] = schema
+      }
+    }
+
+    const graphJson = { order, nodes: graphNodes }
+
+    let res: Record<string, { schema?: ColumnSchema[]; schema_resolved?: boolean; error?: string }> | undefined
+    try {
+      res = await pyodideStore.runPythonWithResult(`
+import json
+result = propagate_schemas(json.loads(${toPythonJson(graphJson)}), json.loads(${toPythonJson(sourceSchemas)}))
+result
+`)
+    } catch (error) {
+      console.warn('Lazy schema propagation failed, falling back to inference:', error)
+      await propagateSchemasTS()
+      return
+    }
+
+    if (!res) return
+    applyPropagatedSchemas(order, res)
+  }
+
+  /**
+   * Apply the Python schema-propagation results to nodeResults, keeping node
+   * settings (select_input/agg_cols/…) in sync with each node's input schema.
+   * Iterates in topological order so an upstream node's freshly-written schema
+   * is visible when syncing a downstream node's settings.
+   */
+  function applyPropagatedSchemas(
+    order: number[],
+    res: Record<string, { schema?: ColumnSchema[]; schema_resolved?: boolean; error?: string }>
+  ) {
+    for (const nodeId of order) {
+      const node = nodes.value.get(nodeId)
+      if (!node) continue
+      if (isSourceNode(node.type)) continue
+
+      const primaryInputId = node.leftInputId || node.inputIds[0]
+      const inputSchema = primaryInputId ? (nodeResults.value.get(primaryInputId)?.schema || null) : null
+      const rightInputSchema = (node.type === 'join' && node.rightInputId)
+        ? (nodeResults.value.get(node.rightInputId)?.schema || null)
+        : null
+      if (inputSchema && inputSchema.length > 0) {
+        const modified = syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
+        if (modified) nodes.value.set(nodeId, { ...node })
+      }
+
+      const info = res[String(nodeId)]
+      if (!info) continue
+
+      const existing = nodeResults.value.get(nodeId)
+      const wasExecuted = existing?.success !== undefined
+      // Unresolved nodes (pivot / errored polars_code) keep their last-known schema.
+      const outputSchema = (info.schema && info.schema.length > 0) ? info.schema : existing?.schema
+      // A successfully-executed node has a real schema even if the lazy pass
+      // couldn't resolve it (e.g. pivot), so don't flag it as unresolved.
+      const resolved = info.schema_resolved === true
+        || (existing?.success === true && !!(existing?.schema && existing.schema.length > 0))
+      nodeResults.value.set(nodeId, {
+        ...existing,
+        success: wasExecuted ? existing!.success : undefined,
+        schema: outputSchema,
+        schemaResolved: resolved
+      })
+    }
+  }
+
+  /**
+   * Resolve a source node's schema for the lazy pass: prefer an already-known
+   * schema (from prior execution or load), else infer it once from content.
+   */
+  function getSourceSchemaForPropagation(node: FlowNode): ColumnSchema[] | null {
+    const existing = nodeResults.value.get(node.id)?.schema
+    if (existing && existing.length > 0) return existing
+
+    const content = fileContents.value.get(node.id)
+    if (!content) return null
+
+    if (node.type === 'manual_input') {
+      const rawData = (node.settings as any)?.raw_data_format
+      if (rawData?.columns?.length) return inferSchemaFromRawData(rawData.columns)
+    }
+
+    const s = node.settings as any
+    const hasHeaders = s?.received_file?.table_settings?.has_headers ?? s?.manual_input?.has_headers ?? true
+    const delimiter = s?.received_file?.table_settings?.delimiter ?? s?.manual_input?.delimiter ?? ','
+    return inferSchemaFromCsv(content, hasHeaders, delimiter)
+  }
+
+  /**
+   * TypeScript fallback used before Pyodide is ready (instant, less precise).
+   * Updates nodeResults with inferred schemas for all nodes that can be computed.
+   */
+  async function propagateSchemasTS() {
     const order = getExecutionOrder()
 
     for (const nodeId of order) {
@@ -1524,6 +1667,67 @@ result
   }
 
   // Node Execution
+
+  /**
+   * Topologically-ordered chain of a node's transitive inputs, ending with the
+   * node itself. Used to materialize data on demand ("Fetch data") without a
+   * full flow run — executing the chain rebuilds the upstream LazyFrames the
+   * node needs (cheap: nothing collects until the final preview).
+   */
+  function getAncestorChain(nodeId: number): number[] {
+    const needed = new Set<number>()
+    const stack = [nodeId]
+    while (stack.length) {
+      const id = stack.pop()!
+      if (needed.has(id)) continue
+      needed.add(id)
+      const node = nodes.value.get(id)
+      if (!node) continue
+      const inputs = [...node.inputIds]
+      if (node.leftInputId) inputs.push(node.leftInputId)
+      if (node.rightInputId) inputs.push(node.rightInputId)
+      for (const inp of inputs) stack.push(inp)
+    }
+    return getExecutionOrder().filter((id) => needed.has(id))
+  }
+
+  /**
+   * Ensure a node's LazyFrame pointer is wired and current, then return it ready
+   * to collect — without re-running upstream steps that are already built and
+   * unchanged. Each node is just a pointer to a LazyFrame (`_lazyframes[id]`);
+   * once wired it persists, so we only (re)build pointers that are MISSING (never
+   * built this session) or DIRTY (their settings/edges/inputs changed). Built &
+   * clean upstream is reused as-is — its source frame is already in memory.
+   * Stops and surfaces the first failing node's error.
+   */
+  async function executeNodeWithUpstream(nodeId: number): Promise<NodeResult> {
+    const chain = getAncestorChain(nodeId)
+
+    // Ground truth for "pointer already wired in this runtime" is the Python data
+    // store itself — NOT nodeResults.success, which survives a page refresh while
+    // _lazyframes does not (refresh => empty => everything correctly rebuilds).
+    let built = new Set<number>()
+    if (pyodideStore.isReady) {
+      try {
+        const ids = await pyodideStore.runPythonWithResult('list(_lazyframes.keys())')
+        if (Array.isArray(ids)) built = new Set(ids.map(Number))
+      } catch {
+        /* leave empty → rebuild the chain */
+      }
+    }
+
+    let last: NodeResult = { success: false, error: 'Node not found' }
+    for (const id of chain) {
+      if (built.has(id) && !isNodeDirty(id)) {
+        // Pointer already wired and current — reuse it, don't re-run the step.
+        last = { success: true }
+        continue
+      }
+      last = await executeNode(id)
+      if (!last.success) return last
+    }
+    return last
+  }
 
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
@@ -2666,6 +2870,7 @@ result
     getNodeInputSchema,
     getLeftInputSchema,
     getRightInputSchema,
+    isInputSchemaResolved,
     getMissingFileNodes,
 
     // Actions
@@ -2702,6 +2907,7 @@ result
     clearFlow,
     cleanupOrphanedData,
     propagateSchemas,
+    executeNodeWithUpstream,
     setSourceNodeSchema,
     updateNodeFile, 
 

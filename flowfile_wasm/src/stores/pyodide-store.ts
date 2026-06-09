@@ -85,6 +85,55 @@ _plan_hashes: Dict[int, str] = {}
 # Schema cache (can be obtained from LazyFrame without collecting)
 _schemas: Dict[int, List[Dict[str, str]]] = {}
 
+# =============================================================================
+# Lazy schema propagation (always-on, data-free)
+# Mirrors flowfile_core: chain empty (0-row) LazyFrames through the node
+# builders and read collect_schema() at each hop. Kept SEPARATE from the
+# data path (_lazyframes) so this store provably holds only schema-only frames
+# and survives clear_all().
+# =============================================================================
+
+_schema_lazyframes: Dict[int, pl.LazyFrame] = {}
+_schema_schemas: Dict[int, List[Dict[str, str]]] = {}
+
+_SOURCE_TYPES = {"read", "manual_input", "external_data", "read_from_catalog"}
+
+# str(dtype) -> pl.DataType, built via getattr so missing names (version drift)
+# are simply skipped. Source schemas only carry scalar types.
+_DTYPE_STR_MAP: Dict[str, Any] = {}
+for _dtname in (
+    "Int8", "Int16", "Int32", "Int64", "Int128",
+    "UInt8", "UInt16", "UInt32", "UInt64",
+    "Float32", "Float64", "Boolean", "String", "Utf8",
+    "Categorical", "Date", "Time", "Null",
+):
+    _dt = getattr(pl, _dtname, None)
+    if _dt is not None:
+        _DTYPE_STR_MAP[_dtname] = _dt
+_DTYPE_STR_MAP["Bool"] = _DTYPE_STR_MAP.get("Boolean", pl.Boolean)
+
+
+def _str_to_dtype(s: str):
+    """Resolve a dtype string (e.g. 'Int64', 'Datetime(...)') to a Polars dtype."""
+    if s in _DTYPE_STR_MAP:
+        return _DTYPE_STR_MAP[s]
+    base = s.split("(")[0]
+    if base in _DTYPE_STR_MAP:
+        return _DTYPE_STR_MAP[base]
+    dt = getattr(pl, base, None)
+    return dt if dt is not None else pl.String
+
+
+def build_empty_lf_from_schema(schema_list: List[Dict[str, str]]) -> pl.LazyFrame:
+    """Build an empty (0-row) LazyFrame carrying only the given schema.
+
+    The flowfile_core equivalent is FlowDataEngine.create_from_schema.
+    """
+    pl_schema = {}
+    for col in schema_list:
+        pl_schema[col["name"]] = _str_to_dtype(col.get("data_type", "String"))
+    return pl.LazyFrame(schema=pl_schema)
+
 
 def _estimate_preview_size_mb(preview_data: Dict) -> float:
     """Estimate memory size of preview data in MB."""
@@ -265,6 +314,8 @@ def clear_node(node_id: int):
     _schemas.pop(node_id, None)
     _preview_cache.pop(node_id, None)
     _plan_hashes.pop(node_id, None)
+    _schema_lazyframes.pop(node_id, None)
+    _schema_schemas.pop(node_id, None)
 
 
 def clear_all():
@@ -548,81 +599,107 @@ def convert_filter_values(values: list[str], dtype) -> list:
     """Convert filter values to match column data type"""
     return [convert_filter_value(v, dtype) for v in values]
 
+def build_filter(input_lf: pl.LazyFrame, settings: Dict) -> pl.LazyFrame:
+    """Build the filtered LazyFrame from input + settings (no store, no collect)."""
+    filter_input = settings.get("filter_input", {})
+    mode = filter_input.get("mode", "basic")
+
+    if mode == "advanced":
+        expr = filter_input.get("advanced_filter", "")
+        if expr:
+            return input_lf.filter(eval(expr))
+        return input_lf
+
+    basic = filter_input.get("basic_filter", {})
+    field = basic.get("field", "")
+    operator = basic.get("operator", "equals")
+    value = basic.get("value", "")
+    value2 = basic.get("value2", "")
+
+    if not field:
+        return input_lf
+
+    col = pl.col(field)
+    # Get column data type from schema
+    schema = input_lf.collect_schema()
+    col_dtype = schema.get(field)
+
+    if operator == "equals":
+        return input_lf.filter(col == convert_filter_value(value, col_dtype))
+    elif operator == "not_equals":
+        return input_lf.filter(col != convert_filter_value(value, col_dtype))
+    elif operator == "greater_than":
+        return input_lf.filter(col > convert_filter_value(value, col_dtype))
+    elif operator == "greater_than_or_equals":
+        return input_lf.filter(col >= convert_filter_value(value, col_dtype))
+    elif operator == "less_than":
+        return input_lf.filter(col < convert_filter_value(value, col_dtype))
+    elif operator == "less_than_or_equals":
+        return input_lf.filter(col <= convert_filter_value(value, col_dtype))
+    elif operator == "contains":
+        return input_lf.filter(col.str.contains(value))
+    elif operator == "not_contains":
+        return input_lf.filter(~col.str.contains(value))
+    elif operator == "starts_with":
+        return input_lf.filter(col.str.starts_with(value))
+    elif operator == "ends_with":
+        return input_lf.filter(col.str.ends_with(value))
+    elif operator == "is_null":
+        return input_lf.filter(col.is_null())
+    elif operator == "is_not_null":
+        return input_lf.filter(col.is_not_null())
+    elif operator == "in":
+        values = [v.strip() for v in value.split(",")]
+        return input_lf.filter(col.is_in(convert_filter_values(values, col_dtype)))
+    elif operator == "not_in":
+        values = [v.strip() for v in value.split(",")]
+        return input_lf.filter(~col.is_in(convert_filter_values(values, col_dtype)))
+    elif operator == "between":
+        v1 = convert_filter_value(value, col_dtype)
+        v2 = convert_filter_value(value2, col_dtype)
+        return input_lf.filter((col >= v1) & (col <= v2))
+    return input_lf
+
+
 def execute_filter(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute filter node - chains onto input LazyFrame"""
     input_lf = get_lazyframe(input_id)
     if input_lf is None:
         return {"success": False, "error": f"Filter error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
-    filter_input = settings.get("filter_input", {})
-    mode = filter_input.get("mode", "basic")
-    field = None
-
+    field = settings.get("filter_input", {}).get("basic_filter", {}).get("field")
     try:
-        if mode == "advanced":
-            expr = filter_input.get("advanced_filter", "")
-            if expr:
-                result_lf = input_lf.filter(eval(expr))
-            else:
-                result_lf = input_lf
-        else:
-            basic = filter_input.get("basic_filter", {})
-            field = basic.get("field", "")
-            operator = basic.get("operator", "equals")
-            value = basic.get("value", "")
-            value2 = basic.get("value2", "")
-
-            if not field:
-                result_lf = input_lf
-            else:
-                col = pl.col(field)
-
-                # Get column data type from schema
-                schema = input_lf.collect_schema()
-                col_dtype = schema.get(field)
-
-                # DON'T convert here - do it per operator
-
-                if operator == "equals":
-                    result_lf = input_lf.filter(col == convert_filter_value(value, col_dtype))
-                elif operator == "not_equals":
-                    result_lf = input_lf.filter(col != convert_filter_value(value, col_dtype))
-                elif operator == "greater_than":
-                    result_lf = input_lf.filter(col > convert_filter_value(value, col_dtype))
-                elif operator == "greater_than_or_equals":
-                    result_lf = input_lf.filter(col >= convert_filter_value(value, col_dtype))
-                elif operator == "less_than":
-                    result_lf = input_lf.filter(col < convert_filter_value(value, col_dtype))
-                elif operator == "less_than_or_equals":
-                    result_lf = input_lf.filter(col <= convert_filter_value(value, col_dtype))
-                elif operator == "contains":
-                    result_lf = input_lf.filter(col.str.contains(value))
-                elif operator == "not_contains":
-                    result_lf = input_lf.filter(~col.str.contains(value))
-                elif operator == "starts_with":
-                    result_lf = input_lf.filter(col.str.starts_with(value))
-                elif operator == "ends_with":
-                    result_lf = input_lf.filter(col.str.ends_with(value))
-                elif operator == "is_null":
-                    result_lf = input_lf.filter(col.is_null())
-                elif operator == "is_not_null":
-                    result_lf = input_lf.filter(col.is_not_null())
-                elif operator == "in":
-                    values = [v.strip() for v in value.split(",")]
-                    result_lf = input_lf.filter(col.is_in(convert_filter_values(values, col_dtype)))
-                elif operator == "not_in":
-                    values = [v.strip() for v in value.split(",")]
-                    result_lf = input_lf.filter(~col.is_in(convert_filter_values(values, col_dtype)))
-                elif operator == "between":
-                    v1 = convert_filter_value(value, col_dtype)
-                    v2 = convert_filter_value(value2, col_dtype)
-                    result_lf = input_lf.filter((col >= v1) & (col <= v2))
-                else:
-                    result_lf = input_lf
+        result_lf = build_filter(input_lf, settings)
         store_lazyframe(node_id, result_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
         return {"success": False, "error": format_error_lf("filter", node_id, e, input_lf, field)}
+
+
+def build_select(input_lf: pl.LazyFrame, settings: Dict) -> pl.LazyFrame:
+    """Build the column-selected/renamed LazyFrame (no store, no collect)."""
+    select_input = settings.get("select_input", [])
+    if not select_input:
+        return input_lf
+
+    kept = [s for s in select_input if s.get("keep", True)]
+    kept.sort(key=lambda x: x.get("position", 0))
+
+    # Get available columns from schema
+    schema = input_lf.collect_schema()
+    available_cols = set(schema.keys())
+
+    exprs = []
+    for s in kept:
+        old_name = s.get("old_name", "")
+        new_name = s.get("new_name", old_name)
+        if old_name in available_cols:
+            if old_name != new_name:
+                exprs.append(pl.col(old_name).alias(new_name))
+            else:
+                exprs.append(pl.col(old_name))
+
+    return input_lf.select(exprs) if exprs else input_lf
 
 
 def execute_select(node_id: int, input_id: int, settings: Dict) -> Dict:
@@ -632,37 +709,61 @@ def execute_select(node_id: int, input_id: int, settings: Dict) -> Dict:
         return {"success": False, "error": f"Select error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
-        select_input = settings.get("select_input", [])
-
-        if not select_input:
-            result_lf = input_lf
-        else:
-            kept = [s for s in select_input if s.get("keep", True)]
-            kept.sort(key=lambda x: x.get("position", 0))
-
-            # Get available columns from schema
-            schema = input_lf.collect_schema()
-            available_cols = set(schema.keys())
-
-            exprs = []
-            for s in kept:
-                old_name = s.get("old_name", "")
-                new_name = s.get("new_name", old_name)
-                if old_name in available_cols:
-                    if old_name != new_name:
-                        exprs.append(pl.col(old_name).alias(new_name))
-                    else:
-                        exprs.append(pl.col(old_name))
-
-            if exprs:
-                result_lf = input_lf.select(exprs)
-            else:
-                result_lf = input_lf
-
+        result_lf = build_select(input_lf, settings)
         store_lazyframe(node_id, result_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
         return {"success": False, "error": format_error_lf("select", node_id, e, input_lf)}
+
+def _build_agg_exprs(agg_defs: List[Dict]) -> list:
+    """Build aggregation expressions from agg column definitions."""
+    exprs = []
+    for a in agg_defs:
+        col = pl.col(a["old_name"])
+        agg = a.get("agg", "count")
+        new_name = a.get("new_name", f"{a['old_name']}_{agg}")
+
+        if agg == "sum":
+            exprs.append(col.sum().alias(new_name))
+        elif agg == "max":
+            exprs.append(col.max().alias(new_name))
+        elif agg == "min":
+            exprs.append(col.min().alias(new_name))
+        elif agg == "count":
+            exprs.append(col.count().alias(new_name))
+        elif agg == "mean":
+            exprs.append(col.mean().alias(new_name))
+        elif agg == "median":
+            exprs.append(col.median().alias(new_name))
+        elif agg == "first":
+            exprs.append(col.first().alias(new_name))
+        elif agg == "last":
+            exprs.append(col.last().alias(new_name))
+        elif agg == "n_unique":
+            exprs.append(col.n_unique().alias(new_name))
+        elif agg == "concat":
+            exprs.append(col.cast(pl.Utf8).str.concat(",").alias(new_name))
+    return exprs
+
+
+def build_group_by(input_lf: pl.LazyFrame, settings: Dict) -> pl.LazyFrame:
+    """Build the grouped/aggregated LazyFrame (no store, no collect)."""
+    groupby_input = settings.get("groupby_input", {})
+    agg_cols = groupby_input.get("agg_cols", [])
+
+    if not agg_cols:
+        return input_lf
+
+    group_cols = [pl.col(c["old_name"]).alias(c["new_name"]) for c in agg_cols if c.get("agg") == "groupby"]
+    agg_defs = [c for c in agg_cols if c.get("agg") != "groupby"]
+    exprs = _build_agg_exprs(agg_defs)
+
+    if not group_cols:
+        return input_lf.select(exprs) if exprs else input_lf
+    if exprs:
+        return input_lf.group_by(group_cols).agg(exprs)
+    return input_lf.group_by(group_cols).agg(pl.count()).drop("count")
+
 
 def execute_group_by(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute group by node (lazy)"""
@@ -671,81 +772,44 @@ def execute_group_by(node_id: int, input_id: int, settings: Dict) -> Dict:
         return {"success": False, "error": f"Group By error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
-        groupby_input = settings.get("groupby_input", {})
-        agg_cols = groupby_input.get("agg_cols", [])
-
-        if not agg_cols:
-            result_lf = input_lf
-        else:
-            group_cols = [pl.col(c["old_name"]).alias(c["new_name"]) for c in agg_cols if c.get("agg") == "groupby"]
-            agg_defs = [c for c in agg_cols if c.get("agg") != "groupby"]
-
-            if not group_cols:
-                exprs = []
-                for a in agg_defs:
-                    col = pl.col(a["old_name"])
-                    agg = a.get("agg", "count")
-                    new_name = a.get("new_name", f"{a['old_name']}_{agg}")
-
-                    if agg == "sum":
-                        exprs.append(col.sum().alias(new_name))
-                    elif agg == "max":
-                        exprs.append(col.max().alias(new_name))
-                    elif agg == "min":
-                        exprs.append(col.min().alias(new_name))
-                    elif agg == "count":
-                        exprs.append(col.count().alias(new_name))
-                    elif agg == "mean":
-                        exprs.append(col.mean().alias(new_name))
-                    elif agg == "median":
-                        exprs.append(col.median().alias(new_name))
-                    elif agg == "first":
-                        exprs.append(col.first().alias(new_name))
-                    elif agg == "last":
-                        exprs.append(col.last().alias(new_name))
-                    elif agg == "n_unique":
-                        exprs.append(col.n_unique().alias(new_name))
-                    elif agg == "concat":
-                        exprs.append(col.cast(pl.Utf8).str.concat(",").alias(new_name))
-
-                result_lf = input_lf.select(exprs) if exprs else input_lf
-            else:
-                exprs = []
-                for a in agg_defs:
-                    col = pl.col(a["old_name"])
-                    agg = a.get("agg", "count")
-                    new_name = a.get("new_name", f"{a['old_name']}_{agg}")
-
-                    if agg == "sum":
-                        exprs.append(col.sum().alias(new_name))
-                    elif agg == "max":
-                        exprs.append(col.max().alias(new_name))
-                    elif agg == "min":
-                        exprs.append(col.min().alias(new_name))
-                    elif agg == "count":
-                        exprs.append(col.count().alias(new_name))
-                    elif agg == "mean":
-                        exprs.append(col.mean().alias(new_name))
-                    elif agg == "median":
-                        exprs.append(col.median().alias(new_name))
-                    elif agg == "first":
-                        exprs.append(col.first().alias(new_name))
-                    elif agg == "last":
-                        exprs.append(col.last().alias(new_name))
-                    elif agg == "n_unique":
-                        exprs.append(col.n_unique().alias(new_name))
-                    elif agg == "concat":
-                        exprs.append(col.cast(pl.Utf8).str.concat(",").alias(new_name))
-
-                if exprs:
-                    result_lf = input_lf.group_by(group_cols).agg(exprs)
-                else:
-                    result_lf = input_lf.group_by(group_cols).agg(pl.count()).drop("count")
-
+        result_lf = build_group_by(input_lf, settings)
         store_lazyframe(node_id, result_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
         return {"success": False, "error": format_error_lf("group_by", node_id, e, input_lf)}
+
+def build_join(left_lf: pl.LazyFrame, right_lf: pl.LazyFrame, settings: Dict) -> pl.LazyFrame:
+    """Build the joined LazyFrame (no store, no collect). Raises on bad config."""
+    join_input = settings.get("join_input", {})
+    join_type = join_input.get("join_type", "inner")
+    mapping = join_input.get("join_mapping", [])
+    right_suffix = join_input.get("right_suffix", "_right")
+
+    if not mapping:
+        raise ValueError("No join columns specified. Configure the join mapping in the node settings.")
+
+    left_on = [m.get("left_col") for m in mapping]
+    right_on = [m.get("right_col") for m in mapping]
+
+    # Validate columns exist using schema
+    left_schema = left_lf.collect_schema()
+    right_schema = right_lf.collect_schema()
+
+    missing_left = [c for c in left_on if c not in left_schema]
+    missing_right = [c for c in right_on if c not in right_schema]
+    if missing_left:
+        raise ValueError(f"Left columns not found: {missing_left}. Available columns: {list(left_schema.keys())}")
+    if missing_right:
+        raise ValueError(f"Right columns not found: {missing_right}. Available columns: {list(right_schema.keys())}")
+
+    return left_lf.join(
+        right_lf,
+        left_on=left_on,
+        right_on=right_on,
+        how=join_type,
+        suffix=right_suffix
+    )
+
 
 def execute_join(node_id: int, left_id: int, right_id: int, settings: Dict) -> Dict:
     """Execute join node (lazy)"""
@@ -758,41 +822,22 @@ def execute_join(node_id: int, left_id: int, right_id: int, settings: Dict) -> D
         return {"success": False, "error": f"Join error on node #{node_id}: No right input data from node #{right_id}. Make sure the upstream node executed successfully."}
 
     try:
-        join_input = settings.get("join_input", {})
-        join_type = join_input.get("join_type", "inner")
-        mapping = join_input.get("join_mapping", [])
-        left_suffix = join_input.get("left_suffix", "_left")
-        right_suffix = join_input.get("right_suffix", "_right")
-
-        if not mapping:
-            return {"success": False, "error": f"Join error on node #{node_id}: No join columns specified. Configure the join mapping in the node settings."}
-
-        left_on = [m.get("left_col") for m in mapping]
-        right_on = [m.get("right_col") for m in mapping]
-
-        # Validate columns exist using schema
-        left_schema = left_lf.collect_schema()
-        right_schema = right_lf.collect_schema()
-
-        missing_left = [c for c in left_on if c not in left_schema]
-        missing_right = [c for c in right_on if c not in right_schema]
-        if missing_left:
-            return {"success": False, "error": f"Join error on node #{node_id}: Left columns not found: {missing_left}. Available columns: {list(left_schema.keys())}"}
-        if missing_right:
-            return {"success": False, "error": f"Join error on node #{node_id}: Right columns not found: {missing_right}. Available columns: {list(right_schema.keys())}"}
-
-        result_lf = left_lf.join(
-            right_lf,
-            left_on=left_on,
-            right_on=right_on,
-            how=join_type,
-            suffix=right_suffix
-        )
-
+        result_lf = build_join(left_lf, right_lf, settings)
         store_lazyframe(node_id, result_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
         return {"success": False, "error": format_error_lf("join", node_id, e, left_lf)}
+
+def build_sort(input_lf: pl.LazyFrame, settings: Dict) -> pl.LazyFrame:
+    """Build the sorted LazyFrame (no store, no collect)."""
+    # sort_input is now a flat list matching flowfile_core: [{column, how}]
+    sort_input = settings.get("sort_input", [])
+    if not sort_input:
+        return input_lf
+    by = [c.get("column") for c in sort_input]
+    descending = [c.get("how") == "desc" for c in sort_input]
+    return input_lf.sort(by, descending=descending)
+
 
 def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute sort node (lazy)"""
@@ -801,16 +846,7 @@ def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
         return {"success": False, "error": f"Sort error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
-        # sort_input is now a flat list matching flowfile_core: [{column, how}]
-        sort_input = settings.get("sort_input", [])
-
-        if not sort_input:
-            result_lf = input_lf
-        else:
-            by = [c.get("column") for c in sort_input]
-            descending = [c.get("how") == "desc" for c in sort_input]
-            result_lf = input_lf.sort(by, descending=descending)
-
+        result_lf = build_sort(input_lf, settings)
         store_lazyframe(node_id, result_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
@@ -988,6 +1024,17 @@ def execute_polars_code(node_id: int, input_ids: List[int], settings: Dict) -> D
         _cleanup_local_vars(local_vars, df_keys_to_cleanup)
         return {"success": False, "error": format_error_lf("polars_code", node_id, e, input_lf)}
 
+def build_unique(input_lf: pl.LazyFrame, settings: Dict) -> pl.LazyFrame:
+    """Build the de-duplicated LazyFrame (no store, no collect)."""
+    unique_input = settings.get("unique_input", {})
+    subset = unique_input.get("subset") or unique_input.get("columns") or []
+    keep = unique_input.get("keep") or unique_input.get("strategy") or "first"
+    maintain_order = unique_input.get("maintain_order", True)
+    if subset:
+        return input_lf.unique(subset=subset, keep=keep, maintain_order=maintain_order)
+    return input_lf.unique(keep=keep, maintain_order=maintain_order)
+
+
 def execute_unique(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute unique node (lazy)"""
     input_lf = get_lazyframe(input_id)
@@ -995,20 +1042,18 @@ def execute_unique(node_id: int, input_id: int, settings: Dict) -> Dict:
         return {"success": False, "error": f"Unique error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
-        unique_input = settings.get("unique_input", {})
-        subset = unique_input.get("subset") or unique_input.get("columns") or []
-        keep = unique_input.get("keep") or unique_input.get("strategy") or "first"
-        maintain_order = unique_input.get("maintain_order", True)
-
-        if subset:
-            result_lf = input_lf.unique(subset=subset, keep=keep, maintain_order=maintain_order)
-        else:
-            result_lf = input_lf.unique(keep=keep, maintain_order=maintain_order)
-
+        result_lf = build_unique(input_lf, settings)
         store_lazyframe(node_id, result_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
         return {"success": False, "error": format_error_lf("unique", node_id, e, input_lf)}
+
+
+def build_head(input_lf: pl.LazyFrame, settings: Dict) -> pl.LazyFrame:
+    """Build the head/limit LazyFrame (no store, no collect)."""
+    n = settings.get("head_input", {}).get("n", 10)
+    return input_lf.head(n)
+
 
 def execute_head(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute head/limit node (lazy)"""
@@ -1017,11 +1062,7 @@ def execute_head(node_id: int, input_id: int, settings: Dict) -> Dict:
         return {"success": False, "error": f"Head error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
-        head_input = settings.get("head_input", {})
-        n = head_input.get("n", 10)
-
-        result_lf = input_lf.head(n)
-
+        result_lf = build_head(input_lf, settings)
         store_lazyframe(node_id, result_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
@@ -1315,6 +1356,37 @@ def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
         gc.collect()
         return {"success": False, "error": format_error("pivot", node_id, e)}
 
+def build_unpivot(input_lf: pl.LazyFrame, settings: Dict) -> pl.LazyFrame:
+    """Build the unpivoted (wide->long) LazyFrame (no store, no collect)."""
+    unpivot_input = settings.get("unpivot_input", {})
+    index_columns = unpivot_input.get("index_columns", [])
+    value_columns = unpivot_input.get("value_columns", [])
+    data_type_selector = unpivot_input.get("data_type_selector")
+    selector_mode = unpivot_input.get("data_type_selector_mode", "column")
+
+    if selector_mode == "data_type" and data_type_selector:
+        import polars.selectors as cs
+        selector_map = {
+            "float": cs.float,
+            "numeric": cs.numeric,
+            "string": cs.string,
+            "date": cs.temporal,
+            "all": cs.all,
+        }
+        if data_type_selector in selector_map:
+            on_selector = selector_map[data_type_selector]()
+        else:
+            on_selector = cs.all()
+        return input_lf.unpivot(on=on_selector, index=index_columns if index_columns else None)
+    elif value_columns:
+        schema = input_lf.collect_schema()
+        missing = [c for c in value_columns if c not in schema]
+        if missing:
+            raise ValueError(f"Columns not found: {missing}. Available columns: {list(schema.keys())}")
+        return input_lf.unpivot(on=value_columns, index=index_columns if index_columns else None)
+    return input_lf.unpivot(index=index_columns if index_columns else None)
+
+
 def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute unpivot node - converts data from wide to long format (lazy)"""
     input_lf = get_lazyframe(input_id)
@@ -1322,39 +1394,152 @@ def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
         return {"success": False, "error": f"Unpivot error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
-        unpivot_input = settings.get("unpivot_input", {})
-        index_columns = unpivot_input.get("index_columns", [])
-        value_columns = unpivot_input.get("value_columns", [])
-        data_type_selector = unpivot_input.get("data_type_selector")
-        selector_mode = unpivot_input.get("data_type_selector_mode", "column")
-
-        if selector_mode == "data_type" and data_type_selector:
-            import polars.selectors as cs
-            selector_map = {
-                "float": cs.float,
-                "numeric": cs.numeric,
-                "string": cs.string,
-                "date": cs.temporal,
-                "all": cs.all,
-            }
-            if data_type_selector in selector_map:
-                on_selector = selector_map[data_type_selector]()
-            else:
-                on_selector = cs.all()
-            result_lf = input_lf.unpivot(on=on_selector, index=index_columns if index_columns else None)
-        elif value_columns:
-            schema = input_lf.collect_schema()
-            missing = [c for c in value_columns if c not in schema]
-            if missing:
-                return {"success": False, "error": f"Unpivot error on node #{node_id}: Columns not found: {missing}. Available columns: {list(schema.keys())}"}
-            result_lf = input_lf.unpivot(on=value_columns, index=index_columns if index_columns else None)
-        else:
-            result_lf = input_lf.unpivot(index=index_columns if index_columns else None)
-
+        result_lf = build_unpivot(input_lf, settings)
         store_lazyframe(node_id, result_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
         return {"success": False, "error": format_error_lf("unpivot", node_id, e, input_lf)}
+
+# =============================================================================
+# Schema propagation entry point (always-on, data-free)
+# =============================================================================
+
+def build_polars_code_schema(input_lfs: List[pl.LazyFrame], settings: Dict) -> pl.LazyFrame:
+    """Resolve a polars_code node's output schema by running the user code
+    against EMPTY (0-row) input frames. Raises on failure (caught upstream)."""
+    local_vars = {"pl": pl, "output_df": None, "output_lf": None}
+    if len(input_lfs) == 1:
+        local_vars["input_df"] = input_lfs[0].collect()
+        local_vars["input_lf"] = input_lfs[0]
+    elif len(input_lfs) > 1:
+        for i, lf in enumerate(input_lfs, start=1):
+            local_vars[f"input_df_{i}"] = lf.collect()
+            local_vars[f"input_lf_{i}"] = lf
+        local_vars["input_df"] = local_vars["input_df_1"]
+        local_vars["input_lf"] = local_vars["input_lf_1"]
+
+    code = (settings.get("polars_code_input", {}).get("polars_code") or "").strip()
+    if not code:
+        if not input_lfs:
+            raise ValueError("No code provided and no input to pass through.")
+        return input_lfs[0]
+
+    global_vars = {"pl": pl}
+    try:
+        exec(code, global_vars, local_vars)
+    except SyntaxError:
+        result = eval(code, global_vars, local_vars)
+        lf = _to_lazyframe(result)
+        if lf is None:
+            raise ValueError("Code must produce a DataFrame or LazyFrame")
+        return lf
+
+    result_lf, error_msg = _extract_result(code, global_vars, local_vars, len(input_lfs) > 0)
+    if error_msg:
+        raise ValueError(error_msg)
+    return result_lf
+
+
+def _schema_identity(input_lf: pl.LazyFrame, settings: Dict) -> pl.LazyFrame:
+    """Pass-through builder for nodes whose output schema == input schema."""
+    return input_lf
+
+
+_SCHEMA_BUILDERS = {
+    "filter": build_filter,
+    "select": build_select,
+    "group_by": build_group_by,
+    "sort": build_sort,
+    "unique": build_unique,
+    "head": build_head,
+    "unpivot": build_unpivot,
+    "explore_data": _schema_identity,
+    "output": _schema_identity,
+    "external_output": _schema_identity,
+    "write_to_catalog": _schema_identity,
+}
+
+
+def _build_schema_node(ntype: str, meta: Dict) -> Optional[pl.LazyFrame]:
+    """Build a node's schema-only LazyFrame from its already-resolved inputs.
+    Returns None when an input's schema isn't available yet."""
+    input_ids = meta.get("input_ids") or []
+    left = meta.get("left")
+    right = meta.get("right")
+    settings = meta.get("settings", {})
+
+    if ntype == "join":
+        left_id = left if left is not None else (input_ids[0] if input_ids else None)
+        l = _schema_lazyframes.get(left_id)
+        r = _schema_lazyframes.get(right)
+        if l is None or r is None:
+            return None
+        return build_join(l, r, settings)
+
+    if ntype in ("polars_code", "formula"):
+        lfs = [_schema_lazyframes.get(i) for i in input_ids]
+        if not lfs or any(x is None for x in lfs):
+            return None
+        return build_polars_code_schema(lfs, settings)
+
+    in_id = left if left is not None else (input_ids[0] if input_ids else None)
+    inp = _schema_lazyframes.get(in_id)
+    if inp is None:
+        return None
+    builder = _SCHEMA_BUILDERS.get(ntype, _schema_identity)
+    return builder(inp, settings)
+
+
+def propagate_schemas(graph_json: Dict, source_schemas: Dict) -> Dict[str, Dict]:
+    """Walk the DAG and resolve every node's output schema lazily (data-free).
+
+    Mirrors flowfile_core: empty (0-row) LazyFrames chained through the node
+    builders, reading collect_schema() at each hop. Never touches data.
+
+    graph_json: {"order": [ids...],
+                 "nodes": {"<id>": {type, input_ids, left, right, settings}}}
+    source_schemas: {"<id>": [{name, data_type}, ...]} for source nodes.
+    Returns {"<id>": {schema, schema_resolved, error}}.
+    """
+    _schema_lazyframes.clear()
+    _schema_schemas.clear()
+    results: Dict[str, Dict] = {}
+
+    order = graph_json.get("order", [])
+    nodes_meta = graph_json.get("nodes", {})
+
+    for nid in order:
+        key = str(nid)
+        meta = nodes_meta.get(key)
+        if not meta:
+            continue
+        ntype = meta.get("type")
+        try:
+            if key in source_schemas or ntype in _SOURCE_TYPES:
+                sch = source_schemas.get(key)
+                if not sch:
+                    results[key] = {"schema": [], "schema_resolved": False, "error": "No data loaded"}
+                    continue
+                lf = build_empty_lf_from_schema(sch)
+            elif ntype == "pivot":
+                results[key] = {"schema": [], "schema_resolved": False,
+                                "error": "Pivot output columns depend on the data; run the flow."}
+                continue
+            else:
+                lf = _build_schema_node(ntype, meta)
+                if lf is None:
+                    results[key] = {"schema": [], "schema_resolved": False, "error": "Upstream schema unavailable"}
+                    continue
+
+            _schema_lazyframes[nid] = lf
+            schema = [{"name": n, "data_type": str(d)} for n, d in lf.collect_schema().items()]
+            _schema_schemas[nid] = schema
+            results[key] = {"schema": schema, "schema_resolved": True, "error": None}
+        except Exception as e:
+            results[key] = {"schema": [], "schema_resolved": False, "error": str(e)}
+
+    return results
+
 
 def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute output node - prepares data for download.

@@ -90,9 +90,10 @@ describe('Write to Catalog node', () => {
     const result = await store.executeNode(writeId)
 
     expect(result.success).toBe(true)
-    // It went through the output materialization path.
-    const calledWith = mocks.runPythonWithResult.mock.calls.at(-1)?.[0] as string
-    expect(calledWith).toContain('execute_output')
+    // It went through the output materialization path. (Search all calls: an
+    // always-on schema-propagation call may interleave after the run.)
+    const allCalls = mocks.runPythonWithResult.mock.calls.map((c) => c[0] as string)
+    expect(allCalls.some((c) => c.includes('execute_output'))).toBe(true)
     // The table is now in the persistent catalog.
     expect(store.getCatalogDatasetNames()).toContain('sales')
     expect(store.getCatalogDatasetContent('sales')).toBe(CSV)

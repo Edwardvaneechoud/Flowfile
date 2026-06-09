@@ -225,6 +225,40 @@
           {{ selectedNodeResult.error }}
         </div>
 
+        <!-- Schema preview: fields are known (lazy propagation) but no data fetched yet -->
+        <div v-else-if="selectedNodeSchema.length" class="schema-preview">
+          <div class="preview-header">
+            <span class="col-count">{{ selectedNodeSchema.length }} columns</span>
+            <span class="schema-preview-hint">Schema preview · fetch data to see rows</span>
+          </div>
+          <div class="schema-grid-container">
+            <table class="schema-table">
+              <thead>
+                <tr>
+                  <th v-for="col in selectedNodeSchema" :key="col.name">
+                    <span class="schema-col-name">{{ col.name }}</span>
+                    <span class="schema-col-type">{{ col.data_type }}</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="schema-empty-row">
+                  <td v-for="col in selectedNodeSchema" :key="col.name">—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="schema-preview-footer">
+            <button
+              class="fetch-data-button"
+              :disabled="isFetching || isExecuting || !pyodideReady"
+              @click="handleFetchData"
+            >
+              {{ isFetching ? 'Fetching…' : 'Fetch data' }}
+            </button>
+          </div>
+        </div>
+
         <!-- Empty state with fetch-to-run button -->
         <div v-else class="no-data">
           <p class="no-data-text">This node hasn't produced data yet. Fetch it to preview the output.</p>
@@ -703,7 +737,7 @@ function handleDeleteNode(nodeId: number) {
 }
 
 async function handleRunNode(nodeId: number) {
-  await flowStore.executeNode(nodeId)
+  await flowStore.executeNodeWithUpstream(nodeId)
 }
 
 // Edit: select the node (opens the settings panel) and surface it.
@@ -772,7 +806,7 @@ async function applyNodeSettings() {
 
   isApplying.value = true
   try {
-    const result = await flowStore.executeNode(node.id)
+    const result = await flowStore.executeNodeWithUpstream(node.id)
     if (result.success && node.type !== 'explore_data') {
       await flowStore.fetchNodePreview(node.id, { maxRows: 100 })
     }
@@ -831,7 +865,9 @@ async function handleFetchData() {
   const nodeId = selectedNodeId.value
   isFetching.value = true
   try {
-    const result = await flowStore.executeNode(nodeId)
+    // Run the node together with its upstream chain so the preview can be
+    // materialized even when the flow hasn't been run.
+    const result = await flowStore.executeNodeWithUpstream(nodeId)
     if (result.success) {
       const node = flowNodes.value.get(nodeId)
       const maxRows = node?.type === 'explore_data' ? 1000 : 100
@@ -903,6 +939,13 @@ const columnDefs = computed<ColDef[]>(() => {
       }
     }
   })
+})
+
+// Propagated schema for the selected node — drives the field preview shown
+// before any data is fetched (lazy schema propagation makes this available
+// without running the flow).
+const selectedNodeSchema = computed<ColumnSchema[]>(() => {
+  return selectedNodeResult.value?.schema || []
 })
 
 // Use caching to prevent unnecessary re-renders that reset scroll position
@@ -1331,6 +1374,73 @@ onUnmounted(() => {
 .no-data-text {
   margin: 0;
   max-width: 280px;
+}
+
+/* Schema preview — show propagated fields before any data is fetched */
+.schema-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.schema-preview-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.schema-grid-container {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.schema-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+.schema-table th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.schema-col-name {
+  display: block;
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.schema-col-type {
+  display: block;
+  margin-top: 2px;
+  color: var(--accent-color);
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+}
+
+.schema-empty-row td {
+  padding: 6px 12px;
+  color: var(--text-secondary);
+  border-right: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
+  text-align: center;
+}
+
+.schema-preview-footer {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  border-top: 1px solid var(--border-color);
 }
 
 /* Fetch-to-run CTA (accent/primary, consistent with the settings Apply button) */
