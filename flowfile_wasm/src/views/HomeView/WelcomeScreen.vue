@@ -84,10 +84,10 @@
             </span>
           </button>
           <button class="explore-tile" @click="emit('browse-templates')">
-            <span class="explore-icon"><span class="material-icons">school</span></span>
+            <span class="explore-icon"><span class="material-icons">dashboard_customize</span></span>
             <span class="explore-text">
-              <span class="explore-label">Interactive demo</span>
-              <span class="explore-desc">Load a worked example flow</span>
+              <span class="explore-label">Templates</span>
+              <span class="explore-desc">Browse worked example flows</span>
             </span>
           </button>
           <button class="explore-tile" @click="uiStore.showDocs = true">

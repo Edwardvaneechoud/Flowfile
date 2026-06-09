@@ -14,22 +14,32 @@
     style="display: none"
     @change="onFileChange"
   />
+  <TemplatesGallery
+    :visible="showTemplates"
+    :loading="isLoading"
+    :error="loadError"
+    @select="onSelectTemplate"
+    @close="showTemplates = false"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import WelcomeScreen from './HomeView/WelcomeScreen.vue'
+import TemplatesGallery from '../components/TemplatesGallery.vue'
 import { useFlowTabsStore } from '../stores/flow-tabs-store'
 import { useRecentFlowsStore } from '../stores/recent-flows-store'
-import { useDemo } from '../composables/useDemo'
+import { useTemplates } from '../composables/useTemplates'
+import type { FlowTemplate } from '../config/templates'
 
 const router = useRouter()
 const flowTabsStore = useFlowTabsStore()
 const recentFlowsStore = useRecentFlowsStore()
-const { loadDemo } = useDemo()
+const { isLoading, loadError, loadTemplate } = useTemplates()
 
 const fileInput = ref<HTMLInputElement | null>(null)
+const showTemplates = ref(false)
 
 onMounted(() => {
   recentFlowsStore.refresh()
@@ -61,12 +71,16 @@ async function onFileChange(event: Event) {
   }
 }
 
-async function handleBrowseTemplates() {
-  const ok = await flowTabsStore.openWith(async () => {
-    await loadDemo(false)
-    return true
-  })
-  if (ok) goDesigner()
+function handleBrowseTemplates() {
+  showTemplates.value = true
+}
+
+async function onSelectTemplate(template: FlowTemplate) {
+  const ok = await flowTabsStore.openWith(() => loadTemplate(template))
+  if (ok) {
+    showTemplates.value = false
+    goDesigner()
+  }
 }
 
 async function handleOpenRecent(id: string) {
