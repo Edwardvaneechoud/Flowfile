@@ -324,6 +324,7 @@ import NodeTitle from './nodes/NodeTitle.vue'
 import ReadCsvSettings from './nodes/ReadCsvSettings.vue'
 import ManualInputSettings from './nodes/ManualInputSettings.vue'
 import ExternalDataSettings from './nodes/ExternalDataSettings.vue'
+import ReadFromCatalogSettings from './nodes/ReadFromCatalogSettings.vue'
 import FilterSettings from './nodes/FilterSettings.vue'
 import SelectSettings from './nodes/SelectSettings.vue'
 import GroupBySettings from './nodes/GroupBySettings.vue'
@@ -436,7 +437,8 @@ const nodeCategories = ref<NodeCategory[]>([
     nodes: [
       { type: 'read', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 },
       { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1 },
-      { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1 }
+      { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1 },
+      { type: 'read_from_catalog', name: 'Read from Catalog', icon: 'database_reader.svg', inputs: 0, outputs: 1 }
     ]
   },
   {
@@ -764,6 +766,7 @@ function getSettingsComponent(type: string) {
     read: ReadCsvSettings,
     manual_input: ManualInputSettings,
     external_data: ExternalDataSettings,
+    read_from_catalog: ReadFromCatalogSettings,
     filter: FilterSettings,
     select: SelectSettings,
     group_by: GroupBySettings,
@@ -1019,7 +1022,9 @@ onMounted(async () => {
   await nextTick()
   if (props.showToolbar && toolbarRef.value) {
     const rect = toolbarRef.value.getBoundingClientRect()
-    toolbarHeight.value = rect.bottom
+    // Use the toolbar's own height (panels are positioned in container-local
+    // coords, not viewport coords — rect.bottom would add the container offset).
+    toolbarHeight.value = rect.height
   } else {
     // No toolbar: panels dock from the top of the canvas area.
     toolbarHeight.value = 0

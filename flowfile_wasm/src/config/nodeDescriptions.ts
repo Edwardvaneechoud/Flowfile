@@ -16,6 +16,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     title: 'External Data',
     intro: 'Load data provided by the host application. Select an available dataset from the dropdown.'
   },
+  read_from_catalog: {
+    title: 'Read from Catalog',
+    intro: 'Read a table you uploaded to the Catalog. Select one from the dropdown.'
+  },
   filter: {
     title: 'Filter',
     intro: 'Filter rows based on conditions. Use basic mode for simple filters or advanced mode for custom Polars expressions.'

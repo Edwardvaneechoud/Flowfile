@@ -40,10 +40,13 @@
     <DocsModal :is-open="uiStore.showDocs" @close="uiStore.showDocs = false" />
     <AboutDialog v-model:visible="uiStore.showAbout" :version="version" />
 
-    <!-- Prominent demo button for first-time visitors on the designer canvas. -->
+    <!-- Prominent demo button for first-time visitors on Home and the designer
+         canvas (mirrors the original app's prominent demo). Loads then opens the
+         designer. -->
     <DemoButton
-      v-if="route.name === 'designer' && !shouldAutoLoadDemo && !hasSeenDemo && !hasDismissedDemo && pyodideReady"
+      v-if="(route.name === 'home' || route.name === 'designer') && !shouldAutoLoadDemo && !hasSeenDemo && !hasDismissedDemo && pyodideReady"
       prominent
+      @loaded="router.push({ name: 'designer' })"
     />
   </div>
 </template>

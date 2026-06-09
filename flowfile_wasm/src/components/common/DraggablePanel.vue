@@ -6,28 +6,32 @@
     ref="panelRef"
     @mousedown.stop="bringToFront"
   >
-    <div class="panel-header" @mousedown="startMove" @dblclick="onHeaderDblClick">
-      <button class="header-btn" @click.stop="toggleMinimize" :title="isMinimized ? 'Expand' : 'Minimize'">
-        {{ isMinimized ? '+' : '−' }}
-      </button>
-      <template v-if="allowMove && !isMinimized && !isFullScreen">
-        <button class="header-btn move-btn" @click.stop="moveToEdge('left')" title="Dock left">←</button>
-        <button class="header-btn move-btn" @click.stop="moveToEdge('top')" title="Dock top">↑</button>
-        <button class="header-btn move-btn" @click.stop="moveToEdge('bottom')" title="Dock bottom">↓</button>
-        <button class="header-btn move-btn" @click.stop="moveToEdge('right')" title="Dock right">→</button>
-      </template>
-      <button
-        v-if="allowFullScreen && !isMinimized"
-        class="header-btn"
-        @click.stop="toggleFullScreen"
-        :title="isFullScreen ? 'Exit fullscreen' : 'Fullscreen'"
-      >
-        {{ isFullScreen ? '❐' : '⛶' }}
-      </button>
+    <!-- The title fills the header and is the drag handle; controls are grouped
+         on the right. Dock arrows reveal on hover to keep the header uncluttered. -->
+    <div class="panel-header" @mousedown="startMove">
       <span class="panel-title">{{ title }}</span>
-      <button v-if="onClose" class="header-btn close-btn" @click.stop="onClose" title="Close">
-        ×
-      </button>
+      <div class="panel-controls" @mousedown.stop>
+        <template v-if="allowMove && !isMinimized && !isFullScreen">
+          <button class="header-btn move-btn" @click.stop="moveToEdge('left')" title="Dock left">←</button>
+          <button class="header-btn move-btn" @click.stop="moveToEdge('top')" title="Dock top">↑</button>
+          <button class="header-btn move-btn" @click.stop="moveToEdge('bottom')" title="Dock bottom">↓</button>
+          <button class="header-btn move-btn" @click.stop="moveToEdge('right')" title="Dock right">→</button>
+        </template>
+        <button
+          v-if="allowFullScreen && !isMinimized"
+          class="header-btn"
+          @click.stop="toggleFullScreen"
+          :title="isFullScreen ? 'Exit fullscreen' : 'Fullscreen'"
+        >
+          {{ isFullScreen ? '❐' : '⛶' }}
+        </button>
+        <button class="header-btn" @click.stop="toggleMinimize" :title="isMinimized ? 'Expand' : 'Minimize'">
+          {{ isMinimized ? '+' : '−' }}
+        </button>
+        <button v-if="onClose" class="header-btn close-btn" @click.stop="onClose" title="Close">
+          ×
+        </button>
+      </div>
     </div>
     <div v-if="!isMinimized" class="panel-content">
       <slot></slot>
@@ -508,12 +512,6 @@ function bringToFront() {
   }
 }
 
-function onHeaderDblClick(e: MouseEvent) {
-  // Ignore double-clicks that land on a header button.
-  if ((e.target as HTMLElement).closest('.header-btn')) return
-  if (props.allowFullScreen) toggleFullScreen()
-}
-
 function toggleFullScreen() {
   const c = getContainerRect()
   if (!isFullScreen.value) {
@@ -735,28 +733,39 @@ onUnmounted(() => {
   color: var(--accent-color);
 }
 
-/* The dock arrows are secondary; keep them subtle until hovered. */
+/* Controls grouped on the right; dock arrows reveal on header hover so the
+   header normally reads as a clean title bar with a few controls. */
+.panel-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
 .move-btn {
   color: var(--text-secondary);
   font-size: 13px;
+  opacity: 0;
+  width: 0;
+  transition: opacity 0.15s, width 0.15s;
+  overflow: hidden;
 }
 
-.close-btn {
-  margin-left: auto;
+.panel-header:hover .move-btn {
+  opacity: 1;
+  width: 22px;
 }
 
+/* The title fills the header and is the primary drag handle. */
 .panel-title {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  background: var(--accent-color);
-  color: white;
-  padding: 2px 8px;
-  border-radius: 4px;
+  color: var(--text-primary);
 }
 
 .draggable-panel.is-fullscreen {

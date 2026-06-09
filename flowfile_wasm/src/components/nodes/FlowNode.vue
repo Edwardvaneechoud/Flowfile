@@ -109,6 +109,7 @@ const iconMap: Record<string, string> = {
   read: 'input_data.png',
   manual_input: 'manual_input.png',
   external_data: 'external_data.svg',
+  read_from_catalog: 'database_reader.svg',
   filter: 'filter.png',
   select: 'select.png',
   group_by: 'group_by.png',

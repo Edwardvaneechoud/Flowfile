@@ -1,6 +1,6 @@
 import type { ColumnSchema, DataPreview, DownloadInfo } from '../../types'
 
-export type CatalogKind = 'file' | 'external' | 'output'
+export type CatalogKind = 'file' | 'external' | 'output' | 'catalog'
 export type CatalogStatus = 'success' | 'failure' | 'pending'
 
 /**

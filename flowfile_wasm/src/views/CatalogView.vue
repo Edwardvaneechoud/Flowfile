@@ -23,6 +23,17 @@
     <div v-if="activeTab !== 'runs'" class="catalog-body">
       <aside class="catalog-sidebar">
         <div class="sidebar-filters">
+          <button class="upload-btn" @click="triggerUpload">
+            <span class="material-icons">upload_file</span>
+            <span>Upload table</span>
+          </button>
+          <input
+            ref="uploadInput"
+            type="file"
+            accept=".csv,.txt"
+            style="display: none"
+            @change="handleUpload"
+          />
           <input v-model="search" type="text" class="search-input" placeholder="Search tables..." />
           <label class="unavailable-toggle">
             <input v-model="showUnavailable" type="checkbox" />
@@ -46,7 +57,15 @@
                 <span class="item-name">{{ item.name }}</span>
                 <span class="item-meta">{{ itemMeta(item) }}</span>
                 <button
-                  class="item-star"
+                  v-if="item.kind === 'catalog' && item.datasetName"
+                  class="item-icon-btn item-delete"
+                  title="Delete catalog table"
+                  @click.stop="deleteCatalogTable(item)"
+                >
+                  <span class="material-icons">delete_outline</span>
+                </button>
+                <button
+                  class="item-icon-btn item-star"
                   :class="{ active: favoritesStore.isFavorite(item.id) }"
                   :title="favoritesStore.isFavorite(item.id) ? 'Remove favorite' : 'Add favorite'"
                   @click.stop="favoritesStore.toggle(item.id)"
@@ -103,16 +122,18 @@ const flowStore = useFlowStore()
 const favoritesStore = useFavoritesStore()
 const runHistoryStore = useRunHistoryStore()
 // `getNode` (used in the items computed) establishes the reactive dep on nodes.
-const { nodeResults, fileContents, externalDatasets } = storeToRefs(flowStore)
+const { nodeResults, fileContents, externalDatasets, catalogDatasets } = storeToRefs(flowStore)
 
 const search = ref('')
 const showUnavailable = ref(true)
 const selectedId = ref<string | null>(null)
 const activeTab = ref<TabKey>('catalog')
+const uploadInput = ref<HTMLInputElement | null>(null)
 
-const SOURCE_TYPES = new Set(['read', 'manual_input', 'external_data'])
+const SOURCE_TYPES = new Set(['read', 'manual_input', 'external_data', 'read_from_catalog'])
 const TYPE_LABELS: Record<string, string> = {
   read: 'Read CSV', manual_input: 'Manual Input', external_data: 'External Data',
+  read_from_catalog: 'Read from Catalog',
   filter: 'Filter', select: 'Select', sort: 'Sort', polars_code: 'Polars Code',
   unique: 'Unique', head: 'Take Sample', join: 'Join', group_by: 'Group By',
   pivot: 'Pivot', unpivot: 'Unpivot', explore_data: 'Explore Data',
@@ -223,6 +244,23 @@ const items = computed<CatalogItem[]>(() => {
     })
   }
 
+  // User-uploaded catalog tables (persisted in IndexedDB)
+  for (const [name, content] of catalogDatasets.value) {
+    const schema = inferSchemaFromCsv(content) ?? undefined
+    out.push({
+      id: `catalog-${name}`,
+      kind: 'catalog',
+      name,
+      subtitle: 'Catalog table',
+      datasetName: name,
+      schema,
+      columns: schema?.length ?? null,
+      sizeBytes: byteSize(content),
+      status: 'success',
+      preview: parseCsvHead(content)
+    })
+  }
+
   for (const [nodeId, result] of nodeResults.value) {
     const node = flowStore.getNode(nodeId)
     if (!node || SOURCE_TYPES.has(node.type)) continue
@@ -261,6 +299,7 @@ const displayGroups = computed(() => {
   const byKind = (kind: CatalogItem['kind']) => items.value.filter((i) => i.kind === kind && match(i))
 
   return [
+    { key: 'catalog', label: 'Catalog tables', items: byKind('catalog'), emptyText: onlyFavorites ? 'No favorited tables.' : 'Upload a CSV to add a catalog table.' },
     { key: 'file', label: 'Loaded files', items: byKind('file'), emptyText: onlyFavorites ? 'No favorited files.' : 'No CSV files loaded yet.' },
     { key: 'external', label: 'External datasets', items: byKind('external'), emptyText: onlyFavorites ? 'No favorited datasets.' : 'No external datasets provided.' },
     { key: 'output', label: 'Node outputs', items: byKind('output'), emptyText: onlyFavorites ? 'No favorited outputs.' : 'Run nodes to populate outputs.' }
@@ -274,6 +313,34 @@ function itemMeta(item: CatalogItem): string {
   if (item.rows != null) return `${item.rows.toLocaleString()} rows`
   if (item.columns != null) return `${item.columns} cols`
   return ''
+}
+
+function triggerUpload() {
+  uploadInput.value?.click()
+}
+
+async function handleUpload(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // allow re-uploading the same filename
+  if (!file) return
+  try {
+    const content = await file.text()
+    // Use the filename (without extension) as the table name; dedupe by name.
+    const name = file.name.replace(/\.[^.]+$/, '') || file.name
+    await flowStore.addCatalogDataset(name, content)
+    selectedId.value = `catalog-${name}`
+  } catch (e) {
+    console.error('[catalog] upload failed', e)
+    alert('Failed to read the file. Please pick a valid CSV.')
+  }
+}
+
+async function deleteCatalogTable(item: CatalogItem) {
+  if (!item.datasetName) return
+  if (!confirm(`Delete catalog table "${item.datasetName}"?`)) return
+  await flowStore.removeCatalogDataset(item.datasetName)
+  if (selectedId.value === item.id) selectedId.value = null
 }
 
 function setTab(tab: TabKey) {
@@ -425,7 +492,7 @@ function refresh() {
 .item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-primary); }
 .item-meta { font-size: var(--font-size-xs); color: var(--color-text-muted); flex-shrink: 0; }
 
-.item-star {
+.item-icon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -440,10 +507,31 @@ function refresh() {
   opacity: 0;
   transition: all var(--transition-fast);
 }
-.listbox li:hover .item-star, .item-star.active { opacity: 1; }
+.listbox li:hover .item-icon-btn, .item-star.active { opacity: 1; }
 .item-star.active { color: var(--color-warning); }
 .item-star:hover { color: var(--color-warning); }
-.item-star .material-icons { font-size: 16px; }
+.item-delete:hover { color: var(--color-danger); }
+.item-icon-btn .material-icons { font-size: 16px; }
+
+/* Upload table button */
+.upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  width: 100%;
+  height: 32px;
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.upload-btn:hover { background: var(--color-accent); color: #fff; }
+.upload-btn .material-icons { font-size: 18px; }
 
 /* Detail */
 .catalog-detail { flex: 1; overflow-y: auto; padding: var(--spacing-5) var(--spacing-6); }

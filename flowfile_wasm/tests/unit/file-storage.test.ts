@@ -12,6 +12,9 @@ describe('FileStorageManager', () => {
     await fileStorage.clearAllDownloads()
     await fileStorage.pruneRecentFlows(0)
     await fileStorage.clearRuns()
+    for (const d of await fileStorage.getAllCatalogDatasets()) {
+      await fileStorage.deleteCatalogDataset(d.name)
+    }
   })
 
   describe('shouldUseIndexedDB', () => {
@@ -317,6 +320,27 @@ describe('FileStorageManager', () => {
 
       await fileStorage.clearRuns()
       expect(await fileStorage.getAllRuns()).toEqual([])
+    })
+  })
+
+  describe('Catalog datasets (v4)', () => {
+    it('stores, lists, and deletes catalog datasets', async () => {
+      await fileStorage.putCatalogDataset({ name: 'sales', content: 'a,b\n1,2' })
+      await fileStorage.putCatalogDataset({ name: 'regions', content: 'r\nx' })
+
+      const all = await fileStorage.getAllCatalogDatasets()
+      expect(all.map((d) => d.name).sort()).toEqual(['regions', 'sales'])
+
+      await fileStorage.deleteCatalogDataset('sales')
+      expect((await fileStorage.getAllCatalogDatasets()).map((d) => d.name)).toEqual(['regions'])
+    })
+
+    it('upserts by name', async () => {
+      await fileStorage.putCatalogDataset({ name: 't', content: 'v1' })
+      await fileStorage.putCatalogDataset({ name: 't', content: 'v2' })
+      const all = await fileStorage.getAllCatalogDatasets()
+      expect(all).toHaveLength(1)
+      expect(all[0].content).toBe('v2')
     })
   })
 })

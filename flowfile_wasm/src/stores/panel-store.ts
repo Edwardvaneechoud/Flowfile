@@ -3,7 +3,9 @@
  * Saves and restores draggable panel positions and sizes using localStorage
  */
 
-const PANEL_STORAGE_KEY = 'flowfile-panel-state'
+// v2: bumped after the app-shell redesign so stale geometry from the old
+// top-tabs layout is discarded and panels open at correct defaults.
+const PANEL_STORAGE_KEY = 'flowfile-panel-state-v2'
 
 export interface PanelState {
   width: number

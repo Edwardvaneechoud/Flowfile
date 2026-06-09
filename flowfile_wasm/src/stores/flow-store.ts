@@ -16,6 +16,7 @@ import type {
   NodeReadSettings,
   NodeManualInputSettings,
   NodeExternalDataSettings,
+  NodeReadFromCatalogSettings,
   NodeExternalOutputSettings,
   NodeFilterSettings,
   NodeSelectSettings,
@@ -113,6 +114,10 @@ export const useFlowStore = defineStore('flow', () => {
 
   // External datasets provided by the host application (for embedded mode)
   const externalDatasets = ref<Map<string, string>>(new Map())
+  // Catalog datasets: CSV tables the user uploads in the Catalog (persisted to
+  // IndexedDB). Independent from host-injected externalDatasets. Read by the
+  // dedicated "Read from Catalog" node.
+  const catalogDatasets = ref<Map<string, string>>(new Map())
 
   // Before-export hooks: called right before the flow is exported to YAML.
   // Used by ExploreData.vue to flush the live Graphic Walker chart spec
@@ -454,6 +459,7 @@ export const useFlowStore = defineStore('flow', () => {
     { deep: true }
   )
 
+  loadCatalogDatasets()
   loadFromStorage()
     .then(() => {
       // Ensure nodeResults are populated from storage before propagating
@@ -835,6 +841,55 @@ export const useFlowStore = defineStore('flow', () => {
    */
   function getExternalDatasetContent(name: string): string | undefined {
     return externalDatasets.value.get(name)
+  }
+
+  // ── Catalog datasets (user-uploaded tables, persisted to IndexedDB) ─────────
+
+  /** Load persisted catalog datasets into memory (called at store init). */
+  async function loadCatalogDatasets() {
+    try {
+      const entries = await fileStorage.getAllCatalogDatasets()
+      catalogDatasets.value.clear()
+      for (const e of entries) catalogDatasets.value.set(e.name, e.content)
+    } catch (err) {
+      console.warn('[flow-store] failed to load catalog datasets:', err)
+    }
+  }
+
+  /** Upload/replace a named catalog dataset (persisted). Auto-loads into any
+   *  read_from_catalog nodes that reference it. */
+  async function addCatalogDataset(name: string, content: string) {
+    catalogDatasets.value.set(name, content)
+    catalogDatasets.value = new Map(catalogDatasets.value) // trigger reactivity
+    nodes.value.forEach((node, nodeId) => {
+      if (node.type === 'read_from_catalog') {
+        const settings = node.settings as { dataset_name?: string }
+        if (settings.dataset_name === name) setFileContent(nodeId, content)
+      }
+    })
+    try {
+      await fileStorage.putCatalogDataset({ name, content })
+    } catch (err) {
+      console.warn('[flow-store] failed to persist catalog dataset:', err)
+    }
+  }
+
+  function getCatalogDatasetNames(): string[] {
+    return Array.from(catalogDatasets.value.keys())
+  }
+
+  function getCatalogDatasetContent(name: string): string | undefined {
+    return catalogDatasets.value.get(name)
+  }
+
+  async function removeCatalogDataset(name: string) {
+    catalogDatasets.value.delete(name)
+    catalogDatasets.value = new Map(catalogDatasets.value)
+    try {
+      await fileStorage.deleteCatalogDataset(name)
+    } catch (err) {
+      console.warn('[flow-store] failed to delete catalog dataset:', err)
+    }
   }
 
   /**
@@ -1518,6 +1573,30 @@ result
           break
         }
 
+        case 'read_from_catalog': {
+          // Reads a CSV table uploaded to the Catalog. The settings panel loads
+          // the chosen dataset's content into fileContents; execution reuses
+          // execute_manual_input (CSV string in → frame). Independent from
+          // external_data so the two can diverge later.
+          const content = fileContents.value.get(nodeId)
+          if (!content) {
+            const settings = node.settings as { dataset_name?: string }
+            const dsName = settings.dataset_name
+            return { success: false, error: dsName ? `Catalog table "${dsName}" not found. Upload it in the Catalog.` : 'No catalog table selected' }
+          }
+          setGlobal('_temp_content', content)
+          try {
+            result = await runPythonWithResult(`
+import json
+result = execute_manual_input(${nodeId}, _temp_content, json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          } finally {
+            deleteGlobal('_temp_content')
+          }
+          break
+        }
+
         case 'filter': {
           const inputId = node.inputIds[0]
           if (!inputId) {
@@ -1915,6 +1994,13 @@ result
           dataset_name: '',
           schema_snapshot: []
         } as NodeExternalDataSettings
+
+      case 'read_from_catalog':
+        return {
+          ...base,
+          dataset_name: '',
+          schema_snapshot: []
+        } as NodeReadFromCatalogSettings
 
       case 'filter':
         return {
@@ -2484,6 +2570,11 @@ result
     setExternalDatasets,
     getExternalDatasetNames,
     getExternalDatasetContent,
+    catalogDatasets,
+    addCatalogDataset,
+    getCatalogDatasetNames,
+    getCatalogDatasetContent,
+    removeCatalogDataset,
     selectNode,
     executeNode,
     executeFlow,

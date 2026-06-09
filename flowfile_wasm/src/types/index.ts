@@ -280,6 +280,13 @@ export interface NodeExternalDataSettings extends NodeBase {
   schema_snapshot?: MinimalFieldInfo[]
 }
 
+export interface NodeReadFromCatalogSettings extends NodeBase {
+  /** Name of the catalog dataset (user-uploaded table in the Catalog) */
+  dataset_name: string
+  /** Schema snapshot saved on export (data itself is NOT saved) */
+  schema_snapshot?: MinimalFieldInfo[]
+}
+
 export interface NodeFilterSettings extends NodeSingleInput {
   filter_input: FilterInput
 }
@@ -498,6 +505,7 @@ export const NODE_TYPES = {
   read: 'read',  // Matches flowfile_core's 'read' type
   manual_input: 'manual_input',
   external_data: 'external_data',
+  read_from_catalog: 'read_from_catalog',
 
   // Transform nodes
   filter: 'filter',

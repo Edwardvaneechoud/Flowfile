@@ -11,11 +11,12 @@
  */
 
 const DB_NAME = 'flowfile_wasm_files';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE_NAME = 'fileContents';
 const DOWNLOAD_STORE_NAME = 'downloadContents';
 const RECENT_FLOWS_STORE = 'recentFlows';
 const RUN_HISTORY_STORE = 'runHistory';
+const CATALOG_DATASETS_STORE = 'catalogDatasets';
 const SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB in bytes
 
 interface FileEntry {
@@ -55,6 +56,12 @@ interface RunHistoryEntry {
   nodesCompleted: number;
   success: boolean;
   error?: string | null;
+}
+
+/** A CSV table uploaded directly in the Catalog (read by the Read-from-Catalog node). */
+interface CatalogDatasetEntry {
+  name: string;
+  content: string;
 }
 
 class FileStorageManager {
@@ -106,6 +113,11 @@ class FileStorageManager {
         if (!db.objectStoreNames.contains(RUN_HISTORY_STORE)) {
           const runStore = db.createObjectStore(RUN_HISTORY_STORE, { keyPath: 'id' });
           runStore.createIndex('startedAt', 'startedAt', { unique: false });
+        }
+
+        // v4 (additive): user-uploaded catalog datasets.
+        if (!db.objectStoreNames.contains(CATALOG_DATASETS_STORE)) {
+          db.createObjectStore(CATALOG_DATASETS_STORE, { keyPath: 'name' });
         }
       };
     });
@@ -541,8 +553,42 @@ class FileStorageManager {
       req.onerror = () => reject(req.error);
     });
   }
+
+  // ── Catalog datasets (user uploads) ───────────────────────────────────────
+
+  async putCatalogDataset(entry: CatalogDatasetEntry): Promise<void> {
+    await this.init();
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([CATALOG_DATASETS_STORE], 'readwrite');
+      const req = tx.objectStore(CATALOG_DATASETS_STORE).put(entry);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async getAllCatalogDatasets(): Promise<CatalogDatasetEntry[]> {
+    return this.getAllFromStore<CatalogDatasetEntry>(CATALOG_DATASETS_STORE);
+  }
+
+  async deleteCatalogDataset(name: string): Promise<void> {
+    await this.init();
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+      const tx = this.db.transaction([CATALOG_DATASETS_STORE], 'readwrite');
+      const req = tx.objectStore(CATALOG_DATASETS_STORE).delete(name);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
 }
 
 export const fileStorage = new FileStorageManager();
 export { SIZE_THRESHOLD };
-export type { DownloadEntry, RecentFlowEntry, RunHistoryEntry };
+export type { DownloadEntry, RecentFlowEntry, RunHistoryEntry, CatalogDatasetEntry };
