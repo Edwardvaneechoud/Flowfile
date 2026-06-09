@@ -43,8 +43,8 @@
       </div>
     </DraggablePanel>
 
-    <!-- Toolbar -->
-    <div ref="toolbarRef" class="toolbar">
+    <!-- Toolbar (hidden in app mode, where the header drives actions) -->
+    <div v-if="showToolbar" ref="toolbarRef" class="toolbar">
       <div class="action-buttons">
         <button
           v-if="effectiveToolbar.showRun"
@@ -65,20 +65,13 @@
           <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           <span class="btn-text">Open</span>
         </button>
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept=".json,.yaml,.yml"
-          @change="handleLoadFlow"
-          style="display: none"
-        />
         <DemoButton v-if="effectiveToolbar.showDemo && hasSeenDemo" />
         <button
           v-if="effectiveToolbar.showCodeGen"
           class="action-btn"
-          :class="{ active: showCodeGenerator }"
+          :class="{ active: uiStore.showCodeGenerator }"
           title="Generate Python Code"
-          @click="showCodeGenerator = true"
+          @click="uiStore.showCodeGenerator = true"
         >
           <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
           <span class="btn-text">Generate code</span>
@@ -105,6 +98,7 @@
         @connect="onConnect"
         @node-click="onNodeClick"
         @pane-click="onPaneClick"
+        @pane-context-menu="onPaneContextMenu"
         @edges-change="onEdgesChange"
         @nodes-change="onNodesChange"
       >
@@ -244,10 +238,20 @@
       </div>
     </DraggablePanel>
 
+    <!-- Hidden file input for Open (lives outside the toolbar so the header's
+         Open action works even when the toolbar is hidden in app mode). -->
+    <input
+      ref="fileInputRef"
+      type="file"
+      accept=".json,.yaml,.yml"
+      @change="handleLoadFlow"
+      style="display: none"
+    />
+
     <!-- Code Generator Modal -->
     <CodeGenerator
-      :is-visible="showCodeGenerator"
-      @close="showCodeGenerator = false"
+      :is-visible="uiStore.showCodeGenerator"
+      @close="uiStore.showCodeGenerator = false"
     />
     <!-- Missing Files Modal -->
     <MissingFilesModal
@@ -263,6 +267,32 @@
     <!-- Teleport target for context menus (inside CSS variable scope, outside VueFlow transforms) -->
     <div id="flowfile-context-menu-container"></div>
 
+    <!-- Canvas (pane) right-click menu -->
+    <div
+      v-if="paneMenuVisible"
+      ref="paneMenuEl"
+      class="context-menu pane-menu"
+      :style="{ position: 'fixed', zIndex: 10000, top: `${paneMenu.y}px`, left: `${paneMenu.x}px` }"
+    >
+      <div class="context-menu-item" @click="paneFitView">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+        <span>Fit view</span>
+      </div>
+      <div class="context-menu-item" @click="paneZoomIn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M11 8v6M8 11h6"/></svg>
+        <span>Zoom in</span>
+      </div>
+      <div class="context-menu-item" @click="paneZoomOut">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M8 11h6"/></svg>
+        <span>Zoom out</span>
+      </div>
+      <div v-if="canPaste" class="context-menu-divider"></div>
+      <div v-if="canPaste" class="context-menu-item" @click="pasteHere">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+        <span>Paste node</span>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -275,6 +305,7 @@ import { Controls } from '@vue-flow/controls'
 import { useFlowStore } from '../stores/flow-store'
 import { usePyodideStore } from '../stores/pyodide-store'
 import { usePanelZIndexStore } from '../stores/panel-zindex-store'
+import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { storeToRefs } from 'pinia'
 import type { NodeSettings, FlowEdge, ColumnSchema, NodeResult } from '../types'
 import type { ToolbarConfig, NodeCategoryConfig } from '../lib/types'
@@ -321,8 +352,12 @@ const props = withDefaults(defineProps<{
   toolbarConfig?: ToolbarConfig
   nodeCategoriesConfig?: NodeCategoryConfig[]
   readonly?: boolean
+  // App mode hides the in-canvas toolbar and drives actions from the header;
+  // the embeddable library keeps the toolbar (default true).
+  showToolbar?: boolean
 }>(), {
-  readonly: false
+  readonly: false,
+  showToolbar: true
 })
 
 const emit = defineEmits<{
@@ -340,6 +375,7 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
 
 const flowStore = useFlowStore()
 const zIndexStore = usePanelZIndexStore()
+const uiStore = useDesignerUiStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
 const { isReady: pyodideReady } = storeToRefs(usePyodideStore())
 
@@ -348,9 +384,15 @@ const { hasSeenDemo } = useDemo()
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
 const toolbarHeight = ref(52)
-const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
+const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut } = useVueFlow()
+
+// Canvas (pane) right-click menu state.
+const paneMenuVisible = ref(false)
+const paneMenuEl = ref<HTMLElement | null>(null)
+const paneMenu = ref({ x: 0, y: 0 })
+let paneFlowPos = { x: 0, y: 0 }
+const canPaste = computed(() => flowStore.hasClipboard())
 const searchQuery = ref('')
-const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
@@ -558,6 +600,62 @@ function onNodeClick(event: { node: Node }) {
 
 function onPaneClick() {
   flowStore.selectNode(null)
+  closePaneMenu()
+}
+
+function onPaneContextMenu(event: MouseEvent) {
+  event.preventDefault()
+  paneFlowPos = screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
+  paneMenu.value = { x: event.clientX, y: event.clientY }
+  paneMenuVisible.value = true
+  setTimeout(() => window.addEventListener('click', handlePaneMenuClickOutside), 0)
+  nextTick(() => {
+    const el = paneMenuEl.value
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    if (paneMenu.value.x + rect.width > window.innerWidth - 10) {
+      paneMenu.value.x = window.innerWidth - rect.width - 10
+    }
+    if (paneMenu.value.y + rect.height > window.innerHeight - 10) {
+      paneMenu.value.y = window.innerHeight - rect.height - 10
+    }
+  })
+}
+
+function handlePaneMenuClickOutside(event: MouseEvent) {
+  // Note: `Node` is shadowed by VueFlow's Node type in this file; use HTMLElement.
+  if (paneMenuEl.value && !paneMenuEl.value.contains(event.target as HTMLElement)) {
+    closePaneMenu()
+  }
+}
+
+function closePaneMenu() {
+  paneMenuVisible.value = false
+  window.removeEventListener('click', handlePaneMenuClickOutside)
+}
+
+function paneFitView() {
+  fitView()
+  closePaneMenu()
+}
+
+function paneZoomIn() {
+  zoomIn()
+  closePaneMenu()
+}
+
+function paneZoomOut() {
+  zoomOut()
+  closePaneMenu()
+}
+
+function pasteHere() {
+  const newId = flowStore.pasteNode(paneFlowPos.x, paneFlowPos.y)
+  if (newId !== null) {
+    pendingNodeAdjustment.value = newId
+    flowStore.selectNode(newId)
+  }
+  closePaneMenu()
 }
 
 function onEdgesChange(changes: EdgeChange[]) {
@@ -910,15 +1008,28 @@ onMounted(async () => {
     flowStore.onOutput(handleOutputCallback)
   }
 
+  // Expose the flow actions so the app header can drive them (app mode).
+  uiStore.registerActions({
+    run: handleRunFlow,
+    save: handleSaveFlow,
+    open: triggerLoadFlow,
+    clear: handleClearFlow
+  })
+
   await nextTick()
-  if (toolbarRef.value) {
+  if (props.showToolbar && toolbarRef.value) {
     const rect = toolbarRef.value.getBoundingClientRect()
     toolbarHeight.value = rect.bottom
+  } else {
+    // No toolbar: panels dock from the top of the canvas area.
+    toolbarHeight.value = 0
   }
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown)
+  window.removeEventListener('click', handlePaneMenuClickOutside)
+  uiStore.clearActions()
   if (flowStore.offOutput) {
     flowStore.offOutput(handleOutputCallback)
   }
@@ -931,6 +1042,17 @@ onUnmounted(() => {
 @import '@vue-flow/core/dist/theme-default.css';
 @import '@vue-flow/controls/dist/style.css';
 @import '@vue-flow/minimap/dist/style.css';
+
+/* Canvas (pane) right-click menu — reuses global .context-menu classes */
+.pane-menu .context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pane-menu .context-menu-item svg {
+  color: var(--text-secondary);
+}
 
 .canvas-container {
   display: flex;

@@ -38,6 +38,27 @@
         </RouterLink>
       </nav>
 
+      <!-- Designer flow actions (header-driven; the canvas toolbar is hidden in app mode) -->
+      <div v-if="route.name === 'designer'" class="header-actions">
+        <button class="header-btn header-btn--run" :disabled="isExecuting" title="Run flow (Ctrl+E)" @click="uiStore.actions?.run()">
+          <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>{{ isExecuting ? 'Running…' : 'Run' }}</span>
+        </button>
+        <button class="header-btn header-btn-icon" title="Save flow" @click="uiStore.actions?.save()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        </button>
+        <button class="header-btn header-btn-icon" title="Open flow" @click="uiStore.actions?.open()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        </button>
+        <button class="header-btn" :class="{ active: uiStore.showCodeGenerator }" title="Generate Python code" @click="uiStore.showCodeGenerator = !uiStore.showCodeGenerator">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          <span>Code</span>
+        </button>
+        <button class="header-btn header-btn-icon header-btn--danger" title="Clear flow" @click="uiStore.actions?.clear()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+      </div>
+
       <div class="header-right">
         <button class="header-btn" @click="isDocsOpen = true">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -103,6 +124,8 @@ import DocsModal from '../components/DocsModal.vue'
 import DemoButton from '../components/DemoButton.vue'
 import { usePyodideStore } from '../stores/pyodide-store'
 import { useThemeStore } from '../stores/theme-store'
+import { useFlowStore } from '../stores/flow-store'
+import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { useTheme } from '../composables/useTheme'
 import { useDemo } from '../composables/useDemo'
 import { storeToRefs } from 'pinia'
@@ -110,6 +133,9 @@ import { storeToRefs } from 'pinia'
 const route = useRoute()
 const pyodideStore = usePyodideStore()
 const themeStore = useThemeStore()
+const flowStore = useFlowStore()
+const uiStore = useDesignerUiStore()
+const { isExecuting } = storeToRefs(flowStore)
 const { isReady: pyodideReady } = storeToRefs(pyodideStore)
 const { isDark, toggleTheme } = useTheme()
 const { hasSeenDemo, hasDismissedDemo, loadDemo } = useDemo()
@@ -282,6 +308,48 @@ if (shouldAutoLoadDemo) {
 .header-btn-icon svg {
   width: 18px;
   height: 18px;
+}
+
+/* Designer action cluster */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: 0 var(--spacing-2);
+  margin: 0 var(--spacing-1);
+  border-left: 1px solid var(--color-border-light);
+  border-right: 1px solid var(--color-border-light);
+}
+
+.header-btn--run {
+  background: var(--color-success);
+  border-color: var(--color-success);
+  color: #fff;
+}
+
+.header-btn--run svg { color: #fff; }
+
+.header-btn--run:hover:not(:disabled) {
+  background: var(--color-success-hover);
+  border-color: var(--color-success-hover);
+  color: #fff;
+}
+
+.header-btn--run:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.header-btn.active {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.header-btn--danger:hover {
+  background: var(--color-danger-light);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 .loading-indicator, .ready-indicator {

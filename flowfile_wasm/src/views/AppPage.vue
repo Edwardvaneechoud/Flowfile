@@ -1,5 +1,7 @@
 <template>
-  <Canvas />
+  <!-- App mode: the header (AppLayout) drives flow actions, so the in-canvas
+       toolbar is hidden. The embeddable library keeps its own toolbar. -->
+  <Canvas :show-toolbar="false" />
 </template>
 
 <script setup lang="ts">
