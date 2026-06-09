@@ -32,6 +32,7 @@ class ExtDatabaseConnection(DatabaseConnection):
     """Database connection configuration with password handling."""
 
     password: str | None = None
+    ssl_enabled: bool | None = False
 
 
 class DatabaseExternalWriteSettings(BaseModel):
