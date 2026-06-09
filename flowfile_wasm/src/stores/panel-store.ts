@@ -12,6 +12,9 @@ export interface PanelState {
   top: number
   isMinimized: boolean
   zIndex?: number
+  // Fullscreen state + pre-fullscreen geometry (so reloads can restore it).
+  isFullScreen?: boolean
+  prevGeom?: { width: number; height: number; left: number; top: number }
   // Viewport dimensions at the time of saving (for resize detection on load)
   savedViewportWidth?: number
   savedViewportHeight?: number

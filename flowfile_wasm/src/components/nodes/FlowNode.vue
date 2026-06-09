@@ -56,6 +56,21 @@
       <!-- Context Menu: teleported to Canvas container (inherits CSS vars, avoids VueFlow transform) -->
       <Teleport v-if="menuVisible" to="#flowfile-context-menu-container">
         <div ref="menuEl" class="context-menu" :style="contextMenuStyle">
+          <div class="context-menu-item" @click="editNode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            <span>Edit</span>
+          </div>
+          <div class="context-menu-item" @click="viewData">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3h18v18H3z"></path>
+              <path d="M3 9h18M3 15h18M9 3v18"></path>
+            </svg>
+            <span>View data</span>
+          </div>
+          <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="runNode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
@@ -63,6 +78,13 @@
             <span>Run Now</span>
           </div>
           <div class="context-menu-divider"></div>
+          <div class="context-menu-item" @click="copyNode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span>Copy</span>
+          </div>
           <div class="context-menu-item context-menu-item-danger" @click="deleteNode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 6h18"></path>
@@ -118,6 +140,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'delete', id: number): void
   (e: 'run', id: number): void
+  (e: 'edit', id: number): void
+  (e: 'view-data', id: number): void
+  (e: 'copy', id: number): void
 }>()
 
 const flowStore = useFlowStore()
@@ -264,6 +289,21 @@ function closeContextMenu() {
 
 function runNode() {
   emit('run', props.data.id)
+  closeContextMenu()
+}
+
+function editNode() {
+  emit('edit', props.data.id)
+  closeContextMenu()
+}
+
+function viewData() {
+  emit('view-data', props.data.id)
+  closeContextMenu()
+}
+
+function copyNode() {
+  emit('copy', props.data.id)
   closeContextMenu()
 }
 

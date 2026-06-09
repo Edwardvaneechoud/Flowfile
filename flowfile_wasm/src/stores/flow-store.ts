@@ -532,6 +532,61 @@ export const useFlowStore = defineStore('flow', () => {
     return id
   }
 
+  // Node clipboard (settings only) persisted to localStorage so copy/paste
+  // survives reloads. File content for input nodes is intentionally not copied.
+  const CLIPBOARD_KEY = 'flowfile-wasm-node-clipboard'
+
+  function copyNode(nodeId: number): boolean {
+    const node = nodes.value.get(nodeId)
+    if (!node) return false
+    try {
+      const payload = {
+        type: node.type,
+        settings: JSON.parse(JSON.stringify(node.settings ?? {})),
+        description: node.description || ''
+      }
+      localStorage.setItem(CLIPBOARD_KEY, JSON.stringify(payload))
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  function hasClipboard(): boolean {
+    try {
+      return !!localStorage.getItem(CLIPBOARD_KEY)
+    } catch {
+      return false
+    }
+  }
+
+  function pasteNode(x: number, y: number): number | null {
+    let payload: { type: string; settings: Record<string, any>; description?: string } | null = null
+    try {
+      const raw = localStorage.getItem(CLIPBOARD_KEY)
+      if (!raw) return null
+      payload = JSON.parse(raw)
+    } catch {
+      return null
+    }
+    if (!payload?.type) return null
+
+    const id = addNode(payload.type, x, y)
+    const node = nodes.value.get(id)
+    if (node) {
+      // Merge copied settings but keep the new node's identity/position and drop
+      // any input linkage from the source node.
+      const merged: Record<string, any> = { ...(payload.settings || {}), node_id: id, pos_x: x, pos_y: y }
+      delete merged.depending_on_id
+      delete merged.depending_on_ids
+      node.settings = merged as NodeSettings
+      node.description = payload.description || ''
+      nodes.value.set(id, { ...node })
+      invalidatePreviewCache(id)
+    }
+    return id
+  }
+
   function updateNode(id: number, updates: Partial<FlowNode>) {
     const node = nodes.value.get(id)
     if (node) {
@@ -2354,6 +2409,9 @@ result
     // Actions
     generateNodeId,
     addNode,
+    copyNode,
+    pasteNode,
+    hasClipboard,
     updateNode,
     updateNodeSettings,
     updateNodeSettingsSilent,

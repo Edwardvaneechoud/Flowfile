@@ -1,14 +1,28 @@
 <template>
   <div
     class="draggable-panel"
-    :class="{ minimized: isMinimized, resizing: isResizing }"
+    :class="{ minimized: isMinimized, resizing: isResizing, 'is-fullscreen': isFullScreen }"
     :style="panelStyle"
     ref="panelRef"
     @mousedown.stop="bringToFront"
   >
-    <div class="panel-header" @mousedown="startMove">
+    <div class="panel-header" @mousedown="startMove" @dblclick="onHeaderDblClick">
       <button class="header-btn" @click.stop="toggleMinimize" :title="isMinimized ? 'Expand' : 'Minimize'">
         {{ isMinimized ? '+' : '−' }}
+      </button>
+      <template v-if="allowMove && !isMinimized && !isFullScreen">
+        <button class="header-btn move-btn" @click.stop="moveToEdge('left')" title="Dock left">←</button>
+        <button class="header-btn move-btn" @click.stop="moveToEdge('top')" title="Dock top">↑</button>
+        <button class="header-btn move-btn" @click.stop="moveToEdge('bottom')" title="Dock bottom">↓</button>
+        <button class="header-btn move-btn" @click.stop="moveToEdge('right')" title="Dock right">→</button>
+      </template>
+      <button
+        v-if="allowFullScreen && !isMinimized"
+        class="header-btn"
+        @click.stop="toggleFullScreen"
+        :title="isFullScreen ? 'Exit fullscreen' : 'Fullscreen'"
+      >
+        {{ isFullScreen ? '❐' : '⛶' }}
       </button>
       <span class="panel-title">{{ title }}</span>
       <button v-if="onClose" class="header-btn close-btn" @click.stop="onClose" title="Close">
@@ -35,8 +49,10 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { getPanelState, savePanelState, type PanelState } from '../../stores/panel-store'
 import { usePanelZIndexStore } from '../../stores/panel-zindex-store'
+import { usePanelGroupStore } from '../../stores/panel-group-store'
 
 const zIndexStore = usePanelZIndexStore()
+const groupStore = usePanelGroupStore()
 
 interface Props {
   title: string
@@ -48,6 +64,14 @@ interface Props {
   initialTop?: number
   defaultZIndex?: number
   onClose?: () => void
+  /** Docking-group name; panels sharing a group can sync dimensions. */
+  group?: string
+  /** When grouped, keep width/height in sync with same-group peers on resize. */
+  syncDimensions?: boolean
+  /** Show the dock-to-edge arrow buttons in the header. */
+  allowMove?: boolean
+  /** Show the fullscreen toggle and allow double-click-header fullscreen. */
+  allowFullScreen?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -56,7 +80,10 @@ const props = withDefaults(defineProps<Props>(), {
   initialHeight: 300,
   initialLeft: 0,
   initialTop: 50,
-  defaultZIndex: 100
+  defaultZIndex: 100,
+  syncDimensions: false,
+  allowMove: true,
+  allowFullScreen: true
 })
 
 const panelRef = ref<HTMLElement | null>(null)
@@ -68,12 +95,22 @@ const top = ref(props.initialTop)
 const isMinimized = ref(false)
 const isResizing = ref(false)
 const isDragging = ref(false)
-
-const zIndex = ref(props.defaultZIndex)
+const isFullScreen = ref(false)
+// Geometry saved before entering fullscreen, restored on exit.
+let prevGeom: { width: number; height: number; left: number; top: number } | null = null
 
 if (props.panelId) {
   zIndexStore.registerPanel(props.panelId, props.defaultZIndex)
+  if (props.group) groupStore.register(props.panelId, props.group)
 }
+
+// Z-index is derived from the shared store so normalization propagates to every
+// panel; fullscreen panels float above the rest.
+const zIndex = computed(() => {
+  if (isFullScreen.value) return zIndexStore.FULLSCREEN_Z_INDEX
+  if (!props.panelId) return props.defaultZIndex
+  return zIndexStore.getZIndex(props.panelId)
+})
 
 const startX = ref(0)
 const startY = ref(0)
@@ -119,6 +156,8 @@ function saveCurrentState() {
     top: top.value,
     isMinimized: isMinimized.value,
     zIndex: zIndex.value,
+    isFullScreen: isFullScreen.value,
+    prevGeom: prevGeom ?? undefined,
     // Save container dimensions to detect resize on next load
     savedViewportWidth: container.width,
     savedViewportHeight: container.height
@@ -340,7 +379,6 @@ onMounted(() => {
         resetToInitialPosition()
 
         if (savedState.zIndex !== undefined) {
-          zIndex.value = savedState.zIndex
           zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
         }
 
@@ -352,6 +390,8 @@ onMounted(() => {
         left.value = savedState.left
         top.value = savedState.top
         isMinimized.value = savedState.isMinimized
+        isFullScreen.value = savedState.isFullScreen ?? false
+        prevGeom = savedState.prevGeom ?? null
 
         // Set prevViewport to the saved dimensions so smart resize calculates correctly
         prevViewportWidth = savedVw!
@@ -360,7 +400,6 @@ onMounted(() => {
         handleWindowResizeSmartly()
 
         if (savedState.zIndex !== undefined) {
-          zIndex.value = savedState.zIndex
           zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
         }
       } else {
@@ -375,9 +414,10 @@ onMounted(() => {
         left.value = validLeft
         top.value = validTop
         isMinimized.value = savedState.isMinimized
+        isFullScreen.value = savedState.isFullScreen ?? false
+        prevGeom = savedState.prevGeom ?? null
 
         if (savedState.zIndex !== undefined) {
-          zIndex.value = savedState.zIndex
           zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
         }
       }
@@ -439,6 +479,16 @@ watch(() => props.initialTop, (newTop) => {
   }
 })
 
+// Adopt dimensions broadcast by a same-group peer (docking-group sync).
+watch(() => groupStore.syncSignal, (sig) => {
+  if (!sig || !props.panelId || !props.group || !props.syncDimensions) return
+  if (sig.group !== props.group || sig.sourceId === props.panelId) return
+  if (isFullScreen.value || isMinimized.value) return
+  width.value = sig.width
+  height.value = sig.height
+  saveCurrentState()
+})
+
 const panelStyle = computed(() => ({
   width: isMinimized.value ? 'auto' : `${width.value}px`,
   height: isMinimized.value ? 'auto' : `${height.value}px`,
@@ -450,12 +500,71 @@ const panelStyle = computed(() => ({
 function bringToFront() {
   if (!props.panelId) return
 
-  const newZIndex = zIndexStore.bringToFront(props.panelId)
+  const before = zIndexStore.getZIndex(props.panelId)
+  const after = zIndexStore.bringToFront(props.panelId)
 
-  if (newZIndex !== zIndex.value) {
-    zIndex.value = newZIndex
+  if (after !== before) {
     saveCurrentState()
   }
+}
+
+function onHeaderDblClick(e: MouseEvent) {
+  // Ignore double-clicks that land on a header button.
+  if ((e.target as HTMLElement).closest('.header-btn')) return
+  if (props.allowFullScreen) toggleFullScreen()
+}
+
+function toggleFullScreen() {
+  const c = getContainerRect()
+  if (!isFullScreen.value) {
+    prevGeom = { width: width.value, height: height.value, left: left.value, top: top.value }
+    isFullScreen.value = true
+    left.value = 0
+    top.value = 0
+    width.value = c.width
+    height.value = c.height
+  } else {
+    isFullScreen.value = false
+    if (prevGeom) {
+      width.value = prevGeom.width
+      height.value = prevGeom.height
+      left.value = prevGeom.left
+      top.value = prevGeom.top
+    }
+    prevGeom = null
+  }
+  saveCurrentState()
+}
+
+// Dock the panel to a container edge, spanning the perpendicular dimension.
+function moveToEdge(edge: 'left' | 'right' | 'top' | 'bottom') {
+  if (isFullScreen.value) toggleFullScreen()
+  const c = getContainerRect()
+  switch (edge) {
+    case 'left':
+      left.value = 0
+      top.value = props.initialTop
+      height.value = c.height - props.initialTop
+      break
+    case 'right':
+      left.value = c.width - width.value
+      top.value = props.initialTop
+      height.value = c.height - props.initialTop
+      break
+    case 'top':
+      left.value = props.initialLeft
+      top.value = props.initialTop
+      width.value = c.width - props.initialLeft
+      break
+    case 'bottom':
+      left.value = props.initialLeft
+      top.value = c.height - height.value
+      width.value = c.width - props.initialLeft
+      break
+  }
+  width.value = Math.max(MIN_PANEL_WIDTH, Math.min(width.value, c.width))
+  height.value = Math.max(MIN_PANEL_HEIGHT, Math.min(height.value, c.height))
+  saveCurrentState()
 }
 
 function toggleMinimize() {
@@ -536,6 +645,11 @@ function onResize(e: MouseEvent) {
       }
       break
   }
+
+  // Keep same-group peers' dimensions in sync.
+  if (props.group && props.syncDimensions && props.panelId) {
+    groupStore.broadcastDims(props.group, props.panelId, width.value, height.value)
+  }
 }
 
 function stopResize() {
@@ -563,6 +677,7 @@ onUnmounted(() => {
   }
   if (props.panelId) {
     zIndexStore.unregisterPanel(props.panelId)
+    groupStore.unregister(props.panelId)
   }
 })
 </script>
@@ -590,8 +705,8 @@ onUnmounted(() => {
 .panel-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 4px;
+  padding: 6px 10px;
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-light);
   cursor: move;
@@ -602,19 +717,28 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
   background: var(--bg-secondary);
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 16px;
+  font-size: 14px;
+  line-height: 1;
   color: var(--text-primary);
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 
 .header-btn:hover {
   background: var(--bg-hover);
+  color: var(--accent-color);
+}
+
+/* The dock arrows are secondary; keep them subtle until hovered. */
+.move-btn {
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .close-btn {
@@ -622,13 +746,21 @@ onUnmounted(() => {
 }
 
 .panel-title {
-  font-size: 13px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
   font-weight: 500;
-  color: var(--text-primary);
   background: var(--accent-color);
   color: white;
   padding: 2px 8px;
   border-radius: 4px;
+}
+
+.draggable-panel.is-fullscreen {
+  border-radius: 0;
 }
 
 .panel-content {

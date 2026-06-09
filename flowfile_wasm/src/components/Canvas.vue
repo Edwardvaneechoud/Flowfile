@@ -8,6 +8,7 @@
       :initial-width="200"
       :initial-top="toolbarHeight"
       :default-z-index="100"
+      :allow-full-screen="false"
     >
       <div class="nodes-wrapper">
         <input
@@ -112,6 +113,9 @@
             :data="nodeProps.data"
             @delete="handleDeleteNode"
             @run="handleRunNode"
+            @edit="handleEditNode"
+            @view-data="handleViewData"
+            @copy="handleCopyNode"
           />
         </template>
         <MiniMap />
@@ -171,6 +175,8 @@
       :initial-height="280"
       :initial-left="200"
       :default-z-index="110"
+      group="bottomPanels"
+      :sync-dimensions="true"
     >
       <div class="data-preview">
         <!-- Loading state -->
@@ -268,6 +274,7 @@ import { MiniMap } from '@vue-flow/minimap'
 import { Controls } from '@vue-flow/controls'
 import { useFlowStore } from '../stores/flow-store'
 import { usePyodideStore } from '../stores/pyodide-store'
+import { usePanelZIndexStore } from '../stores/panel-zindex-store'
 import { storeToRefs } from 'pinia'
 import type { NodeSettings, FlowEdge, ColumnSchema, NodeResult } from '../types'
 import type { ToolbarConfig, NodeCategoryConfig } from '../lib/types'
@@ -332,6 +339,7 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
 }))
 
 const flowStore = useFlowStore()
+const zIndexStore = usePanelZIndexStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
 const { isReady: pyodideReady } = storeToRefs(usePyodideStore())
 
@@ -595,6 +603,27 @@ async function handleRunNode(nodeId: number) {
   await flowStore.executeNode(nodeId)
 }
 
+// Edit: select the node (opens the settings panel) and surface it.
+function handleEditNode(nodeId: number) {
+  flowStore.selectNode(nodeId)
+  nextTick(() => zIndexStore.bringToFront('node-settings-panel'))
+}
+
+// View data: select the node, fetch its preview if needed, surface the preview.
+async function handleViewData(nodeId: number) {
+  flowStore.selectNode(nodeId)
+  const result = nodeResults.value.get(nodeId)
+  const node = flowNodes.value.get(nodeId)
+  if (node?.type !== 'explore_data' && !(result?.success && result?.data)) {
+    await handleFetchData()
+  }
+  nextTick(() => zIndexStore.bringToFront('data-preview-panel'))
+}
+
+function handleCopyNode(nodeId: number) {
+  flowStore.copyNode(nodeId)
+}
+
 function updateSettings(settings: NodeSettings) {
   if (selectedNodeId.value !== null) {
     flowStore.updateNodeSettings(selectedNodeId.value, settings)
@@ -832,10 +861,40 @@ function handleResetLayout() {
 }
 
 function handleKeyDown(event: KeyboardEvent) {
+  // Don't hijack shortcuts while typing in an input/textarea/editable field.
+  const target = event.target as HTMLElement | null
+  const isTyping =
+    !!target &&
+    (target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable)
+
   if ((event.ctrlKey || event.metaKey) && (event.key === 'e' || event.key === 'E')) {
     event.preventDefault()
     if (!isExecuting.value) {
       handleRunFlow()
+    }
+    return
+  }
+
+  if (isTyping) return
+
+  // Copy the selected node.
+  if ((event.ctrlKey || event.metaKey) && (event.key === 'c' || event.key === 'C')) {
+    if (selectedNodeId.value !== null) {
+      flowStore.copyNode(selectedNodeId.value)
+    }
+    return
+  }
+
+  // Paste the clipboard node near the centre of the current view.
+  if ((event.ctrlKey || event.metaKey) && (event.key === 'v' || event.key === 'V')) {
+    if (!flowStore.hasClipboard()) return
+    const pos = screenToFlowCoordinate({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+    const newId = flowStore.pasteNode(pos.x, pos.y)
+    if (newId !== null) {
+      pendingNodeAdjustment.value = newId
+      flowStore.selectNode(newId)
     }
   }
 }
