@@ -94,8 +94,8 @@ export class CatalogApi {
     return response.data;
   }
 
-  static async deleteFlow(id: number): Promise<void> {
-    await axios.delete(`/catalog/flows/${id}`);
+  static async deleteFlow(id: number, deleteFile = false): Promise<void> {
+    await axios.delete(`/catalog/flows/${id}`, { params: { delete_file: deleteFile } });
   }
 
   static async runFlow(flowId: number): Promise<FlowRun> {
@@ -226,8 +226,8 @@ export class CatalogApi {
     return response.data;
   }
 
-  static async deleteTable(id: number): Promise<void> {
-    await axios.delete(`/catalog/tables/${id}`);
+  static async deleteTable(id: number, deleteFile = false): Promise<void> {
+    await axios.delete(`/catalog/tables/${id}`, { params: { delete_file: deleteFile } });
   }
 
   // Delete all versions of a model (global artifact) by name within its namespace.

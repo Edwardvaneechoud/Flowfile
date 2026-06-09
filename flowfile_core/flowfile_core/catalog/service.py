@@ -279,9 +279,9 @@ class CatalogService:
         """Update a flow registration."""
         return self._flows.update_flow(registration_id, requesting_user_id, name, description, namespace_id)
 
-    def delete_flow(self, registration_id: int) -> None:
-        """Delete a flow and its related favourites/follows."""
-        self._flows.delete_flow(registration_id)
+    def delete_flow(self, registration_id: int, delete_file: bool = False) -> None:
+        """Delete a flow and its related favourites/follows (optionally its file)."""
+        self._flows.delete_flow(registration_id, delete_file)
 
     def get_flow(self, registration_id: int, user_id: int) -> FlowRegistrationOut:
         """Get an enriched flow registration."""
@@ -624,9 +624,9 @@ class CatalogService:
         """Update a catalog table's metadata."""
         return self._tables.update_table(table_id, name, description, namespace_id)
 
-    def delete_table(self, table_id: int) -> None:
-        """Delete a catalog table and its materialised storage (Delta dir or Parquet file)."""
-        self._tables.delete_table(table_id)
+    def delete_table(self, table_id: int, delete_file: bool = False) -> None:
+        """Delete a catalog table; optionally delete its managed storage (Delta dir / Parquet)."""
+        self._tables.delete_table(table_id, delete_file)
 
     # ------------------------------------------------------------------ #
     # Virtual Flow Table operations

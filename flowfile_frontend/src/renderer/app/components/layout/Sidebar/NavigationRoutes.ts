@@ -25,6 +25,13 @@ export default {
   },
   routes: [
     {
+      name: "home",
+      displayName: "menu.home",
+      meta: {
+        icon: "fa-solid fa-house",
+      },
+    },
+    {
       name: "designer",
       displayName: "menu.designer",
       meta: {

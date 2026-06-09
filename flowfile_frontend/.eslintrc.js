@@ -6,6 +6,10 @@ module.exports = {
     node: true,
     'vue/setup-compiler-macros': true,
   },
+  globals: {
+    // Injected by Vite `define` (vite.config.mjs).
+    __APP_VERSION__: 'readonly',
+  },
   plugins: ['@typescript-eslint'],
   parser: 'vue-eslint-parser',
   parserOptions: {

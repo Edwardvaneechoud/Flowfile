@@ -73,6 +73,8 @@ class CatalogRepository(Protocol):
 
     def get_flow_by_path(self, flow_path: str) -> FlowRegistration | None: ...
 
+    def count_flows_by_path(self, flow_path: str) -> int: ...
+
     def list_flows(
         self,
         namespace_id: int | None = None,
@@ -365,6 +367,9 @@ class SQLAlchemyCatalogRepository:
 
     def get_flow_by_path(self, flow_path: str) -> FlowRegistration | None:
         return self._db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
+
+    def count_flows_by_path(self, flow_path: str) -> int:
+        return self._db.query(FlowRegistration).filter_by(flow_path=flow_path).count()
 
     def list_flows(
         self,

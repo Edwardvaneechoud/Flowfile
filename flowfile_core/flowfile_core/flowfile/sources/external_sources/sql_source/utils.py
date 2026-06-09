@@ -365,6 +365,8 @@ def construct_sql_uri(
     password: SecretStr | None = None,
     database: str | None = None,
     url: str | None = None,
+    ssl_enabled: bool = False,
+    connect_timeout: int | None = None,
     **kwargs,
 ) -> str:
     """
@@ -380,6 +382,8 @@ def construct_sql_uri(
         password: Database password as SecretStr
         database: Database name
         url: Complete database URL (overrides other parameters if provided)
+        ssl_enabled: Adds sslmode=require for postgres-family databases
+        connect_timeout: Connection timeout in seconds (postgres-family only)
         **kwargs: Additional connection parameters
 
     Returns:
@@ -397,6 +401,8 @@ def construct_sql_uri(
         password=password_str,
         database=database,
         url=url,
+        ssl_enabled=ssl_enabled,
+        connect_timeout=connect_timeout,
         **kwargs,
     )
 

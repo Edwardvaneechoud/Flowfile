@@ -50,7 +50,7 @@
         <div v-show="openMode === 'catalog'" class="open-panel catalog-panel">
           <div class="catalog-tree-pane">
             <label class="pane-label">Namespace</label>
-            <catalog-namespace-picker v-model="selectedNamespaceId" />
+            <catalog-namespace-picker ref="namespacePicker" v-model="selectedNamespaceId" />
           </div>
           <div class="catalog-flows-pane">
             <label class="pane-label">Flows</label>
@@ -116,7 +116,10 @@ const props = defineProps({
 
 const emit = defineEmits<{
   (e: "update:visible", value: boolean): void;
-  (e: "open-flow", payload: { message: string; flowPath: string }): void;
+  (
+    e: "open-flow",
+    payload: { message: string; flowPath: string; flowName?: string; catalogRef?: string },
+  ): void;
   (e: "open-cancelled"): void;
 }>();
 
@@ -139,6 +142,7 @@ function loadNamespaceId(): number | null {
 
 const isVisible = ref(props.visible);
 const openMode = ref<"file" | "catalog">(loadOpenMode());
+const namespacePicker = ref<InstanceType<typeof CatalogNamespacePicker> | null>(null);
 
 // Catalog tab state
 const selectedNamespaceId = ref<number | null>(loadNamespaceId());
@@ -222,9 +226,14 @@ function handleRowClick(flow: FlowRegistration) {
 }
 
 function handleOpenCatalogFlow(flow: FlowRegistration) {
+  const nsPath = namespacePicker.value?.getNamespacePath(
+    flow.namespace_id ?? selectedNamespaceId.value,
+  );
   emit("open-flow", {
     message: "Flow opened from catalog",
     flowPath: flow.flow_path,
+    flowName: flow.name,
+    catalogRef: nsPath ? `${nsPath}.${flow.name}` : undefined,
   });
   isVisible.value = false;
 }

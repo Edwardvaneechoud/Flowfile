@@ -9,7 +9,7 @@ from shared.storage_config import storage
 try:
     __version__ = version("Flowfile")
 except PackageNotFoundError:
-    __version__ = "0.11.2"
+    __version__ = "0.11.3"
 multiprocessing.set_start_method("spawn", force=True)
 
 from multiprocessing import get_context

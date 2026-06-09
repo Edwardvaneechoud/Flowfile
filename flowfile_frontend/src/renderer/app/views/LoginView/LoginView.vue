@@ -100,7 +100,8 @@ const handleLogin = async () => {
     const success = await authStore.login(username.value, password.value);
 
     if (success) {
-      router.push({ name: "designer" });
+      // Route through the "main" entry guard so login resumes open flows.
+      router.push({ name: "main" });
     } else {
       error.value = authStore.authError || "Invalid username or password";
     }

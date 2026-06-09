@@ -147,7 +147,7 @@ from shared.storage_config import storage
 try:
     __version__ = version("Flowfile")
 except PackageNotFoundError:
-    __version__ = "0.11.2"
+    __version__ = "0.11.3"
 
 
 def represent_list_json(dumper, data):
@@ -3621,9 +3621,8 @@ class FlowGraph:
                 fields=node_database_reader.fields,
             )
 
-            # TODO: centralize this local SQL read with flowfile_worker's
-            # /store_database_read_result path — both call pl.read_database_uri
-            # and have drifted in shape (see schema_callback below too).
+            # Local and worker reads share shared.db_reader.read_sql_with_fallback
+            # (via SqlSource here, via read_sql_source in the worker).
             if self.execution_location == "local":
                 local_source = SqlSource(
                     connection_string=sql_utils.construct_sql_uri(
@@ -3633,11 +3632,14 @@ class FlowGraph:
                         database=database_connection.database,
                         username=database_connection.username,
                         password=decrypt_secret(encrypted_password) if encrypted_password else None,
+                        ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
+                        connect_timeout=10,
                     ),
                     query=None if database_settings.query_mode == "table" else database_settings.query,
                     table_name=database_settings.table_name,
                     schema_name=database_settings.schema_name,
                     fields=node_database_reader.fields,
+                    cancel_check=lambda: self.flow_settings.is_canceled or node._execution_state.is_canceled,
                 )
                 fl = FlowDataEngine(local_source.get_pl_df())
                 fl.lazy = True
@@ -3678,6 +3680,8 @@ class FlowGraph:
                     database=database_connection.database,
                     username=database_connection.username,
                     password=decrypt_secret(encrypted_password) if encrypted_password else None,
+                    ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
+                    connect_timeout=10,
                 ),
                 query=None if database_settings.query_mode == "table" else database_settings.query,
                 table_name=database_settings.table_name,
