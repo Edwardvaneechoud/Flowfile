@@ -4,7 +4,6 @@
     :title="`Share ${resourceLabel}`"
     width="540px"
     @update:model-value="(v: boolean) => emit('update:modelValue', v)"
-    @open="onOpen"
   >
     <div v-loading="loading" class="share-dialog">
       <p class="resource-name">
@@ -89,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { UserGroupsApi } from "../../api/userGroups.api";
 import { useSharingStore } from "../../stores/sharing-store";
 import { useAuthStore } from "../../stores/auth-store";
@@ -160,18 +159,32 @@ async function onOpen() {
   selectedPermission.value = "use";
   loading.value = true;
   try {
+    // Fetch groups and existing shares in parallel — they're independent.
     // Admins can share to ANY group, so list all; everyone else lists their own.
     // Always fresh — a group created after the page loaded must show up.
-    groups.value = authStore.isAdmin
-      ? await UserGroupsApi.list(true)
-      : await sharing.loadMyGroups(true);
-    shares.value = await sharing.listShares(props.resourceType, props.resourceId);
+    const [groupList, shareList] = await Promise.all([
+      authStore.isAdmin ? UserGroupsApi.list(true) : sharing.loadMyGroups(true),
+      sharing.listShares(props.resourceType, props.resourceId),
+    ]);
+    groups.value = groupList;
+    shares.value = shareList;
   } catch (e: any) {
     error.value = e?.response?.data?.detail || "Failed to load sharing info.";
   } finally {
     loading.value = false;
   }
 }
+
+// Parents mount this dialog with v-if AND open it in the same tick, so el-dialog's
+// @open never fires on that initial already-open mount. Load on modelValue instead
+// (immediate covers the mount-while-open case; reloads on each subsequent open).
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (open) void onOpen();
+  },
+  { immediate: true },
+);
 
 async function addShare() {
   if (!selectedGroupId.value) return;
@@ -225,9 +238,14 @@ async function removeShare(share: Share) {
 }
 .permission-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 12px;
+}
+/* Keep Use|Manage as a horizontal segmented control, never wrapping. */
+.permission-row :deep(.el-radio-group) {
+  flex-wrap: nowrap;
 }
 .permission-help {
   font-size: 12px;
