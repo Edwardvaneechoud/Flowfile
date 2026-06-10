@@ -300,15 +300,26 @@ async function handleUpload(event: Event) {
   const file = input.files?.[0]
   input.value = '' // allow re-uploading the same filename
   if (!file) return
+  let content: string
   try {
-    const content = await file.text()
-    // Use the filename (without extension) as the table name; dedupe by name.
-    const name = file.name.replace(/\.[^.]+$/, '') || file.name
+    content = await file.text()
+  } catch (e) {
+    console.error('[catalog] failed to read file', e)
+    alert('Failed to read the file. Please pick a valid CSV.')
+    return
+  }
+  // Use the filename (without extension) as the table name; dedupe by name.
+  const name = file.name.replace(/\.[^.]+$/, '') || file.name
+  try {
     await flowStore.addCatalogDataset(name, content)
     selectedId.value = `catalog-${name}`
   } catch (e) {
-    console.error('[catalog] upload failed', e)
-    alert('Failed to read the file. Please pick a valid CSV.')
+    // The table is shown (in-memory) but persistence failed — say so explicitly
+    // rather than letting it silently disappear on the next refresh.
+    console.error('[catalog] failed to persist catalog table', e)
+    const reason = e instanceof Error ? e.message : String(e)
+    selectedId.value = `catalog-${name}`
+    alert(`Couldn't save "${name}" to the Catalog — ${reason}\n\nIt won't survive a page refresh.`)
   }
 }
 

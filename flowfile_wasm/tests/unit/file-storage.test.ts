@@ -345,6 +345,41 @@ describe('FileStorageManager', () => {
       expect(all).toHaveLength(1)
       expect(all[0].content).toBe('v2')
     })
+
+    it('self-heals a DB stuck at a version that lacks the catalogDatasets store', async () => {
+      // Tear down the live connection and drop the DB.
+      const mgr = fileStorage as unknown as { db: IDBDatabase | null; initPromise: Promise<void> | null }
+      mgr.db?.close()
+      mgr.db = null
+      mgr.initPromise = null
+      await new Promise<void>((res) => {
+        const r = indexedDB.deleteDatabase('flowfile_wasm_files')
+        r.onsuccess = () => res()
+        r.onerror = () => res()
+        r.onblocked = () => res()
+      })
+
+      // Recreate the DB at v5 WITHOUT the catalogDatasets store — i.e. an older
+      // build whose version bump predated the catalog feature.
+      await new Promise<void>((res, rej) => {
+        const open = indexedDB.open('flowfile_wasm_files', 5)
+        open.onupgradeneeded = () => { open.result.createObjectStore('fileContents', { keyPath: 'nodeId' }) }
+        open.onsuccess = () => { open.result.close(); res() }
+        open.onerror = () => rej(open.error)
+      })
+
+      // A catalog write must now succeed: init() detects the missing store and
+      // reopens at the next version to create it. (This reproduces the developer's
+      // stale-DB scenario; if persistence were broken, this would fail.)
+      await fileStorage.putCatalogDataset({ name: 'healed', content: 'a,b\n1,2' })
+      expect((await fileStorage.getAllCatalogDatasets()).map((d) => d.name)).toContain('healed')
+    })
+
+    // Note: the blocked-upgrade path (another tab holds an older DB version open,
+    // so the self-heal version bump can't proceed) is handled by init()'s
+    // `onblocked` reject + initPromise reset, but it's verified manually — modelling
+    // it in fake-indexeddb leaves an un-cancellable pending open request that leaks
+    // into later tests.
   })
 
   // v5 (additive): the persistent flow library (stable uuid identity).

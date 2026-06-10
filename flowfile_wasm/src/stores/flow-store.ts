@@ -926,7 +926,10 @@ export const useFlowStore = defineStore('flow', () => {
     try {
       await fileStorage.putCatalogDataset({ name, content })
     } catch (err) {
+      // Keep the in-memory entry (UI stays responsive) but tell the caller it was
+      // NOT persisted — otherwise the table looks saved yet vanishes on refresh.
       console.warn('[flow-store] failed to persist catalog dataset:', err)
+      throw err instanceof Error ? err : new Error(String(err))
     }
   }
 

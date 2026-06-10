@@ -140,29 +140,61 @@ class FileStorageManager {
     if (this.db) return;
     if (this.initPromise) return this.initPromise;
 
-    this.initPromise = new Promise<void>((resolve, reject) => {
-      const openAt = (version?: number) => {
-        const request = version === undefined ? indexedDB.open(DB_NAME) : indexedDB.open(DB_NAME, version);
+    const p = new Promise<void>((resolve, reject) => {
+      const fail = (err: unknown) => {
+        console.error('Failed to open IndexedDB:', err);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
 
-        request.onupgradeneeded = () => this.createStores(request.result);
+      // `healed` marks an open that follows a version bump + createStores(): if a
+      // required store is STILL missing afterwards, we reject instead of looping.
+      const openAt = (version?: number, healed = false) => {
+        let request: IDBOpenDBRequest;
+        try {
+          request = version === undefined ? indexedDB.open(DB_NAME) : indexedDB.open(DB_NAME, version);
+        } catch (err) {
+          fail(err);
+          return;
+        }
+
+        request.onupgradeneeded = () => {
+          try {
+            this.createStores(request.result);
+          } catch (err) {
+            // Aborts the versionchange transaction; request.onerror fires next.
+            console.error('Failed to create IndexedDB stores:', err);
+          }
+        };
+
+        // A version-bumped open is blocked when another tab/connection holds the
+        // DB open at the old version. Don't hang forever — surface a recoverable
+        // error (initPromise resets below, so a retry works once the tab closes).
+        request.onblocked = () =>
+          fail(new Error('Flowfile storage is open in another tab — close other Flowfile tabs and reload.'));
 
         request.onerror = () => {
           // VersionError: the DB drifted ahead of DB_VERSION (a prior self-heal).
           // Retry without a version to open at whatever version exists.
           if (version !== undefined) {
-            openAt();
+            openAt(undefined, healed);
             return;
           }
-          console.error('Failed to open IndexedDB:', request.error);
-          reject(request.error);
+          fail(request.error);
         };
 
         request.onsuccess = () => {
           const db = request.result;
           if (REQUIRED_STORES.some((s) => !db.objectStoreNames.contains(s))) {
+            if (healed) {
+              // Already bumped + ran createStores yet a store is missing — give up
+              // loudly rather than spin through endless version bumps.
+              db.close();
+              fail(new Error('IndexedDB is missing required object stores after an upgrade.'));
+              return;
+            }
             const next = db.version + 1;
             db.close();
-            openAt(next);
+            openAt(next, true);
             return;
           }
           this.db = db;
@@ -175,7 +207,14 @@ class FileStorageManager {
       openAt(DB_VERSION);
     });
 
-    return this.initPromise;
+    // Reset on failure so a later call can retry (e.g. after a blocking tab closes
+    // or a transient open error clears) instead of replaying a cached rejection.
+    this.initPromise = p;
+    p.catch(() => {
+      if (this.initPromise === p) this.initPromise = null;
+    });
+
+    return p;
   }
 
   /**
@@ -491,7 +530,15 @@ class FileStorageManager {
             reject(new Error('IndexedDB not initialized'));
             return;
           }
-          const tx = this.db.transaction([storeName], 'readonly');
+          let tx: IDBTransaction;
+          try {
+            // transaction() throws NotFoundError synchronously if the store is
+            // absent on this handle — reject cleanly instead of throwing through.
+            tx = this.db.transaction([storeName], 'readonly');
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+            return;
+          }
           const req = tx.objectStore(storeName).getAll();
           req.onsuccess = () => resolve(req.result as T[]);
           req.onerror = () => reject(req.error);
@@ -616,7 +663,15 @@ class FileStorageManager {
         reject(new Error('IndexedDB not initialized'));
         return;
       }
-      const tx = this.db.transaction([CATALOG_DATASETS_STORE], 'readwrite');
+      let tx: IDBTransaction;
+      try {
+        // transaction() throws NotFoundError synchronously if the store is absent
+        // on this handle — reject cleanly so the caller can surface the failure.
+        tx = this.db.transaction([CATALOG_DATASETS_STORE], 'readwrite');
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
       const req = tx.objectStore(CATALOG_DATASETS_STORE).put(entry);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
@@ -634,7 +689,13 @@ class FileStorageManager {
         reject(new Error('IndexedDB not initialized'));
         return;
       }
-      const tx = this.db.transaction([CATALOG_DATASETS_STORE], 'readwrite');
+      let tx: IDBTransaction;
+      try {
+        tx = this.db.transaction([CATALOG_DATASETS_STORE], 'readwrite');
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
       const req = tx.objectStore(CATALOG_DATASETS_STORE).delete(name);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);

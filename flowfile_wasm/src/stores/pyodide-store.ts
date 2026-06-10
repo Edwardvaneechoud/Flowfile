@@ -84,7 +84,17 @@ export const usePyodideStore = defineStore('pyodide', () => {
 import sys
 if ${JSON.stringify(root)} not in sys.path:
     sys.path.insert(0, ${JSON.stringify(root)})
-from engine import *
+import engine
+
+# The flow-store bridge was written against the original single-module engine,
+# where the whole namespace — public functions, internal stores (e.g. _lazyframes)
+# and imported modules (e.g. gc) — lived in Pyodide's globals. Re-expose that flat
+# namespace from the package so those bare references keep resolving.
+for _mod in [m for n, m in sys.modules.items() if n == "engine" or n.startswith("engine.")]:
+    for _key, _val in vars(_mod).items():
+        if not _key.startswith("__"):
+            globals()[_key] = _val
+del _mod, _key, _val
 `)
   }
 
