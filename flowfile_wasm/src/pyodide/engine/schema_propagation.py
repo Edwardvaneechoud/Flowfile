@@ -1,6 +1,9 @@
+import time
+
 import polars as pl
 
 from .dtypes import build_empty_lf_from_schema
+from .log import logger
 from .nodes_aggregate import build_group_by, build_unpivot
 from .nodes_combine import build_join
 from .nodes_polars_code import build_polars_code_schema
@@ -73,6 +76,7 @@ def propagate_schemas(graph_json: dict, source_schemas: dict) -> dict[str, dict]
     _schema_schemas.clear()
     results: dict[str, dict] = {}
 
+    t0 = time.perf_counter()
     order = graph_json.get("order", [])
     nodes_meta = graph_json.get("nodes", {})
 
@@ -108,5 +112,15 @@ def propagate_schemas(graph_json: dict, source_schemas: dict) -> dict[str, dict]
             results[key] = {"schema": schema, "schema_resolved": True, "error": None}
         except Exception as e:
             results[key] = {"schema": [], "schema_resolved": False, "error": str(e)}
+
+    unresolved = {k: r["error"] for k, r in results.items() if not r["schema_resolved"]}
+    logger.info(
+        "propagate_schemas: resolved=%d unresolved=%d (%.0fms)",
+        len(results) - len(unresolved),
+        len(unresolved),
+        (time.perf_counter() - t0) * 1000,
+    )
+    for key, why in unresolved.items():
+        logger.debug("propagate_schemas node=%s unresolved: %s", key, why)
 
     return results

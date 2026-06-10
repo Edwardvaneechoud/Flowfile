@@ -3,9 +3,11 @@ import gc
 import polars as pl
 
 from .errors import format_error, format_error_lf
+from .log import log_node
 from .state import get_lazyframe, get_schema, store_lazyframe
 
 
+@log_node
 def execute_read_csv(node_id: int, file_content: str, settings: dict) -> dict:
     """Execute read CSV node - creates a LazyFrame"""
     try:
@@ -27,6 +29,7 @@ def execute_read_csv(node_id: int, file_content: str, settings: dict) -> dict:
         return {"success": False, "error": format_error("read", node_id, e)}
 
 
+@log_node
 def execute_manual_input(node_id: int, data_content: str, settings: dict) -> dict:
     """Execute manual input node - creates a LazyFrame"""
     try:
@@ -57,6 +60,7 @@ def execute_manual_input(node_id: int, data_content: str, settings: dict) -> dic
         return {"success": False, "error": format_error("manual_input", node_id, e)}
 
 
+@log_node
 def execute_output(node_id: int, input_id: int, settings: dict) -> dict:
     """Execute output node - prepares data for download.
     Note: This must collect data to generate the output file.

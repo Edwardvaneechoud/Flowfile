@@ -4,6 +4,7 @@ from typing import Any
 import polars as pl
 
 from .errors import format_error_lf
+from .log import log_node, logger
 from .state import get_lazyframe, get_schema, store_lazyframe
 
 GW_MAX_ROWS = 100_000
@@ -90,6 +91,7 @@ def _gw_prepare_row(row_dict: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+@log_node
 def execute_explore_data(node_id: int, input_id: int, settings: dict) -> dict:
     """Execute explore_data node: materialise up to GW_MAX_ROWS rows from the
     upstream LazyFrame and return a Graphic Walker input payload plus any
@@ -177,7 +179,9 @@ def prepare_visual_data(csv_content: str, max_rows: int = GW_MAX_ROWS) -> dict:
     df = None
     try:
         import io
+        import time
 
+        t0 = time.perf_counter()
         lf = pl.read_csv(io.StringIO(csv_content)).lazy()
         schema = lf.collect_schema()
         fields = _gw_build_fields(schema)
@@ -190,6 +194,9 @@ def prepare_visual_data(csv_content: str, max_rows: int = GW_MAX_ROWS) -> dict:
         truncated = bool(total_rows is not None and total_rows > max_rows)
         df = lf.head(max_rows).collect()
         rows = [_gw_prepare_row(r) for r in df.to_dicts()]
+        logger.info(
+            "prepare_visual_data rows=%d/%s ok (%.0fms)", len(rows), total_rows, (time.perf_counter() - t0) * 1000
+        )
 
         return {
             "success": True,
@@ -203,6 +210,7 @@ def prepare_visual_data(csv_content: str, max_rows: int = GW_MAX_ROWS) -> dict:
             },
         }
     except Exception as e:
+        logger.warning("prepare_visual_data failed: %s", e)
         return {"success": False, "error": f"Failed to prepare visualization data: {e}"}
     finally:
         if df is not None:

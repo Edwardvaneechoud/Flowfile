@@ -45,7 +45,7 @@ jobs:
         run: npm run test:run
 
   python-engine-tests:
-    # Runs the in-browser Pyodide engine (src/pyodide/engine.py) under CPython
+    # Runs the in-browser Pyodide engine (src/pyodide/engine/) under CPython
     # with the exact Polars/Pydantic versions Pyodide v0.27.7 bundles, so engine
     # logic regressions are caught before they reach a user's browser.
     runs-on: ubuntu-latest
@@ -64,3 +64,28 @@ jobs:
 
       - name: Run Python engine tests
         run: python -m pytest flowfile_wasm/tests/python -v
+
+  pyodide-smoke:
+    # Boots real Pyodide and replays the flow-store bridge against the engine
+    # package (FS write + namespace dump). Catches browser-only namespace/bootstrap
+    # breakage the CPython unit tests cannot (e.g. the bridge referencing engine
+    # internals/modules). pyodide is installed on-demand — it is intentionally NOT a
+    # package dependency (the app CDN-loads it).
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Pyodide (on-demand, not saved to package.json)
+        working-directory: flowfile_wasm
+        run: npm install --no-save pyodide@0.27.7
+
+      - name: Run Pyodide bridge smoke test
+        working-directory: flowfile_wasm
+        run: node tests/pyodide-smoke/smoke.cjs

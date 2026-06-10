@@ -1,5 +1,8 @@
+import time
+
 import polars as pl
 
+from .log import logger
 from .state import (
     _PREVIEW_CACHE_MAX_MEMORY_MB,
     _PREVIEW_CACHE_MAX_SIZE,
@@ -27,15 +30,21 @@ def _estimate_preview_size_mb(preview_data: dict) -> float:
 
 def _evict_preview_cache_if_needed():
     """Evict oldest entries if cache exceeds limits."""
+    evicted = 0
     # Evict by count
     while len(_preview_cache) > _PREVIEW_CACHE_MAX_SIZE:
         _preview_cache.popitem(last=False)
+        evicted += 1
 
     # Evict by estimated memory
     total_mb = sum(_estimate_preview_size_mb(v) for v in _preview_cache.values())
     while total_mb > _PREVIEW_CACHE_MAX_MEMORY_MB and len(_preview_cache) > 1:
         _preview_cache.popitem(last=False)
+        evicted += 1
         total_mb = sum(_estimate_preview_size_mb(v) for v in _preview_cache.values())
+
+    if evicted:
+        logger.debug("preview cache evicted %d entries (%d kept)", evicted, len(_preview_cache))
 
 
 def materialize_preview(node_id: int, max_rows: int = 100) -> dict:
@@ -46,8 +55,10 @@ def materialize_preview(node_id: int, max_rows: int = 100) -> dict:
     """
     lf = _lazyframes.get(node_id)
     if lf is None:
+        logger.warning("materialize_preview node=%s skipped: no LazyFrame (node not executed?)", node_id)
         return {"error": f"No LazyFrame found for node #{node_id}"}
 
+    t0 = time.perf_counter()
     try:
         # Optimized: Add row number to get total count in single collection
         # This avoids the double .collect() call
@@ -81,8 +92,16 @@ def materialize_preview(node_id: int, max_rows: int = 100) -> dict:
         _preview_cache.move_to_end(node_id)  # Mark as recently used
         _evict_preview_cache_if_needed()
 
+        logger.info(
+            "materialize_preview node=%s rows=%d/%s (%.0fms)",
+            node_id,
+            preview_data["preview_rows"],
+            total_rows,
+            (time.perf_counter() - t0) * 1000,
+        )
         return preview_data
     except Exception as e:
+        logger.warning("materialize_preview node=%s failed: %s", node_id, e)
         return {"error": str(e)}
 
 
@@ -96,7 +115,10 @@ def fetch_preview(node_id: int, max_rows: int = 100, force_refresh: bool = False
         # Mark as recently used for LRU
         if node_id in _preview_cache:
             _preview_cache.move_to_end(node_id)
+        logger.debug("fetch_preview node=%s cache hit", node_id)
         return {"success": True, "data": cached, "from_cache": True}
+
+    logger.debug("fetch_preview node=%s cache miss, materializing", node_id)
 
     preview_data = materialize_preview(node_id, max_rows)
 

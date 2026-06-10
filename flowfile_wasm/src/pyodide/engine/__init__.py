@@ -8,6 +8,7 @@ pytest imports the package directly. See flowfile_wasm/CLAUDE.md.
 
 from .dtypes import build_empty_lf_from_schema
 from .errors import format_error, format_error_lf
+from .log import logger, set_log_level
 from .nodes_aggregate import (
     build_group_by,
     build_unpivot,
@@ -64,6 +65,9 @@ __all__ = [
     # errors
     "format_error",
     "format_error_lf",
+    # logging
+    "logger",
+    "set_log_level",
     # state + cache
     "clear_all",
     "clear_node",

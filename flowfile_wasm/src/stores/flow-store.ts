@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, shallowRef, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
 import yaml from 'js-yaml'
 import { inferOutputSchema, isSourceNode, inferSchemaFromCsv, inferSchemaFromRawData } from './schema-inference'
@@ -586,27 +586,57 @@ export const useFlowStore = defineStore('flow', () => {
     return id
   }
 
-  // Node clipboard (settings only) persisted to localStorage so copy/paste
-  // survives reloads. File content for input nodes is intentionally not copied.
+  // Node clipboard persisted to localStorage so copy/paste survives reloads.
+  // Loaded file content (keyed by node id) travels with the copy; content too
+  // large for localStorage rides the in-memory clipboard for same-session paste.
   const CLIPBOARD_KEY = 'flowfile-wasm-node-clipboard'
+
+  interface NodeClipboardPayload {
+    type: string
+    settings: Record<string, any>
+    description?: string
+    fileContent?: string
+    copiedAt?: number
+  }
+
+  const memoryClipboard = shallowRef<NodeClipboardPayload | null>(null)
 
   function copyNode(nodeId: number): boolean {
     const node = nodes.value.get(nodeId)
     if (!node) return false
+    let payload: NodeClipboardPayload
     try {
-      const payload = {
+      payload = {
         type: node.type,
         settings: JSON.parse(JSON.stringify(node.settings ?? {})),
-        description: node.description || ''
+        description: node.description || '',
+        fileContent: fileContents.value.get(nodeId),
+        copiedAt: Date.now()
       }
-      localStorage.setItem(CLIPBOARD_KEY, JSON.stringify(payload))
-      return true
     } catch {
       return false
     }
+    memoryClipboard.value = payload
+    const persistable =
+      payload.fileContent === undefined || !fileStorage.shouldUseIndexedDB(payload.fileContent)
+    try {
+      localStorage.setItem(
+        CLIPBOARD_KEY,
+        JSON.stringify(persistable ? payload : { ...payload, fileContent: undefined })
+      )
+    } catch {
+      // Quota exceeded — persist settings only; content stays in memory.
+      try {
+        localStorage.setItem(CLIPBOARD_KEY, JSON.stringify({ ...payload, fileContent: undefined }))
+      } catch {
+        /* localStorage unavailable — the in-memory clipboard still works */
+      }
+    }
+    return true
   }
 
   function hasClipboard(): boolean {
+    if (memoryClipboard.value) return true
     try {
       return !!localStorage.getItem(CLIPBOARD_KEY)
     } catch {
@@ -615,13 +645,19 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   function pasteNode(x: number, y: number): number | null {
-    let payload: { type: string; settings: Record<string, any>; description?: string } | null = null
+    let stored: NodeClipboardPayload | null = null
     try {
       const raw = localStorage.getItem(CLIPBOARD_KEY)
-      if (!raw) return null
-      payload = JSON.parse(raw)
+      if (raw) stored = JSON.parse(raw)
     } catch {
-      return null
+      /* fall back to the in-memory clipboard */
+    }
+    // Prefer the in-memory copy (it can carry file content too large to
+    // persist) unless another tab copied something newer into localStorage.
+    const inMemory = memoryClipboard.value
+    let payload = stored
+    if (inMemory && (!stored || (stored.copiedAt ?? 0) <= (inMemory.copiedAt ?? 0))) {
+      payload = inMemory
     }
     if (!payload?.type) return null
 
@@ -636,7 +672,13 @@ export const useFlowStore = defineStore('flow', () => {
       node.settings = merged as NodeSettings
       node.description = payload.description || ''
       nodes.value.set(id, { ...node })
-      invalidatePreviewCache(id)
+      if (payload.fileContent !== undefined) {
+        // Re-key the copied node's loaded data to the new id so the paste can
+        // actually run (also seeds the inferred schema + preview invalidation).
+        setFileContent(id, payload.fileContent)
+      } else {
+        invalidatePreviewCache(id)
+      }
     }
     return id
   }
@@ -1494,9 +1536,10 @@ result
         // 2. For other nodes: input schema might be missing
         //
         // Keep any existing executed result (which has actual schema from Python)
-        // Only clear if there's no input AND no existing data
+        // Only clear never-executed placeholders (success === false is a real
+        // execution failure that must stay visible on the node)
         const existingResult = nodeResults.value.get(nodeId)
-        if (!inputSchema && !isSourceNode(node.type) && existingResult && !existingResult.data && !existingResult.success) {
+        if (!inputSchema && !isSourceNode(node.type) && existingResult && !existingResult.data && existingResult.success === undefined) {
           nodeResults.value.delete(nodeId)
         }
         // If there's an existing result with actual data, keep it - the schema from
@@ -1786,12 +1829,27 @@ result
     return last
   }
 
+  /**
+   * Record a pre-execution failure (missing file/input/config) on the node so
+   * it surfaces in the UI (red status + preview error) instead of leaving the
+   * node looking never-executed after a run.
+   */
+  function failNode(nodeId: number, error: string): NodeResult {
+    console.warn(`[flowfile] node ${nodeId} (${nodes.value.get(nodeId)?.type}) not executed: ${error}`)
+    const existing = nodeResults.value.get(nodeId)
+    const result: NodeResult = { ...existing, success: false, error, data: undefined }
+    nodeResults.value.set(nodeId, result)
+    return result
+  }
+
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
     if (!node) {
+      console.warn(`[flowfile] executeNode skipped: node ${nodeId} not found`)
       return { success: false, error: 'Node not found' }
     }
 
+    console.debug(`[flowfile] executeNode ${nodeId} (${node.type})`)
     const { runPythonWithResult, setGlobal, deleteGlobal } = pyodideStore
 
     try {
@@ -1801,7 +1859,7 @@ result
         case 'read': {
           const content = fileContents.value.get(nodeId)
           if (!content) {
-            return { success: false, error: 'No file loaded' }
+            return failNode(nodeId, 'No file loaded')
           }
           setGlobal('_temp_content', content)
           try {
@@ -1819,7 +1877,7 @@ result
         case 'manual_input': {
           const content = fileContents.value.get(nodeId)
           if (!content) {
-            return { success: false, error: 'No data entered' }
+            return failNode(nodeId, 'No data entered')
           }
           setGlobal('_temp_content', content)
           try {
@@ -1842,7 +1900,7 @@ result
           if (!content) {
             const settings = node.settings as NodeExternalDataSettings
             const dsName = settings.dataset_name
-            return { success: false, error: dsName ? `No data loaded for dataset "${dsName}". Ensure the host provides this dataset.` : 'No dataset selected' }
+            return failNode(nodeId, dsName ? `No data loaded for dataset "${dsName}". Ensure the host provides this dataset.` : 'No dataset selected')
           }
           setGlobal('_temp_content', content)
           try {
@@ -1866,7 +1924,7 @@ result
           if (!content) {
             const settings = node.settings as { dataset_name?: string }
             const dsName = settings.dataset_name
-            return { success: false, error: dsName ? `Catalog table "${dsName}" not found. Upload it in the Catalog.` : 'No catalog table selected' }
+            return failNode(nodeId, dsName ? `Catalog table "${dsName}" not found. Upload it in the Catalog.` : 'No catalog table selected')
           }
           setGlobal('_temp_content', content)
           try {
@@ -1884,7 +1942,7 @@ result
         case 'filter': {
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           result = await runPythonWithResult(`
 import json
@@ -1897,7 +1955,7 @@ result
         case 'select': {
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           result = await runPythonWithResult(`
 import json
@@ -1910,7 +1968,7 @@ result
         case 'group_by': {
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           result = await runPythonWithResult(`
 import json
@@ -1924,7 +1982,7 @@ result
           const leftId = node.leftInputId || node.inputIds[0]
           const rightId = node.rightInputId
           if (!leftId || !rightId) {
-            return { success: false, error: 'Both left and right inputs required for join' }
+            return failNode(nodeId, 'Both left and right inputs required for join')
           }
           result = await runPythonWithResult(`
 import json
@@ -1937,7 +1995,7 @@ result
         case 'sort': {
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           result = await runPythonWithResult(`
 import json
@@ -1959,7 +2017,7 @@ result
         case 'unique': {
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           result = await runPythonWithResult(`
 import json
@@ -1972,7 +2030,7 @@ result
         case 'head': {
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           result = await runPythonWithResult(`
 import json
@@ -1985,7 +2043,7 @@ result
         case 'explore_data': {
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           result = await runPythonWithResult(`
 import json
@@ -1998,7 +2056,7 @@ result
         case 'pivot': {
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           result = await runPythonWithResult(`
 import json
@@ -2011,7 +2069,7 @@ result
         case 'unpivot': {
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           result = await runPythonWithResult(`
 import json
@@ -2024,7 +2082,7 @@ result
         case 'output': {
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           const outputResult = await runPythonWithResult(`
 import json
@@ -2072,7 +2130,7 @@ result
           // External output: execute like output but always emit CSV to callbacks
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           const settings = node.settings as NodeExternalOutputSettings
           const outputName = settings.output_name || 'result'
@@ -2121,12 +2179,12 @@ result
           // persist the CSV through addCatalogDataset (IndexedDB-backed).
           const inputId = node.inputIds[0]
           if (!inputId) {
-            return { success: false, error: 'No input connected' }
+            return failNode(nodeId, 'No input connected')
           }
           const settings = node.settings as NodeWriteToCatalogSettings
           const tableName = (settings.dataset_name || '').trim()
           if (!tableName) {
-            return { success: false, error: 'No catalog table name set. Open the node settings and name the table.' }
+            return failNode(nodeId, 'No catalog table name set. Open the node settings and name the table.')
           }
           const outputSettings = {
             output_settings: {
@@ -2162,7 +2220,7 @@ result
         }
 
         default:
-          return { success: false, error: `Unknown node type: ${node.type}` }
+          return failNode(nodeId, `Unknown node type: ${node.type}`)
       }
 
       // Store result - success=true indicates data is available in Python
@@ -2197,6 +2255,7 @@ result
       return nodeResult
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
+      console.error(`[flowfile] executeNode ${nodeId} (${node.type}) threw:`, error)
       const errorResult: NodeResult = {
         success: false,
         error: errorMessage
@@ -2208,6 +2267,7 @@ result
 
   async function executeFlow() {
     if (!pyodideStore.isReady) {
+      console.warn('[flowfile] executeFlow skipped: Pyodide is not ready yet')
       return
     }
 
@@ -2225,6 +2285,7 @@ result
 
       // This builds the lazy query plans - should be fast!
       const order = getExecutionOrder()
+      console.debug(`[flowfile] executeFlow: ${order.length} nodes in order [${order.join(', ')}]`)
 
       for (const nodeId of order) {
         await executeNode(nodeId)
@@ -2259,6 +2320,10 @@ result
       // Record a per-run summary for the Catalog Run History (client-side only).
       try {
         const nodesCompleted = Array.from(nodeResults.value.values()).filter(r => r.success === true).length
+        console.debug(
+          `[flowfile] executeFlow done: ${nodesCompleted}/${nodes.value.size} nodes ok in ${Date.now() - runStartedAt}ms` +
+          (executionError.value ? ` (error: ${executionError.value})` : '')
+        )
         await fileStorage.putRun({
           id: (globalThis.crypto?.randomUUID?.() ?? `run-${runStartedAt}`),
           flowId: currentFlowId.value ?? undefined,

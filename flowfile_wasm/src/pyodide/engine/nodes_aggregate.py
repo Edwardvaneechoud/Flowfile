@@ -3,6 +3,7 @@ import gc
 import polars as pl
 
 from .errors import format_error, format_error_lf
+from .log import log_node
 from .state import get_lazyframe, get_schema, store_lazyframe
 
 
@@ -33,7 +34,7 @@ def _build_agg_exprs(agg_defs: list[dict]) -> list:
         elif agg == "n_unique":
             exprs.append(col.n_unique().alias(new_name))
         elif agg == "concat":
-            exprs.append(col.cast(pl.Utf8).str.concat(",").alias(new_name))
+            exprs.append(col.cast(pl.Utf8).str.join(",").alias(new_name))
     return exprs
 
 
@@ -56,6 +57,7 @@ def build_group_by(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
     return input_lf.group_by(group_cols).agg(pl.count()).drop("count")
 
 
+@log_node
 def execute_group_by(node_id: int, input_id: int, settings: dict) -> dict:
     """Execute group by node (lazy)"""
     input_lf = get_lazyframe(input_id)
@@ -73,6 +75,7 @@ def execute_group_by(node_id: int, input_id: int, settings: dict) -> dict:
         return {"success": False, "error": format_error_lf("group_by", node_id, e, input_lf)}
 
 
+@log_node
 def execute_pivot(node_id: int, input_id: int, settings: dict) -> dict:
     """Execute pivot node - converts data from long to wide format
     Note: Pivot requires collecting data due to dynamic column creation.
@@ -250,6 +253,7 @@ def build_unpivot(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
     return input_lf.unpivot(index=index_columns if index_columns else None)
 
 
+@log_node
 def execute_unpivot(node_id: int, input_id: int, settings: dict) -> dict:
     """Execute unpivot node - converts data from wide to long format (lazy)"""
     input_lf = get_lazyframe(input_id)

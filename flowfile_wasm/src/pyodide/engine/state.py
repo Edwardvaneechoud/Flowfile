@@ -4,6 +4,8 @@ from hashlib import md5
 
 import polars as pl
 
+from .log import logger
+
 _lazyframes: dict[int, pl.LazyFrame] = {}
 
 
@@ -51,6 +53,8 @@ def store_lazyframe(node_id: int, lf: pl.LazyFrame):
     old_hash = _plan_hashes.get(node_id)
 
     if old_hash != new_hash:
+        if node_id in _preview_cache:
+            logger.debug("store_lazyframe node=%s plan changed, preview cache invalidated", node_id)
         _preview_cache.pop(node_id, None)
         _plan_hashes[node_id] = new_hash
 
@@ -79,6 +83,7 @@ def get_cached_preview(node_id: int) -> dict | None:
 
 def clear_node(node_id: int):
     """Clear all data for a node."""
+    logger.debug("clear_node node=%s", node_id)
     _lazyframes.pop(node_id, None)
     _schemas.pop(node_id, None)
     _preview_cache.pop(node_id, None)
@@ -89,10 +94,13 @@ def clear_node(node_id: int):
 
 def clear_all():
     """Clear all data."""
+    logger.info("clear_all: dropping %d lazyframes, %d previews", len(_lazyframes), len(_preview_cache))
     _lazyframes.clear()
     _schemas.clear()
     _preview_cache.clear()
     _plan_hashes.clear()
+    _schema_lazyframes.clear()
+    _schema_schemas.clear()
     gc.collect()
 
 

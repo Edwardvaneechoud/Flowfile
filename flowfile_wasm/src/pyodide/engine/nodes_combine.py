@@ -1,6 +1,7 @@
 import polars as pl
 
 from .errors import format_error_lf
+from .log import log_node
 from .state import get_lazyframe, get_schema, store_lazyframe
 
 
@@ -31,6 +32,7 @@ def build_join(left_lf: pl.LazyFrame, right_lf: pl.LazyFrame, settings: dict) ->
     return left_lf.join(right_lf, left_on=left_on, right_on=right_on, how=join_type, suffix=right_suffix)
 
 
+@log_node
 def execute_join(node_id: int, left_id: int, right_id: int, settings: dict) -> dict:
     """Execute join node (lazy)"""
     left_lf = get_lazyframe(left_id)

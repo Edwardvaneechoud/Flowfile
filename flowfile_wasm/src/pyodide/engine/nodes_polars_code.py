@@ -4,6 +4,7 @@ from typing import Any
 import polars as pl
 
 from .errors import format_error_lf
+from .log import log_node
 from .state import get_lazyframe, get_schema, store_lazyframe
 
 
@@ -144,6 +145,7 @@ def _extract_result(
     return None, "Code must produce a DataFrame or LazyFrame (set output_df or output_lf)"
 
 
+@log_node
 def execute_polars_code(node_id: int, input_ids: list[int], settings: dict) -> dict:
     """Execute polars code node - supports zero, single, or multiple inputs.
     Memory-optimized: cleans up materialized DataFrames after execution."""

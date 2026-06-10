@@ -96,6 +96,8 @@ interface CatalogDatasetEntry {
 class FileStorageManager {
   private db: IDBDatabase | null = null;
   private initPromise: Promise<void> | null = null;
+  /** In-flight clearAll(); writes await it so a fire-and-forget clear can never delete a just-written file. */
+  private pendingClear: Promise<void> | null = null;
 
   /** Create any object store that doesn't exist yet (additive, idempotent). */
   private createStores(db: IDBDatabase): void {
@@ -230,6 +232,9 @@ class FileStorageManager {
 
     // Large file: use IndexedDB
     await this.init();
+    if (this.pendingClear) {
+      await this.pendingClear.catch(() => {});
+    }
 
     return new Promise<void>((resolve, reject) => {
       if (!this.db) {
@@ -372,24 +377,35 @@ class FileStorageManager {
    * Clear all files from IndexedDB
    */
   async clearAll(): Promise<void> {
-    await this.init();
+    const clearPromise = (async () => {
+      await this.init();
 
-    return new Promise<void>((resolve, reject) => {
-      if (!this.db) {
-        reject(new Error('IndexedDB not initialized'));
-        return;
+      return new Promise<void>((resolve, reject) => {
+        if (!this.db) {
+          reject(new Error('IndexedDB not initialized'));
+          return;
+        }
+
+        const transaction = this.db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.clear();
+
+        request.onsuccess = () => resolve();
+        request.onerror = () => {
+          console.error('Failed to clear IndexedDB:', request.error);
+          reject(request.error);
+        };
+      });
+    })();
+
+    this.pendingClear = clearPromise;
+    try {
+      await clearPromise;
+    } finally {
+      if (this.pendingClear === clearPromise) {
+        this.pendingClear = null;
       }
-
-      const transaction = this.db.transaction([STORE_NAME], 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.clear();
-
-      request.onsuccess = () => resolve();
-      request.onerror = () => {
-        console.error('Failed to clear IndexedDB:', request.error);
-        reject(request.error);
-      };
-    });
+    }
   }
 
   /**

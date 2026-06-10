@@ -1,6 +1,7 @@
 import polars as pl
 
 from .errors import format_error_lf
+from .log import log_node
 from .state import get_lazyframe, get_schema, store_lazyframe
 
 
@@ -82,6 +83,7 @@ def build_filter(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
     return input_lf
 
 
+@log_node
 def execute_filter(node_id: int, input_id: int, settings: dict) -> dict:
     """Execute filter node - chains onto input LazyFrame"""
     input_lf = get_lazyframe(input_id)
@@ -126,6 +128,7 @@ def build_select(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
     return input_lf.select(exprs) if exprs else input_lf
 
 
+@log_node
 def execute_select(node_id: int, input_id: int, settings: dict) -> dict:
     """Execute select node - column selection/renaming (lazy)"""
     input_lf = get_lazyframe(input_id)
@@ -154,6 +157,7 @@ def build_sort(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
     return input_lf.sort(by, descending=descending)
 
 
+@log_node
 def execute_sort(node_id: int, input_id: int, settings: dict) -> dict:
     """Execute sort node (lazy)"""
     input_lf = get_lazyframe(input_id)
@@ -182,6 +186,7 @@ def build_unique(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
     return input_lf.unique(keep=keep, maintain_order=maintain_order)
 
 
+@log_node
 def execute_unique(node_id: int, input_id: int, settings: dict) -> dict:
     """Execute unique node (lazy)"""
     input_lf = get_lazyframe(input_id)
@@ -205,6 +210,7 @@ def build_head(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
     return input_lf.head(n)
 
 
+@log_node
 def execute_head(node_id: int, input_id: int, settings: dict) -> dict:
     """Execute head/limit node (lazy)"""
     input_lf = get_lazyframe(input_id)
@@ -222,6 +228,7 @@ def execute_head(node_id: int, input_id: int, settings: dict) -> dict:
         return {"success": False, "error": format_error_lf("head", node_id, e, input_lf)}
 
 
+@log_node
 def execute_preview(node_id: int, input_id: int) -> dict:
     """Execute preview node - just passes through the LazyFrame"""
     input_lf = get_lazyframe(input_id)

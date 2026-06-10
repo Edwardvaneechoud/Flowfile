@@ -34,6 +34,7 @@ vi.mock('../../src/stores/file-storage', () => ({
 }))
 
 import { useFlowStore } from '../../src/stores/flow-store'
+import { fileStorage } from '../../src/stores/file-storage'
 import type { FlowfileData } from '../../src/types'
 
 describe('Flow Store', () => {
@@ -538,6 +539,114 @@ describe('Flow Store', () => {
       store.setFileContent(1, 'id,name\n1,Alice\n2,Bob')
 
       expect(store.fileContents.get(1)).toBe('id,name\n1,Alice\n2,Bob')
+    })
+  })
+
+  describe('Node clipboard (copy/paste)', () => {
+    beforeEach(() => {
+      localStorage.clear()
+    })
+
+    it('copies settings AND file content to the pasted node', () => {
+      const store = useFlowStore()
+      const id = store.addNode('read', 10, 20)
+      const settings = store.getNode(id)!.settings as any
+      settings.received_file.name = 'sales-data.csv'
+      settings.received_file.table_settings.delimiter = ';'
+      store.setFileContent(id, 'a;b\n1;2\n')
+
+      expect(store.copyNode(id)).toBe(true)
+      const newId = store.pasteNode(300, 400)
+
+      expect(newId).not.toBeNull()
+      expect(newId).not.toBe(id)
+      const pasted = store.getNode(newId!)!
+      const pastedSettings = pasted.settings as any
+      expect(pastedSettings.received_file.name).toBe('sales-data.csv')
+      expect(pastedSettings.received_file.table_settings.delimiter).toBe(';')
+      expect(pastedSettings.node_id).toBe(newId)
+      expect(pastedSettings.pos_x).toBe(300)
+      // The loaded data is re-keyed to the new node id so the paste can run.
+      expect(store.getFileContent(newId!)).toBe('a;b\n1;2\n')
+    })
+
+    it('pastes from localStorage when there is no in-memory clipboard (reload)', () => {
+      localStorage.setItem(
+        'flowfile-wasm-node-clipboard',
+        JSON.stringify({
+          type: 'read',
+          settings: { file_name: 'x.csv' },
+          description: '',
+          fileContent: 'a,b\n1,2\n',
+          copiedAt: 123
+        })
+      )
+      const store = useFlowStore()
+
+      const newId = store.pasteNode(0, 0)
+
+      expect(newId).not.toBeNull()
+      expect(store.getFileContent(newId!)).toBe('a,b\n1,2\n')
+    })
+
+    it('keeps large file content on the in-memory clipboard when too big for localStorage', () => {
+      const store = useFlowStore()
+      const id = store.addNode('read', 0, 0)
+      store.setFileContent(id, 'big-content')
+      vi.mocked(fileStorage.shouldUseIndexedDB).mockReturnValue(true)
+      try {
+        store.copyNode(id)
+
+        const persisted = JSON.parse(localStorage.getItem('flowfile-wasm-node-clipboard')!)
+        expect(persisted.fileContent).toBeUndefined()
+
+        const newId = store.pasteNode(5, 5)
+        expect(store.getFileContent(newId!)).toBe('big-content')
+      } finally {
+        vi.mocked(fileStorage.shouldUseIndexedDB).mockReturnValue(false)
+      }
+    })
+
+    it('still pastes a settings-only copy (no file content)', () => {
+      const store = useFlowStore()
+      const id = store.addNode('filter', 0, 0)
+
+      store.copyNode(id)
+      const newId = store.pasteNode(50, 60)
+
+      expect(newId).not.toBeNull()
+      expect(store.getNode(newId!)!.type).toBe('filter')
+      expect(store.getFileContent(newId!)).toBeUndefined()
+    })
+  })
+
+  describe('Execution failure surfacing', () => {
+    it('records a failed result when a read node runs without file content', async () => {
+      const store = useFlowStore()
+      const id = store.addNode('read', 0, 0)
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe('No file loaded')
+      // The failure must land in nodeResults so the node shows the error
+      // instead of looking never-executed.
+      expect(store.nodeResults.get(id)?.success).toBe(false)
+      expect(store.nodeResults.get(id)?.error).toBe('No file loaded')
+    })
+
+    it('records a failed result when a transform node has no input', async () => {
+      const store = useFlowStore()
+      // Let the store's init-time schema propagation settle first — its TS
+      // fallback intentionally clears no-input errors while editing.
+      await new Promise(resolve => setTimeout(resolve, 0))
+      const id = store.addNode('filter', 0, 0)
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe('No input connected')
+      expect(store.nodeResults.get(id)?.error).toBe('No input connected')
     })
   })
 
