@@ -44,6 +44,7 @@
             <div v-if="registerInCatalog" class="namespace-section">
               <label class="namespace-label">Namespace</label>
               <catalog-namespace-picker
+                ref="filePicker"
                 v-model="selectedNamespaceId"
                 :hide-system-namespaces="true"
               />
@@ -68,6 +69,7 @@
             <div class="form-group">
               <label>Namespace</label>
               <catalog-namespace-picker
+                ref="catalogPicker"
                 v-model="selectedNamespaceId"
                 :hide-system-namespaces="true"
               />
@@ -99,6 +101,7 @@ import FileBrowser from "../../../components/common/FileBrowser/fileBrowser.vue"
 import { createFlow } from "../../../components/nodes/nodeLogic";
 import { getCatalogFlowsDirectory } from "../../../api/file.api";
 import { ALLOWED_SAVE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
+import { basenameNoExt } from "../../../composables/useRecentFlows";
 import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
 
 const props = defineProps({
@@ -119,6 +122,16 @@ const registerInCatalog = ref(true);
 const selectedNamespaceId = ref<number | null>(null);
 const catalogFlowName = ref("");
 const catalogFlowsDir = ref("");
+const filePicker = ref<InstanceType<typeof CatalogNamespacePicker> | null>(null);
+const catalogPicker = ref<InstanceType<typeof CatalogNamespacePicker> | null>(null);
+
+// Dotted catalog reference ("General.default.my_flow") for the recents list;
+// undefined when the namespace path can't be resolved.
+const catalogRefFor = (flowName: string): string | undefined => {
+  const picker = catalogPicker.value ?? filePicker.value;
+  const nsPath = picker?.getNamespacePath(selectedNamespaceId.value);
+  return nsPath ? `${nsPath}.${flowName}` : undefined;
+};
 
 watch(
   () => props.visible,
@@ -168,7 +181,11 @@ const handleCreateAtPath = async (flowPath: string) => {
     const newFlowId = await createFlow(flowPath, null, namespaceId);
     ElMessage.success("Flow created successfully");
     isVisible.value = false;
-    emit("create-complete", newFlowId);
+    const catalogRef =
+      registerInCatalog.value && selectedNamespaceId.value !== null
+        ? catalogRefFor(basenameNoExt(flowPath))
+        : undefined;
+    emit("create-complete", newFlowId, catalogRef);
   } catch (error: any) {
     console.error("Error creating flow:", error);
     ElMessage.error({
@@ -196,9 +213,10 @@ const handleCreateInCatalog = async () => {
     const newFlowId = await createFlow(catalogFilePath.value, null, selectedNamespaceId.value);
     ElMessage.success("Flow created and registered in catalog");
     isVisible.value = false;
+    const catalogRef = catalogRefFor(basenameNoExt(catalogFlowName.value.trim()));
     // Reset catalog name so the next invocation starts clean
     catalogFlowName.value = "";
-    emit("create-complete", newFlowId);
+    emit("create-complete", newFlowId, catalogRef);
   } catch (error: any) {
     console.error("Error creating flow in catalog:", error);
     ElMessage.error({

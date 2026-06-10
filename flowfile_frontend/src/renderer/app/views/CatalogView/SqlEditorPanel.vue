@@ -109,7 +109,7 @@
           </span>
         </div>
         <el-form label-position="top" @submit.prevent="saveAsVirtualTable">
-          <el-form-item label="Table name" required>
+          <el-form-item label="Table name" required :error="sqlNameError">
             <el-input v-model="saveForm.name" placeholder="my_virtual_table" />
           </el-form-item>
           <el-form-item label="Catalog / Schema">
@@ -141,7 +141,7 @@
         <el-button @click="showSaveDialog = false">Cancel</el-button>
         <el-button
           type="primary"
-          :disabled="!saveForm.name.trim()"
+          :disabled="!saveForm.name.trim() || !!sqlNameError"
           :loading="savingVirtual"
           @click="saveAsVirtualTable"
         >
@@ -162,6 +162,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { validateCatalogName } from "../../composables/catalogNameValidation";
 import SqlExplorePanel from "./SqlExplorePanel.vue";
 import type { SqlQueryResult } from "../../types";
 
@@ -295,6 +296,8 @@ const saveForm = reactive({
 
 const canSaveAsVirtual = computed(() => result.value !== null && !result.value.error);
 
+const sqlNameError = computed(() => validateCatalogName(saveForm.name, "Table") ?? "");
+
 const schemaNamespaces = computed(() => {
   const items: { id: number; label: string }[] = [];
   for (const catalog of catalogStore.tree) {
@@ -315,7 +318,7 @@ watch(showSaveDialog, (val) => {
 
 async function saveAsVirtualTable() {
   const trimmedName = saveForm.name.trim();
-  if (!trimmedName) return;
+  if (!trimmedName || sqlNameError.value) return;
 
   savingVirtual.value = true;
   try {

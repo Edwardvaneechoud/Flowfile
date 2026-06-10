@@ -1,7 +1,7 @@
 <template>
   <div class="sidebar">
     <div class="center-container">
-      <Logo width="50px" :app-name="''" position-app-name="left" />
+      <Logo width="50px" :app-name="''" position-app-name="left" :click-action="goHome" />
     </div>
     <div class="sidebar-container">
       <menu-accordion :items="items" :is-collapse="true" />
@@ -131,6 +131,8 @@ const items = computed(() => {
 });
 
 const showLogout = computed(() => !authService.isInDesktopMode());
+
+const goHome = () => router.push({ name: "home" });
 
 const handleStartTutorial = async () => {
   if (router.currentRoute.value.name !== "designer") {

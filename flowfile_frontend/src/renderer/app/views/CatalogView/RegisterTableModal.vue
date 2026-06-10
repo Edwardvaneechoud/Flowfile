@@ -12,6 +12,7 @@
           <div class="form-group">
             <label class="field-label">Table name</label>
             <input v-model="name" class="input-field" placeholder="Table name" />
+            <p v-if="nameError" class="field-error">{{ nameError }}</p>
           </div>
           <div class="form-group">
             <label class="field-label">Description</label>
@@ -61,7 +62,7 @@
         <button class="btn-secondary" @click="$emit('close')">Cancel</button>
         <button
           class="btn-primary"
-          :disabled="!name.trim() || !path.trim() || submitting"
+          :disabled="!name.trim() || !!nameError || !path.trim() || submitting"
           @click="submit"
         >
           {{ submitting ? "Registering..." : "Register" }}
@@ -76,6 +77,7 @@ import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { validateCatalogName, sanitizeCatalogName } from "../../composables/catalogNameValidation";
 import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
 
 const props = defineProps<{
@@ -92,6 +94,8 @@ const path = ref("");
 const description = ref("");
 const selectedNamespaceId = ref<number | null>(null);
 const submitting = ref(false);
+
+const nameError = computed(() => validateCatalogName(name.value, "Table"));
 
 const fileName = computed(() => {
   if (!path.value) return "";
@@ -125,7 +129,7 @@ function handleFileSelected(fileInfo: { name: string; path: string }) {
   path.value = fileInfo.path;
   if (!name.value.trim()) {
     const baseName = fileInfo.name.replace(/\.parquet$/i, "");
-    name.value = baseName;
+    name.value = sanitizeCatalogName(baseName);
   }
 }
 
@@ -136,7 +140,7 @@ function handleFileUpdate(file: { name: string; path: string; is_directory: bool
 }
 
 async function submit() {
-  if (!name.value.trim() || !path.value.trim()) return;
+  if (!name.value.trim() || nameError.value || !path.value.trim()) return;
   submitting.value = true;
   try {
     const nsId = selectedNamespaceId.value ?? props.defaultNamespaceId;
@@ -268,6 +272,12 @@ async function submit() {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.field-error {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--el-color-danger);
 }
 
 select.input-field {

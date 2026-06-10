@@ -39,8 +39,22 @@ from flowfile_core.schemas.catalog_schema import (
     ColumnSchema,
     FlowSummary,
 )
+from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
+
+
+def _is_managed_table_path(file_path: str) -> bool:
+    """True when the storage path lives under Flowfile's managed catalog dir.
+
+    External/user-registered paths (registered by pointing at an existing file
+    outside the managed dir) return False and must never be deleted.
+    """
+    try:
+        Path(file_path).resolve().relative_to(storage.catalog_tables_directory.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
 
 
 def _should_offload() -> bool:
@@ -715,8 +729,13 @@ class TableService:
         table = self.repo.update_table(table)
         return self.table_to_out(table)
 
-    def delete_table(self, table_id: int) -> None:
-        """Delete a catalog table and its materialized storage."""
+    def delete_table(self, table_id: int, delete_file: bool = False) -> None:
+        """Delete a catalog table; optionally delete its materialized storage.
+
+        Storage is only removed when ``delete_file`` is set AND the path is
+        Flowfile-managed (under the catalog tables dir) — external/user-owned
+        files are never touched. Virtual tables have no file to delete.
+        """
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
@@ -724,7 +743,7 @@ class TableService:
         file_path = table.file_path
         self.repo.delete_table(table_id)
 
-        if file_path:
+        if delete_file and file_path and _is_managed_table_path(file_path):
             try:
                 storage_path = Path(file_path)
                 if storage_path.exists():

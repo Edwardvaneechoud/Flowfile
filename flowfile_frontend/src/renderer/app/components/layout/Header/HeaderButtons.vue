@@ -290,6 +290,7 @@ import CreateDialog from "../../../features/designer/components/CreateDialog.vue
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
+import { useRecentFlows } from "../../../composables/useRecentFlows";
 import {
   createFlow,
   getFlowSettings,
@@ -305,6 +306,7 @@ import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
+const { recordFlowFromSettings } = useRecentFlows();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -326,6 +328,7 @@ const handleQuickCreate = async () => {
   try {
     const createdFlowId = await createFlow(null, null);
     nodeStore.setFlowId(createdFlowId);
+    await recordCurrentFlowAsRecent();
     emit("refreshFlow");
     ElMessage.success("Flow created");
     advanceQuickCreateTutorial();
@@ -349,13 +352,22 @@ const advanceQuickCreateTutorial = () => {
   }
 };
 
-const handleCreateComplete = (flowId: number) => {
+const handleCreateComplete = async (flowId: number, catalogRef?: string) => {
   modalVisibleForCreate.value = false;
   if (flowId) {
     nodeStore.setFlowId(flowId);
+    await recordCurrentFlowAsRecent(catalogRef);
     emit("refreshFlow");
   }
   advanceQuickCreateTutorial();
+};
+
+// Created flows never pass through DesignerView's reloadCanvas (the open-path
+// recording seam), so record them here. loadFlowSettings dedupes with the
+// flow_id watcher's concurrent call, so this costs no extra request.
+const recordCurrentFlowAsRecent = async (catalogRef?: string) => {
+  await loadFlowSettings();
+  recordFlowFromSettings(flowSettings.value, catalogRef);
 };
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
@@ -447,7 +459,12 @@ const handleSaveDialogComplete = (flowId: number) => {
   }
 };
 
-function handleOpenFromDialog(payload: { message: string; flowPath: string }) {
+function handleOpenFromDialog(payload: {
+  message: string;
+  flowPath: string;
+  flowName?: string;
+  catalogRef?: string;
+}) {
   emit("openFlow", payload);
   nodeStore.resetRunResults();
   modalVisibleForOpen.value = false;

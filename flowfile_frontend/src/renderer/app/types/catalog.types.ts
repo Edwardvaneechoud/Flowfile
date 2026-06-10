@@ -40,6 +40,17 @@ export function filterSelectableNamespaces(tree: NamespaceTree[]): NamespaceTree
   );
 }
 
+// Ancestry names from root to the namespace with the given id (e.g.
+// ["General", "default"]), or [] when the id isn't in the tree.
+export function findNamespacePath(nodes: NamespaceTree[], id: number): string[] {
+  for (const node of nodes) {
+    if (node.id === id) return [node.name];
+    const childPath = findNamespacePath(node.children, id);
+    if (childPath.length) return [node.name, ...childPath];
+  }
+  return [];
+}
+
 export interface NamespaceCreate {
   name: string;
   parent_id?: number | null;

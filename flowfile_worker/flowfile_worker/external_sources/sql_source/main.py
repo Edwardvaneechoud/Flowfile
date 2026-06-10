@@ -8,6 +8,8 @@ from flowfile_worker.external_sources.sql_source.models import (
     DatabaseReadSettings,
     DatabaseWriteSettings,
 )
+from flowfile_worker.flow_logger import get_worker_logger
+from shared.db_reader import read_sql_with_fallback
 
 # Default ports per database type for the pre-flight connectivity check.
 _DEFAULT_DB_PORTS = {
@@ -89,6 +91,10 @@ def read_sql_source(database_read_settings: DatabaseReadSettings):
     Returns:
         pl.DataFrame: The resulting Polars DataFrame.
     """
+    logger = get_worker_logger(
+        database_read_settings.flowfile_flow_id, database_read_settings.flowfile_node_id
+    )
     verify_database_reachable(database_read_settings.connection)
-    df = read_query_as_pd_df(database_read_settings.query, database_read_settings.connection.create_uri())
-    return df
+    return read_sql_with_fallback(
+        database_read_settings.query, database_read_settings.connection.create_uri(), logger
+    )
