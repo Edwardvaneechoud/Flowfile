@@ -3930,7 +3930,9 @@ class FlowGraph:
                         ),
                     )
                 # OAuth needs the per-instance client config; service accounts don't.
-                oauth_cfg = get_google_oauth_config(db, node_ga_reader.user_id) if auth_method == "oauth" else None
+                # Resolved from the CONNECTION OWNER, not the run user: a group-shared
+                # OAuth connection must use the owner's Google client config.
+                oauth_cfg = get_google_oauth_config(db, db_conn.user_id) if auth_method == "oauth" else None
 
             common_kwargs = dict(
                 property_id=ga_settings.property_id,

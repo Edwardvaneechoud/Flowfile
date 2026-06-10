@@ -5,6 +5,7 @@ import os
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from flowfile_core.auth import sharing
 from flowfile_core.auth.jwt import (
     create_access_token,
     create_refresh_token,
@@ -225,10 +226,24 @@ async def delete_user(
     if user.id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete your own account")
 
-    # Delete user's secrets and connections first (cascade)
+    # Delete user's secrets and connections first (cascade), including any sharing
+    # grants on them — SQLite reuses rowids, so a stale grant would attach to a
+    # future resource created with the same id.
+    for resource_type, model in (
+        ("secret", db_models.Secret),
+        ("database_connection", db_models.DatabaseConnection),
+        ("cloud_connection", db_models.CloudStorageConnection),
+    ):
+        resource_ids = [row[0] for row in db.query(model.id).filter(model.user_id == user_id)]
+        if resource_ids:
+            db.query(db_models.ResourceGrant).filter(
+                db_models.ResourceGrant.resource_type == resource_type,
+                db_models.ResourceGrant.resource_id.in_(resource_ids),
+            ).delete(synchronize_session=False)
     db.query(db_models.Secret).filter(db_models.Secret.user_id == user_id).delete()
     db.query(db_models.DatabaseConnection).filter(db_models.DatabaseConnection.user_id == user_id).delete()
     db.query(db_models.CloudStorageConnection).filter(db_models.CloudStorageConnection.user_id == user_id).delete()
+    sharing.delete_memberships_for_user(db, user_id)
 
     db.delete(user)
     db.commit()

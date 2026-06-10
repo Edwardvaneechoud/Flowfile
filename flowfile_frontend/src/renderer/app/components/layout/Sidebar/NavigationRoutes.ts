@@ -102,6 +102,14 @@ export default {
       dockerOnly: true,
     },
     {
+      name: "groups",
+      displayName: "menu.groups",
+      meta: {
+        icon: "fa-solid fa-user-group",
+      },
+      dockerOnly: true,
+    },
+    {
       name: "admin",
       displayName: "menu.admin",
       meta: {

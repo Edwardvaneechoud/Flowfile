@@ -12,10 +12,15 @@ import json
 from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
+from flowfile_core.auth import sharing
 from flowfile_core.database.models import GoogleAnalyticsConnection as DBGoogleAnalyticsConnection
 from flowfile_core.database.models import Secret
+from flowfile_core.database.models import User as DBUser
 from flowfile_core.schemas.google_analytics_schemas import FullGoogleAnalyticsConnectionInterface
+from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import SecretInput, encrypt_secret, store_secret
+
+_OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
 
 _SECRET_SUFFIX = "_ga_oauth_refresh_token"
 _SA_SECRET_SUFFIX = "_ga_service_account_key"
@@ -29,15 +34,35 @@ def _sa_secret_name(connection_name: str) -> str:
     return connection_name + _SA_SECRET_SUFFIX
 
 
-def get_ga_connection(db: Session, connection_name: str, user_id: int) -> DBGoogleAnalyticsConnection | None:
+def _get_own_ga_connection(db: Session, connection_name: str, user_id: int) -> DBGoogleAnalyticsConnection | None:
     return (
         db.query(DBGoogleAnalyticsConnection)
         .filter(
             DBGoogleAnalyticsConnection.connection_name == connection_name,
             DBGoogleAnalyticsConnection.user_id == user_id,
         )
+        .order_by(DBGoogleAnalyticsConnection.id.asc())
         .first()
     )
+
+
+def get_ga_connection(db: Session, connection_name: str, user_id: int) -> DBGoogleAnalyticsConnection | None:
+    """Own connection first, else a group-shared one (lowest id wins on name collisions)."""
+    db_conn = _get_own_ga_connection(db, connection_name, user_id)
+    if db_conn:
+        return db_conn
+    granted_ids = sharing.granted_resource_ids(db, user_id, "ga_connection")
+    if granted_ids:
+        return (
+            db.query(DBGoogleAnalyticsConnection)
+            .filter(
+                DBGoogleAnalyticsConnection.connection_name == connection_name,
+                DBGoogleAnalyticsConnection.id.in_(granted_ids),
+            )
+            .order_by(DBGoogleAnalyticsConnection.id.asc())
+            .first()
+        )
+    return None
 
 
 def upsert_ga_connection_with_refresh_token(
@@ -55,7 +80,7 @@ def upsert_ga_connection_with_refresh_token(
     Existing rows keep their ``description`` and ``default_property_id`` if the
     caller passes ``None`` (so a *Reconnect* doesn't wipe metadata).
     """
-    existing = get_ga_connection(db, connection_name, user_id)
+    existing = _get_own_ga_connection(db, connection_name, user_id)
     encrypted = encrypt_secret(refresh_token, user_id)
 
     if existing:
@@ -144,7 +169,7 @@ def upsert_ga_connection_with_service_account(
     info = _validate_service_account_key(service_account_key)
     client_email = info["client_email"]
 
-    existing = get_ga_connection(db, connection_name, user_id)
+    existing = _get_own_ga_connection(db, connection_name, user_id)
     encrypted = encrypt_secret(service_account_key, user_id)
 
     if existing:
@@ -197,8 +222,9 @@ def update_ga_connection_metadata(
     default_property_id: str | None,
 ) -> DBGoogleAnalyticsConnection:
     """Update description + default property id only. The OAuth credential is
-    never touched by this path — use the OAuth callback for that."""
-    db_conn = get_ga_connection(db, connection_name, user_id)
+    never touched by this path — use the OAuth callback for that. Own-only:
+    routes authorize manage-grantees and pass the owner's user_id."""
+    db_conn = _get_own_ga_connection(db, connection_name, user_id)
     if db_conn is None:
         raise ValueError(f"Google Analytics connection '{connection_name}' not found for user {user_id}.")
     db_conn.description = description
@@ -209,11 +235,12 @@ def update_ga_connection_metadata(
 
 
 def delete_ga_connection(db: Session, connection_name: str, user_id: int) -> None:
-    db_conn = get_ga_connection(db, connection_name, user_id)
+    db_conn = _get_own_ga_connection(db, connection_name, user_id)
     if not db_conn:
         return
 
     secret_id = db_conn.credential_secret_id
+    sharing.delete_grants_for_resource(db, "ga_connection", db_conn.id)
     db.delete(db_conn)
     if secret_id is not None:
         db.query(Secret).filter(Secret.id == secret_id).delete(synchronize_session=False)
@@ -239,6 +266,7 @@ get_encrypted_refresh_token = get_encrypted_credential
 
 def ga_connection_interface_from_db(
     db_conn: DBGoogleAnalyticsConnection,
+    access: AccessInfo | None = None,
 ) -> FullGoogleAnalyticsConnectionInterface:
     return FullGoogleAnalyticsConnectionInterface(
         connection_name=db_conn.connection_name,
@@ -246,9 +274,32 @@ def ga_connection_interface_from_db(
         default_property_id=db_conn.default_property_id,
         auth_method=db_conn.auth_method,
         oauth_user_email=db_conn.oauth_user_email,
+        id=db_conn.id,
+        access=access,
     )
 
 
 def get_all_ga_connections_interface(db: Session, user_id: int) -> list[FullGoogleAnalyticsConnectionInterface]:
     rows = db.query(DBGoogleAnalyticsConnection).filter(DBGoogleAnalyticsConnection.user_id == user_id).all()
-    return [ga_connection_interface_from_db(r) for r in rows]
+    result = [ga_connection_interface_from_db(r, access=_OWNER_ACCESS) for r in rows]
+
+    details = sharing.granted_access_details(db, user_id, "ga_connection")
+    if details:
+        shared_rows = (
+            db.query(DBGoogleAnalyticsConnection)
+            .filter(
+                DBGoogleAnalyticsConnection.id.in_(details.keys()),
+                DBGoogleAnalyticsConnection.user_id != user_id,
+            )
+            .order_by(DBGoogleAnalyticsConnection.id.asc())
+            .all()
+        )
+        granter_ids = {details[row.id][1] for row in shared_rows if details[row.id][1] is not None}
+        usernames = {}
+        if granter_ids:
+            usernames = dict(db.query(DBUser.id, DBUser.username).filter(DBUser.id.in_(granter_ids)))
+        for row in shared_rows:
+            permission, granted_by = details[row.id]
+            access = AccessInfo(is_owner=False, access_level=permission, shared_by=usernames.get(granted_by))
+            result.append(ga_connection_interface_from_db(row, access=access))
+    return result

@@ -68,9 +68,17 @@ class SqlService:
         )
 
     def execute_sql_query(
-        self, query: str, max_rows: int = DEFAULT_SQL_MAX_ROWS, user_id: int | None = None
+        self,
+        query: str,
+        max_rows: int = DEFAULT_SQL_MAX_ROWS,
+        user_id: int | None = None,
+        accessible_table_ids: set[int] | None = None,
     ) -> SqlQueryResult:
-        """Execute a SQL query against all catalog tables (physical + virtual) via the worker."""
+        """Execute a SQL query against catalog tables (physical + virtual) via the worker.
+
+        ``accessible_table_ids`` (multi-user mode) restricts the registered tables
+        to those the user may read.
+        """
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
             validate_sql_query,
@@ -82,7 +90,7 @@ class SqlService:
             return SqlQueryResult(error=str(e))
 
         virtual_tables = self._require_virtual_tables()
-        delta_map, virtual_map = virtual_tables.resolve_all_queryable_tables()
+        delta_map, virtual_map = virtual_tables.resolve_all_queryable_tables(accessible_table_ids)
         if not delta_map and not virtual_map:
             return SqlQueryResult(error="No catalog tables available")
 

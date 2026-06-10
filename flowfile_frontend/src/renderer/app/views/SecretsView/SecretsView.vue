@@ -187,6 +187,10 @@
               <div class="secret-name">
                 <i class="fa-solid fa-key"></i>
                 <span>{{ secret.name }}</span>
+                <span v-if="isShared(secret)" class="shared-badge" :title="sharedTitle(secret)">
+                  <i class="fa-solid fa-share-nodes"></i>
+                  Shared · {{ secret.access?.access_level }}
+                </span>
               </div>
               <div class="secret-value">
                 <input
@@ -199,6 +203,17 @@
               </div>
               <div class="secret-actions">
                 <button
+                  v-if="isMultiUser && isOwned(secret) && secret.id != null"
+                  type="button"
+                  class="btn btn-secondary"
+                  :aria-label="`Share secret ${secret.name}`"
+                  @click="openShare(secret)"
+                >
+                  <i class="fa-solid fa-share-nodes"></i>
+                  <span>Share</span>
+                </button>
+                <button
+                  v-if="isOwned(secret)"
                   type="button"
                   class="btn btn-danger"
                   :aria-label="`Delete secret ${secret.name}`"
@@ -219,6 +234,15 @@
         </div>
       </div>
     </template>
+
+    <ShareDialog
+      v-if="shareSecret && shareSecret.id != null"
+      v-model="showShareDialog"
+      resource-type="secret"
+      :resource-id="shareSecret.id"
+      :resource-name="shareSecret.name"
+      :can-manage-grants="true"
+    />
 
     <!-- Delete Confirmation Modal -->
     <div v-if="showDeleteModal" class="modal-overlay" @click="cancelDelete">
@@ -252,11 +276,28 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
-import type { SecretInput } from "./secretTypes";
+import type { Secret, SecretInput } from "./secretTypes";
 import { useSecretManager } from "./useSecretManager";
+import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import { useMultiUser } from "../../composables/useMultiUser";
 
 const { secrets, filteredSecrets, isLoading, searchTerm, loadSecrets, addSecret, deleteSecret } =
   useSecretManager();
+
+const { isMultiUser } = useMultiUser();
+
+const showShareDialog = ref(false);
+const shareSecret = ref<Secret | null>(null);
+
+const isOwned = (secret: Secret) => secret.access?.is_owner !== false;
+const isShared = (secret: Secret) => !!secret.access && secret.access.is_owner === false;
+const sharedTitle = (secret: Secret) =>
+  secret.access?.shared_by ? `Shared by ${secret.access.shared_by}` : "Shared with you";
+
+const openShare = (secret: Secret) => {
+  shareSecret.value = secret;
+  showShareDialog.value = true;
+};
 
 // Landing screen vs. management screen. First visit always lands on the intro;
 // once a user moves on (or returns to the overview) we remember their choice so
@@ -498,5 +539,20 @@ onMounted(() => {
 .secret-actions {
   flex-shrink: 0;
   margin-left: auto;
+  display: flex;
+  gap: var(--spacing-2);
+}
+
+.shared-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: var(--spacing-2);
+  padding: 1px 8px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-accent);
+  background: var(--color-accent-subtle);
+  border-radius: 999px;
 }
 </style>

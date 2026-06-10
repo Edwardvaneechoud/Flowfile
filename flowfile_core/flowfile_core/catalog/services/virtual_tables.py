@@ -415,9 +415,18 @@ class VirtualTableService:
             if table.file_path and is_delta_table(Path(table.file_path))
         }
 
-    def resolve_all_queryable_tables(self) -> tuple[dict[str, str], dict[str, int]]:
-        """Return Delta + virtual name maps, keyed by qualified name and by bare name (when unique)."""
+    def resolve_all_queryable_tables(
+        self, accessible_table_ids: set[int] | None = None
+    ) -> tuple[dict[str, str], dict[str, int]]:
+        """Return Delta + virtual name maps, keyed by qualified name and by bare name (when unique).
+
+        ``accessible_table_ids`` (set in multi-user mode) restricts the registered
+        tables to the ones the requesting user may read, so SQL cannot reach a
+        table the user cannot see.
+        """
         tables = self.repo.list_tables()
+        if accessible_table_ids is not None:
+            tables = [t for t in tables if t.id in accessible_table_ids]
         bare_counts: dict[str, int] = {}
         for t in tables:
             if t.table_type == "virtual" or (t.file_path and is_delta_table(Path(t.file_path))):

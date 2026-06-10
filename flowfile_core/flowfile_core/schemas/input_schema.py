@@ -18,6 +18,7 @@ from pydantic import (
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
+from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.schemas.yaml_types import (
     NodeCrossJoinYaml,
     NodeFuzzyMatchYaml,
@@ -865,6 +866,8 @@ class FullDatabaseConnectionInterface(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    id: int | None = None
+    access: AccessInfo | None = None
 
 
 class DatabaseSettings(BaseModel):

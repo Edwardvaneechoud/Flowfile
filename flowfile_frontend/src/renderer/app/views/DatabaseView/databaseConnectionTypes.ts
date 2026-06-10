@@ -1,5 +1,7 @@
 //flowfile_frontend/src/renderer/app/pages/databaseManager/databaseConnectionTypes.ts
 
+import type { AccessInfo } from "../../types/sharing.types";
+
 export type DatabaseType = "postgresql" | "mysql" | "sqlite";
 
 export const defaultPorts: Partial<Record<DatabaseType, number>> = {
@@ -42,6 +44,8 @@ export interface PythonFullDatabaseConnectionInterface {
   database?: string;
   ssl_enabled: boolean;
   url?: string;
+  id?: number;
+  access?: AccessInfo | null;
 }
 
 export interface FullDatabaseConnectionInterface {
@@ -53,4 +57,6 @@ export interface FullDatabaseConnectionInterface {
   database?: string;
   sslEnabled: boolean;
   url?: string;
+  id?: number;
+  access?: AccessInfo | null;
 }

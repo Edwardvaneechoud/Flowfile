@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import polars as pl
 
@@ -19,7 +19,15 @@ from flowfile_core.catalog.constants import (
     DEFAULT_PREVIEW_LIMIT,
     DEFAULT_SQL_MAX_ROWS,
 )
+from flowfile_core.catalog.exceptions import (
+    DashboardNotFoundError,
+    NotAuthorizedError,
+    VisualizationNotFoundError,
+)
 from flowfile_core.catalog.repository import CatalogRepository
+
+if TYPE_CHECKING:
+    from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.serializers import (
     VizEnrichment,
     format_pyarrow_preview,
@@ -131,8 +139,12 @@ class CatalogService:
     # ``CatalogService._compute_laziness_blockers(flow_path)`` directly.
     _compute_laziness_blockers = staticmethod(TableService._compute_laziness_blockers)
 
-    def __init__(self, repo: CatalogRepository) -> None:
+    def __init__(self, repo: CatalogRepository, access: AccessResolver | None = None) -> None:
         self.repo = repo
+        # None for internal callers (scheduler, kafka sync, flow execution),
+        # electron mode, and tests → fully unrestricted, today's behavior.
+        # Set by routes/catalog.py for per-request private-by-default filtering.
+        self.access = access
         self._namespaces = NamespaceService(repo)
         self._flows = FlowRegistrationService(repo, self._namespaces)
         self._runs = FlowRunService(repo)
@@ -160,6 +172,91 @@ class CatalogService:
         self._schedules.bind_facade(self)
 
         self._stats = StatsService(repo, self._flows, self._runs, self._tables)
+
+    # ------------------------------------------------------------------ #
+    # Authorization helpers (no-op when self.access is None / unrestricted)
+    # ------------------------------------------------------------------ #
+
+    @property
+    def _restricted(self) -> bool:
+        return self.access is not None and self.access.restricted
+
+    def _require_use(self, resource_type: str, resource_id: int) -> None:
+        if self._restricted:
+            self.access.require_use(resource_type, resource_id)
+
+    def _require_manage(self, resource_type: str, resource_id: int) -> None:
+        if self._restricted:
+            self.access.require_manage(resource_type, resource_id)
+
+    def _require_namespace_visible(self, namespace_id: int | None) -> None:
+        """Creating items requires the target namespace be visible (public / owned / granted)."""
+        if self._restricted and namespace_id is not None and namespace_id not in self.access.visible_namespace_ids():
+            raise NotAuthorizedError(self.access.user_id or -1, "create items in this namespace")
+
+    def _require_use_run(self, run_id: int) -> None:
+        """A run is accessible to its actor or to anyone who can use its flow."""
+        if not self._restricted:
+            return
+        run = self._runs.get_run(run_id)  # raises RunNotFoundError if missing
+        if run.user_id == self.access.user_id:
+            return
+        if run.registration_id is not None and self.access.can_use("flow", run.registration_id):
+            return
+        raise NotAuthorizedError(self.access.user_id or -1, "access this run")
+
+    def _require_manage_schedule(self, schedule_id: int) -> None:
+        """Editing a schedule needs schedule ownership, manage on its flow, or admin."""
+        if not self._restricted:
+            return
+        schedule = self._schedules.get_schedule(schedule_id)  # raises ScheduleNotFoundError if missing
+        if schedule.owner_id == self.access.user_id:
+            return
+        if self.access.can_manage("flow", schedule.registration_id):
+            return
+        raise NotAuthorizedError(self.access.user_id or -1, "modify this schedule")
+
+    def _require_use_visualization(self, viz_id: int) -> None:
+        """Viz read follows its parent table (or creator); sql-source viz is creator-only."""
+        if not self._restricted:
+            return
+        viz = self.repo.get_visualization(viz_id)
+        if viz is None:
+            raise VisualizationNotFoundError(viz_id=viz_id)
+        if viz.created_by == self.access.user_id:
+            return
+        if viz.catalog_table_id is not None and self.access.can_use("catalog_table", viz.catalog_table_id):
+            return
+        raise NotAuthorizedError(self.access.user_id or -1, "access this visualization")
+
+    def _require_manage_visualization(self, viz_id: int) -> None:
+        if not self._restricted:
+            return
+        viz = self.repo.get_visualization(viz_id)
+        if viz is None:
+            raise VisualizationNotFoundError(viz_id=viz_id)
+        if viz.created_by != self.access.user_id:
+            raise NotAuthorizedError(self.access.user_id or -1, "modify this visualization")
+
+    def _require_manage_dashboard(self, dashboard_id: int) -> None:
+        if not self._restricted:
+            return
+        dashboard = self.repo.get_dashboard(dashboard_id)
+        if dashboard is None:
+            raise DashboardNotFoundError(dashboard_id=dashboard_id)
+        if dashboard.created_by != self.access.user_id:
+            raise NotAuthorizedError(self.access.user_id or -1, "modify this dashboard")
+
+    def _require_use_viz_source(self, source) -> None:
+        """Guard an ad-hoc viz source. Table sources require read on that table."""
+        if self._restricted and getattr(source, "source_type", None) == "table" and source.table_id is not None:
+            self._require_use("catalog_table", source.table_id)
+
+    def _filter_by_access(self, items: list, resource_type: str) -> list:
+        if not self._restricted:
+            return items
+        allowed = self.access.accessible_ids(resource_type)
+        return [item for item in items if item.id in allowed]
 
     # ------------------------------------------------------------------ #
     # Private helpers
@@ -217,6 +314,7 @@ class CatalogService:
         description: str | None = None,
     ) -> CatalogNamespace:
         """Create a catalog (level 0) or schema (level 1) namespace."""
+        self._require_namespace_visible(parent_id)
         return self._namespaces.create_namespace(name, owner_id, parent_id, description)
 
     def update_namespace(
@@ -226,10 +324,12 @@ class CatalogService:
         description: str | None = None,
     ) -> CatalogNamespace:
         """Update a namespace's name and/or description."""
+        self._require_manage("catalog_namespace", namespace_id)
         return self._namespaces.update_namespace(namespace_id, name, description)
 
     def delete_namespace(self, namespace_id: int) -> None:
         """Delete a namespace if it has no children, flows or tables."""
+        self._require_manage("catalog_namespace", namespace_id)
         self._namespaces.delete_namespace(namespace_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:
@@ -238,16 +338,45 @@ class CatalogService:
 
     def list_namespaces(self, parent_id: int | None = None) -> list[CatalogNamespace]:
         """List namespaces, optionally filtered by parent."""
-        return self._namespaces.list_namespaces(parent_id)
+        namespaces = self._namespaces.list_namespaces(parent_id)
+        if self._restricted:
+            visible = self.access.visible_namespace_ids()
+            namespaces = [ns for ns in namespaces if ns.id in visible]
+        return namespaces
 
     def get_namespace_tree(self, user_id: int) -> list[NamespaceTree]:
         """Build the full catalog tree with flows, tables and visualizations nested under schemas."""
-        return self._namespaces.get_namespace_tree(
+        tree = self._namespaces.get_namespace_tree(
             user_id,
             list_visualizations=lambda uid: self._visualizations.list_visualization_library(uid),
             bulk_enrich_tables=self._tables.bulk_enrich_tables,
             bulk_enrich_flows=self._flows.bulk_enrich_flows,
         )
+        if not self._restricted:
+            return tree
+        return self._filter_namespace_tree(tree)
+
+    def _filter_namespace_tree(self, tree: list[NamespaceTree]) -> list[NamespaceTree]:
+        """Private-by-default tree: per-namespace items filtered to accessible ones;
+        a namespace is kept when it is visible (public/owned/granted) OR still has
+        any visible child item (context-only ancestor of a shared table/flow)."""
+        visible_ns = self.access.visible_namespace_ids()
+        flow_ids = self.access.accessible_ids("flow")
+        table_ids = self.access.accessible_ids("catalog_table")
+        user_id = self.access.user_id
+
+        def _prune(node: NamespaceTree) -> NamespaceTree | None:
+            node.flows = [f for f in node.flows if f.id in flow_ids]
+            node.tables = [t for t in node.tables if t.id in table_ids]
+            node.visualizations = [v for v in node.visualizations if v.created_by == user_id]
+            node.artifacts = [a for a in node.artifacts if getattr(a, "owner_id", None) == user_id]
+            node.children = [c for c in (_prune(child) for child in node.children) if c is not None]
+            has_items = bool(node.flows or node.tables or node.visualizations or node.artifacts or node.children)
+            if node.id in visible_ns or has_items:
+                return node
+            return None
+
+        return [n for n in (_prune(node) for node in tree) if n is not None]
 
     def get_default_namespace_id(self) -> int | None:
         """Return the ID of the ``General > default`` schema."""
@@ -266,6 +395,7 @@ class CatalogService:
         description: str | None = None,
     ) -> FlowRegistrationOut:
         """Register a new flow in the catalog."""
+        self._require_namespace_visible(namespace_id)
         return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description)
 
     def update_flow(
@@ -277,22 +407,28 @@ class CatalogService:
         namespace_id: int | None = None,
     ) -> FlowRegistrationOut:
         """Update a flow registration."""
+        self._require_manage("flow", registration_id)
+        if namespace_id is not None:
+            self._require_namespace_visible(namespace_id)
         return self._flows.update_flow(registration_id, requesting_user_id, name, description, namespace_id)
 
     def delete_flow(self, registration_id: int, delete_file: bool = False) -> None:
         """Delete a flow and its related favourites/follows (optionally its file)."""
+        self._require_manage("flow", registration_id)
         self._flows.delete_flow(registration_id, delete_file)
 
     def get_flow(self, registration_id: int, user_id: int) -> FlowRegistrationOut:
         """Get an enriched flow registration."""
+        self._require_use("flow", registration_id)
         return self._flows.get_flow(registration_id, user_id)
 
     def list_flows(self, user_id: int, namespace_id: int | None = None) -> list[FlowRegistrationOut]:
         """List flows, optionally filtered by namespace, enriched with user context."""
-        return self._flows.list_flows(user_id, namespace_id)
+        return self._filter_by_access(self._flows.list_flows(user_id, namespace_id), "flow")
 
     def list_artifacts_for_flow(self, registration_id: int) -> list[GlobalArtifactOut]:
         """List all active artifacts produced by a registered flow."""
+        self._require_use("flow", registration_id)
         return self._flows.list_artifacts_for_flow(registration_id)
 
     # ------------------------------------------------------------------ #
@@ -309,10 +445,23 @@ class CatalogService:
         search: str | None = None,
     ) -> PaginatedFlowRuns:
         """List run summaries (without snapshots) with total count for pagination."""
-        return self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset, search)
+        if self._restricted and registration_id is not None:
+            self._require_use("flow", registration_id)
+        elif self._restricted and schedule_id is not None:
+            schedule = self._schedules.get_schedule(schedule_id)
+            self._require_use("flow", schedule.registration_id)
+        result = self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset, search)
+        if self._restricted and registration_id is None and schedule_id is None:
+            # Global list: best-effort page filter to own runs ∪ runs of accessible
+            # flows (page totals may drift; by-id run reads are separately guarded).
+            allowed_flows = self.access.accessible_ids("flow")
+            user_id = self.access.user_id
+            result.runs = [r for r in result.runs if r.user_id == user_id or (r.registration_id in allowed_flows)]
+        return result
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
         """Get a single run including the YAML snapshot."""
+        self._require_use_run(run_id)
         return self._runs.get_run_detail(run_id)
 
     def get_run(self, run_id: int) -> FlowRun:
@@ -426,6 +575,7 @@ class CatalogService:
 
     def get_run_snapshot(self, run_id: int) -> str:
         """Return the flow snapshot text for a run."""
+        self._require_use_run(run_id)
         return self._runs.get_run_snapshot(run_id)
 
     # ------------------------------------------------------------------ #
@@ -484,6 +634,7 @@ class CatalogService:
         source_run_id: int | None = None,
     ) -> CatalogTableOut:
         """Register a new table by materialising it as a Delta table via the worker."""
+        self._require_namespace_visible(namespace_id)
         return self._tables.register_table(
             name, file_path, owner_id, namespace_id, description, source_registration_id, source_run_id
         )
@@ -504,6 +655,7 @@ class CatalogService:
         size_bytes: int | None = None,
     ) -> CatalogTableOut:
         """Register an already-materialized table (Delta or Parquet) without copying its data."""
+        self._require_namespace_visible(namespace_id)
         return self._tables.register_table_from_data(
             name,
             table_path,
@@ -559,6 +711,7 @@ class CatalogService:
         size_bytes: int | None = None,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table in-place, preserving its ID."""
+        self._require_manage("catalog_table", table_id)
         return self._tables.overwrite_table_data(
             table_id,
             table_path,
@@ -598,6 +751,7 @@ class CatalogService:
 
     def get_table(self, table_id: int, user_id: int | None = None) -> CatalogTableOut:
         """Get a catalog table by ID."""
+        self._require_use("catalog_table", table_id)
         return self._tables.get_table(table_id, user_id)
 
     def resolve_table_out(
@@ -608,11 +762,13 @@ class CatalogService:
         user_id: int | None = None,
     ) -> tuple[CatalogTableOut, list[dict]]:
         """Resolve a reference and return its DTO plus ambiguity warnings (empty when unambiguous)."""
-        return self._tables.resolve_table_out(reference, default_namespace_id, strict, user_id)
+        result, warnings = self._tables.resolve_table_out(reference, default_namespace_id, strict, user_id)
+        self._require_use("catalog_table", result.id)
+        return result, warnings
 
     def list_tables(self, namespace_id: int | None = None, user_id: int | None = None) -> list[CatalogTableOut]:
         """List tables, optionally filtered by namespace."""
-        return self._tables.list_tables(namespace_id, user_id)
+        return self._filter_by_access(self._tables.list_tables(namespace_id, user_id), "catalog_table")
 
     def update_table(
         self,
@@ -622,10 +778,14 @@ class CatalogService:
         namespace_id: int | None = None,
     ) -> CatalogTableOut:
         """Update a catalog table's metadata."""
+        self._require_manage("catalog_table", table_id)
+        if namespace_id is not None:
+            self._require_namespace_visible(namespace_id)
         return self._tables.update_table(table_id, name, description, namespace_id)
 
     def delete_table(self, table_id: int, delete_file: bool = False) -> None:
         """Delete a catalog table; optionally delete its managed storage (Delta dir / Parquet)."""
+        self._require_manage("catalog_table", table_id)
         self._tables.delete_table(table_id, delete_file)
 
     # ------------------------------------------------------------------ #
@@ -673,6 +833,7 @@ class CatalogService:
         source_table_versions: str | None = None,
     ) -> CatalogTableOut:
         """Update a virtual flow table's metadata or producer."""
+        self._require_manage("catalog_table", table_id)
         return self._virtual_tables.update_virtual_flow_table(
             table_id,
             name,
@@ -706,6 +867,7 @@ class CatalogService:
         sql_query: str | None = None,
     ) -> CatalogTableOut:
         """Update a query-based virtual table; re-derives schema if SQL changed."""
+        self._require_manage("catalog_table", table_id)
         return self._virtual_tables.update_query_virtual_table(table_id, name, description, namespace_id, sql_query)
 
     def resolve_query_virtual_table(
@@ -750,6 +912,7 @@ class CatalogService:
         user_id: int | None = None,
     ) -> CatalogTablePreview:
         """Read the first N rows from a catalog table (physical, virtual or Delta-versioned)."""
+        self._require_use("catalog_table", table_id)
         return self._previews.get_table_preview(table_id, limit, version, user_id)
 
     def resolve_virtual_flow_table_preview(
@@ -759,10 +922,12 @@ class CatalogService:
         user_id: int | None = None,
     ) -> CatalogTablePreview:
         """Resolve a virtual flow table and return a preview (worker-backed)."""
+        self._require_use("catalog_table", table_id)
         return self._previews.resolve_virtual_flow_table_preview(table_id, limit, user_id)
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table."""
+        self._require_use("catalog_table", table_id)
         return self._previews.get_table_history(table_id, limit)
 
     def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
@@ -796,6 +961,9 @@ class CatalogService:
         description: str | None = None,
     ) -> FlowScheduleOut:
         """Create a new schedule (interval, cron, table_trigger or table_set_trigger) for a flow."""
+        # use-level on the flow is enough: the schedule runs as its creator
+        # (FlowSchedule.owner_id), so secret/connection resolution stays self-consistent.
+        self._require_use("flow", registration_id)
         return self._schedules.create_schedule(
             registration_id=registration_id,
             owner_id=owner_id,
@@ -821,6 +989,7 @@ class CatalogService:
         description: str | None = None,
     ) -> FlowScheduleOut:
         """Update a schedule's enabled flag, interval, cron expression/timezone, name or description."""
+        self._require_manage_schedule(schedule_id)
         return self._schedules.update_schedule(
             schedule_id=schedule_id,
             enabled=enabled,
@@ -833,15 +1002,24 @@ class CatalogService:
 
     def delete_schedule(self, schedule_id: int) -> None:
         """Delete a schedule and its associated trigger table links."""
+        self._require_manage_schedule(schedule_id)
         self._schedules.delete_schedule(schedule_id)
 
     def get_schedule(self, schedule_id: int) -> FlowScheduleOut:
         """Get a schedule by ID."""
-        return self._schedules.get_schedule(schedule_id)
+        schedule = self._schedules.get_schedule(schedule_id)
+        if self._restricted and schedule.owner_id != self.access.user_id:
+            self._require_use("flow", schedule.registration_id)
+        return schedule
 
     def list_schedules(self, registration_id: int | None = None) -> list[FlowScheduleOut]:
         """List schedules, optionally filtered by flow."""
-        return self._schedules.list_schedules(registration_id)
+        schedules = self._schedules.list_schedules(registration_id)
+        if self._restricted:
+            allowed = self.access.accessible_ids("flow")
+            user_id = self.access.user_id
+            schedules = [s for s in schedules if s.owner_id == user_id or s.registration_id in allowed]
+        return schedules
 
     # ------------------------------------------------------------------ #
     # Trigger schedule now
@@ -863,10 +1041,14 @@ class CatalogService:
 
     def run_flow_now(self, registration_id: int, user_id: int) -> FlowRunOut:
         """Trigger a registered flow immediately without a schedule."""
+        self._require_use("flow", registration_id)
         return self._runs.run_flow_now(registration_id, user_id)
 
     def trigger_schedule_now(self, schedule_id: int, user_id: int) -> FlowRunOut:
         """Manually trigger a scheduled flow immediately."""
+        if self._restricted:
+            schedule = self._schedules.get_schedule(schedule_id)
+            self._require_use("flow", schedule.registration_id)
         return self._schedules.trigger_schedule_now(schedule_id, user_id)
 
     # ------------------------------------------------------------------ #
@@ -875,10 +1057,16 @@ class CatalogService:
 
     def list_active_runs(self) -> list[ActiveFlowRun]:
         """List all currently running flows (``ended_at IS NULL``)."""
-        return self._runs.list_active_runs()
+        runs = self._runs.list_active_runs()
+        if self._restricted:
+            allowed = self.access.accessible_ids("flow")
+            user_id = self.access.user_id
+            runs = [r for r in runs if r.user_id == user_id or r.registration_id in allowed]
+        return runs
 
     def cancel_run(self, run_id: int) -> None:
         """Cancel a running flow by terminating its subprocess and marking the run failed."""
+        self._require_use_run(run_id)
         self._runs.cancel_run(run_id)
 
     # ------------------------------------------------------------------ #
@@ -905,7 +1093,8 @@ class CatalogService:
         self, query: str, max_rows: int = DEFAULT_SQL_MAX_ROWS, user_id: int | None = None
     ) -> SqlQueryResult:
         """Execute a SQL query against all catalog tables (physical + virtual) via the worker."""
-        return self._sql.execute_sql_query(query, max_rows, user_id)
+        accessible = self.access.accessible_ids("catalog_table") if self._restricted else None
+        return self._sql.execute_sql_query(query, max_rows, user_id, accessible_table_ids=accessible)
 
     def save_sql_query_as_flow(
         self,
@@ -923,14 +1112,21 @@ class CatalogService:
 
     def list_visualizations_for_table(self, table_id: int, user_id: int | None = None) -> list[VisualizationOut]:
         """List visualizations bound to a specific catalog table."""
+        self._require_use("catalog_table", table_id)
         return self._visualizations.list_visualizations_for_table(table_id, user_id)
 
     def list_visualization_library(self, user_id: int | None = None) -> list[VisualizationOut]:
         """Return all saved visualizations as catalog library entries (specs omitted)."""
-        return self._visualizations.list_visualization_library(user_id)
+        vizzes = self._visualizations.list_visualization_library(user_id)
+        if self._restricted:
+            uid = self.access.user_id
+            table_ids = self.access.accessible_ids("catalog_table")
+            vizzes = [v for v in vizzes if v.created_by == uid or (v.catalog_table_id in table_ids)]
+        return vizzes
 
     def get_visualization(self, viz_id: int, user_id: int | None = None) -> VisualizationOut:
         """Get a single visualization by ID."""
+        self._require_use_visualization(viz_id)
         return self._visualizations.get_visualization(viz_id, user_id)
 
     _validate_thumbnail = staticmethod(validate_thumbnail)
@@ -942,21 +1138,29 @@ class CatalogService:
 
     def update_visualization(self, viz_id: int, payload: VisualizationUpdate, user_id: int) -> VisualizationOut:
         """Update a visualization's spec, name, namespace or thumbnail."""
+        self._require_manage_visualization(viz_id)
         return self._visualizations.update_visualization(viz_id, payload, user_id)
 
     def delete_visualization(self, viz_id: int, user_id: int) -> None:
         """Delete a visualization by ID."""
+        self._require_manage_visualization(viz_id)
         self._visualizations.delete_visualization(viz_id, user_id)
 
     # ================== Dashboards =========================================
 
     def list_dashboards(self, user_id: int | None = None) -> list[DashboardOut]:
         """List all dashboards."""
-        return self._visualizations.list_dashboards(user_id)
+        dashboards = self._visualizations.list_dashboards(user_id)
+        if self._restricted:
+            dashboards = [d for d in dashboards if d.created_by == self.access.user_id]
+        return dashboards
 
     def get_dashboard(self, dashboard_id: int, user_id: int | None = None) -> DashboardOut:
         """Get a dashboard by ID."""
-        return self._visualizations.get_dashboard(dashboard_id, user_id)
+        dashboard = self._visualizations.get_dashboard(dashboard_id, user_id)
+        if self._restricted and dashboard.created_by != self.access.user_id:
+            raise NotAuthorizedError(self.access.user_id or -1, "access this dashboard")
+        return dashboard
 
     def create_dashboard(self, payload: DashboardCreate, user_id: int) -> DashboardOut:
         """Create a new dashboard."""
@@ -964,10 +1168,12 @@ class CatalogService:
 
     def update_dashboard(self, dashboard_id: int, payload: DashboardUpdate, user_id: int) -> DashboardOut:
         """Update a dashboard's name, layout, namespace or description."""
+        self._require_manage_dashboard(dashboard_id)
         return self._visualizations.update_dashboard(dashboard_id, payload, user_id)
 
     def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
         """Delete a dashboard by ID."""
+        self._require_manage_dashboard(dashboard_id)
         self._visualizations.delete_dashboard(dashboard_id, user_id)
 
     # ---- Compute ----------------------------------------------------------
@@ -980,10 +1186,12 @@ class CatalogService:
         payload: dict | None = None,
     ) -> VisualizationComputeResponse:
         """Compute rows for a saved viz against its embedded source via the worker."""
+        self._require_use_visualization(viz_id)
         return self._visualizations.compute_saved_visualization_rows(viz_id, max_rows, user_id, payload)
 
     def get_visualization_fields_for_viz(self, viz_id: int, user_id: int) -> VisualizationFieldsResponse:
         """Return the list of fields available for a saved visualization's source."""
+        self._require_use_visualization(viz_id)
         return self._visualizations.get_visualization_fields_for_viz(viz_id, user_id)
 
     def compute_ad_hoc_visualization(
@@ -994,10 +1202,12 @@ class CatalogService:
         user_id: int,
     ) -> VisualizationComputeResponse:
         """Compute rows for an ad-hoc viz source via the worker."""
+        self._require_use_viz_source(source)
         return self._visualizations.compute_ad_hoc_visualization(source, payload, max_rows, user_id)
 
     def get_visualization_fields(self, source: VizSourceDescriptor, user_id: int) -> VisualizationFieldsResponse:
         """Return the list of fields available for a viz source descriptor."""
+        self._require_use_viz_source(source)
         return self._visualizations.get_visualization_fields(source, user_id)
 
     def get_table_column_stats(
@@ -1008,6 +1218,7 @@ class CatalogService:
         user_id: int,
     ) -> ColumnStatsResponse:
         """Return distinct values plus min/max for a single column on a catalog table."""
+        self._require_use("catalog_table", table_id)
         return self._visualizations.get_table_column_stats(table_id, column, limit, user_id)
 
 

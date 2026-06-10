@@ -9,7 +9,8 @@ from confluent_kafka import Consumer, ConsumerGroupTopicPartitions, KafkaError, 
 from confluent_kafka.admin import AdminClient
 from sqlalchemy.orm import Session
 
-from flowfile_core.database.models import KafkaConnection, Secret
+from flowfile_core.auth import sharing
+from flowfile_core.database.models import KafkaConnection, Secret, User
 from flowfile_core.schemas.kafka_schemas import (
     KafkaConnectionCreate,
     KafkaConnectionOut,
@@ -17,9 +18,12 @@ from flowfile_core.schemas.kafka_schemas import (
     KafkaConnectionUpdate,
     KafkaTopicInfo,
 )
+from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
 
 logger = logging.getLogger(__name__)
+
+_OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
 
 
 def decrypt_secret_value(encrypted: str) -> str:
@@ -89,7 +93,7 @@ def store_kafka_connection(db: Session, connection: KafkaConnectionCreate, user_
     return _to_connection_out(db_conn)
 
 
-def get_kafka_connection(db: Session, connection_id: int, user_id: int) -> KafkaConnection | None:
+def _get_own_kafka_connection(db: Session, connection_id: int, user_id: int) -> KafkaConnection | None:
     return (
         db.query(KafkaConnection)
         .filter(KafkaConnection.id == connection_id, KafkaConnection.user_id == user_id)
@@ -97,23 +101,64 @@ def get_kafka_connection(db: Session, connection_id: int, user_id: int) -> Kafka
     )
 
 
+def get_kafka_connection(db: Session, connection_id: int, user_id: int) -> KafkaConnection | None:
+    """Own connection first, else a group-shared one (use or manage grant)."""
+    db_conn = _get_own_kafka_connection(db, connection_id, user_id)
+    if db_conn:
+        return db_conn
+    if connection_id in sharing.granted_resource_ids(db, user_id, "kafka_connection"):
+        return db.query(KafkaConnection).filter(KafkaConnection.id == connection_id).first()
+    return None
+
+
 def get_kafka_connection_by_name(db: Session, connection_name: str, user_id: int) -> KafkaConnection | None:
-    return (
+    """Own connection first, else a group-shared one (lowest id wins on name collisions)."""
+    db_conn = (
         db.query(KafkaConnection)
         .filter(KafkaConnection.connection_name == connection_name, KafkaConnection.user_id == user_id)
+        .order_by(KafkaConnection.id.asc())
         .first()
     )
+    if db_conn:
+        return db_conn
+    granted_ids = sharing.granted_resource_ids(db, user_id, "kafka_connection")
+    if granted_ids:
+        return (
+            db.query(KafkaConnection)
+            .filter(KafkaConnection.connection_name == connection_name, KafkaConnection.id.in_(granted_ids))
+            .order_by(KafkaConnection.id.asc())
+            .first()
+        )
+    return None
 
 
 def list_kafka_connections(db: Session, user_id: int) -> list[KafkaConnectionOut]:
     connections = db.query(KafkaConnection).filter(KafkaConnection.user_id == user_id).all()
-    return [_to_connection_out(c) for c in connections]
+    result = [_to_connection_out(c, access=_OWNER_ACCESS) for c in connections]
+
+    details = sharing.granted_access_details(db, user_id, "kafka_connection")
+    if details:
+        shared_rows = (
+            db.query(KafkaConnection)
+            .filter(KafkaConnection.id.in_(details.keys()), KafkaConnection.user_id != user_id)
+            .order_by(KafkaConnection.id.asc())
+            .all()
+        )
+        granter_ids = {details[row.id][1] for row in shared_rows if details[row.id][1] is not None}
+        usernames = {}
+        if granter_ids:
+            usernames = dict(db.query(User.id, User.username).filter(User.id.in_(granter_ids)))
+        for row in shared_rows:
+            permission, granted_by = details[row.id]
+            access = AccessInfo(is_owner=False, access_level=permission, shared_by=usernames.get(granted_by))
+            result.append(_to_connection_out(row, access=access))
+    return result
 
 
 def update_kafka_connection(
     db: Session, connection_id: int, update: KafkaConnectionUpdate, user_id: int
 ) -> KafkaConnectionOut:
-    db_conn = get_kafka_connection(db, connection_id, user_id)
+    db_conn = _get_own_kafka_connection(db, connection_id, user_id)
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
@@ -152,10 +197,11 @@ def update_kafka_connection(
 
 
 def delete_kafka_connection(db: Session, connection_id: int, user_id: int) -> None:
-    db_conn = get_kafka_connection(db, connection_id, user_id)
+    db_conn = _get_own_kafka_connection(db, connection_id, user_id)
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
+    sharing.delete_grants_for_resource(db, "kafka_connection", db_conn.id)
     secret_ids = [db_conn.sasl_password_id, db_conn.ssl_key_id]
     for sid in secret_ids:
         if sid:
@@ -342,7 +388,7 @@ def get_consumer_group_offsets(db: Session, group_id: str, connection_id: int, u
 # Helpers
 
 
-def _to_connection_out(db_conn: KafkaConnection) -> KafkaConnectionOut:
+def _to_connection_out(db_conn: KafkaConnection, access: AccessInfo | None = None) -> KafkaConnectionOut:
     return KafkaConnectionOut(
         id=db_conn.id,
         connection_name=db_conn.connection_name,
@@ -353,4 +399,5 @@ def _to_connection_out(db_conn: KafkaConnection) -> KafkaConnectionOut:
         schema_registry_url=db_conn.schema_registry_url,
         created_at=db_conn.created_at,
         updated_at=db_conn.updated_at,
+        access=access,
     )

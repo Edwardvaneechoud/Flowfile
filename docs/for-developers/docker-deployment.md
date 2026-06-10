@@ -142,3 +142,50 @@ For high-availability deployments:
 - Deploy multiple worker instances
 - Use Redis for distributed task queue
 - Place services behind a load balancer
+
+## Group-Based Sharing (multi-user mode)
+
+In Docker (multi-user) mode, Flowfile supports sharing resources with **user groups**.
+This feature is dormant in the desktop/Electron app.
+
+### ⚠️ Breaking change: the catalog is now private-by-default
+
+Previously the data catalog (namespaces, tables, flows, runs, visualizations,
+dashboards) was **globally visible** to every authenticated user in Docker mode.
+As of the release that introduces group sharing, the catalog is
+**private-by-default**: each user sees only the resources they own, the ones
+explicitly shared with a group they belong to, and the seeded *public* system
+namespaces (`General`, `default`, `Unnamed Flows`, `Local Flows`) as tree
+containers. Global admins still see everything.
+
+If your team relied on the old "everyone sees every flow/table" behavior, create a
+group, add the relevant members, and share the namespaces/tables/flows you want
+shared. No data is lost in the upgrade — only its *visibility* narrows.
+
+### How it works
+
+- **Groups**: only global admins create groups (`/user-groups`, or the **User
+  Groups** sidebar entry). Each group has member roles (`owner` / `manager` /
+  `member`) so a group owner can manage membership without being a global admin.
+- **Sharing**: owners share a resource with a group at `use` (read/execute) or
+  `manage` (edit + re-share) level via the **Share** action in the UI.
+  - *Secrets* are **use-only** when shared: a group's flows can run with the
+    credential, but members can never view its value. Sharing a secret for use is
+    therefore security-equivalent to giving the group that credential.
+  - *Connections* (database, cloud, Google Analytics, Kafka): a shared connection
+    is usable in flows directly. A `manage`-grantee who changes the connection's
+    target (host/endpoint/protocol) must re-enter the credentials.
+- **Schedules**: a `use`-level member may schedule a shared flow; the run executes
+  as that member, so its secret/connection references resolve against the member's
+  own grants. Make sure the member also has access to everything the flow uses.
+- **Not shared**: AI BYOK keys and uploaded files stay outside the sharing model
+  (the Docker uploads directory is already common to all users).
+
+### Operator notes
+
+- `FLOWFILE_INTERNAL_SERVICE_USER_ID` (default `1`) selects which user the kernel
+  internal-service principal maps to when no kernel id is supplied. In hardened
+  deployments point it at a dedicated service account that owns no resources.
+- Migration `020` adds the `user_groups`, `user_group_memberships`, and
+  `resource_grants` tables and an `is_public` flag on namespaces; it runs
+  automatically at core startup.

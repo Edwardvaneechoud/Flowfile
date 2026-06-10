@@ -58,6 +58,14 @@
                 <i class="fa-solid fa-database"></i>
                 <span>{{ connection.connectionName }}</span>
                 <span class="badge">{{ connection.databaseType }}</span>
+                <span
+                  v-if="isShared(connection)"
+                  class="shared-badge"
+                  :title="sharedTitle(connection)"
+                >
+                  <i class="fa-solid fa-share-nodes"></i>
+                  Shared · {{ connection.access?.access_level }}
+                </span>
               </div>
               <div class="connection-details">
                 <span>{{
@@ -68,11 +76,26 @@
               </div>
             </div>
             <div class="connection-actions">
-              <button type="button" class="btn btn-secondary" @click="showEditModal(connection)">
+              <button
+                v-if="isMultiUser && isOwned(connection) && connection.id != null"
+                type="button"
+                class="btn btn-secondary"
+                @click="openShare(connection)"
+              >
+                <i class="fa-solid fa-share-nodes"></i>
+                <span>Share</span>
+              </button>
+              <button
+                v-if="canManage(connection)"
+                type="button"
+                class="btn btn-secondary"
+                @click="showEditModal(connection)"
+              >
                 <i class="fa-solid fa-edit"></i>
                 <span>Modify</span>
               </button>
               <button
+                v-if="canManage(connection)"
                 type="button"
                 class="btn btn-danger"
                 @click="showDeleteModal(connection.connectionName)"
@@ -107,6 +130,15 @@
         @cancel="dialogVisible = false"
       />
     </el-dialog>
+
+    <ShareDialog
+      v-if="shareConnection && shareConnection.id != null"
+      v-model="showShareDialog"
+      resource-type="database_connection"
+      :resource-id="shareConnection.id"
+      :resource-name="shareConnection.connectionName"
+      :can-manage-grants="shareConnection.access?.is_owner !== false"
+    />
 
     <el-dialog
       v-model="deleteDialogVisible"
@@ -149,6 +181,8 @@ import {
 } from "./databaseConnectionTypes";
 import type { DatabaseType } from "./databaseConnectionTypes";
 import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
+import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import { useMultiUser } from "../../composables/useMultiUser";
 
 // State
 const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
@@ -160,6 +194,23 @@ const isSubmitting = ref(false);
 const isDeleting = ref(false);
 const connectionToDelete = ref("");
 const activeConnection = ref<FullDatabaseConnection | undefined>(undefined);
+
+const { isMultiUser } = useMultiUser();
+const showShareDialog = ref(false);
+const shareConnection = ref<FullDatabaseConnectionInterface | null>(null);
+
+const isOwned = (c: FullDatabaseConnectionInterface) => c.access?.is_owner !== false;
+const isShared = (c: FullDatabaseConnectionInterface) => !!c.access && c.access.is_owner === false;
+// Owners and manage-grantees can edit/delete; use-grantees cannot.
+const canManage = (c: FullDatabaseConnectionInterface) =>
+  !c.access || c.access.is_owner || c.access.access_level === "manage";
+const sharedTitle = (c: FullDatabaseConnectionInterface) =>
+  c.access?.shared_by ? `Shared by ${c.access.shared_by}` : "Shared with you";
+
+const openShare = (c: FullDatabaseConnectionInterface) => {
+  shareConnection.value = c;
+  showShareDialog.value = true;
+};
 
 const fetchConnections = async () => {
   isLoading.value = true;
@@ -302,6 +353,19 @@ onMounted(() => {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   margin-left: var(--spacing-2);
+}
+
+.shared-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-3);
+  border-radius: var(--border-radius-full);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
 }
 
 .connection-details {
