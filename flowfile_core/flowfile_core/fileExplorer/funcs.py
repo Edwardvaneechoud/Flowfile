@@ -427,6 +427,8 @@ def validate_path_under_cwd(user_path: str) -> str:
         if ".." in user_path:
             raise HTTPException(403, "Access denied: path traversal not allowed")
         normalized_path = os.path.normpath(os.path.expanduser(user_path))
+        if not os.path.isabs(normalized_path):
+            normalized_path = os.path.normpath(os.path.join(os.getcwd(), normalized_path))
         for root in _local_filesystem_roots():
             base_path = os.path.normpath(root)
             fullpath = os.path.normpath(os.path.join(base_path, normalized_path))

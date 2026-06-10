@@ -2094,6 +2094,18 @@ def test_validate_path_under_cwd_electron_blocks_dot_dot(monkeypatch):
     assert exc_info.value.status_code == 403
 
 
+def test_validate_path_under_cwd_electron_relative_path_resolves_to_cwd(monkeypatch):
+    """In electron mode a relative path anchors to the cwd, not the filesystem
+    root — joining it onto '/' would point create_flow at a nonexistent dir."""
+    from flowfile_core.configs import settings
+    from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
+
+    monkeypatch.setattr(settings, "is_electron_mode", lambda: True)
+
+    result = validate_path_under_cwd(os.path.join("some_dir", "flow.yaml"))
+    assert result == os.path.normpath(os.path.join(os.getcwd(), "some_dir", "flow.yaml"))
+
+
 def test_get_available_flow_files_path_traversal_blocked():
     """Test that available_flow_files blocks access to directories outside sandbox."""
     response = client.get("/files/available_flow_files", params={"path": "/etc"})
