@@ -191,6 +191,12 @@ def find_registration_by_path(flow_path: str) -> FlowRegistrationSnapshot | None
         return _snapshot(service.repo.get_flow_by_path(flow_path))
 
 
+def namespace_exists(namespace_id: int) -> bool:
+    """Return whether a catalog namespace with the given id exists."""
+    with get_db_context() as db:
+        return SQLAlchemyCatalogRepository(db).get_namespace(namespace_id) is not None
+
+
 def find_registration_by_name(name: str, namespace_id: int) -> FlowRegistrationSnapshot | None:
     """Return the FlowRegistrationSnapshot for ``(name, namespace_id)``, or None.
 

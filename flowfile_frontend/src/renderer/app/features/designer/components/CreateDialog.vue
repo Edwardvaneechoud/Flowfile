@@ -98,7 +98,6 @@
 import { ref, watch, computed } from "vue";
 import { ElMessage } from "element-plus";
 import FileBrowser from "../../../components/common/FileBrowser/fileBrowser.vue";
-import { saveFlow } from "../../../components/layout/Header/utils";
 import { createFlow } from "../../../components/nodes/nodeLogic";
 import { getCatalogFlowsDirectory } from "../../../api/file.api";
 import { ALLOWED_SAVE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
@@ -178,17 +177,8 @@ const handleCreateAtPath = async (flowPath: string) => {
   }
 
   try {
-    const newFlowId = await createFlow(flowPath);
-    // The create endpoint auto-registers in the default namespace. If the user
-    // picked a different namespace, re-register by calling save_flow with
-    // namespace_id (same path → backend updates the existing registration).
-    if (registerInCatalog.value && selectedNamespaceId.value !== null) {
-      try {
-        await saveFlow(newFlowId, flowPath, selectedNamespaceId.value);
-      } catch (regErr) {
-        console.warn("Created flow but failed to set catalog namespace:", regErr);
-      }
-    }
+    const namespaceId = registerInCatalog.value ? selectedNamespaceId.value : null;
+    const newFlowId = await createFlow(flowPath, null, namespaceId);
     ElMessage.success("Flow created successfully");
     isVisible.value = false;
     const catalogRef =
@@ -199,7 +189,7 @@ const handleCreateAtPath = async (flowPath: string) => {
   } catch (error: any) {
     console.error("Error creating flow:", error);
     ElMessage.error({
-      message: error?.message || "Failed to create flow",
+      message: error?.response?.data?.detail || error?.message || "Failed to create flow",
       duration: 5000,
     });
   }
@@ -220,14 +210,7 @@ const canCreateInCatalog = computed(() => {
 const handleCreateInCatalog = async () => {
   if (!canCreateInCatalog.value) return;
   try {
-    const newFlowId = await createFlow(catalogFilePath.value);
-    if (selectedNamespaceId.value !== null) {
-      try {
-        await saveFlow(newFlowId, catalogFilePath.value, selectedNamespaceId.value);
-      } catch (regErr) {
-        console.warn("Created flow but failed to set catalog namespace:", regErr);
-      }
-    }
+    const newFlowId = await createFlow(catalogFilePath.value, null, selectedNamespaceId.value);
     ElMessage.success("Flow created and registered in catalog");
     isVisible.value = false;
     const catalogRef = catalogRefFor(basenameNoExt(catalogFlowName.value.trim()));
@@ -237,7 +220,7 @@ const handleCreateInCatalog = async () => {
   } catch (error: any) {
     console.error("Error creating flow in catalog:", error);
     ElMessage.error({
-      message: error?.message || "Failed to create flow",
+      message: error?.response?.data?.detail || error?.message || "Failed to create flow",
       duration: 5000,
     });
   }
