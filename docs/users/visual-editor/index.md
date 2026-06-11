@@ -2,6 +2,9 @@
 
 Build powerful data pipelines without writing code using Flowfile's intuitive drag-and-drop interface.
 
+!!! tip "Try it in your browser first"
+    Want the visual editor with zero install? [**Flowfile Lite**](../deployment/lite.md) runs this same canvas entirely in your browser at [demo.flowfile.org](https://demo.flowfile.org) — a lightweight subset with no backend, databases, scheduler, or AI.
+
 ## What You'll Learn
 
 - **Build flows visually** - Drag, drop, and connect nodes

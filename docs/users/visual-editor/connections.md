@@ -10,6 +10,9 @@ Connections store your credentials securely (passwords are encrypted via [Secret
 so you can reference them by name in Database Reader, Database Writer, Cloud Storage Reader,
 and Cloud Storage Writer nodes without re-entering credentials each time.
 
+!!! info "Not in Flowfile Lite"
+    Saved connections require the full desktop/server build. The browser-only [Flowfile Lite](../deployment/lite.md) edition has no backend, so database, cloud storage, and Kafka connections (and the secrets that back them) are not available.
+
 ---
 
 ## Database Connections

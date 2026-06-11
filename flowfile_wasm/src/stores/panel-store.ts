@@ -3,7 +3,9 @@
  * Saves and restores draggable panel positions and sizes using localStorage
  */
 
-const PANEL_STORAGE_KEY = 'flowfile-panel-state'
+// v2: bumped after the app-shell redesign so stale geometry from the old
+// top-tabs layout is discarded and panels open at correct defaults.
+const PANEL_STORAGE_KEY = 'flowfile-panel-state-v2'
 
 export interface PanelState {
   width: number
@@ -12,6 +14,9 @@ export interface PanelState {
   top: number
   isMinimized: boolean
   zIndex?: number
+  // Fullscreen state + pre-fullscreen geometry (so reloads can restore it).
+  isFullScreen?: boolean
+  prevGeom?: { width: number; height: number; left: number; top: number }
   // Viewport dimensions at the time of saving (for resize detection on load)
   savedViewportWidth?: number
   savedViewportHeight?: number

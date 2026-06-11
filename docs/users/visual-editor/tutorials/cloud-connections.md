@@ -2,6 +2,9 @@
 
 This guide walks you through creating AWS S3 connections in Flowfile to access your cloud data.
 
+!!! info "Not in Flowfile Lite"
+    Cloud storage connections require the full desktop/server build. This guide does not apply to the browser-only [Flowfile Lite](../../deployment/lite.md) edition, which has no backend.
+
 ## Overview
 
 Cloud storage connections securely store your AWS credentials and configuration, allowing you to reuse them across multiple workflows without re-entering credentials.

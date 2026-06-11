@@ -7,7 +7,7 @@
     </div>
 
     <div v-else-if="columns.length === 0 && availableColumns.length === 0" class="no-columns">
-      Run the flow to see available columns.
+      Connect an input to see its columns.
     </div>
 
     <div v-else-if="availableColumns.length > 0" class="table-wrapper">

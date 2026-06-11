@@ -1,0 +1,130 @@
+flowfile_version: 1.0.0
+flowfile_id: 1700000000002
+flowfile_name: Employee Directory Cleanup
+flowfile_settings:
+  description: ''
+  execution_mode: Development
+  execution_location: local
+  auto_save: true
+  show_detailed_progress: false
+nodes:
+  - id: 1
+    type: read
+    is_start_node: true
+    description: Read Employees
+    x_position: 120
+    y_position: 240
+    input_ids: []
+    outputs:
+      - 2
+    setting_input:
+      cache_results: false
+      file_name: employees.csv
+      received_file:
+        name: employees.csv
+        path: employees.csv
+        file_type: csv
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          has_headers: true
+          encoding: utf-8
+  - id: 2
+    type: filter
+    is_start_node: false
+    description: Active employees only
+    x_position: 380
+    y_position: 240
+    input_ids:
+      - 1
+    outputs:
+      - 3
+    setting_input:
+      cache_results: false
+      filter_input:
+        mode: basic
+        basic_filter:
+          field: status
+          operator: equals
+          value: Active
+        advanced_filter: ''
+  - id: 3
+    type: select
+    is_start_node: false
+    description: Tidy columns
+    x_position: 640
+    y_position: 240
+    input_ids:
+      - 2
+    outputs:
+      - 4
+    setting_input:
+      cache_results: false
+      select_input:
+        - old_name: emp_id
+          new_name: emp_id
+          data_type: ''
+          keep: true
+          position: 0
+        - old_name: first_name
+          new_name: first_name
+          data_type: ''
+          keep: true
+          position: 1
+        - old_name: last_name
+          new_name: last_name
+          data_type: ''
+          keep: true
+          position: 2
+        - old_name: department
+          new_name: department
+          data_type: ''
+          keep: true
+          position: 3
+        - old_name: status
+          new_name: status
+          data_type: ''
+          keep: false
+          position: 4
+        - old_name: salary
+          new_name: salary
+          data_type: ''
+          keep: false
+          position: 5
+  - id: 4
+    type: sort
+    is_start_node: false
+    description: Sort by department
+    x_position: 900
+    y_position: 240
+    input_ids:
+      - 3
+    outputs:
+      - 5
+    setting_input:
+      cache_results: false
+      sort_input:
+        - column: department
+          how: asc
+        - column: last_name
+          how: asc
+  - id: 5
+    type: output
+    is_start_node: false
+    description: Export directory
+    x_position: 1160
+    y_position: 240
+    input_ids:
+      - 4
+    outputs: []
+    setting_input:
+      cache_results: false
+      output_settings:
+        name: employee_directory.csv
+        directory: .
+        file_type: csv
+        write_mode: overwrite
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          encoding: utf-8

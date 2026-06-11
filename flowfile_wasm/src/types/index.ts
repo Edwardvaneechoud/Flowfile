@@ -171,7 +171,7 @@ export interface UnpivotInput {
 
 // OUTPUT SCHEMAS (matches flowfile_core/schemas/input_schema.py)
 
-export type OutputFileType = 'csv' | 'parquet'
+export type OutputFileType = 'csv' | 'parquet' | 'excel'
 export type OutputWriteMode = 'overwrite' | 'new file' | 'append'
 
 export interface OutputCsvTable {
@@ -184,7 +184,13 @@ export interface OutputParquetTable {
   file_type: 'parquet'
 }
 
-export type OutputTableSettings = OutputCsvTable | OutputParquetTable
+// Matches flowfile_core OutputExcelTable
+export interface OutputExcelTable {
+  file_type: 'excel'
+  sheet_name: string
+}
+
+export type OutputTableSettings = OutputCsvTable | OutputParquetTable | OutputExcelTable
 
 export type OutputPolarsMethod = 'sink_csv' | 'sink_parquet'
 
@@ -246,6 +252,27 @@ export interface InputCsvTable {
   ignore_errors?: boolean
 }
 
+// Matches flowfile_core InputExcelTable. start_column/end_row/end_column are
+// carried for save-file compatibility; the WASM engine honors sheet_name,
+// has_headers and start_row only.
+export interface InputExcelTable {
+  file_type: 'excel'
+  sheet_name?: string | null
+  start_row?: number
+  start_column?: number
+  end_row?: number
+  end_column?: number
+  has_headers: boolean
+  type_inference?: boolean
+}
+
+// Matches flowfile_core InputParquetTable
+export interface InputParquetTable {
+  file_type: 'parquet'
+}
+
+export type InputTableSettings = InputCsvTable | InputExcelTable | InputParquetTable
+
 // Matches flowfile_core ReceivedTable
 export interface ReceivedTable {
   id?: number
@@ -257,7 +284,7 @@ export interface ReceivedTable {
   fields?: MinimalFieldInfo[]
   abs_file_path?: string
   file_type: 'csv' | 'json' | 'parquet' | 'excel'
-  table_settings: InputCsvTable
+  table_settings: InputTableSettings
 }
 
 // NODE SETTING TYPES (matches flowfile_core node structures)
@@ -275,6 +302,13 @@ export interface NodeManualInputSettings extends NodeBase {
 
 export interface NodeExternalDataSettings extends NodeBase {
   /** Name of the external dataset (key into inputData prop) */
+  dataset_name: string
+  /** Schema snapshot saved on export (data itself is NOT saved) */
+  schema_snapshot?: MinimalFieldInfo[]
+}
+
+export interface NodeReadFromCatalogSettings extends NodeBase {
+  /** Name of the catalog dataset (user-uploaded table in the Catalog) */
   dataset_name: string
   /** Schema snapshot saved on export (data itself is NOT saved) */
   schema_snapshot?: MinimalFieldInfo[]
@@ -337,11 +371,17 @@ export interface NodeExternalOutputSettings extends NodeSingleInput {
   output_name: string
 }
 
+export interface NodeWriteToCatalogSettings extends NodeSingleInput {
+  /** Name of the catalog table to write the result to (created/overwritten on run) */
+  dataset_name: string
+}
+
 // Union type for all node settings
 export type NodeSettings =
   | NodeReadSettings
   | NodeManualInputSettings
   | NodeExternalDataSettings
+  | NodeReadFromCatalogSettings
   | NodeFilterSettings
   | NodeSelectSettings
   | NodeSortSettings
@@ -355,6 +395,7 @@ export type NodeSettings =
   | NodeUnpivotSettings
   | NodeOutputSettings
   | NodeExternalOutputSettings
+  | NodeWriteToCatalogSettings
 
 // FLOWFILE DATA STRUCTURE (for save/load - matches flowfile_core/schemas/schemas.py)
 
@@ -438,6 +479,10 @@ export interface DataPreview {
 
 export interface DownloadInfo {
   content: string
+  /** 'binary' = the file bytes are staged engine-side (take_output_binary), not in content. */
+  content_kind?: 'text' | 'binary'
+  /** 'arrow-ipc' = staged bytes are Arrow IPC that JS must encode to the final format. */
+  transport?: 'arrow-ipc' | null
   file_name: string
   file_type: string
   mime_type: string
@@ -479,6 +524,8 @@ export interface NodeResult {
   error?: string
   data?: DataPreview
   schema?: ColumnSchema[]
+  schemaResolved?: boolean  // false = output schema is data-dependent (e.g. pivot) and only known after a run
+
   execution_time?: number
   download?: DownloadInfo  // For output nodes - contains downloadable file data
   graphic_walker_input?: GraphicWalkerInput  // For explore_data nodes - full dataset + fields + saved specs
@@ -498,6 +545,7 @@ export const NODE_TYPES = {
   read: 'read',  // Matches flowfile_core's 'read' type
   manual_input: 'manual_input',
   external_data: 'external_data',
+  read_from_catalog: 'read_from_catalog',
 
   // Transform nodes
   filter: 'filter',
@@ -519,6 +567,7 @@ export const NODE_TYPES = {
   explore_data: 'explore_data',  // Matches flowfile_core's 'explore_data' type
   output: 'output',
   external_output: 'external_output',
+  write_to_catalog: 'write_to_catalog',
 } as const
 
 export type NodeType = typeof NODE_TYPES[keyof typeof NODE_TYPES]
