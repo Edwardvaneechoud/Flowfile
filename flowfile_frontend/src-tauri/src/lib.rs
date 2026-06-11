@@ -179,6 +179,9 @@ fn create_main_window(
         // column reorder, etc. We're not handling file drops in this app, so
         // disable the native capture and let the webview see the events.
         .disable_drag_drop_handler()
+        // macOS delivers the first click on an unfocused window to focus only;
+        // opt in so that click also reaches the page (no-op on other platforms).
+        .accept_first_mouse(true)
         .initialization_script(&init_script)
         .build()
 }

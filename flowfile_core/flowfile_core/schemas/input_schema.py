@@ -29,6 +29,7 @@ from flowfile_core.schemas.yaml_types import (
 )
 from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
+from shared.path_utils import is_url
 
 SecretRef = Annotated[
     str, StringConstraints(min_length=1, max_length=100), Field(description="An ID referencing an encrypted secret.")
@@ -214,6 +215,9 @@ class ReceivedTable(BaseModel):
 
     def set_absolute_filepath(self):
         """Resolves the path to an absolute file path."""
+        if is_url(self.path):
+            self.abs_file_path = self.path
+            return
         base_path = Path(self.path).expanduser()
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path

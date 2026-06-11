@@ -256,12 +256,15 @@
           :runs="catalogStore.runs"
           @view-run="handleViewRun"
           @view-flow="navigateToFlow($event)"
+          @view-schedule-runs="navigateToScheduleRuns"
+          @open-snapshot="openRunSnapshot($event)"
           @view-table="selectTable($event)"
           @create-schedule="showCreateSchedule = true"
           @toggle-schedule="handleToggleSchedule"
           @delete-schedule="handleDeleteSchedule"
           @run-now="handleRunNow"
           @cancel-schedule-run="handleCancelScheduleRun"
+          @select-schedule="selectSchedule"
           @open-tab="handleTabClick($event)"
         />
       </div>
@@ -457,7 +460,7 @@
 //   - 19 async handlers: move into catalog-store.ts as Pinia actions (~lines 657-927)
 //   - useRouteSync composable: applyRouteToStore (~lines 930-993)
 import { computed, h, onMounted, onUnmounted, ref, watch } from "vue";
-import { ElCheckbox, ElMessage, ElMessageBox } from "element-plus";
+import { ElCheckbox, ElLoading, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -995,13 +998,23 @@ async function handleRenameFlow(flowId: number, newName: string) {
   }
 }
 
+let openingSnapshot = false;
+
 async function openRunSnapshot(runId: number) {
+  if (openingSnapshot) return;
+  openingSnapshot = true;
+  const loading = ElLoading.service({ text: "Opening flow version…" });
   try {
     const flowId = await CatalogApi.openRunSnapshot(runId);
     flowStore.setFlowId(flowId);
-    router.push({ name: "designer" });
+    const failure = await router.push({ name: "designer" });
+    if (failure) ElMessage.error("Could not open the designer");
   } catch (e: any) {
+    console.error("Failed to open run snapshot:", e);
     ElMessage.error(e?.response?.data?.detail ?? "Failed to open flow snapshot");
+  } finally {
+    loading.close();
+    openingSnapshot = false;
   }
 }
 
@@ -1595,6 +1608,7 @@ onUnmounted(() => {
 .catalog-view .flow-link {
   cursor: pointer;
   transition: color var(--transition-fast);
+  user-select: none;
 }
 
 .catalog-view .flow-link:hover {
@@ -1605,6 +1619,12 @@ onUnmounted(() => {
   color: var(--color-primary);
   cursor: pointer;
   font-size: var(--font-size-xs);
+  user-select: none;
+  /* Oversized hit target: sloppy trackpad clicks that drift a few px must
+     still release inside the element, or no click event fires at all. */
+  display: inline-block;
+  padding: var(--spacing-1) var(--spacing-2);
+  margin: calc(-1 * var(--spacing-1)) calc(-1 * var(--spacing-2));
 }
 
 .catalog-view .no-snapshot {
