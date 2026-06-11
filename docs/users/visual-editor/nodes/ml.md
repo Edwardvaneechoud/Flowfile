@@ -5,6 +5,9 @@ read off quality metrics — all from the visual canvas. Compute runs in Polars
 (via [polars-ds](https://github.com/abstractqqq/polars_ds_extension)), so you
 do not need scikit-learn or any extra Python environment.
 
+!!! info "Not in Flowfile Lite"
+    Machine Learning nodes require the full desktop/server build. The browser-only [Flowfile Lite](../../deployment/lite.md) edition does not include Train / Apply / Evaluate Model.
+
 ## The pipeline shape
 
 A typical ML flow chains five nodes end-to-end:

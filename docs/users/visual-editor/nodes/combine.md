@@ -6,6 +6,9 @@ Depending on the method used, datasets can be merged by **matching values**, **s
 
 These transformations are essential for tasks like **data preparation, consolidation, and relationship mapping** across datasets.
 
+!!! info "Only Join is in Flowfile Lite"
+    The browser-only [Flowfile Lite](../../deployment/lite.md) build supports the **Join** node. **Fuzzy Match**, **Union Data**, **Cross Join**, and **Graph Solver** require the full desktop/server build.
+
 ## Node Details
 
 ### ![Join](../../../assets/images/nodes/join.png){ width="50" height="50" } Join  

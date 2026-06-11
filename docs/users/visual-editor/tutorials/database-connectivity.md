@@ -4,6 +4,9 @@
 
 Flowfile's latest release introduces powerful database connectivity features that allow you to seamlessly integrate with PostgreSQL databases like Supabase. In this guide, I'll walk you through the entire process of connecting to a database, reading data, transforming it, and writing it back.
 
+!!! info "Not in Flowfile Lite"
+    Database connectivity requires the full desktop/server build. This guide does not apply to the browser-only [Flowfile Lite](../../deployment/lite.md) edition, which has no backend.
+
 ## Prerequisites
 
 Before diving in, make sure you have:

@@ -3,9 +3,13 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
 const isLibBuild = process.env.BUILD_MODE === 'lib'
+const appVersion = process.env.npm_package_version || '0.1.0'
 
 export default defineConfig({
   plugins: [vue()],
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion)
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src')
@@ -43,6 +47,6 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['pyodide'],
-    include: ['react', 'react-dom/client', '@kanaries/graphic-walker']
+    include: ['react', 'react-dom/client', '@kanaries/graphic-walker', 'grid-layout-plus']
   }
 })

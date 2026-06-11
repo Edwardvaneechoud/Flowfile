@@ -2,6 +2,9 @@
 
 Query your catalog tables directly using SQL — no need to build a flow for quick ad-hoc analysis.
 
+!!! info "Not in Flowfile Lite"
+    The SQL editor requires the full desktop/server build and is not available in the browser-only [Flowfile Lite](../../deployment/lite.md) edition.
+
 ---
 
 ## Opening the SQL Editor

@@ -1,0 +1,89 @@
+flowfile_version: 1.0.0
+flowfile_id: 1700000000004
+flowfile_name: Web Traffic by Page
+flowfile_settings:
+  description: ''
+  execution_mode: Development
+  execution_location: local
+  auto_save: true
+  show_detailed_progress: false
+nodes:
+  - id: 1
+    type: read
+    is_start_node: true
+    description: Read Page Views
+    x_position: 120
+    y_position: 240
+    input_ids: []
+    outputs:
+      - 2
+    setting_input:
+      cache_results: false
+      file_name: page_views.csv
+      received_file:
+        name: page_views.csv
+        path: page_views.csv
+        file_type: csv
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          has_headers: true
+          encoding: utf-8
+  - id: 2
+    type: group_by
+    is_start_node: false
+    description: Views & users per page
+    x_position: 400
+    y_position: 240
+    input_ids:
+      - 1
+    outputs:
+      - 3
+    setting_input:
+      cache_results: false
+      groupby_input:
+        agg_cols:
+          - old_name: page
+            agg: groupby
+            new_name: page
+          - old_name: event_id
+            agg: count
+            new_name: views
+          - old_name: user_id
+            agg: n_unique
+            new_name: unique_users
+  - id: 3
+    type: sort
+    is_start_node: false
+    description: Most viewed first
+    x_position: 680
+    y_position: 240
+    input_ids:
+      - 2
+    outputs:
+      - 4
+    setting_input:
+      cache_results: false
+      sort_input:
+        - column: views
+          how: desc
+  - id: 4
+    type: output
+    is_start_node: false
+    description: Export page traffic
+    x_position: 940
+    y_position: 240
+    input_ids:
+      - 3
+    outputs: []
+    setting_input:
+      cache_results: false
+      output_settings:
+        name: page_traffic.csv
+        directory: .
+        file_type: csv
+        write_mode: overwrite
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          encoding: utf-8

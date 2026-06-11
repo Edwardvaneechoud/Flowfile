@@ -307,7 +307,7 @@ export function inferOutputSchema(
  * Check if a node type is a source node (produces data rather than transforming it)
  */
 export function isSourceNode(nodeType: string): boolean {
-  return nodeType === 'read' || nodeType === 'manual_input' || nodeType === 'external_data'
+  return nodeType === 'read' || nodeType === 'manual_input' || nodeType === 'external_data' || nodeType === 'read_from_catalog'
 }
 
 /**
@@ -344,6 +344,20 @@ function inferDataTypeFromValues(values: string[]): string {
   if (allNumbers) return 'Float64'
 
   return 'String'
+}
+
+/**
+ * Schema from a FileContent: text delegates to CSV inference; binary
+ * (xlsx/parquet) returns null — the schema resolves on execution, riding the
+ * same lazy-execution contract as polars_code/pivot.
+ */
+export function inferSchemaFromContent(
+  content: import('../types/file-content').FileContent,
+  hasHeaders: boolean = true,
+  delimiter: string = ','
+): ColumnSchema[] | null {
+  if (content.kind !== 'text') return null
+  return inferSchemaFromCsv(content.data, hasHeaders, delimiter)
 }
 
 /**

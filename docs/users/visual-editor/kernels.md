@@ -2,6 +2,9 @@
 
 Run custom Python code in isolated Docker containers with full access to your flow's data.
 
+!!! info "Not in Flowfile Lite"
+    Kernel execution requires Docker and the full desktop/server build. The browser-only [Flowfile Lite](../deployment/lite.md) edition cannot run kernels — use the **Polars Code** node for in-browser Python/Polars logic.
+
 !!! warning "Beta Feature"
     Kernel execution is currently in **beta**. The core functionality is working, but some features are still under active development and optimization. See [Known Limitations](#known-limitations) for details.
 

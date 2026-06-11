@@ -2,6 +2,9 @@
 
 Transform nodes modify and shape your data. These nodes handle everything from basic operations like filtering and sorting to more complex transformations like custom formulas and text manipulation.
 
+!!! info "Some transform nodes are not in Flowfile Lite"
+    The browser-only [Flowfile Lite](../../deployment/lite.md) build includes **Select**, **Filter**, **Sort**, **Take Sample**, **Drop Duplicates**, and **Polars Code**. **Add Record ID**, **Formula**, **Text to Rows**, and **Python Script** are not available — use the **Polars Code** node for Formula-style column logic.
+
 ## Node Details
 
 

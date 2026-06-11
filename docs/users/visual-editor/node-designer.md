@@ -4,6 +4,9 @@ Create custom transformation nodes visually—no Python files required.
 
 The Node Designer lets you build reusable nodes by dragging UI components onto a canvas, configuring their properties, and writing transformation logic. Your custom nodes appear in the node palette alongside built-in nodes.
 
+!!! info "Not in Flowfile Lite"
+    The Node Designer requires the full desktop/server build and is not available in the browser-only [Flowfile Lite](../deployment/lite.md) edition. Use the **Polars Code** node for custom logic there.
+
 ![Node Designer Interface](../../assets/images/guides/node-designer/node-designer-overview.png)
 
 *The Node Designer with a "Prefixer" node being created*
