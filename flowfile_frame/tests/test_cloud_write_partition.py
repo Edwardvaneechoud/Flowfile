@@ -13,7 +13,9 @@ def _writer_settings(df, child):
 
 def test_write_delta_threads_partition_by():
     df = ff.from_dict({"a": [1, 2], "b": ["x", "y"]})
-    child = df.write_delta("s3://bucket/tbl", partition_by=["b"])
+    child = df.write_delta(
+        "s3://flowfile-test/partition_thread_tbl", connection_name="minio-flowframe-test", partition_by=["b"]
+    )
     settings = _writer_settings(df, child)
     assert settings.partition_by == ["b"]
     assert settings.file_format == "delta"
@@ -21,7 +23,7 @@ def test_write_delta_threads_partition_by():
 
 def test_write_delta_default_no_partition():
     df = ff.from_dict({"a": [1, 2], "b": ["x", "y"]})
-    child = df.write_delta("s3://bucket/tbl2")
+    child = df.write_delta("s3://flowfile-test/partition_thread_tbl2", connection_name="minio-flowframe-test")
     assert _writer_settings(df, child).partition_by is None
 
 

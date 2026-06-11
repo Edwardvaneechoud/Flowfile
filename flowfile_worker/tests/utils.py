@@ -49,5 +49,6 @@ def cloud_storage_connection_settings() -> FullCloudStorageConnection:
         aws_secret_access_key=SecretStr(aws_access_secret),
         aws_region="us-east-1",
         endpoint_url="http://localhost:9000",
+        aws_allow_unsafe_html=True,  # delta-rs rejects http endpoints without allow_http
     )
     return minio_connection
