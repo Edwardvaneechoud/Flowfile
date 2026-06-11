@@ -363,6 +363,7 @@ function runStatusText(run: FlowRun): string {
   color: var(--color-primary);
   cursor: pointer;
   transition: opacity var(--transition-fast);
+  user-select: none;
 }
 
 .schedule-link:hover {
