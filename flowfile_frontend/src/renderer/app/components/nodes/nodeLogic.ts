@@ -40,8 +40,9 @@ export const insertNode = async (
 export async function createFlow(
   flowPath: string | null = null,
   name: string | null = null,
+  namespaceId: number | null = null,
 ): Promise<number> {
-  return FlowApi.createFlow(flowPath, name);
+  return FlowApi.createFlow(flowPath, name, namespaceId);
 }
 
 export async function getFlowSettings(flow_id: number): Promise<FlowSettings | null> {

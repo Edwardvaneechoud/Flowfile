@@ -27,6 +27,21 @@ def _assert_safe_name(name: str) -> None:
         raise ValueError(f"Unsafe input/output name rejected: {name!r}")
 
 
+def clear_stale_parquets(dir_path: str) -> None:
+    """Remove leftover ``*.parquet`` files from a prior run in *dir_path*.
+
+    Stale outputs would mask missing publishes in read_kernel_outputs; stale
+    inputs would be picked up as ghost inputs by resolve_node_paths (the
+    interactive /execute and /execute_cell routes scan the whole input dir).
+    No-op when the directory does not exist.
+    """
+    if not os.path.isdir(dir_path):
+        return
+    for stale in os.listdir(dir_path):
+        if stale.endswith(".parquet"):
+            os.remove(os.path.join(dir_path, stale))
+
+
 def _write_parquet_locally(lf: pl.LazyFrame | pl.DataFrame, output_path: str) -> None:
     """Collect a LazyFrame and write it to a parquet file locally.
 
@@ -42,7 +57,8 @@ def _write_parquet_locally(lf: pl.LazyFrame | pl.DataFrame, output_path: str) ->
         except Exception:
             df = lf.collect()
     df.write_parquet(output_path)
-    with open(output_path, "rb") as f:
+    # "rb+" — os.fsync needs a writable fd on Windows (EBADF on read-only handles)
+    with open(output_path, "rb+") as f:
         os.fsync(f.fileno())
 
 
@@ -151,6 +167,52 @@ def build_execute_request(
         log_callback_url=log_callback_url,
         internal_token=internal_token,
     )
+
+
+def read_kernel_outputs(
+    *,
+    output_dir: str,
+    output_names: list[str],
+    result: ExecuteResult,
+    node,
+) -> FlowDataEngine | None:
+    """Read the parquet outputs the kernel wrote to *output_dir*.
+
+    Registers each found output on ``node._named_outputs`` and returns the
+    primary (index-0) output, or None when the kernel published nothing
+    (caller falls back to input passthrough — intentional).
+
+    Raises when the kernel reported published outputs but none of the expected
+    files exist locally — either the published names don't match the node's
+    output_names, or a host/container path-translation / shared-volume mount
+    mismatch that would otherwise silently feed ghost data downstream.
+    """
+    primary: FlowDataEngine | None = None
+    found = False
+    for i, name in enumerate(output_names):
+        output_path = os.path.join(output_dir, f"{name}.parquet")
+        if os.path.exists(output_path):
+            found = True
+            fde = FlowDataEngine(pl.scan_parquet(output_path))
+            if node is not None:
+                node._named_outputs[f"output-{i}"] = fde
+            if i == 0:
+                primary = fde
+    if result.output_paths and not found:
+        published = [p.replace("\\", "/").rsplit("/", 1)[-1] for p in result.output_paths]
+        expected = [f"{name}.parquet" for name in output_names]
+        if not set(published) & set(expected):
+            raise RuntimeError(
+                f"Kernel published {published} but the node expects outputs named {expected}. "
+                "Match the name passed to flowfile_ctx.publish_output(df, name=...) with the "
+                "node's output names."
+            )
+        raise RuntimeError(
+            f"Kernel reported {len(result.output_paths)} published output file(s) but none were "
+            f"found under {output_dir!r} — host/container path-translation or shared-volume "
+            f"mount mismatch. Kernel paths: {result.output_paths}"
+        )
+    return primary
 
 
 def forward_kernel_logs(result: ExecuteResult, node_logger) -> None:
