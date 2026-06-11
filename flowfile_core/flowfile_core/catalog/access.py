@@ -34,6 +34,32 @@ class AccessResolver:
         # types in tree/list endpoints, so memoize them for the request's lifetime.
         self._accessible_cache: dict[str, set[int]] = {}
         self._public_cache: set[int] | None = None
+        # Group membership and namespace-grant expansion are identical for every
+        # resource type in a tree/list call; compute each once per request. Before
+        # this memo the catalog tree re-ran user_group_ids ~14x and the namespace
+        # expansion ~8x per load.
+        self._group_ids: list[int] | None = None
+        self._ns_perms: dict[int, str] | None = None
+
+    # ---- per-request memoized grant context ----
+
+    def group_ids(self) -> list[int]:
+        """Ids of every group the user belongs to (memoized for the request)."""
+        if self._group_ids is None:
+            self._group_ids = sharing.user_group_ids(self.db, self.user_id)
+        return self._group_ids
+
+    def namespace_permissions(self) -> dict[int, str]:
+        """namespace_id -> highest granted permission (memoized for the request)."""
+        if self._ns_perms is None:
+            self._ns_perms = sharing._granted_namespace_permissions(
+                self.db, self.user_id, group_ids=self.group_ids()
+            )
+        return self._ns_perms
+
+    def _ns_perms_for(self, resource_type: str) -> dict[int, str] | None:
+        """Pass the namespace-permission memo only for namespace-scoped types."""
+        return self.namespace_permissions() if resource_type in sharing._NAMESPACE_SCOPED_TYPES else None
 
     # ---- per-resource checks ----
 
@@ -64,7 +90,14 @@ class AccessResolver:
             spec = sharing.RESOURCE_REGISTRY[resource_type]
             owner_col = getattr(spec.model, spec.owner_attr)
             own = {r[0] for r in self.db.query(spec.model.id).filter(owner_col == self.user_id)}
-            cached = own | sharing.granted_resource_ids(self.db, self.user_id, resource_type)
+            granted = sharing.granted_resource_ids(
+                self.db,
+                self.user_id,
+                resource_type,
+                group_ids=self.group_ids(),
+                ns_perms=self._ns_perms_for(resource_type),
+            )
+            cached = own | granted
             self._accessible_cache[resource_type] = cached
         return cached
 
@@ -84,5 +117,11 @@ class AccessResolver:
         A use-level grant makes a namespace visible (read) but never a write target.
         """
         own = {r[0] for r in self.db.query(CatalogNamespace.id).filter(CatalogNamespace.owner_id == self.user_id)}
-        manage = sharing.expand_namespace_grants(self.db, self.user_id, sharing.PERMISSION_MANAGE)
+        manage = sharing.expand_namespace_grants(
+            self.db,
+            self.user_id,
+            sharing.PERMISSION_MANAGE,
+            group_ids=self.group_ids(),
+            ns_perms=self.namespace_permissions(),
+        )
         return own | manage | self.public_namespace_ids()

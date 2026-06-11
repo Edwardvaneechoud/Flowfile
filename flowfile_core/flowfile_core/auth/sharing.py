@@ -108,14 +108,17 @@ def group_role(db: Session, group_id: int, user_id: int) -> str | None:
     return row[0] if row else None
 
 
-def _granted_namespace_permissions(db: Session, user_id: int) -> dict[int, str]:
+def _granted_namespace_permissions(db: Session, user_id: int, group_ids: list[int] | None = None) -> dict[int, str]:
     """namespace_id -> highest granted permission, expanded to direct children.
 
     Namespaces are hard-capped at two levels (catalog -> schema), so one
     parent_id expansion covers the whole subtree. Computing both permission
     levels in one walk lets callers avoid a second expansion.
+
+    ``group_ids`` may be passed pre-computed (per-request memo) to avoid
+    re-running the membership query on every catalog list/tree call.
     """
-    gids = user_group_ids(db, user_id)
+    gids = user_group_ids(db, user_id) if group_ids is None else group_ids
     if not gids:
         return {}
     rows = db.query(db_models.ResourceGrant.resource_id, db_models.ResourceGrant.permission).filter(
@@ -138,18 +141,30 @@ def _granted_namespace_permissions(db: Session, user_id: int) -> dict[int, str]:
     return perms
 
 
-def expand_namespace_grants(db: Session, user_id: int, permission: str = PERMISSION_USE) -> set[int]:
-    """Namespace ids granted to the user's groups, plus their direct children."""
+def expand_namespace_grants(
+    db: Session,
+    user_id: int,
+    permission: str = PERMISSION_USE,
+    group_ids: list[int] | None = None,
+    ns_perms: dict[int, str] | None = None,
+) -> set[int]:
+    """Namespace ids granted to the user's groups, plus their direct children.
+
+    ``ns_perms`` (the full ``_granted_namespace_permissions`` map) may be passed
+    pre-computed to skip recomputation.
+    """
     if not sharing_enabled():
         return set()
-    perms = _granted_namespace_permissions(db, user_id)
+    perms = _granted_namespace_permissions(db, user_id, group_ids=group_ids) if ns_perms is None else ns_perms
     if permission == PERMISSION_MANAGE:
         return {ns_id for ns_id, p in perms.items() if p == PERMISSION_MANAGE}
     return set(perms)
 
 
-def _direct_granted_ids(db: Session, user_id: int, resource_type: str, permission: str) -> set[int]:
-    gids = user_group_ids(db, user_id)
+def _direct_granted_ids(
+    db: Session, user_id: int, resource_type: str, permission: str, group_ids: list[int] | None = None
+) -> set[int]:
+    gids = user_group_ids(db, user_id) if group_ids is None else group_ids
     if not gids:
         return set()
     q = db.query(db_models.ResourceGrant.resource_id).filter(
@@ -161,17 +176,28 @@ def _direct_granted_ids(db: Session, user_id: int, resource_type: str, permissio
     return {r[0] for r in q}
 
 
-def granted_resource_ids(db: Session, user_id: int, resource_type: str, permission: str = PERMISSION_USE) -> set[int]:
+def granted_resource_ids(
+    db: Session,
+    user_id: int,
+    resource_type: str,
+    permission: str = PERMISSION_USE,
+    group_ids: list[int] | None = None,
+    ns_perms: dict[int, str] | None = None,
+) -> set[int]:
     """Resource ids of ``resource_type`` the user can reach via group grants.
 
     ``use`` matches both grant levels; ``manage`` only manage-level grants.
     Tables and flows union direct grants with namespace-inherited ones.
+
+    ``group_ids`` / ``ns_perms`` may be passed pre-computed (per-request memo)
+    so list/tree endpoints that hit many resource types share one membership and
+    one namespace-grant query instead of re-running them per type.
     """
     if not sharing_enabled():
         return set()
-    ids = _direct_granted_ids(db, user_id, resource_type, permission)
+    ids = _direct_granted_ids(db, user_id, resource_type, permission, group_ids=group_ids)
     if resource_type in _NAMESPACE_SCOPED_TYPES:
-        ns_ids = expand_namespace_grants(db, user_id, permission)
+        ns_ids = expand_namespace_grants(db, user_id, permission, group_ids=group_ids, ns_perms=ns_perms)
         if ns_ids:
             spec = RESOURCE_REGISTRY[resource_type]
             rows = db.query(spec.model.id).filter(spec.model.namespace_id.in_(ns_ids))
@@ -179,15 +205,23 @@ def granted_resource_ids(db: Session, user_id: int, resource_type: str, permissi
     return ids
 
 
-def granted_access_details(db: Session, user_id: int, resource_type: str) -> dict[int, tuple[str, int | None]]:
+def granted_access_details(
+    db: Session,
+    user_id: int,
+    resource_type: str,
+    group_ids: list[int] | None = None,
+    ns_perms: dict[int, str] | None = None,
+) -> dict[int, tuple[str, int | None]]:
     """resource_id -> (highest permission, granted_by user id) for list annotation.
 
     Namespace-inherited table/flow access is reported with ``granted_by=None``
     (the grant lives on the namespace, not the item).
+
+    ``group_ids`` / ``ns_perms`` may be passed pre-computed (per-request memo).
     """
     if not sharing_enabled():
         return {}
-    gids = user_group_ids(db, user_id)
+    gids = user_group_ids(db, user_id) if group_ids is None else group_ids
     details: dict[int, tuple[str, int | None]] = {}
     if gids:
         rows = db.query(
@@ -203,14 +237,14 @@ def granted_access_details(db: Session, user_id: int, resource_type: str) -> dic
             if existing is None or (permission == PERMISSION_MANAGE and existing[0] != PERMISSION_MANAGE):
                 details[resource_id] = (permission, granted_by)
     if resource_type in _NAMESPACE_SCOPED_TYPES:
-        ns_perms = _granted_namespace_permissions(db, user_id)
-        if ns_perms:
+        ns_perms_map = _granted_namespace_permissions(db, user_id, group_ids=gids) if ns_perms is None else ns_perms
+        if ns_perms_map:
             spec = RESOURCE_REGISTRY[resource_type]
             rows = db.query(spec.model.id, spec.model.namespace_id).filter(
-                spec.model.namespace_id.in_(ns_perms.keys())
+                spec.model.namespace_id.in_(ns_perms_map.keys())
             )
             for resource_id, ns_id in rows:
-                permission = ns_perms[ns_id]
+                permission = ns_perms_map[ns_id]
                 existing = details.get(resource_id)
                 if existing is None or (permission == PERMISSION_MANAGE and existing[0] != PERMISSION_MANAGE):
                     details[resource_id] = (permission, None)
@@ -286,7 +320,9 @@ def shared_resource_rows(db: Session, user_id: int, resource_type: str) -> list[
     granter_ids = {details[row.id][1] for row in rows if details[row.id][1] is not None}
     usernames = {}
     if granter_ids:
-        usernames = dict(db.query(db_models.User.id, db_models.User.username).filter(db_models.User.id.in_(granter_ids)))
+        usernames = dict(
+            db.query(db_models.User.id, db_models.User.username).filter(db_models.User.id.in_(granter_ids))
+        )
     out = []
     for row in rows:
         permission, granted_by = details[row.id]

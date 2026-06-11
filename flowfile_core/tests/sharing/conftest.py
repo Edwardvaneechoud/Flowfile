@@ -70,6 +70,9 @@ def users():
             db_models.KafkaConnection,
             db_models.GoogleAnalyticsConnection,
             db_models.Secret,
+            db_models.FlowFavorite,
+            db_models.FlowFollow,
+            db_models.TableFavorite,
         ):
             db.query(model).filter(model.user_id.in_(created_ids)).delete(synchronize_session=False)
         for uid in created_ids:

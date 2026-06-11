@@ -286,7 +286,13 @@ class CatalogService:
         """resource_id -> AccessInfo for own + group-granted items (restricted mode only)."""
         from flowfile_core.auth import sharing
 
-        details = sharing.granted_access_details(self.access.db, self.access.user_id, resource_type)
+        details = sharing.granted_access_details(
+            self.access.db,
+            self.access.user_id,
+            resource_type,
+            group_ids=self.access.group_ids(),
+            ns_perms=self.access._ns_perms_for(resource_type),
+        )
         granter_ids = {by for _perm, by in details.values() if by is not None}
         usernames = {}
         if granter_ids:
@@ -674,6 +680,7 @@ class CatalogService:
 
     def add_favorite(self, user_id: int, registration_id: int) -> FlowFavorite:
         """Add a flow to the user's favourites (idempotent)."""
+        self._require_use("flow", registration_id)
         return self._engagement.add_favorite(user_id, registration_id)
 
     def remove_favorite(self, user_id: int, registration_id: int) -> None:
@@ -682,10 +689,12 @@ class CatalogService:
 
     def list_favorites(self, user_id: int) -> list[FlowRegistrationOut]:
         """List all flows the user has favourited, enriched."""
-        return self._engagement.list_favorites(user_id)
+        flows = self._filter_by_access(self._engagement.list_favorites(user_id), "flow")
+        return self._stamp_access(flows, "flow")
 
     def add_follow(self, user_id: int, registration_id: int) -> FlowFollow:
         """Follow a flow (idempotent)."""
+        self._require_use("flow", registration_id)
         return self._engagement.add_follow(user_id, registration_id)
 
     def remove_follow(self, user_id: int, registration_id: int) -> None:
@@ -694,7 +703,8 @@ class CatalogService:
 
     def list_following(self, user_id: int) -> list[FlowRegistrationOut]:
         """List all flows the user is following, enriched."""
-        return self._engagement.list_following(user_id)
+        flows = self._filter_by_access(self._engagement.list_following(user_id), "flow")
+        return self._stamp_access(flows, "flow")
 
     # ------------------------------------------------------------------ #
     # Catalog table operations
@@ -1029,6 +1039,7 @@ class CatalogService:
 
     def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
         """Add a table to the user's favourites (idempotent)."""
+        self._require_use("catalog_table", table_id)
         return self._tables.add_table_favorite(user_id, table_id)
 
     def remove_table_favorite(self, user_id: int, table_id: int) -> None:
@@ -1037,7 +1048,8 @@ class CatalogService:
 
     def list_table_favorites(self, user_id: int) -> list[CatalogTableOut]:
         """List all tables the user has favourited, enriched."""
-        return self._tables.list_table_favorites(user_id)
+        tables = self._filter_by_access(self._tables.list_table_favorites(user_id), "catalog_table")
+        return self._stamp_access(tables, "catalog_table")
 
     def _schedule_to_out(self, schedule: FlowSchedule) -> FlowScheduleOut:
         """Convert a FlowSchedule ORM row to its DTO, populating trigger info."""
@@ -1206,7 +1218,12 @@ class CatalogService:
         used_tables: list[str] | None = None,
     ) -> int:
         """Create a registered flow from a SQL query and return the registration ID."""
-        return self._sql.save_sql_query_as_flow(query, name, owner_id, namespace_id, description, used_tables)
+        # Only embed catalog_reader nodes for tables the caller may read, so the
+        # generated flow can't be used to exfiltrate another user's table.
+        accessible = self.access.accessible_ids("catalog_table") if self._restricted else None
+        return self._sql.save_sql_query_as_flow(
+            query, name, owner_id, namespace_id, description, used_tables, accessible_table_ids=accessible
+        )
 
     # ================== Visualizations =====================================
 

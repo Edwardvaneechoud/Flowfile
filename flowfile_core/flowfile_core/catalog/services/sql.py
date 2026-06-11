@@ -137,12 +137,17 @@ class SqlService:
         namespace_id: int | None = None,
         description: str | None = None,
         used_tables: list[str] | None = None,
+        accessible_table_ids: set[int] | None = None,
     ) -> int:
         """Create a registered flow from a SQL query.
 
         Builds a flow JSON with catalog_reader nodes (one per used table)
         connected to a single sql_query node, saves it, and registers it.
         Returns the registration ID.
+
+        ``accessible_table_ids`` (multi-user mode) restricts the embedded reader
+        nodes to tables the caller may read; references to other tables are
+        dropped so the saved flow can't read data the user has no access to.
         """
         from flowfile_core.flowfile.utils import create_unique_id
 
@@ -155,6 +160,8 @@ class SqlService:
         for i, table_name in enumerate(used_tables):
             table = self.repo.get_table_by_name(table_name, namespace_id)
             if table is None:
+                continue
+            if accessible_table_ids is not None and table.id not in accessible_table_ids:
                 continue
             node_id = i + 1
             reader_node_ids.append(node_id)
