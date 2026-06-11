@@ -181,6 +181,30 @@ shared. No data is lost in the upgrade — only its *visibility* narrows.
 - **Not shared**: AI BYOK keys and uploaded files stay outside the sharing model
   (the Docker uploads directory is already common to all users).
 
+### How shared secrets decrypt for non-owners
+
+Sharing is **authorization-only**: granting a group access to a secret or
+connection never copies, re-encrypts, or exposes the credential.
+
+Every secret is stored as `$ffsec$1$<owner_id>$<ciphertext>`, encrypted with a
+per-user key derived from the master key (HKDF with the owner's user id as
+context). Because the owner's id is embedded in the stored value, decryption
+never depends on *who is running the flow*: when a group member's flow resolves
+a shared secret, core (and the worker, which derives keys independently) reads
+the owner id out of the value and re-derives the **owner's** key. The member's
+identity only matters for the authorization check — may this user resolve this
+secret by name — which is grant-based: own secrets first, then group-shared ones.
+
+Consequences:
+
+- The plaintext is never returned to non-owners through the API; it only
+  resolves inside flow execution.
+- When a `manage`-grantee rotates a shared connection's credential, the new
+  value is re-encrypted under the **owner's** key, so the stored format never
+  changes hands.
+- Revoking a grant takes effect immediately: the grantee never held key
+  material, so there is nothing to rotate or re-encrypt.
+
 ### Operator notes
 
 - `FLOWFILE_INTERNAL_SERVICE_USER_ID` (default `1`) selects which user the kernel
