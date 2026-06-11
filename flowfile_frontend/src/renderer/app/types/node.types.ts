@@ -768,6 +768,7 @@ export interface CatalogWriteSettings {
   description: string | null;
   write_mode: CatalogWriteMode;
   merge_keys: string[];
+  partition_by: string[];
 }
 
 export interface NodeCatalogWriter extends NodeBase {

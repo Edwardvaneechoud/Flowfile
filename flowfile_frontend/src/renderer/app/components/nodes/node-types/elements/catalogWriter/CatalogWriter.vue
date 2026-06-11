@@ -29,6 +29,32 @@
         </el-select>
       </div>
 
+      <!-- Target table status: exists vs new -->
+      <div
+        v-if="nodeData.catalog_write_settings.table_name && tableLookupDone"
+        class="table-status"
+      >
+        <template v-if="existingTable">
+          <div class="status-line status-exists">
+            <i class="fa-solid fa-circle-info"></i>
+            <span
+              >Table exists — {{ (existingTable.row_count ?? 0).toLocaleString() }} rows. Writing
+              here {{ existingModeVerb }}.</span
+            >
+          </div>
+          <div v-if="existingPartitionColumns.length" class="status-line status-partitions">
+            <span class="status-partitions-label">Partitioned by</span>
+            <span v-for="col in existingPartitionColumns" :key="col" class="status-chip">{{
+              col
+            }}</span>
+          </div>
+        </template>
+        <div v-else class="status-line status-new">
+          <i class="fa-solid fa-circle-plus"></i>
+          <span>New table — will be created.</span>
+        </div>
+      </div>
+
       <!-- Tabs: Physical Write vs Virtual Table -->
       <el-tabs v-model="activeTab" class="writer-tabs" @tab-change="handleTabChange">
         <el-tab-pane label="Write to Catalog" name="physical">
@@ -56,6 +82,30 @@
               >
                 <el-option v-for="col in availableColumns" :key="col" :label="col" :value="col" />
               </el-select>
+            </div>
+
+            <div v-if="canPartition" class="catalog-field">
+              <label class="catalog-label">Partition by (optional)</label>
+              <el-select
+                v-model="nodeData.catalog_write_settings.partition_by"
+                size="small"
+                multiple
+                filterable
+                placeholder="Select partition columns"
+              >
+                <el-option v-for="col in availableColumns" :key="col" :label="col" :value="col" />
+              </el-select>
+              <p
+                v-if="existingPartitionColumns.length && physicalWriteMode !== 'overwrite'"
+                class="partition-hint"
+              >
+                This table is partitioned by {{ existingPartitionColumns.join(", ") }} — leave empty
+                to inherit, or select the same columns.
+              </p>
+              <p v-else class="partition-hint">
+                Set at table creation; appends must match the existing partitioning. Use
+                low-cardinality columns.
+              </p>
             </div>
 
             <div v-if="physicalModeDescription" class="mode-description">
@@ -127,6 +177,7 @@ import { validateCatalogName } from "../../../../../composables/catalogNameValid
 import { CatalogApi } from "../../../../../api/catalog.api";
 import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
 import axios from "../../../../../services/axios.config";
+import type { CatalogTable } from "../../../../../types/catalog.types";
 import type {
   CatalogWriteMode,
   NodeCatalogWriter,
@@ -167,6 +218,58 @@ const needsMergeKeys = computed(() => {
   return mode === "upsert" || mode === "update" || mode === "delete";
 });
 
+const canPartition = computed(() => {
+  const mode = physicalWriteMode.value;
+  return mode === "overwrite" || mode === "error" || mode === "append";
+});
+
+// Target-table existence lookup (resolved by name + namespace)
+const existingTable = ref<CatalogTable | null>(null);
+const tableLookupDone = ref(false);
+let lookupTimer: ReturnType<typeof setTimeout> | null = null;
+
+const existingPartitionColumns = computed(() => existingTable.value?.partition_columns ?? []);
+
+const MODE_VERBS: Record<string, string> = {
+  overwrite: "replaces all its data",
+  error: "will fail (the table already exists)",
+  append: "adds rows to it",
+  upsert: "updates matched rows and inserts the rest",
+  update: "updates matched rows",
+  delete: "deletes matched rows",
+};
+
+const existingModeVerb = computed(() => {
+  if (activeTab.value === "virtual") return "re-registers it as a virtual table";
+  return MODE_VERBS[physicalWriteMode.value] ?? "modifies it";
+});
+
+async function lookupExistingTable() {
+  const name = nodeData.value?.catalog_write_settings.table_name?.trim();
+  if (!name) {
+    existingTable.value = null;
+    tableLookupDone.value = false;
+    return;
+  }
+  const namespaceId = nodeData.value?.catalog_write_settings.namespace_id ?? null;
+  existingTable.value = await CatalogApi.resolveTableByName(name, namespaceId);
+  tableLookupDone.value = true;
+}
+
+function scheduleLookup() {
+  if (lookupTimer) clearTimeout(lookupTimer);
+  tableLookupDone.value = false;
+  lookupTimer = setTimeout(lookupExistingTable, 350);
+}
+
+watch(
+  () => [
+    nodeData.value?.catalog_write_settings.table_name,
+    nodeData.value?.catalog_write_settings.namespace_id,
+  ],
+  () => scheduleLookup(),
+);
+
 const availableColumns = computed(() => {
   return fullNodeData.value?.main_input?.columns ?? [];
 });
@@ -189,6 +292,9 @@ watch(physicalWriteMode, (newMode) => {
     if (!["upsert", "update", "delete"].includes(newMode)) {
       nodeData.value.catalog_write_settings.merge_keys = [];
     }
+    if (!["overwrite", "error", "append"].includes(newMode)) {
+      nodeData.value.catalog_write_settings.partition_by = [];
+    }
   }
 });
 
@@ -197,6 +303,7 @@ function handleTabChange(tab: string) {
   if (tab === "virtual") {
     nodeData.value.catalog_write_settings.write_mode = "virtual";
     nodeData.value.catalog_write_settings.merge_keys = [];
+    nodeData.value.catalog_write_settings.partition_by = [];
     fetchLazinessCheck();
   } else {
     nodeData.value.catalog_write_settings.write_mode = physicalWriteMode.value;
@@ -244,9 +351,12 @@ async function loadNodeData(nodeId: number) {
   fullNodeData.value = nodeResult;
   if (nodeResult?.setting_input && nodeResult.setting_input.is_setup) {
     nodeData.value = nodeResult.setting_input;
-    // Ensure merge_keys exists for backward compatibility
+    // Ensure merge_keys / partition_by exist for backward compatibility
     if (!nodeData.value!.catalog_write_settings.merge_keys) {
       nodeData.value!.catalog_write_settings.merge_keys = [];
+    }
+    if (!nodeData.value!.catalog_write_settings.partition_by) {
+      nodeData.value!.catalog_write_settings.partition_by = [];
     }
   } else {
     nodeData.value = {
@@ -256,6 +366,7 @@ async function loadNodeData(nodeId: number) {
         description: null,
         write_mode: "overwrite",
         merge_keys: [],
+        partition_by: [],
       },
       flow_id: nodeStore.flow_id,
       node_id: nodeId,
@@ -335,6 +446,59 @@ defineExpose({
   padding: 6px 8px;
   background-color: var(--color-background-secondary);
   border-radius: 4px;
+}
+
+.partition-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.table-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background-color: var(--color-background-secondary);
+  font-size: 11px;
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.status-exists {
+  color: var(--color-text-secondary);
+}
+
+.status-exists i {
+  color: var(--color-primary);
+}
+
+.status-new {
+  color: var(--color-text-tertiary);
+}
+
+.status-new i {
+  color: var(--color-success, #22c55e);
+}
+
+.status-partitions-label {
+  color: var(--color-text-tertiary);
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--color-primary);
+  border-radius: 4px;
+  font-weight: 500;
 }
 
 .virtual-info {

@@ -135,7 +135,7 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
 )
 from flowfile_core.utils.arrow_reader import get_read_top_n
-from shared.delta_utils import get_delta_size_bytes, merge_into_delta
+from shared.delta_utils import get_delta_partition_columns, get_delta_size_bytes, merge_into_delta
 from shared.delta_utils import write_delta as _write_delta
 from shared.google_analytics.models import (
     GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
@@ -507,13 +507,16 @@ def _write_catalog_delta_local(
     dest_path: Path,
     delta_mode: str,
     merge_keys: list[str] | None,
+    partition_by: list[str] | None = None,
 ) -> TableWriteMetadata | None:
     """Write a Delta table locally. Returns metadata dict, or ``None`` when the write was skipped."""
     dest = str(dest_path)
     if delta_mode in ("upsert", "update", "delete"):
-        wrote = merge_into_delta(df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=merge_keys)
+        wrote = merge_into_delta(
+            df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=merge_keys, partition_by=partition_by
+        )
     else:
-        wrote = _write_delta(df.data_frame, dest, mode=delta_mode)
+        wrote = _write_delta(df.data_frame, dest, mode=delta_mode, partition_by=partition_by)
     if not wrote:
         return None
     return {
@@ -563,6 +566,7 @@ def _register_catalog_table(
     meta_kwargs: TableWriteMetadata,
 ) -> None:
     """Register or update the catalog table entry, cleaning up orphaned storage on failure for new tables."""
+    partition_columns = get_delta_partition_columns(dest_path) if is_delta_table(dest_path) else []
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -574,6 +578,7 @@ def _register_catalog_table(
                     source_registration_id=source_registration_id,
                     description=settings.description,
                     storage_format="delta",
+                    partition_columns=partition_columns,
                     **meta_kwargs,
                 )
             else:
@@ -585,6 +590,7 @@ def _register_catalog_table(
                     description=settings.description,
                     source_registration_id=source_registration_id,
                     storage_format="delta",
+                    partition_columns=partition_columns,
                     **meta_kwargs,
                 )
     except Exception:
@@ -783,13 +789,14 @@ def _handle_physical_table_write(
             "output_path": str(dest_path),
             "merge_mode": delta_mode,
             "merge_keys": settings.merge_keys,
+            "partition_by": settings.partition_by,
         }
     else:
         op_type = "write_delta"
-        op_kwargs = {"output_path": str(dest_path), "mode": delta_mode}
+        op_kwargs = {"output_path": str(dest_path), "mode": delta_mode, "partition_by": settings.partition_by}
 
     if graph.flow_settings.execution_location == "local":
-        meta_kwargs = _write_catalog_delta_local(df, dest_path, delta_mode, settings.merge_keys)
+        meta_kwargs = _write_catalog_delta_local(df, dest_path, delta_mode, settings.merge_keys, settings.partition_by)
     else:
         meta_kwargs = _write_catalog_delta_remote(
             flow_id=graph.flow_id,

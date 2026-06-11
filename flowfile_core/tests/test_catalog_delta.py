@@ -981,3 +981,138 @@ class TestStorageFormatColumn:
             db.commit()
             db.refresh(table)
             assert table.storage_format == "delta"
+
+
+# partition_columns persistence
+
+
+class TestPartitionColumnsPersistence:
+    def test_register_persists_partition_columns(self, tmp_path):
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.register_table_from_data(
+                name="part_table",
+                table_path=str(tmp_path / "pt"),
+                owner_id=1,
+                namespace_id=schema_id,
+                storage_format="delta",
+                schema=[{"name": "a", "dtype": "Int64"}, {"name": "b", "dtype": "String"}],
+                row_count=3,
+                column_count=2,
+                size_bytes=512,
+                partition_columns=["b"],
+            )
+            table_id = out.id
+        assert out.partition_columns == ["b"]
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            refetched = svc.get_table(table_id)
+        assert refetched.partition_columns == ["b"]
+
+    def test_no_partition_columns_is_none(self, tmp_path):
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.register_table_from_data(
+                name="unpart_table",
+                table_path=str(tmp_path / "up"),
+                owner_id=1,
+                namespace_id=schema_id,
+                storage_format="delta",
+                schema=[{"name": "a", "dtype": "Int64"}],
+                row_count=1,
+                column_count=1,
+                size_bytes=100,
+            )
+        assert out.partition_columns is None
+
+
+# optimize / vacuum service (local execution)
+
+
+def _register_real_delta(svc, schema_id, name, tmp_path, *, partition_by=None):
+    """Write a real multi-file delta table on disk and register it."""
+    path = tmp_path / name
+    df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "x"]})
+    df.write_delta(str(path), delta_write_options={"partition_by": partition_by} if partition_by else None)
+    pl.DataFrame({"a": [4], "b": ["y"]}).write_delta(str(path), mode="append")
+    return svc.register_table_from_data(
+        name=name,
+        table_path=str(path),
+        owner_id=1,
+        namespace_id=schema_id,
+        storage_format="delta",
+        schema=[{"name": "a", "dtype": "Int64"}, {"name": "b", "dtype": "String"}],
+        row_count=4,
+        column_count=2,
+        size_bytes=1,
+        partition_columns=partition_by,
+    )
+
+
+class TestOptimizeVacuumService:
+    def test_optimize_local(self, tmp_path, monkeypatch):
+        import flowfile_core.catalog.services.tables as tables_mod
+
+        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = _register_real_delta(svc, schema_id, "opt_tbl", tmp_path)
+            result = svc.optimize_table(out.id)
+        assert isinstance(result.metrics, dict)
+        assert result.size_bytes is not None and result.size_bytes > 0
+
+    def test_vacuum_local_dry_run(self, tmp_path, monkeypatch):
+        import flowfile_core.catalog.services.tables as tables_mod
+
+        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = _register_real_delta(svc, schema_id, "vac_tbl", tmp_path)
+            result = svc.vacuum_table(out.id, retention_hours=0, dry_run=True)
+        assert result.dry_run is True
+        assert result.file_count == len(result.files_removed)
+
+    def test_optimize_rejects_virtual(self, tmp_path):
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            table = CatalogTable(
+                name="virt_tbl",
+                namespace_id=schema_id,
+                owner_id=1,
+                file_path=None,
+                table_type="virtual",
+                storage_format="delta",
+            )
+            db.add(table)
+            db.commit()
+            db.refresh(table)
+            table_id = table.id
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            with pytest.raises(ValueError, match="virtual"):
+                svc.optimize_table(table_id)
+
+    def test_vacuum_rejects_legacy_parquet(self, tmp_path):
+        _, schema_id = _make_namespace()
+        pq = tmp_path / "legacy.parquet"
+        pl.DataFrame({"a": [1]}).write_parquet(pq)
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = svc.register_table_from_data(
+                name="legacy_tbl",
+                table_path=str(pq),
+                owner_id=1,
+                namespace_id=schema_id,
+                storage_format="parquet",
+                schema=[{"name": "a", "dtype": "Int64"}],
+                row_count=1,
+                column_count=1,
+                size_bytes=100,
+            )
+            with pytest.raises(ValueError, match="not a Delta table"):
+                svc.vacuum_table(out.id)

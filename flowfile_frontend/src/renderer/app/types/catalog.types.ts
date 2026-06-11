@@ -200,8 +200,30 @@ export interface CatalogTable {
   sql_query: string | null;
   polars_plan: string | null;
   source_table_versions: string | null;
+  partition_columns: string[] | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface OptimizeTableRequest {
+  z_order_columns?: string[] | null;
+}
+
+export interface OptimizeTableResponse {
+  metrics: Record<string, unknown>;
+  size_bytes: number | null;
+}
+
+export interface VacuumTableRequest {
+  retention_hours: number;
+  dry_run: boolean;
+}
+
+export interface VacuumTableResponse {
+  dry_run: boolean;
+  files_removed: string[];
+  file_count: number;
+  size_bytes: number | null;
 }
 
 export interface CatalogTableCreate {

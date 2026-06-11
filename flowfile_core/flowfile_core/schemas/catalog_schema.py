@@ -312,6 +312,7 @@ class CatalogTableOut(BaseModel):
     sql_query: str | None = None
     polars_plan: str | None = None
     source_table_versions: str | None = None
+    partition_columns: list[str] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -358,6 +359,42 @@ class DeltaTableHistory(BaseModel):
 
     current_version: int
     history: list[DeltaVersionCommit] = Field(default_factory=list)
+
+
+# ==================== Delta Maintenance Schemas ====================
+
+
+class OptimizeTableRequest(BaseModel):
+    """Request to compact (and optionally Z-order) a Delta catalog table."""
+
+    z_order_columns: list[str] | None = None
+
+
+class OptimizeTableResponse(BaseModel):
+    """Result of an optimize operation: raw deltalake metrics + table size after."""
+
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    size_bytes: int | None = None
+
+
+class VacuumTableRequest(BaseModel):
+    """Request to vacuum tombstoned files from a Delta catalog table.
+
+    ``dry_run`` (default) only lists what would be removed. Retention below the
+    Delta 168h minimum is permitted (the retention guard is relaxed server-side).
+    """
+
+    retention_hours: int = Field(default=168, ge=0)
+    dry_run: bool = True
+
+
+class VacuumTableResponse(BaseModel):
+    """Result of a vacuum operation."""
+
+    dry_run: bool
+    files_removed: list[str] = Field(default_factory=list)
+    file_count: int = 0
+    size_bytes: int | None = None
 
 
 # ==================== SQL Query Schemas ====================

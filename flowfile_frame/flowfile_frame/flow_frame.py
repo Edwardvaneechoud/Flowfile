@@ -2066,6 +2066,7 @@ class FlowFrame:
         namespace_id: int | None = None,
         write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite",
         merge_keys: list[str] | None = None,
+        partition_by: list[str] | None = None,
         description: str | None = None,
     ) -> FlowFrame:
         """Write the data frame to the Flowfile catalog.
@@ -2079,6 +2080,8 @@ class FlowFrame:
                 (requires the flow to be registered with the catalog first;
                 see :func:`flowfile_frame.register_flow_with_catalog`).
             merge_keys: Column names for merge operations (required for upsert/update/delete).
+            partition_by: Delta partition columns (applied at table creation; appends
+                must match the existing partitioning).
             description: Optional description for this operation.
 
         Returns:
@@ -2097,6 +2100,7 @@ class FlowFrame:
             namespace_id=namespace_id,
             write_mode=write_mode,
             merge_keys=merge_keys,
+            partition_by=partition_by,
             description=description,
         )
         return self._create_child_frame(new_node_id)

@@ -73,14 +73,38 @@ def get_delta_size_bytes(path: str | Path) -> int:
 # Catalog path validation
 
 
-def write_delta(df: pl.LazyFrame | pl.DataFrame, output_path: str, mode: str = "overwrite") -> bool:
+def _frame_column_names(df: pl.LazyFrame | pl.DataFrame) -> set[str]:
+    """Return the column names of a LazyFrame or DataFrame without materialising data."""
+    import polars as pl_
+
+    if isinstance(df, pl_.LazyFrame):
+        return set(df.collect_schema().names())
+    return set(df.columns)
+
+
+def _validate_partition_columns(df: pl.LazyFrame | pl.DataFrame, partition_by: list[str]) -> None:
+    """Raise ``ValueError`` if any partition column is absent from *df*."""
+    missing = [c for c in partition_by if c not in _frame_column_names(df)]
+    if missing:
+        raise ValueError(f"partition_by columns not present in data: {missing}")
+
+
+def write_delta(
+    df: pl.LazyFrame | pl.DataFrame,
+    output_path: str,
+    mode: str = "overwrite",
+    partition_by: list[str] | None = None,
+) -> bool:
     """Write a Polars DataFrame or LazyFrame to a Delta table.
 
     When *df* is a LazyFrame the write is streamed via ``sink_delta``,
     avoiding full materialisation in memory.  An eager DataFrame falls
     back to ``write_delta``.
 
-    Handles schema_mode options for overwrite and append modes.
+    Handles schema_mode options for overwrite and append modes. *partition_by*
+    is passed through to Delta for every mode: it defines partitioning when the
+    table is created and, on writes to an existing table, Delta enforces that it
+    matches the table's existing partitioning (raising on a mismatch).
     """
     import os
 
@@ -93,20 +117,21 @@ def write_delta(df: pl.LazyFrame | pl.DataFrame, output_path: str, mode: str = "
         from deltalake import DeltaTable
 
         existing_cols = {f.name for f in DeltaTable(output_path).schema().fields}
-        if isinstance(df, pl_.LazyFrame):
-            incoming_cols = set(df.collect_schema().names())
-        else:
-            incoming_cols = set(df.columns)
+        incoming_cols = _frame_column_names(df)
         if incoming_cols == existing_cols:
             row_count = df.select(pl_.len()).collect().item() if isinstance(df, pl_.LazyFrame) else df.height
             if row_count == 0:
                 return False
 
-    delta_write_options: dict[str, str] = {}
+    delta_write_options: dict[str, object] = {}
     if mode == "overwrite":
         delta_write_options["schema_mode"] = "overwrite"
     elif mode == "append":
         delta_write_options["schema_mode"] = "merge"
+
+    if partition_by:
+        _validate_partition_columns(df, partition_by)
+        delta_write_options["partition_by"] = partition_by
 
     if isinstance(df, pl_.LazyFrame):
         df.sink_delta(output_path, mode=mode, delta_write_options=delta_write_options)
@@ -120,6 +145,7 @@ def merge_into_delta(
     output_path: str,
     merge_mode: str = "upsert",
     merge_keys: list[str] | None = None,
+    partition_by: list[str] | None = None,
 ) -> bool:
     """Merge a Polars DataFrame into a Delta table.
 
@@ -142,11 +168,17 @@ def merge_into_delta(
 
     if not table_exists:
         os.makedirs(output_path, exist_ok=True)
+        create_opts: dict[str, object] = {}
+        if partition_by:
+            _validate_partition_columns(df, partition_by)
+            create_opts["partition_by"] = partition_by
         if merge_mode in ("delete", "update"):
-            df.clear().write_delta(output_path, mode="error")
+            df.clear().write_delta(output_path, mode="error", delta_write_options=create_opts)
         else:
-            df.write_delta(output_path, mode="error")
+            df.write_delta(output_path, mode="error", delta_write_options=create_opts)
     else:
+        if partition_by:
+            logger.warning("Ignoring partition_by on merge into existing table: Delta partitioning is immutable")
         if not merge_keys:
             raise ValueError("merge_keys is required for merge operations on existing tables")
 
@@ -178,6 +210,58 @@ def merge_into_delta(
         else:
             raise ValueError(f"Unknown merge_mode: {merge_mode}")
     return True
+
+
+# Delta maintenance: vacuum / optimize
+
+
+def get_delta_partition_columns(path: str | Path, storage_options: dict[str, str] | None = None) -> list[str]:
+    """Return the partition columns of a Delta table, or ``[]`` if unpartitioned/unreadable."""
+    from deltalake import DeltaTable
+
+    try:
+        return list(DeltaTable(str(path), storage_options=storage_options).metadata().partition_columns)
+    except Exception:
+        logger.warning("Failed to read partition columns from %s", path, exc_info=True)
+        return []
+
+
+def vacuum_delta(
+    path: str | Path,
+    retention_hours: int = 168,
+    dry_run: bool = True,
+    storage_options: dict[str, str] | None = None,
+) -> list[str]:
+    """Vacuum tombstoned files from a Delta table, returning the affected file list.
+
+    Delta enforces a minimum 168h (7-day) retention; a shorter window requires
+    disabling that guard, which this does automatically for ``retention_hours < 168``.
+    """
+    from deltalake import DeltaTable
+
+    dt = DeltaTable(str(path), storage_options=storage_options)
+    return dt.vacuum(
+        retention_hours=retention_hours,
+        dry_run=dry_run,
+        enforce_retention_duration=retention_hours >= 168,
+    )
+
+
+def optimize_delta(
+    path: str | Path,
+    z_order_columns: list[str] | None = None,
+    storage_options: dict[str, str] | None = None,
+) -> dict:
+    """Optimize a Delta table, returning the metrics dict.
+
+    Z-orders by *z_order_columns* when given, otherwise compacts small files.
+    """
+    from deltalake import DeltaTable
+
+    dt = DeltaTable(str(path), storage_options=storage_options)
+    if z_order_columns:
+        return dt.optimize.z_order(z_order_columns)
+    return dt.optimize.compact()
 
 
 # Catalog path validation

@@ -310,6 +310,7 @@ class SchemaReference:
         *,
         write_mode: WriteMode = "overwrite",
         merge_keys: list[str] | None = None,
+        partition_by: list[str] | None = None,
         description: str | None = None,
     ) -> None:
         """Write a :class:`FlowFrame` to a table in this schema."""
@@ -318,6 +319,7 @@ class SchemaReference:
             schema=self,
             write_mode=write_mode,
             merge_keys=merge_keys,
+            partition_by=partition_by,
             description=description,
         )
 
