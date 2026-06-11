@@ -257,12 +257,25 @@ class FlowToPolarsConverter {
   private handleReadCsv(settings: NodeReadSettings, varName: string): void {
     const table = settings.received_file
     const fileName = settings.file_name || table?.name || 'data.csv'
+    // Files loaded from a URL keep it as received_file.path — generated code
+    // reads from the same source instead of a file name that only existed in
+    // the browser session. scan_csv/scan_parquet accept http(s) directly.
+    const path = table?.path ?? ''
+    const isRemote = path.startsWith('http://') || path.startsWith('https://')
+    const source = isRemote ? path : fileName
 
     if (table?.file_type === 'excel') {
       const ts = table.table_settings as InputExcelTable
       this.addCode(`# requires: pip install fastexcel (polars' default excel engine)`)
-      this.addCode(`${varName} = pl.read_excel(`)
-      this.addCode(`    "${fileName}",`)
+      if (isRemote) {
+        this.addCode(`from io import BytesIO`)
+        this.addCode(`from urllib.request import urlopen`)
+        this.addCode(`${varName} = pl.read_excel(`)
+        this.addCode(`    BytesIO(urlopen("${source}").read()),`)
+      } else {
+        this.addCode(`${varName} = pl.read_excel(`)
+        this.addCode(`    "${source}",`)
+      }
       if (ts?.sheet_name) {
         this.addCode(`    sheet_name="${ts.sheet_name}",`)
       }
@@ -277,7 +290,7 @@ class FlowToPolarsConverter {
     }
 
     if (table?.file_type === 'parquet') {
-      this.addCode(`${varName} = pl.scan_parquet("${fileName}")`)
+      this.addCode(`${varName} = pl.scan_parquet("${source}")`)
       this.addCode('')
       return
     }
@@ -285,7 +298,7 @@ class FlowToPolarsConverter {
     const tableSettings = table?.table_settings as InputCsvTable | undefined
 
     this.addCode(`${varName} = pl.scan_csv(`)
-    this.addCode(`    "${fileName}",`)
+    this.addCode(`    "${source}",`)
 
     if (tableSettings) {
       this.addCode(`    separator="${tableSettings.delimiter || ','}",`)

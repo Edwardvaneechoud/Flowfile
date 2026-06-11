@@ -216,6 +216,12 @@ function loadSettings(settings: NodeSettings) {
   }
 
   fileName.value = localSettings.value.file_name ?? ''
+
+  // Show where the data comes from: prefill the URL field for URL-sourced
+  // nodes (without clobbering anything the user is typing).
+  if (!urlInput.value && sourceUrl.value) {
+    urlInput.value = sourceUrl.value
+  }
 }
 
 watch(() => props.settings, (newSettings) => {
@@ -277,6 +283,7 @@ async function handleFileSelect(event: Event) {
       flowStore.setFileContent(props.nodeId, content)
       applyPickedFile(file.name, 'csv')
     }
+    urlInput.value = ''
     emitUpdate()
   } catch (err) {
     fileError.value = 'Failed to read file'

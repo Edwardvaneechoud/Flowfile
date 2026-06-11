@@ -1457,7 +1457,7 @@ onUnmounted(() => {
   margin-top: 2px;
   color: var(--accent-color);
   font-size: 11px;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-family-mono, monospace);
 }
 
 .schema-empty-row td {

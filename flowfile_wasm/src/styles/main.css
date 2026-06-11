@@ -326,6 +326,12 @@ html, body, #app {
   transition: background-color var(--transition-normal), color var(--transition-normal);
 }
 
+/* Form controls don't inherit fonts by default (buttons/inputs fall back to
+ * the browser UI font); explicit mono rules (code editors) still win. */
+button, input, textarea, select {
+  font-family: inherit;
+}
+
 /* Custom Vue Flow overrides */
 .vue-flow__minimap {
   transform: scale(75%);

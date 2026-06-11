@@ -22,7 +22,7 @@ nodes:
       file_name: sales-data.csv
       received_file:
         name: sales-data.csv
-        path: sales-data.csv
+        path: https://raw.githubusercontent.com/edwardvaneechoud/Flowfile/main/flowfile_wasm/public/demo/sales-data.csv
         file_type: csv
         table_settings:
           file_type: csv
@@ -43,7 +43,7 @@ nodes:
       file_name: regions.csv
       received_file:
         name: regions.csv
-        path: regions.csv
+        path: https://raw.githubusercontent.com/edwardvaneechoud/Flowfile/main/flowfile_wasm/public/demo/regions.csv
         file_type: csv
         table_settings:
           file_type: csv

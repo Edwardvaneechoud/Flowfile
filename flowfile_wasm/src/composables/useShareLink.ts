@@ -60,6 +60,9 @@ export function useShareLink() {
       for (const [nid, content] of Object.entries(payload.files ?? {})) {
         flowStore.setFileContent(Number(nid), content)
       }
+      // URL-sourced inputs whose content didn't travel hydrate in the
+      // background; running before they arrive triggers an awaited fetch.
+      void flowStore.refetchRemoteFiles()
       await flowStore.propagateSchemas()
       return true
     })

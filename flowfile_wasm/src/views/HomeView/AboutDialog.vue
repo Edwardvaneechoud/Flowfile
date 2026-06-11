@@ -11,10 +11,21 @@
             <h2 class="about-title">Flowfile</h2>
             <span v-if="version" class="about-version">v{{ version }}</span>
             <p class="about-description">
-              Flowfile is an open-source visual ETL platform. Design data pipelines on a
-              drag-and-drop canvas — this browser build runs Polars entirely in WebAssembly,
-              with no backend.
+              Flowfile is an open-source visual ETL platform. This browser build runs Polars
+              entirely in WebAssembly — ideal for quick, private data transformations with zero
+              setup, where your data never leaves your machine.
             </p>
+            <div class="about-upgrade">
+              <p class="about-upgrade-title">Need more then the lite version can do?</p>
+              <p class="about-upgrade-text">
+                The full version adds scheduling, database &amp; cloud connections, many more
+                transformations, custom Python code integration, and much more.
+              </p>
+              <a class="about-upgrade-btn" href="https://flowfile.io" target="_blank" rel="noopener">
+                <span>Get the full version at flowfile.io</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              </a>
+            </div>
             <div class="about-links">
               <a class="about-link" href="https://edwardvaneechoud.github.io/Flowfile/" target="_blank" rel="noopener">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
@@ -118,6 +129,47 @@ function close() {
   line-height: var(--line-height-relaxed);
   color: var(--color-text-secondary);
 }
+
+.about-upgrade {
+  width: 100%;
+  margin-top: var(--spacing-4);
+  padding: var(--spacing-4);
+  background: rgba(8, 145, 178, 0.1);
+  border: 1px solid rgba(8, 145, 178, 0.35);
+  border-radius: var(--border-radius-lg);
+}
+
+.about-upgrade-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.about-upgrade-text {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-text-secondary);
+}
+
+.about-upgrade-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-3);
+  padding: var(--spacing-2) var(--spacing-4);
+  background: var(--color-accent);
+  border: none;
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-inverse);
+  text-decoration: none;
+  transition: all var(--transition-fast);
+}
+.about-upgrade-btn:hover { background: var(--color-accent-hover, var(--color-accent)); transform: translateY(-1px); }
+.about-upgrade-btn svg { width: 15px; height: 15px; }
 
 .about-links {
   display: flex;

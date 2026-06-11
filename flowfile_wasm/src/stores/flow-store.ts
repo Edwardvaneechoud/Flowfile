@@ -6,6 +6,7 @@ import { inferOutputSchema, isSourceNode, inferSchemaFromCsv, inferSchemaFromRaw
 import { fileStorage, SIZE_THRESHOLD } from './file-storage'
 import { asFileContent, contentByteSize, isBinary, type FileContent } from '../types/file-content'
 import { ipcStreamToParquet, parquetToIpcStream } from '../utils/parquet-bridge'
+import { fetchRemoteFile } from '../utils/remote-file'
 import type {
   FlowNode,
   FlowEdge,
@@ -1931,7 +1932,12 @@ result
       switch (node.type) {
         case 'read': {
           const fileType = (node.settings as NodeReadSettings).received_file?.file_type ?? 'csv'
-          const fc = getFileContent(nodeId)
+          let fc = getFileContent(nodeId)
+          if (!fc && getRemoteSourceUrl(nodeId)) {
+            const [failure] = await refetchRemoteFiles([nodeId])
+            if (failure) return failNode(nodeId, failure.error)
+            fc = getFileContent(nodeId)
+          }
           if (!fc) {
             return failNode(nodeId, 'No file loaded')
           }
@@ -3097,6 +3103,9 @@ result
   
       const imported = importFromFlowfile(data)
       if (imported) {
+        // Hydrate URL-sourced read nodes in the background; failures surface
+        // with a clear error if the node is run before its data arrives.
+        void refetchRemoteFiles()
         const missingFiles = getMissingFileNodes()
         return { success: true, missingFiles }
       }
@@ -3109,18 +3118,68 @@ result
 
   function getMissingFileNodes(): Array<{nodeId: number, fileName: string}> {
     const missing: Array<{nodeId: number, fileName: string}> = []
-    
+
     for (const [id, node] of nodes.value) {
       if (node.type === 'read') {
         const settings = node.settings as NodeReadSettings
         const fileName = settings.file_name || settings.received_file?.name
-        
-        if (fileName && !fileContents.value.has(id)) {
+
+        // URL-sourced nodes self-heal: refetchRemoteFiles re-downloads them.
+        if (fileName && !fileContents.value.has(id) && !getRemoteSourceUrl(id)) {
           missing.push({ nodeId: id, fileName })
         }
       }
     }
     return missing
+  }
+
+  /** Remote source URL of a read node, when its content was loaded from one
+   * (the settings panel stores the URL as received_file.path). */
+  function getRemoteSourceUrl(nodeId: number): string | null {
+    const node = nodes.value.get(nodeId)
+    if (!node || node.type !== 'read') return null
+    const path = (node.settings as NodeReadSettings).received_file?.path ?? ''
+    return path.startsWith('http://') || path.startsWith('https://') ? path : null
+  }
+
+  const remoteFetchesInFlight = new Map<number, Promise<void>>()
+
+  /**
+   * Re-download content for URL-sourced read nodes that have none loaded —
+   * a flow opened from a share link, file or library on another machine keeps
+   * its data sources in node settings. Concurrent calls per node are deduped.
+   * Returns the nodes that could not be fetched.
+   */
+  async function refetchRemoteFiles(
+    nodeIds?: number[]
+  ): Promise<Array<{ nodeId: number; fileName: string; error: string }>> {
+    const targets = (nodeIds ?? [...nodes.value.keys()]).filter(
+      (id) => !fileContents.value.has(id) && getRemoteSourceUrl(id) !== null
+    )
+    const failures: Array<{ nodeId: number; fileName: string; error: string }> = []
+    await Promise.all(
+      targets.map(async (id) => {
+        const url = getRemoteSourceUrl(id)!
+        let inFlight = remoteFetchesInFlight.get(id)
+        if (!inFlight) {
+          inFlight = fetchRemoteFile(url)
+            .then((remote) => setFileContent(id, remote.content))
+            .finally(() => remoteFetchesInFlight.delete(id))
+          remoteFetchesInFlight.set(id, inFlight)
+        }
+        try {
+          await inFlight
+        } catch (err) {
+          const settings = nodes.value.get(id)?.settings as NodeReadSettings | undefined
+          failures.push({
+            nodeId: id,
+            fileName: settings?.file_name || settings?.received_file?.name || `node ${id}`,
+            error: err instanceof Error ? err.message : String(err)
+          })
+        }
+      })
+    )
+    return failures
   }
 
 
@@ -3225,6 +3284,8 @@ result
     getRightInputSchema,
     isInputSchemaResolved,
     getMissingFileNodes,
+    getRemoteSourceUrl,
+    refetchRemoteFiles,
 
     // Actions
     generateNodeId,

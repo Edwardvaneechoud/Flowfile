@@ -7,14 +7,11 @@
 
 import { computed, ref } from 'vue'
 import { useFlowStore } from '../stores/flow-store'
-import { inferSchemaFromCsv } from '../stores/schema-inference'
 import yaml from 'js-yaml'
 import type { FlowfileData } from '../types'
 
 const DEMO_SHOWN_KEY = 'flowfile_demo_shown'
 const DEMO_DISMISSED_KEY = 'flowfile_demo_dismissed'
-const ORDERS_NODE_ID = 1 // Must match the read_csv node ID for orders in sample-flow.yaml
-const REGIONS_NODE_ID = 2 // Must match the read_csv node ID for regions in sample-flow.yaml
 
 const isLoading = ref(false)
 const loadError = ref<string | null>(null)
@@ -99,29 +96,12 @@ export function useDemo() {
     loadError.value = null
 
     try {
-      const [flowResponse, ordersResponse, regionsResponse] = await Promise.all([
-        fetch('/demo/sample-flow.yaml'),
-        fetch('/demo/sales-data.csv'),
-        fetch('/demo/regions.csv')
-      ])
-
+      const flowResponse = await fetch('/demo/sample-flow.yaml')
       if (!flowResponse.ok) {
         throw new Error(`Failed to fetch flow definition: ${flowResponse.status}`)
       }
-      if (!ordersResponse.ok) {
-        throw new Error(`Failed to fetch orders data: ${ordersResponse.status}`)
-      }
-      if (!regionsResponse.ok) {
-        throw new Error(`Failed to fetch regions data: ${regionsResponse.status}`)
-      }
 
-      const [flowYaml, ordersContent, regionsContent] = await Promise.all([
-        flowResponse.text(),
-        ordersResponse.text(),
-        regionsResponse.text()
-      ])
-
-      const flowData = yaml.load(flowYaml) as FlowfileData
+      const flowData = yaml.load(await flowResponse.text()) as FlowfileData
       if (!flowData || !flowData.nodes) {
         throw new Error('Invalid flow definition')
       }
@@ -132,16 +112,11 @@ export function useDemo() {
         throw new Error('Failed to import flow')
       }
 
-      flowStore.setFileContent(ORDERS_NODE_ID, ordersContent)
-      const ordersSchema = inferSchemaFromCsv(ordersContent, true, ',')
-      if (ordersSchema) {
-        flowStore.setSourceNodeSchema(ORDERS_NODE_ID, ordersSchema)
-      }
-
-      flowStore.setFileContent(REGIONS_NODE_ID, regionsContent)
-      const regionsSchema = inferSchemaFromCsv(regionsContent, true, ',')
-      if (regionsSchema) {
-        flowStore.setSourceNodeSchema(REGIONS_NODE_ID, regionsSchema)
+      // The demo's read nodes carry their data sources as URLs (GitHub raw),
+      // same as any user flow — fetch them through the standard remote path.
+      const failures = await flowStore.refetchRemoteFiles()
+      if (failures.length) {
+        throw new Error(`Failed to fetch demo data: ${failures.map((f) => f.fileName).join(', ')}`)
       }
 
       await flowStore.propagateSchemas()

@@ -64,6 +64,53 @@ describe('Code Generation', () => {
       expect(code).toContain('has_header=True')
     })
 
+    it('should read from the source URL when the file was loaded from one', () => {
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', {
+        file_name: 'sales.csv',
+        received_file: {
+          name: 'sales.csv',
+          path: 'https://raw.githubusercontent.com/user/repo/main/sales.csv',
+          file_type: 'csv',
+          table_settings: { delimiter: ',', has_headers: true, starting_from_line: 0 }
+        }
+      }))
+
+      const code = generateCode({ nodes, edges: [] })
+
+      expect(code).toContain('pl.scan_csv(')
+      expect(code).toContain('"https://raw.githubusercontent.com/user/repo/main/sales.csv"')
+      expect(code).not.toContain('"sales.csv"')
+    })
+
+    it('should read remote parquet and excel from their source URLs', () => {
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', {
+        file_name: 'data.parquet',
+        received_file: {
+          name: 'data.parquet',
+          path: 'https://example.com/data.parquet',
+          file_type: 'parquet',
+          table_settings: {}
+        }
+      }))
+      nodes.set(2, createNode(2, 'read', {
+        file_name: 'book.xlsx',
+        received_file: {
+          name: 'book.xlsx',
+          path: 'https://example.com/book.xlsx',
+          file_type: 'excel',
+          table_settings: { sheet_name: 'Sheet1', has_headers: true }
+        }
+      }))
+
+      const code = generateCode({ nodes, edges: [] })
+
+      expect(code).toContain('pl.scan_parquet("https://example.com/data.parquet")')
+      expect(code).toContain('urlopen("https://example.com/book.xlsx")')
+      expect(code).toContain('BytesIO(')
+    })
+
     it('should generate code for manual_input node', () => {
       const nodes = new Map<number, FlowNode>()
       nodes.set(1, createNode(1, 'manual_input', {

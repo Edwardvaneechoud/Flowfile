@@ -411,6 +411,7 @@ onUnmounted(() => {
   margin: 0;
   white-space: pre-wrap;
   word-wrap: break-word;
+  font-family: var(--font-family-base);
   font-size: 12px;
 }
 
@@ -421,6 +422,7 @@ onUnmounted(() => {
   padding: 4px;
   border: 1px solid var(--accent-color);
   border-radius: 4px;
+  font-family: var(--font-family-base);
   font-size: small;
   background-color: var(--bg-secondary);
   color: var(--text-primary);

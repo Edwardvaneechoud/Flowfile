@@ -62,6 +62,7 @@ export const useSavedFlowsStore = defineStore('savedFlows', () => {
           flowStore.setFileContent(Number(nid), content)
         }
       }
+      void flowStore.refetchRemoteFiles()
       flowStore.currentFlowId = entry.id
       flowStore.currentFlowName = entry.name
       return true
