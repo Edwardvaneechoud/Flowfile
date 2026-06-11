@@ -172,3 +172,33 @@ class NodeDescriptionResponse(BaseModel):
 
     description: str = ""
     is_auto_generated: bool = False
+
+
+class ProjectExportFile(BaseModel):
+    """A single file in a project export (path relative to the project root)."""
+
+    path: str
+    content: str
+
+
+class ProjectExportManifest(BaseModel):
+    """The full file manifest of a flow exported as a Python project."""
+
+    project_name: str
+    files: list[ProjectExportFile]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ProjectSaveRequest(BaseModel):
+    """Request to write a project export to a directory on the server."""
+
+    flow_id: int
+    target_directory: str
+    overwrite: bool = False
+
+
+class ProjectSaveResponse(BaseModel):
+    """Result of writing a project export to disk."""
+
+    saved_to: str
+    file_count: int
