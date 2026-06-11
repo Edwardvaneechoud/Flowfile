@@ -2,6 +2,9 @@
 
 Save interactive charts in the catalog and reopen them whenever you need them. A visualization sits on top of a catalog table or an inline SQL query and is built with [Graphic Walker](https://github.com/Kanaries/graphic-walker), so dragging fields onto axes, switching aggregations, and filtering happen live against the underlying data.
 
+!!! info "Limited in Flowfile Lite"
+    The browser-only [Flowfile Lite](../../deployment/lite.md) edition can explore data interactively with Graphic Walker (the **Explore Data** node), but **saving visualizations to the catalog** requires the full desktop/server build.
+
 ![Visualizations library](../../../assets/images/guides/catalog/visualizations-library.png)
 *The Visualizations library — saved charts as cards with thumbnails, filtered by namespace.*
 

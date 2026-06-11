@@ -2,6 +2,9 @@
 
 Store sensitive credentials like database passwords and API keys securely.
 
+!!! info "Not in Flowfile Lite"
+    Secrets storage requires the full desktop/server build. The browser-only [Flowfile Lite](../../deployment/lite.md) edition does not store credentials.
+
 ## How It Works
 
 Secrets are encrypted using a master key before storage. When a flow needs a credential, Flowfile decrypts it on-demand. The actual values never appear in flow definitions or logs.

@@ -13,6 +13,9 @@
   <p style="margin-bottom: 0; font-size: clamp(0.9rem, 2vw, 1rem);">This installs everything you need - the Python API, visual editor, and all services.</p>
 </div>
 
+!!! tip "Want to try Flowfile without installing anything?"
+    [**Flowfile Lite**](users/deployment/lite.md) runs the visual editor entirely in your browser (Polars via WebAssembly) — no install, no signup. Try it at [demo.flowfile.org](https://demo.flowfile.org). It's a lightweight subset (18 nodes, no backend, databases, scheduler, or AI); install the full package below for everything else.
+
 ### Alternative Installation Methods
 
 <details markdown="1">

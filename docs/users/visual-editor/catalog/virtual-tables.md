@@ -2,6 +2,9 @@
 
 Create catalog tables that store **no data on disk**. When queried, a virtual table executes its producer flow on demand — delivering always-fresh results with zero storage overhead.
 
+!!! info "Not in Flowfile Lite"
+    Virtual tables require the full desktop/server build and are not available in the browser-only [Flowfile Lite](../../deployment/lite.md) edition.
+
 ---
 
 ## Why Virtual Tables?

@@ -2,6 +2,9 @@
 
 Automate flow execution with schedules — run flows on a timer or trigger them when catalog tables are refreshed.
 
+!!! info "Not in Flowfile Lite"
+    The scheduler requires the full desktop/server build. The browser-only [Flowfile Lite](../../deployment/lite.md) edition cannot schedule or automate flows.
+
 ![Schedules overview](../../../assets/images/guides/schedules/schedules-overview.png)
 
 *The Schedules tab with scheduler status, summary cards, and schedule list*
