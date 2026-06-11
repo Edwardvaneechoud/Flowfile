@@ -31,7 +31,10 @@ vi.mock('../../src/stores/file-storage', () => ({
     getDownloadContent: vi.fn().mockResolvedValue(null),
     setDownloadContent: vi.fn().mockResolvedValue(undefined),
     clearAll: vi.fn().mockResolvedValue(undefined),
-    shouldUseIndexedDB: vi.fn().mockReturnValue(false)
+    shouldUseIndexedDB: vi.fn().mockReturnValue(false),
+    getAllCatalogDatasets: vi.fn().mockResolvedValue([]),
+    putCatalogDataset: vi.fn().mockResolvedValue(undefined),
+    deleteCatalogDataset: vi.fn().mockResolvedValue(undefined)
   },
   SIZE_THRESHOLD: 5 * 1024 * 1024
 }))
@@ -239,8 +242,16 @@ describe('Lazy schema propagation', () => {
         runPythonWithResult.mock.calls.filter((c) => (c[0] as string).includes('propagate_schemas')).length
 
       await store.propagateSchemas()
-      for (let i = 0; i < 10; i++) await vi.runAllTimersAsync()
-      const settled = propagateCalls()
+      // Settle: flush until two consecutive rounds add no propagations — slow
+      // schedulers may need several rounds to realize one debounce cycle.
+      let settled = propagateCalls()
+      for (let i = 0, quiet = 0; i < 50 && quiet < 2; i++) {
+        await vi.runAllTimersAsync()
+        const now = propagateCalls()
+        quiet = now === settled ? quiet + 1 : 0
+        settled = now
+      }
+      // A looping implementation never goes quiet: more rounds keep adding calls.
       for (let i = 0; i < 10; i++) await vi.runAllTimersAsync()
       expect(propagateCalls()).toBe(settled)
     } finally {

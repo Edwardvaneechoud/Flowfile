@@ -41,7 +41,10 @@ vi.mock('../../src/stores/file-storage', () => ({
     getSavedFlow: vi.fn().mockResolvedValue(null),
     putSavedFlow: vi.fn().mockResolvedValue(undefined),
     putRun: vi.fn().mockResolvedValue(undefined),
-    pruneRuns: vi.fn().mockResolvedValue(undefined)
+    pruneRuns: vi.fn().mockResolvedValue(undefined),
+    getAllCatalogDatasets: vi.fn().mockResolvedValue([]),
+    putCatalogDataset: vi.fn().mockResolvedValue(undefined),
+    deleteCatalogDataset: vi.fn().mockResolvedValue(undefined)
   }
 }))
 
