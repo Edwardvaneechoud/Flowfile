@@ -153,6 +153,8 @@
       <RunOverviewPanel
         @view-run="$emit('viewRun', $event)"
         @view-flow="$emit('viewFlow', $event)"
+        @view-schedule-runs="$emit('viewScheduleRuns', $event)"
+        @open-snapshot="$emit('openSnapshot', $event)"
       />
     </div>
 
@@ -165,6 +167,7 @@
         @run-now="$emit('runNow', $event)"
         @cancel-schedule-run="$emit('cancelScheduleRun', $event)"
         @view-flow="$emit('viewFlow', $event)"
+        @select-schedule="$emit('selectSchedule', $event)"
       />
     </div>
 
@@ -323,12 +326,15 @@ const favoriteTables = computed((): CatalogTable[] => {
 defineEmits([
   "viewRun",
   "viewFlow",
+  "viewScheduleRuns",
+  "openSnapshot",
   "viewTable",
   "createSchedule",
   "toggleSchedule",
   "deleteSchedule",
   "runNow",
   "cancelScheduleRun",
+  "selectSchedule",
   "openTab",
 ]);
 

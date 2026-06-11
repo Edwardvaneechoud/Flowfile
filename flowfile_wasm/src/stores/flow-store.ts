@@ -2485,17 +2485,19 @@ result
       const order = getExecutionOrder()
       console.debug(`[flowfile] executeFlow: ${order.length} nodes in order [${order.join(', ')}]`)
 
+      const failedNodes: string[] = []
       for (const nodeId of order) {
-        await executeNode(nodeId)
+        const result = await executeNode(nodeId)
+        if (result && !result.success) {
+          failedNodes.push(`${nodeId}: ${result.error ?? 'unknown error'}`)
+        }
+      }
+      if (failedNodes.length > 0) {
+        executionError.value = `Node execution failed — ${failedNodes.join('; ')}`
       }
 
-      // After execution, propagate schemas to update downstream node settings
-      // This syncs select_input, agg_cols, etc. with actual executed schemas
       await propagateSchemas()
 
-      // Optional: Auto-fetch preview for selected node
-      // explore_data nodes use Graphic Walker (payload already on nodeResult),
-      // so the AG Grid preview is not needed for them.
       if (selectedNodeId.value !== null) {
         const result = nodeResults.value.get(selectedNodeId.value)
         if (result?.success) {
