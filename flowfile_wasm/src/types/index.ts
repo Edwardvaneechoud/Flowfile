@@ -171,7 +171,7 @@ export interface UnpivotInput {
 
 // OUTPUT SCHEMAS (matches flowfile_core/schemas/input_schema.py)
 
-export type OutputFileType = 'csv' | 'parquet'
+export type OutputFileType = 'csv' | 'parquet' | 'excel'
 export type OutputWriteMode = 'overwrite' | 'new file' | 'append'
 
 export interface OutputCsvTable {
@@ -184,7 +184,13 @@ export interface OutputParquetTable {
   file_type: 'parquet'
 }
 
-export type OutputTableSettings = OutputCsvTable | OutputParquetTable
+// Matches flowfile_core OutputExcelTable
+export interface OutputExcelTable {
+  file_type: 'excel'
+  sheet_name: string
+}
+
+export type OutputTableSettings = OutputCsvTable | OutputParquetTable | OutputExcelTable
 
 export type OutputPolarsMethod = 'sink_csv' | 'sink_parquet'
 
@@ -246,6 +252,27 @@ export interface InputCsvTable {
   ignore_errors?: boolean
 }
 
+// Matches flowfile_core InputExcelTable. start_column/end_row/end_column are
+// carried for save-file compatibility; the WASM engine honors sheet_name,
+// has_headers and start_row only.
+export interface InputExcelTable {
+  file_type: 'excel'
+  sheet_name?: string | null
+  start_row?: number
+  start_column?: number
+  end_row?: number
+  end_column?: number
+  has_headers: boolean
+  type_inference?: boolean
+}
+
+// Matches flowfile_core InputParquetTable
+export interface InputParquetTable {
+  file_type: 'parquet'
+}
+
+export type InputTableSettings = InputCsvTable | InputExcelTable | InputParquetTable
+
 // Matches flowfile_core ReceivedTable
 export interface ReceivedTable {
   id?: number
@@ -257,7 +284,7 @@ export interface ReceivedTable {
   fields?: MinimalFieldInfo[]
   abs_file_path?: string
   file_type: 'csv' | 'json' | 'parquet' | 'excel'
-  table_settings: InputCsvTable
+  table_settings: InputTableSettings
 }
 
 // NODE SETTING TYPES (matches flowfile_core node structures)
@@ -452,6 +479,10 @@ export interface DataPreview {
 
 export interface DownloadInfo {
   content: string
+  /** 'binary' = the file bytes are staged engine-side (take_output_binary), not in content. */
+  content_kind?: 'text' | 'binary'
+  /** 'arrow-ipc' = staged bytes are Arrow IPC that JS must encode to the final format. */
+  transport?: 'arrow-ipc' | null
   file_name: string
   file_type: string
   mime_type: string

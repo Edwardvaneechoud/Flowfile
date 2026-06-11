@@ -347,6 +347,20 @@ function inferDataTypeFromValues(values: string[]): string {
 }
 
 /**
+ * Schema from a FileContent: text delegates to CSV inference; binary
+ * (xlsx/parquet) returns null — the schema resolves on execution, riding the
+ * same lazy-execution contract as polars_code/pivot.
+ */
+export function inferSchemaFromContent(
+  content: import('../types/file-content').FileContent,
+  hasHeaders: boolean = true,
+  delimiter: string = ','
+): ColumnSchema[] | null {
+  if (content.kind !== 'text') return null
+  return inferSchemaFromCsv(content.data, hasHeaders, delimiter)
+}
+
+/**
  * Parse CSV content and return the inferred schema
  * This is used for source nodes to provide immediate schema feedback
  */

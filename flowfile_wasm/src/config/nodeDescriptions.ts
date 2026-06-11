@@ -5,8 +5,8 @@ export interface NodeDescription {
 
 export const nodeDescriptions: Record<string, NodeDescription> = {
   read: {
-    title: 'Read CSV',
-    intro: 'Load data from a CSV file. Drag and drop a file or paste CSV content directly.'
+    title: 'Read File',
+    intro: 'Load data from a CSV, Excel (.xlsx) or Parquet file. Excel downloads openpyxl from PyPI and Parquet downloads its engine from the CDN on first use.'
   },
   manual_input: {
     title: 'Manual Input',

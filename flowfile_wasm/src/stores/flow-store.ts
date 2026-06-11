@@ -4,6 +4,8 @@ import { usePyodideStore } from './pyodide-store'
 import yaml from 'js-yaml'
 import { inferOutputSchema, isSourceNode, inferSchemaFromCsv, inferSchemaFromRawData } from './schema-inference'
 import { fileStorage, SIZE_THRESHOLD } from './file-storage'
+import { asFileContent, contentByteSize, isBinary, type FileContent } from '../types/file-content'
+import { ipcStreamToParquet, parquetToIpcStream } from '../utils/parquet-bridge'
 import type {
   FlowNode,
   FlowEdge,
@@ -18,6 +20,7 @@ import type {
   NodeExternalDataSettings,
   NodeReadFromCatalogSettings,
   NodeExternalOutputSettings,
+  NodeOutputSettings,
   NodeWriteToCatalogSettings,
   NodeFilterSettings,
   NodeSelectSettings,
@@ -38,7 +41,7 @@ export interface FlowStateSnapshot {
   /** Stable library id, or null for a flow not yet saved to the library. */
   flowId: string | null
   snapshot: FlowfileData
-  fileContents: Record<number, string>
+  fileContents: Record<number, FileContent>
   nodeIdCounter: number
 }
 
@@ -128,14 +131,14 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   // File content storage for CSV nodes
-  const fileContents = ref<Map<number, string>>(new Map())
+  const fileContents = ref<Map<number, FileContent>>(new Map())
 
   // Output callbacks for embeddable mode
   type OutputCallback = (data: { nodeId: number; content: string; fileName: string; mimeType: string }) => void
   const outputCallbacks = new Set<OutputCallback>()
 
   // External datasets provided by the host application (for embedded mode)
-  const externalDatasets = ref<Map<string, string>>(new Map())
+  const externalDatasets = ref<Map<string, FileContent>>(new Map())
   // Catalog datasets: CSV tables the user uploads in the Catalog (persisted to
   // IndexedDB). Independent from host-injected externalDatasets. Read by the
   // dedicated "Read from Catalog" node.
@@ -239,19 +242,21 @@ export const useFlowStore = defineStore('flow', () => {
             deriveEdgesFromNodes(data.nodes)
           }
 
-          // Restore file contents from sessionStorage (small files)
+          // Restore file contents from sessionStorage (small text files)
           if (state.fileContents) {
-            fileContents.value = new Map(state.fileContents)
+            fileContents.value = new Map(
+              (state.fileContents as Array<[number, string]>).map(([nid, content]) => [nid, asFileContent(content)])
+            )
           }
 
-          // Restore large file contents from IndexedDB
+          // Restore large/binary file contents from IndexedDB
           if (state.largeFileNodeIds && Array.isArray(state.largeFileNodeIds)) {
             await Promise.all(
               state.largeFileNodeIds.map(async (nodeId: number) => {
                 try {
                   const content = await fileStorage.getFileContent(nodeId)
                   if (content) {
-                    fileContents.value.set(nodeId, content)
+                    fileContents.value.set(nodeId, asFileContent(content))
                   }
                 } catch (err) {
                   console.error(`Failed to load large file for node ${nodeId} from IndexedDB:`, err)
@@ -282,7 +287,11 @@ export const useFlowStore = defineStore('flow', () => {
         else if (state.nodes) {
           nodes.value = new Map(state.nodes)
           if (state.edges) edges.value = state.edges
-          if (state.fileContents) fileContents.value = new Map(state.fileContents)
+          if (state.fileContents) {
+            fileContents.value = new Map(
+              (state.fileContents as Array<[number, string]>).map(([nid, content]) => [nid, asFileContent(content)])
+            )
+          }
           if (state.nodeIdCounter !== undefined) nodeIdCounter.value = state.nodeIdCounter
         }
       }
@@ -390,21 +399,20 @@ export const useFlowStore = defineStore('flow', () => {
       nodes: flowfileNodes
     }
 
-    // Separate small and large files for hybrid storage
+    // Separate small and large files for hybrid storage. sessionStorage keeps
+    // the legacy [nodeId, string] shape; binary always lives in IndexedDB.
     const smallFiles: Array<[number, string]> = []
     const largeFileNodeIds: number[] = []
 
     for (const [nodeId, content] of fileContents.value.entries()) {
-      if (fileStorage.shouldUseIndexedDB(content)) {
-        // Large file: save to IndexedDB
+      if (isBinary(content) || fileStorage.shouldUseIndexedDB(content)) {
         largeFileNodeIds.push(nodeId)
         // Save asynchronously (don't await to avoid blocking)
         fileStorage.setFileContent(nodeId, content).catch(err => {
           console.error(`Failed to save large file for node ${nodeId} to IndexedDB:`, err)
         })
       } else {
-        // Small file: save to sessionStorage
-        smallFiles.push([nodeId, content])
+        smallFiles.push([nodeId, content.data])
       }
     }
 
@@ -595,7 +603,8 @@ export const useFlowStore = defineStore('flow', () => {
     type: string
     settings: Record<string, any>
     description?: string
-    fileContent?: string
+    /** localStorage carries plain strings only; the in-memory clipboard may hold binary FileContent. */
+    fileContent?: string | FileContent
     copiedAt?: number
   }
 
@@ -617,12 +626,15 @@ export const useFlowStore = defineStore('flow', () => {
       return false
     }
     memoryClipboard.value = payload
-    const persistable =
-      payload.fileContent === undefined || !fileStorage.shouldUseIndexedDB(payload.fileContent)
+    // Persist text-only: JSON.stringify corrupts Uint8Array (index-keyed object);
+    // binary copies remain paste-able in-session via the in-memory clipboard.
+    const fc = payload.fileContent as FileContent | undefined
+    const persistedContent =
+      fc !== undefined && !isBinary(fc) && !fileStorage.shouldUseIndexedDB(fc) ? fc.data : undefined
     try {
       localStorage.setItem(
         CLIPBOARD_KEY,
-        JSON.stringify(persistable ? payload : { ...payload, fileContent: undefined })
+        JSON.stringify({ ...payload, fileContent: persistedContent })
       )
     } catch {
       // Quota exceeded — persist settings only; content stays in memory.
@@ -697,6 +709,14 @@ export const useFlowStore = defineStore('flow', () => {
       nodes.value.set(id, node)
 
       invalidatePreviewCache(id)
+
+      // A stale download must not survive settings edits — the panel would
+      // serve the OLD bytes under the NEW name/format until the next run.
+      const result = nodeResults.value.get(id)
+      if (result?.download) {
+        nodeResults.value.set(id, { ...result, download: undefined })
+        dirtyNodes.value.add(id)
+      }
     }
   }
 
@@ -863,18 +883,19 @@ export const useFlowStore = defineStore('flow', () => {
     }
   }
 
-  function setFileContent(nodeId: number, content: string) {
-    fileContents.value.set(nodeId, content)
+  function setFileContent(nodeId: number, content: string | FileContent) {
+    const fc = asFileContent(content)
+    fileContents.value.set(nodeId, fc)
 
-    // If file is large, immediately save to IndexedDB for performance
-    if (fileStorage.shouldUseIndexedDB(content)) {
-      fileStorage.setFileContent(nodeId, content).catch(err => {
+    // Binary always persists to IndexedDB; large text too (sessionStorage can't hold it)
+    if (isBinary(fc) || fileStorage.shouldUseIndexedDB(fc)) {
+      fileStorage.setFileContent(nodeId, fc).catch(err => {
         console.error(`Failed to save large file for node ${nodeId} to IndexedDB:`, err)
       })
     }
 
     const node = nodes.value.get(nodeId)
-    if (node && (node.type === 'read' || node.type === 'manual_input')) {
+    if (fc.kind === 'text' && node && (node.type === 'read' || node.type === 'manual_input')) {
       let hasHeaders = true
       let delimiter = ','
 
@@ -884,7 +905,7 @@ export const useFlowStore = defineStore('flow', () => {
         delimiter = settings?.received_file?.table_settings?.delimiter ?? ','
       }
 
-      const schema = inferSchemaFromCsv(content, hasHeaders, delimiter)
+      const schema = inferSchemaFromCsv(fc.data, hasHeaders, delimiter)
       if (schema) {
         // Set schema for source node (success undefined = not yet executed, shows grey)
         nodeResults.value.set(nodeId, { schema })
@@ -896,24 +917,69 @@ export const useFlowStore = defineStore('flow', () => {
     invalidatePreviewCache(nodeId)
   }
 
-  /** Whether a node currently has loaded CSV content in memory. */
+  /** Whether a node currently has loaded file content in memory. */
   function hasFileContent(nodeId: number): boolean {
     return fileContents.value.has(nodeId)
   }
 
-  /** Get a node's loaded CSV content (in-memory), if any. */
-  function getFileContent(nodeId: number): string | undefined {
+  /** Get a node's loaded content (in-memory), if any. */
+  function getFileContent(nodeId: number): FileContent | undefined {
     return fileContents.value.get(nodeId)
+  }
+
+  /** Text content for text-only consumers (CSV bridge, inference); undefined for binary. */
+  function getTextContent(nodeId: number): string | undefined {
+    const fc = fileContents.value.get(nodeId)
+    return fc?.kind === 'text' ? fc.data : undefined
+  }
+
+  // _temp_bytes is ONE shared Pyodide global with four writers (the sheet
+  // picker plus the excel/parquet/external_data execution branches); a write
+  // landing inside another caller's set→run→delete window swaps its bytes or
+  // NameErrors it. Serialize the window through a promise chain.
+  let tempBytesChain: Promise<unknown> = Promise.resolve()
+  function withTempBytes<T>(bytes: Uint8Array, fn: () => Promise<T>): Promise<T> {
+    const run = tempBytesChain.then(async () => {
+      pyodideStore.setGlobal('_temp_bytes', bytes)
+      try {
+        return await fn()
+      } finally {
+        pyodideStore.deleteGlobal('_temp_bytes')
+      }
+    })
+    tempBytesChain = run.catch(() => {})
+    return run
+  }
+
+  /** A node's result frame as Arrow IPC stream bytes (host pull API);
+   * null when the node has no executed frame. */
+  async function getNodeResultArrow(nodeId: number): Promise<Uint8Array | null> {
+    if (!pyodideStore.isReady) return null
+    return pyodideStore.runPythonGetBytes(`get_node_arrow(${nodeId})`)
+  }
+
+  /** Worksheet names of a node's loaded xlsx (settings-panel sheet picker).
+   * Throws with an actionable message when openpyxl can't be installed. */
+  async function listExcelSheets(nodeId: number): Promise<string[]> {
+    const fc = getFileContent(nodeId)
+    if (!fc || !isBinary(fc) || fc.format !== 'excel' || !pyodideStore.isReady) return []
+    await pyodideStore.ensurePyPackages(['openpyxl==3.1.5'])
+    const res = await withTempBytes(fc.data, () =>
+      pyodideStore.runPythonWithResult('list_excel_sheets(_temp_bytes.to_py())')
+    )
+    if (res?.success) return (res.sheets as string[]) ?? []
+    throw new Error(res?.error || 'Could not list worksheets')
   }
 
   /**
    * Set external datasets available from the host application.
-   * Called by FlowfileEditor when inputData prop changes.
+   * Called by FlowfileEditor when inputData prop changes. Hosts may pass text
+   * (CSV) or binary FileContent (Arrow IPC / Parquet bytes).
    */
-  function setExternalDatasets(datasets: Record<string, string>) {
+  function setExternalDatasets(datasets: Record<string, string | FileContent>) {
     externalDatasets.value.clear()
     for (const [name, content] of Object.entries(datasets)) {
-      externalDatasets.value.set(name, content)
+      externalDatasets.value.set(name, asFileContent(content))
     }
 
     // Auto-load data into any external_data nodes that reference these datasets
@@ -937,7 +1003,7 @@ export const useFlowStore = defineStore('flow', () => {
   /**
    * Get content for an external dataset by name
    */
-  function getExternalDatasetContent(name: string): string | undefined {
+  function getExternalDatasetContent(name: string): FileContent | undefined {
     return externalDatasets.value.get(name)
   }
 
@@ -1006,8 +1072,12 @@ export const useFlowStore = defineStore('flow', () => {
     rowInfo?: Record<string, unknown>
     error?: string
   }> {
-    const content = getCatalogDatasetContent(name) ?? getExternalDatasetContent(name)
+    const external = getExternalDatasetContent(name)
+    const content = getCatalogDatasetContent(name) ?? (external?.kind === 'text' ? external.data : undefined)
     if (content === undefined) {
+      if (isBinary(external)) {
+        return { success: false, error: `Dataset "${name}" is binary (Arrow/Parquet) — visuals support CSV datasets only.` }
+      }
       return { success: false, error: `Dataset "${name}" is not in the catalog.` }
     }
     const { runPythonWithResult, setGlobal, deleteGlobal } = pyodideStore
@@ -1444,10 +1514,13 @@ result
       if (rawData?.columns?.length) return inferSchemaFromRawData(rawData.columns)
     }
 
+    // Binary sources (xlsx/parquet) can't be inferred in TS — schema resolves on execution
+    if (content.kind !== 'text') return null
+
     const s = node.settings as any
     const hasHeaders = s?.received_file?.table_settings?.has_headers ?? s?.manual_input?.has_headers ?? true
     const delimiter = s?.received_file?.table_settings?.delimiter ?? s?.manual_input?.delimiter ?? ','
-    return inferSchemaFromCsv(content, hasHeaders, delimiter)
+    return inferSchemaFromCsv(content.data, hasHeaders, delimiter)
   }
 
   /**
@@ -1857,9 +1930,60 @@ result
 
       switch (node.type) {
         case 'read': {
-          const content = fileContents.value.get(nodeId)
-          if (!content) {
+          const fileType = (node.settings as NodeReadSettings).received_file?.file_type ?? 'csv'
+          const fc = getFileContent(nodeId)
+          if (!fc) {
             return failNode(nodeId, 'No file loaded')
+          }
+
+          if (fileType === 'excel') {
+            if (!isBinary(fc)) {
+              return failNode(nodeId, 'Node is configured for Excel but holds text content — re-pick the file')
+            }
+            try {
+              await pyodideStore.ensurePyPackages(['openpyxl==3.1.5'])
+            } catch (err) {
+              return failNode(nodeId, err instanceof Error ? err.message : String(err))
+            }
+            result = await withTempBytes(fc.data, () => runPythonWithResult(`
+import json
+result = execute_read_excel(${nodeId}, _temp_bytes.to_py(), json.loads(${toPythonJson(node.settings)}))
+result
+`))
+            break
+          }
+
+          if (fileType === 'json') {
+            return failNode(nodeId, 'JSON read is not supported in the browser — use the desktop app or convert to CSV')
+          }
+
+          if (fileType === 'parquet') {
+            if (!isBinary(fc)) {
+              return failNode(nodeId, 'Node is configured for Parquet but holds text content — re-pick the file')
+            }
+            let ipc: Uint8Array
+            try {
+              // Decode in JS (parquet-wasm, CDN-loaded on first use); the engine
+              // only sees Arrow IPC stream bytes. Original parquet bytes stay in
+              // fileContents (compressed); the IPC copy is transient.
+              ipc = await parquetToIpcStream(fc.data)
+            } catch (err) {
+              return failNode(nodeId, err instanceof Error ? err.message : String(err))
+            }
+            result = await withTempBytes(ipc, () => runPythonWithResult(`
+import json
+result = execute_read_ipc(${nodeId}, _temp_bytes.to_py(), json.loads(${toPythonJson(node.settings)}))
+result
+`))
+            break
+          }
+
+          const content = getTextContent(nodeId)
+          if (content === undefined) {
+            return failNode(nodeId, 'File content is binary but the node is configured as CSV — re-pick the file')
+          }
+          if (!content) {
+            return failNode(nodeId, 'The loaded file is empty')
           }
           setGlobal('_temp_content', content)
           try {
@@ -1875,7 +1999,7 @@ result
         }
 
         case 'manual_input': {
-          const content = fileContents.value.get(nodeId)
+          const content = getTextContent(nodeId)
           if (!content) {
             return failNode(nodeId, 'No data entered')
           }
@@ -1893,16 +2017,37 @@ result
         }
 
         case 'external_data': {
-          // Reuses execute_manual_input because the data format is identical (CSV string + settings).
-          // If execute_manual_input ever adds manual-input-specific logic, this should be split
-          // into a dedicated Python function.
-          const content = fileContents.value.get(nodeId)
-          if (!content) {
+          const fc = getFileContent(nodeId)
+          if (!fc) {
             const settings = node.settings as NodeExternalDataSettings
             const dsName = settings.dataset_name
             return failNode(nodeId, dsName ? `No data loaded for dataset "${dsName}". Ensure the host provides this dataset.` : 'No dataset selected')
           }
-          setGlobal('_temp_content', content)
+
+          if (isBinary(fc)) {
+            // Host-provided binary: Arrow IPC executes directly; Parquet decodes
+            // to IPC in JS first. (Excel bytes are not part of the host contract.)
+            let ipc = fc.data
+            if (fc.format === 'parquet') {
+              try {
+                ipc = await parquetToIpcStream(fc.data)
+              } catch (err) {
+                return failNode(nodeId, err instanceof Error ? err.message : String(err))
+              }
+            } else if (fc.format !== 'arrow-ipc') {
+              return failNode(nodeId, `External datasets support CSV, Arrow IPC or Parquet — got ${fc.format}`)
+            }
+            result = await withTempBytes(ipc, () => runPythonWithResult(`
+import json
+result = execute_read_ipc(${nodeId}, _temp_bytes.to_py(), json.loads(${toPythonJson(node.settings)}))
+result
+`))
+            break
+          }
+
+          // Text reuses execute_manual_input because the data format is identical
+          // (CSV string + settings).
+          setGlobal('_temp_content', fc.data)
           try {
             result = await runPythonWithResult(`
 import json
@@ -1920,7 +2065,7 @@ result
           // the chosen dataset's content into fileContents; execution reuses
           // execute_manual_input (CSV string in → frame). Independent from
           // external_data so the two can diverge later.
-          const content = fileContents.value.get(nodeId)
+          const content = getTextContent(nodeId)
           if (!content) {
             const settings = node.settings as { dataset_name?: string }
             const dsName = settings.dataset_name
@@ -2084,6 +2229,14 @@ result
           if (!inputId) {
             return failNode(nodeId, 'No input connected')
           }
+          const outputFileType = (node.settings as NodeOutputSettings).output_settings?.file_type
+          if (outputFileType === 'excel') {
+            try {
+              await pyodideStore.ensurePyPackages(['XlsxWriter==3.2.0'])
+            } catch (err) {
+              return failNode(nodeId, err instanceof Error ? err.message : String(err))
+            }
+          }
           const outputResult = await runPythonWithResult(`
 import json
 result = execute_output(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
@@ -2091,7 +2244,30 @@ result
 `)
           // Store download content separately in IndexedDB (not in nodeResults)
           if (outputResult?.success && outputResult?.download) {
-            const { content, file_name, file_type, mime_type, row_count } = outputResult.download
+            const { file_name, file_type, mime_type, row_count, content_kind, transport } = outputResult.download
+            let content: string | Uint8Array = outputResult.download.content
+            if (content_kind === 'binary') {
+              // Bytes don't survive the toJs() bridge — one-shot pull from the registry.
+              // Failures here happen AFTER the engine stored the node's LazyFrame, so
+              // mark the node dirty or the next run reuses the "built" pointer and
+              // never regenerates the download.
+              const bytes = await pyodideStore.runPythonGetBytes(`take_output_binary(${nodeId})`)
+              if (!bytes) {
+                dirtyNodes.value.add(nodeId)
+                return failNode(nodeId, 'Output file bytes were not produced — re-run the node')
+              }
+              if (transport === 'arrow-ipc') {
+                // The engine staged Arrow IPC; encode the final .parquet in JS
+                try {
+                  content = await ipcStreamToParquet(bytes)
+                } catch (err) {
+                  dirtyNodes.value.add(nodeId)
+                  return failNode(nodeId, err instanceof Error ? err.message : String(err))
+                }
+              } else {
+                content = bytes
+              }
+            }
             await fileStorage.setDownloadContent(
               nodeId,
               content,
@@ -2100,13 +2276,16 @@ result
               mime_type,
               row_count
             )
-            // Notify output callbacks (for embeddable mode)
-            outputCallbacks.forEach(cb => cb({
-              nodeId,
-              content,
-              fileName: file_name,
-              mimeType: mime_type
-            }))
+            // Notify output callbacks (for embeddable mode) — text outputs only;
+            // binary results are pulled by hosts via the Arrow API.
+            if (typeof content === 'string') {
+              outputCallbacks.forEach(cb => cb({
+                nodeId,
+                content: content as string,
+                fileName: file_name,
+                mimeType: mime_type
+              }))
+            }
             // Create result without content - just metadata
             result = {
               success: outputResult.success,
@@ -2726,11 +2905,15 @@ result
     }
   }
 
-  /** Bundle the in-memory input CSVs that are small enough to persist inline. */
+  /** Bundle the in-memory input CSVs that are small enough to persist inline.
+   * Text-only: binary content is restored via re-pick, never inlined into
+   * library entries (and the wrapper would defeat a Blob size check anyway). */
   function collectSmallFileContents(): Record<number, string> {
     const smallFiles: Record<number, string> = {}
     for (const [nid, content] of fileContents.value) {
-      if (new Blob([content]).size < SIZE_THRESHOLD) smallFiles[nid] = content
+      if (content.kind === 'text' && contentByteSize(content) < SIZE_THRESHOLD) {
+        smallFiles[nid] = content.data
+      }
     }
     return smallFiles
   }
@@ -2945,7 +3128,7 @@ result
    * switching away. Lossless for in-session round-trips.
    */
   function captureSnapshot(): FlowStateSnapshot {
-    const fc: Record<number, string> = {}
+    const fc: Record<number, FileContent> = {}
     for (const [nid, content] of fileContents.value) fc[nid] = content
     return {
       name: currentFlowName.value,
@@ -2975,9 +3158,11 @@ result
     return true
   }
 
-  function updateNodeFile(nodeId: number, fileName: string, content: string) {
-    fileContents.value.set(nodeId, content)
-    
+  function updateNodeFile(nodeId: number, fileName: string, content: string | FileContent) {
+    // Route through setFileContent so normalization, IndexedDB routing, and
+    // schema inference all apply (a raw Map.set bypassed them all).
+    setFileContent(nodeId, content)
+
     const node = nodes.value.get(nodeId)
     if (node && node.type === 'read') {
       const settings = node.settings as NodeReadSettings
@@ -3035,6 +3220,9 @@ result
     setFileContent,
     hasFileContent,
     getFileContent,
+    getTextContent,
+    listExcelSheets,
+    getNodeResultArrow,
     externalDatasets,
     setExternalDatasets,
     getExternalDatasetNames,

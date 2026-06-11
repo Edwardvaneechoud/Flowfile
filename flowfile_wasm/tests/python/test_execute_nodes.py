@@ -88,11 +88,25 @@ def test_output_tab_delimiter_emits_real_tab():
     assert out["download"]["content"].startswith("a\tb")
 
 
-def test_output_parquet_is_rejected():
+def test_output_parquet_stages_arrow_ipc():
+    # Parquet output stages Arrow IPC bytes for the JS side (parquet-wasm
+    # encodes the final .parquet); the wasm polars build can't write parquet.
     read_csv(1, "a\n1\n")
     out = output(2, 1, name="x.parquet", file_type="parquet")
-    assert out["success"] is False
-    assert "Parquet" in out["error"]
+    assert out["success"] is True
+    dl = out["download"]
+    assert dl["content_kind"] == "binary"
+    assert dl["transport"] == "arrow-ipc"
+    assert dl["mime_type"] == "application/vnd.apache.parquet"
+
+    import io
+
+    import polars as pl
+
+    ipc = engine.take_output_binary(2)
+    df = pl.read_ipc_stream(io.BytesIO(ipc))
+    assert df["a"].to_list() == [1]
+    assert engine.take_output_binary(2) is None
 
 
 def test_filter_missing_column_reports_available_columns():

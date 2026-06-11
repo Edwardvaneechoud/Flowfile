@@ -15,6 +15,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useFlowStore, type FlowStateSnapshot } from './flow-store'
 import { SIZE_THRESHOLD } from './file-storage'
+import { asFileContent, contentByteSize, type FileContent } from '../types/file-content'
 
 const FLOW_TABS_KEY = 'flowfile_wasm_tabs'
 
@@ -26,8 +27,10 @@ export interface FlowTab {
   /** Graph snapshot (FlowfileData). Fresh for inactive tabs; for the active tab
    *  the live flow-store is the source of truth (re-captured on switch-away). */
   snapshot: FlowStateSnapshot['snapshot']
-  /** In-memory CSV contents by node id. Persisted small-only to sessionStorage. */
-  fileContents: Record<number, string>
+  /** In-memory file contents by node id. Persisted small-text-only to
+   *  sessionStorage (as plain strings); binary survives tab switches in memory
+   *  and reloads via IndexedDB/re-pick. */
+  fileContents: Record<number, FileContent>
   nodeIdCounter: number
 }
 
@@ -65,9 +68,11 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
       const slim = tabs.value.map((t) => {
         const small: Record<number, string> = {}
         for (const [nid, content] of Object.entries(t.fileContents)) {
-          // Keep only small inline files; large files are re-flagged as missing
-          // on reload (same trade-off as Recent Flows).
-          if (new Blob([content]).size < SIZE_THRESHOLD) small[Number(nid)] = content
+          // Keep only small inline text files; large/binary files are re-flagged
+          // as missing on reload (same trade-off as Recent Flows).
+          if (content.kind === 'text' && contentByteSize(content) < SIZE_THRESHOLD) {
+            small[Number(nid)] = content.data
+          }
         }
         return {
           id: t.id,
@@ -112,7 +117,10 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
             name: t.name || 'Untitled Flow',
             flowId: t.flowId ?? null,
             snapshot: t.snapshot,
-            fileContents: t.fileContents || {},
+            // Persisted tabs hold plain strings — normalize to FileContent.
+            fileContents: Object.fromEntries(
+              Object.entries(t.fileContents || {}).map(([nid, c]) => [nid, asFileContent(c as string | FileContent)])
+            ),
             nodeIdCounter: t.nodeIdCounter ?? 0
           }))
           activeTabId.value =

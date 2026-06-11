@@ -18,7 +18,15 @@ from .nodes_aggregate import (
 )
 from .nodes_combine import build_join, execute_join
 from .nodes_explore import execute_explore_data, prepare_visual_data
-from .nodes_io import execute_manual_input, execute_output, execute_read_csv
+from .nodes_io import (
+    execute_manual_input,
+    execute_output,
+    execute_read_csv,
+    execute_read_excel,
+    execute_read_ipc,
+    get_node_arrow,
+    list_excel_sheets,
+)
 from .nodes_polars_code import build_polars_code_schema, execute_polars_code
 from .nodes_transform import (
     build_filter,
@@ -52,6 +60,7 @@ from .state import (
     has_cached_preview,
     run_gc,
     store_lazyframe,
+    take_output_binary,
 )
 from .validation import (
     clean_setting_input,
@@ -77,6 +86,7 @@ __all__ = [
     "has_cached_preview",
     "run_gc",
     "store_lazyframe",
+    "take_output_binary",
     # preview
     "df_to_preview",
     "fetch_preview",
@@ -91,6 +101,10 @@ __all__ = [
     "execute_manual_input",
     "execute_output",
     "execute_read_csv",
+    "execute_read_excel",
+    "execute_read_ipc",
+    "get_node_arrow",
+    "list_excel_sheets",
     # nodes: transform
     "build_filter",
     "build_head",

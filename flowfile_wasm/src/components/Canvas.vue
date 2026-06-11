@@ -360,7 +360,7 @@ ModuleRegistry.registerModules([ClientSideRowModelModule])
 import DraggablePanel from './common/DraggablePanel.vue'
 import FlowNode from './nodes/FlowNode.vue'
 import NodeTitle from './nodes/NodeTitle.vue'
-import ReadCsvSettings from './nodes/ReadCsvSettings.vue'
+import ReadFileSettings from './nodes/ReadFileSettings.vue'
 import ManualInputSettings from './nodes/ManualInputSettings.vue'
 import ExternalDataSettings from './nodes/ExternalDataSettings.vue'
 import ReadFromCatalogSettings from './nodes/ReadFromCatalogSettings.vue'
@@ -477,7 +477,7 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Input Sources',
     isOpen: true,
     nodes: [
-      { type: 'read', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 },
+      { type: 'read', name: 'Read File', icon: 'input_data.png', inputs: 0, outputs: 1 },
       { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1 },
       { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1 },
       { type: 'read_from_catalog', name: 'Read from Catalog', icon: 'catalog_reader.svg', inputs: 0, outputs: 1 }
@@ -770,7 +770,11 @@ function handleCopyNode(nodeId: number) {
 // Persist a source node's loaded CSV as a reusable catalog table. The catalog
 // is the cross-flow store, so this bridges flow-bound data into it.
 async function handleSaveToCatalog(nodeId: number) {
-  const content = flowStore.getFileContent(nodeId)
+  if (flowStore.getFileContent(nodeId) && flowStore.getTextContent(nodeId) === undefined) {
+    alert('The catalog stores CSV tables only — this node holds a binary file (Excel/Parquet).')
+    return
+  }
+  const content = flowStore.getTextContent(nodeId)
   if (!content) {
     alert('This node has no loaded data to save. Run or load the node first.')
     return
@@ -836,7 +840,7 @@ watch(selectedNodeId, () => {
 
 function getSettingsComponent(type: string) {
   const components: Record<string, any> = {
-    read: ReadCsvSettings,
+    read: ReadFileSettings,
     manual_input: ManualInputSettings,
     external_data: ExternalDataSettings,
     read_from_catalog: ReadFromCatalogSettings,

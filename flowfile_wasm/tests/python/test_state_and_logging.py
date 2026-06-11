@@ -29,6 +29,7 @@ def _populate_all_state():
 
 def test_clear_all_empties_every_state_dict():
     _populate_all_state()
+    state._output_binaries[1] = b"stub"
     dicts = (
         state._lazyframes,
         state._schemas,
@@ -36,11 +37,24 @@ def test_clear_all_empties_every_state_dict():
         state._plan_hashes,
         state._schema_lazyframes,
         state._schema_schemas,
+        state._output_binaries,
     )
     assert all(len(d) > 0 for d in dicts)
 
     engine.clear_all()
     assert all(len(d) == 0 for d in dicts)
+
+
+def test_take_output_binary_pops():
+    state._output_binaries[7] = b"payload"
+    assert engine.take_output_binary(7) == b"payload"
+    assert engine.take_output_binary(7) is None
+
+
+def test_clear_node_drops_output_binary():
+    state._output_binaries[3] = b"x"
+    engine.clear_node(3)
+    assert 3 not in state._output_binaries
 
 
 def test_clear_node_drops_schema_caches_too():

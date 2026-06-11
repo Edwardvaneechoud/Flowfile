@@ -104,8 +104,9 @@ async function run() {
 | `executeNode(nodeId)` | `Promise<NodeResult>` | Run a single node |
 | `exportFlow()` | `FlowfileData` | Export the current flow as JSON |
 | `importFlow(data)` | `boolean` | Load a flow from JSON |
-| `setInputData(name, csv)` | `void` | Push a named dataset |
+| `setInputData(name, content, format?)` | `void` | Push a named dataset (CSV string, or `Uint8Array` of Arrow IPC / Parquet bytes) |
 | `getNodeResult(nodeId)` | `NodeResult \| undefined` | Get a node's result |
+| `getNodeResultArrow(nodeId)` | `Promise<Uint8Array \| null>` | A node's full result frame as Arrow IPC stream bytes — feed straight to arrow-js / duckdb-wasm, no CSV stringification |
 | `clearFlow()` | `void` | Clear all nodes and edges |
 | `initializePyodide()` | `Promise<void>` | Manually init Pyodide (when `autoInit: false`) |
 
@@ -128,6 +129,12 @@ const datasets = {
     content: 'id,amount\n1,100\n2,250',
     format: 'csv',
     delimiter: ','
+  },
+
+  // Binary: Arrow IPC stream or Parquet bytes (e.g. from duckdb-wasm or a fetch)
+  events: {
+    content: parquetBytes,   // Uint8Array
+    format: 'parquet'        // or 'arrow-ipc'; omit to sniff (PAR1 magic)
   }
 }
 </script>
@@ -175,9 +182,19 @@ export default defineConfig({
 })
 ```
 
+### Content-Security-Policy allowlist
+
+If your page sets a CSP, the editor needs network access to:
+
+- `cdn.jsdelivr.net` — Pyodide runtime (always) and parquet-wasm (only when a
+  flow reads/writes Parquet)
+- `pypi.org` + `files.pythonhosted.org` — only when a flow uses Excel files
+  (openpyxl/xlsxwriter are micropip-installed on first use; CSV-only flows
+  never touch PyPI)
+
 ## Available Node Types
 
-**Input:** Read CSV, Manual Input, External Data
+**Input:** Read File (CSV/Excel/Parquet), Manual Input, External Data
 **Transform:** Filter, Select, Group By, Join, Sort, Unique, Take Sample, Pivot, Unpivot, Polars Code
 **Output:** Preview, Output (download), External Output (emits to host)
 

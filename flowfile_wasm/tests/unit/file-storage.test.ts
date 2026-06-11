@@ -49,7 +49,7 @@ describe('FileStorageManager', () => {
       await fileStorage.setFileContent(nodeId, content)
       const retrieved = await fileStorage.getFileContent(nodeId)
 
-      expect(retrieved).toBe(content)
+      expect(retrieved).toEqual({ kind: 'text', data: content })
     })
 
     it('should not store small files in IndexedDB', async () => {
@@ -68,6 +68,23 @@ describe('FileStorageManager', () => {
       expect(retrieved).toBeNull()
     })
 
+    it('stores binary content in IndexedDB regardless of size and round-trips it', async () => {
+      const bytes = new Uint8Array([0x50, 0x4b, 3, 4, 255, 0, 128])
+      await fileStorage.setFileContent(7, { kind: 'binary', data: bytes, format: 'excel' })
+
+      const retrieved = await fileStorage.getFileContent(7)
+      expect(retrieved?.kind).toBe('binary')
+      if (retrieved?.kind === 'binary') {
+        expect(retrieved.format).toBe('excel')
+        expect(Array.from(retrieved.data)).toEqual(Array.from(bytes))
+      }
+    })
+
+    it('treats any binary as IndexedDB-bound', () => {
+      expect(fileStorage.shouldUseIndexedDB({ kind: 'binary', data: new Uint8Array(3), format: 'parquet' })).toBe(true)
+      expect(fileStorage.shouldUseIndexedDB('tiny')).toBe(false)
+    })
+
     it('should overwrite existing file content', async () => {
       const nodeId = 3
       const content1 = 'y'.repeat(SIZE_THRESHOLD + 100)
@@ -77,7 +94,7 @@ describe('FileStorageManager', () => {
       await fileStorage.setFileContent(nodeId, content2)
 
       const retrieved = await fileStorage.getFileContent(nodeId)
-      expect(retrieved).toBe(content2)
+      expect(retrieved).toEqual({ kind: 'text', data: content2 })
     })
 
     it('should delete file content', async () => {
@@ -272,9 +289,9 @@ describe('FileStorageManager', () => {
         fileStorage.getFileContent(3)
       ])
 
-      expect(result1).toBe(content + '1')
-      expect(result2).toBe(content + '2')
-      expect(result3).toBe(content + '3')
+      expect(result1).toEqual({ kind: 'text', data: content + '1' })
+      expect(result2).toEqual({ kind: 'text', data: content + '2' })
+      expect(result3).toEqual({ kind: 'text', data: content + '3' })
     })
   })
 

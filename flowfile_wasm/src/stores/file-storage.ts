@@ -10,6 +10,8 @@
  * This design optimizes for performance while avoiding sessionStorage limits.
  */
 
+import { asFileContent, binaryContent, contentByteSize, textContent, type BinaryFormat, type FileContent } from '../types/file-content';
+
 const DB_NAME = 'flowfile_wasm_files';
 const DB_VERSION = 5;
 const STORE_NAME = 'fileContents';
@@ -33,14 +35,18 @@ const REQUIRED_STORES = [
 
 interface FileEntry {
   nodeId: number;
-  content: string;
+  /** Uint8Array survives IndexedDB structured clone natively — no base64. */
+  content: string | Uint8Array;
+  kind?: 'text' | 'binary';
+  format?: BinaryFormat;
   size: number;
   timestamp: number;
 }
 
 interface DownloadEntry {
   nodeId: number;
-  content: string;
+  content: string | Uint8Array;
+  contentKind?: 'text' | 'binary';
   fileName: string;
   fileType: string;
   mimeType: string;
@@ -220,17 +226,19 @@ class FileStorageManager {
   }
 
   /**
-   * Store file content with automatic storage selection based on size
+   * Store file content with automatic storage selection based on size.
+   * Binary content always goes to IndexedDB regardless of size — it can't
+   * ride the sessionStorage JSON path.
    */
-  async setFileContent(nodeId: number, content: string): Promise<void> {
-    const size = new Blob([content]).size;
+  async setFileContent(nodeId: number, content: string | FileContent): Promise<void> {
+    const fc = asFileContent(content);
+    const size = contentByteSize(fc);
 
-    if (size < SIZE_THRESHOLD) {
-      // Small file: use sessionStorage (synchronous, fast)
+    if (fc.kind === 'text' && size < SIZE_THRESHOLD) {
+      // Small text file: lives in sessionStorage (synchronous, fast)
       return;
     }
 
-    // Large file: use IndexedDB
     await this.init();
     if (this.pendingClear) {
       await this.pendingClear.catch(() => {});
@@ -247,7 +255,9 @@ class FileStorageManager {
 
       const entry: FileEntry = {
         nodeId,
-        content,
+        content: fc.data,
+        kind: fc.kind,
+        format: fc.kind === 'binary' ? fc.format : undefined,
         size,
         timestamp: Date.now()
       };
@@ -263,12 +273,13 @@ class FileStorageManager {
   }
 
   /**
-   * Retrieve file content from IndexedDB
+   * Retrieve file content from IndexedDB. Legacy entries (plain string, no
+   * kind) come back as text.
    */
-  async getFileContent(nodeId: number): Promise<string | null> {
+  async getFileContent(nodeId: number): Promise<FileContent | null> {
     await this.init();
 
-    return new Promise<string | null>((resolve, reject) => {
+    return new Promise<FileContent | null>((resolve, reject) => {
       if (!this.db) {
         reject(new Error('IndexedDB not initialized'));
         return;
@@ -280,7 +291,13 @@ class FileStorageManager {
 
       request.onsuccess = () => {
         const entry = request.result as FileEntry | undefined;
-        resolve(entry?.content || null);
+        if (!entry || entry.content == null) {
+          resolve(null);
+        } else if (entry.kind === 'binary' && entry.content instanceof Uint8Array) {
+          resolve(binaryContent(entry.content, entry.format ?? 'parquet'));
+        } else {
+          resolve(textContent(entry.content as string));
+        }
       };
 
       request.onerror = () => {
@@ -409,11 +426,12 @@ class FileStorageManager {
   }
 
   /**
-   * Check if a file should be stored in IndexedDB based on size
+   * Check if a file should be stored in IndexedDB. Binary always does;
+   * text only above the size threshold.
    */
-  shouldUseIndexedDB(content: string): boolean {
-    const size = new Blob([content]).size;
-    return size >= SIZE_THRESHOLD;
+  shouldUseIndexedDB(content: string | FileContent): boolean {
+    const fc = asFileContent(content);
+    return fc.kind === 'binary' || contentByteSize(fc) >= SIZE_THRESHOLD;
   }
 
   // Download Content Storage (for output nodes)
@@ -423,7 +441,7 @@ class FileStorageManager {
    */
   async setDownloadContent(
     nodeId: number,
-    content: string,
+    content: string | Uint8Array,
     fileName: string,
     fileType: string,
     mimeType: string,
@@ -443,6 +461,7 @@ class FileStorageManager {
       const entry: DownloadEntry = {
         nodeId,
         content,
+        contentKind: typeof content === 'string' ? 'text' : 'binary',
         fileName,
         fileType,
         mimeType,

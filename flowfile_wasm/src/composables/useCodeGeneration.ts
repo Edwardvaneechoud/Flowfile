@@ -16,6 +16,8 @@ import type {
   NodeUnpivotSettings,
   NodeSampleSettings,
   NodeReadSettings,
+  InputCsvTable,
+  InputExcelTable,
   NodeManualInputSettings,
   NodeExternalDataSettings,
   NodeOutputSettings,
@@ -255,7 +257,32 @@ class FlowToPolarsConverter {
   private handleReadCsv(settings: NodeReadSettings, varName: string): void {
     const table = settings.received_file
     const fileName = settings.file_name || table?.name || 'data.csv'
-    const tableSettings = table?.table_settings
+
+    if (table?.file_type === 'excel') {
+      const ts = table.table_settings as InputExcelTable
+      this.addCode(`# requires: pip install fastexcel (polars' default excel engine)`)
+      this.addCode(`${varName} = pl.read_excel(`)
+      this.addCode(`    "${fileName}",`)
+      if (ts?.sheet_name) {
+        this.addCode(`    sheet_name="${ts.sheet_name}",`)
+      }
+      this.addCode(`    has_header=${(ts?.has_headers ?? true) ? 'True' : 'False'},`)
+      this.addCode(`).lazy()`)
+      if (ts?.start_row) {
+        this.addCode(`# note: this flow skips the first ${ts.start_row} row(s) before the header;`)
+        this.addCode(`# adjust read_options for your engine if needed`)
+      }
+      this.addCode('')
+      return
+    }
+
+    if (table?.file_type === 'parquet') {
+      this.addCode(`${varName} = pl.scan_parquet("${fileName}")`)
+      this.addCode('')
+      return
+    }
+
+    const tableSettings = table?.table_settings as InputCsvTable | undefined
 
     this.addCode(`${varName} = pl.scan_csv(`)
     this.addCode(`    "${fileName}",`)
@@ -683,11 +710,22 @@ class FlowToPolarsConverter {
     const fileName = outputSettings?.name || anySettings.file_name || 'output.csv'
     const fileType = outputSettings?.file_type || anySettings.file_type || 'csv'
     const tableSettings = outputSettings?.table_settings || anySettings.output_table
-    const polarsMethod = outputSettings?.polars_method || (fileType === 'parquet' ? 'sink_parquet' : 'sink_csv')
+    // file_type is authoritative: settings saved by older builds carry a stale
+    // polars_method ('sink_csv' on parquet nodes)
+    const polarsMethod = fileType === 'parquet' ? 'sink_parquet' : 'sink_csv'
 
     if (!outputSettings && !anySettings.file_name && !anySettings.file_type) {
       this.addComment(`# Output node ${varName} has no settings configured`)
       this.addCode(`${varName} = ${inputDf}`)
+      this.addCode('')
+      return
+    }
+
+    if (fileType === 'excel') {
+      const sheetName = (tableSettings && 'sheet_name' in tableSettings && tableSettings.sheet_name) || 'Sheet1'
+      this.addComment(`# Write output to ${fileName} (requires: pip install xlsxwriter)`)
+      this.addCode(`${inputDf}.collect().write_excel("${fileName}", worksheet="${sheetName}")`)
+      this.addCode(`${varName} = ${inputDf}  # Reference for potential downstream use`)
       this.addCode('')
       return
     }

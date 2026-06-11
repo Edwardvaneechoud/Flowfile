@@ -30,6 +30,12 @@ _schema_lazyframes: dict[int, pl.LazyFrame] = {}
 _schema_schemas: dict[int, list[dict[str, str]]] = {}
 
 
+# Binary node outputs (xlsx/parquet-IPC bytes) staged for a one-shot JS pull:
+# Python bytes don't survive the toJs() bridge, so JS fetches them separately
+# via take_output_binary + PyProxy.getBuffer.
+_output_binaries: dict[int, bytes] = {}
+
+
 _SOURCE_TYPES = {"read", "manual_input", "external_data", "read_from_catalog"}
 
 
@@ -81,6 +87,11 @@ def get_cached_preview(node_id: int) -> dict | None:
     return _preview_cache.get(node_id)
 
 
+def take_output_binary(node_id: int) -> bytes | None:
+    """Pop and return a node's staged binary output (one-shot; frees the heap copy)."""
+    return _output_binaries.pop(node_id, None)
+
+
 def clear_node(node_id: int):
     """Clear all data for a node."""
     logger.debug("clear_node node=%s", node_id)
@@ -90,6 +101,7 @@ def clear_node(node_id: int):
     _plan_hashes.pop(node_id, None)
     _schema_lazyframes.pop(node_id, None)
     _schema_schemas.pop(node_id, None)
+    _output_binaries.pop(node_id, None)
 
 
 def clear_all():
@@ -101,6 +113,7 @@ def clear_all():
     _plan_hashes.clear()
     _schema_lazyframes.clear()
     _schema_schemas.clear()
+    _output_binaries.clear()
     gc.collect()
 
 

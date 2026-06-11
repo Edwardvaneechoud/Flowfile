@@ -190,7 +190,23 @@ const items = computed<CatalogItem[]>(() => {
   const out: CatalogItem[] = []
 
   for (const [name, content] of externalDatasets.value) {
-    const schema = inferSchemaFromCsv(content) ?? undefined
+    if (content.kind !== 'text') {
+      // Host-provided binary (Arrow IPC / Parquet): listed, but no CSV preview
+      out.push({
+        id: `ext-${name}`,
+        kind: 'external',
+        name,
+        subtitle: `External dataset (${content.format})`,
+        datasetName: name,
+        schema: undefined,
+        columns: null,
+        sizeBytes: content.data.byteLength,
+        status: 'success',
+        preview: null
+      })
+      continue
+    }
+    const schema = inferSchemaFromCsv(content.data) ?? undefined
     out.push({
       id: `ext-${name}`,
       kind: 'external',
@@ -199,9 +215,9 @@ const items = computed<CatalogItem[]>(() => {
       datasetName: name,
       schema,
       columns: schema?.length ?? null,
-      sizeBytes: byteSize(content),
+      sizeBytes: byteSize(content.data),
       status: 'success',
-      preview: parseCsvHead(content)
+      preview: parseCsvHead(content.data)
     })
   }
 

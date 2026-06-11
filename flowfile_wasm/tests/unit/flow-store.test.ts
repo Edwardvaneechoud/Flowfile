@@ -6,15 +6,27 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-vi.mock('../../src/stores/pyodide-store', () => ({
-  usePyodideStore: () => ({
-    isReady: false,
-    runPython: vi.fn(),
-    runPythonWithResult: vi.fn(),
-    setGlobal: vi.fn(),
-    deleteGlobal: vi.fn()
-  })
+const pyodideMock = vi.hoisted(() => ({
+  isReady: false,
+  runPython: vi.fn(),
+  runPythonWithResult: vi.fn(),
+  runPythonGetBytes: vi.fn(),
+  ensurePyPackages: vi.fn(),
+  setGlobal: vi.fn(),
+  deleteGlobal: vi.fn(),
+  packageStatus: {} as Record<string, string>
 }))
+
+vi.mock('../../src/stores/pyodide-store', () => ({
+  usePyodideStore: () => pyodideMock
+}))
+
+const parquetBridgeMock = vi.hoisted(() => ({
+  parquetToIpcStream: vi.fn(),
+  ipcStreamToParquet: vi.fn()
+}))
+
+vi.mock('../../src/utils/parquet-bridge', () => parquetBridgeMock)
 
 vi.mock('../../src/stores/file-storage', () => ({
   SIZE_THRESHOLD: 5 * 1024 * 1024,
@@ -538,7 +550,9 @@ describe('Flow Store', () => {
       store.addNode('read_csv', 0, 0)
       store.setFileContent(1, 'id,name\n1,Alice\n2,Bob')
 
-      expect(store.fileContents.get(1)).toBe('id,name\n1,Alice\n2,Bob')
+      // Strings normalize into tagged FileContent wrappers
+      expect(store.fileContents.get(1)).toEqual({ kind: 'text', data: 'id,name\n1,Alice\n2,Bob' })
+      expect(store.getTextContent(1)).toBe('id,name\n1,Alice\n2,Bob')
     })
   })
 
@@ -567,7 +581,7 @@ describe('Flow Store', () => {
       expect(pastedSettings.node_id).toBe(newId)
       expect(pastedSettings.pos_x).toBe(300)
       // The loaded data is re-keyed to the new node id so the paste can run.
-      expect(store.getFileContent(newId!)).toBe('a;b\n1;2\n')
+      expect(store.getTextContent(newId!)).toBe('a;b\n1;2\n')
     })
 
     it('pastes from localStorage when there is no in-memory clipboard (reload)', () => {
@@ -586,7 +600,7 @@ describe('Flow Store', () => {
       const newId = store.pasteNode(0, 0)
 
       expect(newId).not.toBeNull()
-      expect(store.getFileContent(newId!)).toBe('a,b\n1,2\n')
+      expect(store.getTextContent(newId!)).toBe('a,b\n1,2\n')
     })
 
     it('keeps large file content on the in-memory clipboard when too big for localStorage', () => {
@@ -601,7 +615,7 @@ describe('Flow Store', () => {
         expect(persisted.fileContent).toBeUndefined()
 
         const newId = store.pasteNode(5, 5)
-        expect(store.getFileContent(newId!)).toBe('big-content')
+        expect(store.getTextContent(newId!)).toBe('big-content')
       } finally {
         vi.mocked(fileStorage.shouldUseIndexedDB).mockReturnValue(false)
       }
@@ -617,6 +631,350 @@ describe('Flow Store', () => {
       expect(newId).not.toBeNull()
       expect(store.getNode(newId!)!.type).toBe('filter')
       expect(store.getFileContent(newId!)).toBeUndefined()
+    })
+
+    it('never persists binary content to localStorage but pastes it in-memory', () => {
+      const store = useFlowStore()
+      const id = store.addNode('read', 0, 0)
+      const bytes = new Uint8Array([1, 2, 3])
+      store.setFileContent(id, { kind: 'binary', data: bytes, format: 'parquet' })
+
+      store.copyNode(id)
+
+      const persisted = JSON.parse(localStorage.getItem('flowfile-wasm-node-clipboard')!)
+      expect(persisted.fileContent).toBeUndefined()
+
+      const newId = store.pasteNode(5, 5)
+      const pasted = store.getFileContent(newId!)
+      expect(pasted?.kind).toBe('binary')
+      if (pasted?.kind === 'binary') {
+        expect(Array.from(pasted.data)).toEqual([1, 2, 3])
+      }
+    })
+  })
+
+  describe('Binary file content routing', () => {
+    it('routes binary to IndexedDB regardless of size and skips CSV inference', () => {
+      const store = useFlowStore()
+      const id = store.addNode('read', 0, 0)
+      vi.mocked(fileStorage.setFileContent).mockClear()
+
+      store.setFileContent(id, { kind: 'binary', data: new Uint8Array([9]), format: 'excel' })
+
+      expect(fileStorage.setFileContent).toHaveBeenCalledWith(
+        id,
+        expect.objectContaining({ kind: 'binary' })
+      )
+      expect(store.getTextContent(id)).toBeUndefined()
+      // No CSV schema gets inferred from binary bytes
+      expect(store.nodeResults.get(id)?.schema).toBeUndefined()
+    })
+  })
+
+  describe('Excel read branch', () => {
+    function excelNode(store: ReturnType<typeof useFlowStore>) {
+      const id = store.addNode('read', 0, 0)
+      const settings = store.getNode(id)!.settings as any
+      settings.received_file.file_type = 'excel'
+      settings.received_file.table_settings = { file_type: 'excel', sheet_name: null, has_headers: true }
+      return id
+    }
+
+    it('installs openpyxl and executes via the _temp_bytes bridge', async () => {
+      const store = useFlowStore()
+      const id = excelNode(store)
+      store.setFileContent(id, { kind: 'binary', data: new Uint8Array([0x50, 0x4b]), format: 'excel' })
+      pyodideMock.ensurePyPackages.mockResolvedValue(undefined)
+      pyodideMock.runPythonWithResult.mockResolvedValue({ success: true, schema: [] })
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(true)
+      expect(pyodideMock.ensurePyPackages).toHaveBeenCalledWith(['openpyxl==3.1.5'])
+      expect(pyodideMock.setGlobal).toHaveBeenCalledWith('_temp_bytes', expect.any(Uint8Array))
+      expect(pyodideMock.runPythonWithResult.mock.calls[0][0]).toContain('execute_read_excel')
+      expect(pyodideMock.runPythonWithResult.mock.calls[0][0]).toContain('_temp_bytes.to_py()')
+      expect(pyodideMock.deleteGlobal).toHaveBeenCalledWith('_temp_bytes')
+    })
+
+    it('fails with the install error when openpyxl cannot be downloaded', async () => {
+      const store = useFlowStore()
+      const id = excelNode(store)
+      store.setFileContent(id, { kind: 'binary', data: new Uint8Array([1]), format: 'excel' })
+      pyodideMock.ensurePyPackages.mockRejectedValueOnce(new Error('Could not download openpyxl from PyPI'))
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('PyPI')
+    })
+
+    it('fails an excel-configured node holding text content', async () => {
+      const store = useFlowStore()
+      const id = excelNode(store)
+      store.setFileContent(id, 'a,b\n1,2\n')
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('re-pick')
+    })
+
+    it('fails a csv-configured node holding binary content', async () => {
+      const store = useFlowStore()
+      const id = store.addNode('read', 0, 0)
+      store.setFileContent(id, { kind: 'binary', data: new Uint8Array([1]), format: 'excel' })
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('binary')
+    })
+  })
+
+  describe('Parquet read branch', () => {
+    function parquetNode(store: ReturnType<typeof useFlowStore>) {
+      const id = store.addNode('read', 0, 0)
+      const settings = store.getNode(id)!.settings as any
+      settings.received_file.file_type = 'parquet'
+      settings.received_file.table_settings = { file_type: 'parquet' }
+      return id
+    }
+
+    it('decodes parquet to IPC in JS and executes via execute_read_ipc', async () => {
+      const store = useFlowStore()
+      const id = parquetNode(store)
+      const parquetBytes = new Uint8Array([0x50, 0x41, 0x52, 0x31])
+      store.setFileContent(id, { kind: 'binary', data: parquetBytes, format: 'parquet' })
+      const ipcBytes = new Uint8Array([7, 7, 7])
+      parquetBridgeMock.parquetToIpcStream.mockResolvedValue(ipcBytes)
+      pyodideMock.runPythonWithResult.mockResolvedValue({ success: true, schema: [] })
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(true)
+      expect(parquetBridgeMock.parquetToIpcStream).toHaveBeenCalledWith(parquetBytes)
+      expect(pyodideMock.setGlobal).toHaveBeenCalledWith('_temp_bytes', ipcBytes)
+      expect(pyodideMock.runPythonWithResult.mock.calls[0][0]).toContain('execute_read_ipc')
+      expect(pyodideMock.deleteGlobal).toHaveBeenCalledWith('_temp_bytes')
+    })
+
+    it('surfaces the CDN error when parquet-wasm cannot load', async () => {
+      const store = useFlowStore()
+      const id = parquetNode(store)
+      store.setFileContent(id, { kind: 'binary', data: new Uint8Array([1]), format: 'parquet' })
+      parquetBridgeMock.parquetToIpcStream.mockRejectedValueOnce(
+        new Error('Could not load the Parquet engine from cdn.jsdelivr.net')
+      )
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('cdn.jsdelivr.net')
+    })
+  })
+
+  describe('External data binary branch (Arrow host contract)', () => {
+    function externalNode(store: ReturnType<typeof useFlowStore>, datasetName: string) {
+      const id = store.addNode('external_data', 0, 0)
+      const settings = store.getNode(id)!.settings as any
+      settings.dataset_name = datasetName
+      return id
+    }
+
+    it('executes host-provided Arrow IPC bytes via execute_read_ipc', async () => {
+      const store = useFlowStore()
+      const ipcBytes = new Uint8Array([1, 2, 3, 4])
+      const id = externalNode(store, 'events')
+      store.setExternalDatasets({ events: { kind: 'binary', data: ipcBytes, format: 'arrow-ipc' } })
+      pyodideMock.runPythonWithResult.mockResolvedValue({ success: true, schema: [] })
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(true)
+      expect(pyodideMock.setGlobal).toHaveBeenCalledWith('_temp_bytes', ipcBytes)
+      expect(pyodideMock.runPythonWithResult.mock.calls[0][0]).toContain('execute_read_ipc')
+    })
+
+    it('decodes host-provided parquet bytes through the bridge first', async () => {
+      const store = useFlowStore()
+      const parquetBytes = new Uint8Array([0x50, 0x41, 0x52, 0x31])
+      const ipcBytes = new Uint8Array([9])
+      const id = externalNode(store, 'sales')
+      store.setExternalDatasets({ sales: { kind: 'binary', data: parquetBytes, format: 'parquet' } })
+      parquetBridgeMock.parquetToIpcStream.mockResolvedValue(ipcBytes)
+      pyodideMock.runPythonWithResult.mockResolvedValue({ success: true, schema: [] })
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(true)
+      expect(parquetBridgeMock.parquetToIpcStream).toHaveBeenCalledWith(parquetBytes)
+      expect(pyodideMock.setGlobal).toHaveBeenCalledWith('_temp_bytes', ipcBytes)
+    })
+
+    it('still runs text datasets through execute_manual_input', async () => {
+      const store = useFlowStore()
+      const id = externalNode(store, 'plain')
+      store.setExternalDatasets({ plain: 'a,b\n1,2\n' })
+      pyodideMock.runPythonWithResult.mockResolvedValue({ success: true, schema: [] })
+
+      const result = await store.executeNode(id)
+
+      expect(result.success).toBe(true)
+      expect(pyodideMock.setGlobal).toHaveBeenCalledWith('_temp_content', 'a,b\n1,2\n')
+      expect(pyodideMock.runPythonWithResult.mock.calls[0][0]).toContain('execute_manual_input')
+    })
+
+    it('exposes node results as Arrow bytes via getNodeResultArrow', async () => {
+      const store = useFlowStore()
+      pyodideMock.isReady = true
+      try {
+        const arrow = new Uint8Array([5, 5])
+        pyodideMock.runPythonGetBytes.mockResolvedValue(arrow)
+
+        const result = await store.getNodeResultArrow(3)
+
+        expect(result).toBe(arrow)
+        expect(pyodideMock.runPythonGetBytes).toHaveBeenCalledWith('get_node_arrow(3)')
+      } finally {
+        pyodideMock.isReady = false
+      }
+    })
+  })
+
+  describe('Parquet output branch', () => {
+    it('converts staged IPC to parquet bytes before storing the download', async () => {
+      const store = useFlowStore()
+      const readId = store.addNode('read', 0, 0)
+      const outId = store.addNode('output', 100, 0)
+      store.addEdge({
+        id: `e${readId}-${outId}`,
+        source: String(readId),
+        target: String(outId),
+        sourceHandle: 'output-0',
+        targetHandle: 'input-0'
+      })
+      const settings = store.getNode(outId)!.settings as any
+      settings.output_settings.file_type = 'parquet'
+      settings.output_settings.name = 'out.parquet'
+      settings.output_settings.table_settings = { file_type: 'parquet' }
+
+      pyodideMock.runPythonWithResult.mockResolvedValue({
+        success: true,
+        schema: [],
+        download: {
+          content: '',
+          content_kind: 'binary',
+          transport: 'arrow-ipc',
+          file_name: 'out.parquet',
+          file_type: 'parquet',
+          mime_type: 'application/vnd.apache.parquet',
+          row_count: 3
+        }
+      })
+      const ipcBytes = new Uint8Array([1, 2, 3])
+      const parquetBytes = new Uint8Array([0x50, 0x41, 0x52, 0x31, 9])
+      pyodideMock.runPythonGetBytes.mockResolvedValue(ipcBytes)
+      parquetBridgeMock.ipcStreamToParquet.mockResolvedValue(parquetBytes)
+
+      const result = await store.executeNode(outId)
+
+      expect(result.success).toBe(true)
+      expect(pyodideMock.runPythonGetBytes).toHaveBeenCalledWith(`take_output_binary(${outId})`)
+      expect(parquetBridgeMock.ipcStreamToParquet).toHaveBeenCalledWith(ipcBytes)
+      expect(fileStorage.setDownloadContent).toHaveBeenCalledWith(
+        outId,
+        parquetBytes,
+        'out.parquet',
+        'parquet',
+        'application/vnd.apache.parquet',
+        3
+      )
+    })
+  })
+
+  describe('Excel output branch', () => {
+    it('pulls staged bytes via take_output_binary and stores a binary download', async () => {
+      const store = useFlowStore()
+      const readId = store.addNode('read', 0, 0)
+      const outId = store.addNode('output', 100, 0)
+      store.addEdge({
+        id: `e${readId}-${outId}`,
+        source: String(readId),
+        target: String(outId),
+        sourceHandle: 'output-0',
+        targetHandle: 'input-0'
+      })
+      const settings = store.getNode(outId)!.settings as any
+      settings.output_settings.file_type = 'excel'
+      settings.output_settings.name = 'out.xlsx'
+      settings.output_settings.table_settings = { file_type: 'excel', sheet_name: 'Data' }
+
+      pyodideMock.ensurePyPackages.mockResolvedValue(undefined)
+      pyodideMock.runPythonWithResult.mockResolvedValue({
+        success: true,
+        schema: [],
+        download: {
+          content: '',
+          content_kind: 'binary',
+          file_name: 'out.xlsx',
+          file_type: 'excel',
+          mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          row_count: 2
+        }
+      })
+      const xlsxBytes = new Uint8Array([0x50, 0x4b, 9, 9])
+      pyodideMock.runPythonGetBytes.mockResolvedValue(xlsxBytes)
+
+      const result = await store.executeNode(outId)
+
+      expect(result.success).toBe(true)
+      expect(pyodideMock.ensurePyPackages).toHaveBeenCalledWith(['XlsxWriter==3.2.0'])
+      expect(pyodideMock.runPythonGetBytes).toHaveBeenCalledWith(`take_output_binary(${outId})`)
+      expect(fileStorage.setDownloadContent).toHaveBeenCalledWith(
+        outId,
+        xlsxBytes,
+        'out.xlsx',
+        'excel',
+        expect.stringContaining('spreadsheetml'),
+        2
+      )
+    })
+
+    it('does not fire host output callbacks for binary downloads', async () => {
+      const store = useFlowStore()
+      const readId = store.addNode('read', 0, 0)
+      const outId = store.addNode('output', 100, 0)
+      store.addEdge({
+        id: `e${readId}-${outId}`,
+        source: String(readId),
+        target: String(outId),
+        sourceHandle: 'output-0',
+        targetHandle: 'input-0'
+      })
+      const settings = store.getNode(outId)!.settings as any
+      settings.output_settings.file_type = 'excel'
+
+      const onOutput = vi.fn()
+      store.onOutput(onOutput)
+      pyodideMock.ensurePyPackages.mockResolvedValue(undefined)
+      pyodideMock.runPythonWithResult.mockResolvedValue({
+        success: true,
+        schema: [],
+        download: {
+          content: '',
+          content_kind: 'binary',
+          file_name: 'out.xlsx',
+          file_type: 'excel',
+          mime_type: 'application/x',
+          row_count: 1
+        }
+      })
+      pyodideMock.runPythonGetBytes.mockResolvedValue(new Uint8Array([1]))
+
+      await store.executeNode(outId)
+
+      expect(onOutput).not.toHaveBeenCalled()
     })
   })
 

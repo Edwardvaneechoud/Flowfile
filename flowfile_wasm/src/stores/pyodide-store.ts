@@ -21,6 +21,11 @@ export const usePyodideStore = defineStore('pyodide', () => {
   const isLoading = ref(false)
   const loadingStatus = ref('')
   const error = ref<string | null>(null)
+  /** name → 'loading' | 'ready' for lazily micropip-installed packages. */
+  const packageStatus = ref<Record<string, 'loading' | 'ready'>>({})
+  const installedPyPackages = new Set<string>()
+  const inFlightInstalls = new Map<string, Promise<void>>()
+  let micropipLoaded = false
 
   async function initialize() {
     if (isReady.value || isLoading.value) {
@@ -141,6 +146,94 @@ del _mod, _key, _val
     return deepConvert(jsResult)
   }
 
+  /**
+   * Lazily micropip-install pure-Python packages (pinned, e.g. 'openpyxl==3.1.5').
+   * Memoized per package; nothing here runs at boot — first use of an Excel
+   * node pays the download. Needs network access to pypi.org / files.pythonhosted.org.
+   */
+  async function ensurePyPackages(packages: string[]): Promise<void> {
+    if (!isReady.value) {
+      throw new Error('Pyodide is not ready')
+    }
+    // Per-package in-flight dedup: concurrent callers (e.g. the sheet picker
+    // and node execution) await the same install instead of double-installing
+    const waits = packages
+      .map(p => inFlightInstalls.get(p))
+      .filter((p): p is Promise<void> => p !== undefined)
+    if (waits.length) await Promise.all(waits)
+
+    const missing = packages.filter(p => !installedPyPackages.has(p))
+    if (missing.length === 0) return
+
+    const install = (async () => {
+      try {
+        if (!micropipLoaded) {
+          await pyodide.value.loadPackage('micropip')
+          micropipLoaded = true
+        }
+        for (const pkg of missing) packageStatus.value = { ...packageStatus.value, [pkg]: 'loading' }
+        const micropip = pyodide.value.pyimport('micropip')
+        try {
+          await micropip.install(missing)
+        } finally {
+          micropip.destroy()
+        }
+        for (const pkg of missing) {
+          installedPyPackages.add(pkg)
+          packageStatus.value = { ...packageStatus.value, [pkg]: 'ready' }
+        }
+      } catch (err) {
+        for (const pkg of missing) {
+          if (packageStatus.value[pkg] === 'loading') {
+            const { [pkg]: _removed, ...rest } = packageStatus.value
+            packageStatus.value = rest
+          }
+        }
+        throw new Error(
+          `Could not download ${missing.join(', ')} from PyPI — check your network connection, ` +
+          `or your page's Content-Security-Policy (pypi.org, files.pythonhosted.org) if embedding. (${err})`
+        )
+      }
+    })()
+    for (const pkg of missing) inFlightInstalls.set(pkg, install)
+    try {
+      await install
+    } finally {
+      for (const pkg of missing) {
+        if (inFlightInstalls.get(pkg) === install) inFlightInstalls.delete(pkg)
+      }
+    }
+  }
+
+  /**
+   * Run Python returning raw bytes. The expression must evaluate to Python
+   * `bytes` (or None) — bytes don't survive toJs()/deepConvert, so this copies
+   * them out via the buffer protocol and releases the proxy.
+   */
+  async function runPythonGetBytes(code: string): Promise<Uint8Array | null> {
+    if (!isReady.value) {
+      throw new Error('Pyodide is not ready')
+    }
+    const proxy = await pyodide.value.runPythonAsync(code)
+    if (proxy == null) return null
+    if (!proxy.getBuffer) {
+      // Plain JS value (shouldn't happen for bytes) — best effort
+      return proxy instanceof Uint8Array ? proxy : null
+    }
+    // Always destroy the proxy — a leak here pins the full byte payload in
+    // the wasm heap
+    try {
+      const buf = proxy.getBuffer('u8')
+      try {
+        return new Uint8Array(buf.data)
+      } finally {
+        buf.release()
+      }
+    } finally {
+      proxy.destroy()
+    }
+  }
+
   function setGlobal(name: string, value: unknown): void {
     if (!isReady.value) {
       throw new Error('Pyodide is not ready')
@@ -161,9 +254,12 @@ del _mod, _key, _val
     isLoading,
     loadingStatus,
     error,
+    packageStatus,
     initialize,
     runPython,
     runPythonWithResult,
+    runPythonGetBytes,
+    ensurePyPackages,
     setGlobal,
     deleteGlobal
   }

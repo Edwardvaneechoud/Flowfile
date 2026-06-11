@@ -6,3 +6,7 @@
 polars==1.18.0
 pydantic==2.10.5
 pytest>=8,<9
+# Excel engines, micropip-installed in the browser with the SAME pins
+# (see ensurePyPackages calls in src/stores/flow-store.ts).
+openpyxl==3.1.5
+XlsxWriter==3.2.0

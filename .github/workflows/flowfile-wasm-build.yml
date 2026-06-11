@@ -40,6 +40,18 @@ jobs:
         working-directory: flowfile_wasm
         run: npm run build
 
+      - name: Build library (flowfile-editor npm surface)
+        working-directory: flowfile_wasm
+        run: npm run build:lib
+
+      - name: Guard the published bundle against literal CDN imports
+        working-directory: flowfile_wasm
+        run: |
+          if grep -q 'import("https://' dist/flowfile-editor.js; then
+            echo 'dist/flowfile-editor.js contains a literal https: import() — breaks webpack5/esbuild embedders'
+            exit 1
+          fi
+
       - name: Run tests
         working-directory: flowfile_wasm
         run: npm run test:run
@@ -82,9 +94,9 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Pyodide (on-demand, not saved to package.json)
+      - name: Install Pyodide + parquet-wasm (on-demand, not saved to package.json)
         working-directory: flowfile_wasm
-        run: npm install --no-save pyodide@0.27.7
+        run: npm install --no-save pyodide@0.27.7 parquet-wasm@0.7.1
 
       - name: Run Pyodide bridge smoke test
         working-directory: flowfile_wasm
