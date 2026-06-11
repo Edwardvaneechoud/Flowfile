@@ -1426,6 +1426,7 @@ gc.collect()
       settings: unknown
     }> = {}
     const sourceSchemas: Record<number, ColumnSchema[]> = {}
+    const knownSchemas: Record<number, ColumnSchema[]> = {}
 
     for (const nodeId of order) {
       const node = nodes.value.get(nodeId)
@@ -1441,6 +1442,8 @@ gc.collect()
         const schema = getSourceSchemaForPropagation(node)
         if (schema && schema.length > 0) sourceSchemas[nodeId] = schema
       }
+      const knownSchema = nodeResults.value.get(nodeId)?.schema
+      if (knownSchema && knownSchema.length > 0) knownSchemas[nodeId] = knownSchema
     }
 
     const graphJson = { order, nodes: graphNodes }
@@ -1449,7 +1452,7 @@ gc.collect()
     try {
       res = await pyodideStore.runPythonWithResult(`
 import json
-result = propagate_schemas(json.loads(${toPythonJson(graphJson)}), json.loads(${toPythonJson(sourceSchemas)}))
+result = propagate_schemas(json.loads(${toPythonJson(graphJson)}), json.loads(${toPythonJson(sourceSchemas)}), json.loads(${toPythonJson(knownSchemas)}))
 result
 `)
     } catch (error) {

@@ -1,6 +1,7 @@
 import contextlib
 import gc
 import io
+import sys
 from typing import Any
 
 import polars as pl
@@ -206,6 +207,41 @@ def execute_polars_code(node_id: int, input_ids: list[int], settings: dict) -> d
         return {"success": False, "error": format_error_lf("polars_code", node_id, e, input_lf)}
 
 
+_inference_depth = 0
+
+
+class _InferenceStdout(io.TextIOBase):
+    """stdout stand-in while inferring schemas: drops user prints during the
+    inference pass, but keeps forwarding if user code captured it by reference
+    (e.g. a bind-once logging handler), so real runs still print."""
+
+    def writable(self):
+        return True
+
+    def write(self, s):
+        if _inference_depth or sys.stdout is self:
+            return len(s)
+        return sys.stdout.write(s)
+
+    def flush(self):
+        if not _inference_depth and sys.stdout is not self:
+            sys.stdout.flush()
+
+
+_INFERENCE_STDOUT = _InferenceStdout()
+
+
+@contextlib.contextmanager
+def _silenced_user_stdout():
+    global _inference_depth
+    _inference_depth += 1
+    try:
+        with contextlib.redirect_stdout(_INFERENCE_STDOUT):
+            yield
+    finally:
+        _inference_depth -= 1
+
+
 def build_polars_code_schema(input_lfs: list[pl.LazyFrame], settings: dict) -> pl.LazyFrame:
     """Resolve a polars_code node's output schema by running the user code
     against EMPTY (0-row) input frames. Raises on failure (caught upstream)."""
@@ -229,7 +265,7 @@ def build_polars_code_schema(input_lfs: list[pl.LazyFrame], settings: dict) -> p
     global_vars = {"pl": pl}
     # Schema inference runs the user code on every propagation pass; swallow its
     # stdout so print() statements don't spam the console (real runs keep printing).
-    with contextlib.redirect_stdout(io.StringIO()):
+    with _silenced_user_stdout():
         try:
             exec(code, global_vars, local_vars)
         except SyntaxError:

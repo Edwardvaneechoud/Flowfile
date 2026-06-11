@@ -101,6 +101,30 @@ describe('Lazy schema propagation', () => {
     expect(store.isInputSchemaResolved(selectId)).toBe(false)
   })
 
+  it('feeds last-known schemas to the Python pass so opaque upstreams do not freeze downstream', async () => {
+    const store = useFlowStore()
+    const codeId = store.addNode('polars_code', 0, 0)
+    const groupId = store.addNode('group_by', 200, 0)
+    connect(store, codeId, groupId)
+
+    // Simulate a post-run state: Python resolves both nodes, caching their
+    // schemas into nodeResults.
+    runPythonWithResult.mockResolvedValue({
+      [codeId]: { schema: [{ name: 'column_0', data_type: 'Int64' }], schema_resolved: true },
+      [groupId]: { schema: [{ name: 'column_0_mean', data_type: 'Float64' }], schema_resolved: true }
+    })
+    await store.propagateSchemas()
+    // Second pass now carries the cached schemas as the third propagate_schemas arg.
+    await store.propagateSchemas()
+
+    const lastCode = runPythonWithResult.mock.calls.at(-1)![0] as string
+    // graph + source_schemas + known_schemas = three json.loads payloads.
+    expect((lastCode.match(/json\.loads\(/g) || []).length).toBe(3)
+    // The opaque polars_code start node and the group_by output are passed as known.
+    expect(lastCode).toContain('column_0_mean')
+    expect(lastCode).toContain('column_0')
+  })
+
   // Mock the engine: the _lazyframes.keys() probe returns `builtIds`; every other
   // call (execute_*) reports success.
   function mockEngine(builtIds: number[]) {

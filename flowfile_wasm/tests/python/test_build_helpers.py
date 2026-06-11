@@ -251,3 +251,24 @@ def test_polars_code_schema_build_swallows_user_stdout(capsys):
     assert engine.execute_read_csv(1, "a\n1\n", {})["success"] is True
     assert engine.execute_polars_code(2, [1], settings)["success"] is True
     assert "PRINT_MARKER" in capsys.readouterr().out
+
+
+def test_polars_code_schema_build_does_not_capture_dead_stdout(capsys):
+    # Bind-once logging handlers capture sys.stdout by reference; a handler bound
+    # during an inference pass must still reach the console on real runs.
+    code = (
+        "import sys, logging\n"
+        'log = logging.getLogger("user_etl")\n'
+        "if not log.handlers:\n"
+        "    log.addHandler(logging.StreamHandler(sys.stdout))\n"
+        'log.warning("LOG_MARKER")\n'
+        "output_df = input_df"
+    )
+    settings = {"polars_code_input": {"polars_code": code}}
+
+    engine.build_polars_code_schema([lf(a=[1])], settings)
+    assert "LOG_MARKER" not in capsys.readouterr().out
+
+    assert engine.execute_read_csv(1, "a\n1\n", {})["success"] is True
+    assert engine.execute_polars_code(2, [1], settings)["success"] is True
+    assert "LOG_MARKER" in capsys.readouterr().out

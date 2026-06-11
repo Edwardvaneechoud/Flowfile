@@ -48,8 +48,11 @@ def _build_schema_node(ntype: str, meta: dict) -> pl.LazyFrame | None:
         return build_join(left_lf, right_lf, settings)
 
     if ntype in ("polars_code", "formula"):
+        # input_ids is empty for a generator START node — build_polars_code_schema
+        # handles zero inputs (it just runs the code, which produces output_df). Only
+        # bail when a declared input exists but isn't resolved yet.
         lfs = [_schema_lazyframes.get(i) for i in input_ids]
-        if not lfs or any(x is None for x in lfs):
+        if any(x is None for x in lfs):
             return None
         return build_polars_code_schema(lfs, settings)
 
@@ -61,7 +64,7 @@ def _build_schema_node(ntype: str, meta: dict) -> pl.LazyFrame | None:
     return builder(inp, settings)
 
 
-def propagate_schemas(graph_json: dict, source_schemas: dict) -> dict[str, dict]:
+def propagate_schemas(graph_json: dict, source_schemas: dict, known_schemas: dict | None = None) -> dict[str, dict]:
     """Walk the DAG and resolve every node's output schema lazily (data-free).
 
     Mirrors flowfile_core: empty (0-row) LazyFrames chained through the node
@@ -70,6 +73,11 @@ def propagate_schemas(graph_json: dict, source_schemas: dict) -> dict[str, dict]
     graph_json: {"order": [ids...],
                  "nodes": {"<id>": {type, input_ids, left, right, settings}}}
     source_schemas: {"<id>": [{name, data_type}, ...]} for source nodes.
+    known_schemas: {"<id>": [{name, data_type}, ...]} last-known output schema
+        per node (from a prior run/propagation). Used as a fallback to seed a
+        node that cannot be statically built (opaque polars_code start nodes,
+        pivot, build errors) so its downstream can still re-predict instead of
+        freezing on a stale schema. Mirrors flowfile_core reading depends_on.schema.
     Returns {"<id>": {schema, schema_resolved, error}}.
     """
     _schema_lazyframes.clear()
@@ -79,6 +87,11 @@ def propagate_schemas(graph_json: dict, source_schemas: dict) -> dict[str, dict]
     t0 = time.perf_counter()
     order = graph_json.get("order", [])
     nodes_meta = graph_json.get("nodes", {})
+    known = known_schemas or {}
+
+    def _seed_from_known(node_key: str) -> pl.LazyFrame | None:
+        sch = known.get(node_key)
+        return build_empty_lf_from_schema(sch) if sch else None
 
     for nid in order:
         key = str(nid)
@@ -94,24 +107,45 @@ def propagate_schemas(graph_json: dict, source_schemas: dict) -> dict[str, dict]
                     continue
                 lf = build_empty_lf_from_schema(sch)
             elif ntype == "pivot":
+                # Pivot's own columns are data-dependent (only known after a run),
+                # but seed _schema_lazyframes from its last-known schema so its
+                # DOWNSTREAM nodes can still rebuild instead of freezing.
+                seed = _seed_from_known(key)
+                if seed is not None:
+                    _schema_lazyframes[nid] = seed
+                pivot_known = known.get(key)
                 results[key] = {
-                    "schema": [],
-                    "schema_resolved": False,
-                    "error": "Pivot output columns depend on the data; run the flow.",
+                    "schema": pivot_known or [],
+                    "schema_resolved": bool(pivot_known),
+                    "error": None if pivot_known else "Pivot output columns depend on the data; run the flow.",
                 }
                 continue
             else:
                 lf = _build_schema_node(ntype, meta)
                 if lf is None:
-                    results[key] = {"schema": [], "schema_resolved": False, "error": "Upstream schema unavailable"}
-                    continue
+                    # Node can't be built statically (e.g. an opaque polars_code
+                    # start node). Fall back to its last-known schema so the rest
+                    # of the chain keeps resolving instead of freezing.
+                    lf = _seed_from_known(key)
+                    if lf is None:
+                        results[key] = {"schema": [], "schema_resolved": False, "error": "Upstream schema unavailable"}
+                        continue
 
             _schema_lazyframes[nid] = lf
             schema = [{"name": n, "data_type": str(d)} for n, d in lf.collect_schema().items()]
             _schema_schemas[nid] = schema
             results[key] = {"schema": schema, "schema_resolved": True, "error": None}
         except Exception as e:
-            results[key] = {"schema": [], "schema_resolved": False, "error": str(e)}
+            # Even when a node's own build fails, seed its last-known schema so
+            # downstream nodes don't freeze on the error.
+            seed = _seed_from_known(key)
+            if seed is not None:
+                _schema_lazyframes[nid] = seed
+                seed_schema = known.get(key)
+                _schema_schemas[nid] = seed_schema
+                results[key] = {"schema": seed_schema, "schema_resolved": True, "error": None}
+            else:
+                results[key] = {"schema": [], "schema_resolved": False, "error": str(e)}
 
     unresolved = {k: r["error"] for k, r in results.items() if not r["schema_resolved"]}
     logger.info(
