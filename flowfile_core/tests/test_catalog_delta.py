@@ -1116,3 +1116,25 @@ class TestOptimizeVacuumService:
             )
             with pytest.raises(ValueError, match="not a Delta table"):
                 svc.vacuum_table(out.id)
+
+    def test_optimize_preserves_updated_at(self, tmp_path, monkeypatch):
+        """Maintenance must not bump updated_at: table-trigger schedules fire on it."""
+        import flowfile_core.catalog.services.tables as tables_mod
+
+        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        _, schema_id = _make_namespace()
+        past = datetime(2020, 1, 1, 12, 0, 0)
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            out = _register_real_delta(svc, schema_id, "opt_ts_tbl", tmp_path)
+            db.query(CatalogTable).filter_by(id=out.id).update({"updated_at": past})
+            db.commit()
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            svc.optimize_table(out.id)
+
+        with get_db_context() as db:
+            table = db.query(CatalogTable).filter_by(id=out.id).one()
+            assert table.updated_at == past
+            assert table.size_bytes > 0

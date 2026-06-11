@@ -216,7 +216,9 @@ export class CatalogApi {
   }
 
   /** Resolve a catalog table by name (+ optional namespace). Returns null when
-   *  no such table exists, so callers can use it as an existence check. */
+   *  no such table exists (404), so callers can use it as an existence check.
+   *  Other failures (network, 5xx) are rethrown so they aren't mistaken for
+   *  "table does not exist". */
   static async resolveTableByName(
     name: string,
     namespaceId?: number | null,
@@ -228,8 +230,9 @@ export class CatalogApi {
         params,
       });
       return response.data.table;
-    } catch {
-      return null;
+    } catch (e: any) {
+      if (e?.response?.status === 404) return null;
+      throw e;
     }
   }
 

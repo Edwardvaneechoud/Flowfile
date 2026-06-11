@@ -98,6 +98,9 @@ class WriteSettings(BaseModel):
     csv_delimiter: str = ","
     csv_encoding: str = "utf8"
 
+    # Delta only: partition columns, applied at table creation
+    partition_by: list[str] | None = None
+
 
 class CloudStorageWriteSettings(BaseModel):
     write_settings: WriteSettings

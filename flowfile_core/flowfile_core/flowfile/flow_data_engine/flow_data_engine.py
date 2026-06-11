@@ -467,6 +467,7 @@ class FlowDataEngine:
             write_mode=write_settings.write_mode,
             compression=write_settings.parquet_compression,
             separator=write_settings.csv_delimiter,
+            partition_by=write_settings.partition_by,
             credential_provider=credential_provider,
             use_pyarrow=use_pyarrow,
             logger=logger,

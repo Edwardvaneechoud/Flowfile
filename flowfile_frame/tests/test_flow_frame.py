@@ -639,6 +639,25 @@ def test_write_to_cloud_storage(df, file_format):
     assert_frame_equal(df.collect(), new_df.collect(), check_row_order=False)
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_write_delta_partitioned_to_cloud_storage(df):
+    from shared.delta_utils import get_delta_partition_columns
+
+    source = f"s3://flowfile-test/flow_frame_delta_partitioned_{uuid4()}.delta"
+    storage_options = {
+        "aws_access_key_id": "minioadmin",
+        "aws_secret_access_key": "minioadmin",
+        "aws_region": "us-east-1",
+        "endpoint_url": "http://localhost:9000",
+        "aws_allow_http": "true",
+    }
+
+    df.write_delta(source, connection_name="minio-flowframe-test", partition_by=["name"])
+    new_df = scan_delta(source, connection_name="minio-flowframe-test")
+    assert_frame_equal(df.collect(), new_df.collect(), check_row_order=False, check_column_order=False)
+    assert get_delta_partition_columns(source, storage_options=storage_options) == ["name"]
+
+
 def test_read_csv_basic():
     """Test basic CSV reading functionality."""
     with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp:

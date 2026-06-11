@@ -140,6 +140,7 @@ def write_delta_to_gcs(
     path: str,
     storage_options: dict[str, Any],
     mode: str = "overwrite",
+    partition_by: list[str] | None = None,
 ) -> None:
     """Write a Polars DataFrame to a Delta Lake table on GCS via gcsfs.
 
@@ -157,6 +158,8 @@ def write_delta_to_gcs(
         GCS storage options passed to gcsfs (token, project, endpoint_url, etc.).
     mode
         Write mode: 'overwrite' or 'append'.
+    partition_by
+        Delta partition columns (applied at table creation).
     """
     clean_path = get_path_without_scheme(path)
 
@@ -164,7 +167,12 @@ def write_delta_to_gcs(
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         local_path = os.path.join(tmp_dir, clean_path)
-        write_deltalake(table_or_uri=local_path, data=df.collect().to_arrow(), storage_options=storage_options)
+        write_deltalake(
+            table_or_uri=local_path,
+            data=df.collect().to_arrow(),
+            storage_options=storage_options,
+            partition_by=partition_by,
+        )
         fs.put(local_path + "/", clean_path, recursive=True)
 
 

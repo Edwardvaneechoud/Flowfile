@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from deltalake import DeltaTable
 from pyarrow import dataset as ds
+from sqlalchemy.orm.attributes import flag_modified
 
 from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
@@ -667,6 +668,9 @@ class TableService:
         if size_bytes is None:
             return
         table.size_bytes = size_bytes
+        # Maintenance must not look like a data change: table-trigger schedules fire on
+        # updated_at, so force the current value into the UPDATE to suppress onupdate.
+        flag_modified(table, "updated_at")
         self.repo.update_table(table)
 
     def optimize_table(self, table_id: int, z_order_columns: list[str] | None = None) -> OptimizeTableResponse:

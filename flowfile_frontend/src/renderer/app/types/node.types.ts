@@ -689,6 +689,7 @@ export interface CloudStorageWriteSettings extends CloudStorageSettings {
   parquet_compression: ParquetCompression;
   csv_delimiter: string;
   csv_encoding: CsvEncoding;
+  partition_by?: string[] | null;
 }
 
 // External Source Types

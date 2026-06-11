@@ -95,10 +95,7 @@
               >
                 <el-option v-for="col in availableColumns" :key="col" :label="col" :value="col" />
               </el-select>
-              <p
-                v-if="existingPartitionColumns.length && physicalWriteMode !== 'overwrite'"
-                class="partition-hint"
-              >
+              <p v-if="existingPartitionColumns.length" class="partition-hint">
                 This table is partitioned by {{ existingPartitionColumns.join(", ") }} — leave empty
                 to inherit, or select the same columns.
               </p>
@@ -169,7 +166,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
@@ -252,8 +249,14 @@ async function lookupExistingTable() {
     return;
   }
   const namespaceId = nodeData.value?.catalog_write_settings.namespace_id ?? null;
-  existingTable.value = await CatalogApi.resolveTableByName(name, namespaceId);
-  tableLookupDone.value = true;
+  try {
+    existingTable.value = await CatalogApi.resolveTableByName(name, namespaceId);
+    tableLookupDone.value = true;
+  } catch {
+    // Lookup failed (network/5xx): show no status rather than a wrong "new table".
+    existingTable.value = null;
+    tableLookupDone.value = false;
+  }
 }
 
 function scheduleLookup() {
@@ -261,6 +264,10 @@ function scheduleLookup() {
   tableLookupDone.value = false;
   lookupTimer = setTimeout(lookupExistingTable, 350);
 }
+
+onUnmounted(() => {
+  if (lookupTimer) clearTimeout(lookupTimer);
+});
 
 watch(
   () => [

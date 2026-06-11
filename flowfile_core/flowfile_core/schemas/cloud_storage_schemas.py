@@ -196,6 +196,9 @@ class WriteSettingsWorkerInterface(BaseModel):
     csv_delimiter: str = ","
     csv_encoding: str = "utf8"
 
+    # Delta only: partition columns, applied at table creation
+    partition_by: list[str] | None = None
+
 
 class CloudStorageWriteSettings(CloudStorageSettings, WriteSettingsWorkerInterface):
     """Settings for writing to cloud storage"""
@@ -213,6 +216,7 @@ class CloudStorageWriteSettings(CloudStorageSettings, WriteSettingsWorkerInterfa
             parquet_compression=self.parquet_compression,
             csv_delimiter=self.csv_delimiter,
             csv_encoding=self.csv_encoding,
+            partition_by=self.partition_by,
         )
 
 

@@ -2046,6 +2046,8 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             self._add_code(f'    compression="{cs.parquet_compression}",')
         if cs.file_format == "delta" and cs.write_mode != "overwrite":
             self._add_code(f'    write_mode="{cs.write_mode}",')
+        if cs.file_format == "delta" and cs.partition_by:
+            self._add_code(f"    partition_by={cs.partition_by},")
         self._add_code(")")
         self._add_code(f"{var_name} = {input_df}")
         self._add_code("")

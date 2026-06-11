@@ -3,6 +3,7 @@ import gc
 import json
 import os
 import uuid
+from queue import Empty
 
 import polars as pl
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
@@ -569,6 +570,26 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
         gc.collect()
 
 
+def _drain_then_join(p, queue) -> dict | None:
+    """Read the subprocess result *before* joining: a child cannot exit until its
+    queued payload fits through the pipe (~64KB), so join-first deadlocks on large
+    results (e.g. a vacuum's file list)."""
+    result = None
+    while True:
+        try:
+            result = queue.get(timeout=0.5)
+            break
+        except Empty:
+            if not p.is_alive():
+                try:
+                    result = queue.get(timeout=1)
+                except Empty:
+                    pass
+                break
+    p.join()
+    return result
+
+
 @router.post("/catalog/optimize", response_model=models.CatalogOptimizeResponse)
 def optimize_catalog_table(payload: models.CatalogOptimizeRequest) -> models.CatalogOptimizeResponse:
     """Compact (and optionally Z-order) a Delta catalog table in a spawned subprocess."""
@@ -591,16 +612,18 @@ def optimize_catalog_table(payload: models.CatalogOptimizeRequest) -> models.Cat
         },
     )
     p.start()
-    p.join()
+    result = _drain_then_join(p, queue)
     try:
         with progress.get_lock():
             final_progress = progress.value
-        if final_progress != 100:
+        if final_progress != 100 or result is None:
             with error_message.get_lock():
                 err = error_message.value.decode().rstrip("\x00")
             logger.error(f"Catalog optimize subprocess failed: {err}")
-            raise HTTPException(status_code=500, detail={"error_type": "optimize_failure", "message": err})
-        result = queue.get(timeout=5)
+            raise HTTPException(
+                status_code=500,
+                detail={"error_type": "optimize_failure", "message": err or "subprocess returned no result"},
+            )
         return models.CatalogOptimizeResponse(
             metrics=result.get("metrics", {}), size_bytes=result.get("size_bytes")
         )
@@ -632,16 +655,18 @@ def vacuum_catalog_table(payload: models.CatalogVacuumRequest) -> models.Catalog
         },
     )
     p.start()
-    p.join()
+    result = _drain_then_join(p, queue)
     try:
         with progress.get_lock():
             final_progress = progress.value
-        if final_progress != 100:
+        if final_progress != 100 or result is None:
             with error_message.get_lock():
                 err = error_message.value.decode().rstrip("\x00")
             logger.error(f"Catalog vacuum subprocess failed: {err}")
-            raise HTTPException(status_code=500, detail={"error_type": "vacuum_failure", "message": err})
-        result = queue.get(timeout=5)
+            raise HTTPException(
+                status_code=500,
+                detail={"error_type": "vacuum_failure", "message": err or "subprocess returned no result"},
+            )
         return models.CatalogVacuumResponse(
             files_removed=result.get("files_removed", []),
             file_count=result.get("file_count", 0),

@@ -102,6 +102,7 @@ def write_to_cloud_storage(
     encoding: CsvEncoding = "utf8",
     compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy",
     write_mode: Literal["overwrite", "append"] = "overwrite",
+    partition_by: list[str] | None = None,
 ) -> None:
     """Write data to cloud storage.
 
@@ -117,7 +118,11 @@ def write_to_cloud_storage(
         encoding: CSV encoding (only used for CSV format).
         compression: Parquet compression (only used for Parquet format).
         write_mode: 'overwrite' or 'append' (only used for Delta format).
+        partition_by: Delta partition columns, applied at table creation
+            (only used for Delta format).
     """
+    if partition_by and file_format != "delta":
+        raise ValueError("partition_by is only supported for the 'delta' file format")
 
     if file_format == "csv":
         df.write_csv_to_cloud_storage(
@@ -135,7 +140,9 @@ def write_to_cloud_storage(
     elif file_format == "json":
         df.write_json_to_cloud_storage(path=path, connection_name=connection_name)
     elif file_format == "delta":
-        df.write_delta(path=path, connection_name=connection_name, write_mode=write_mode)
+        df.write_delta(
+            path=path, connection_name=connection_name, write_mode=write_mode, partition_by=partition_by
+        )
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
 
@@ -151,6 +158,7 @@ def add_write_ff_to_cloud_storage(
     csv_delimiter: str = ";",
     csv_encoding: CsvEncoding = "utf8",
     parquet_compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy",
+    partition_by: list[str] | None = None,
     description: str | None = None,
 ) -> int:
     node_id = generate_node_id()
@@ -166,6 +174,7 @@ def add_write_ff_to_cloud_storage(
             csv_delimiter=csv_delimiter,
             csv_encoding=csv_encoding,
             parquet_compression=parquet_compression,
+            partition_by=partition_by,
         ),
         user_id=get_current_user_id(),
         depending_on_id=depends_on_node_id,

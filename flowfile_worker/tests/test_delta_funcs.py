@@ -372,6 +372,47 @@ class TestMaterializeCatalogTableTask:
         assert progress.value == -1
 
 
+# _drain_then_join
+
+
+def _put_large_payload(queue):
+    # ~200KB: well past the OS pipe buffer, so a join-before-get would deadlock
+    queue.put({"files_removed": ["x" * 100 for _ in range(2000)]})
+
+
+class TestDrainThenJoin:
+    def test_large_payload_does_not_deadlock(self):
+        from flowfile_worker.routes import _drain_then_join
+
+        queue = mp_context.Queue(maxsize=1)
+        p = mp_context.Process(target=_put_large_payload, args=(queue,))
+        p.start()
+        result = _drain_then_join(p, queue)
+        assert result is not None
+        assert len(result["files_removed"]) == 2000
+
+    def test_child_error_returns_none(self, tmp_path):
+        from flowfile_worker.routes import _drain_then_join
+
+        progress = mp_context.Value("i", 0)
+        error_message = mp_context.Array("c", 1024)
+        queue = mp_context.Queue(maxsize=1)
+        p = mp_context.Process(
+            target=optimize_catalog_table_task,
+            kwargs={
+                "table_path": str(tmp_path / "does_not_exist"),
+                "z_order_columns": None,
+                "progress": progress,
+                "error_message": error_message,
+                "queue": queue,
+            },
+        )
+        p.start()
+        result = _drain_then_join(p, queue)
+        assert result is None
+        assert progress.value == -1
+
+
 # Worker Routes
 
 
