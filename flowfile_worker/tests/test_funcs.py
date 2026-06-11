@@ -71,6 +71,38 @@ def test_write_to_cloud_storage(cloud_storage_connection_settings):
         pytest.fail(f"Write to cloud storage failed: {e}")
 
 
+def test_write_to_cloud_storage_partitioned_delta(cloud_storage_connection_settings):
+    from shared.delta_utils import get_delta_partition_columns
+
+    resource_path = "s3://worker-test-bucket/func_test_write_partitioned_delta"
+    write_settings = WriteSettings(
+        resource_path=resource_path,
+        file_format="delta",
+        write_mode="overwrite",
+        partition_by=["grp"],
+    )
+    cloud_write_settings = CloudStorageWriteSettings(
+        connection=cloud_storage_connection_settings,
+        write_settings=write_settings,
+    )
+    lf = pl.LazyFrame({"value": list(range(10)), "grp": ["a", "b"] * 5})
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+
+    write_to_cloud_storage(
+        polars_serializable_object=lf.serialize(),
+        progress=progress,
+        error_message=error_message,
+        queue=Queue(maxsize=1),
+        file_path="",
+        cloud_write_settings=cloud_write_settings,
+    )
+
+    assert progress.value == 100, error_message[:].decode(errors="replace")
+    storage_options = cloud_storage_connection_settings.get_storage_options()
+    assert get_delta_partition_columns(resource_path, storage_options=storage_options) == ["grp"]
+
+
 def test_generic_task_error_returns_early(tmp_path):
     """A failing func must set progress=-1 and not fall through to scan a missing IPC file."""
     progress = mp_context.Value('i', 0)
