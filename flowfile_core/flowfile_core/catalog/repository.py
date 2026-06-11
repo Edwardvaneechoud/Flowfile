@@ -481,9 +481,7 @@ class SQLAlchemyCatalogRepository:
         makes the equality unsatisfiable — no rows match, no explicit guard
         needed at call sites.
         """
-        uuid_subq = (
-            self._db.query(FlowRegistration.flow_uuid).filter_by(id=registration_id).scalar_subquery()
-        )
+        uuid_subq = self._db.query(FlowRegistration.flow_uuid).filter_by(id=registration_id).scalar_subquery()
         return FlowRun.flow_uuid == uuid_subq
 
     def _apply_run_filters(
@@ -737,6 +735,11 @@ class SQLAlchemyCatalogRepository:
     def delete_table(self, table_id: int) -> None:
         self._db.query(CatalogTableReadLink).filter_by(table_id=table_id).delete()
         self._db.query(TableFavorite).filter_by(table_id=table_id).delete()
+        # Drop grants on the table's visualizations before the bulk delete (this is a
+        # second viz-delete path that bypasses delete_visualization).
+        viz_ids = [row[0] for row in self._db.query(CatalogVisualization.id).filter_by(catalog_table_id=table_id)]
+        for viz_id in viz_ids:
+            sharing.delete_grants_for_resource(self._db, "visualization", viz_id)
         self._db.query(CatalogVisualization).filter_by(catalog_table_id=table_id).delete()
         sharing.delete_grants_for_resource(self._db, "catalog_table", table_id)
         table = self._db.get(CatalogTable, table_id)
@@ -1106,6 +1109,7 @@ class SQLAlchemyCatalogRepository:
     def delete_visualization(self, viz_id: int) -> None:
         viz = self._db.get(CatalogVisualization, viz_id)
         if viz is not None:
+            sharing.delete_grants_for_resource(self._db, "visualization", viz_id)
             self._db.delete(viz)
             self._db.commit()
 
@@ -1131,5 +1135,6 @@ class SQLAlchemyCatalogRepository:
     def delete_dashboard(self, dashboard_id: int) -> None:
         dashboard = self._db.get(CatalogDashboard, dashboard_id)
         if dashboard is not None:
+            sharing.delete_grants_for_resource(self._db, "dashboard", dashboard_id)
             self._db.delete(dashboard)
             self._db.commit()

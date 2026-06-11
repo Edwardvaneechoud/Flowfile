@@ -101,6 +101,7 @@
               @create-schema="openCreateSchema($event)"
               @delete-table="handleDeleteTable($event)"
               @delete-flow="handleDeleteFlow($event)"
+              @namespace-share="openNamespaceShare($event)"
             />
           </div>
         </div>
@@ -350,6 +351,15 @@
       />
     </el-dialog>
 
+    <ShareDialog
+      v-if="shareNamespace"
+      v-model="showNamespaceShareDialog"
+      resource-type="catalog_namespace"
+      :resource-id="shareNamespace.id"
+      :resource-name="shareNamespace.name"
+      :can-manage-grants="shareNamespace.access?.is_owner !== false"
+    />
+
     <!-- Right-click context menus for catalog tables and flows -->
     <Teleport to="body">
       <ContextMenu
@@ -477,6 +487,7 @@ import VisualsPanel from "./VisualsPanel.vue";
 import ApisPanel from "./ApisPanel.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
+import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { catalogTabs } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
@@ -496,6 +507,14 @@ const route = useRoute();
 
 const catalogStore = useCatalogStore();
 const flowStore = useFlowStore();
+
+// Namespace sharing (one dialog for the whole tree).
+const shareNamespace = ref<NamespaceTree | null>(null);
+const showNamespaceShareDialog = ref(false);
+const openNamespaceShare = (node: NamespaceTree) => {
+  shareNamespace.value = node;
+  showNamespaceShareDialog.value = true;
+};
 
 const tabs = computed(() =>
   catalogTabs.map((tab) => ({

@@ -11,11 +11,22 @@
           <h2>{{ artifact.name }}</h2>
           <span v-if="isUnavailable" class="status-badge unavailable">unavailable</span>
           <span v-else class="status-badge" :class="artifact.status">{{ artifact.status }}</span>
+          <SharedBadge :access="artifact.access" />
         </div>
         <p v-if="artifact.description" class="description">{{ artifact.description }}</p>
       </div>
       <div class="header-actions">
         <button
+          v-if="canShare(artifact)"
+          class="btn btn-secondary btn-sm"
+          title="Share model"
+          @click="showShareDialog = true"
+        >
+          <i class="fa-solid fa-share-nodes"></i>
+          Share
+        </button>
+        <button
+          v-if="canManage(artifact)"
           class="btn btn-danger btn-sm"
           title="Delete model"
           @click="emit('deleteArtifact', artifact)"
@@ -25,6 +36,15 @@
         </button>
       </div>
     </div>
+
+    <ShareDialog
+      v-if="artifact.id != null"
+      v-model="showShareDialog"
+      resource-type="global_artifact"
+      :resource-id="artifact.id"
+      :resource-name="artifact.name"
+      :can-manage-grants="canManageGrants(artifact)"
+    />
 
     <!-- Data missing banner -->
     <div v-if="isUnavailable" class="missing-banner">
@@ -160,10 +180,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { GlobalArtifact } from "../../types";
 import { formatDate, formatSize, formatType } from "./catalog-formatters";
+import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
+
+const showShareDialog = ref(false);
+const { canShare, canManage, canManageGrants } = useResourceSharing();
 
 const props = defineProps<{
   artifact: GlobalArtifact;

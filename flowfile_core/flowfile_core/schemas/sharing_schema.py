@@ -14,6 +14,9 @@ ResourceType = Literal[
     "catalog_namespace",
     "catalog_table",
     "flow",
+    "visualization",
+    "dashboard",
+    "global_artifact",
 ]
 PermissionLevel = Literal["use", "manage"]
 GroupRole = Literal["owner", "manager", "member"]

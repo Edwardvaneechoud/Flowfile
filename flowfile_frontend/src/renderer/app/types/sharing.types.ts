@@ -8,7 +8,10 @@ export type ResourceType =
   | "kafka_connection"
   | "catalog_namespace"
   | "catalog_table"
-  | "flow";
+  | "flow"
+  | "visualization"
+  | "dashboard"
+  | "global_artifact";
 
 export type PermissionLevel = "use" | "manage";
 export type GroupRole = "owner" | "manager" | "member";

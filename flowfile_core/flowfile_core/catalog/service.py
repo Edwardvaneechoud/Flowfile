@@ -57,6 +57,7 @@ from flowfile_core.catalog.validators import (
     validate_viz_source,
 )
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.database import models as db_models
 from flowfile_core.database.models import (
     CatalogNamespace,
     CatalogTable,
@@ -107,9 +108,12 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationUpdate,
     VizSourceDescriptor,
 )
+from flowfile_core.schemas.sharing_schema import AccessInfo
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
+
+_OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
 
 
 def _should_offload() -> bool:
@@ -217,13 +221,15 @@ class CatalogService:
         raise NotAuthorizedError(self.access.user_id or -1, "modify this schedule")
 
     def _require_use_visualization(self, viz_id: int) -> None:
-        """Viz read follows its parent table (or creator); sql-source viz is creator-only."""
+        """Viz read: creator, a use/manage grant, or read on its parent table."""
         if not self._restricted:
             return
         viz = self.repo.get_visualization(viz_id)
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
         if viz.created_by == self.access.user_id:
+            return
+        if self.access.can_use("visualization", viz_id, owner_id=viz.created_by):
             return
         if viz.catalog_table_id is not None and self.access.can_use("catalog_table", viz.catalog_table_id):
             return
@@ -235,8 +241,21 @@ class CatalogService:
         viz = self.repo.get_visualization(viz_id)
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
-        if viz.created_by != self.access.user_id:
+        if viz.created_by == self.access.user_id:
+            return
+        if not self.access.can_manage("visualization", viz_id, owner_id=viz.created_by):
             raise NotAuthorizedError(self.access.user_id or -1, "modify this visualization")
+
+    def _require_use_dashboard(self, dashboard_id: int) -> None:
+        if not self._restricted:
+            return
+        dashboard = self.repo.get_dashboard(dashboard_id)
+        if dashboard is None:
+            raise DashboardNotFoundError(dashboard_id=dashboard_id)
+        if dashboard.created_by == self.access.user_id:
+            return
+        if not self.access.can_use("dashboard", dashboard_id, owner_id=dashboard.created_by):
+            raise NotAuthorizedError(self.access.user_id or -1, "access this dashboard")
 
     def _require_manage_dashboard(self, dashboard_id: int) -> None:
         if not self._restricted:
@@ -244,7 +263,9 @@ class CatalogService:
         dashboard = self.repo.get_dashboard(dashboard_id)
         if dashboard is None:
             raise DashboardNotFoundError(dashboard_id=dashboard_id)
-        if dashboard.created_by != self.access.user_id:
+        if dashboard.created_by == self.access.user_id:
+            return
+        if not self.access.can_manage("dashboard", dashboard_id, owner_id=dashboard.created_by):
             raise NotAuthorizedError(self.access.user_id or -1, "modify this dashboard")
 
     def _require_use_viz_source(self, source) -> None:
@@ -257,6 +278,45 @@ class CatalogService:
             return items
         allowed = self.access.accessible_ids(resource_type)
         return [item for item in items if item.id in allowed]
+
+    # -- access annotation (stamps the DTO .access field for the frontend) ---
+
+    def _access_detail_map(self, resource_type: str) -> dict:
+        """resource_id -> AccessInfo for own + group-granted items (restricted mode only)."""
+        from flowfile_core.auth import sharing
+
+        details = sharing.granted_access_details(self.access.db, self.access.user_id, resource_type)
+        granter_ids = {by for _perm, by in details.values() if by is not None}
+        usernames = {}
+        if granter_ids:
+            usernames = dict(
+                self.access.db.query(db_models.User.id, db_models.User.username).filter(
+                    db_models.User.id.in_(granter_ids)
+                )
+            )
+        out = {}
+        for rid, (perm, by) in details.items():
+            out[rid] = AccessInfo(is_owner=False, access_level=perm, shared_by=usernames.get(by))
+        return out
+
+    def _stamp_access(self, items: list, resource_type: str, detail_map: dict | None = None):
+        """Set ``.access`` on each DTO: owner → owner; granted → use/manage; else None."""
+        if not self._restricted:
+            return items
+        from flowfile_core.auth import sharing
+
+        owner_attr = sharing.RESOURCE_REGISTRY[resource_type].owner_attr
+        details = self._access_detail_map(resource_type) if detail_map is None else detail_map
+        uid = self.access.user_id
+        for item in items:
+            if item is None:
+                continue
+            owner = getattr(item, owner_attr, None)
+            if owner == uid:
+                item.access = _OWNER_ACCESS
+            elif item.id in details:
+                item.access = details[item.id]
+        return items
 
     # ------------------------------------------------------------------ #
     # Private helpers
@@ -357,20 +417,41 @@ class CatalogService:
         return self._filter_namespace_tree(tree)
 
     def _filter_namespace_tree(self, tree: list[NamespaceTree]) -> list[NamespaceTree]:
-        """Private-by-default tree: per-namespace items filtered to accessible ones;
-        a namespace is kept when it is visible (public/owned/granted) OR still has
-        any visible child item (context-only ancestor of a shared table/flow)."""
+        """Private-by-default tree: per-namespace items filtered to accessible ones
+        (own ∪ granted, incl. namespace-inherited), and each kept item + namespace
+        stamped with its `.access`. A namespace is kept when it is visible
+        (public/owned/granted) OR still has any visible child (context-only ancestor)."""
         visible_ns = self.access.visible_namespace_ids()
-        flow_ids = self.access.accessible_ids("flow")
-        table_ids = self.access.accessible_ids("catalog_table")
-        user_id = self.access.user_id
+        accessible = {
+            t: self.access.accessible_ids(t) for t in ("flow", "catalog_table", "visualization", "global_artifact")
+        }
+        # Compute the per-type granted-detail maps once (reused for every node).
+        details = {
+            t: self._access_detail_map(t)
+            for t in ("flow", "catalog_table", "visualization", "global_artifact", "catalog_namespace")
+        }
 
         def _prune(node: NamespaceTree) -> NamespaceTree | None:
-            node.flows = [f for f in node.flows if f.id in flow_ids]
-            node.tables = [t for t in node.tables if t.id in table_ids]
-            node.visualizations = [v for v in node.visualizations if v.created_by == user_id]
-            node.artifacts = [a for a in node.artifacts if getattr(a, "owner_id", None) == user_id]
+            node.flows = self._stamp_access(
+                [f for f in node.flows if f.id in accessible["flow"]], "flow", details["flow"]
+            )
+            node.tables = self._stamp_access(
+                [t for t in node.tables if t.id in accessible["catalog_table"]],
+                "catalog_table",
+                details["catalog_table"],
+            )
+            node.visualizations = self._stamp_access(
+                [v for v in node.visualizations if v.id in accessible["visualization"]],
+                "visualization",
+                details["visualization"],
+            )
+            node.artifacts = self._stamp_access(
+                [a for a in node.artifacts if a.id in accessible["global_artifact"]],
+                "global_artifact",
+                details["global_artifact"],
+            )
             node.children = [c for c in (_prune(child) for child in node.children) if c is not None]
+            self._stamp_access([node], "catalog_namespace", details["catalog_namespace"])
             has_items = bool(node.flows or node.tables or node.visualizations or node.artifacts or node.children)
             if node.id in visible_ns or has_items:
                 return node
@@ -420,16 +501,18 @@ class CatalogService:
     def get_flow(self, registration_id: int, user_id: int) -> FlowRegistrationOut:
         """Get an enriched flow registration."""
         self._require_use("flow", registration_id)
-        return self._flows.get_flow(registration_id, user_id)
+        flow = self._flows.get_flow(registration_id, user_id)
+        return self._stamp_access([flow], "flow")[0]
 
     def list_flows(self, user_id: int, namespace_id: int | None = None) -> list[FlowRegistrationOut]:
         """List flows, optionally filtered by namespace, enriched with user context."""
-        return self._filter_by_access(self._flows.list_flows(user_id, namespace_id), "flow")
+        flows = self._filter_by_access(self._flows.list_flows(user_id, namespace_id), "flow")
+        return self._stamp_access(flows, "flow")
 
     def list_artifacts_for_flow(self, registration_id: int) -> list[GlobalArtifactOut]:
         """List all active artifacts produced by a registered flow."""
         self._require_use("flow", registration_id)
-        return self._flows.list_artifacts_for_flow(registration_id)
+        return self._stamp_access(self._flows.list_artifacts_for_flow(registration_id), "global_artifact")
 
     # ------------------------------------------------------------------ #
     # Run operations
@@ -752,7 +835,7 @@ class CatalogService:
     def get_table(self, table_id: int, user_id: int | None = None) -> CatalogTableOut:
         """Get a catalog table by ID."""
         self._require_use("catalog_table", table_id)
-        return self._tables.get_table(table_id, user_id)
+        return self._stamp_access([self._tables.get_table(table_id, user_id)], "catalog_table")[0]
 
     def resolve_table_out(
         self,
@@ -764,11 +847,12 @@ class CatalogService:
         """Resolve a reference and return its DTO plus ambiguity warnings (empty when unambiguous)."""
         result, warnings = self._tables.resolve_table_out(reference, default_namespace_id, strict, user_id)
         self._require_use("catalog_table", result.id)
-        return result, warnings
+        return self._stamp_access([result], "catalog_table")[0], warnings
 
     def list_tables(self, namespace_id: int | None = None, user_id: int | None = None) -> list[CatalogTableOut]:
         """List tables, optionally filtered by namespace."""
-        return self._filter_by_access(self._tables.list_tables(namespace_id, user_id), "catalog_table")
+        tables = self._filter_by_access(self._tables.list_tables(namespace_id, user_id), "catalog_table")
+        return self._stamp_access(tables, "catalog_table")
 
     def update_table(
         self,
@@ -1113,21 +1197,23 @@ class CatalogService:
     def list_visualizations_for_table(self, table_id: int, user_id: int | None = None) -> list[VisualizationOut]:
         """List visualizations bound to a specific catalog table."""
         self._require_use("catalog_table", table_id)
-        return self._visualizations.list_visualizations_for_table(table_id, user_id)
+        return self._stamp_access(
+            self._visualizations.list_visualizations_for_table(table_id, user_id), "visualization"
+        )
 
     def list_visualization_library(self, user_id: int | None = None) -> list[VisualizationOut]:
         """Return all saved visualizations as catalog library entries (specs omitted)."""
         vizzes = self._visualizations.list_visualization_library(user_id)
         if self._restricted:
-            uid = self.access.user_id
+            viz_ids = self.access.accessible_ids("visualization")  # own ∪ granted (+ ns-inherited)
             table_ids = self.access.accessible_ids("catalog_table")
-            vizzes = [v for v in vizzes if v.created_by == uid or (v.catalog_table_id in table_ids)]
-        return vizzes
+            vizzes = [v for v in vizzes if v.id in viz_ids or (v.catalog_table_id in table_ids)]
+        return self._stamp_access(vizzes, "visualization")
 
     def get_visualization(self, viz_id: int, user_id: int | None = None) -> VisualizationOut:
         """Get a single visualization by ID."""
         self._require_use_visualization(viz_id)
-        return self._visualizations.get_visualization(viz_id, user_id)
+        return self._stamp_access([self._visualizations.get_visualization(viz_id, user_id)], "visualization")[0]
 
     _validate_thumbnail = staticmethod(validate_thumbnail)
     _validate_viz_source = staticmethod(validate_viz_source)
@@ -1152,15 +1238,14 @@ class CatalogService:
         """List all dashboards."""
         dashboards = self._visualizations.list_dashboards(user_id)
         if self._restricted:
-            dashboards = [d for d in dashboards if d.created_by == self.access.user_id]
-        return dashboards
+            allowed = self.access.accessible_ids("dashboard")  # own ∪ granted (+ ns-inherited)
+            dashboards = [d for d in dashboards if d.id in allowed]
+        return self._stamp_access(dashboards, "dashboard")
 
     def get_dashboard(self, dashboard_id: int, user_id: int | None = None) -> DashboardOut:
         """Get a dashboard by ID."""
-        dashboard = self._visualizations.get_dashboard(dashboard_id, user_id)
-        if self._restricted and dashboard.created_by != self.access.user_id:
-            raise NotAuthorizedError(self.access.user_id or -1, "access this dashboard")
-        return dashboard
+        self._require_use_dashboard(dashboard_id)
+        return self._stamp_access([self._visualizations.get_dashboard(dashboard_id, user_id)], "dashboard")[0]
 
     def create_dashboard(self, payload: DashboardCreate, user_id: int) -> DashboardOut:
         """Create a new dashboard."""

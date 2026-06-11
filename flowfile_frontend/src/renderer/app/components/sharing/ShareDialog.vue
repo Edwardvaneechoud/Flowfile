@@ -129,6 +129,9 @@ const RESOURCE_LABELS: Record<ResourceType, string> = {
   catalog_namespace: "namespace",
   catalog_table: "table",
   flow: "flow",
+  visualization: "visualization",
+  dashboard: "dashboard",
+  global_artifact: "model",
 };
 
 const resourceLabel = computed(() => RESOURCE_LABELS[props.resourceType]);

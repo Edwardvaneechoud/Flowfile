@@ -50,13 +50,19 @@ RESOURCE_REGISTRY: dict[str, ResourceSpec] = {
     "catalog_namespace": ResourceSpec(db_models.CatalogNamespace, "owner_id", "namespace"),
     "catalog_table": ResourceSpec(db_models.CatalogTable, "owner_id", "table"),
     "flow": ResourceSpec(db_models.FlowRegistration, "owner_id", "flow"),
+    # Catalog content. Visualizations/dashboards use the NULLABLE created_by column,
+    # so a NULL-owner row is reachable only by an admin or an explicit grant.
+    "visualization": ResourceSpec(db_models.CatalogVisualization, "created_by", "visualization"),
+    "dashboard": ResourceSpec(db_models.CatalogDashboard, "created_by", "dashboard"),
+    "global_artifact": ResourceSpec(db_models.GlobalArtifact, "owner_id", "model"),
 }
 
 # Secrets are use-only when shared: a manage grant would imply edit/re-share rights
 # on a credential, which collapses into "give me the plaintext".
 MANAGE_DISALLOWED_TYPES = frozenset({"secret"})
 
-_NAMESPACE_SCOPED_TYPES = frozenset({"catalog_table", "flow"})
+# Types with a namespace_id: a namespace grant cascades to all of them.
+_NAMESPACE_SCOPED_TYPES = frozenset({"catalog_table", "flow", "visualization", "dashboard", "global_artifact"})
 
 
 def sharing_enabled() -> bool:
