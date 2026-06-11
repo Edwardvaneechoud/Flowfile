@@ -8,6 +8,7 @@
       :initial-width="200"
       :initial-top="toolbarHeight"
       :default-z-index="100"
+      :allow-full-screen="false"
     >
       <div class="nodes-wrapper">
         <input
@@ -42,8 +43,8 @@
       </div>
     </DraggablePanel>
 
-    <!-- Toolbar -->
-    <div ref="toolbarRef" class="toolbar">
+    <!-- Toolbar (hidden in app mode, where the header drives actions) -->
+    <div v-if="showToolbar" ref="toolbarRef" class="toolbar">
       <div class="action-buttons">
         <button
           v-if="effectiveToolbar.showRun"
@@ -56,28 +57,25 @@
           <span class="btn-text">{{ isExecuting ? 'Running...' : 'Run' }}</span>
         </button>
         <div v-if="effectiveToolbar.showRun" class="toolbar-divider"></div>
-        <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="handleSaveFlow" title="Save Flow">
+        <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="handleSaveFlow" title="Save flow to the catalog">
           <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-          <span class="btn-text">Save</span>
+          <span class="btn-text">{{ savedFlash ? 'Saved' : 'Save' }}</span>
+        </button>
+        <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="handleExportFlow" title="Export flow to file">
+          <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="btn-text">Export</span>
         </button>
         <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="triggerLoadFlow" title="Load Flow">
           <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           <span class="btn-text">Open</span>
         </button>
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept=".json,.yaml,.yml"
-          @change="handleLoadFlow"
-          style="display: none"
-        />
         <DemoButton v-if="effectiveToolbar.showDemo && hasSeenDemo" />
         <button
           v-if="effectiveToolbar.showCodeGen"
           class="action-btn"
-          :class="{ active: showCodeGenerator }"
+          :class="{ active: uiStore.showCodeGenerator }"
           title="Generate Python Code"
-          @click="showCodeGenerator = true"
+          @click="uiStore.showCodeGenerator = true"
         >
           <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
           <span class="btn-text">Generate code</span>
@@ -104,6 +102,7 @@
         @connect="onConnect"
         @node-click="onNodeClick"
         @pane-click="onPaneClick"
+        @pane-context-menu="onPaneContextMenu"
         @edges-change="onEdgesChange"
         @nodes-change="onNodesChange"
       >
@@ -112,6 +111,10 @@
             :data="nodeProps.data"
             @delete="handleDeleteNode"
             @run="handleRunNode"
+            @edit="handleEditNode"
+            @view-data="handleViewData"
+            @copy="handleCopyNode"
+            @save-to-catalog="handleSaveToCatalog"
           />
         </template>
         <MiniMap />
@@ -146,6 +149,20 @@
           @update:settings="updateSettings"
         />
       </NodeSettingsWrapper>
+
+      <!-- Sticky Apply footer: runs the node and refreshes its preview, mirroring
+           the main editor's NodeSettingsDrawer. Settings are already applied live,
+           so this re-executes to surface the result. -->
+      <template #footer>
+        <button
+          class="apply-btn"
+          :class="{ applied: justApplied }"
+          :disabled="isApplying"
+          @click="applyNodeSettings"
+        >
+          {{ isApplying ? 'Applying…' : justApplied ? 'Applied ✓' : 'Apply' }}
+        </button>
+      </template>
     </DraggablePanel>
 
     <!-- Data Preview Panel (hidden for explore_data nodes which have their own preview) -->
@@ -157,6 +174,8 @@
       :initial-height="280"
       :initial-left="200"
       :default-z-index="110"
+      group="bottomPanels"
+      :sync-dimensions="true"
     >
       <div class="data-preview">
         <!-- Loading state -->
@@ -167,6 +186,19 @@
 
         <!-- Data grid -->
         <template v-else-if="selectedNodeResult?.success && selectedNodeResult?.data">
+          <!-- Multi-output selector (only for nodes with >1 output; dormant today) -->
+          <div v-if="hasMultipleOutputs" class="output-selector">
+            <span class="output-selector__label">Output:</span>
+            <button
+              v-for="output in selectedNodeOutputs"
+              :key="output.id"
+              class="output-selector__button"
+              :class="{ active: output.id === selectedOutputHandle }"
+              @click="selectOutput(output.id)"
+            >
+              <span class="output-selector__letter">{{ output.label }}</span>
+            </button>
+          </div>
           <div class="preview-header">
             <span class="row-count">{{ selectedNodeResult.data.total_rows }} rows</span>
             <span class="col-count">{{ selectedNodeResult.data.columns?.length }} columns</span>
@@ -197,17 +229,68 @@
           {{ selectedNodeResult.error }}
         </div>
 
-        <!-- Empty state -->
+        <!-- Schema preview: fields are known (lazy propagation) but no data fetched yet -->
+        <div v-else-if="selectedNodeSchema.length" class="schema-preview">
+          <div class="preview-header">
+            <span class="col-count">{{ selectedNodeSchema.length }} columns</span>
+            <span class="schema-preview-hint">Schema preview · fetch data to see rows</span>
+          </div>
+          <div class="schema-grid-container">
+            <table class="schema-table">
+              <thead>
+                <tr>
+                  <th v-for="col in selectedNodeSchema" :key="col.name">
+                    <span class="schema-col-name">{{ col.name }}</span>
+                    <span class="schema-col-type">{{ col.data_type }}</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="schema-empty-row">
+                  <td v-for="col in selectedNodeSchema" :key="col.name">—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="schema-preview-footer">
+            <button
+              class="fetch-data-button"
+              :disabled="isFetching || isExecuting || !pyodideReady"
+              @click="handleFetchData"
+            >
+              {{ isFetching ? 'Fetching…' : 'Fetch data' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Empty state with fetch-to-run button -->
         <div v-else class="no-data">
-          No data available. Run the flow to see results.
+          <p class="no-data-text">This node hasn't produced data yet. Fetch it to preview the output.</p>
+          <button
+            class="fetch-data-button"
+            :disabled="isFetching || isExecuting || !pyodideReady"
+            @click="handleFetchData"
+          >
+            {{ isFetching ? 'Fetching…' : 'Fetch data' }}
+          </button>
         </div>
       </div>
     </DraggablePanel>
 
+    <!-- Hidden file input for Open (lives outside the toolbar so the header's
+         Open action works even when the toolbar is hidden in app mode). -->
+    <input
+      ref="fileInputRef"
+      type="file"
+      accept=".json,.yaml,.yml"
+      @change="handleLoadFlow"
+      style="display: none"
+    />
+
     <!-- Code Generator Modal -->
     <CodeGenerator
-      :is-visible="showCodeGenerator"
-      @close="showCodeGenerator = false"
+      :is-visible="uiStore.showCodeGenerator"
+      @close="uiStore.showCodeGenerator = false"
     />
     <!-- Missing Files Modal -->
     <MissingFilesModal
@@ -223,16 +306,45 @@
     <!-- Teleport target for context menus (inside CSS variable scope, outside VueFlow transforms) -->
     <div id="flowfile-context-menu-container"></div>
 
+    <!-- Canvas (pane) right-click menu -->
+    <div
+      v-if="paneMenuVisible"
+      ref="paneMenuEl"
+      class="context-menu pane-menu"
+      :style="{ position: 'fixed', zIndex: 10000, top: `${paneMenu.y}px`, left: `${paneMenu.x}px` }"
+    >
+      <div class="context-menu-item" @click="paneFitView">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+        <span>Fit view</span>
+      </div>
+      <div class="context-menu-item" @click="paneZoomIn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M11 8v6M8 11h6"/></svg>
+        <span>Zoom in</span>
+      </div>
+      <div class="context-menu-item" @click="paneZoomOut">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M8 11h6"/></svg>
+        <span>Zoom out</span>
+      </div>
+      <div v-if="canPaste" class="context-menu-divider"></div>
+      <div v-if="canPaste" class="context-menu-item" @click="pasteHere">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+        <span>Paste node</span>
+      </div>
+    </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
+import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent, watch } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
 import { Controls } from '@vue-flow/controls'
 import { useFlowStore } from '../stores/flow-store'
+import { usePyodideStore } from '../stores/pyodide-store'
+import { usePanelZIndexStore } from '../stores/panel-zindex-store'
+import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { storeToRefs } from 'pinia'
 import type { NodeSettings, FlowEdge, ColumnSchema, NodeResult } from '../types'
 import type { ToolbarConfig, NodeCategoryConfig } from '../lib/types'
@@ -248,9 +360,10 @@ ModuleRegistry.registerModules([ClientSideRowModelModule])
 import DraggablePanel from './common/DraggablePanel.vue'
 import FlowNode from './nodes/FlowNode.vue'
 import NodeTitle from './nodes/NodeTitle.vue'
-import ReadCsvSettings from './nodes/ReadCsvSettings.vue'
+import ReadFileSettings from './nodes/ReadFileSettings.vue'
 import ManualInputSettings from './nodes/ManualInputSettings.vue'
 import ExternalDataSettings from './nodes/ExternalDataSettings.vue'
+import ReadFromCatalogSettings from './nodes/ReadFromCatalogSettings.vue'
 import FilterSettings from './nodes/FilterSettings.vue'
 import SelectSettings from './nodes/SelectSettings.vue'
 import GroupBySettings from './nodes/GroupBySettings.vue'
@@ -267,6 +380,7 @@ import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'
 import ExternalOutputSettings from './nodes/ExternalOutputSettings.vue'
+import WriteToCatalogSettings from './nodes/WriteToCatalogSettings.vue'
 import NodeSettingsWrapper from './nodes/NodeSettingsWrapper.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
@@ -279,8 +393,12 @@ const props = withDefaults(defineProps<{
   toolbarConfig?: ToolbarConfig
   nodeCategoriesConfig?: NodeCategoryConfig[]
   readonly?: boolean
+  // App mode hides the in-canvas toolbar and drives actions from the header;
+  // the embeddable library keeps the toolbar (default true).
+  showToolbar?: boolean
 }>(), {
-  readonly: false
+  readonly: false,
+  showToolbar: true
 })
 
 const emit = defineEmits<{
@@ -297,19 +415,39 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
 }))
 
 const flowStore = useFlowStore()
+const zIndexStore = usePanelZIndexStore()
+const uiStore = useDesignerUiStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
+const { isReady: pyodideReady } = storeToRefs(usePyodideStore())
 
 const { hasSeenDemo } = useDemo()
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
 const toolbarHeight = ref(52)
-const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
+const { screenToFlowCoordinate, removeNodes, updateNode, fitView, zoomIn, zoomOut } = useVueFlow()
+
+// Canvas (pane) right-click menu state.
+const paneMenuVisible = ref(false)
+const paneMenuEl = ref<HTMLElement | null>(null)
+const paneMenu = ref({ x: 0, y: 0 })
+let paneFlowPos = { x: 0, y: 0 }
+const canPaste = computed(() => flowStore.hasClipboard())
 const searchQuery = ref('')
-const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
+// Brief "Saved" confirmation on the toolbar Save button (lib/embed mode).
+const savedFlash = ref(false)
+
+// Apply-button state for the node settings panel footer.
+const isApplying = ref(false)
+const justApplied = ref(false)
+let appliedTimer: ReturnType<typeof setTimeout> | null = null
+
+// Data-preview state: fetch-to-run + (dormant) multi-output selector.
+const isFetching = ref(false)
+const selectedOutputHandle = ref('output-0')
 
 const nodeTypes: Record<string, any> = {
   'flow-node': markRaw(FlowNode)
@@ -339,9 +477,10 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Input Sources',
     isOpen: true,
     nodes: [
-      { type: 'read', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 },
+      { type: 'read', name: 'Read File', icon: 'input_data.png', inputs: 0, outputs: 1 },
       { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1 },
-      { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1 }
+      { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1 },
+      { type: 'read_from_catalog', name: 'Read from Catalog', icon: 'catalog_reader.svg', inputs: 0, outputs: 1 }
     ]
   },
   {
@@ -378,6 +517,7 @@ const nodeCategories = ref<NodeCategory[]>([
     nodes: [
       { type: 'explore_data', name: 'Explore Data', icon: 'explore_data.png', inputs: 1, outputs: 0 },
       { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0 },
+      { type: 'write_to_catalog', name: 'Write to Catalog', icon: 'catalog_writer.svg', inputs: 1, outputs: 0 },
       { type: 'external_output', name: 'External Output', icon: 'external_output.svg', inputs: 1, outputs: 0 }
     ]
   }
@@ -505,6 +645,62 @@ function onNodeClick(event: { node: Node }) {
 
 function onPaneClick() {
   flowStore.selectNode(null)
+  closePaneMenu()
+}
+
+function onPaneContextMenu(event: MouseEvent) {
+  event.preventDefault()
+  paneFlowPos = screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
+  paneMenu.value = { x: event.clientX, y: event.clientY }
+  paneMenuVisible.value = true
+  setTimeout(() => window.addEventListener('click', handlePaneMenuClickOutside), 0)
+  nextTick(() => {
+    const el = paneMenuEl.value
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    if (paneMenu.value.x + rect.width > window.innerWidth - 10) {
+      paneMenu.value.x = window.innerWidth - rect.width - 10
+    }
+    if (paneMenu.value.y + rect.height > window.innerHeight - 10) {
+      paneMenu.value.y = window.innerHeight - rect.height - 10
+    }
+  })
+}
+
+function handlePaneMenuClickOutside(event: MouseEvent) {
+  // Note: `Node` is shadowed by VueFlow's Node type in this file; use HTMLElement.
+  if (paneMenuEl.value && !paneMenuEl.value.contains(event.target as HTMLElement)) {
+    closePaneMenu()
+  }
+}
+
+function closePaneMenu() {
+  paneMenuVisible.value = false
+  window.removeEventListener('click', handlePaneMenuClickOutside)
+}
+
+function paneFitView() {
+  fitView()
+  closePaneMenu()
+}
+
+function paneZoomIn() {
+  zoomIn()
+  closePaneMenu()
+}
+
+function paneZoomOut() {
+  zoomOut()
+  closePaneMenu()
+}
+
+function pasteHere() {
+  const newId = flowStore.pasteNode(paneFlowPos.x, paneFlowPos.y)
+  if (newId !== null) {
+    pendingNodeAdjustment.value = newId
+    flowStore.selectNode(newId)
+  }
+  closePaneMenu()
 }
 
 function onEdgesChange(changes: EdgeChange[]) {
@@ -547,7 +743,62 @@ function handleDeleteNode(nodeId: number) {
 }
 
 async function handleRunNode(nodeId: number) {
-  await flowStore.executeNode(nodeId)
+  await flowStore.executeNodeWithUpstream(nodeId)
+}
+
+// Edit: select the node (opens the settings panel) and surface it.
+function handleEditNode(nodeId: number) {
+  flowStore.selectNode(nodeId)
+  nextTick(() => zIndexStore.bringToFront('node-settings-panel'))
+}
+
+// View data: select the node, fetch its preview if needed, surface the preview.
+async function handleViewData(nodeId: number) {
+  flowStore.selectNode(nodeId)
+  const result = nodeResults.value.get(nodeId)
+  const node = flowNodes.value.get(nodeId)
+  if (node?.type !== 'explore_data' && !(result?.success && result?.data)) {
+    await handleFetchData()
+  }
+  nextTick(() => zIndexStore.bringToFront('data-preview-panel'))
+}
+
+function handleCopyNode(nodeId: number) {
+  flowStore.copyNode(nodeId)
+}
+
+// Persist a source node's loaded CSV as a reusable catalog table. The catalog
+// is the cross-flow store, so this bridges flow-bound data into it.
+async function handleSaveToCatalog(nodeId: number) {
+  if (flowStore.getFileContent(nodeId) && flowStore.getTextContent(nodeId) === undefined) {
+    alert('The catalog stores CSV tables only — this node holds a binary file (Excel/Parquet).')
+    return
+  }
+  const content = flowStore.getTextContent(nodeId)
+  if (!content) {
+    alert('This node has no loaded data to save. Run or load the node first.')
+    return
+  }
+  const node = flowStore.getNode(nodeId)
+  const s = (node?.settings ?? {}) as Record<string, any>
+  const defaultName =
+    (s.received_file?.name as string) ||
+    (s.file_name as string) ||
+    (s.dataset_name as string) ||
+    node?.description ||
+    `table_${nodeId}`
+  const cleanName = String(defaultName).replace(/\.[^.]+$/, '').trim() || `table_${nodeId}`
+  const name = window.prompt('Save as catalog table named:', cleanName)
+  if (name === null) return
+  const trimmed = name.trim()
+  if (!trimmed) return
+  if (
+    flowStore.getCatalogDatasetNames().includes(trimmed) &&
+    !window.confirm(`A catalog table named "${trimmed}" already exists. Replace it?`)
+  ) {
+    return
+  }
+  await flowStore.addCatalogDataset(trimmed, content)
 }
 
 function updateSettings(settings: NodeSettings) {
@@ -556,11 +807,43 @@ function updateSettings(settings: NodeSettings) {
   }
 }
 
+// Apply: settings already update live in the store, so this re-executes the
+// selected node and refreshes its preview (the main editor's Apply does the
+// equivalent push + run), with a brief "Applied ✓" confirmation.
+async function applyNodeSettings() {
+  const node = selectedNode.value
+  if (!node || isApplying.value) return
+
+  isApplying.value = true
+  try {
+    const result = await flowStore.executeNodeWithUpstream(node.id)
+    if (result.success && node.type !== 'explore_data') {
+      await flowStore.fetchNodePreview(node.id, { maxRows: 100 })
+    }
+    justApplied.value = true
+    if (appliedTimer) clearTimeout(appliedTimer)
+    appliedTimer = setTimeout(() => { justApplied.value = false }, 1500)
+  } finally {
+    isApplying.value = false
+  }
+}
+
+// Reset the "Applied" confirmation and preview output selection when switching nodes.
+watch(selectedNodeId, () => {
+  justApplied.value = false
+  selectedOutputHandle.value = 'output-0'
+  if (appliedTimer) {
+    clearTimeout(appliedTimer)
+    appliedTimer = null
+  }
+})
+
 function getSettingsComponent(type: string) {
   const components: Record<string, any> = {
-    read: ReadCsvSettings,
+    read: ReadFileSettings,
     manual_input: ManualInputSettings,
     external_data: ExternalDataSettings,
+    read_from_catalog: ReadFromCatalogSettings,
     filter: FilterSettings,
     select: SelectSettings,
     group_by: GroupBySettings,
@@ -573,7 +856,8 @@ function getSettingsComponent(type: string) {
     pivot: PivotSettings,
     unpivot: UnpivotSettings,
     output: OutputSettings,
-    external_output: ExternalOutputSettings
+    external_output: ExternalOutputSettings,
+    write_to_catalog: WriteToCatalogSettings
   }
   return components[type] || null
 }
@@ -583,6 +867,47 @@ const isPreviewLoading = computed(() => {
   if (selectedNodeId.value === null) return false
   return flowStore.isPreviewLoading(selectedNodeId.value)
 })
+
+// Fetch-to-run: execute the selected node, then materialize its preview. No
+// polling needed (everything runs in-browser), unlike the main editor.
+async function handleFetchData() {
+  if (selectedNodeId.value === null || isFetching.value) return
+  const nodeId = selectedNodeId.value
+  isFetching.value = true
+  try {
+    // Run the node together with its upstream chain so the preview can be
+    // materialized even when the flow hasn't been run.
+    const result = await flowStore.executeNodeWithUpstream(nodeId)
+    if (result.success) {
+      const node = flowNodes.value.get(nodeId)
+      const maxRows = node?.type === 'explore_data' ? 1000 : 100
+      await flowStore.fetchNodePreview(nodeId, { maxRows })
+    }
+    emit('execution-complete', nodeResults.value)
+  } finally {
+    isFetching.value = false
+  }
+}
+
+// Multi-output selector (parity with the main editor). NOTE: dormant for now —
+// no built-in WASM node has >1 output and the Pyodide engine keeps one frame per
+// node_id, so this renders only if outputs>1 and selecting a handle does not yet
+// re-query data. Real per-output preview needs engine changes (per-(node,handle)
+// frames + fetchNodePreview(handle) + per-handle NodeResult).
+const selectedNodeOutputs = computed(() => {
+  if (!selectedNode.value) return []
+  const def = findNodeDef(selectedNode.value.type)
+  const count = def?.outputs ?? 1
+  if (count <= 1) return []
+  return Array.from({ length: count }, (_, i) => ({
+    id: `output-${i}`,
+    label: String.fromCharCode(65 + i)
+  }))
+})
+const hasMultipleOutputs = computed(() => selectedNodeOutputs.value.length > 1)
+function selectOutput(handle: string) {
+  selectedOutputHandle.value = handle
+}
 
 const columnDefs = computed<ColDef[]>(() => {
   const result = selectedNodeResult.value
@@ -624,6 +949,13 @@ const columnDefs = computed<ColDef[]>(() => {
       }
     }
   })
+})
+
+// Propagated schema for the selected node — drives the field preview shown
+// before any data is fetched (lazy schema propagation makes this available
+// without running the flow).
+const selectedNodeSchema = computed<ColumnSchema[]>(() => {
+  return selectedNodeResult.value?.schema || []
 })
 
 // Use caching to prevent unnecessary re-renders that reset scroll position
@@ -677,11 +1009,30 @@ async function handleRunFlow() {
   emit('execution-complete', nodeResults.value)
 }
 
-async function handleSaveFlow() {
-  const name = prompt('Enter flow name:', 'my_flow')
-  if (name) {
-    await flowStore.downloadFlowfile(name)
+// Save the flow to the in-browser library (no file download). Prompts for a
+// name only on first save of an untitled flow; re-saves update the same entry.
+async function handleSaveFlow(): Promise<boolean> {
+  const needsName = !flowStore.currentFlowId || flowStore.currentFlowName === 'Untitled Flow'
+  let name = flowStore.currentFlowName
+  if (needsName) {
+    const entered = prompt('Save flow as:', name && name !== 'Untitled Flow' ? name : 'my_flow')
+    if (!entered) return false
+    name = entered
   }
+  await flowStore.saveToLibrary(name)
+  savedFlash.value = true
+  setTimeout(() => (savedFlash.value = false), 1600)
+  return true
+}
+
+// Export the flow to a downloaded file (separate from library save).
+async function handleExportFlow() {
+  let name = flowStore.currentFlowName
+  if (!name || name === 'Untitled Flow') {
+    name = prompt('Export flow as:', 'my_flow') || ''
+    if (!name) return
+  }
+  await flowStore.downloadFlowfile(name)
 }
 
 function triggerLoadFlow() {
@@ -717,10 +1068,40 @@ function handleResetLayout() {
 }
 
 function handleKeyDown(event: KeyboardEvent) {
+  // Don't hijack shortcuts while typing in an input/textarea/editable field.
+  const target = event.target as HTMLElement | null
+  const isTyping =
+    !!target &&
+    (target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable)
+
   if ((event.ctrlKey || event.metaKey) && (event.key === 'e' || event.key === 'E')) {
     event.preventDefault()
     if (!isExecuting.value) {
       handleRunFlow()
+    }
+    return
+  }
+
+  if (isTyping) return
+
+  // Copy the selected node.
+  if ((event.ctrlKey || event.metaKey) && (event.key === 'c' || event.key === 'C')) {
+    if (selectedNodeId.value !== null) {
+      flowStore.copyNode(selectedNodeId.value)
+    }
+    return
+  }
+
+  // Paste the clipboard node near the centre of the current view.
+  if ((event.ctrlKey || event.metaKey) && (event.key === 'v' || event.key === 'V')) {
+    if (!flowStore.hasClipboard()) return
+    const pos = screenToFlowCoordinate({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+    const newId = flowStore.pasteNode(pos.x, pos.y)
+    if (newId !== null) {
+      pendingNodeAdjustment.value = newId
+      flowStore.selectNode(newId)
     }
   }
 }
@@ -736,15 +1117,31 @@ onMounted(async () => {
     flowStore.onOutput(handleOutputCallback)
   }
 
+  // Expose the flow actions so the app header can drive them (app mode).
+  uiStore.registerActions({
+    run: handleRunFlow,
+    save: handleSaveFlow,
+    exportFile: handleExportFlow,
+    open: triggerLoadFlow,
+    clear: handleClearFlow
+  })
+
   await nextTick()
-  if (toolbarRef.value) {
+  if (props.showToolbar && toolbarRef.value) {
     const rect = toolbarRef.value.getBoundingClientRect()
-    toolbarHeight.value = rect.bottom
+    // Use the toolbar's own height (panels are positioned in container-local
+    // coords, not viewport coords — rect.bottom would add the container offset).
+    toolbarHeight.value = rect.height
+  } else {
+    // No toolbar: panels dock from the top of the canvas area.
+    toolbarHeight.value = 0
   }
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown)
+  window.removeEventListener('click', handlePaneMenuClickOutside)
+  uiStore.clearActions()
   if (flowStore.offOutput) {
     flowStore.offOutput(handleOutputCallback)
   }
@@ -757,6 +1154,17 @@ onUnmounted(() => {
 @import '@vue-flow/core/dist/theme-default.css';
 @import '@vue-flow/controls/dist/style.css';
 @import '@vue-flow/minimap/dist/style.css';
+
+/* Canvas (pane) right-click menu — reuses global .context-menu classes */
+.pane-menu .context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pane-menu .context-menu-item svg {
+  color: var(--text-secondary);
+}
 
 .canvas-container {
   display: flex;
@@ -823,8 +1231,9 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
-  background: var(--bg-tertiary);
+  height: 32px;
+  padding: 8px 16px;
+  background: var(--bg-muted);
   cursor: pointer;
   user-select: none;
 }
@@ -835,7 +1244,7 @@ onUnmounted(() => {
 
 .category-title {
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--text-primary);
 }
 
@@ -852,7 +1261,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  height: 32px;
+  padding: 8px 16px;
   cursor: grab;
   user-select: none;
   border-bottom: 1px solid var(--border-light);
@@ -880,6 +1290,43 @@ onUnmounted(() => {
 .node-name {
   font-size: 13px;
   color: var(--text-primary);
+}
+
+/* Node settings Apply button (mirrors the main editor's primary Apply) */
+.apply-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  height: 28px;
+  padding: 0 14px;
+  background: var(--color-accent);
+  color: #fff;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.apply-btn:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.apply-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.apply-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.apply-btn.applied {
+  background: var(--color-success);
+  border-color: var(--color-success);
 }
 
 /* Data preview styles */
@@ -944,10 +1391,170 @@ onUnmounted(() => {
 }
 
 .no-data {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
   color: var(--text-secondary);
   text-align: center;
   padding: 40px 20px;
   font-size: 13px;
+}
+
+.no-data-text {
+  margin: 0;
+  max-width: 280px;
+}
+
+/* Schema preview — show propagated fields before any data is fetched */
+.schema-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.schema-preview-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.schema-grid-container {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.schema-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+.schema-table th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.schema-col-name {
+  display: block;
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.schema-col-type {
+  display: block;
+  margin-top: 2px;
+  color: var(--accent-color);
+  font-size: 11px;
+  font-family: var(--font-family-mono, monospace);
+}
+
+.schema-empty-row td {
+  padding: 6px 12px;
+  color: var(--text-secondary);
+  border-right: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
+  text-align: center;
+}
+
+.schema-preview-footer {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+/* Fetch-to-run CTA (accent/primary, consistent with the settings Apply button) */
+.fetch-data-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 110px;
+  height: 32px;
+  padding: 0 18px;
+  background: var(--accent-color);
+  color: #fff;
+  border: 1px solid var(--accent-color);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.fetch-data-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.fetch-data-button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.fetch-data-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Multi-output (A/B/C) selector — parity-shaped, dormant for current nodes */
+.output-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  flex-shrink: 0;
+}
+
+.output-selector__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.output-selector__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.output-selector__button:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-color);
+}
+
+.output-selector__button.active {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #fff;
+}
+
+.output-selector__letter {
+  line-height: 1;
 }
 
 /* AG Grid Theme Overrides - ensure proper colors in both themes */

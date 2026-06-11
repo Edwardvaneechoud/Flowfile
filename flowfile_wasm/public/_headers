@@ -1,0 +1,5 @@
+# Pyodide needs SharedArrayBuffer, which requires cross-origin isolation.
+# Mirrors the dev-server headers in vite.config.ts.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp

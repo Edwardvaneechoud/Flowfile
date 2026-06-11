@@ -2,6 +2,9 @@
 
 The [AI Assistant](index.md) runs against any major LLM provider — pick the one that fits your budget, latency needs, or compliance posture. Today that's Anthropic, OpenAI, Google, Groq, OpenRouter, and a local Ollama server. You bring your own API key; Flowfile encrypts it at rest with Fernet (using `FLOWFILE_MASTER_KEY` / `master_key.txt`), the same scheme that protects your other secrets. For air-gapped work, Ollama lets the entire AI layer run on your laptop with no traffic leaving your machine.
 
+!!! info "Not in Flowfile Lite"
+    The AI Assistant (and BYOK provider setup) requires the full desktop/server build, not the browser-only [Flowfile Lite](../users/deployment/lite.md) edition.
+
 ---
 
 ## Supported providers

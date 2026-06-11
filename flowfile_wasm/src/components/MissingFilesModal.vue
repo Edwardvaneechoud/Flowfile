@@ -67,7 +67,7 @@
                       <label class="upload-btn">
                         <input 
                           type="file" 
-                          accept=".csv,.txt"
+                          accept=".csv,.txt,.xlsx,.xlsm,.parquet,.pq"
                           @change="(e) => handleFileUpload(e, file.nodeId)"
                         />
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -105,6 +105,7 @@
   <script setup lang="ts">
   import { ref, watch } from 'vue'
   import { useFlowStore } from '@/stores/flow-store'
+  import { binaryContent, detectFormat } from '@/types/file-content'
   
   interface MissingFile {
     nodeId: number
@@ -131,7 +132,12 @@
     if (!file) return
   
     try {
-      const content = await file.text()
+      // Binary formats must not be read as UTF-8 text (mojibake corrupts them)
+      const format = detectFormat(file.name)
+      const content =
+        format === 'csv'
+          ? await file.text()
+          : binaryContent(new Uint8Array(await file.arrayBuffer()), format)
       flowStore.updateNodeFile(nodeId, file.name, content)
       resolvedFiles.value.add(nodeId)
       resolvedFiles.value = new Set(resolvedFiles.value)

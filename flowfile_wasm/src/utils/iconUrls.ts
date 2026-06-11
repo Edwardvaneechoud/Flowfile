@@ -20,6 +20,8 @@ import exploreData from '../assets/icons/explore_data.png'
 import output from '../assets/icons/output.png'
 import externalData from '../assets/icons/external_data.svg'
 import externalOutput from '../assets/icons/external_output.svg'
+import catalogReader from '../assets/icons/catalog_reader.svg'
+import catalogWriter from '../assets/icons/catalog_writer.svg'
 
 export const iconUrls: Record<string, string> = {
   'input_data.png': inputData,
@@ -39,4 +41,6 @@ export const iconUrls: Record<string, string> = {
   'output.png': output,
   'external_data.svg': externalData,
   'external_output.svg': externalOutput,
+  'catalog_reader.svg': catalogReader,
+  'catalog_writer.svg': catalogWriter,
 }

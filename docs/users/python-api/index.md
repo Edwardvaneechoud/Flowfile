@@ -2,6 +2,8 @@
 
 Build data pipelines programmatically with Flowfile's Polars-compatible API.
 
+!!! info "Backend required — not in Flowfile Lite"
+    The Python API runs the full Flowfile engine in-process. It is **not** part of the browser-only [Flowfile Lite](../deployment/lite.md) edition, which is visual-only. Install the [Python package](../deployment/python.md) to use this API.
 
 !!! info "If You Know Polars, You Know Flowfile" 
     Our API is designed to be a seamless extension of Polars. The majority of the methods are identical, so you can leverage your existing knowledge to be productive from day one. The main additions are features that connect your code to the broader Flowfile ecosystem, like cloud integrations and UI visualization.

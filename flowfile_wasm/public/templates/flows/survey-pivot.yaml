@@ -1,0 +1,70 @@
+flowfile_version: 1.0.0
+flowfile_id: 1700000000003
+flowfile_name: Survey Results Pivot
+flowfile_settings:
+  description: ''
+  execution_mode: Development
+  execution_location: local
+  auto_save: true
+  show_detailed_progress: false
+nodes:
+  - id: 1
+    type: read
+    is_start_node: true
+    description: Read Survey Responses
+    x_position: 120
+    y_position: 240
+    input_ids: []
+    outputs:
+      - 2
+    setting_input:
+      cache_results: false
+      file_name: survey_responses.csv
+      received_file:
+        name: survey_responses.csv
+        path: survey_responses.csv
+        file_type: csv
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          has_headers: true
+          encoding: utf-8
+  - id: 2
+    type: pivot
+    is_start_node: false
+    description: Avg rating per question
+    x_position: 400
+    y_position: 240
+    input_ids:
+      - 1
+    outputs:
+      - 3
+    setting_input:
+      cache_results: false
+      pivot_input:
+        index_columns:
+          - respondent_id
+        pivot_column: question
+        value_col: rating
+        aggregations:
+          - mean
+  - id: 3
+    type: output
+    is_start_node: false
+    description: Export pivoted ratings
+    x_position: 680
+    y_position: 240
+    input_ids:
+      - 2
+    outputs: []
+    setting_input:
+      cache_results: false
+      output_settings:
+        name: survey_pivot.csv
+        directory: .
+        file_type: csv
+        write_mode: overwrite
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          encoding: utf-8

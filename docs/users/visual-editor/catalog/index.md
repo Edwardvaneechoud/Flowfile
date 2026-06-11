@@ -4,6 +4,9 @@ Organize, track, and govern your data flows and tables in a central catalog.
 
 The Catalog is your single pane of glass for managing flows, tracking execution history, registering data tables (physical and [virtual](virtual-tables.md)), querying data with [SQL](sql-editor.md), sharing artifacts across flows, and automating pipelines with [schedules](schedules.md).
 
+!!! info "Limited in Flowfile Lite"
+    The browser-only [Flowfile Lite](../../deployment/lite.md) edition includes only a **lightweight in-browser catalog** (save and reuse CSV tables). The governed catalog described here — Delta-backed storage, version history, virtual tables, lineage, SQL, schedules, and secrets — requires the full desktop/server build.
+
 ![Catalog overview](../../../assets/images/guides/catalog/catalog-overview.png)
 
 *The Catalog page with namespace tree, tabs, and dashboard statistics*

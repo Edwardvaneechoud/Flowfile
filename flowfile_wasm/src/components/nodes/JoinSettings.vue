@@ -20,7 +20,7 @@
     <div class="listbox-subtitle" style="margin-top: 12px;">Join Columns</div>
 
     <div v-if="leftColumns.length === 0 || rightColumns.length === 0" class="help-text">
-      Run upstream nodes first to see available columns.
+      Connect both inputs to see available columns.
     </div>
 
     <div v-else class="join-columns-section">

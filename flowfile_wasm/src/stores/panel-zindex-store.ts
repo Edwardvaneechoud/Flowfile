@@ -10,6 +10,11 @@ export const usePanelZIndexStore = defineStore('panelZIndex', () => {
   const panels = ref<Record<string, number>>({})
 
   const BASE_Z_INDEX = 100
+  // Z-index used by a panel while in fullscreen (sits above normal panels).
+  const FULLSCREEN_Z_INDEX = 250
+  // Once the top panel climbs past this, re-pack everyone into BASE..N to keep
+  // values bounded (mirrors the main editor's normalization).
+  const NORMALIZE_CEILING = BASE_Z_INDEX + 200
 
   const maxZIndex = computed(() => {
     const values = Object.values(panels.value)
@@ -32,17 +37,31 @@ export const usePanelZIndexStore = defineStore('panelZIndex', () => {
     panels.value[panelId] = newZIndex
   }
 
+  /** Re-pack z-indices into BASE..BASE+n preserving order, to bound growth. */
+  function normalize() {
+    const sorted = Object.entries(panels.value).sort((a, b) => a[1] - b[1])
+    sorted.forEach(([id], index) => {
+      panels.value[id] = BASE_Z_INDEX + index
+    })
+  }
+
   function bringToFront(panelId: string): number {
     const currentZIndex = panels.value[panelId] ?? BASE_Z_INDEX
     const currentMax = maxZIndex.value
 
-    // Only increment if this panel is not already at the top
-    if (currentZIndex < currentMax) {
-      const newZIndex = currentMax + 1
-      panels.value[panelId] = newZIndex
-      return newZIndex
+    // Already on top — nothing to do.
+    if (currentZIndex >= currentMax && Object.keys(panels.value).length > 0) {
+      return currentZIndex
     }
-    return currentZIndex
+
+    let newZIndex = currentMax + 1
+    panels.value[panelId] = newZIndex
+
+    if (newZIndex > NORMALIZE_CEILING) {
+      normalize()
+      newZIndex = panels.value[panelId]
+    }
+    return newZIndex
   }
 
   function getZIndex(panelId: string): number {
@@ -52,6 +71,8 @@ export const usePanelZIndexStore = defineStore('panelZIndex', () => {
   return {
     panels,
     maxZIndex,
+    BASE_Z_INDEX,
+    FULLSCREEN_Z_INDEX,
     registerPanel,
     unregisterPanel,
     updateZIndex,

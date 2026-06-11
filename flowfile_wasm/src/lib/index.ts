@@ -31,3 +31,7 @@ export type {
   NodeSettings,
   NodeType
 } from '../types'
+
+// Binary content types for the Arrow IPC host contract
+export type { BinaryFormat, FileContent } from '../types/file-content'
+export { detectBinaryFormat } from '../utils/binary-format'

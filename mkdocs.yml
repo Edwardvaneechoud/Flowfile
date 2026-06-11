@@ -134,6 +134,7 @@ nav:
 
   - Deployment:
     - Overview: users/deployment/index.md
+    - Flowfile Lite (Browser): users/deployment/lite.md
     - Desktop App: users/deployment/desktop.md
     - Python Package: users/deployment/python.md
     - Docker: users/deployment/docker.md
