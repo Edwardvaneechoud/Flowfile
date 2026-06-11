@@ -1498,6 +1498,62 @@ def test_flowframe_filter_split_native_and_fallback():
     verify_if_execute(fallback_code)
 
 
+def test_translate_registers_snippet_imports(monkeypatch):
+    """Validated snippets referencing datetime/pl must register those imports for the script.
+
+    The validation namespace includes pl and datetime, so the transpiler may
+    emit references to them (e.g. today() -> ff.lit(datetime.datetime.today()));
+    without the imports the exported script raises NameError.
+    """
+    from flowfile_core.flowfile.code_generator import code_generator as cg
+
+    converter = cg.FlowGraphToFlowFrameConverter(create_basic_flow())
+    monkeypatch.setattr(
+        cg, "_try_translate_to_ff_code", lambda formula: "ff.lit(datetime.date(2024, 1, 1)) + pl.len()"
+    )
+    assert converter._translate_to_ff_code("anything") is not None
+    assert "import datetime" in converter.imports
+    assert "import polars as pl" in converter.imports
+
+
+def test_flowframe_formula_datetime_emission_is_runnable():
+    """A today() formula must produce runnable code: either the fallback emission,
+    or (if the native translation validates) code that imports datetime."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="exported_at", data_type="Auto"),
+            function="today()"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    if "datetime." in code:
+        verify_code_contains(code, "import datetime")
+    # The result is time-dependent, so only assert the script runs.
+    verify_if_execute(code)
+
+
+def test_native_cast_type_rendering():
+    """Cast targets are validated: simple and parameterized types render, container types fall back."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    converter = FlowGraphToFlowFrameConverter(create_basic_flow())
+    assert converter._native_cast_type("Integer") == "ff.Int64"
+    datetime_cast = converter._native_cast_type("Datetime")
+    assert datetime_cast is not None and datetime_cast.startswith("ff.Datetime")
+    # Bare container types ("List") don't instantiate and str() of nested types
+    # references unbound inner names — both must return None so the formula
+    # handler falls back to the legacy flowfile_formulas emission.
+    assert converter._native_cast_type("List") is None
+
+
 @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
 def test_pivot_operation(export_func):
     """Test pivot operation"""

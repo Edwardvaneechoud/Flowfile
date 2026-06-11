@@ -130,7 +130,9 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         self._collect_notebook_warnings(settings)
 
         output_names = settings.output_names or ["main"]
-        node_label = settings.description or f"node {settings.node_id}"
+        # First line only: a multi-line description would put its tail on an
+        # uncommented line of the generated pipeline.
+        node_label = (settings.description or f"node {settings.node_id}").splitlines()[0]
         outputs_var = f"_nb_{settings.node_id}_outputs"
         call_args = ", ".join(
             f"{b['param']}={b['args'][0]}" if len(b["args"]) == 1 else f"{b['param']}=[{', '.join(b['args'])}]"
@@ -193,7 +195,14 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
     def _build_notebook_module(
         self, settings: input_schema.NodePythonScript, bindings: list[dict], main_items: list[str]
     ) -> str:
-        """Build the notebook module: the user code verbatim inside a run() function."""
+        """Build the notebook module: run() exec's the node's code, preserved byte-for-byte.
+
+        The source is embedded as a string constant instead of being indented
+        into run(): indentation would change the *content* of multi-line string
+        literals inside the user's code (SQL templates, regexes, ...). exec'ing
+        the verbatim source with ``flowfile_ctx`` injected and ``__name__`` set
+        to ``"__main__"`` mirrors how the kernel runs the node inside Flowfile.
+        """
         script_input = settings.python_script_input
         if script_input.cells:
             cell_blocks = [f"# %%\n{cell.code.rstrip()}" for cell in script_input.cells if cell.code.strip()]
@@ -217,28 +226,28 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             entries.append(f'"main": [{", ".join(main_items)}]')
         inputs_literal = "{" + ", ".join(entries) + "}"
 
-        if body:
-            indented = "\n".join(f"        {line}" if line.strip() else "" for line in body.split("\n"))
-        else:
-            indented = "        pass"
-
         return (
             f'"""{label}\n\n'
-            f"Code preserved verbatim from Flowfile notebook node {settings.node_id}.\n"
+            f"Code preserved verbatim from Flowfile notebook node {settings.node_id} (see _NODE_SOURCE).\n"
             '"""\n'
             "import polars as pl\n"
             "\n"
             "import flowfile_ctx\n"
             "\n"
+            f"_NODE_SOURCE = {body!r}\n"
+            "\n"
             "\n"
             f"def run({params}) -> dict[str, pl.LazyFrame]:\n"
-            f'    """Notebook node {settings.node_id}: {node_label!r}."""\n'
+            f'    """Notebook node {settings.node_id}: {label}."""\n'
             "    with flowfile_ctx.node_context(\n"
             f"        inputs={inputs_literal},\n"
             f"        output_names={output_names!r},\n"
             f"        node_name={node_label!r},\n"
             "    ) as ctx:\n"
-            f"{indented}\n"
+            "        exec(  # noqa: S102 - the node's own code, preserved byte-for-byte\n"
+            f'            compile(_NODE_SOURCE, "<notebook node {settings.node_id}>", "exec"),\n'
+            '            {"flowfile_ctx": flowfile_ctx, "pl": pl, "__name__": "__main__"},\n'
+            "        )\n"
             "    return ctx.results()\n"
         )
 
@@ -348,11 +357,17 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
     def _build_pyproject_toml(self, project_name: str) -> str:
         dependencies = [_dependency_pin("Flowfile", "flowfile"), _dependency_pin("polars", "polars")]
         deps = "\n".join(f'    "{dep}",' for dep in dependencies)
+        # PEP 508 names must start alphanumeric: the identifier sanitizer prefixes
+        # an underscore for digit-leading flow names, which the dash-replace would
+        # otherwise turn into an invalid leading "-".
+        package_name = re.sub(r"^[^A-Za-z0-9]+", "", project_name.replace("_", "-")) or "flowfile-project"
+        # TOML basic strings can't hold raw newlines/quotes/backslashes.
+        flow_label = " ".join(self.flow_graph.__name__.split()).replace("\\", "\\\\").replace('"', '\\"')
         return (
             "[project]\n"
-            f'name = "{project_name.replace("_", "-")}"\n'
+            f'name = "{package_name}"\n'
             'version = "0.1.0"\n'
-            f'description = "ETL pipeline exported from the Flowfile flow {self.flow_graph.__name__!r}"\n'
+            f"description = \"ETL pipeline exported from the Flowfile flow '{flow_label}'\"\n"
             'requires-python = ">=3.10"\n'
             "dependencies = [\n"
             f"{deps}\n"

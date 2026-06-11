@@ -929,12 +929,18 @@ def save_generated_project(request: output_model.ProjectSaveRequest) -> output_m
     if not target_dir.exists() or not target_dir.is_dir():
         raise HTTPException(404, "Target directory does not exist")
     project_dir = target_dir / manifest.project_name
-    if project_dir.exists() and not request.overwrite:
-        raise HTTPException(409, f"'{project_dir}' already exists. Enable overwrite to replace its files.")
-    for file in manifest.files:
-        file_path = project_dir / file.path
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(file.content, encoding="utf-8")
+    if project_dir.exists():
+        if not project_dir.is_dir():
+            raise HTTPException(409, f"'{project_dir}' exists and is not a directory.")
+        if not request.overwrite:
+            raise HTTPException(409, f"'{project_dir}' already exists. Enable overwrite to replace its files.")
+    try:
+        for file in manifest.files:
+            file_path = project_dir / file.path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(file.content, encoding="utf-8")
+    except OSError as e:
+        raise HTTPException(409, f"Could not write the project to '{project_dir}': {e}") from e
     return output_model.ProjectSaveResponse(saved_to=str(project_dir), file_count=len(manifest.files))
 
 

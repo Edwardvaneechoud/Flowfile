@@ -1,4 +1,5 @@
 import inspect
+import re
 import typing
 
 import polars as pl
@@ -44,21 +45,31 @@ def _try_translate_to_ff_code(formula: str) -> str | None:
     if not generated:
         return None
     try:
-        # Lazy imports: flowfile/flowfile_frame import flowfile_core, so a
-        # module-level import here would be circular.
-        import datetime
-
-        import flowfile as ff_module
         from flowfile_frame.expr import Expr as FlowFrameExpr
     except ImportError:
         logger.debug("flowfile package unavailable; cannot validate generated ff code")
         return None
     try:
-        result = eval(generated, {"__builtins__": {}}, {"ff": ff_module, "pl": pl, "datetime": datetime})  # noqa: S307
+        result = _eval_in_validation_namespace(generated)
     except Exception as e:
         logger.debug(f"Generated ff code failed validation for {formula!r}: {e}")
         return None
     return generated if isinstance(result, FlowFrameExpr) else None
+
+
+def _eval_in_validation_namespace(code: str):
+    """Eval generated ff code in the restricted namespace used for validation.
+
+    Lazy imports: flowfile/flowfile_frame import flowfile_core, so module-level
+    imports here would be circular. Raises on any failure. The namespace mirrors
+    what generated snippets may reference — callers emitting a validated snippet
+    must also emit the matching imports (see _translate_to_ff_code).
+    """
+    import datetime
+
+    import flowfile as ff_module
+
+    return eval(code, {"__builtins__": {}}, {"ff": ff_module, "pl": pl, "datetime": datetime})  # noqa: S307
 
 
 class FlowGraphCodeConverter:
@@ -2034,6 +2045,43 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         super().__init__(flow_graph)
         self.imports.add("import flowfile as ff")
 
+    def _translate_to_ff_code(self, formula: str) -> str | None:
+        """Translate a formula to native ff code, registering the imports the snippet needs.
+
+        The validation namespace includes ``pl`` and ``datetime``, so generated
+        snippets may reference them (e.g. ``today()`` translates to
+        ``ff.lit(datetime.datetime.today())``); the emitted script must import
+        whatever the snippet uses or it fails with NameError at runtime.
+        """
+        ff_code = _try_translate_to_ff_code(formula)
+        if ff_code:
+            if re.search(r"\bdatetime\.", ff_code):
+                self.imports.add("import datetime")
+            if re.search(r"\bpl\.", ff_code):
+                self.imports.add("import polars as pl")
+        return ff_code
+
+    def _native_cast_type(self, data_type: str) -> str | None:
+        """Render *data_type* as an ``ff.``-prefixed cast target, or None when it can't be.
+
+        ``str()`` of nested types (e.g. ``List(Int64)``) contains inner type
+        names the generated script has no bindings for, and bare container
+        names ("List") don't even instantiate, so validate the candidate the
+        same way translated formulas are validated and let the caller fall
+        back to the legacy emission when that fails.
+        """
+        try:
+            output_type = convert_pl_type_to_string(cast_str_to_polars_type(data_type))
+        except Exception:
+            return None
+        if not output_type.startswith(f"{self.framework}."):
+            output_type = f"{self.framework}.{output_type}"
+        try:
+            _eval_in_validation_namespace(output_type)
+        except Exception:
+            return None
+        return output_type
+
     def _handle_random_split(
         self, settings: input_schema.NodeRandomSplit, var_name: str, input_vars: dict[str, str]
     ) -> None:
@@ -2116,7 +2164,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             return
 
         if settings.filter_input.is_advanced():
-            ff_code = _try_translate_to_ff_code(settings.filter_input.advanced_filter)
+            ff_code = self._translate_to_ff_code(settings.filter_input.advanced_filter)
             if ff_code:
                 self._add_code(f"{var_name} = {input_df}.filter({ff_code})")
             else:
@@ -2138,7 +2186,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         pass_var = f"{var_name}_pass"
         fail_var = f"{var_name}_fail"
         if settings.filter_input.is_advanced():
-            ff_code = _try_translate_to_ff_code(settings.filter_input.advanced_filter)
+            ff_code = self._translate_to_ff_code(settings.filter_input.advanced_filter)
             if ff_code:
                 self._add_code(f"{pass_var}, {fail_var} = {input_df}.filter_split({ff_code})")
             else:
@@ -2169,14 +2217,16 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         col_name = settings.function.field.name
         data_type = settings.function.field.data_type
 
-        ff_code = _try_translate_to_ff_code(formula)
+        ff_code = self._translate_to_ff_code(formula)
+        cast_type = None
+        if ff_code and data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+            cast_type = self._native_cast_type(data_type)
+            if cast_type is None:
+                ff_code = None  # cast target not expressible natively; use the legacy emission
         if ff_code:
             expr_str = f'({ff_code}).alias("{col_name}")'
-            if data_type not in (None, transform_schema.AUTO_DATA_TYPE):
-                output_type = convert_pl_type_to_string(cast_str_to_polars_type(data_type))
-                if output_type[:3] != f"{self.framework}.":
-                    output_type = f"{self.framework}.{output_type}"
-                expr_str += f".cast({output_type})"
+            if cast_type:
+                expr_str += f".cast({cast_type})"
             self._add_code(f"{var_name} = {input_df}.with_columns({expr_str})")
         elif data_type not in (None, transform_schema.AUTO_DATA_TYPE):
             self._add_code(

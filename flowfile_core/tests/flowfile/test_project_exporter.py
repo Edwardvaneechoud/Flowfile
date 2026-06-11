@@ -5,10 +5,10 @@ flowfile_ctx shim, custom-node module emission, zip packaging, and an
 end-to-end execution of an exported project.
 """
 
+import ast
 import io
 import subprocess
 import sys
-import textwrap
 import zipfile
 from pathlib import Path
 
@@ -154,6 +154,19 @@ def test_project_scaffolding_contents():
     assert "def run_etl_pipeline():" in pipeline
 
 
+def test_pyproject_name_and_description_sanitized():
+    """Digit-leading flow names must not yield a leading-dash (invalid) package name,
+    and quotes in the flow name must not break the TOML description string."""
+    flow = create_basic_flow(name='2024 "Q1" sales')
+    add_sample_input(flow, node_id=1)
+
+    manifest = export_flow_to_project(flow)
+
+    pyproject = get_file(manifest, "pyproject.toml")
+    assert 'name = "2024-q1-sales"' in pyproject
+    assert '\\"Q1\\"' in pyproject
+
+
 def test_project_manifest_with_notebook():
     flow = create_basic_flow(name="Notebook Flow")
     add_sample_input(flow, node_id=1)
@@ -183,6 +196,14 @@ def test_project_manifest_with_notebook():
 # ---------------------------------------------------------------------------
 
 
+def get_node_source(module: str) -> str:
+    """Extract the verbatim _NODE_SOURCE constant from a generated notebook module."""
+    for stmt in ast.parse(module).body:
+        if isinstance(stmt, ast.Assign) and getattr(stmt.targets[0], "id", None) == "_NODE_SOURCE":
+            return ast.literal_eval(stmt.value)
+    raise AssertionError("_NODE_SOURCE not found in generated module")
+
+
 def test_notebook_module_keeps_cells_verbatim():
     cell_1 = "import polars as pl\n\ndf = flowfile_ctx.read_input()"
     cell_2 = "result = df.with_columns((pl.col('age') * 2).alias('age2'))\nflowfile_ctx.publish_output(result)"
@@ -198,10 +219,10 @@ def test_notebook_module_keeps_cells_verbatim():
     assert "def run(df_1: pl.LazyFrame) -> dict[str, pl.LazyFrame]:" in module
     assert "with flowfile_ctx.node_context(" in module
     assert "return ctx.results()" in module
-    # The user code lives verbatim inside run(), indented two levels
-    assert textwrap.indent(cell_1, " " * 8) in module
-    assert textwrap.indent(cell_2, " " * 8) in module
-    assert module.count("# %%") == 2
+    # The user code is preserved byte-for-byte in _NODE_SOURCE, cells joined
+    # with # %% markers, and exec'd inside run().
+    assert get_node_source(module) == f"# %%\n{cell_1}\n\n# %%\n{cell_2}"
+    assert "exec(" in module
 
 
 def test_notebook_module_falls_back_to_code_without_cells():
@@ -214,8 +235,57 @@ def test_notebook_module_falls_back_to_code_without_cells():
     manifest = export_flow_to_project(flow)
 
     module = get_file(manifest, "notebooks/node_02_python_script.py")
-    assert textwrap.indent(code, " " * 8) in module
-    assert "# %%" not in module
+    assert get_node_source(module) == code
+    assert "# %%" not in get_node_source(module)
+
+
+def test_notebook_multiline_string_fidelity(monkeypatch):
+    """Multi-line string literals in notebook code keep their exact value in the export."""
+    sql = 'SELECT *\n\nFROM "orders"\n    WHERE x > 1'
+    cell = (
+        "import polars as pl\n"
+        "\n"
+        f'query = """{sql}"""\n'
+        'flowfile_ctx.publish_output(pl.LazyFrame({"query": [query]}))'
+    )
+    flow = create_basic_flow()
+    add_sample_input(flow, node_id=1)
+    add_notebook_node(flow, node_id=2, depending_on_ids=[1], cells=[cell])
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    manifest = export_flow_to_project(flow)
+    module_source = get_file(manifest, "notebooks/node_02_python_script.py")
+
+    # Run the generated module in-process with the shim standing in for flowfile_ctx.
+    monkeypatch.setitem(sys.modules, "flowfile_ctx", project_shim)
+    namespace = {}
+    exec(compile(module_source, "node_02_python_script.py", "exec"), namespace)
+    result = namespace["run"](pl.LazyFrame({"a": [1]}))
+    assert result["main"].collect()["query"][0] == sql
+
+
+def test_notebook_description_with_newline_and_quotes_compiles():
+    """Descriptions with newlines / triple quotes must not break generated code."""
+    description = 'Cleans the data\nand has """tricky""" content'
+    flow = create_basic_flow()
+    add_sample_input(flow, node_id=1)
+    add_notebook_node(
+        flow,
+        node_id=2,
+        depending_on_ids=[1],
+        description=description,
+        cells=["flowfile_ctx.publish_output(flowfile_ctx.read_input())"],
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    manifest = export_flow_to_project(flow)
+
+    module = get_file(manifest, "notebooks/node_02_cleans_the_data_and_has_tricky_content.py")
+    compile(module, "module.py", "exec")
+    pipeline = get_file(manifest, "pipeline.py")
+    compile(pipeline, "pipeline.py", "exec")
+    # The comment keeps only the first line of the description.
+    assert "# Notebook node 2: Cleans the data\n" in pipeline
 
 
 def test_notebook_inputs_use_node_reference():
@@ -426,10 +496,16 @@ def test_shim_artifact_roundtrip(tmp_path, monkeypatch):
     project_shim.publish_artifact("model", {"weights": [1, 2, 3]})
     assert project_shim.read_artifact("model") == {"weights": [1, 2, 3]}
     assert [a["name"] for a in project_shim.list_artifacts()] == ["model"]
+    # Mirrors the kernel ArtifactStore: duplicate publish raises ValueError
+    with pytest.raises(ValueError, match="already exists"):
+        project_shim.publish_artifact("model", {"weights": [4]})
     project_shim.delete_artifact("model")
     assert project_shim.list_artifacts() == []
     with pytest.raises(KeyError):
         project_shim.read_artifact("model")
+    # Mirrors the kernel ArtifactStore: deleting a missing artifact raises KeyError
+    with pytest.raises(KeyError, match="not found"):
+        project_shim.delete_artifact("model")
 
 
 def test_shim_server_only_apis_raise():
@@ -437,6 +513,29 @@ def test_shim_server_only_apis_raise():
         project_shim.publish_global("name", object())
     with pytest.raises(NotImplementedError, match="read_catalog_table"):
         project_shim.read_catalog_table("table")
+
+
+def test_shim_covers_kernel_public_api():
+    """Every public function of the kernel flowfile_ctx client must exist in the shim
+    (implemented, or stubbed via the server-only NotImplementedError wrappers), so
+    exported notebook code never hits an AttributeError that the in-app run wouldn't.
+
+    The kernel client is parsed (not imported) — kernel_runtime has its own
+    dependency set and is not importable from the core test environment.
+    """
+    repo_root = Path(__file__).resolve()
+    while not (repo_root / "kernel_runtime").is_dir():
+        repo_root = repo_root.parent
+        assert repo_root != repo_root.parent, "could not locate the repo root"
+    client_path = repo_root / "kernel_runtime" / "kernel_runtime" / "flowfile_client.py"
+    kernel_funcs = {
+        stmt.name
+        for stmt in ast.parse(client_path.read_text(encoding="utf-8")).body
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and not stmt.name.startswith("_")
+    }
+    shim_funcs = {name for name in dir(project_shim) if not name.startswith("_")}
+    missing = kernel_funcs - shim_funcs
+    assert not missing, f"kernel flowfile_ctx APIs missing from project_shim: {sorted(missing)}"
 
 
 def test_shim_node_context_collects_outputs_and_falls_back():

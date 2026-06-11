@@ -10,8 +10,10 @@ volume.
 Differences from the kernel runtime:
 
 - Artifacts are pickled to a project-local ``.artifacts/`` directory.
+  ``list_artifacts`` returns plain dicts (``name``/``path``/``size_bytes``)
+  rather than the kernel's ``ArtifactInfo`` objects.
 - ``get_shared_location`` resolves into a project-local ``.shared/`` directory.
-- Log and display messages are printed to stdout.
+- Log and display messages are printed to stdout (no rich figure rendering).
 - Global-artifact and catalog APIs require a running Flowfile server and
   raise ``NotImplementedError`` here.
 """
@@ -173,9 +175,18 @@ def publish_output(df: pl.LazyFrame | pl.DataFrame, name: str = "main") -> None:
 
 
 def publish_artifact(name: str, obj: Any) -> None:
-    """Pickle *obj* into the project-local ``.artifacts/`` directory."""
+    """Pickle *obj* into the project-local ``.artifacts/`` directory.
+
+    Mirrors the kernel: publishing an existing name raises ValueError.
+    """
     _ARTIFACTS_DIR.mkdir(exist_ok=True)
-    with open(_ARTIFACTS_DIR / f"{name}.pkl", "wb") as f:
+    path = _ARTIFACTS_DIR / f"{name}.pkl"
+    if path.exists():
+        raise ValueError(
+            f"Artifact '{name}' already exists. Delete it first with "
+            f"flowfile_ctx.delete_artifact('{name}') before publishing a new one with the same name."
+        )
+    with open(path, "wb") as f:
         pickle.dump(obj, f)
 
 
@@ -199,10 +210,14 @@ def list_artifacts() -> list[dict[str, Any]]:
 
 
 def delete_artifact(name: str) -> None:
-    """Delete a previously published artifact (no-op when missing)."""
+    """Delete a previously published artifact.
+
+    Mirrors the kernel: deleting a missing artifact raises KeyError.
+    """
     path = _ARTIFACTS_DIR / f"{name}.pkl"
-    if path.exists():
-        path.unlink()
+    if not path.exists():
+        raise KeyError(f"Artifact '{name}' not found")
+    path.unlink()
 
 
 # ===== File utilities =====

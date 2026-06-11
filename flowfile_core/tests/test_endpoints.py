@@ -1596,6 +1596,18 @@ def test_editor_code_to_project_save_missing_directory():
     assert v.status_code == 404, "Missing target directory should return 404"
 
 
+def test_editor_code_to_project_save_name_taken_by_file(tmp_path):
+    """A file occupying the project name must yield a 409, not a 500 — even with overwrite."""
+    flow_id = create_flow_with_manual_input_and_select()
+    manifest = client.get("/editor/code_to_project", params={"flow_id": flow_id}).json()
+    (tmp_path / manifest["project_name"]).write_text("not a directory")
+
+    body = {"flow_id": flow_id, "target_directory": str(tmp_path), "overwrite": True}
+    v = client.post("/editor/code_to_project/save", json=body)
+    assert v.status_code == 409, "Project name occupied by a file should conflict"
+    assert "not a directory" in v.json()["detail"]
+
+
 def test_copy_node_not_run():
     flow_id = create_flow_with_manual_input_and_select()
     flow = flow_file_handler.get_flow(flow_id)

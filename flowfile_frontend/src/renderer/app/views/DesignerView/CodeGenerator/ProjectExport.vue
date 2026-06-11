@@ -109,14 +109,20 @@ const selectedContent = computed(() => {
   return file?.content ?? "";
 });
 
+// Monotonic token so an out-of-order response (e.g. after switching flows
+// mid-request) can't overwrite the state of a newer request.
+let fetchSeq = 0;
+
 const fetchManifest = async () => {
   if (nodeStore.flow_id <= 0) return;
+  const requestId = ++fetchSeq;
   loading.value = true;
   errorMessage.value = "";
   try {
     const response = await axios.get("/editor/code_to_project", {
       params: { flow_id: nodeStore.flow_id },
     });
+    if (requestId !== fetchSeq) return;
     projectName.value = response.data.project_name;
     files.value = response.data.files;
     warnings.value = response.data.warnings ?? [];
@@ -124,13 +130,16 @@ const fetchManifest = async () => {
       selectedPath.value = files.value[0]?.path ?? "";
     }
   } catch (error: any) {
+    if (requestId !== fetchSeq) return;
     files.value = [];
     warnings.value = [];
     errorMessage.value =
       error?.response?.data?.detail ??
       "Failed to generate the project export. Please check your flow configuration.";
   } finally {
-    loading.value = false;
+    if (requestId === fetchSeq) {
+      loading.value = false;
+    }
   }
 };
 
