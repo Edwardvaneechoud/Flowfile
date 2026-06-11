@@ -9,7 +9,7 @@ from flowfile_worker.external_sources.s3_source.models import (
     CloudStorageWriteSettings,
     WriteSettings,
 )
-from flowfile_worker.funcs import fuzzy_join_task, generic_task, write_to_cloud_storage
+from flowfile_worker.funcs import fuzzy_join_task, generic_task, write_parquet, write_to_cloud_storage
 
 logger = getLogger(__name__)
 
@@ -24,6 +24,27 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     # noinspection PyUnresolvedReferences
+
+
+def test_write_parquet(tmp_path):
+    """Direct-call regression test: the post-write fsync must use a writable fd
+    (read-only handles raise EBADF on Windows)."""
+    lf = pl.LazyFrame({"value": [1, 2, 3]})
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    output_path = str(tmp_path / "1" / "2" / "inputs" / "main_0.parquet")
+
+    write_parquet(
+        polars_serializable_object=lf.serialize(),
+        progress=progress,
+        error_message=error_message,
+        queue=Queue(maxsize=1),
+        file_path="",
+        output_path=output_path,
+    )
+
+    assert progress.value == 100, error_message[:].decode(errors="replace")
+    assert pl.read_parquet(output_path)["value"].to_list() == [1, 2, 3]
 
 
 def test_write_to_cloud_storage(cloud_storage_connection_settings):
