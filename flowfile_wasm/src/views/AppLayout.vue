@@ -23,6 +23,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             <span>Export</span>
           </button>
+          <button class="action-btn" :disabled="flowStore.nodes.size === 0" title="Share flow via link" @click="showShareModal = true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            <span>Share</span>
+          </button>
           <transition name="fade">
             <span v-if="savedFlash" class="save-flash">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -65,6 +69,7 @@
       @save="onSaveModal"
       @close="showSaveModal = false"
     />
+    <ShareModal :is-open="showShareModal" @close="showShareModal = false" />
 
     <!-- Prominent demo button for first-time visitors on Home and the designer
          canvas (mirrors the original app's prominent demo). Loads then opens the
@@ -85,6 +90,7 @@ import IconRail from '../components/layout/IconRail.vue'
 import FlowTabs from '../components/FlowTabs.vue'
 import DocsModal from '../components/DocsModal.vue'
 import SaveFlowModal from '../components/SaveFlowModal.vue'
+import ShareModal from '../components/ShareModal.vue'
 import DemoButton from '../components/DemoButton.vue'
 import AboutDialog from './HomeView/AboutDialog.vue'
 import { usePyodideStore } from '../stores/pyodide-store'
@@ -94,6 +100,8 @@ import { useFlowTabsStore } from '../stores/flow-tabs-store'
 import { useSavedFlowsStore } from '../stores/saved-flows-store'
 import { useDesignerUiStore } from '../stores/designer-ui-store'
 import { useDemo } from '../composables/useDemo'
+import { useShareLink } from '../composables/useShareLink'
+import { hasShareHash } from '../utils/share-link'
 
 const route = useRoute()
 const router = useRouter()
@@ -109,7 +117,11 @@ const { hasSeenDemo, hasDismissedDemo, loadDemo } = useDemo()
 
 const version = __APP_VERSION__
 const urlParams = new URLSearchParams(window.location.search)
-const shouldAutoLoadDemo = urlParams.get('demo') === 'true'
+// A share link wins over ?demo=true when both are present.
+const shouldAutoLoadDemo = urlParams.get('demo') === 'true' && !hasShareHash(window.location.hash)
+
+const { importShareHash } = useShareLink()
+const showShareModal = ref(false)
 
 const openInput = ref<HTMLInputElement | null>(null)
 
@@ -175,8 +187,33 @@ function onDemoLoaded() {
 onMounted(async () => {
   themeStore.initialize()
   flowTabsStore.init()
+  await handleShareHash()
   await pyodideStore.initialize()
 })
+
+// Import a shared flow from the URL fragment (#flow=...). Runs before Pyodide
+// init — schema propagation re-fires via the isReady watcher once the runtime
+// is up. On success the hash is consumed (router.replace drops it); a cancelled
+// confirm keeps it so a reload can re-offer the flow.
+async function handleShareHash() {
+  const result = await importShareHash(window.location.hash)
+  switch (result.status) {
+    case 'imported':
+      if (result.missingFiles.length) {
+        const names = result.missingFiles.map((m) => m.fileName).join(', ')
+        alert(`Flow opened. Some input files need to be re-loaded: ${names}`)
+      }
+      router.replace({ name: 'designer' })
+      break
+    case 'invalid':
+    case 'failed':
+      alert('This share link is invalid or truncated.')
+      // Pass history.state through: replacing it with null clobbers vue-router's
+      // scroll-position state.
+      history.replaceState(history.state, '', window.location.pathname + window.location.search)
+      break
+  }
+}
 
 if (shouldAutoLoadDemo) {
   watch(pyodideReady, async (ready) => {
@@ -246,9 +283,10 @@ if (shouldAutoLoadDemo) {
   transition: all var(--transition-fast);
 }
 .action-btn svg { width: 16px; height: 16px; color: var(--color-text-secondary); }
-.action-btn:hover { background: var(--color-background-tertiary); border-color: var(--color-border-secondary); }
-.action-btn:hover svg { color: var(--color-text-primary); }
-.action-btn:active { transform: translateY(1px); box-shadow: none; }
+.action-btn:hover:not(:disabled) { background: var(--color-background-tertiary); border-color: var(--color-border-secondary); }
+.action-btn:hover:not(:disabled) svg { color: var(--color-text-primary); }
+.action-btn:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+.action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .action-btn.active {
   background: var(--color-accent-subtle);
   border-color: var(--color-accent);

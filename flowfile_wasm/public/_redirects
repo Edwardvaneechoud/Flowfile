@@ -1,0 +1,2 @@
+# SPA fallback so hard loads of deep links (e.g. /designer#flow=...) resolve.
+/*    /index.html   200

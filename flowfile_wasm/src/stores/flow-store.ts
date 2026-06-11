@@ -2950,6 +2950,31 @@ result
   }
 
   /**
+   * Snapshot the active flow for a share link: the flow definition plus inline
+   * small text files (same inlining as library entries). Binary/oversized
+   * inputs can't travel in a URL — they're reported so the share UI can list
+   * what recipients will have to re-pick.
+   */
+  async function exportShareSnapshot(): Promise<{
+    flow: FlowfileData
+    files: Record<number, string>
+    excludedFiles: Array<{ nodeId: number; fileName: string }>
+  }> {
+    await runBeforeExportHooks()
+    const flowName = currentFlowName.value || 'Untitled Flow'
+    const flow = JSON.parse(JSON.stringify(exportToFlowfile(flowName))) as FlowfileData
+    const files = collectSmallFileContents()
+    const excludedFiles: Array<{ nodeId: number; fileName: string }> = []
+    for (const [nid, content] of fileContents.value) {
+      if (content.kind === 'text' && contentByteSize(content) < SIZE_THRESHOLD) continue
+      const settings = nodes.value.get(nid)?.settings as NodeReadSettings | undefined
+      const fileName = settings?.file_name || settings?.received_file?.name || `node ${nid} input`
+      excludedFiles.push({ nodeId: nid, fileName })
+    }
+    return { flow, files, excludedFiles }
+  }
+
+  /**
    * Export the current flow as a downloaded file (yaml/json). File output only —
    * persisting to the library is saveToLibrary's job.
    * @param name - Optional name for the flow
@@ -3260,6 +3285,7 @@ result
     captureSnapshot,
     loadFromSnapshot,
     saveToLibrary,
+    exportShareSnapshot,
     exportFlowfile,
     downloadFlowfile,
     loadFlowfile,
