@@ -2,6 +2,9 @@
 
 Aggregate nodes help you summarize and analyze your data by grouping and calculating statistics. These nodes are essential for creating summaries and transforming data structure.
 
+!!! tip "Available in Flowfile Lite"
+    All aggregate nodes — **Group By**, **Pivot**, and **Unpivot** — are included in the browser-only [Flowfile Lite](../../deployment/lite.md) build.
+
 ## Node Details
 
 ### ![Group By](../../../assets/images/nodes/group_by.png){ width="50" height="50" } Group By  

@@ -2,6 +2,9 @@
 
 Output nodes represent the final steps in your data pipeline, allowing you to save your transformed data or explore it visually. These nodes help you deliver your results in the desired format or analyze them directly.
 
+!!! info "Some output nodes are not in Flowfile Lite"
+    In the browser-only [Flowfile Lite](../../deployment/lite.md) build, **Write Data** downloads files to your browser and **Write to Catalog** / **Explore Data** work as usual. **Cloud Storage Writer** and **Database Writer** are not available (no backend).
+
 ## Node Details
 ## Node Details  
 

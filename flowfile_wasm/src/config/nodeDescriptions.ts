@@ -5,8 +5,8 @@ export interface NodeDescription {
 
 export const nodeDescriptions: Record<string, NodeDescription> = {
   read: {
-    title: 'Read CSV',
-    intro: 'Load data from a CSV file. Drag and drop a file or paste CSV content directly.'
+    title: 'Read File',
+    intro: 'Load data from a CSV, Excel (.xlsx) or Parquet file. Excel downloads openpyxl from PyPI and Parquet downloads its engine from the CDN on first use.'
   },
   manual_input: {
     title: 'Manual Input',
@@ -15,6 +15,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   external_data: {
     title: 'External Data',
     intro: 'Load data provided by the host application. Select an available dataset from the dropdown.'
+  },
+  read_from_catalog: {
+    title: 'Read from Catalog',
+    intro: 'Read a table you uploaded to the Catalog. Select one from the dropdown.'
   },
   filter: {
     title: 'Filter',
@@ -67,6 +71,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   external_output: {
     title: 'External Output',
     intro: 'Send the result data back to the host application via the output callback. Use this to return processed data from the embedded editor.'
+  },
+  write_to_catalog: {
+    title: 'Write to Catalog',
+    intro: 'Save the flow result as a reusable table in the Catalog. Name the table, then run the flow — it can be read back with a Read from Catalog node and persists across flows.'
   }
 }
 

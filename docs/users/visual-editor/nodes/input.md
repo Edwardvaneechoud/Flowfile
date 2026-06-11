@@ -2,6 +2,9 @@
 
 Input nodes are the starting point for any data flow. Flowfile supports reading from **local files**, **databases**, **cloud storage**, **catalog tables**, and **manual input**.
 
+!!! info "Not all input nodes are in Flowfile Lite"
+    The browser-only [Flowfile Lite](../../deployment/lite.md) build reads **local files (CSV/Excel/Parquet)**, **remote URLs**, **Manual Input**, and **Read from Catalog** — but it has no backend, so **Cloud Storage Reader** and **Database Reader** are not available.
+
 ## Node Details
 
 ### ![Read Data](../../../assets/images/nodes/input_data.png){ width="50" height="50" } Read Data

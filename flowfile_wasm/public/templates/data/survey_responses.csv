@@ -1,0 +1,2001 @@
+response_id,respondent_id,question,rating,date
+1,R0248,Product Quality,3,2024-12-17
+2,R0266,Overall Satisfaction,1,2024-03-16
+3,R0211,Customer Service,2,2024-07-01
+4,R0255,Product Quality,2,2024-10-22
+5,R0221,Value for Money,2,2024-02-15
+6,R0100,Ease of Use,1,2024-05-20
+7,R0279,Ease of Use,5,2024-03-30
+8,R0136,Overall Satisfaction,3,2024-06-18
+9,R0201,Delivery Speed,4,2024-05-21
+10,R0159,Customer Service,1,2024-10-23
+11,R0267,Overall Satisfaction,3,2024-11-09
+12,R0063,Ease of Use,4,2024-10-17
+13,R0178,Value for Money,1,2024-01-05
+14,R0256,Overall Satisfaction,2,2024-08-26
+15,R0077,Delivery Speed,3,2024-11-15
+16,R0286,Overall Satisfaction,2,2024-06-04
+17,R0250,Value for Money,1,2024-05-30
+18,R0008,Ease of Use,1,2024-04-21
+19,R0145,Delivery Speed,1,2024-01-28
+20,R0251,Value for Money,1,2024-08-08
+21,R0181,Overall Satisfaction,1,2024-01-26
+22,R0129,Customer Service,3,2024-05-25
+23,R0258,Overall Satisfaction,5,2024-03-20
+24,R0045,Overall Satisfaction,3,2024-03-14
+25,R0101,Ease of Use,5,2024-02-11
+26,R0149,Customer Service,1,2024-08-30
+27,R0182,Customer Service,4,2024-08-04
+28,R0205,Product Quality,3,2024-06-03
+29,R0160,Customer Service,5,2024-08-11
+30,R0166,Delivery Speed,2,2024-12-15
+31,R0103,Value for Money,2,2024-08-01
+32,R0284,Customer Service,3,2024-06-05
+33,R0044,Value for Money,5,2024-11-17
+34,R0237,Delivery Speed,2,2024-07-11
+35,R0224,Product Quality,2,2024-09-26
+36,R0227,Overall Satisfaction,3,2024-09-14
+37,R0184,Ease of Use,3,2024-08-06
+38,R0239,Ease of Use,4,2024-08-24
+39,R0015,Delivery Speed,1,2024-08-03
+40,R0046,Customer Service,5,2024-06-03
+41,R0125,Delivery Speed,5,2024-07-10
+42,R0066,Delivery Speed,5,2024-10-16
+43,R0151,Product Quality,4,2024-03-05
+44,R0207,Overall Satisfaction,1,2024-08-24
+45,R0266,Ease of Use,1,2024-02-13
+46,R0029,Value for Money,1,2024-06-19
+47,R0050,Value for Money,5,2024-09-03
+48,R0170,Product Quality,1,2024-10-26
+49,R0262,Overall Satisfaction,1,2024-12-25
+50,R0105,Delivery Speed,2,2024-10-14
+51,R0254,Customer Service,2,2024-12-11
+52,R0080,Value for Money,3,2024-01-04
+53,R0249,Delivery Speed,2,2024-02-28
+54,R0035,Product Quality,2,2024-11-05
+55,R0062,Delivery Speed,1,2024-05-06
+56,R0105,Product Quality,4,2024-01-13
+57,R0259,Ease of Use,4,2024-01-29
+58,R0063,Value for Money,4,2024-09-04
+59,R0095,Customer Service,5,2024-05-13
+60,R0225,Overall Satisfaction,5,2024-03-04
+61,R0222,Customer Service,1,2024-04-04
+62,R0073,Overall Satisfaction,2,2024-03-28
+63,R0262,Overall Satisfaction,5,2024-04-12
+64,R0244,Ease of Use,3,2024-05-28
+65,R0052,Delivery Speed,4,2024-07-07
+66,R0141,Ease of Use,4,2024-12-23
+67,R0055,Ease of Use,4,2024-08-05
+68,R0076,Product Quality,3,2024-08-22
+69,R0062,Delivery Speed,4,2024-01-06
+70,R0298,Value for Money,1,2024-11-26
+71,R0228,Product Quality,3,2024-03-12
+72,R0240,Overall Satisfaction,4,2024-05-21
+73,R0005,Customer Service,3,2024-09-13
+74,R0258,Customer Service,3,2024-12-27
+75,R0269,Ease of Use,5,2024-02-02
+76,R0090,Overall Satisfaction,2,2024-06-29
+77,R0289,Value for Money,4,2024-03-12
+78,R0143,Overall Satisfaction,3,2024-07-20
+79,R0035,Overall Satisfaction,4,2024-07-11
+80,R0242,Delivery Speed,2,2024-10-21
+81,R0260,Overall Satisfaction,5,2024-05-12
+82,R0067,Overall Satisfaction,3,2024-10-28
+83,R0298,Value for Money,5,2024-11-12
+84,R0207,Product Quality,1,2024-01-16
+85,R0082,Customer Service,1,2024-12-06
+86,R0055,Ease of Use,4,2024-06-14
+87,R0119,Overall Satisfaction,2,2024-02-23
+88,R0090,Overall Satisfaction,4,2024-08-03
+89,R0033,Product Quality,5,2024-05-08
+90,R0059,Product Quality,1,2024-08-14
+91,R0192,Delivery Speed,1,2024-03-30
+92,R0165,Product Quality,4,2024-07-12
+93,R0069,Overall Satisfaction,5,2024-10-11
+94,R0103,Customer Service,3,2024-09-08
+95,R0225,Overall Satisfaction,3,2024-04-25
+96,R0104,Overall Satisfaction,2,2024-08-10
+97,R0271,Customer Service,1,2024-10-25
+98,R0013,Overall Satisfaction,1,2024-04-14
+99,R0018,Customer Service,1,2024-07-03
+100,R0209,Delivery Speed,5,2024-02-06
+101,R0175,Customer Service,5,2024-09-11
+102,R0098,Customer Service,5,2024-08-30
+103,R0257,Value for Money,3,2024-11-12
+104,R0287,Customer Service,1,2024-08-12
+105,R0219,Overall Satisfaction,4,2024-02-06
+106,R0292,Product Quality,2,2024-09-21
+107,R0153,Product Quality,1,2024-09-12
+108,R0119,Product Quality,5,2024-10-03
+109,R0170,Product Quality,2,2024-05-28
+110,R0129,Ease of Use,3,2024-02-04
+111,R0081,Value for Money,1,2024-09-30
+112,R0295,Customer Service,5,2024-11-08
+113,R0257,Value for Money,4,2024-11-12
+114,R0030,Delivery Speed,1,2024-10-25
+115,R0242,Value for Money,1,2024-01-17
+116,R0174,Ease of Use,3,2024-04-12
+117,R0172,Product Quality,2,2024-04-14
+118,R0281,Overall Satisfaction,3,2024-12-05
+119,R0032,Customer Service,4,2024-02-07
+120,R0289,Delivery Speed,1,2024-06-26
+121,R0037,Ease of Use,5,2024-11-09
+122,R0042,Delivery Speed,4,2024-03-07
+123,R0139,Overall Satisfaction,1,2024-02-23
+124,R0019,Ease of Use,5,2024-04-25
+125,R0180,Ease of Use,4,2024-06-04
+126,R0117,Product Quality,1,2024-01-14
+127,R0101,Delivery Speed,5,2024-07-13
+128,R0010,Delivery Speed,4,2024-01-27
+129,R0199,Ease of Use,2,2024-08-08
+130,R0219,Delivery Speed,2,2024-02-29
+131,R0225,Product Quality,5,2024-07-07
+132,R0181,Customer Service,3,2024-08-11
+133,R0030,Customer Service,2,2024-02-17
+134,R0006,Customer Service,4,2024-10-01
+135,R0291,Product Quality,1,2024-05-07
+136,R0030,Product Quality,1,2024-03-05
+137,R0225,Customer Service,3,2024-01-23
+138,R0161,Value for Money,5,2024-12-01
+139,R0126,Value for Money,2,2024-11-06
+140,R0204,Ease of Use,1,2024-12-02
+141,R0040,Product Quality,3,2024-10-05
+142,R0106,Ease of Use,3,2024-04-22
+143,R0228,Overall Satisfaction,3,2024-07-06
+144,R0283,Value for Money,2,2024-09-26
+145,R0137,Value for Money,5,2024-09-14
+146,R0054,Product Quality,3,2024-07-29
+147,R0249,Value for Money,1,2024-04-14
+148,R0071,Delivery Speed,2,2024-06-05
+149,R0284,Customer Service,1,2024-07-09
+150,R0073,Product Quality,2,2024-12-23
+151,R0226,Overall Satisfaction,4,2024-02-28
+152,R0011,Ease of Use,1,2024-05-18
+153,R0143,Delivery Speed,4,2024-06-02
+154,R0044,Product Quality,3,2024-11-08
+155,R0197,Ease of Use,1,2024-07-14
+156,R0197,Ease of Use,1,2024-04-24
+157,R0106,Ease of Use,2,2024-12-03
+158,R0221,Delivery Speed,1,2024-12-04
+159,R0157,Product Quality,5,2024-06-27
+160,R0014,Delivery Speed,3,2024-05-14
+161,R0111,Product Quality,3,2024-11-14
+162,R0223,Ease of Use,1,2024-02-25
+163,R0284,Ease of Use,3,2024-09-30
+164,R0238,Ease of Use,5,2024-10-17
+165,R0266,Value for Money,2,2024-07-14
+166,R0240,Overall Satisfaction,2,2024-03-08
+167,R0008,Value for Money,3,2024-02-13
+168,R0128,Delivery Speed,3,2024-06-21
+169,R0293,Ease of Use,1,2024-11-11
+170,R0141,Value for Money,3,2024-12-03
+171,R0129,Overall Satisfaction,5,2024-01-07
+172,R0064,Value for Money,5,2024-12-04
+173,R0165,Value for Money,2,2024-08-15
+174,R0237,Product Quality,4,2024-01-05
+175,R0239,Product Quality,3,2024-09-02
+176,R0285,Customer Service,4,2024-01-30
+177,R0297,Product Quality,3,2024-11-08
+178,R0283,Value for Money,1,2024-08-13
+179,R0093,Value for Money,3,2024-05-12
+180,R0254,Customer Service,2,2024-11-18
+181,R0090,Customer Service,5,2024-12-01
+182,R0026,Customer Service,1,2024-12-01
+183,R0020,Customer Service,5,2024-08-13
+184,R0297,Value for Money,1,2024-10-10
+185,R0117,Product Quality,3,2024-05-11
+186,R0009,Overall Satisfaction,3,2024-10-03
+187,R0023,Delivery Speed,2,2024-06-28
+188,R0056,Product Quality,5,2024-08-15
+189,R0058,Delivery Speed,1,2024-05-01
+190,R0105,Value for Money,5,2024-07-09
+191,R0213,Product Quality,4,2024-05-24
+192,R0074,Product Quality,3,2024-11-06
+193,R0185,Value for Money,4,2024-11-29
+194,R0192,Ease of Use,3,2024-11-14
+195,R0016,Customer Service,3,2024-01-23
+196,R0149,Customer Service,5,2024-01-14
+197,R0055,Delivery Speed,2,2024-06-09
+198,R0262,Overall Satisfaction,5,2024-10-24
+199,R0177,Customer Service,4,2024-10-25
+200,R0017,Overall Satisfaction,2,2024-07-14
+201,R0041,Product Quality,2,2024-10-16
+202,R0258,Delivery Speed,5,2024-08-02
+203,R0276,Overall Satisfaction,1,2024-09-27
+204,R0027,Delivery Speed,4,2024-12-03
+205,R0269,Delivery Speed,4,2024-06-11
+206,R0138,Customer Service,5,2024-05-30
+207,R0125,Value for Money,2,2024-07-04
+208,R0119,Ease of Use,3,2024-02-29
+209,R0124,Ease of Use,4,2024-07-04
+210,R0041,Value for Money,5,2024-09-15
+211,R0040,Value for Money,4,2024-11-05
+212,R0118,Ease of Use,4,2024-04-27
+213,R0292,Customer Service,5,2024-05-05
+214,R0209,Overall Satisfaction,5,2024-12-06
+215,R0071,Delivery Speed,3,2024-05-26
+216,R0175,Value for Money,1,2024-02-11
+217,R0210,Ease of Use,5,2024-03-16
+218,R0295,Ease of Use,2,2024-04-02
+219,R0233,Product Quality,2,2024-03-02
+220,R0215,Value for Money,5,2024-12-30
+221,R0241,Overall Satisfaction,1,2024-03-05
+222,R0018,Ease of Use,1,2024-12-19
+223,R0086,Product Quality,2,2024-09-20
+224,R0272,Ease of Use,4,2024-06-30
+225,R0066,Ease of Use,5,2024-05-03
+226,R0151,Product Quality,3,2024-06-21
+227,R0056,Overall Satisfaction,1,2024-02-07
+228,R0182,Ease of Use,4,2024-11-18
+229,R0231,Overall Satisfaction,4,2024-05-28
+230,R0245,Overall Satisfaction,2,2024-04-03
+231,R0261,Product Quality,2,2024-01-04
+232,R0190,Overall Satisfaction,4,2024-07-13
+233,R0165,Ease of Use,2,2024-09-17
+234,R0144,Product Quality,2,2024-06-01
+235,R0253,Value for Money,1,2024-10-15
+236,R0266,Delivery Speed,5,2024-09-17
+237,R0219,Value for Money,3,2024-07-15
+238,R0164,Customer Service,2,2024-01-22
+239,R0108,Ease of Use,5,2024-05-22
+240,R0295,Delivery Speed,3,2024-02-20
+241,R0178,Value for Money,2,2024-03-01
+242,R0148,Value for Money,4,2024-08-12
+243,R0115,Customer Service,3,2024-05-12
+244,R0055,Customer Service,3,2024-03-13
+245,R0050,Customer Service,5,2024-09-17
+246,R0087,Product Quality,5,2024-01-21
+247,R0277,Delivery Speed,2,2024-01-04
+248,R0251,Product Quality,3,2024-04-14
+249,R0145,Delivery Speed,4,2024-08-15
+250,R0267,Customer Service,4,2024-05-31
+251,R0057,Overall Satisfaction,1,2024-08-15
+252,R0222,Ease of Use,3,2024-02-14
+253,R0071,Value for Money,1,2024-06-30
+254,R0041,Overall Satisfaction,2,2024-02-08
+255,R0168,Customer Service,5,2024-06-20
+256,R0142,Ease of Use,5,2024-12-10
+257,R0038,Overall Satisfaction,3,2024-01-20
+258,R0222,Product Quality,5,2024-06-11
+259,R0098,Delivery Speed,1,2024-11-20
+260,R0005,Customer Service,2,2024-10-27
+261,R0193,Customer Service,2,2024-05-15
+262,R0241,Customer Service,4,2024-04-05
+263,R0255,Value for Money,2,2024-04-11
+264,R0046,Delivery Speed,2,2024-01-02
+265,R0223,Product Quality,4,2024-10-12
+266,R0107,Overall Satisfaction,2,2024-01-20
+267,R0215,Overall Satisfaction,3,2024-11-10
+268,R0195,Overall Satisfaction,5,2024-04-30
+269,R0179,Ease of Use,5,2024-12-02
+270,R0093,Value for Money,2,2024-05-29
+271,R0249,Ease of Use,4,2024-11-02
+272,R0183,Delivery Speed,4,2024-05-31
+273,R0050,Customer Service,1,2024-05-27
+274,R0215,Ease of Use,3,2024-05-06
+275,R0218,Product Quality,2,2024-08-25
+276,R0164,Overall Satisfaction,1,2024-06-26
+277,R0204,Overall Satisfaction,2,2024-09-04
+278,R0251,Delivery Speed,4,2024-12-17
+279,R0121,Product Quality,3,2024-05-17
+280,R0260,Customer Service,4,2024-02-01
+281,R0288,Value for Money,3,2024-12-11
+282,R0163,Ease of Use,4,2024-08-14
+283,R0218,Ease of Use,3,2024-01-28
+284,R0138,Ease of Use,2,2024-06-22
+285,R0024,Value for Money,4,2024-07-28
+286,R0114,Delivery Speed,2,2024-10-01
+287,R0106,Overall Satisfaction,1,2024-11-10
+288,R0169,Customer Service,5,2024-10-03
+289,R0011,Overall Satisfaction,1,2024-07-13
+290,R0047,Overall Satisfaction,3,2024-06-29
+291,R0284,Product Quality,1,2024-09-22
+292,R0108,Value for Money,5,2024-04-11
+293,R0081,Delivery Speed,4,2024-04-27
+294,R0149,Customer Service,3,2024-06-18
+295,R0212,Customer Service,5,2024-05-07
+296,R0007,Product Quality,1,2024-09-26
+297,R0053,Delivery Speed,4,2024-09-05
+298,R0022,Customer Service,3,2024-06-03
+299,R0013,Customer Service,2,2024-01-18
+300,R0140,Overall Satisfaction,1,2024-07-12
+301,R0206,Customer Service,3,2024-02-13
+302,R0040,Product Quality,5,2024-12-26
+303,R0213,Product Quality,1,2024-10-04
+304,R0078,Product Quality,5,2024-07-19
+305,R0100,Delivery Speed,3,2024-06-14
+306,R0218,Delivery Speed,1,2024-06-03
+307,R0141,Ease of Use,2,2024-02-21
+308,R0136,Overall Satisfaction,5,2024-08-29
+309,R0193,Value for Money,4,2024-02-17
+310,R0114,Ease of Use,5,2024-05-22
+311,R0248,Value for Money,5,2024-09-16
+312,R0126,Ease of Use,1,2024-09-11
+313,R0202,Value for Money,5,2024-12-31
+314,R0056,Ease of Use,2,2024-10-22
+315,R0013,Ease of Use,2,2024-08-16
+316,R0190,Ease of Use,5,2024-02-25
+317,R0160,Value for Money,2,2024-11-18
+318,R0043,Product Quality,5,2024-03-27
+319,R0107,Ease of Use,5,2024-05-07
+320,R0043,Customer Service,4,2024-11-11
+321,R0243,Delivery Speed,5,2024-04-29
+322,R0031,Ease of Use,3,2024-07-29
+323,R0160,Overall Satisfaction,3,2024-03-18
+324,R0019,Value for Money,5,2024-11-02
+325,R0209,Product Quality,3,2024-12-19
+326,R0108,Delivery Speed,4,2024-10-06
+327,R0256,Value for Money,2,2024-06-13
+328,R0237,Overall Satisfaction,4,2024-09-20
+329,R0285,Overall Satisfaction,1,2024-02-23
+330,R0218,Overall Satisfaction,1,2024-07-11
+331,R0066,Product Quality,2,2024-09-23
+332,R0063,Customer Service,2,2024-08-12
+333,R0059,Product Quality,4,2024-09-10
+334,R0088,Overall Satisfaction,5,2024-09-06
+335,R0072,Overall Satisfaction,5,2024-08-02
+336,R0205,Product Quality,3,2024-03-01
+337,R0223,Value for Money,3,2024-09-24
+338,R0166,Delivery Speed,3,2024-10-15
+339,R0085,Customer Service,3,2024-09-24
+340,R0105,Delivery Speed,3,2024-09-22
+341,R0129,Ease of Use,4,2024-04-17
+342,R0170,Overall Satisfaction,2,2024-03-25
+343,R0269,Overall Satisfaction,4,2024-01-06
+344,R0163,Ease of Use,2,2024-03-17
+345,R0241,Product Quality,1,2024-06-08
+346,R0097,Customer Service,1,2024-10-02
+347,R0235,Value for Money,1,2024-02-01
+348,R0240,Delivery Speed,2,2024-02-04
+349,R0180,Overall Satisfaction,5,2024-04-25
+350,R0177,Overall Satisfaction,1,2024-04-08
+351,R0141,Value for Money,4,2024-10-26
+352,R0157,Value for Money,5,2024-07-25
+353,R0131,Delivery Speed,5,2024-11-24
+354,R0104,Product Quality,5,2024-03-19
+355,R0053,Overall Satisfaction,2,2024-05-23
+356,R0092,Value for Money,5,2024-02-22
+357,R0065,Delivery Speed,5,2024-11-26
+358,R0197,Value for Money,5,2024-10-30
+359,R0142,Overall Satisfaction,5,2024-12-08
+360,R0243,Customer Service,2,2024-01-02
+361,R0119,Customer Service,1,2024-11-10
+362,R0076,Customer Service,2,2024-08-31
+363,R0001,Value for Money,1,2024-01-27
+364,R0071,Delivery Speed,4,2024-08-05
+365,R0242,Value for Money,3,2024-09-13
+366,R0061,Customer Service,5,2024-07-20
+367,R0194,Ease of Use,4,2024-06-30
+368,R0160,Delivery Speed,3,2024-09-28
+369,R0041,Delivery Speed,2,2024-03-26
+370,R0143,Overall Satisfaction,2,2024-08-11
+371,R0287,Ease of Use,4,2024-12-21
+372,R0129,Overall Satisfaction,1,2024-10-12
+373,R0223,Overall Satisfaction,3,2024-04-01
+374,R0013,Value for Money,4,2024-12-09
+375,R0178,Overall Satisfaction,4,2024-04-19
+376,R0287,Customer Service,4,2024-07-10
+377,R0092,Overall Satisfaction,1,2024-04-10
+378,R0227,Value for Money,5,2024-04-09
+379,R0003,Delivery Speed,3,2024-06-17
+380,R0049,Value for Money,3,2024-09-14
+381,R0007,Delivery Speed,3,2024-01-18
+382,R0141,Overall Satisfaction,4,2024-07-22
+383,R0023,Overall Satisfaction,3,2024-05-20
+384,R0030,Delivery Speed,1,2024-08-29
+385,R0233,Ease of Use,2,2024-08-30
+386,R0280,Product Quality,1,2024-07-08
+387,R0015,Delivery Speed,2,2024-12-27
+388,R0091,Customer Service,1,2024-08-02
+389,R0062,Product Quality,4,2024-11-22
+390,R0032,Value for Money,1,2024-10-05
+391,R0143,Customer Service,5,2024-01-09
+392,R0171,Overall Satisfaction,3,2024-12-29
+393,R0087,Delivery Speed,3,2024-09-21
+394,R0008,Overall Satisfaction,4,2024-08-01
+395,R0032,Product Quality,2,2024-09-13
+396,R0076,Overall Satisfaction,3,2024-02-12
+397,R0089,Ease of Use,1,2024-05-21
+398,R0102,Overall Satisfaction,5,2024-07-28
+399,R0089,Overall Satisfaction,1,2024-06-08
+400,R0141,Delivery Speed,3,2024-03-01
+401,R0175,Ease of Use,5,2024-12-22
+402,R0045,Delivery Speed,4,2024-02-15
+403,R0060,Product Quality,2,2024-02-14
+404,R0096,Value for Money,5,2024-11-16
+405,R0011,Customer Service,1,2024-04-21
+406,R0192,Ease of Use,1,2024-05-06
+407,R0158,Overall Satisfaction,2,2024-03-08
+408,R0159,Product Quality,4,2024-12-27
+409,R0147,Customer Service,3,2024-03-12
+410,R0290,Value for Money,4,2024-04-25
+411,R0097,Value for Money,2,2024-03-31
+412,R0152,Value for Money,4,2024-05-15
+413,R0048,Ease of Use,3,2024-10-23
+414,R0187,Value for Money,5,2024-08-18
+415,R0088,Product Quality,5,2024-07-16
+416,R0080,Delivery Speed,5,2024-04-17
+417,R0223,Value for Money,3,2024-04-16
+418,R0176,Overall Satisfaction,5,2024-10-09
+419,R0138,Product Quality,5,2024-04-17
+420,R0133,Customer Service,4,2024-05-13
+421,R0017,Product Quality,5,2024-12-03
+422,R0096,Ease of Use,2,2024-08-27
+423,R0166,Value for Money,5,2024-07-12
+424,R0018,Value for Money,1,2024-11-18
+425,R0184,Product Quality,2,2024-08-03
+426,R0244,Value for Money,3,2024-11-27
+427,R0052,Customer Service,3,2024-06-05
+428,R0084,Ease of Use,5,2024-04-05
+429,R0012,Ease of Use,5,2024-08-21
+430,R0295,Overall Satisfaction,4,2024-07-23
+431,R0243,Customer Service,3,2024-07-10
+432,R0173,Ease of Use,4,2024-06-02
+433,R0021,Customer Service,5,2024-02-25
+434,R0216,Ease of Use,3,2024-10-22
+435,R0206,Delivery Speed,1,2024-03-24
+436,R0263,Customer Service,3,2024-11-01
+437,R0269,Customer Service,5,2024-03-12
+438,R0067,Overall Satisfaction,3,2024-01-28
+439,R0047,Value for Money,2,2024-06-26
+440,R0235,Ease of Use,2,2024-08-23
+441,R0001,Overall Satisfaction,2,2024-04-12
+442,R0089,Value for Money,3,2024-02-11
+443,R0095,Customer Service,2,2024-08-11
+444,R0047,Overall Satisfaction,2,2024-03-19
+445,R0285,Value for Money,1,2024-09-01
+446,R0082,Value for Money,1,2024-08-29
+447,R0282,Overall Satisfaction,4,2024-12-23
+448,R0109,Ease of Use,4,2024-08-25
+449,R0125,Product Quality,4,2024-03-06
+450,R0163,Customer Service,4,2024-06-16
+451,R0145,Overall Satisfaction,4,2024-11-01
+452,R0202,Delivery Speed,1,2024-06-26
+453,R0251,Overall Satisfaction,5,2024-01-14
+454,R0114,Delivery Speed,2,2024-04-30
+455,R0189,Value for Money,3,2024-09-13
+456,R0001,Delivery Speed,5,2024-07-22
+457,R0040,Overall Satisfaction,2,2024-03-11
+458,R0256,Customer Service,1,2024-04-18
+459,R0155,Ease of Use,1,2024-06-22
+460,R0197,Overall Satisfaction,2,2024-08-05
+461,R0078,Value for Money,3,2024-07-17
+462,R0247,Product Quality,3,2024-08-03
+463,R0092,Customer Service,4,2024-12-15
+464,R0265,Product Quality,4,2024-02-12
+465,R0178,Overall Satisfaction,1,2024-12-01
+466,R0208,Product Quality,2,2024-06-12
+467,R0066,Delivery Speed,5,2024-07-15
+468,R0233,Product Quality,4,2024-11-30
+469,R0206,Ease of Use,1,2024-06-04
+470,R0218,Value for Money,1,2024-11-05
+471,R0231,Delivery Speed,3,2024-08-30
+472,R0172,Delivery Speed,3,2024-02-27
+473,R0092,Ease of Use,5,2024-07-15
+474,R0041,Customer Service,1,2024-06-21
+475,R0133,Customer Service,5,2024-11-10
+476,R0233,Ease of Use,1,2024-08-25
+477,R0145,Product Quality,1,2024-09-07
+478,R0236,Value for Money,1,2024-11-02
+479,R0190,Value for Money,4,2024-06-21
+480,R0152,Product Quality,5,2024-05-16
+481,R0092,Value for Money,3,2024-08-01
+482,R0009,Ease of Use,3,2024-06-01
+483,R0019,Delivery Speed,1,2024-07-01
+484,R0019,Delivery Speed,4,2024-05-07
+485,R0090,Product Quality,5,2024-02-18
+486,R0065,Overall Satisfaction,2,2024-11-20
+487,R0253,Ease of Use,3,2024-06-25
+488,R0235,Overall Satisfaction,5,2024-05-04
+489,R0269,Delivery Speed,4,2024-01-21
+490,R0040,Value for Money,3,2024-01-20
+491,R0076,Delivery Speed,1,2024-07-14
+492,R0263,Overall Satisfaction,1,2024-06-21
+493,R0155,Ease of Use,4,2024-01-12
+494,R0095,Overall Satisfaction,3,2024-11-30
+495,R0041,Ease of Use,1,2024-04-08
+496,R0293,Value for Money,3,2024-11-11
+497,R0264,Delivery Speed,2,2024-12-21
+498,R0026,Value for Money,5,2024-08-30
+499,R0111,Ease of Use,3,2024-12-18
+500,R0096,Value for Money,5,2024-12-09
+501,R0024,Delivery Speed,4,2024-04-02
+502,R0146,Value for Money,1,2024-07-27
+503,R0107,Product Quality,4,2024-12-02
+504,R0067,Value for Money,3,2024-08-24
+505,R0163,Product Quality,2,2024-04-25
+506,R0010,Overall Satisfaction,3,2024-04-23
+507,R0033,Delivery Speed,3,2024-12-30
+508,R0236,Delivery Speed,4,2024-11-21
+509,R0169,Delivery Speed,4,2024-08-31
+510,R0286,Product Quality,3,2024-06-23
+511,R0164,Value for Money,4,2024-03-18
+512,R0237,Overall Satisfaction,4,2024-04-17
+513,R0273,Overall Satisfaction,2,2024-12-10
+514,R0200,Value for Money,4,2024-01-17
+515,R0293,Product Quality,4,2024-10-14
+516,R0177,Product Quality,2,2024-09-28
+517,R0190,Value for Money,3,2024-06-10
+518,R0232,Overall Satisfaction,4,2024-01-16
+519,R0080,Delivery Speed,5,2024-03-26
+520,R0181,Delivery Speed,4,2024-07-31
+521,R0012,Value for Money,5,2024-09-08
+522,R0121,Ease of Use,5,2024-03-08
+523,R0194,Delivery Speed,1,2024-02-19
+524,R0203,Customer Service,2,2024-02-26
+525,R0293,Value for Money,2,2024-03-22
+526,R0206,Delivery Speed,4,2024-06-29
+527,R0112,Ease of Use,5,2024-05-22
+528,R0164,Value for Money,1,2024-12-06
+529,R0163,Delivery Speed,5,2024-09-29
+530,R0201,Customer Service,4,2024-09-10
+531,R0238,Value for Money,4,2024-03-21
+532,R0091,Ease of Use,3,2024-01-02
+533,R0273,Value for Money,4,2024-12-01
+534,R0089,Overall Satisfaction,1,2024-07-15
+535,R0298,Overall Satisfaction,4,2024-08-02
+536,R0211,Customer Service,1,2024-11-12
+537,R0115,Customer Service,5,2024-11-13
+538,R0258,Product Quality,5,2024-10-19
+539,R0210,Product Quality,3,2024-11-08
+540,R0128,Customer Service,5,2024-11-16
+541,R0242,Overall Satisfaction,1,2024-07-08
+542,R0012,Overall Satisfaction,5,2024-11-30
+543,R0200,Delivery Speed,5,2024-04-08
+544,R0083,Ease of Use,3,2024-05-02
+545,R0090,Ease of Use,2,2024-06-14
+546,R0068,Value for Money,1,2024-01-16
+547,R0106,Delivery Speed,4,2024-08-23
+548,R0126,Overall Satisfaction,5,2024-08-15
+549,R0124,Customer Service,4,2024-09-13
+550,R0057,Delivery Speed,3,2024-03-22
+551,R0126,Ease of Use,1,2024-01-04
+552,R0017,Overall Satisfaction,4,2024-09-23
+553,R0241,Ease of Use,1,2024-08-01
+554,R0134,Overall Satisfaction,5,2024-03-02
+555,R0274,Overall Satisfaction,1,2024-08-12
+556,R0247,Overall Satisfaction,1,2024-05-29
+557,R0204,Overall Satisfaction,1,2024-07-05
+558,R0205,Overall Satisfaction,5,2024-11-18
+559,R0226,Ease of Use,1,2024-02-23
+560,R0075,Value for Money,5,2024-02-27
+561,R0087,Value for Money,4,2024-12-02
+562,R0174,Customer Service,2,2024-09-04
+563,R0108,Value for Money,1,2024-06-17
+564,R0038,Ease of Use,4,2024-05-05
+565,R0134,Value for Money,3,2024-12-18
+566,R0228,Value for Money,4,2024-12-24
+567,R0133,Delivery Speed,3,2024-10-31
+568,R0019,Customer Service,2,2024-09-24
+569,R0148,Product Quality,2,2024-07-08
+570,R0289,Value for Money,3,2024-06-06
+571,R0082,Delivery Speed,3,2024-08-31
+572,R0226,Overall Satisfaction,3,2024-03-20
+573,R0066,Customer Service,5,2024-05-29
+574,R0197,Value for Money,2,2024-01-15
+575,R0109,Delivery Speed,3,2024-03-16
+576,R0300,Product Quality,3,2024-07-05
+577,R0261,Overall Satisfaction,5,2024-07-26
+578,R0245,Delivery Speed,2,2024-06-25
+579,R0080,Delivery Speed,5,2024-06-09
+580,R0268,Value for Money,4,2024-09-05
+581,R0087,Delivery Speed,4,2024-03-30
+582,R0248,Ease of Use,1,2024-12-08
+583,R0034,Value for Money,2,2024-06-07
+584,R0106,Customer Service,2,2024-05-22
+585,R0062,Overall Satisfaction,2,2024-07-01
+586,R0256,Ease of Use,5,2024-11-22
+587,R0007,Overall Satisfaction,5,2024-04-26
+588,R0104,Value for Money,1,2024-07-23
+589,R0051,Value for Money,5,2024-02-04
+590,R0139,Delivery Speed,5,2024-10-02
+591,R0041,Product Quality,4,2024-10-17
+592,R0268,Customer Service,2,2024-05-11
+593,R0094,Overall Satisfaction,2,2024-04-26
+594,R0234,Customer Service,1,2024-11-07
+595,R0137,Delivery Speed,3,2024-02-16
+596,R0098,Overall Satisfaction,1,2024-03-08
+597,R0268,Value for Money,1,2024-04-16
+598,R0117,Customer Service,5,2024-10-24
+599,R0245,Ease of Use,1,2024-10-01
+600,R0027,Value for Money,1,2024-04-10
+601,R0245,Product Quality,4,2024-02-12
+602,R0244,Customer Service,1,2024-10-04
+603,R0111,Delivery Speed,4,2024-06-02
+604,R0292,Product Quality,5,2024-08-08
+605,R0058,Overall Satisfaction,4,2024-11-25
+606,R0100,Delivery Speed,5,2024-08-21
+607,R0001,Value for Money,4,2024-11-03
+608,R0139,Ease of Use,2,2024-06-17
+609,R0260,Ease of Use,5,2024-05-25
+610,R0154,Value for Money,5,2024-05-07
+611,R0175,Value for Money,5,2024-09-14
+612,R0159,Overall Satisfaction,4,2024-02-27
+613,R0094,Ease of Use,1,2024-06-12
+614,R0261,Ease of Use,4,2024-03-24
+615,R0092,Product Quality,4,2024-12-10
+616,R0156,Product Quality,4,2024-06-24
+617,R0276,Customer Service,2,2024-02-25
+618,R0119,Customer Service,3,2024-09-13
+619,R0157,Value for Money,5,2024-08-29
+620,R0053,Overall Satisfaction,3,2024-11-08
+621,R0108,Delivery Speed,2,2024-06-14
+622,R0081,Customer Service,4,2024-03-28
+623,R0081,Delivery Speed,2,2024-06-15
+624,R0265,Ease of Use,5,2024-08-01
+625,R0138,Customer Service,3,2024-08-29
+626,R0156,Value for Money,2,2024-06-05
+627,R0171,Overall Satisfaction,3,2024-06-10
+628,R0231,Value for Money,4,2024-10-15
+629,R0202,Ease of Use,1,2024-07-25
+630,R0029,Ease of Use,3,2024-11-26
+631,R0072,Ease of Use,3,2024-01-10
+632,R0104,Customer Service,3,2024-05-30
+633,R0192,Product Quality,3,2024-08-06
+634,R0196,Value for Money,5,2024-10-13
+635,R0103,Customer Service,5,2024-09-14
+636,R0226,Value for Money,1,2024-02-08
+637,R0125,Customer Service,3,2024-09-02
+638,R0241,Product Quality,4,2024-12-18
+639,R0250,Customer Service,3,2024-11-06
+640,R0193,Product Quality,1,2024-01-29
+641,R0176,Value for Money,5,2024-07-08
+642,R0225,Value for Money,1,2024-08-29
+643,R0069,Overall Satisfaction,1,2024-06-15
+644,R0212,Customer Service,2,2024-10-28
+645,R0154,Delivery Speed,2,2024-10-14
+646,R0046,Ease of Use,2,2024-06-16
+647,R0294,Delivery Speed,3,2024-10-12
+648,R0272,Value for Money,1,2024-03-12
+649,R0035,Overall Satisfaction,3,2024-07-03
+650,R0229,Overall Satisfaction,2,2024-04-04
+651,R0165,Ease of Use,2,2024-08-23
+652,R0186,Value for Money,2,2024-12-12
+653,R0133,Value for Money,5,2024-01-12
+654,R0072,Product Quality,4,2024-08-06
+655,R0203,Ease of Use,1,2024-09-27
+656,R0031,Delivery Speed,3,2024-01-09
+657,R0290,Ease of Use,1,2024-09-15
+658,R0168,Delivery Speed,4,2024-05-24
+659,R0295,Value for Money,1,2024-02-08
+660,R0290,Product Quality,5,2024-02-27
+661,R0273,Customer Service,5,2024-02-14
+662,R0294,Ease of Use,5,2024-11-28
+663,R0098,Product Quality,4,2024-05-21
+664,R0239,Ease of Use,2,2024-11-29
+665,R0170,Product Quality,2,2024-11-27
+666,R0295,Value for Money,4,2024-09-27
+667,R0222,Product Quality,4,2024-10-21
+668,R0151,Product Quality,5,2024-07-18
+669,R0010,Product Quality,2,2024-06-14
+670,R0219,Customer Service,3,2024-04-24
+671,R0300,Overall Satisfaction,3,2024-09-29
+672,R0235,Overall Satisfaction,2,2024-10-21
+673,R0182,Overall Satisfaction,5,2024-03-19
+674,R0097,Customer Service,2,2024-06-06
+675,R0093,Product Quality,1,2024-09-30
+676,R0021,Customer Service,5,2024-06-27
+677,R0036,Value for Money,3,2024-04-27
+678,R0107,Customer Service,3,2024-03-24
+679,R0218,Value for Money,2,2024-04-21
+680,R0182,Product Quality,2,2024-08-13
+681,R0064,Ease of Use,1,2024-08-15
+682,R0107,Ease of Use,1,2024-08-16
+683,R0225,Ease of Use,2,2024-04-15
+684,R0195,Delivery Speed,1,2024-02-17
+685,R0090,Delivery Speed,5,2024-09-21
+686,R0063,Customer Service,2,2024-03-02
+687,R0251,Overall Satisfaction,5,2024-07-02
+688,R0163,Ease of Use,2,2024-04-17
+689,R0047,Delivery Speed,3,2024-09-01
+690,R0131,Delivery Speed,1,2024-08-21
+691,R0009,Product Quality,4,2024-08-03
+692,R0205,Product Quality,3,2024-07-03
+693,R0159,Product Quality,4,2024-11-29
+694,R0154,Customer Service,1,2024-11-29
+695,R0200,Ease of Use,1,2024-05-20
+696,R0166,Product Quality,2,2024-05-07
+697,R0091,Delivery Speed,1,2024-03-06
+698,R0266,Customer Service,2,2024-12-21
+699,R0241,Product Quality,1,2024-11-01
+700,R0108,Overall Satisfaction,3,2024-07-09
+701,R0213,Customer Service,4,2024-03-29
+702,R0090,Delivery Speed,2,2024-12-08
+703,R0093,Value for Money,1,2024-03-24
+704,R0016,Ease of Use,2,2024-06-05
+705,R0207,Overall Satisfaction,3,2024-05-15
+706,R0165,Product Quality,1,2024-06-18
+707,R0015,Ease of Use,1,2024-03-14
+708,R0209,Product Quality,5,2024-07-12
+709,R0269,Customer Service,2,2024-02-21
+710,R0008,Value for Money,2,2024-02-17
+711,R0215,Product Quality,1,2024-08-31
+712,R0238,Ease of Use,5,2024-08-13
+713,R0069,Delivery Speed,1,2024-06-08
+714,R0244,Ease of Use,3,2024-03-06
+715,R0166,Overall Satisfaction,5,2024-07-06
+716,R0050,Ease of Use,4,2024-10-19
+717,R0101,Customer Service,2,2024-09-20
+718,R0067,Customer Service,2,2024-12-03
+719,R0043,Overall Satisfaction,1,2024-07-25
+720,R0145,Delivery Speed,1,2024-05-07
+721,R0116,Value for Money,2,2024-12-03
+722,R0155,Value for Money,4,2024-12-08
+723,R0267,Delivery Speed,5,2024-05-16
+724,R0068,Value for Money,4,2024-07-10
+725,R0075,Delivery Speed,1,2024-07-16
+726,R0025,Customer Service,2,2024-01-08
+727,R0074,Overall Satisfaction,1,2024-05-01
+728,R0083,Ease of Use,3,2024-01-06
+729,R0293,Ease of Use,4,2024-06-25
+730,R0097,Overall Satisfaction,5,2024-07-26
+731,R0232,Customer Service,4,2024-11-14
+732,R0135,Delivery Speed,4,2024-03-01
+733,R0144,Overall Satisfaction,5,2024-06-21
+734,R0173,Customer Service,3,2024-06-23
+735,R0250,Delivery Speed,4,2024-12-05
+736,R0050,Overall Satisfaction,3,2024-09-22
+737,R0135,Product Quality,3,2024-08-06
+738,R0014,Delivery Speed,2,2024-02-18
+739,R0117,Ease of Use,1,2024-03-02
+740,R0282,Overall Satisfaction,3,2024-03-05
+741,R0178,Value for Money,4,2024-08-11
+742,R0284,Product Quality,5,2024-04-03
+743,R0204,Delivery Speed,2,2024-03-13
+744,R0114,Product Quality,2,2024-06-30
+745,R0270,Delivery Speed,2,2024-10-15
+746,R0272,Delivery Speed,1,2024-09-29
+747,R0186,Delivery Speed,2,2024-12-21
+748,R0272,Customer Service,3,2024-03-22
+749,R0052,Overall Satisfaction,2,2024-11-21
+750,R0116,Overall Satisfaction,2,2024-10-03
+751,R0218,Customer Service,3,2024-01-26
+752,R0206,Value for Money,4,2024-09-24
+753,R0216,Ease of Use,4,2024-06-13
+754,R0070,Overall Satisfaction,3,2024-01-01
+755,R0039,Value for Money,5,2024-12-08
+756,R0160,Customer Service,5,2024-10-31
+757,R0035,Product Quality,4,2024-03-12
+758,R0074,Ease of Use,2,2024-05-04
+759,R0201,Customer Service,4,2024-07-19
+760,R0100,Customer Service,3,2024-02-06
+761,R0116,Value for Money,2,2024-07-24
+762,R0064,Overall Satisfaction,5,2024-12-10
+763,R0078,Customer Service,4,2024-03-13
+764,R0142,Value for Money,1,2024-11-22
+765,R0061,Delivery Speed,3,2024-09-25
+766,R0053,Overall Satisfaction,5,2024-08-29
+767,R0119,Overall Satisfaction,4,2024-06-01
+768,R0064,Delivery Speed,5,2024-08-20
+769,R0079,Product Quality,3,2024-05-19
+770,R0021,Ease of Use,3,2024-02-27
+771,R0239,Ease of Use,5,2024-03-27
+772,R0250,Value for Money,2,2024-09-24
+773,R0053,Product Quality,5,2024-11-02
+774,R0186,Customer Service,4,2024-12-25
+775,R0222,Ease of Use,1,2024-11-22
+776,R0054,Value for Money,3,2024-05-08
+777,R0261,Value for Money,4,2024-12-07
+778,R0129,Value for Money,1,2024-01-07
+779,R0052,Overall Satisfaction,4,2024-05-04
+780,R0300,Ease of Use,2,2024-10-29
+781,R0223,Overall Satisfaction,3,2024-02-23
+782,R0250,Delivery Speed,5,2024-10-16
+783,R0193,Delivery Speed,5,2024-12-07
+784,R0196,Product Quality,5,2024-02-25
+785,R0051,Delivery Speed,1,2024-03-01
+786,R0123,Value for Money,5,2024-12-10
+787,R0216,Ease of Use,1,2024-06-26
+788,R0226,Ease of Use,5,2024-09-24
+789,R0020,Ease of Use,4,2024-12-08
+790,R0014,Customer Service,5,2024-04-02
+791,R0013,Overall Satisfaction,3,2024-02-20
+792,R0150,Ease of Use,1,2024-08-21
+793,R0130,Value for Money,3,2024-06-29
+794,R0128,Value for Money,4,2024-01-25
+795,R0167,Ease of Use,3,2024-03-23
+796,R0108,Delivery Speed,5,2024-11-27
+797,R0165,Overall Satisfaction,4,2024-06-27
+798,R0089,Ease of Use,1,2024-06-19
+799,R0181,Delivery Speed,5,2024-04-26
+800,R0163,Value for Money,1,2024-02-16
+801,R0208,Value for Money,5,2024-09-11
+802,R0096,Ease of Use,2,2024-05-15
+803,R0249,Value for Money,3,2024-08-12
+804,R0186,Customer Service,2,2024-06-14
+805,R0009,Product Quality,2,2024-10-24
+806,R0159,Delivery Speed,5,2024-05-31
+807,R0287,Delivery Speed,2,2024-07-22
+808,R0039,Customer Service,1,2024-02-16
+809,R0208,Value for Money,2,2024-06-23
+810,R0273,Value for Money,4,2024-03-09
+811,R0198,Product Quality,3,2024-11-10
+812,R0292,Product Quality,3,2024-04-25
+813,R0227,Product Quality,2,2024-10-07
+814,R0080,Overall Satisfaction,3,2024-01-14
+815,R0254,Customer Service,2,2024-05-05
+816,R0116,Ease of Use,2,2024-03-15
+817,R0007,Value for Money,2,2024-01-11
+818,R0248,Ease of Use,4,2024-10-11
+819,R0283,Delivery Speed,2,2024-07-30
+820,R0096,Delivery Speed,5,2024-07-23
+821,R0295,Ease of Use,3,2024-12-27
+822,R0187,Value for Money,4,2024-07-08
+823,R0187,Customer Service,3,2024-10-03
+824,R0183,Product Quality,2,2024-06-13
+825,R0127,Delivery Speed,5,2024-03-06
+826,R0050,Delivery Speed,4,2024-10-01
+827,R0161,Product Quality,5,2024-04-26
+828,R0179,Overall Satisfaction,5,2024-04-24
+829,R0239,Value for Money,5,2024-01-28
+830,R0236,Delivery Speed,4,2024-09-11
+831,R0224,Product Quality,2,2024-01-12
+832,R0287,Ease of Use,5,2024-11-28
+833,R0030,Value for Money,4,2024-12-27
+834,R0076,Product Quality,3,2024-02-03
+835,R0142,Delivery Speed,3,2024-01-15
+836,R0252,Ease of Use,2,2024-07-21
+837,R0111,Overall Satisfaction,4,2024-06-07
+838,R0276,Overall Satisfaction,3,2024-06-18
+839,R0120,Delivery Speed,5,2024-07-27
+840,R0074,Delivery Speed,5,2024-06-10
+841,R0004,Delivery Speed,1,2024-12-30
+842,R0184,Delivery Speed,1,2024-02-06
+843,R0033,Delivery Speed,4,2024-03-23
+844,R0100,Customer Service,5,2024-04-01
+845,R0093,Product Quality,4,2024-03-02
+846,R0170,Product Quality,1,2024-07-25
+847,R0294,Overall Satisfaction,4,2024-07-27
+848,R0196,Overall Satisfaction,4,2024-03-11
+849,R0176,Customer Service,1,2024-06-08
+850,R0182,Customer Service,4,2024-05-09
+851,R0256,Product Quality,2,2024-05-13
+852,R0206,Customer Service,2,2024-06-28
+853,R0042,Value for Money,4,2024-02-18
+854,R0269,Value for Money,1,2024-11-06
+855,R0032,Delivery Speed,1,2024-12-15
+856,R0192,Product Quality,2,2024-01-01
+857,R0271,Product Quality,1,2024-06-16
+858,R0197,Value for Money,1,2024-10-17
+859,R0289,Value for Money,1,2024-03-29
+860,R0097,Overall Satisfaction,5,2024-09-12
+861,R0094,Delivery Speed,2,2024-06-25
+862,R0050,Overall Satisfaction,2,2024-11-03
+863,R0192,Delivery Speed,2,2024-08-13
+864,R0091,Delivery Speed,2,2024-08-15
+865,R0016,Delivery Speed,1,2024-10-02
+866,R0062,Value for Money,3,2024-02-25
+867,R0179,Overall Satisfaction,2,2024-10-29
+868,R0266,Customer Service,1,2024-09-11
+869,R0099,Delivery Speed,2,2024-11-09
+870,R0173,Ease of Use,5,2024-07-18
+871,R0230,Product Quality,5,2024-02-03
+872,R0174,Customer Service,3,2024-03-13
+873,R0123,Ease of Use,2,2024-07-25
+874,R0022,Value for Money,1,2024-09-02
+875,R0051,Delivery Speed,1,2024-12-05
+876,R0165,Delivery Speed,5,2024-10-21
+877,R0273,Delivery Speed,4,2024-10-06
+878,R0103,Value for Money,3,2024-03-10
+879,R0230,Customer Service,3,2024-11-16
+880,R0219,Ease of Use,4,2024-07-12
+881,R0043,Ease of Use,1,2024-09-08
+882,R0054,Value for Money,5,2024-09-04
+883,R0200,Value for Money,4,2024-05-27
+884,R0029,Delivery Speed,1,2024-04-06
+885,R0046,Value for Money,5,2024-10-19
+886,R0278,Customer Service,3,2024-01-25
+887,R0274,Product Quality,1,2024-06-04
+888,R0198,Customer Service,3,2024-10-02
+889,R0027,Overall Satisfaction,4,2024-09-17
+890,R0269,Customer Service,5,2024-07-08
+891,R0023,Customer Service,1,2024-08-22
+892,R0096,Customer Service,3,2024-02-07
+893,R0105,Ease of Use,2,2024-10-19
+894,R0008,Product Quality,4,2024-04-15
+895,R0060,Value for Money,1,2024-05-03
+896,R0170,Customer Service,4,2024-04-26
+897,R0191,Ease of Use,1,2024-03-20
+898,R0073,Delivery Speed,2,2024-11-14
+899,R0133,Ease of Use,5,2024-12-29
+900,R0159,Customer Service,3,2024-07-28
+901,R0006,Ease of Use,4,2024-07-12
+902,R0143,Customer Service,4,2024-05-09
+903,R0006,Overall Satisfaction,4,2024-01-22
+904,R0230,Customer Service,2,2024-02-06
+905,R0059,Product Quality,2,2024-09-07
+906,R0035,Customer Service,5,2024-06-16
+907,R0086,Overall Satisfaction,3,2024-12-14
+908,R0204,Value for Money,5,2024-05-26
+909,R0146,Delivery Speed,3,2024-02-25
+910,R0062,Ease of Use,2,2024-02-14
+911,R0285,Ease of Use,2,2024-03-06
+912,R0266,Product Quality,4,2024-09-02
+913,R0056,Product Quality,2,2024-01-20
+914,R0199,Customer Service,1,2024-12-21
+915,R0035,Customer Service,4,2024-11-11
+916,R0190,Ease of Use,2,2024-08-14
+917,R0022,Overall Satisfaction,5,2024-04-06
+918,R0108,Overall Satisfaction,3,2024-01-23
+919,R0292,Product Quality,2,2024-06-23
+920,R0129,Customer Service,3,2024-08-24
+921,R0103,Overall Satisfaction,1,2024-07-19
+922,R0195,Customer Service,3,2024-09-15
+923,R0033,Customer Service,2,2024-11-17
+924,R0100,Value for Money,4,2024-01-13
+925,R0226,Product Quality,2,2024-11-04
+926,R0271,Value for Money,5,2024-03-23
+927,R0074,Delivery Speed,3,2024-01-30
+928,R0058,Overall Satisfaction,1,2024-07-28
+929,R0266,Delivery Speed,1,2024-11-12
+930,R0087,Overall Satisfaction,3,2024-07-08
+931,R0020,Customer Service,1,2024-12-16
+932,R0120,Product Quality,4,2024-01-02
+933,R0289,Product Quality,4,2024-10-17
+934,R0062,Customer Service,1,2024-10-15
+935,R0280,Product Quality,1,2024-11-28
+936,R0244,Delivery Speed,4,2024-05-24
+937,R0199,Ease of Use,2,2024-12-15
+938,R0252,Delivery Speed,3,2024-06-25
+939,R0233,Ease of Use,2,2024-08-20
+940,R0275,Value for Money,2,2024-03-14
+941,R0147,Overall Satisfaction,2,2024-07-17
+942,R0132,Customer Service,3,2024-01-11
+943,R0222,Value for Money,2,2024-01-22
+944,R0236,Ease of Use,5,2024-04-26
+945,R0206,Customer Service,3,2024-04-16
+946,R0208,Ease of Use,4,2024-08-23
+947,R0232,Ease of Use,4,2024-08-25
+948,R0187,Value for Money,3,2024-12-06
+949,R0205,Customer Service,5,2024-04-15
+950,R0126,Customer Service,2,2024-10-18
+951,R0100,Overall Satisfaction,5,2024-07-05
+952,R0238,Delivery Speed,4,2024-07-10
+953,R0158,Customer Service,4,2024-03-13
+954,R0241,Product Quality,5,2024-11-29
+955,R0232,Value for Money,5,2024-07-30
+956,R0027,Customer Service,2,2024-06-21
+957,R0283,Customer Service,4,2024-09-21
+958,R0222,Customer Service,4,2024-01-13
+959,R0106,Ease of Use,5,2024-12-07
+960,R0089,Value for Money,5,2024-03-20
+961,R0206,Delivery Speed,2,2024-03-18
+962,R0211,Value for Money,4,2024-05-05
+963,R0067,Ease of Use,3,2024-11-08
+964,R0272,Overall Satisfaction,1,2024-12-12
+965,R0050,Product Quality,1,2024-01-11
+966,R0005,Product Quality,3,2024-02-16
+967,R0161,Value for Money,2,2024-03-18
+968,R0110,Value for Money,1,2024-07-04
+969,R0162,Delivery Speed,4,2024-08-31
+970,R0174,Overall Satisfaction,2,2024-05-28
+971,R0156,Product Quality,5,2024-03-22
+972,R0078,Customer Service,4,2024-03-01
+973,R0273,Delivery Speed,4,2024-03-22
+974,R0288,Delivery Speed,4,2024-12-24
+975,R0144,Overall Satisfaction,2,2024-02-28
+976,R0076,Ease of Use,1,2024-01-21
+977,R0070,Ease of Use,4,2024-07-13
+978,R0245,Customer Service,1,2024-10-27
+979,R0186,Ease of Use,5,2024-10-19
+980,R0094,Ease of Use,1,2024-09-08
+981,R0291,Value for Money,3,2024-02-13
+982,R0190,Product Quality,2,2024-03-10
+983,R0154,Overall Satisfaction,4,2024-03-17
+984,R0057,Overall Satisfaction,2,2024-11-20
+985,R0165,Value for Money,1,2024-06-30
+986,R0254,Product Quality,5,2024-10-29
+987,R0214,Customer Service,3,2024-05-09
+988,R0099,Delivery Speed,3,2024-09-23
+989,R0013,Ease of Use,3,2024-03-26
+990,R0027,Overall Satisfaction,2,2024-12-24
+991,R0157,Value for Money,4,2024-08-09
+992,R0173,Product Quality,3,2024-12-02
+993,R0235,Overall Satisfaction,1,2024-06-19
+994,R0283,Product Quality,2,2024-11-15
+995,R0006,Overall Satisfaction,5,2024-01-10
+996,R0155,Ease of Use,2,2024-08-28
+997,R0195,Ease of Use,1,2024-12-21
+998,R0139,Overall Satisfaction,4,2024-06-20
+999,R0188,Delivery Speed,4,2024-07-27
+1000,R0176,Customer Service,3,2024-05-13
+1001,R0283,Customer Service,4,2024-05-24
+1002,R0137,Product Quality,4,2024-12-09
+1003,R0044,Overall Satisfaction,3,2024-09-17
+1004,R0059,Product Quality,2,2024-02-24
+1005,R0125,Product Quality,2,2024-07-10
+1006,R0034,Customer Service,5,2024-05-01
+1007,R0045,Product Quality,1,2024-01-07
+1008,R0175,Delivery Speed,1,2024-03-20
+1009,R0299,Overall Satisfaction,4,2024-11-19
+1010,R0170,Overall Satisfaction,1,2024-11-09
+1011,R0063,Product Quality,2,2024-04-12
+1012,R0042,Customer Service,1,2024-02-16
+1013,R0002,Ease of Use,2,2024-04-17
+1014,R0026,Overall Satisfaction,1,2024-07-17
+1015,R0165,Overall Satisfaction,5,2024-04-08
+1016,R0244,Customer Service,4,2024-11-05
+1017,R0096,Ease of Use,3,2024-12-12
+1018,R0032,Ease of Use,2,2024-09-16
+1019,R0004,Product Quality,2,2024-04-11
+1020,R0135,Customer Service,5,2024-10-21
+1021,R0097,Overall Satisfaction,1,2024-12-25
+1022,R0039,Customer Service,2,2024-06-13
+1023,R0117,Customer Service,4,2024-11-21
+1024,R0152,Delivery Speed,4,2024-09-16
+1025,R0147,Customer Service,4,2024-05-08
+1026,R0177,Overall Satisfaction,2,2024-09-28
+1027,R0004,Overall Satisfaction,3,2024-05-24
+1028,R0083,Product Quality,1,2024-02-02
+1029,R0253,Value for Money,1,2024-11-13
+1030,R0221,Product Quality,4,2024-01-07
+1031,R0046,Value for Money,5,2024-07-04
+1032,R0034,Delivery Speed,3,2024-06-12
+1033,R0231,Value for Money,4,2024-07-08
+1034,R0256,Value for Money,4,2024-06-09
+1035,R0280,Overall Satisfaction,2,2024-04-26
+1036,R0088,Product Quality,3,2024-07-28
+1037,R0239,Ease of Use,3,2024-07-25
+1038,R0238,Ease of Use,4,2024-03-19
+1039,R0073,Overall Satisfaction,4,2024-08-02
+1040,R0013,Customer Service,3,2024-07-14
+1041,R0077,Ease of Use,3,2024-01-08
+1042,R0223,Overall Satisfaction,2,2024-03-18
+1043,R0095,Customer Service,1,2024-01-09
+1044,R0201,Ease of Use,2,2024-05-18
+1045,R0173,Customer Service,1,2024-09-11
+1046,R0201,Customer Service,3,2024-10-08
+1047,R0143,Customer Service,2,2024-09-06
+1048,R0256,Ease of Use,4,2024-03-22
+1049,R0250,Overall Satisfaction,1,2024-06-29
+1050,R0055,Product Quality,3,2024-12-27
+1051,R0245,Delivery Speed,3,2024-03-13
+1052,R0121,Delivery Speed,4,2024-04-20
+1053,R0214,Ease of Use,1,2024-06-06
+1054,R0082,Value for Money,3,2024-12-16
+1055,R0220,Delivery Speed,1,2024-11-02
+1056,R0067,Delivery Speed,3,2024-06-23
+1057,R0192,Overall Satisfaction,2,2024-07-08
+1058,R0290,Ease of Use,1,2024-01-10
+1059,R0229,Value for Money,4,2024-05-06
+1060,R0108,Value for Money,2,2024-06-09
+1061,R0244,Value for Money,5,2024-06-23
+1062,R0296,Value for Money,2,2024-03-06
+1063,R0165,Overall Satisfaction,5,2024-04-27
+1064,R0122,Customer Service,4,2024-10-15
+1065,R0241,Product Quality,3,2024-09-18
+1066,R0049,Ease of Use,2,2024-11-15
+1067,R0165,Product Quality,5,2024-09-08
+1068,R0237,Delivery Speed,3,2024-02-04
+1069,R0231,Ease of Use,2,2024-05-21
+1070,R0074,Value for Money,1,2024-08-30
+1071,R0127,Customer Service,1,2024-06-16
+1072,R0183,Delivery Speed,4,2024-10-14
+1073,R0075,Value for Money,3,2024-09-05
+1074,R0161,Delivery Speed,5,2024-04-12
+1075,R0097,Delivery Speed,5,2024-03-02
+1076,R0152,Overall Satisfaction,1,2024-04-09
+1077,R0269,Delivery Speed,3,2024-05-07
+1078,R0193,Ease of Use,1,2024-06-01
+1079,R0134,Customer Service,2,2024-05-31
+1080,R0013,Product Quality,4,2024-02-10
+1081,R0189,Ease of Use,2,2024-08-16
+1082,R0196,Delivery Speed,2,2024-10-31
+1083,R0228,Value for Money,1,2024-05-20
+1084,R0234,Value for Money,2,2024-12-27
+1085,R0233,Value for Money,2,2024-10-27
+1086,R0066,Value for Money,1,2024-03-04
+1087,R0027,Value for Money,5,2024-09-01
+1088,R0189,Customer Service,3,2024-07-11
+1089,R0282,Product Quality,4,2024-11-26
+1090,R0166,Ease of Use,2,2024-06-16
+1091,R0018,Overall Satisfaction,3,2024-06-14
+1092,R0290,Delivery Speed,1,2024-09-18
+1093,R0029,Overall Satisfaction,2,2024-09-11
+1094,R0033,Product Quality,2,2024-03-18
+1095,R0053,Delivery Speed,2,2024-12-31
+1096,R0121,Product Quality,3,2024-07-01
+1097,R0174,Product Quality,4,2024-06-24
+1098,R0036,Ease of Use,4,2024-10-06
+1099,R0032,Delivery Speed,4,2024-11-24
+1100,R0203,Overall Satisfaction,2,2024-10-07
+1101,R0046,Customer Service,4,2024-03-22
+1102,R0060,Value for Money,2,2024-05-02
+1103,R0029,Overall Satisfaction,5,2024-01-13
+1104,R0027,Overall Satisfaction,2,2024-09-02
+1105,R0022,Product Quality,2,2024-04-29
+1106,R0079,Customer Service,5,2024-06-12
+1107,R0166,Ease of Use,4,2024-01-10
+1108,R0262,Value for Money,4,2024-01-13
+1109,R0213,Delivery Speed,1,2024-01-21
+1110,R0103,Delivery Speed,1,2024-04-16
+1111,R0118,Delivery Speed,4,2024-01-04
+1112,R0179,Overall Satisfaction,1,2024-10-24
+1113,R0189,Delivery Speed,2,2024-07-22
+1114,R0109,Customer Service,5,2024-01-04
+1115,R0145,Value for Money,5,2024-07-10
+1116,R0262,Ease of Use,2,2024-04-13
+1117,R0132,Value for Money,2,2024-06-16
+1118,R0134,Ease of Use,1,2024-11-29
+1119,R0147,Ease of Use,1,2024-08-16
+1120,R0263,Ease of Use,2,2024-04-04
+1121,R0058,Product Quality,4,2024-02-24
+1122,R0106,Customer Service,5,2024-06-01
+1123,R0110,Delivery Speed,3,2024-07-03
+1124,R0238,Product Quality,2,2024-10-17
+1125,R0130,Customer Service,5,2024-01-13
+1126,R0159,Product Quality,2,2024-04-02
+1127,R0171,Customer Service,4,2024-07-17
+1128,R0168,Ease of Use,4,2024-11-04
+1129,R0085,Ease of Use,4,2024-10-14
+1130,R0147,Overall Satisfaction,2,2024-02-09
+1131,R0055,Product Quality,1,2024-11-13
+1132,R0026,Product Quality,3,2024-01-01
+1133,R0156,Ease of Use,4,2024-10-17
+1134,R0082,Product Quality,1,2024-07-07
+1135,R0111,Overall Satisfaction,2,2024-08-04
+1136,R0191,Product Quality,3,2024-08-01
+1137,R0012,Value for Money,1,2024-03-02
+1138,R0155,Customer Service,3,2024-08-21
+1139,R0105,Product Quality,1,2024-08-31
+1140,R0090,Product Quality,1,2024-02-14
+1141,R0121,Ease of Use,5,2024-12-21
+1142,R0286,Value for Money,3,2024-01-12
+1143,R0289,Ease of Use,1,2024-12-20
+1144,R0079,Customer Service,1,2024-07-22
+1145,R0194,Product Quality,1,2024-09-11
+1146,R0222,Ease of Use,4,2024-03-30
+1147,R0007,Delivery Speed,1,2024-12-02
+1148,R0033,Value for Money,3,2024-09-02
+1149,R0104,Value for Money,1,2024-12-09
+1150,R0140,Customer Service,2,2024-12-19
+1151,R0230,Product Quality,1,2024-10-15
+1152,R0223,Delivery Speed,4,2024-04-28
+1153,R0025,Value for Money,3,2024-02-15
+1154,R0189,Ease of Use,4,2024-10-05
+1155,R0084,Value for Money,3,2024-10-09
+1156,R0277,Customer Service,3,2024-11-23
+1157,R0178,Ease of Use,2,2024-10-24
+1158,R0206,Value for Money,4,2024-06-26
+1159,R0150,Customer Service,4,2024-12-11
+1160,R0278,Ease of Use,3,2024-08-09
+1161,R0045,Delivery Speed,3,2024-03-11
+1162,R0171,Value for Money,4,2024-08-18
+1163,R0277,Overall Satisfaction,2,2024-01-22
+1164,R0176,Delivery Speed,2,2024-11-02
+1165,R0175,Delivery Speed,2,2024-10-20
+1166,R0072,Customer Service,4,2024-02-11
+1167,R0215,Product Quality,5,2024-10-05
+1168,R0022,Delivery Speed,1,2024-10-21
+1169,R0003,Value for Money,5,2024-12-06
+1170,R0085,Overall Satisfaction,2,2024-12-16
+1171,R0172,Ease of Use,1,2024-06-15
+1172,R0192,Delivery Speed,4,2024-09-24
+1173,R0202,Customer Service,5,2024-06-28
+1174,R0209,Overall Satisfaction,1,2024-04-25
+1175,R0233,Customer Service,2,2024-01-01
+1176,R0259,Product Quality,4,2024-03-14
+1177,R0037,Overall Satisfaction,3,2024-05-03
+1178,R0208,Value for Money,2,2024-10-04
+1179,R0050,Customer Service,1,2024-01-09
+1180,R0016,Value for Money,1,2024-04-16
+1181,R0096,Overall Satisfaction,1,2024-02-04
+1182,R0130,Ease of Use,1,2024-08-04
+1183,R0184,Overall Satisfaction,4,2024-01-06
+1184,R0154,Value for Money,4,2024-07-10
+1185,R0107,Value for Money,4,2024-11-13
+1186,R0245,Overall Satisfaction,5,2024-10-30
+1187,R0022,Overall Satisfaction,4,2024-01-17
+1188,R0256,Value for Money,3,2024-01-16
+1189,R0131,Overall Satisfaction,4,2024-07-15
+1190,R0276,Product Quality,4,2024-12-18
+1191,R0180,Overall Satisfaction,4,2024-01-14
+1192,R0195,Product Quality,4,2024-02-14
+1193,R0244,Value for Money,5,2024-02-17
+1194,R0043,Customer Service,1,2024-08-20
+1195,R0195,Overall Satisfaction,3,2024-05-03
+1196,R0241,Product Quality,3,2024-06-07
+1197,R0283,Overall Satisfaction,4,2024-04-20
+1198,R0211,Product Quality,1,2024-12-16
+1199,R0066,Delivery Speed,1,2024-09-16
+1200,R0228,Product Quality,5,2024-04-02
+1201,R0238,Value for Money,5,2024-07-17
+1202,R0275,Overall Satisfaction,1,2024-05-09
+1203,R0300,Product Quality,5,2024-09-08
+1204,R0090,Ease of Use,3,2024-03-24
+1205,R0021,Value for Money,5,2024-06-18
+1206,R0219,Product Quality,2,2024-02-09
+1207,R0102,Ease of Use,4,2024-05-07
+1208,R0003,Ease of Use,2,2024-07-11
+1209,R0023,Value for Money,2,2024-04-24
+1210,R0175,Overall Satisfaction,5,2024-09-09
+1211,R0118,Overall Satisfaction,4,2024-12-24
+1212,R0060,Product Quality,2,2024-03-12
+1213,R0068,Overall Satisfaction,5,2024-10-15
+1214,R0013,Ease of Use,4,2024-07-06
+1215,R0221,Product Quality,5,2024-12-21
+1216,R0189,Overall Satisfaction,5,2024-02-24
+1217,R0215,Ease of Use,1,2024-05-22
+1218,R0224,Delivery Speed,4,2024-02-04
+1219,R0034,Product Quality,3,2024-12-06
+1220,R0184,Ease of Use,4,2024-09-16
+1221,R0125,Customer Service,1,2024-01-13
+1222,R0083,Product Quality,5,2024-04-05
+1223,R0101,Ease of Use,5,2024-07-10
+1224,R0286,Value for Money,4,2024-02-04
+1225,R0095,Delivery Speed,4,2024-02-29
+1226,R0287,Product Quality,2,2024-04-13
+1227,R0076,Value for Money,2,2024-12-25
+1228,R0201,Product Quality,3,2024-01-31
+1229,R0262,Product Quality,1,2024-09-25
+1230,R0137,Delivery Speed,5,2024-01-05
+1231,R0156,Customer Service,3,2024-05-04
+1232,R0246,Customer Service,2,2024-12-05
+1233,R0244,Ease of Use,4,2024-04-19
+1234,R0051,Customer Service,4,2024-10-10
+1235,R0278,Product Quality,2,2024-12-07
+1236,R0066,Delivery Speed,2,2024-02-04
+1237,R0245,Delivery Speed,1,2024-10-16
+1238,R0085,Customer Service,4,2024-11-16
+1239,R0186,Customer Service,3,2024-07-27
+1240,R0031,Ease of Use,1,2024-06-13
+1241,R0203,Product Quality,2,2024-12-09
+1242,R0192,Ease of Use,4,2024-11-06
+1243,R0116,Overall Satisfaction,2,2024-09-02
+1244,R0261,Ease of Use,2,2024-05-03
+1245,R0267,Value for Money,4,2024-02-08
+1246,R0222,Delivery Speed,1,2024-08-01
+1247,R0034,Delivery Speed,1,2024-12-26
+1248,R0075,Overall Satisfaction,1,2024-07-08
+1249,R0143,Ease of Use,3,2024-08-25
+1250,R0175,Value for Money,5,2024-11-05
+1251,R0168,Value for Money,4,2024-09-18
+1252,R0250,Ease of Use,5,2024-12-21
+1253,R0287,Overall Satisfaction,5,2024-11-02
+1254,R0294,Customer Service,4,2024-06-21
+1255,R0047,Overall Satisfaction,4,2024-06-24
+1256,R0273,Delivery Speed,5,2024-11-19
+1257,R0033,Value for Money,3,2024-05-18
+1258,R0148,Delivery Speed,5,2024-04-26
+1259,R0161,Value for Money,2,2024-10-16
+1260,R0098,Value for Money,3,2024-04-08
+1261,R0172,Delivery Speed,4,2024-05-22
+1262,R0136,Delivery Speed,4,2024-12-08
+1263,R0097,Delivery Speed,2,2024-12-18
+1264,R0152,Customer Service,3,2024-12-30
+1265,R0278,Delivery Speed,3,2024-04-14
+1266,R0237,Delivery Speed,5,2024-03-29
+1267,R0061,Overall Satisfaction,3,2024-11-22
+1268,R0127,Customer Service,5,2024-11-20
+1269,R0173,Customer Service,4,2024-07-10
+1270,R0126,Ease of Use,4,2024-05-18
+1271,R0291,Ease of Use,5,2024-06-23
+1272,R0075,Value for Money,5,2024-02-06
+1273,R0130,Product Quality,4,2024-10-08
+1274,R0202,Product Quality,1,2024-04-06
+1275,R0131,Ease of Use,4,2024-10-08
+1276,R0299,Value for Money,5,2024-10-17
+1277,R0216,Customer Service,3,2024-01-27
+1278,R0219,Overall Satisfaction,4,2024-10-31
+1279,R0056,Ease of Use,4,2024-07-17
+1280,R0161,Product Quality,2,2024-04-02
+1281,R0063,Value for Money,1,2024-01-22
+1282,R0036,Value for Money,1,2024-10-07
+1283,R0275,Value for Money,2,2024-02-19
+1284,R0217,Customer Service,1,2024-12-04
+1285,R0291,Product Quality,1,2024-02-27
+1286,R0173,Delivery Speed,3,2024-05-25
+1287,R0221,Customer Service,2,2024-04-22
+1288,R0293,Value for Money,5,2024-06-30
+1289,R0122,Customer Service,1,2024-10-10
+1290,R0300,Value for Money,2,2024-03-28
+1291,R0197,Customer Service,5,2024-11-11
+1292,R0009,Customer Service,1,2024-10-19
+1293,R0139,Ease of Use,1,2024-02-18
+1294,R0127,Ease of Use,2,2024-05-03
+1295,R0236,Delivery Speed,2,2024-03-29
+1296,R0113,Value for Money,1,2024-01-02
+1297,R0123,Overall Satisfaction,3,2024-08-10
+1298,R0297,Delivery Speed,4,2024-08-16
+1299,R0110,Customer Service,1,2024-02-11
+1300,R0210,Overall Satisfaction,4,2024-08-14
+1301,R0077,Overall Satisfaction,4,2024-11-10
+1302,R0195,Product Quality,5,2024-05-19
+1303,R0106,Overall Satisfaction,4,2024-08-11
+1304,R0269,Value for Money,3,2024-01-11
+1305,R0256,Delivery Speed,5,2024-07-17
+1306,R0227,Delivery Speed,2,2024-07-09
+1307,R0074,Overall Satisfaction,1,2024-11-03
+1308,R0194,Customer Service,4,2024-04-16
+1309,R0112,Value for Money,3,2024-07-26
+1310,R0141,Customer Service,3,2024-04-28
+1311,R0195,Delivery Speed,4,2024-01-13
+1312,R0289,Customer Service,1,2024-08-19
+1313,R0012,Ease of Use,5,2024-06-25
+1314,R0185,Ease of Use,1,2024-09-08
+1315,R0224,Overall Satisfaction,4,2024-08-05
+1316,R0046,Ease of Use,3,2024-06-27
+1317,R0118,Value for Money,3,2024-05-13
+1318,R0246,Customer Service,2,2024-04-22
+1319,R0300,Overall Satisfaction,5,2024-11-02
+1320,R0272,Customer Service,1,2024-07-14
+1321,R0187,Product Quality,2,2024-02-16
+1322,R0082,Product Quality,5,2024-12-22
+1323,R0284,Product Quality,3,2024-02-10
+1324,R0269,Value for Money,4,2024-03-17
+1325,R0151,Customer Service,4,2024-05-22
+1326,R0096,Customer Service,4,2024-06-08
+1327,R0086,Delivery Speed,1,2024-04-28
+1328,R0048,Delivery Speed,1,2024-10-20
+1329,R0091,Value for Money,5,2024-08-28
+1330,R0217,Customer Service,2,2024-01-09
+1331,R0101,Delivery Speed,1,2024-02-04
+1332,R0052,Value for Money,2,2024-09-30
+1333,R0064,Ease of Use,5,2024-07-07
+1334,R0092,Customer Service,5,2024-04-05
+1335,R0126,Product Quality,3,2024-03-28
+1336,R0140,Delivery Speed,1,2024-09-13
+1337,R0259,Product Quality,4,2024-03-10
+1338,R0086,Product Quality,4,2024-03-20
+1339,R0068,Customer Service,5,2024-07-07
+1340,R0294,Value for Money,4,2024-05-05
+1341,R0233,Customer Service,1,2024-12-31
+1342,R0128,Customer Service,5,2024-01-22
+1343,R0035,Ease of Use,2,2024-01-01
+1344,R0148,Ease of Use,5,2024-09-07
+1345,R0203,Delivery Speed,5,2024-07-25
+1346,R0269,Ease of Use,5,2024-06-30
+1347,R0296,Overall Satisfaction,4,2024-05-08
+1348,R0269,Ease of Use,2,2024-09-14
+1349,R0256,Customer Service,1,2024-04-15
+1350,R0038,Delivery Speed,3,2024-06-01
+1351,R0060,Delivery Speed,4,2024-07-14
+1352,R0193,Value for Money,3,2024-01-13
+1353,R0162,Ease of Use,2,2024-01-09
+1354,R0111,Ease of Use,2,2024-08-18
+1355,R0072,Overall Satisfaction,3,2024-07-21
+1356,R0126,Customer Service,1,2024-04-26
+1357,R0225,Value for Money,4,2024-07-23
+1358,R0239,Overall Satisfaction,4,2024-07-09
+1359,R0105,Ease of Use,2,2024-07-31
+1360,R0027,Customer Service,2,2024-11-23
+1361,R0052,Value for Money,3,2024-01-28
+1362,R0180,Ease of Use,4,2024-11-30
+1363,R0222,Product Quality,5,2024-05-30
+1364,R0182,Delivery Speed,5,2024-09-01
+1365,R0021,Ease of Use,1,2024-06-29
+1366,R0170,Customer Service,3,2024-09-16
+1367,R0085,Product Quality,1,2024-03-15
+1368,R0288,Value for Money,1,2024-01-13
+1369,R0261,Customer Service,5,2024-07-09
+1370,R0013,Ease of Use,4,2024-06-20
+1371,R0236,Value for Money,5,2024-06-16
+1372,R0146,Value for Money,1,2024-09-21
+1373,R0300,Product Quality,4,2024-09-06
+1374,R0222,Delivery Speed,1,2024-12-07
+1375,R0281,Overall Satisfaction,5,2024-09-16
+1376,R0035,Customer Service,4,2024-06-18
+1377,R0226,Overall Satisfaction,3,2024-03-14
+1378,R0073,Customer Service,1,2024-11-11
+1379,R0197,Value for Money,4,2024-04-22
+1380,R0022,Product Quality,3,2024-01-07
+1381,R0069,Customer Service,4,2024-10-18
+1382,R0100,Ease of Use,2,2024-08-06
+1383,R0281,Delivery Speed,3,2024-04-17
+1384,R0001,Product Quality,2,2024-01-20
+1385,R0136,Overall Satisfaction,4,2024-02-03
+1386,R0113,Ease of Use,2,2024-12-10
+1387,R0253,Product Quality,1,2024-12-08
+1388,R0236,Value for Money,5,2024-07-09
+1389,R0241,Value for Money,5,2024-10-12
+1390,R0281,Overall Satisfaction,3,2024-11-19
+1391,R0168,Delivery Speed,2,2024-12-07
+1392,R0267,Overall Satisfaction,3,2024-10-31
+1393,R0126,Customer Service,1,2024-08-10
+1394,R0248,Value for Money,3,2024-09-17
+1395,R0154,Ease of Use,4,2024-01-27
+1396,R0154,Value for Money,1,2024-03-16
+1397,R0285,Customer Service,2,2024-05-07
+1398,R0238,Customer Service,1,2024-12-23
+1399,R0278,Delivery Speed,3,2024-07-30
+1400,R0205,Ease of Use,5,2024-06-18
+1401,R0154,Product Quality,2,2024-03-24
+1402,R0247,Overall Satisfaction,1,2024-06-09
+1403,R0030,Ease of Use,4,2024-08-09
+1404,R0079,Ease of Use,4,2024-01-16
+1405,R0171,Value for Money,1,2024-06-06
+1406,R0121,Ease of Use,4,2024-07-21
+1407,R0110,Ease of Use,4,2024-04-30
+1408,R0147,Customer Service,5,2024-03-25
+1409,R0173,Customer Service,5,2024-06-16
+1410,R0193,Product Quality,1,2024-02-12
+1411,R0043,Overall Satisfaction,1,2024-03-17
+1412,R0277,Ease of Use,4,2024-02-17
+1413,R0078,Product Quality,1,2024-08-29
+1414,R0091,Product Quality,2,2024-05-29
+1415,R0188,Overall Satisfaction,3,2024-12-07
+1416,R0293,Product Quality,1,2024-03-25
+1417,R0159,Value for Money,1,2024-01-20
+1418,R0299,Product Quality,1,2024-11-10
+1419,R0001,Customer Service,2,2024-07-19
+1420,R0252,Product Quality,3,2024-10-30
+1421,R0150,Delivery Speed,5,2024-02-06
+1422,R0146,Customer Service,1,2024-08-24
+1423,R0134,Customer Service,5,2024-02-19
+1424,R0255,Delivery Speed,2,2024-12-18
+1425,R0146,Product Quality,4,2024-06-22
+1426,R0084,Overall Satisfaction,4,2024-08-19
+1427,R0184,Delivery Speed,3,2024-05-30
+1428,R0206,Ease of Use,2,2024-06-07
+1429,R0168,Customer Service,2,2024-08-24
+1430,R0077,Overall Satisfaction,2,2024-01-19
+1431,R0041,Product Quality,5,2024-03-01
+1432,R0076,Product Quality,4,2024-03-05
+1433,R0077,Overall Satisfaction,1,2024-05-24
+1434,R0171,Overall Satisfaction,3,2024-10-23
+1435,R0123,Overall Satisfaction,4,2024-08-10
+1436,R0210,Product Quality,5,2024-10-27
+1437,R0155,Overall Satisfaction,2,2024-08-30
+1438,R0018,Value for Money,2,2024-07-19
+1439,R0099,Value for Money,1,2024-01-26
+1440,R0017,Value for Money,4,2024-04-05
+1441,R0255,Ease of Use,4,2024-12-29
+1442,R0166,Ease of Use,2,2024-06-16
+1443,R0217,Overall Satisfaction,3,2024-10-17
+1444,R0095,Product Quality,2,2024-05-08
+1445,R0213,Product Quality,4,2024-06-20
+1446,R0076,Product Quality,2,2024-05-02
+1447,R0263,Delivery Speed,4,2024-05-22
+1448,R0104,Overall Satisfaction,2,2024-08-01
+1449,R0020,Product Quality,3,2024-12-30
+1450,R0176,Delivery Speed,3,2024-06-21
+1451,R0002,Product Quality,4,2024-09-13
+1452,R0104,Customer Service,2,2024-06-19
+1453,R0259,Value for Money,5,2024-07-19
+1454,R0271,Delivery Speed,5,2024-11-09
+1455,R0101,Ease of Use,1,2024-08-20
+1456,R0281,Value for Money,5,2024-08-21
+1457,R0023,Value for Money,3,2024-01-10
+1458,R0209,Delivery Speed,1,2024-08-30
+1459,R0214,Ease of Use,5,2024-10-19
+1460,R0119,Value for Money,5,2024-04-24
+1461,R0231,Value for Money,3,2024-11-29
+1462,R0020,Customer Service,5,2024-05-10
+1463,R0203,Value for Money,1,2024-09-28
+1464,R0118,Product Quality,2,2024-08-18
+1465,R0123,Ease of Use,1,2024-08-08
+1466,R0025,Product Quality,3,2024-10-01
+1467,R0280,Ease of Use,1,2024-09-13
+1468,R0157,Delivery Speed,1,2024-09-11
+1469,R0298,Customer Service,5,2024-12-04
+1470,R0283,Value for Money,1,2024-04-30
+1471,R0200,Delivery Speed,3,2024-03-31
+1472,R0280,Overall Satisfaction,2,2024-01-08
+1473,R0220,Product Quality,3,2024-11-27
+1474,R0126,Ease of Use,1,2024-02-20
+1475,R0067,Overall Satisfaction,3,2024-03-27
+1476,R0150,Overall Satisfaction,3,2024-07-31
+1477,R0083,Ease of Use,2,2024-03-24
+1478,R0186,Product Quality,3,2024-06-07
+1479,R0278,Overall Satisfaction,5,2024-11-23
+1480,R0036,Product Quality,2,2024-03-03
+1481,R0002,Customer Service,1,2024-05-18
+1482,R0092,Product Quality,4,2024-06-21
+1483,R0063,Delivery Speed,5,2024-08-26
+1484,R0262,Product Quality,4,2024-12-08
+1485,R0143,Product Quality,3,2024-02-17
+1486,R0181,Customer Service,4,2024-04-06
+1487,R0280,Value for Money,1,2024-11-13
+1488,R0045,Product Quality,2,2024-03-15
+1489,R0176,Customer Service,5,2024-12-19
+1490,R0274,Customer Service,4,2024-11-19
+1491,R0180,Product Quality,3,2024-07-18
+1492,R0222,Product Quality,5,2024-07-25
+1493,R0109,Customer Service,2,2024-11-13
+1494,R0248,Delivery Speed,1,2024-04-26
+1495,R0254,Delivery Speed,4,2024-07-17
+1496,R0165,Overall Satisfaction,3,2024-04-11
+1497,R0022,Product Quality,4,2024-04-06
+1498,R0002,Delivery Speed,3,2024-01-09
+1499,R0191,Overall Satisfaction,3,2024-07-31
+1500,R0004,Value for Money,4,2024-02-13
+1501,R0069,Product Quality,5,2024-09-23
+1502,R0288,Product Quality,5,2024-03-10
+1503,R0243,Ease of Use,5,2024-10-09
+1504,R0175,Product Quality,5,2024-01-17
+1505,R0163,Customer Service,3,2024-10-01
+1506,R0218,Value for Money,1,2024-02-24
+1507,R0029,Value for Money,2,2024-12-22
+1508,R0133,Ease of Use,2,2024-05-23
+1509,R0175,Ease of Use,1,2024-09-28
+1510,R0187,Product Quality,4,2024-06-06
+1511,R0154,Ease of Use,1,2024-01-14
+1512,R0146,Value for Money,2,2024-12-30
+1513,R0048,Customer Service,5,2024-11-04
+1514,R0052,Value for Money,1,2024-02-18
+1515,R0136,Value for Money,3,2024-03-04
+1516,R0094,Delivery Speed,2,2024-10-25
+1517,R0041,Customer Service,1,2024-05-21
+1518,R0160,Delivery Speed,5,2024-02-10
+1519,R0282,Delivery Speed,5,2024-06-01
+1520,R0283,Overall Satisfaction,3,2024-02-21
+1521,R0207,Product Quality,3,2024-08-03
+1522,R0048,Overall Satisfaction,3,2024-05-17
+1523,R0027,Customer Service,1,2024-02-18
+1524,R0003,Product Quality,4,2024-01-22
+1525,R0241,Value for Money,4,2024-10-04
+1526,R0055,Value for Money,2,2024-10-29
+1527,R0288,Customer Service,1,2024-06-20
+1528,R0087,Customer Service,5,2024-12-24
+1529,R0054,Overall Satisfaction,1,2024-08-28
+1530,R0112,Overall Satisfaction,2,2024-03-27
+1531,R0261,Customer Service,4,2024-01-03
+1532,R0268,Value for Money,5,2024-04-06
+1533,R0253,Delivery Speed,2,2024-01-31
+1534,R0221,Customer Service,5,2024-12-07
+1535,R0199,Customer Service,5,2024-05-29
+1536,R0177,Customer Service,4,2024-10-29
+1537,R0211,Delivery Speed,3,2024-05-17
+1538,R0128,Delivery Speed,1,2024-12-27
+1539,R0216,Value for Money,5,2024-09-11
+1540,R0001,Product Quality,4,2024-10-29
+1541,R0098,Overall Satisfaction,3,2024-12-19
+1542,R0066,Delivery Speed,2,2024-11-24
+1543,R0298,Product Quality,2,2024-03-08
+1544,R0021,Customer Service,2,2024-01-24
+1545,R0037,Overall Satisfaction,4,2024-03-09
+1546,R0112,Value for Money,1,2024-10-21
+1547,R0002,Overall Satisfaction,2,2024-02-26
+1548,R0008,Ease of Use,1,2024-06-23
+1549,R0106,Ease of Use,2,2024-03-16
+1550,R0064,Value for Money,3,2024-07-29
+1551,R0194,Overall Satisfaction,5,2024-12-14
+1552,R0141,Ease of Use,2,2024-11-21
+1553,R0075,Customer Service,4,2024-06-29
+1554,R0097,Overall Satisfaction,2,2024-09-07
+1555,R0251,Value for Money,4,2024-01-26
+1556,R0130,Product Quality,4,2024-08-25
+1557,R0082,Product Quality,1,2024-08-22
+1558,R0269,Value for Money,2,2024-07-30
+1559,R0057,Value for Money,2,2024-05-25
+1560,R0144,Customer Service,4,2024-01-08
+1561,R0243,Delivery Speed,1,2024-10-27
+1562,R0233,Value for Money,3,2024-11-25
+1563,R0115,Ease of Use,2,2024-12-18
+1564,R0142,Ease of Use,4,2024-05-18
+1565,R0083,Ease of Use,2,2024-08-12
+1566,R0069,Product Quality,2,2024-11-26
+1567,R0249,Ease of Use,2,2024-10-09
+1568,R0261,Overall Satisfaction,2,2024-02-26
+1569,R0138,Overall Satisfaction,3,2024-09-24
+1570,R0131,Overall Satisfaction,1,2024-05-19
+1571,R0265,Value for Money,4,2024-01-11
+1572,R0033,Delivery Speed,1,2024-05-03
+1573,R0145,Value for Money,2,2024-12-08
+1574,R0285,Delivery Speed,5,2024-09-28
+1575,R0094,Overall Satisfaction,4,2024-09-27
+1576,R0002,Customer Service,1,2024-06-16
+1577,R0284,Ease of Use,5,2024-06-23
+1578,R0001,Ease of Use,2,2024-04-05
+1579,R0056,Overall Satisfaction,3,2024-08-05
+1580,R0129,Overall Satisfaction,3,2024-10-27
+1581,R0103,Overall Satisfaction,4,2024-12-08
+1582,R0290,Delivery Speed,3,2024-02-19
+1583,R0195,Ease of Use,5,2024-04-10
+1584,R0126,Value for Money,1,2024-06-21
+1585,R0183,Ease of Use,2,2024-09-29
+1586,R0171,Ease of Use,2,2024-08-08
+1587,R0288,Product Quality,1,2024-02-22
+1588,R0290,Customer Service,2,2024-07-29
+1589,R0023,Customer Service,4,2024-07-30
+1590,R0274,Overall Satisfaction,1,2024-02-22
+1591,R0281,Ease of Use,2,2024-04-23
+1592,R0110,Customer Service,3,2024-02-19
+1593,R0019,Value for Money,1,2024-10-27
+1594,R0210,Product Quality,3,2024-11-25
+1595,R0231,Customer Service,1,2024-06-23
+1596,R0122,Delivery Speed,1,2024-02-17
+1597,R0129,Delivery Speed,5,2024-11-18
+1598,R0124,Product Quality,4,2024-12-18
+1599,R0142,Delivery Speed,2,2024-12-02
+1600,R0004,Ease of Use,2,2024-07-29
+1601,R0170,Product Quality,1,2024-09-14
+1602,R0299,Customer Service,5,2024-05-22
+1603,R0001,Ease of Use,3,2024-07-01
+1604,R0232,Delivery Speed,2,2024-01-14
+1605,R0050,Overall Satisfaction,5,2024-01-11
+1606,R0141,Customer Service,2,2024-03-21
+1607,R0120,Overall Satisfaction,1,2024-04-01
+1608,R0101,Customer Service,2,2024-03-08
+1609,R0152,Ease of Use,1,2024-12-04
+1610,R0231,Customer Service,5,2024-03-09
+1611,R0017,Product Quality,2,2024-07-06
+1612,R0154,Overall Satisfaction,4,2024-03-19
+1613,R0033,Customer Service,4,2024-07-12
+1614,R0004,Customer Service,3,2024-01-18
+1615,R0273,Customer Service,4,2024-02-25
+1616,R0044,Customer Service,2,2024-02-07
+1617,R0079,Ease of Use,1,2024-08-10
+1618,R0118,Overall Satisfaction,2,2024-05-16
+1619,R0267,Overall Satisfaction,5,2024-12-12
+1620,R0272,Delivery Speed,5,2024-06-17
+1621,R0232,Customer Service,5,2024-09-29
+1622,R0291,Customer Service,4,2024-08-05
+1623,R0089,Delivery Speed,4,2024-05-22
+1624,R0162,Value for Money,5,2024-04-19
+1625,R0011,Customer Service,4,2024-05-31
+1626,R0193,Delivery Speed,4,2024-02-16
+1627,R0298,Product Quality,2,2024-01-28
+1628,R0118,Overall Satisfaction,5,2024-02-27
+1629,R0287,Ease of Use,4,2024-11-28
+1630,R0298,Overall Satisfaction,2,2024-01-28
+1631,R0266,Customer Service,5,2024-04-28
+1632,R0065,Customer Service,1,2024-09-17
+1633,R0279,Product Quality,2,2024-10-02
+1634,R0283,Product Quality,3,2024-09-25
+1635,R0276,Product Quality,3,2024-05-13
+1636,R0171,Delivery Speed,2,2024-04-01
+1637,R0023,Ease of Use,4,2024-04-15
+1638,R0072,Customer Service,1,2024-09-22
+1639,R0076,Delivery Speed,4,2024-02-06
+1640,R0217,Overall Satisfaction,5,2024-02-11
+1641,R0165,Ease of Use,2,2024-12-14
+1642,R0142,Value for Money,1,2024-01-17
+1643,R0006,Product Quality,1,2024-01-16
+1644,R0043,Value for Money,2,2024-11-22
+1645,R0300,Product Quality,1,2024-12-18
+1646,R0098,Ease of Use,1,2024-08-12
+1647,R0276,Overall Satisfaction,3,2024-01-30
+1648,R0014,Overall Satisfaction,2,2024-06-29
+1649,R0161,Ease of Use,1,2024-09-15
+1650,R0149,Value for Money,3,2024-03-22
+1651,R0044,Delivery Speed,2,2024-11-03
+1652,R0296,Delivery Speed,4,2024-05-27
+1653,R0252,Delivery Speed,1,2024-03-18
+1654,R0090,Value for Money,5,2024-11-14
+1655,R0022,Value for Money,4,2024-08-28
+1656,R0021,Delivery Speed,4,2024-08-27
+1657,R0014,Product Quality,5,2024-01-26
+1658,R0002,Overall Satisfaction,3,2024-05-05
+1659,R0194,Value for Money,3,2024-02-15
+1660,R0186,Overall Satisfaction,5,2024-05-20
+1661,R0272,Customer Service,4,2024-07-12
+1662,R0289,Product Quality,2,2024-07-30
+1663,R0077,Value for Money,5,2024-04-26
+1664,R0165,Value for Money,1,2024-07-06
+1665,R0159,Customer Service,5,2024-07-11
+1666,R0022,Delivery Speed,1,2024-11-16
+1667,R0241,Product Quality,4,2024-04-16
+1668,R0124,Ease of Use,5,2024-11-10
+1669,R0286,Ease of Use,5,2024-06-30
+1670,R0009,Delivery Speed,5,2024-04-04
+1671,R0065,Product Quality,1,2024-05-17
+1672,R0025,Product Quality,4,2024-05-09
+1673,R0271,Product Quality,5,2024-09-27
+1674,R0003,Value for Money,3,2024-11-25
+1675,R0091,Delivery Speed,4,2024-09-12
+1676,R0128,Delivery Speed,2,2024-07-12
+1677,R0097,Delivery Speed,1,2024-07-23
+1678,R0138,Customer Service,2,2024-12-10
+1679,R0034,Customer Service,4,2024-11-12
+1680,R0152,Overall Satisfaction,2,2024-09-24
+1681,R0293,Overall Satisfaction,3,2024-07-27
+1682,R0153,Customer Service,1,2024-05-04
+1683,R0215,Overall Satisfaction,2,2024-07-07
+1684,R0271,Ease of Use,2,2024-02-23
+1685,R0159,Value for Money,1,2024-08-24
+1686,R0021,Ease of Use,3,2024-11-19
+1687,R0200,Customer Service,3,2024-07-10
+1688,R0149,Product Quality,2,2024-07-25
+1689,R0118,Overall Satisfaction,3,2024-06-23
+1690,R0279,Overall Satisfaction,2,2024-05-30
+1691,R0099,Overall Satisfaction,1,2024-12-08
+1692,R0044,Ease of Use,4,2024-06-06
+1693,R0211,Value for Money,3,2024-09-19
+1694,R0295,Delivery Speed,5,2024-01-12
+1695,R0116,Overall Satisfaction,1,2024-07-07
+1696,R0124,Delivery Speed,5,2024-09-22
+1697,R0092,Value for Money,3,2024-03-09
+1698,R0239,Delivery Speed,1,2024-12-10
+1699,R0175,Product Quality,3,2024-12-17
+1700,R0030,Value for Money,2,2024-04-14
+1701,R0111,Customer Service,3,2024-04-09
+1702,R0270,Value for Money,5,2024-06-10
+1703,R0063,Ease of Use,2,2024-03-13
+1704,R0053,Product Quality,1,2024-12-30
+1705,R0233,Delivery Speed,4,2024-03-04
+1706,R0279,Product Quality,5,2024-04-11
+1707,R0124,Delivery Speed,1,2024-11-19
+1708,R0102,Ease of Use,2,2024-03-09
+1709,R0208,Overall Satisfaction,3,2024-04-25
+1710,R0021,Ease of Use,1,2024-02-09
+1711,R0043,Delivery Speed,5,2024-09-11
+1712,R0168,Ease of Use,1,2024-08-24
+1713,R0257,Ease of Use,5,2024-09-25
+1714,R0005,Product Quality,2,2024-04-16
+1715,R0014,Product Quality,5,2024-02-24
+1716,R0172,Ease of Use,1,2024-10-08
+1717,R0066,Delivery Speed,5,2024-01-07
+1718,R0126,Overall Satisfaction,4,2024-06-19
+1719,R0242,Overall Satisfaction,4,2024-05-15
+1720,R0146,Delivery Speed,1,2024-07-31
+1721,R0002,Delivery Speed,2,2024-07-19
+1722,R0189,Delivery Speed,3,2024-03-09
+1723,R0030,Product Quality,3,2024-11-05
+1724,R0037,Product Quality,5,2024-11-23
+1725,R0295,Value for Money,1,2024-10-03
+1726,R0150,Customer Service,2,2024-07-22
+1727,R0272,Ease of Use,3,2024-01-14
+1728,R0072,Ease of Use,2,2024-03-28
+1729,R0081,Customer Service,5,2024-11-04
+1730,R0259,Customer Service,1,2024-05-02
+1731,R0232,Value for Money,3,2024-06-21
+1732,R0215,Product Quality,1,2024-05-10
+1733,R0019,Overall Satisfaction,3,2024-03-07
+1734,R0267,Delivery Speed,4,2024-01-22
+1735,R0188,Overall Satisfaction,1,2024-06-21
+1736,R0122,Ease of Use,4,2024-08-07
+1737,R0223,Overall Satisfaction,1,2024-09-22
+1738,R0050,Product Quality,2,2024-08-06
+1739,R0010,Product Quality,2,2024-01-29
+1740,R0267,Customer Service,3,2024-07-18
+1741,R0204,Delivery Speed,1,2024-01-14
+1742,R0198,Customer Service,4,2024-02-07
+1743,R0165,Overall Satisfaction,2,2024-02-21
+1744,R0090,Customer Service,3,2024-06-23
+1745,R0183,Product Quality,4,2024-09-17
+1746,R0282,Customer Service,4,2024-10-19
+1747,R0056,Ease of Use,4,2024-08-05
+1748,R0288,Overall Satisfaction,2,2024-11-14
+1749,R0108,Delivery Speed,3,2024-05-28
+1750,R0021,Product Quality,2,2024-06-04
+1751,R0284,Product Quality,5,2024-08-17
+1752,R0100,Value for Money,3,2024-05-01
+1753,R0245,Overall Satisfaction,5,2024-09-27
+1754,R0070,Ease of Use,1,2024-04-18
+1755,R0120,Overall Satisfaction,3,2024-11-10
+1756,R0064,Product Quality,1,2024-12-07
+1757,R0190,Ease of Use,1,2024-11-06
+1758,R0025,Delivery Speed,3,2024-10-16
+1759,R0298,Overall Satisfaction,1,2024-05-28
+1760,R0147,Delivery Speed,2,2024-01-09
+1761,R0232,Value for Money,5,2024-03-25
+1762,R0207,Delivery Speed,5,2024-11-15
+1763,R0216,Delivery Speed,5,2024-07-11
+1764,R0152,Delivery Speed,5,2024-11-03
+1765,R0234,Product Quality,5,2024-05-31
+1766,R0075,Delivery Speed,3,2024-10-23
+1767,R0197,Overall Satisfaction,5,2024-05-07
+1768,R0076,Value for Money,5,2024-02-22
+1769,R0151,Product Quality,5,2024-06-07
+1770,R0292,Delivery Speed,2,2024-03-30
+1771,R0098,Product Quality,2,2024-04-24
+1772,R0151,Customer Service,4,2024-07-25
+1773,R0289,Delivery Speed,1,2024-07-27
+1774,R0012,Delivery Speed,4,2024-03-20
+1775,R0204,Overall Satisfaction,1,2024-08-22
+1776,R0214,Product Quality,4,2024-03-30
+1777,R0111,Value for Money,5,2024-04-26
+1778,R0267,Delivery Speed,2,2024-06-15
+1779,R0186,Overall Satisfaction,2,2024-09-23
+1780,R0071,Overall Satisfaction,5,2024-01-09
+1781,R0146,Product Quality,3,2024-07-27
+1782,R0061,Customer Service,5,2024-11-08
+1783,R0223,Value for Money,1,2024-10-08
+1784,R0076,Ease of Use,5,2024-07-02
+1785,R0279,Overall Satisfaction,2,2024-08-10
+1786,R0137,Product Quality,5,2024-07-14
+1787,R0294,Ease of Use,3,2024-07-27
+1788,R0038,Customer Service,1,2024-10-14
+1789,R0247,Ease of Use,1,2024-12-10
+1790,R0075,Customer Service,5,2024-06-09
+1791,R0293,Value for Money,1,2024-05-08
+1792,R0099,Value for Money,4,2024-10-04
+1793,R0077,Customer Service,5,2024-06-08
+1794,R0261,Value for Money,1,2024-01-16
+1795,R0085,Ease of Use,2,2024-01-01
+1796,R0004,Overall Satisfaction,5,2024-08-10
+1797,R0201,Ease of Use,1,2024-01-29
+1798,R0060,Ease of Use,5,2024-04-13
+1799,R0039,Product Quality,2,2024-11-09
+1800,R0172,Product Quality,1,2024-02-03
+1801,R0193,Delivery Speed,1,2024-11-09
+1802,R0143,Product Quality,3,2024-11-18
+1803,R0038,Overall Satisfaction,3,2024-01-28
+1804,R0233,Ease of Use,2,2024-11-18
+1805,R0268,Customer Service,5,2024-08-14
+1806,R0211,Overall Satisfaction,2,2024-01-26
+1807,R0189,Customer Service,3,2024-05-18
+1808,R0009,Ease of Use,4,2024-08-14
+1809,R0145,Ease of Use,2,2024-01-30
+1810,R0230,Customer Service,4,2024-07-29
+1811,R0067,Delivery Speed,2,2024-06-25
+1812,R0010,Delivery Speed,1,2024-09-08
+1813,R0243,Ease of Use,1,2024-03-23
+1814,R0290,Overall Satisfaction,5,2024-02-04
+1815,R0135,Product Quality,4,2024-09-25
+1816,R0274,Value for Money,1,2024-04-09
+1817,R0102,Customer Service,4,2024-04-28
+1818,R0046,Customer Service,3,2024-07-02
+1819,R0088,Customer Service,3,2024-07-24
+1820,R0056,Ease of Use,5,2024-02-10
+1821,R0238,Product Quality,2,2024-03-25
+1822,R0053,Product Quality,5,2024-03-24
+1823,R0001,Ease of Use,1,2024-04-22
+1824,R0217,Customer Service,5,2024-12-08
+1825,R0163,Customer Service,4,2024-09-10
+1826,R0280,Delivery Speed,3,2024-07-11
+1827,R0063,Customer Service,2,2024-08-17
+1828,R0039,Overall Satisfaction,5,2024-05-31
+1829,R0158,Value for Money,5,2024-01-26
+1830,R0087,Delivery Speed,3,2024-01-25
+1831,R0073,Ease of Use,3,2024-09-18
+1832,R0023,Product Quality,4,2024-05-21
+1833,R0146,Product Quality,2,2024-08-19
+1834,R0105,Overall Satisfaction,3,2024-02-22
+1835,R0204,Ease of Use,5,2024-02-25
+1836,R0073,Ease of Use,4,2024-12-07
+1837,R0263,Customer Service,2,2024-02-08
+1838,R0008,Customer Service,1,2024-09-08
+1839,R0275,Customer Service,1,2024-11-17
+1840,R0100,Value for Money,5,2024-08-02
+1841,R0088,Delivery Speed,5,2024-06-23
+1842,R0252,Overall Satisfaction,5,2024-08-12
+1843,R0120,Ease of Use,2,2024-10-03
+1844,R0125,Product Quality,5,2024-03-31
+1845,R0279,Overall Satisfaction,3,2024-07-28
+1846,R0015,Value for Money,2,2024-10-20
+1847,R0231,Overall Satisfaction,1,2024-09-09
+1848,R0279,Overall Satisfaction,4,2024-07-25
+1849,R0061,Ease of Use,4,2024-12-24
+1850,R0032,Ease of Use,4,2024-04-30
+1851,R0208,Delivery Speed,2,2024-01-08
+1852,R0187,Product Quality,4,2024-10-03
+1853,R0074,Product Quality,2,2024-04-02
+1854,R0115,Overall Satisfaction,3,2024-06-16
+1855,R0082,Product Quality,4,2024-12-13
+1856,R0188,Product Quality,3,2024-10-03
+1857,R0230,Product Quality,3,2024-07-26
+1858,R0292,Customer Service,1,2024-09-24
+1859,R0090,Product Quality,5,2024-03-12
+1860,R0168,Delivery Speed,4,2024-08-21
+1861,R0021,Delivery Speed,5,2024-09-30
+1862,R0138,Customer Service,4,2024-11-15
+1863,R0278,Value for Money,5,2024-01-09
+1864,R0082,Customer Service,1,2024-06-18
+1865,R0018,Delivery Speed,2,2024-12-05
+1866,R0278,Ease of Use,5,2024-12-20
+1867,R0129,Delivery Speed,3,2024-11-27
+1868,R0067,Value for Money,5,2024-06-21
+1869,R0263,Delivery Speed,1,2024-11-27
+1870,R0044,Value for Money,3,2024-08-19
+1871,R0280,Delivery Speed,4,2024-01-19
+1872,R0226,Product Quality,3,2024-04-01
+1873,R0121,Delivery Speed,4,2024-08-17
+1874,R0200,Ease of Use,2,2024-10-03
+1875,R0096,Product Quality,5,2024-08-19
+1876,R0141,Ease of Use,1,2024-11-10
+1877,R0033,Overall Satisfaction,4,2024-09-10
+1878,R0273,Ease of Use,4,2024-10-04
+1879,R0077,Delivery Speed,5,2024-08-11
+1880,R0259,Ease of Use,2,2024-03-07
+1881,R0164,Delivery Speed,5,2024-04-10
+1882,R0253,Overall Satisfaction,1,2024-11-25
+1883,R0273,Value for Money,5,2024-01-01
+1884,R0205,Overall Satisfaction,2,2024-12-15
+1885,R0122,Value for Money,1,2024-12-22
+1886,R0138,Product Quality,3,2024-07-18
+1887,R0196,Overall Satisfaction,5,2024-06-18
+1888,R0234,Delivery Speed,1,2024-01-16
+1889,R0064,Customer Service,3,2024-10-04
+1890,R0091,Overall Satisfaction,3,2024-07-10
+1891,R0138,Value for Money,2,2024-09-25
+1892,R0202,Ease of Use,5,2024-07-20
+1893,R0101,Customer Service,3,2024-11-09
+1894,R0151,Customer Service,2,2024-11-20
+1895,R0069,Overall Satisfaction,5,2024-10-21
+1896,R0138,Ease of Use,2,2024-04-09
+1897,R0280,Delivery Speed,1,2024-06-23
+1898,R0208,Customer Service,3,2024-02-10
+1899,R0168,Customer Service,5,2024-06-21
+1900,R0248,Customer Service,3,2024-07-18
+1901,R0086,Delivery Speed,2,2024-07-25
+1902,R0114,Overall Satisfaction,2,2024-06-24
+1903,R0272,Delivery Speed,3,2024-02-22
+1904,R0115,Delivery Speed,1,2024-10-13
+1905,R0201,Value for Money,3,2024-01-14
+1906,R0251,Delivery Speed,3,2024-07-16
+1907,R0287,Value for Money,1,2024-11-08
+1908,R0165,Ease of Use,3,2024-05-13
+1909,R0115,Product Quality,2,2024-06-05
+1910,R0062,Overall Satisfaction,5,2024-10-22
+1911,R0039,Product Quality,4,2024-11-02
+1912,R0248,Customer Service,1,2024-04-11
+1913,R0268,Overall Satisfaction,3,2024-10-24
+1914,R0121,Value for Money,1,2024-02-14
+1915,R0187,Customer Service,4,2024-06-06
+1916,R0046,Value for Money,3,2024-08-20
+1917,R0056,Value for Money,3,2024-04-13
+1918,R0055,Customer Service,2,2024-07-06
+1919,R0110,Ease of Use,4,2024-09-25
+1920,R0050,Customer Service,4,2024-08-17
+1921,R0163,Product Quality,1,2024-11-13
+1922,R0137,Customer Service,1,2024-05-25
+1923,R0045,Product Quality,3,2024-03-31
+1924,R0234,Ease of Use,5,2024-09-27
+1925,R0063,Overall Satisfaction,5,2024-09-25
+1926,R0243,Delivery Speed,1,2024-11-05
+1927,R0068,Ease of Use,1,2024-05-19
+1928,R0185,Customer Service,2,2024-09-20
+1929,R0270,Delivery Speed,3,2024-07-24
+1930,R0084,Customer Service,3,2024-10-12
+1931,R0220,Ease of Use,1,2024-06-15
+1932,R0299,Delivery Speed,4,2024-08-18
+1933,R0276,Ease of Use,3,2024-06-01
+1934,R0086,Customer Service,4,2024-12-27
+1935,R0173,Delivery Speed,3,2024-12-08
+1936,R0144,Delivery Speed,3,2024-10-28
+1937,R0217,Value for Money,3,2024-12-30
+1938,R0148,Customer Service,5,2024-03-06
+1939,R0156,Delivery Speed,1,2024-02-12
+1940,R0220,Value for Money,1,2024-03-10
+1941,R0004,Product Quality,1,2024-03-20
+1942,R0158,Value for Money,2,2024-10-27
+1943,R0119,Product Quality,2,2024-03-08
+1944,R0060,Value for Money,3,2024-02-05
+1945,R0107,Product Quality,3,2024-06-23
+1946,R0247,Product Quality,5,2024-04-14
+1947,R0218,Delivery Speed,2,2024-12-15
+1948,R0052,Value for Money,3,2024-05-25
+1949,R0267,Delivery Speed,5,2024-07-15
+1950,R0198,Delivery Speed,5,2024-09-08
+1951,R0074,Ease of Use,2,2024-08-04
+1952,R0230,Overall Satisfaction,4,2024-05-29
+1953,R0212,Customer Service,1,2024-03-07
+1954,R0188,Delivery Speed,2,2024-07-07
+1955,R0148,Customer Service,1,2024-09-26
+1956,R0112,Customer Service,5,2024-02-24
+1957,R0069,Customer Service,1,2024-03-05
+1958,R0103,Delivery Speed,2,2024-11-26
+1959,R0004,Overall Satisfaction,3,2024-11-15
+1960,R0048,Product Quality,4,2024-01-05
+1961,R0047,Delivery Speed,2,2024-07-31
+1962,R0135,Ease of Use,2,2024-04-14
+1963,R0284,Ease of Use,3,2024-01-13
+1964,R0273,Customer Service,4,2024-07-25
+1965,R0266,Overall Satisfaction,1,2024-12-06
+1966,R0234,Customer Service,2,2024-06-28
+1967,R0246,Ease of Use,3,2024-05-13
+1968,R0186,Delivery Speed,3,2024-09-04
+1969,R0070,Ease of Use,2,2024-10-19
+1970,R0017,Value for Money,2,2024-11-12
+1971,R0047,Delivery Speed,4,2024-07-14
+1972,R0284,Customer Service,1,2024-07-19
+1973,R0028,Delivery Speed,2,2024-08-13
+1974,R0062,Overall Satisfaction,4,2024-03-30
+1975,R0033,Ease of Use,2,2024-04-11
+1976,R0227,Overall Satisfaction,2,2024-10-16
+1977,R0299,Customer Service,1,2024-06-15
+1978,R0094,Customer Service,2,2024-10-22
+1979,R0291,Delivery Speed,2,2024-07-29
+1980,R0088,Product Quality,4,2024-06-16
+1981,R0300,Product Quality,3,2024-04-30
+1982,R0284,Delivery Speed,2,2024-05-01
+1983,R0086,Value for Money,3,2024-12-25
+1984,R0126,Delivery Speed,5,2024-04-14
+1985,R0164,Delivery Speed,3,2024-05-16
+1986,R0214,Product Quality,4,2024-11-26
+1987,R0238,Overall Satisfaction,4,2024-04-22
+1988,R0083,Ease of Use,3,2024-05-06
+1989,R0011,Delivery Speed,3,2024-05-13
+1990,R0130,Delivery Speed,4,2024-11-08
+1991,R0060,Customer Service,4,2024-11-05
+1992,R0299,Ease of Use,1,2024-04-05
+1993,R0293,Customer Service,4,2024-02-05
+1994,R0083,Product Quality,3,2024-05-06
+1995,R0240,Delivery Speed,4,2024-02-27
+1996,R0110,Ease of Use,3,2024-03-11
+1997,R0297,Delivery Speed,5,2024-05-04
+1998,R0067,Customer Service,1,2024-12-11
+1999,R0051,Customer Service,3,2024-07-22
+2000,R0028,Delivery Speed,2,2024-03-29

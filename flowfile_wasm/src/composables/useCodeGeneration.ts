@@ -16,9 +16,12 @@ import type {
   NodeUnpivotSettings,
   NodeSampleSettings,
   NodeReadSettings,
+  InputCsvTable,
+  InputExcelTable,
   NodeManualInputSettings,
   NodeExternalDataSettings,
   NodeOutputSettings,
+  NodeWriteToCatalogSettings,
   PolarsCodeSettings,
   FilterOperator,
   AggType
@@ -213,6 +216,9 @@ class FlowToPolarsConverter {
       case 'external_output':
         this.handleExternalOutput(varName, inputVars)
         break
+      case 'write_to_catalog':
+        this.handleWriteToCatalog(node.settings as NodeWriteToCatalogSettings, varName, inputVars)
+        break
       default:
         this.unsupportedNodes.push({
           id: node.id,
@@ -251,10 +257,48 @@ class FlowToPolarsConverter {
   private handleReadCsv(settings: NodeReadSettings, varName: string): void {
     const table = settings.received_file
     const fileName = settings.file_name || table?.name || 'data.csv'
-    const tableSettings = table?.table_settings
+    // Files loaded from a URL keep it as received_file.path — generated code
+    // reads from the same source instead of a file name that only existed in
+    // the browser session. scan_csv/scan_parquet accept http(s) directly.
+    const path = table?.path ?? ''
+    const isRemote = path.startsWith('http://') || path.startsWith('https://')
+    const source = isRemote ? path : fileName
+
+    if (table?.file_type === 'excel') {
+      const ts = table.table_settings as InputExcelTable
+      this.addCode(`# requires: pip install fastexcel (polars' default excel engine)`)
+      if (isRemote) {
+        this.addCode(`from io import BytesIO`)
+        this.addCode(`from urllib.request import urlopen`)
+        this.addCode(`${varName} = pl.read_excel(`)
+        this.addCode(`    BytesIO(urlopen("${source}").read()),`)
+      } else {
+        this.addCode(`${varName} = pl.read_excel(`)
+        this.addCode(`    "${source}",`)
+      }
+      if (ts?.sheet_name) {
+        this.addCode(`    sheet_name="${ts.sheet_name}",`)
+      }
+      this.addCode(`    has_header=${(ts?.has_headers ?? true) ? 'True' : 'False'},`)
+      this.addCode(`).lazy()`)
+      if (ts?.start_row) {
+        this.addCode(`# note: this flow skips the first ${ts.start_row} row(s) before the header;`)
+        this.addCode(`# adjust read_options for your engine if needed`)
+      }
+      this.addCode('')
+      return
+    }
+
+    if (table?.file_type === 'parquet') {
+      this.addCode(`${varName} = pl.scan_parquet("${source}")`)
+      this.addCode('')
+      return
+    }
+
+    const tableSettings = table?.table_settings as InputCsvTable | undefined
 
     this.addCode(`${varName} = pl.scan_csv(`)
-    this.addCode(`    "${fileName}",`)
+    this.addCode(`    "${source}",`)
 
     if (tableSettings) {
       this.addCode(`    separator="${tableSettings.delimiter || ','}",`)
@@ -314,6 +358,17 @@ class FlowToPolarsConverter {
     const inputDf = inputVars.main || 'df'
     this.addComment(`# External output — collect result for downstream use`)
     this.addCode(`${varName} = ${inputDf}.collect()`)
+    this.addCode('')
+  }
+
+  private handleWriteToCatalog(settings: NodeWriteToCatalogSettings, varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    const name = (settings.dataset_name || '').trim() || 'catalog_table'
+    // The browser Catalog has no standalone equivalent; the closest is writing
+    // the table to a CSV file named after it.
+    this.addComment(`# Write to Catalog table "${name}" (browser catalog → CSV file in standalone code)`)
+    this.addCode(`${inputDf}.sink_csv("${name}.csv", separator=",")`)
+    this.addCode(`${varName} = ${inputDf}  # Reference for potential downstream use`)
     this.addCode('')
   }
 
@@ -668,11 +723,22 @@ class FlowToPolarsConverter {
     const fileName = outputSettings?.name || anySettings.file_name || 'output.csv'
     const fileType = outputSettings?.file_type || anySettings.file_type || 'csv'
     const tableSettings = outputSettings?.table_settings || anySettings.output_table
-    const polarsMethod = outputSettings?.polars_method || (fileType === 'parquet' ? 'sink_parquet' : 'sink_csv')
+    // file_type is authoritative: settings saved by older builds carry a stale
+    // polars_method ('sink_csv' on parquet nodes)
+    const polarsMethod = fileType === 'parquet' ? 'sink_parquet' : 'sink_csv'
 
     if (!outputSettings && !anySettings.file_name && !anySettings.file_type) {
       this.addComment(`# Output node ${varName} has no settings configured`)
       this.addCode(`${varName} = ${inputDf}`)
+      this.addCode('')
+      return
+    }
+
+    if (fileType === 'excel') {
+      const sheetName = (tableSettings && 'sheet_name' in tableSettings && tableSettings.sheet_name) || 'Sheet1'
+      this.addComment(`# Write output to ${fileName} (requires: pip install xlsxwriter)`)
+      this.addCode(`${inputDf}.collect().write_excel("${fileName}", worksheet="${sheetName}")`)
+      this.addCode(`${varName} = ${inputDf}  # Reference for potential downstream use`)
       this.addCode('')
       return
     }

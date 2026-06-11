@@ -2,6 +2,9 @@
 
 Flowfile integrates with LLMs to help you **build, document, and debug** pipelines in plain language. Describe a transformation and the agent builds it; ask the assistant to write the docs for a flow you just shipped; turn a red run into a one-paragraph diagnosis. Every suggestion is grounded in the live node graph, so the model references the columns and node types you actually have — not what it imagines.
 
+!!! info "Not in Flowfile Lite"
+    The AI Assistant requires the full desktop/server build. The browser-only [Flowfile Lite](../users/deployment/lite.md) edition does not include any AI features.
+
 ![Flowfile AI Assistant in action](../assets/images/ai/ai-overview.gif)
 
 How a change lands depends on the surface:

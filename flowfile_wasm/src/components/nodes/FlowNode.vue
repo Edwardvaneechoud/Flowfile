@@ -29,7 +29,7 @@
           <span class="tooltip-text">{{ statusTooltip }}</span>
         </div>
         <button :class="['node-button', { selected: isSelected }]" @click="onClick">
-          <img :src="iconUrl" :alt="data.label" width="50" height="50" />
+          <img :src="iconUrl" :alt="data.label" width="40" />
         </button>
       </div>
 
@@ -56,13 +56,43 @@
       <!-- Context Menu: teleported to Canvas container (inherits CSS vars, avoids VueFlow transform) -->
       <Teleport v-if="menuVisible" to="#flowfile-context-menu-container">
         <div ref="menuEl" class="context-menu" :style="contextMenuStyle">
+          <div class="context-menu-item" @click="editNode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            <span>Edit</span>
+          </div>
+          <div class="context-menu-item" @click="viewData">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3h18v18H3z"></path>
+              <path d="M3 9h18M3 15h18M9 3v18"></path>
+            </svg>
+            <span>View data</span>
+          </div>
+          <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="runNode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
             </svg>
             <span>Run Now</span>
           </div>
+          <div v-if="canSaveToCatalog" class="context-menu-item" @click="saveToCatalog">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+            </svg>
+            <span>Save to catalog</span>
+          </div>
           <div class="context-menu-divider"></div>
+          <div class="context-menu-item" @click="copyNode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span>Copy</span>
+          </div>
           <div class="context-menu-item context-menu-item-danger" @click="deleteNode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 6h18"></path>
@@ -82,11 +112,13 @@ import { computed, ref, onUnmounted, nextTick, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import type { NodeResult } from '../../types'
 import { useFlowStore } from '../../stores/flow-store'
+import { iconUrls } from '../../utils/iconUrls'
 
 const iconMap: Record<string, string> = {
   read: 'input_data.png',
   manual_input: 'manual_input.png',
   external_data: 'external_data.svg',
+  read_from_catalog: 'catalog_reader.svg',
   filter: 'filter.png',
   select: 'select.png',
   group_by: 'group_by.png',
@@ -99,7 +131,8 @@ const iconMap: Record<string, string> = {
   pivot: 'pivot.png',
   unpivot: 'unpivot.png',
   output: 'output.png',
-  external_output: 'external_output.svg'
+  external_output: 'external_output.svg',
+  write_to_catalog: 'catalog_writer.svg'
 }
 
 interface NodeData {
@@ -118,9 +151,20 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'delete', id: number): void
   (e: 'run', id: number): void
+  (e: 'edit', id: number): void
+  (e: 'view-data', id: number): void
+  (e: 'copy', id: number): void
+  (e: 'save-to-catalog', id: number): void
 }>()
 
 const flowStore = useFlowStore()
+
+// Source nodes carry their loaded CSV in fileContents, so they can be persisted
+// to the catalog as a reusable table.
+const SOURCE_NODE_TYPES = new Set(['read', 'manual_input', 'external_data', 'read_from_catalog'])
+const canSaveToCatalog = computed(
+  () => SOURCE_NODE_TYPES.has(props.data.type) && flowStore.hasFileContent(props.data.id)
+)
 
 const description = ref('')
 const editMode = ref(false)
@@ -153,7 +197,7 @@ const isSelected = computed(() => flowStore.selectedNodeId === props.data.id)
 
 const iconUrl = computed(() => {
   const iconFile = iconMap[props.data.type] || 'view.png'
-  return new URL(`../../assets/icons/${iconFile}`, import.meta.url).href
+  return iconUrls[iconFile] || new URL(`../../assets/icons/${iconFile}`, import.meta.url).href
 })
 
 const statusClass = computed(() => {
@@ -267,6 +311,26 @@ function runNode() {
   closeContextMenu()
 }
 
+function editNode() {
+  emit('edit', props.data.id)
+  closeContextMenu()
+}
+
+function viewData() {
+  emit('view-data', props.data.id)
+  closeContextMenu()
+}
+
+function copyNode() {
+  emit('copy', props.data.id)
+  closeContextMenu()
+}
+
+function saveToCatalog() {
+  emit('save-to-catalog', props.data.id)
+  closeContextMenu()
+}
+
 function deleteNode() {
   emit('delete', props.data.id)
   closeContextMenu()
@@ -347,6 +411,7 @@ onUnmounted(() => {
   margin: 0;
   white-space: pre-wrap;
   word-wrap: break-word;
+  font-family: var(--font-family-base);
   font-size: 12px;
 }
 
@@ -357,6 +422,7 @@ onUnmounted(() => {
   padding: 4px;
   border: 1px solid var(--accent-color);
   border-radius: 4px;
+  font-family: var(--font-family-base);
   font-size: small;
   background-color: var(--bg-secondary);
   color: var(--text-primary);
@@ -427,8 +493,8 @@ onUnmounted(() => {
 .tooltip-text {
   visibility: hidden;
   width: 120px;
-  background-color: #333;
-  color: #fff;
+  background-color: var(--color-gray-800);
+  color: var(--color-text-inverse);
   text-align: center;
   border-radius: 6px;
   padding: 5px 0;
@@ -452,18 +518,17 @@ onUnmounted(() => {
   border-radius: 10px;
   border-width: 0px;
   cursor: pointer;
-  padding: 4px;
-  transition: all 0.2s;
+  transition: all var(--transition-normal);
 }
 
 .node-button:hover {
-  background-color: #c8c8c8;
+  background-color: var(--color-background-hover);
   transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .node-button.selected {
-  border: 2px solid var(--accent-color);
+  border: 2px solid var(--color-accent);
 }
 
 .node-button img {

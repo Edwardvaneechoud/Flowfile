@@ -1,0 +1,82 @@
+flowfile_version: 1.0.0
+flowfile_id: 1700000000001
+flowfile_name: Customer Deduplication
+flowfile_settings:
+  description: ''
+  execution_mode: Development
+  execution_location: local
+  auto_save: true
+  show_detailed_progress: false
+nodes:
+  - id: 1
+    type: read
+    is_start_node: true
+    description: Read Customers
+    x_position: 120
+    y_position: 220
+    input_ids: []
+    outputs:
+      - 2
+    setting_input:
+      cache_results: false
+      file_name: customers.csv
+      received_file:
+        name: customers.csv
+        path: customers.csv
+        file_type: csv
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          has_headers: true
+          encoding: utf-8
+  - id: 2
+    type: unique
+    is_start_node: false
+    description: Dedupe by email
+    x_position: 380
+    y_position: 220
+    input_ids:
+      - 1
+    outputs:
+      - 3
+    setting_input:
+      cache_results: false
+      unique_input:
+        columns:
+          - email
+        strategy: first
+  - id: 3
+    type: sort
+    is_start_node: false
+    description: Sort by name
+    x_position: 640
+    y_position: 220
+    input_ids:
+      - 2
+    outputs:
+      - 4
+    setting_input:
+      cache_results: false
+      sort_input:
+        - column: name
+          how: asc
+  - id: 4
+    type: output
+    is_start_node: false
+    description: Export unique customers
+    x_position: 900
+    y_position: 220
+    input_ids:
+      - 3
+    outputs: []
+    setting_input:
+      cache_results: false
+      output_settings:
+        name: customers_deduplicated.csv
+        directory: .
+        file_type: csv
+        write_mode: overwrite
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          encoding: utf-8

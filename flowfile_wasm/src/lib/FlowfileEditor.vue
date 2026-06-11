@@ -35,11 +35,14 @@ import type {
   FlowfileEditorProps,
   ToolbarConfig,
   FlowfileEditorAPI,
+  InputDataItem,
   InputDataMap,
   OutputData,
   EditorError
 } from './types'
 import type { FlowfileData, NodeResult } from '../types'
+import { binaryContent, type FileContent } from '../types/file-content'
+import { detectBinaryFormat } from '../utils/binary-format'
 
 const props = withDefaults(defineProps<FlowfileEditorProps>(), {
   readonly: false,
@@ -124,12 +127,24 @@ watch(pyodideReady, (ready) => {
 
 /**
  * Push input data to the flow store as external datasets.
- * External Data nodes select from these by name.
+ * External Data nodes select from these by name. Binary content becomes
+ * tagged FileContent (explicit format preferred; PAR1 sniff as fallback).
  */
 function pushExternalDatasets(data: InputDataMap) {
-  const datasets: Record<string, string> = {}
+  const datasets: Record<string, string | FileContent> = {}
   for (const [name, config] of Object.entries(data)) {
-    datasets[name] = typeof config === 'string' ? config : config.content
+    if (typeof config === 'string') {
+      datasets[name] = config
+      continue
+    }
+    const { content, format } = config
+    if (content instanceof Uint8Array) {
+      const binFormat =
+        format === 'parquet' || format === 'arrow-ipc' ? format : detectBinaryFormat(content)
+      datasets[name] = binaryContent(content, binFormat)
+    } else {
+      datasets[name] = content
+    }
   }
   flowStore.setExternalDatasets(datasets)
 }
@@ -181,10 +196,11 @@ const api: FlowfileEditorAPI = {
   executeNode: (nodeId: number) => flowStore.executeNode(nodeId),
   exportFlow: () => flowStore.exportToFlowfile(),
   importFlow: (data: FlowfileData) => flowStore.importFromFlowfile(data),
-  setInputData: (name: string, content: string) => {
-    pushExternalDatasets({ [name]: content })
+  setInputData: (name: string, content: string | Uint8Array, format?: InputDataItem['format']) => {
+    pushExternalDatasets({ [name]: { content, format } })
   },
   getNodeResult: (nodeId: number) => flowStore.getNodeResult(nodeId),
+  getNodeResultArrow: (nodeId: number) => flowStore.getNodeResultArrow(nodeId),
   clearFlow: () => flowStore.clearFlow(),
   initializePyodide: () => pyodideStore.initialize()
 }

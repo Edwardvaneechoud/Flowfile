@@ -193,7 +193,7 @@ function loadData() {
     }
   }
 
-  const storedContent = flowStore.fileContents.get(props.nodeId)
+  const storedContent = flowStore.getTextContent(props.nodeId)
   if (storedContent) {
     console.log('[ManualInputSettings] Loading from fileContents')
     try {

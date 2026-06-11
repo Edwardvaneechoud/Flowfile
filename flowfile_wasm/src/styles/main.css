@@ -48,6 +48,14 @@
   --color-accent-light: #22d3ee;
   --color-accent-subtle: #ecfeff;
 
+  /* Run-button purple + primary aliases (mirror the full app so ported
+     catalog/run-button CSS resolves). */
+  --color-accent-purple: #667eea;
+  --color-accent-purple-hover: #4f5fcc;
+  --color-primary: var(--light-blue);
+  --color-primary-dark: var(--primary-blue);
+  --color-primary-light-9: var(--color-accent-subtle);
+
   /* Legacy alias */
   --light-blue: #0891b2;
   --light-blue-hover: #0e7490;
@@ -316,6 +324,12 @@ html, body, #app {
   color: var(--color-text-primary);
   background: var(--color-background-secondary);
   transition: background-color var(--transition-normal), color var(--transition-normal);
+}
+
+/* Form controls don't inherit fonts by default (buttons/inputs fall back to
+ * the browser UI font); explicit mono rules (code editors) still win. */
+button, input, textarea, select {
+  font-family: inherit;
 }
 
 /* Custom Vue Flow overrides */
