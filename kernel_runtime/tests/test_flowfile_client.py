@@ -493,3 +493,91 @@ class TestSharedLocation:
 
         assert pl.read_csv(csv_path).shape == (2, 2)
         assert pl.read_parquet(parquet_path)["x"].to_list() == [1, 2]
+
+
+class TestPathTranslation:
+    """Host<->container path translation, including Windows host prefixes.
+
+    The kernel always runs on Linux, but the Docker host may be Windows —
+    Core then hands over backslash-separated host paths that must rebase to
+    pure-POSIX container paths (and back, with host-native separators).
+    """
+
+    WIN_SHARED = r"C:\Users\u\.flowfile\temp\kernel_shared"
+    WIN_CATALOG = r"C:\Users\u\.flowfile\catalog_tables"
+
+    def test_host_to_container_windows_shared(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", raising=False)
+        monkeypatch.setenv("FLOWFILE_HOST_SHARED_DIR", self.WIN_SHARED)
+        result = flowfile_client._translate_host_path_to_container(
+            self.WIN_SHARED + r"\artifact_staging\5_model.joblib"
+        )
+        assert result == "/shared/artifact_staging/5_model.joblib"
+
+    def test_host_to_container_windows_catalog(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", self.WIN_CATALOG)
+        monkeypatch.delenv("FLOWFILE_HOST_SHARED_DIR", raising=False)
+        result = flowfile_client._translate_host_path_to_container(self.WIN_CATALOG + r"\orders_ab12cd34")
+        assert result == "/catalog_tables/orders_ab12cd34"
+
+    def test_host_to_container_catalog_priority(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", self.WIN_CATALOG)
+        monkeypatch.setenv("FLOWFILE_HOST_SHARED_DIR", self.WIN_SHARED)
+        assert flowfile_client._translate_host_path_to_container(self.WIN_CATALOG) == "/catalog_tables"
+        assert flowfile_client._translate_host_path_to_container(self.WIN_SHARED) == "/shared"
+
+    def test_host_to_container_posix_unchanged(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", raising=False)
+        monkeypatch.setenv("FLOWFILE_HOST_SHARED_DIR", "/home/u/.flowfile/temp/kernel_shared")
+        result = flowfile_client._translate_host_path_to_container(
+            "/home/u/.flowfile/temp/kernel_shared/1/5/outputs"
+        )
+        assert result == "/shared/1/5/outputs"
+
+    def test_host_to_container_no_env_passthrough(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", raising=False)
+        monkeypatch.delenv("FLOWFILE_HOST_SHARED_DIR", raising=False)
+        path = "/app/internal_storage/temp/kernel_shared/1/5/outputs"
+        assert flowfile_client._translate_host_path_to_container(path) == path
+
+    def test_host_to_container_unrelated_passthrough(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("FLOWFILE_HOST_SHARED_DIR", self.WIN_SHARED)
+        other = r"D:\elsewhere\data.parquet"
+        assert flowfile_client._translate_host_path_to_container(other) == other
+
+    def test_host_to_container_sibling_prefix_not_matched(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", raising=False)
+        monkeypatch.setenv("FLOWFILE_HOST_SHARED_DIR", "/home/u/shared")
+        path = "/home/u/shared_other/x.parquet"
+        assert flowfile_client._translate_host_path_to_container(path) == path
+
+    def test_container_to_host_windows(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", self.WIN_CATALOG)
+        monkeypatch.setenv("FLOWFILE_KERNEL_CATALOG_TABLES_DIR", "/catalog_tables")
+        result = flowfile_client._translate_container_path_to_host("/catalog_tables/orders_ab12")
+        assert result == self.WIN_CATALOG + "\\orders_ab12"
+        assert "/" not in result
+
+    def test_container_to_host_windows_exact(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", self.WIN_CATALOG)
+        monkeypatch.setenv("FLOWFILE_KERNEL_CATALOG_TABLES_DIR", "/catalog_tables")
+        assert flowfile_client._translate_container_path_to_host("/catalog_tables") == self.WIN_CATALOG
+
+    def test_container_to_host_posix(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", "/home/u/.flowfile/catalog_tables")
+        monkeypatch.setenv("FLOWFILE_KERNEL_CATALOG_TABLES_DIR", "/catalog_tables")
+        result = flowfile_client._translate_container_path_to_host("/catalog_tables/orders_ab12")
+        assert result == "/home/u/.flowfile/catalog_tables/orders_ab12"
+
+    def test_container_to_host_no_env_passthrough(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", raising=False)
+        path = "/catalog_tables/orders_ab12"
+        assert flowfile_client._translate_container_path_to_host(path) == path
+
+    def test_windows_roundtrip(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("FLOWFILE_HOST_CATALOG_TABLES_DIR", self.WIN_CATALOG)
+        monkeypatch.setenv("FLOWFILE_KERNEL_CATALOG_TABLES_DIR", "/catalog_tables")
+        host = self.WIN_CATALOG + r"\orders_ab12"
+        container = flowfile_client._translate_host_path_to_container(host)
+        assert container == "/catalog_tables/orders_ab12"
+        assert flowfile_client._translate_container_path_to_host(container) == host

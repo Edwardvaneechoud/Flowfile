@@ -74,7 +74,8 @@ COPY --from=builder /opt/constraints.txt /opt/constraints.txt
 
 COPY kernel_runtime /app/kernel_runtime
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Strip CRs so images built from a Windows checkout (CRLF) still exec
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 ENV PYTHONPATH=/app \
     PYTHONDONTWRITEBYTECODE=1 \

@@ -16,6 +16,22 @@ from kernel_runtime.artifact_store import ArtifactStore
 from kernel_runtime.schemas import ArtifactInfo, GlobalArtifactInfo
 
 
+def _rebase(path: str, host_prefix: str, container_prefix: str) -> str | None:
+    """Rebase *path* under *host_prefix* onto *container_prefix* as a POSIX path.
+
+    Normalizes backslashes so Windows host paths (the kernel always runs on
+    Linux, but the host may be Windows) produce pure-POSIX container paths.
+    Returns None when *path* is not under *host_prefix*.
+    """
+    p = path.replace("\\", "/").rstrip("/")
+    base = host_prefix.replace("\\", "/").rstrip("/")
+    if p == base:
+        return container_prefix
+    if p.startswith(base + "/"):
+        return container_prefix + "/" + p[len(base) + 1 :]
+    return None
+
+
 def _translate_host_path_to_container(host_path: str) -> str:
     """Translate a host filesystem path to the kernel container's mount.
 
@@ -29,25 +45,17 @@ def _translate_host_path_to_container(host_path: str) -> str:
     var is set (the same volume is mounted at the same path everywhere) so
     the input path is returned unchanged.
     """
-    normalized_host_path = os.path.normpath(host_path)
-
     host_catalog_dir = os.environ.get("FLOWFILE_HOST_CATALOG_TABLES_DIR")
     if host_catalog_dir:
-        normalized_catalog_dir = os.path.normpath(host_catalog_dir)
-        if normalized_host_path == normalized_catalog_dir:
-            return "/catalog_tables"
-        if normalized_host_path.startswith(normalized_catalog_dir + os.sep):
-            relative_path = normalized_host_path[len(normalized_catalog_dir) + 1 :]
-            return f"/catalog_tables/{relative_path}"
+        rebased = _rebase(host_path, host_catalog_dir, "/catalog_tables")
+        if rebased is not None:
+            return rebased
 
     host_shared_dir = os.environ.get("FLOWFILE_HOST_SHARED_DIR")
     if host_shared_dir:
-        normalized_shared_dir = os.path.normpath(host_shared_dir)
-        if normalized_host_path.startswith(normalized_shared_dir + os.sep):
-            relative_path = normalized_host_path[len(normalized_shared_dir) + 1 :]
-            return f"/shared/{relative_path}"
-        if normalized_host_path == normalized_shared_dir:
-            return "/shared"
+        rebased = _rebase(host_path, host_shared_dir, "/shared")
+        if rebased is not None:
+            return rebased
 
     return host_path
 
@@ -170,8 +178,9 @@ def publish_output(df: pl.LazyFrame | pl.DataFrame, name: str = "main") -> None:
     else:
         df.write_parquet(str(output_path))
     # Ensure the file is fully flushed to disk before the host reads it
-    # This prevents "File must end with PAR1" errors from race conditions
-    with open(output_path, "rb") as f:
+    # This prevents "File must end with PAR1" errors from race conditions.
+    # "rb+" — os.fsync needs a writable fd on Windows (EBADF on read-only handles)
+    with open(output_path, "rb+") as f:
         os.fsync(f.fileno())
 
 
@@ -807,19 +816,21 @@ def _translate_container_path_to_host(container_path: str) -> str:
 
     The kernel writes Delta directories using its in-container path
     (``/catalog_tables/...``) but Core stores the host path. In local mode
-    we swap the prefix; in DinD mode the path passes through unchanged.
+    we swap the prefix, emitting host-native separators (backslashes when the
+    host is Windows); in DinD mode the path passes through unchanged.
     """
     host_catalog_dir = _host_catalog_dir()
     if not host_catalog_dir:
         return container_path
-    kernel_catalog_dir = _kernel_catalog_dir()
-    normalized = os.path.normpath(container_path)
-    normalized_kernel = os.path.normpath(kernel_catalog_dir)
-    if normalized == normalized_kernel:
+    kernel_dir = _kernel_catalog_dir().replace("\\", "/").rstrip("/")
+    p = container_path.replace("\\", "/").rstrip("/")
+    sep = "\\" if "\\" in host_catalog_dir else "/"
+    base = host_catalog_dir.rstrip("/\\")
+    if p == kernel_dir:
         return host_catalog_dir
-    if normalized.startswith(normalized_kernel + os.sep):
-        rel = normalized[len(normalized_kernel) + 1 :]
-        return os.path.join(host_catalog_dir, rel)
+    if p.startswith(kernel_dir + "/"):
+        rel = p[len(kernel_dir) + 1 :].replace("/", sep)
+        return base + sep + rel
     return container_path
 
 
