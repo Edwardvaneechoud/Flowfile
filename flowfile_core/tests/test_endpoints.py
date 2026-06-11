@@ -702,6 +702,111 @@ def test_save_flow_to_catalog_rejects_filename_with_separators():
         remove_flow(source_path)
 
 
+def test_create_flow_registers_in_selected_namespace():
+    """create_flow with namespace_id registers directly in that namespace, not Local Flows."""
+    from flowfile_core.database.models import FlowRegistration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "ns_create_target.yaml")
+    remove_flow(flow_path)
+
+    ns = client.post("/catalog/namespaces", json={"name": "NsCreateFlow_endpoint"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    try:
+        resp = client.post("editor/create_flow", params={"flow_path": flow_path, "namespace_id": ns["id"]})
+        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        assert os.path.exists(flow_path), "Flow file should exist after create"
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one()
+            assert reg.namespace_id == ns["id"]
+            assert reg.name == "ns_create_target"
+    finally:
+        remove_flow(flow_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_create_flow_without_namespace_auto_registers_local_flows():
+    """Regression guard: create_flow without namespace_id keeps auto-registering under Local Flows."""
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import CatalogNamespace, FlowRegistration
+
+    # Earlier catalog test files wipe all CatalogNamespace rows via autouse fixtures,
+    # so the seeded "General > Local Flows" may be gone by the time this runs. Re-seed
+    # (idempotent) so auto-registration has a namespace to land in.
+    init_db()
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "ns_create_default.yaml")
+    remove_flow(flow_path)
+
+    try:
+        resp = client.post("editor/create_flow", params={"flow_path": flow_path})
+        assert resp.status_code == 200, f"Create failed: {resp.text}"
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).one()
+            ns = db.get(CatalogNamespace, reg.namespace_id)
+            assert ns.name == "Local Flows"
+    finally:
+        remove_flow(flow_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_create_flow_name_collision_in_namespace_409():
+    """A second create with the same name in the same namespace is rejected before any file is written."""
+    from flowfile_core.database.models import FlowRegistration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    other_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows"
+    path_a = str(base_dir / "ns_create_collision.yaml")
+    path_b = str(other_dir / "ns_create_collision.yaml")
+    remove_flow(path_a)
+    remove_flow(path_b)
+
+    ns = client.post("/catalog/namespaces", json={"name": "NsCreateCollision_endpoint"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    try:
+        resp_a = client.post("editor/create_flow", params={"flow_path": path_a, "namespace_id": ns["id"]})
+        assert resp_a.status_code == 200, f"First create failed: {resp_a.text}"
+
+        resp_b = client.post("editor/create_flow", params={"flow_path": path_b, "namespace_id": ns["id"]})
+        assert resp_b.status_code == 409, f"Expected 409, got {resp_b.status_code}: {resp_b.text}"
+        assert not os.path.exists(path_b), "Rejected create must not leave a file behind"
+    finally:
+        remove_flow(path_a)
+        remove_flow(path_b)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path.in_([path_a, path_b])).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_create_flow_nonexistent_namespace_404():
+    """create_flow with a namespace_id that does not exist is rejected before any file is written."""
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    flow_path = str(base_dir / "ns_create_missing_ns.yaml")
+    remove_flow(flow_path)
+
+    try:
+        resp = client.post("editor/create_flow", params={"flow_path": flow_path, "namespace_id": 99999999})
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        assert not os.path.exists(flow_path), "Rejected create must not leave a file behind"
+    finally:
+        remove_flow(flow_path)
+
+
 def test_overwrite_flow_in_catalog_preserves_metadata():
     """Overwriting writes the source flow's YAML into the target's path while
     keeping the target's name + namespace, and stamps the preserved
@@ -2005,6 +2110,52 @@ def test_get_excel_sheet_names_path_traversal_with_dots():
     # .. patterns are blocked in all modes
     response = client.get("/api/get_xlsx_sheet_names", params={"path": "../../../etc/passwd"})
     assert response.status_code == 403, "Path traversal with .. should be blocked"
+
+
+def test_validate_path_under_cwd_electron_allows_any_local_path(monkeypatch):
+    """In electron (desktop) mode, validate_path_under_cwd permits any local
+    absolute path and returns it normalized.
+
+    Regression guard for the py/path-injection fix: the electron branch now routes
+    the value through a normpath+startswith barrier (CodeQL-recognized sanitizer),
+    and that must NOT change desktop behavior of allowing any local file.
+    """
+    from flowfile_core.configs import settings
+    from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
+
+    monkeypatch.setattr(settings, "is_electron_mode", lambda: True)
+
+    abs_path = str(storage.user_data_directory / "some_local_flow.yaml")
+    result = validate_path_under_cwd(abs_path)
+    assert os.path.isabs(result), "An absolute local path must stay absolute in desktop mode"
+    assert result == os.path.normpath(abs_path), "An already-normalized absolute path is returned unchanged"
+
+
+def test_validate_path_under_cwd_electron_blocks_dot_dot(monkeypatch):
+    """In electron mode, .. traversal must still be rejected with a 403 (the
+    blocklist is kept on top of the normpath+startswith barrier)."""
+    from fastapi import HTTPException
+
+    from flowfile_core.configs import settings
+    from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
+
+    monkeypatch.setattr(settings, "is_electron_mode", lambda: True)
+
+    with pytest.raises(HTTPException) as exc_info:
+        validate_path_under_cwd(os.path.join("a", "..", "..", "etc", "passwd"))
+    assert exc_info.value.status_code == 403
+
+
+def test_validate_path_under_cwd_electron_relative_path_resolves_to_cwd(monkeypatch):
+    """In electron mode a relative path anchors to the cwd, not the filesystem
+    root — joining it onto '/' would point create_flow at a nonexistent dir."""
+    from flowfile_core.configs import settings
+    from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
+
+    monkeypatch.setattr(settings, "is_electron_mode", lambda: True)
+
+    result = validate_path_under_cwd(os.path.join("some_dir", "flow.yaml"))
+    assert result == os.path.normpath(os.path.join(os.getcwd(), "some_dir", "flow.yaml"))
 
 
 def test_get_available_flow_files_path_traversal_blocked():
