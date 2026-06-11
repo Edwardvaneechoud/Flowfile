@@ -4,12 +4,51 @@
       <div>
         <h2 class="page-title">User Groups</h2>
         <p class="page-description">
-          Groups are who you share secrets, connections, and catalog resources with.
+          A group is a named set of users you share resources with — secrets, connections, tables,
+          flows, models, and visuals. Sharing a resource with a group grants it to every member at
+          once. Only administrators can create groups.
         </p>
       </div>
       <el-button v-if="isAdmin" type="primary" @click="openCreate">
         <i class="fa-solid fa-plus" />&nbsp;Create group
       </el-button>
+    </div>
+
+    <!-- Roles explainer -->
+    <button type="button" class="roles-toggle" @click="showRolesHelp = !showRolesHelp">
+      <i :class="showRolesHelp ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'" />
+      What do the member roles mean?
+    </button>
+    <div v-if="showRolesHelp" class="roles-help">
+      <p class="roles-help-intro">
+        A member's role controls <strong>group administration only</strong> — who can manage the
+        group itself. It is separate from the <em>use</em>/<em>manage</em> permission a resource is
+        shared at.
+      </p>
+      <ul class="roles-list">
+        <li>
+          <span class="role-pill role-owner">Owner</span>
+          <span>
+            Full control of the group: rename or delete it, and add, remove, or change the role of
+            any member — including promoting or removing other owners. A group always keeps at least
+            one owner.
+          </span>
+        </li>
+        <li>
+          <span class="role-pill role-manager">Manager</span>
+          <span>
+            Manages membership: add or remove members and set them to member or manager. Cannot
+            promote/remove owners, rename, or delete the group.
+          </span>
+        </li>
+        <li>
+          <span class="role-pill role-member">Member</span>
+          <span>
+            Belongs to the group and can use everything shared with it. No group-administration
+            abilities.
+          </span>
+        </li>
+      </ul>
     </div>
 
     <el-table v-loading="loading" :data="groups" class="groups-table" empty-text="No groups yet">
@@ -71,7 +110,11 @@
       width="600px"
     >
       <div v-if="detail" v-loading="detailLoading">
-        <div class="add-member">
+        <p class="detail-roles-note">
+          <strong>Owner</strong> runs the group, <strong>Manager</strong> manages members,
+          <strong>Member</strong> just gets access to what's shared with the group.
+        </p>
+        <div v-if="canManageMembers" class="add-member">
           <el-select v-model="addUserId" placeholder="Add a user" filterable class="user-select">
             <el-option
               v-for="user in addableUsers"
@@ -136,6 +179,7 @@ import userService, { type User } from "../../services/user.service";
 const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.isAdmin);
 
+const showRolesHelp = ref(false);
 const loading = ref(false);
 const groups = ref<UserGroup[]>([]);
 const allUsers = ref<User[]>([]);
@@ -296,9 +340,77 @@ onMounted(() => {
   margin: 4px 0 0;
   color: var(--el-text-color-secondary);
   font-size: 13px;
+  max-width: 70ch;
+}
+.roles-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--el-color-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.roles-help {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+.roles-help-intro {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+.roles-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.roles-list li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  line-height: 1.45;
+}
+.role-pill {
+  flex-shrink: 0;
+  width: 72px;
+  text-align: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.role-owner {
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+}
+.role-manager {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+.role-member {
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color);
 }
 .groups-table {
   width: 100%;
+}
+.detail-roles-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
 }
 .add-member {
   display: flex;

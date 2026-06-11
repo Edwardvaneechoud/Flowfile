@@ -5,31 +5,12 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CloudStorageConnection as DBCloudStorageConnection
 from flowfile_core.database.models import DatabaseConnection as DBConnectionModel
 from flowfile_core.database.models import Secret
-from flowfile_core.database.models import User as DBUser
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
 
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
-
-
-def _shared_connection_rows(db: Session, user_id: int, resource_type: str, model) -> list[tuple]:
-    """(row, AccessInfo) pairs for connections reachable via group grants (excluding own)."""
-    details = sharing.granted_access_details(db, user_id, resource_type)
-    if not details:
-        return []
-    rows = db.query(model).filter(model.id.in_(details.keys()), model.user_id != user_id).order_by(model.id.asc()).all()
-    granter_ids = {details[row.id][1] for row in rows if details[row.id][1] is not None}
-    usernames = {}
-    if granter_ids:
-        usernames = dict(db.query(DBUser.id, DBUser.username).filter(DBUser.id.in_(granter_ids)))
-    out = []
-    for row in rows:
-        permission, granted_by = details[row.id]
-        access = AccessInfo(is_owner=False, access_level=permission, shared_by=usernames.get(granted_by))
-        out.append((row, access))
-    return out
 
 
 def store_database_connection(db: Session, connection: FullDatabaseConnection, user_id: int) -> DBConnectionModel:
@@ -254,7 +235,7 @@ def get_all_database_connections_interface(db: Session, user_id: int) -> list[Fu
         else:
             raise TypeError(f"Expected a DBConnectionModel instance, got {type(db_connection)}")
 
-    for row, access in _shared_connection_rows(db, user_id, "database_connection", DBConnectionModel):
+    for row, access in sharing.shared_resource_rows(db, user_id, "database_connection"):
         result.append(database_connection_interface_from_db_connection(row, access=access))
 
     return result
@@ -564,7 +545,7 @@ def get_all_cloud_connections_interface(db: Session, user_id: int) -> list[FullC
     db_connections = db.query(DBCloudStorageConnection).filter(DBCloudStorageConnection.user_id == user_id).all()
 
     result = [cloud_connection_interface_from_db_connection(conn, access=_OWNER_ACCESS) for conn in db_connections]
-    for row, access in _shared_connection_rows(db, user_id, "cloud_connection", DBCloudStorageConnection):
+    for row, access in sharing.shared_resource_rows(db, user_id, "cloud_connection"):
         result.append(cloud_connection_interface_from_db_connection(row, access=access))
     return result
 

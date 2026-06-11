@@ -10,10 +10,12 @@ from typing import TYPE_CHECKING, Literal
 
 import polars as pl
 
+from flowfile_core.auth import sharing
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
 from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
 from flowfile_core.catalog.exceptions import (
     FlowNotFoundError,
+    NotAuthorizedError,
     TableNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
@@ -294,6 +296,19 @@ class VirtualTableService:
 
         rewritten_query = rewrite_qualified_references(table.sql_query, alias_to_table.keys())
         referenced_ids = {tbl.id for alias, tbl in alias_to_table.items() if is_table_reference(alias, rewritten_query)}
+
+        # A query virtual table must not outlive its creator's access to the tables it
+        # references: re-check access on every referenced table at resolve time, so a
+        # revoked grant immediately stops the virtual table from reading that data.
+        # No-op when sharing is off or user_id is None (internal/unscoped resolution);
+        # when a check is due, a repository without a session fails CLOSED.
+        if sharing.sharing_enabled() and user_id is not None and referenced_ids:
+            db = getattr(self.repo, "_db", None)
+            if db is None:
+                raise NotAuthorizedError(user_id, "use a table referenced by this query")
+            for ref_id in referenced_ids:
+                if not sharing.user_id_can_use(db, user_id, "catalog_table", ref_id):
+                    raise NotAuthorizedError(user_id, "use a table referenced by this query")
 
         sql_context = pl.SQLContext()
         for tbl_id in referenced_ids:

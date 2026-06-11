@@ -58,14 +58,7 @@
                 <i class="fa-solid fa-database"></i>
                 <span>{{ connection.connectionName }}</span>
                 <span class="badge">{{ connection.databaseType }}</span>
-                <span
-                  v-if="isShared(connection)"
-                  class="shared-badge"
-                  :title="sharedTitle(connection)"
-                >
-                  <i class="fa-solid fa-share-nodes"></i>
-                  Shared · {{ connection.access?.access_level }}
-                </span>
+                <SharedBadge :access="connection.access" />
               </div>
               <div class="connection-details">
                 <span>{{
@@ -137,7 +130,7 @@
       resource-type="database_connection"
       :resource-id="shareConnection.id"
       :resource-name="shareConnection.connectionName"
-      :can-manage-grants="shareConnection.access?.is_owner !== false"
+      :can-manage-grants="canManageGrants(shareConnection)"
     />
 
     <el-dialog
@@ -182,7 +175,8 @@ import {
 import type { DatabaseType } from "./databaseConnectionTypes";
 import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
-import { useMultiUser } from "../../composables/useMultiUser";
+import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 
 // State
 const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
@@ -195,17 +189,9 @@ const isDeleting = ref(false);
 const connectionToDelete = ref("");
 const activeConnection = ref<FullDatabaseConnection | undefined>(undefined);
 
-const { isMultiUser } = useMultiUser();
+const { isMultiUser, isOwned, canManage, canManageGrants } = useResourceSharing();
 const showShareDialog = ref(false);
 const shareConnection = ref<FullDatabaseConnectionInterface | null>(null);
-
-const isOwned = (c: FullDatabaseConnectionInterface) => c.access?.is_owner !== false;
-const isShared = (c: FullDatabaseConnectionInterface) => !!c.access && c.access.is_owner === false;
-// Owners and manage-grantees can edit/delete; use-grantees cannot.
-const canManage = (c: FullDatabaseConnectionInterface) =>
-  !c.access || c.access.is_owner || c.access.access_level === "manage";
-const sharedTitle = (c: FullDatabaseConnectionInterface) =>
-  c.access?.shared_by ? `Shared by ${c.access.shared_by}` : "Shared with you";
 
 const openShare = (c: FullDatabaseConnectionInterface) => {
   shareConnection.value = c;
@@ -353,19 +339,6 @@ onMounted(() => {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   margin-left: var(--spacing-2);
-}
-
-.shared-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: var(--spacing-2);
-  padding: var(--spacing-1) var(--spacing-3);
-  border-radius: var(--border-radius-full);
-  background: var(--color-accent-subtle);
-  color: var(--color-accent);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
 }
 
 .connection-details {

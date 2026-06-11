@@ -58,7 +58,7 @@
       resource-type="dashboard"
       :resource-id="shareDashboard.id"
       :resource-name="shareDashboard.name"
-      :can-manage-grants="shareDashboard.access?.is_owner !== false"
+      :can-manage-grants="canManageGrants(shareDashboard)"
     />
   </div>
 </template>
@@ -71,12 +71,14 @@ import { Plus, Search } from "@element-plus/icons-vue";
 import { useDashboardsStore } from "../../stores/dashboards-store";
 import DashboardCard from "./DashboardCard.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 import type { Dashboard } from "../../types";
 
 const router = useRouter();
 const store = useDashboardsStore();
 const search = ref("");
 
+const { canManageGrants } = useResourceSharing();
 const shareDashboard = ref<Dashboard | null>(null);
 const showShareDialog = ref(false);
 const onShare = (d: Dashboard) => {

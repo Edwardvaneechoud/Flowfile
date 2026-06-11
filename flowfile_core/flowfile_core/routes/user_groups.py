@@ -7,6 +7,7 @@ exist on desktop. Not to be confused with node-canvas groups (/editor/create_gro
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
@@ -50,19 +51,39 @@ def _members_of(db: Session, group_id: int) -> list[tuple[db_models.UserGroupMem
     )
 
 
+def _groups_out(db: Session, groups: list[db_models.UserGroup], user_id: int) -> list[UserGroupOut]:
+    """Build the DTOs with one member-count query and one my-role query for the whole list."""
+    gids = [g.id for g in groups]
+    counts: dict[int, int] = {}
+    roles: dict[int, str] = {}
+    if gids:
+        counts = dict(
+            db.query(db_models.UserGroupMembership.group_id, func.count())
+            .filter(db_models.UserGroupMembership.group_id.in_(gids))
+            .group_by(db_models.UserGroupMembership.group_id)
+        )
+        roles = dict(
+            db.query(db_models.UserGroupMembership.group_id, db_models.UserGroupMembership.role).filter(
+                db_models.UserGroupMembership.group_id.in_(gids),
+                db_models.UserGroupMembership.user_id == user_id,
+            )
+        )
+    return [
+        UserGroupOut(
+            id=g.id,
+            name=g.name,
+            description=g.description,
+            created_by=g.created_by,
+            member_count=counts.get(g.id, 0),
+            my_role=roles.get(g.id),
+            created_at=g.created_at,
+        )
+        for g in groups
+    ]
+
+
 def _group_out(db: Session, group: db_models.UserGroup, user_id: int) -> UserGroupOut:
-    member_count = (
-        db.query(db_models.UserGroupMembership).filter(db_models.UserGroupMembership.group_id == group.id).count()
-    )
-    return UserGroupOut(
-        id=group.id,
-        name=group.name,
-        description=group.description,
-        created_by=group.created_by,
-        member_count=member_count,
-        my_role=sharing.group_role(db, group.id, user_id),
-        created_at=group.created_at,
-    )
+    return _groups_out(db, [group], user_id)[0]
 
 
 def _require_group_admin(db: Session, group: db_models.UserGroup, user: User, owner_only: bool = False) -> None:
@@ -130,7 +151,7 @@ def list_groups(
             if gids
             else []
         )
-    return [_group_out(db, g, current_user.id) for g in groups]
+    return _groups_out(db, groups, current_user.id)
 
 
 @router.get("/{group_id}", response_model=UserGroupDetail)

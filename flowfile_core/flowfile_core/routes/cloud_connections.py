@@ -65,7 +65,7 @@ def update_cloud_storage_connection(
         raise HTTPException(404, "Cloud connection not found")
     if authorize_connection_mutation(db, current_user, "cloud_connection", db_connection):
         changed = changed_target_fields(
-            db_connection, input_connection, ("storage_type", "auth_method", "endpoint_url")
+            db_connection, input_connection, ("storage_type", "auth_method", "endpoint_url", "verify_ssl")
         )
         has_new_credentials = any(
             field is not None and field.get_secret_value()

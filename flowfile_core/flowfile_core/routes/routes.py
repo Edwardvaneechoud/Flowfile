@@ -668,7 +668,9 @@ def update_db_connection(
     if db_connection is None:
         raise HTTPException(404, "Database connection not found")
     if authorize_connection_mutation(db, current_user, "database_connection", db_connection):
-        changed = changed_target_fields(db_connection, input_connection, ("host", "port", "database", "database_type"))
+        changed = changed_target_fields(
+            db_connection, input_connection, ("host", "port", "database", "database_type", "ssl_enabled")
+        )
         require_credentials_on_target_change(
             changed,
             has_new_credentials=bool(input_connection.password.get_secret_value()),

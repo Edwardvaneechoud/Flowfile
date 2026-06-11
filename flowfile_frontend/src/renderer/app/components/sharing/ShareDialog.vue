@@ -143,11 +143,15 @@ const availableGroups = computed(() =>
   groups.value.filter((group) => !shares.value.some((s) => s.group_id === group.id)),
 );
 
-const noGroupsText = computed(() =>
-  authStore.isAdmin
+const noGroupsText = computed(() => {
+  // Groups exist but every one already has access (vs. genuinely being in none).
+  if (groups.value.length > 0) {
+    return "Already shared with all available groups";
+  }
+  return authStore.isAdmin
     ? "No groups exist yet — create one in User Groups"
-    : "You are not in any groups",
-);
+    : "You are not in any groups";
+});
 
 const permissionHelp = computed(() => {
   const noun = resourceLabel.value;

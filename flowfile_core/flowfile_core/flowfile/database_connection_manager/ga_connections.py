@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from flowfile_core.auth import sharing
 from flowfile_core.database.models import GoogleAnalyticsConnection as DBGoogleAnalyticsConnection
 from flowfile_core.database.models import Secret
-from flowfile_core.database.models import User as DBUser
 from flowfile_core.schemas.google_analytics_schemas import FullGoogleAnalyticsConnectionInterface
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import SecretInput, encrypt_secret, store_secret
@@ -283,23 +282,6 @@ def get_all_ga_connections_interface(db: Session, user_id: int) -> list[FullGoog
     rows = db.query(DBGoogleAnalyticsConnection).filter(DBGoogleAnalyticsConnection.user_id == user_id).all()
     result = [ga_connection_interface_from_db(r, access=_OWNER_ACCESS) for r in rows]
 
-    details = sharing.granted_access_details(db, user_id, "ga_connection")
-    if details:
-        shared_rows = (
-            db.query(DBGoogleAnalyticsConnection)
-            .filter(
-                DBGoogleAnalyticsConnection.id.in_(details.keys()),
-                DBGoogleAnalyticsConnection.user_id != user_id,
-            )
-            .order_by(DBGoogleAnalyticsConnection.id.asc())
-            .all()
-        )
-        granter_ids = {details[row.id][1] for row in shared_rows if details[row.id][1] is not None}
-        usernames = {}
-        if granter_ids:
-            usernames = dict(db.query(DBUser.id, DBUser.username).filter(DBUser.id.in_(granter_ids)))
-        for row in shared_rows:
-            permission, granted_by = details[row.id]
-            access = AccessInfo(is_owner=False, access_level=permission, shared_by=usernames.get(granted_by))
-            result.append(ga_connection_interface_from_db(row, access=access))
+    for row, access in sharing.shared_resource_rows(db, user_id, "ga_connection"):
+        result.append(ga_connection_interface_from_db(row, access=access))
     return result

@@ -93,7 +93,14 @@ def update_kafka_connection_route(
         provided = update.model_fields_set
         changed = [
             field
-            for field in ("bootstrap_servers", "security_protocol", "sasl_mechanism", "schema_registry_url")
+            for field in (
+                "bootstrap_servers",
+                "security_protocol",
+                "sasl_mechanism",
+                "schema_registry_url",
+                "ssl_ca_location",
+                "ssl_cert_location",
+            )
             if field in provided and getattr(update, field) != getattr(db_conn, field)
         ]
         has_new_credentials = bool(

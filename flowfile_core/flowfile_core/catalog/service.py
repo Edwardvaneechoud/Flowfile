@@ -193,9 +193,10 @@ class CatalogService:
         if self._restricted:
             self.access.require_manage(resource_type, resource_id)
 
-    def _require_namespace_visible(self, namespace_id: int | None) -> None:
-        """Creating items requires the target namespace be visible (public / owned / granted)."""
-        if self._restricted and namespace_id is not None and namespace_id not in self.access.visible_namespace_ids():
+    def _require_namespace_writable(self, namespace_id: int | None) -> None:
+        """Creating/moving items requires write access to the target namespace:
+        public, owned, or manage-granted. A use-level grant is read-only."""
+        if self._restricted and namespace_id is not None and namespace_id not in self.access.writable_namespace_ids():
             raise NotAuthorizedError(self.access.user_id or -1, "create items in this namespace")
 
     def _require_use_run(self, run_id: int) -> None:
@@ -374,7 +375,7 @@ class CatalogService:
         description: str | None = None,
     ) -> CatalogNamespace:
         """Create a catalog (level 0) or schema (level 1) namespace."""
-        self._require_namespace_visible(parent_id)
+        self._require_namespace_writable(parent_id)
         return self._namespaces.create_namespace(name, owner_id, parent_id, description)
 
     def update_namespace(
@@ -453,7 +454,13 @@ class CatalogService:
             node.children = [c for c in (_prune(child) for child in node.children) if c is not None]
             self._stamp_access([node], "catalog_namespace", details["catalog_namespace"])
             has_items = bool(node.flows or node.tables or node.visualizations or node.artifacts or node.children)
-            if node.id in visible_ns or has_items:
+            if node.id in visible_ns:
+                return node
+            if has_items:
+                # Context-only ancestor: kept so granted children can render, but its
+                # own metadata is not the user's to read — redact the description (the
+                # name stays: it is the breadcrumb to the granted item).
+                node.description = None
                 return node
             return None
 
@@ -476,7 +483,7 @@ class CatalogService:
         description: str | None = None,
     ) -> FlowRegistrationOut:
         """Register a new flow in the catalog."""
-        self._require_namespace_visible(namespace_id)
+        self._require_namespace_writable(namespace_id)
         return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description)
 
     def update_flow(
@@ -490,7 +497,7 @@ class CatalogService:
         """Update a flow registration."""
         self._require_manage("flow", registration_id)
         if namespace_id is not None:
-            self._require_namespace_visible(namespace_id)
+            self._require_namespace_writable(namespace_id)
         return self._flows.update_flow(registration_id, requesting_user_id, name, description, namespace_id)
 
     def delete_flow(self, registration_id: int, delete_file: bool = False) -> None:
@@ -717,7 +724,7 @@ class CatalogService:
         source_run_id: int | None = None,
     ) -> CatalogTableOut:
         """Register a new table by materialising it as a Delta table via the worker."""
-        self._require_namespace_visible(namespace_id)
+        self._require_namespace_writable(namespace_id)
         return self._tables.register_table(
             name, file_path, owner_id, namespace_id, description, source_registration_id, source_run_id
         )
@@ -738,7 +745,7 @@ class CatalogService:
         size_bytes: int | None = None,
     ) -> CatalogTableOut:
         """Register an already-materialized table (Delta or Parquet) without copying its data."""
-        self._require_namespace_visible(namespace_id)
+        self._require_namespace_writable(namespace_id)
         return self._tables.register_table_from_data(
             name,
             table_path,
@@ -864,7 +871,7 @@ class CatalogService:
         """Update a catalog table's metadata."""
         self._require_manage("catalog_table", table_id)
         if namespace_id is not None:
-            self._require_namespace_visible(namespace_id)
+            self._require_namespace_writable(namespace_id)
         return self._tables.update_table(table_id, name, description, namespace_id)
 
     def delete_table(self, table_id: int, delete_file: bool = False) -> None:
@@ -890,6 +897,7 @@ class CatalogService:
         source_table_versions: str | None = None,
     ) -> CatalogTableOut:
         """Create a virtual flow table (non-materialised catalog entry)."""
+        self._require_namespace_writable(namespace_id)
         return self._virtual_tables.create_virtual_flow_table(
             name,
             owner_id,
@@ -918,6 +926,8 @@ class CatalogService:
     ) -> CatalogTableOut:
         """Update a virtual flow table's metadata or producer."""
         self._require_manage("catalog_table", table_id)
+        if namespace_id is not None:
+            self._require_namespace_writable(namespace_id)
         return self._virtual_tables.update_virtual_flow_table(
             table_id,
             name,
@@ -940,6 +950,7 @@ class CatalogService:
         description: str | None = None,
     ) -> CatalogTableOut:
         """Create a query-based virtual table from a SQL expression."""
+        self._require_namespace_writable(namespace_id)
         return self._virtual_tables.create_query_virtual_table(name, owner_id, sql_query, namespace_id, description)
 
     def update_query_virtual_table(
@@ -952,6 +963,8 @@ class CatalogService:
     ) -> CatalogTableOut:
         """Update a query-based virtual table; re-derives schema if SQL changed."""
         self._require_manage("catalog_table", table_id)
+        if namespace_id is not None:
+            self._require_namespace_writable(namespace_id)
         return self._virtual_tables.update_query_virtual_table(table_id, name, description, namespace_id, sql_query)
 
     def resolve_query_virtual_table(
@@ -1098,8 +1111,11 @@ class CatalogService:
 
     def list_schedules(self, registration_id: int | None = None) -> list[FlowScheduleOut]:
         """List schedules, optionally filtered by flow."""
+        if self._restricted and registration_id is not None:
+            # Same fail-fast contract as list_runs: by-flow listing needs use on the flow.
+            self._require_use("flow", registration_id)
         schedules = self._schedules.list_schedules(registration_id)
-        if self._restricted:
+        if self._restricted and registration_id is None:
             allowed = self.access.accessible_ids("flow")
             user_id = self.access.user_id
             schedules = [s for s in schedules if s.owner_id == user_id or s.registration_id in allowed]
@@ -1220,11 +1236,20 @@ class CatalogService:
 
     def create_visualization(self, payload: VisualizationCreate, user_id: int) -> VisualizationOut:
         """Create a new visualization (table-source or sql-source)."""
+        if payload.catalog_table_id is not None:
+            self._require_use("catalog_table", payload.catalog_table_id)
+        # When namespace_id is None it defaults to the source table's namespace,
+        # which the table-use check above already covers.
+        self._require_namespace_writable(payload.namespace_id)
         return self._visualizations.create_visualization(payload, user_id)
 
     def update_visualization(self, viz_id: int, payload: VisualizationUpdate, user_id: int) -> VisualizationOut:
         """Update a visualization's spec, name, namespace or thumbnail."""
         self._require_manage_visualization(viz_id)
+        if payload.catalog_table_id is not None:
+            self._require_use("catalog_table", payload.catalog_table_id)
+        if payload.namespace_id is not None:
+            self._require_namespace_writable(payload.namespace_id)
         return self._visualizations.update_visualization(viz_id, payload, user_id)
 
     def delete_visualization(self, viz_id: int, user_id: int) -> None:
@@ -1249,11 +1274,14 @@ class CatalogService:
 
     def create_dashboard(self, payload: DashboardCreate, user_id: int) -> DashboardOut:
         """Create a new dashboard."""
+        self._require_namespace_writable(payload.namespace_id)
         return self._visualizations.create_dashboard(payload, user_id)
 
     def update_dashboard(self, dashboard_id: int, payload: DashboardUpdate, user_id: int) -> DashboardOut:
         """Update a dashboard's name, layout, namespace or description."""
         self._require_manage_dashboard(dashboard_id)
+        if payload.namespace_id is not None:
+            self._require_namespace_writable(payload.namespace_id)
         return self._visualizations.update_dashboard(dashboard_id, payload, user_id)
 
     def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:

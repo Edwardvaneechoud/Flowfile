@@ -10,7 +10,7 @@ from confluent_kafka.admin import AdminClient
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
-from flowfile_core.database.models import KafkaConnection, Secret, User
+from flowfile_core.database.models import KafkaConnection, Secret
 from flowfile_core.schemas.kafka_schemas import (
     KafkaConnectionCreate,
     KafkaConnectionOut,
@@ -136,22 +136,8 @@ def list_kafka_connections(db: Session, user_id: int) -> list[KafkaConnectionOut
     connections = db.query(KafkaConnection).filter(KafkaConnection.user_id == user_id).all()
     result = [_to_connection_out(c, access=_OWNER_ACCESS) for c in connections]
 
-    details = sharing.granted_access_details(db, user_id, "kafka_connection")
-    if details:
-        shared_rows = (
-            db.query(KafkaConnection)
-            .filter(KafkaConnection.id.in_(details.keys()), KafkaConnection.user_id != user_id)
-            .order_by(KafkaConnection.id.asc())
-            .all()
-        )
-        granter_ids = {details[row.id][1] for row in shared_rows if details[row.id][1] is not None}
-        usernames = {}
-        if granter_ids:
-            usernames = dict(db.query(User.id, User.username).filter(User.id.in_(granter_ids)))
-        for row in shared_rows:
-            permission, granted_by = details[row.id]
-            access = AccessInfo(is_owner=False, access_level=permission, shared_by=usernames.get(granted_by))
-            result.append(_to_connection_out(row, access=access))
+    for row, access in sharing.shared_resource_rows(db, user_id, "kafka_connection"):
+        result.append(_to_connection_out(row, access=access))
     return result
 
 

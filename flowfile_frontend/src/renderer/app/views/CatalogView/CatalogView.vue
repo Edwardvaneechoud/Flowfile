@@ -357,7 +357,7 @@
       resource-type="catalog_namespace"
       :resource-id="shareNamespace.id"
       :resource-name="shareNamespace.name"
-      :can-manage-grants="shareNamespace.access?.is_owner !== false"
+      :can-manage-grants="canManageGrants(shareNamespace)"
     />
 
     <!-- Right-click context menus for catalog tables and flows -->
@@ -488,6 +488,7 @@ import ApisPanel from "./ApisPanel.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 import { catalogTabs } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
@@ -509,6 +510,7 @@ const catalogStore = useCatalogStore();
 const flowStore = useFlowStore();
 
 // Namespace sharing (one dialog for the whole tree).
+const { canManageGrants } = useResourceSharing();
 const shareNamespace = ref<NamespaceTree | null>(null);
 const showNamespaceShareDialog = ref(false);
 const openNamespaceShare = (node: NamespaceTree) => {

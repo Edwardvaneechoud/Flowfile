@@ -6,18 +6,20 @@ authorization-only feature: ciphertext stays keyed to the owning user
 (``$ffsec$1$<owner_id>$``), so granting access never re-encrypts anything and
 the worker needs no changes.
 
-Deliberately import-light (database models + sqlalchemy only — no catalog or
-route imports) so any layer can use it. Everything degenerates to owner-only
-behavior when ``sharing_enabled()`` is False (electron/desktop mode).
+Deliberately import-light (database models, sqlalchemy and the plain pydantic
+sharing schema — no catalog or route imports) so any layer can use it.
+Everything degenerates to owner-only behavior when ``sharing_enabled()`` is
+False (electron/desktop mode).
 """
 
 import os
 from dataclasses import dataclass
 
-from sqlalchemy import or_
+from sqlalchemy import event, or_
 from sqlalchemy.orm import Session
 
 from flowfile_core.database import models as db_models
+from flowfile_core.schemas.sharing_schema import AccessInfo
 
 PERMISSION_USE = "use"
 PERMISSION_MANAGE = "manage"
@@ -106,19 +108,44 @@ def group_role(db: Session, group_id: int, user_id: int) -> str | None:
     return row[0] if row else None
 
 
-def expand_namespace_grants(db: Session, user_id: int, permission: str = PERMISSION_USE) -> set[int]:
-    """Namespace ids granted to the user's groups, plus their direct children.
+def _granted_namespace_permissions(db: Session, user_id: int) -> dict[int, str]:
+    """namespace_id -> highest granted permission, expanded to direct children.
 
     Namespaces are hard-capped at two levels (catalog -> schema), so one
-    parent_id expansion covers the whole subtree.
+    parent_id expansion covers the whole subtree. Computing both permission
+    levels in one walk lets callers avoid a second expansion.
     """
+    gids = user_group_ids(db, user_id)
+    if not gids:
+        return {}
+    rows = db.query(db_models.ResourceGrant.resource_id, db_models.ResourceGrant.permission).filter(
+        db_models.ResourceGrant.resource_type == "catalog_namespace",
+        db_models.ResourceGrant.group_id.in_(gids),
+    )
+    perms: dict[int, str] = {}
+    for ns_id, permission in rows:
+        if permission == PERMISSION_MANAGE or ns_id not in perms:
+            perms[ns_id] = permission
+    if not perms:
+        return {}
+    children = db.query(db_models.CatalogNamespace.id, db_models.CatalogNamespace.parent_id).filter(
+        db_models.CatalogNamespace.parent_id.in_(perms.keys())
+    )
+    for child_id, parent_id in children:
+        parent_perm = perms[parent_id]
+        if child_id not in perms or parent_perm == PERMISSION_MANAGE:
+            perms[child_id] = parent_perm
+    return perms
+
+
+def expand_namespace_grants(db: Session, user_id: int, permission: str = PERMISSION_USE) -> set[int]:
+    """Namespace ids granted to the user's groups, plus their direct children."""
     if not sharing_enabled():
         return set()
-    granted = _direct_granted_ids(db, user_id, "catalog_namespace", permission)
-    if not granted:
-        return set()
-    children = db.query(db_models.CatalogNamespace.id).filter(db_models.CatalogNamespace.parent_id.in_(granted))
-    return granted | {r[0] for r in children}
+    perms = _granted_namespace_permissions(db, user_id)
+    if permission == PERMISSION_MANAGE:
+        return {ns_id for ns_id, p in perms.items() if p == PERMISSION_MANAGE}
+    return set(perms)
 
 
 def _direct_granted_ids(db: Session, user_id: int, resource_type: str, permission: str) -> set[int]:
@@ -176,13 +203,14 @@ def granted_access_details(db: Session, user_id: int, resource_type: str) -> dic
             if existing is None or (permission == PERMISSION_MANAGE and existing[0] != PERMISSION_MANAGE):
                 details[resource_id] = (permission, granted_by)
     if resource_type in _NAMESPACE_SCOPED_TYPES:
-        for permission in (PERMISSION_USE, PERMISSION_MANAGE):
-            ns_ids = expand_namespace_grants(db, user_id, permission)
-            if not ns_ids:
-                continue
+        ns_perms = _granted_namespace_permissions(db, user_id)
+        if ns_perms:
             spec = RESOURCE_REGISTRY[resource_type]
-            rows = db.query(spec.model.id).filter(spec.model.namespace_id.in_(ns_ids))
-            for (resource_id,) in rows:
+            rows = db.query(spec.model.id, spec.model.namespace_id).filter(
+                spec.model.namespace_id.in_(ns_perms.keys())
+            )
+            for resource_id, ns_id in rows:
+                permission = ns_perms[ns_id]
                 existing = details.get(resource_id)
                 if existing is None or (permission == PERMISSION_MANAGE and existing[0] != PERMISSION_MANAGE):
                     details[resource_id] = (permission, None)
@@ -222,6 +250,50 @@ def can_manage(db: Session, user, resource_type: str, resource_id: int, owner_id
     return _has_access(db, user, resource_type, resource_id, owner_id, PERMISSION_MANAGE)
 
 
+def user_id_can_use(db: Session, user_id: int | None, resource_type: str, resource_id: int) -> bool:
+    """``can_use`` for a bare user id (resolves the ``User`` row).
+
+    Used by deep resolution paths (virtual-table SQL context) that only carry a
+    user id. Unrestricted when sharing is off or the user id is ``None``
+    (internal/unscoped resolution). A non-None id that doesn't resolve to a
+    ``User`` row is denied — a stale id must never widen access.
+    """
+    if not sharing_enabled() or user_id is None:
+        return True
+    user = db.get(db_models.User, user_id)
+    if user is None:
+        return False
+    return can_use(db, user, resource_type, resource_id)
+
+
+def shared_resource_rows(db: Session, user_id: int, resource_type: str) -> list[tuple[object, AccessInfo]]:
+    """(row, AccessInfo) pairs for rows reachable via group grants, excluding own rows.
+
+    The single implementation behind every "list shared X" endpoint: resolves the
+    grant details, loads the rows, and annotates each with the granter's username.
+    """
+    details = granted_access_details(db, user_id, resource_type)
+    if not details:
+        return []
+    spec = RESOURCE_REGISTRY[resource_type]
+    owner_col = getattr(spec.model, spec.owner_attr)
+    rows = (
+        db.query(spec.model)
+        .filter(spec.model.id.in_(details.keys()), owner_col != user_id)
+        .order_by(spec.model.id.asc())
+        .all()
+    )
+    granter_ids = {details[row.id][1] for row in rows if details[row.id][1] is not None}
+    usernames = {}
+    if granter_ids:
+        usernames = dict(db.query(db_models.User.id, db_models.User.username).filter(db_models.User.id.in_(granter_ids)))
+    out = []
+    for row in rows:
+        permission, granted_by = details[row.id]
+        out.append((row, AccessInfo(is_owner=False, access_level=permission, shared_by=usernames.get(granted_by))))
+    return out
+
+
 def accessible_filter(db: Session, user_id: int, resource_type: str, permission: str = PERMISSION_USE):
     """SQLAlchemy criterion matching rows the user owns or was granted. For list queries."""
     spec = RESOURCE_REGISTRY[resource_type]
@@ -256,3 +328,26 @@ def delete_memberships_for_user(db: Session, user_id: int) -> None:
     db.query(db_models.UserGroupMembership).filter(db_models.UserGroupMembership.user_id == user_id).delete(
         synchronize_session=False
     )
+
+
+def _register_grant_cleanup_backstop() -> None:
+    """ORM-delete backstop: deleting a registered resource row via ``session.delete``
+    also deletes its grants in the same flush, so a forgotten
+    ``delete_grants_for_resource`` call can't leave a grant behind to re-attach to a
+    reused rowid. Bulk ``query.delete()`` paths bypass ORM events and must still
+    call ``delete_grants_for_resource`` explicitly."""
+    grants = db_models.ResourceGrant.__table__
+
+    for resource_type, spec in RESOURCE_REGISTRY.items():
+
+        def _on_delete(mapper, connection, target, _resource_type=resource_type):
+            connection.execute(
+                grants.delete()
+                .where(grants.c.resource_type == _resource_type)
+                .where(grants.c.resource_id == target.id)
+            )
+
+        event.listen(spec.model, "after_delete", _on_delete)
+
+
+_register_grant_cleanup_backstop()

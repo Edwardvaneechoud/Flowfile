@@ -318,6 +318,81 @@ def test_namespace_grant_cascades_to_content(
     assert alice_dashboard in [d["id"] for d in bob.get("/catalog/dashboards").json()]
 
 
+def test_query_virtual_table_loses_access_on_revoke(users, resource_factory, alice_catalog, team, grant_factory):
+    """A saved query virtual table must re-check the creator's access to its source
+    tables at resolve time — revoking the grant immediately blocks it."""
+    from flowfile_core.catalog import CatalogService, NotAuthorizedError, SQLAlchemyCatalogRepository
+
+    # alice owns a source table; bob builds a query virtual table on top of it.
+    src_id = resource_factory(
+        db_models.CatalogTable, name="shared_src_tbl", namespace_id=alice_catalog["schema"], owner_id=users["alice"].id
+    )
+    vt_id = resource_factory(
+        db_models.CatalogTable,
+        name="bob_query_vt",
+        namespace_id=alice_catalog["schema"],
+        owner_id=users["bob"].id,
+        table_type="virtual",
+        sql_query="SELECT * FROM shared_src_tbl",
+    )
+    grant_factory("catalog_table", src_id, team, permission="use", granted_by=users["alice"].id)
+
+    def _resolve():
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            return svc.resolve_query_virtual_table(vt_id, user_id=users["bob"].id)
+
+    # With the grant the auth check passes (resolution then fails on missing data,
+    # not on authorization).
+    with pytest.raises(Exception) as exc_info:
+        _resolve()
+    assert not isinstance(exc_info.value, NotAuthorizedError)
+
+    # Revoke the grant on the source table → the virtual table can no longer read it.
+    with get_db_context() as db:
+        db.query(db_models.ResourceGrant).filter_by(resource_type="catalog_table", resource_id=src_id).delete()
+        db.commit()
+    with pytest.raises(NotAuthorizedError):
+        _resolve()
+
+
+def test_use_grant_does_not_allow_namespace_writes(users, client_for, alice_catalog, team, grant_factory):
+    """A use-level namespace grant is read-only: creating inside it is denied;
+    upgrading the grant to manage allows it."""
+    grant_factory("catalog_namespace", alice_catalog["catalog"], team, permission="use", granted_by=users["alice"].id)
+    bob = client_for("bob")
+    denied = bob.post("/catalog/namespaces", json={"name": "bob_sub", "parent_id": alice_catalog["catalog"]})
+    assert denied.status_code == 403, denied.text
+
+    with get_db_context() as db:
+        db.query(db_models.ResourceGrant).filter_by(
+            resource_type="catalog_namespace", resource_id=alice_catalog["catalog"]
+        ).update({"permission": "manage"})
+        db.commit()
+    allowed = bob.post("/catalog/namespaces", json={"name": "bob_sub", "parent_id": alice_catalog["catalog"]})
+    assert allowed.status_code == 201, allowed.text
+    with get_db_context() as db:
+        row = db.query(db_models.CatalogNamespace).filter_by(name="bob_sub").first()
+        if row:
+            db.delete(row)
+            db.commit()
+
+
+def test_create_visualization_requires_table_access(users, client_for, alice_catalog):
+    bob = client_for("bob")
+    response = bob.post(
+        "/catalog/visualizations",
+        json={"name": "bob_viz", "spec": [{}], "source_type": "table", "catalog_table_id": alice_catalog["table"]},
+    )
+    assert response.status_code == 403, response.text
+
+
+def test_create_dashboard_requires_writable_namespace(users, client_for, alice_catalog):
+    bob = client_for("bob")
+    response = bob.post("/catalog/dashboards", json={"name": "bob_dash", "namespace_id": alice_catalog["schema"]})
+    assert response.status_code == 403, response.text
+
+
 def test_create_in_public_namespace_allowed(users, client_for, resource_factory):
     public_id = resource_factory(
         db_models.CatalogNamespace,

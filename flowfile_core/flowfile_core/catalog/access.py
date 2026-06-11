@@ -30,6 +30,10 @@ class AccessResolver:
             and not getattr(user, "is_admin", False)
             and not sharing.is_synthetic_principal(user)
         )
+        # The resolver lives for one request; id-set lookups repeat across resource
+        # types in tree/list endpoints, so memoize them for the request's lifetime.
+        self._accessible_cache: dict[str, set[int]] = {}
+        self._public_cache: set[int] | None = None
 
     # ---- per-resource checks ----
 
@@ -55,15 +59,30 @@ class AccessResolver:
 
     def accessible_ids(self, resource_type: str) -> set[int]:
         """Own ∪ granted ids for a resource type (only meaningful when restricted)."""
-        spec = sharing.RESOURCE_REGISTRY[resource_type]
-        owner_col = getattr(spec.model, spec.owner_attr)
-        own = {r[0] for r in self.db.query(spec.model.id).filter(owner_col == self.user_id)}
-        return own | sharing.granted_resource_ids(self.db, self.user_id, resource_type)
+        cached = self._accessible_cache.get(resource_type)
+        if cached is None:
+            spec = sharing.RESOURCE_REGISTRY[resource_type]
+            owner_col = getattr(spec.model, spec.owner_attr)
+            own = {r[0] for r in self.db.query(spec.model.id).filter(owner_col == self.user_id)}
+            cached = own | sharing.granted_resource_ids(self.db, self.user_id, resource_type)
+            self._accessible_cache[resource_type] = cached
+        return cached
 
     def public_namespace_ids(self) -> set[int]:
-        rows = self.db.query(CatalogNamespace.id).filter(CatalogNamespace.is_public.is_(True))
-        return {r[0] for r in rows}
+        if self._public_cache is None:
+            rows = self.db.query(CatalogNamespace.id).filter(CatalogNamespace.is_public.is_(True))
+            self._public_cache = {r[0] for r in rows}
+        return self._public_cache
 
     def visible_namespace_ids(self) -> set[int]:
         """Namespaces a user may see as tree containers: owned ∪ granted(+children) ∪ public."""
         return self.accessible_ids("catalog_namespace") | self.public_namespace_ids()
+
+    def writable_namespace_ids(self) -> set[int]:
+        """Namespaces a user may create/move items into: owned ∪ manage-granted(+children) ∪ public.
+
+        A use-level grant makes a namespace visible (read) but never a write target.
+        """
+        own = {r[0] for r in self.db.query(CatalogNamespace.id).filter(CatalogNamespace.owner_id == self.user_id)}
+        manage = sharing.expand_namespace_grants(self.db, self.user_id, sharing.PERMISSION_MANAGE)
+        return own | manage | self.public_namespace_ids()

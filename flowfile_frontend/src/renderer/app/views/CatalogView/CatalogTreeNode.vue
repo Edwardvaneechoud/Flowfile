@@ -14,7 +14,7 @@
       <span v-if="totalFlows > 0" class="ns-count">{{ totalFlows }}</span>
       <div class="tree-actions" @click.stop>
         <button
-          v-if="isMultiUser && node.access?.is_owner !== false"
+          v-if="isMultiUser && isOwned(node)"
           class="action-btn"
           title="Share namespace"
           @click="$emit('namespaceShare', node)"
@@ -273,9 +273,9 @@ import type { GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
-import { useMultiUser } from "../../composables/useMultiUser";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 
-const { isMultiUser } = useMultiUser();
+const { isMultiUser, isOwned } = useResourceSharing();
 
 type TreeSectionRef = InstanceType<typeof TreeSection> | null;
 

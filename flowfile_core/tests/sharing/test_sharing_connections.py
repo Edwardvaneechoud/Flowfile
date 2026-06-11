@@ -138,6 +138,22 @@ def test_manage_grantee_target_change_requires_credentials(users, client_for, te
     assert alice.put("/db_connection_lib", json=_db_connection_body("managed_pg", host="db2.internal", password="")).status_code == 200
 
 
+def test_manage_grantee_tls_change_requires_credentials(users, client_for, team):
+    """TLS settings are target fields too: silently disabling cert validation would
+    enable a MITM credential harvest without ever touching the host."""
+    alice = client_for("alice")
+    bob = client_for("bob")
+    _create_db_connection(alice, "tls_pg")
+    conn_id, _ = _db_connection_row("tls_pg", users["alice"].id)
+    _share(alice, "database_connection", conn_id, team, permission="manage")
+
+    body = _db_connection_body("tls_pg", password="")
+    body["ssl_enabled"] = True
+    flip = bob.put("/db_connection_lib", json=body)
+    assert flip.status_code == 422
+    assert "re-entering" in flip.json()["detail"]
+
+
 def test_manage_grantee_can_delete_and_grants_are_cleaned(users, client_for, team):
     alice = client_for("alice")
     bob = client_for("bob")
@@ -340,3 +356,45 @@ def test_shared_kafka_connection(users, client_for, team):
             db.query(db_models.ResourceGrant).filter_by(resource_type="kafka_connection", resource_id=conn_id).count()
         )
     assert grants == 0
+
+
+def test_user_deletion_cleans_all_owned_resources_and_grants(users, client_for, team, grant_factory):
+    """Deleting a user removes every user_id-keyed resource row AND its grants —
+    including GA/Kafka connections (a surviving grant would silently re-attach to
+    whatever resource later reuses the rowid)."""
+    carol_id = users["carol"].id
+    with get_db_context() as db:
+        secret = db_models.Secret(name="carol_ga_cred", encrypted_value="x", user_id=carol_id)
+        db.add(secret)
+        db.commit()
+        db.refresh(secret)
+        ga = db_models.GoogleAnalyticsConnection(
+            connection_name="carol_ga", credential_secret_id=secret.id, user_id=carol_id
+        )
+        kafka = db_models.KafkaConnection(
+            connection_name="carol_kafka", bootstrap_servers="broker:9092", user_id=carol_id
+        )
+        db.add_all([ga, kafka])
+        db.commit()
+        db.refresh(ga)
+        db.refresh(kafka)
+        ga_id, kafka_id = ga.id, kafka.id
+    grant_factory("ga_connection", ga_id, team, granted_by=carol_id)
+    grant_factory("kafka_connection", kafka_id, team, granted_by=carol_id)
+
+    admin = client_for("admin")
+    assert admin.delete(f"/auth/users/{carol_id}").status_code == 200
+
+    with get_db_context() as db:
+        assert db.get(db_models.GoogleAnalyticsConnection, ga_id) is None
+        assert db.get(db_models.KafkaConnection, kafka_id) is None
+        assert db.query(db_models.Secret).filter_by(user_id=carol_id).count() == 0
+        leftover = (
+            db.query(db_models.ResourceGrant)
+            .filter(
+                db_models.ResourceGrant.resource_type.in_(("ga_connection", "kafka_connection")),
+                db_models.ResourceGrant.resource_id.in_((ga_id, kafka_id)),
+            )
+            .count()
+        )
+        assert leftover == 0

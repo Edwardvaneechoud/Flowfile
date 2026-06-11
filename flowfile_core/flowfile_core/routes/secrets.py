@@ -27,34 +27,9 @@ _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
 
 def _shared_secret_rows(db: Session, user_id: int) -> list[Secret]:
     """Group-shared secrets as metadata-only rows: no value, not even masked ciphertext."""
-    details = sharing.granted_access_details(db, user_id, "secret")
-    if not details:
-        return []
-    rows = (
-        db.query(db_models.Secret)
-        .filter(db_models.Secret.id.in_(details.keys()), db_models.Secret.user_id != user_id)
-        .order_by(db_models.Secret.id.asc())
-        .all()
-    )
-    granter_ids = {details[row.id][1] for row in rows if details[row.id][1] is not None}
-    usernames = {}
-    if granter_ids:
-        usernames = dict(
-            db.query(db_models.User.id, db_models.User.username).filter(db_models.User.id.in_(granter_ids))
-        )
     return [
-        Secret(
-            name=row.name,
-            value=None,
-            user_id=str(row.user_id),
-            id=row.id,
-            access=AccessInfo(
-                is_owner=False,
-                access_level=details[row.id][0],
-                shared_by=usernames.get(details[row.id][1]),
-            ),
-        )
-        for row in rows
+        Secret(name=row.name, value=None, user_id=str(row.user_id), id=row.id, access=access)
+        for row, access in sharing.shared_resource_rows(db, user_id, "secret")
     ]
 
 
