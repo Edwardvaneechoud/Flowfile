@@ -1,9 +1,10 @@
 import inspect
+import re
 import typing
 
 import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
-from polars_expr_transformer import PolarsCodeGenError, to_polars_code
+from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code, to_polars_code
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
@@ -23,6 +24,52 @@ class UnsupportedNodeError(Exception):
         self.node_id = node_id
         self.reason = reason
         super().__init__(f"Cannot generate code for node '{node_type}' (node_id={node_id}): {reason}")
+
+
+def _try_translate_to_ff_code(formula: str) -> str | None:
+    """Translate a flowfile formula into native ``ff.``-prefixed FlowFrame expression code.
+
+    Returns the validated code string, or None so callers fall back to the
+    legacy ``flowfile_formula(s)`` emission (which is always correct). Mirrors
+    flowfile_frame.flow_frame._try_translate_flowfile_formulas: generate via
+    polars_expr_transformer.to_flowframe_code, then validate by eval'ing in a
+    restricted namespace and checking the result is a FlowFrame Expr.
+    """
+    try:
+        generated = to_flowframe_code(formula)
+    except PolarsCodeGenError:
+        return None
+    except Exception as e:
+        logger.debug(f"to_flowframe_code failed for {formula!r}: {e}")
+        return None
+    if not generated:
+        return None
+    try:
+        from flowfile_frame.expr import Expr as FlowFrameExpr
+    except ImportError:
+        logger.debug("flowfile package unavailable; cannot validate generated ff code")
+        return None
+    try:
+        result = _eval_in_validation_namespace(generated)
+    except Exception as e:
+        logger.debug(f"Generated ff code failed validation for {formula!r}: {e}")
+        return None
+    return generated if isinstance(result, FlowFrameExpr) else None
+
+
+def _eval_in_validation_namespace(code: str):
+    """Eval generated ff code in the restricted namespace used for validation.
+
+    Lazy imports: flowfile/flowfile_frame import flowfile_core, so module-level
+    imports here would be circular. Raises on any failure. The namespace mirrors
+    what generated snippets may reference — callers emitting a validated snippet
+    must also emit the matching imports (see _translate_to_ff_code).
+    """
+    import datetime
+
+    import flowfile as ff_module
+
+    return eval(code, {"__builtins__": {}}, {"ff": ff_module, "pl": pl, "datetime": datetime})  # noqa: S307
 
 
 class FlowGraphCodeConverter:
@@ -1541,17 +1588,31 @@ class FlowGraphCodeConverter:
 
     def _handle_user_defined(self, node: FlowNode, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle user-defined custom nodes by including their class definition and calling process()."""
-        node_type = node.node_type
-        settings = node.setting_input
+        custom_node_class = self._lookup_custom_node_class(node)
+        if custom_node_class is None:
+            return
+        if not self._register_custom_node_source(node, custom_node_class):
+            return
+        self._emit_user_defined_call(node, custom_node_class, var_name, input_vars)
 
+    def _lookup_custom_node_class(self, node: FlowNode) -> type | None:
+        """Resolve a user-defined node's class from the registry, recording unsupported on miss."""
+        node_type = node.node_type
         custom_node_class = CUSTOM_NODE_STORE.get(node_type)
         if custom_node_class is None:
             self.unsupported_nodes.append(
                 (node.node_id, node_type, f"User-defined node type '{node_type}' not found in the custom node registry")
             )
             self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Not found in registry")
-            return
+        return custom_node_class
 
+    def _register_custom_node_source(self, node: FlowNode, custom_node_class: type) -> bool:
+        """Capture the custom node's class source for inlining into the generated script.
+
+        Returns False (after recording the node as unsupported) when the
+        source cannot be retrieved.
+        """
+        node_type = node.node_type
         class_name = custom_node_class.__name__
         if class_name not in self.custom_node_classes:
             file_source = self._read_custom_node_source_file(custom_node_class)
@@ -1587,20 +1648,27 @@ class FlowGraphCodeConverter:
                     self._add_comment(
                         f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable"
                     )
-                    return
+                    return False
 
             self.imports.add(
                 "from flowfile_core.flowfile.node_designer import ("
                 "CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, "
                 "IncomingColumns, ColumnSelector, NumericInput, TextInput, "
-                "DropdownSelector, TextArea, Toggle)"
+                "ColumnActionInput, SliderInput, ToggleSwitch)"
             )
+        return True
 
+    def _emit_user_defined_call(
+        self, node: FlowNode, custom_node_class: type, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Emit the instantiation, settings population, and process() call for a custom node."""
+        settings = node.setting_input
+        class_name = custom_node_class.__name__
         settings_dict = getattr(settings, "settings", {}) or {}
 
         needs_collect, needs_lazy = self._check_process_method_signature(custom_node_class)
 
-        _node_name_field = custom_node_class.model_fields.get("node_name", type("", (), {"default": node_type}))
+        _node_name_field = custom_node_class.model_fields.get("node_name", type("", (), {"default": node.node_type}))
         self._add_code(f"# User-defined node: {_node_name_field.default}")
         self._add_code(f"_custom_node_{node.node_id} = {class_name}()")
 
@@ -1977,6 +2045,43 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         super().__init__(flow_graph)
         self.imports.add("import flowfile as ff")
 
+    def _translate_to_ff_code(self, formula: str) -> str | None:
+        """Translate a formula to native ff code, registering the imports the snippet needs.
+
+        The validation namespace includes ``pl`` and ``datetime``, so generated
+        snippets may reference them (e.g. ``today()`` translates to
+        ``ff.lit(datetime.datetime.today())``); the emitted script must import
+        whatever the snippet uses or it fails with NameError at runtime.
+        """
+        ff_code = _try_translate_to_ff_code(formula)
+        if ff_code:
+            if re.search(r"\bdatetime\.", ff_code):
+                self.imports.add("import datetime")
+            if re.search(r"\bpl\.", ff_code):
+                self.imports.add("import polars as pl")
+        return ff_code
+
+    def _native_cast_type(self, data_type: str) -> str | None:
+        """Render *data_type* as an ``ff.``-prefixed cast target, or None when it can't be.
+
+        ``str()`` of nested types (e.g. ``List(Int64)``) contains inner type
+        names the generated script has no bindings for, and bare container
+        names ("List") don't even instantiate, so validate the candidate the
+        same way translated formulas are validated and let the caller fall
+        back to the legacy emission when that fails.
+        """
+        try:
+            output_type = convert_pl_type_to_string(cast_str_to_polars_type(data_type))
+        except Exception:
+            return None
+        if not output_type.startswith(f"{self.framework}."):
+            output_type = f"{self.framework}.{output_type}"
+        try:
+            _eval_in_validation_namespace(output_type)
+        except Exception:
+            return None
+        return output_type
+
     def _handle_random_split(
         self, settings: input_schema.NodeRandomSplit, var_name: str, input_vars: dict[str, str]
     ) -> None:
@@ -2059,9 +2164,13 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             return
 
         if settings.filter_input.is_advanced():
-            self._add_code(
-                f'{var_name} = {input_df}.filter(flowfile_formula="{settings.filter_input.advanced_filter}")'
-            )
+            ff_code = self._translate_to_ff_code(settings.filter_input.advanced_filter)
+            if ff_code:
+                self._add_code(f"{var_name} = {input_df}.filter({ff_code})")
+            else:
+                self._add_code(
+                    f"{var_name} = {input_df}.filter(flowfile_formula={settings.filter_input.advanced_filter!r})"
+                )
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
@@ -2077,10 +2186,14 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         pass_var = f"{var_name}_pass"
         fail_var = f"{var_name}_fail"
         if settings.filter_input.is_advanced():
-            self._add_code(
-                f'{pass_var}, {fail_var} = {input_df}.filter_split('
-                f'flowfile_formula="{settings.filter_input.advanced_filter}")'
-            )
+            ff_code = self._translate_to_ff_code(settings.filter_input.advanced_filter)
+            if ff_code:
+                self._add_code(f"{pass_var}, {fail_var} = {input_df}.filter_split({ff_code})")
+            else:
+                self._add_code(
+                    f"{pass_var}, {fail_var} = {input_df}.filter_split("
+                    f"flowfile_formula={settings.filter_input.advanced_filter!r})"
+                )
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
@@ -2098,13 +2211,24 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self._add_code("")
 
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle formula nodes using FlowFrame's native flowfile_formulas parameter."""
+        """Handle formula nodes, preferring native ff expressions over the flowfile_formulas parameter."""
         input_df = input_vars.get("main", "df")
         formula = settings.function.function
         col_name = settings.function.field.name
         data_type = settings.function.field.data_type
 
-        if data_type not in (None, "Auto"):
+        ff_code = self._translate_to_ff_code(formula)
+        cast_type = None
+        if ff_code and data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+            cast_type = self._native_cast_type(data_type)
+            if cast_type is None:
+                ff_code = None  # cast target not expressible natively; use the legacy emission
+        if ff_code:
+            expr_str = f'({ff_code}).alias("{col_name}")'
+            if cast_type:
+                expr_str += f".cast({cast_type})"
+            self._add_code(f"{var_name} = {input_df}.with_columns({expr_str})")
+        elif data_type not in (None, transform_schema.AUTO_DATA_TYPE):
             self._add_code(
                 f"{var_name} = {input_df}.with_columns("
                 f"flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}], "
