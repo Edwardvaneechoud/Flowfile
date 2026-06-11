@@ -183,7 +183,7 @@ my_flow/
 
 Key points:
 
-* **Notebook nodes are exported** (they are not supported by the single-file modes). Each one becomes its own module with the cell structure preserved via `# %%` markers, and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
+* **Notebook nodes are exported** (they are not supported by the single-file modes). Each one becomes its own module exposing a `run()` function that the pipeline calls with the node's input frames; the notebook code is preserved verbatim inside it (cell structure kept via `# %%` markers), and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
 * **Custom nodes get their own modules** under `custom_nodes/` instead of being inlined into the script.
 * The pipeline itself uses the **FlowFrame API** (`import flowfile as ff`).
 * Server-backed `flowfile_ctx` APIs (global artifacts, catalog access) raise `NotImplementedError` in the exported project; the export panel and the generated README list these limitations per node.

@@ -8,6 +8,7 @@ end-to-end execution of an exported project.
 import io
 import subprocess
 import sys
+import textwrap
 import zipfile
 from pathlib import Path
 
@@ -17,6 +18,7 @@ import pytest
 from flowfile_core.configs.node_store import add_to_custom_node_store
 from flowfile_core.flowfile.code_generator import project_shim
 from flowfile_core.flowfile.code_generator.project_exporter import (
+    FlowGraphToProjectConverter,
     export_flow_to_project,
     project_to_zip_bytes,
 )
@@ -168,9 +170,10 @@ def test_project_manifest_with_notebook():
 
     assert {"flowfile_ctx.py", "notebooks/__init__.py", "notebooks/node_02_clean_data.py"} <= file_paths(manifest)
     pipeline = get_file(manifest, "pipeline.py")
-    assert "import flowfile_ctx" in pipeline
-    assert 'flowfile_ctx.run_node(' in pipeline
-    assert '"notebooks.node_02_clean_data"' in pipeline
+    assert "from notebooks import node_02_clean_data" in pipeline
+    assert "_nb_2_outputs = node_02_clean_data.run(" in pipeline
+    # The pipeline calls the module's run() function; only notebook modules touch the shim
+    assert "import flowfile_ctx" not in pipeline
     # The shipped shim is the real module source
     assert get_file(manifest, "flowfile_ctx.py") == Path(project_shim.__file__).read_text(encoding="utf-8")
 
@@ -192,8 +195,12 @@ def test_notebook_module_keeps_cells_verbatim():
 
     module = get_file(manifest, "notebooks/node_02_python_script.py")
     assert "import flowfile_ctx" in module
-    assert cell_1 in module
-    assert cell_2 in module
+    assert "def run(df_1: pl.LazyFrame) -> dict[str, pl.LazyFrame]:" in module
+    assert "with flowfile_ctx.node_context(" in module
+    assert "return ctx.results()" in module
+    # The user code lives verbatim inside run(), indented two levels
+    assert textwrap.indent(cell_1, " " * 8) in module
+    assert textwrap.indent(cell_2, " " * 8) in module
     assert module.count("# %%") == 2
 
 
@@ -207,7 +214,7 @@ def test_notebook_module_falls_back_to_code_without_cells():
     manifest = export_flow_to_project(flow)
 
     module = get_file(manifest, "notebooks/node_02_python_script.py")
-    assert code in module
+    assert textwrap.indent(code, " " * 8) in module
     assert "# %%" not in module
 
 
@@ -220,8 +227,11 @@ def test_notebook_inputs_use_node_reference():
     manifest = export_flow_to_project(flow)
 
     pipeline = get_file(manifest, "pipeline.py")
-    assert '"orders": [orders.data]' in pipeline
-    assert '"main": [orders.data]' in pipeline
+    assert "node_02_python_script.run(orders=orders.data)" in pipeline
+    module = get_file(manifest, "notebooks/node_02_python_script.py")
+    assert "def run(orders: pl.LazyFrame) -> dict[str, pl.LazyFrame]:" in module
+    assert '"orders": [orders]' in module
+    assert '"main": [orders]' in module
 
 
 def test_notebook_multi_output_feeds_downstream_nodes():
@@ -247,11 +257,30 @@ def test_notebook_multi_output_feeds_downstream_nodes():
 
     manifest = export_flow_to_project(flow)
 
+    module = get_file(manifest, "notebooks/node_02_python_script.py")
+    assert "output_names=['main', 'rejected']" in module
     pipeline = get_file(manifest, "pipeline.py")
-    assert "output_names=['main', 'rejected']" in pipeline
     assert 'df_2_rejected = ff.FlowFrame(_nb_2_outputs["rejected"])' in pipeline
     # The downstream filter must consume the output-1 variable
     assert "df_3 = df_2_rejected.filter" in pipeline
+
+
+def test_notebook_zero_inputs():
+    flow = create_basic_flow()
+    add_notebook_node(
+        flow,
+        node_id=1,
+        depending_on_ids=[],
+        cells=["import polars as pl\n\nflowfile_ctx.publish_output(pl.LazyFrame({'a': [1]}))"],
+    )
+
+    manifest = export_flow_to_project(flow)
+
+    module = get_file(manifest, "notebooks/node_01_python_script.py")
+    assert "def run() -> dict[str, pl.LazyFrame]:" in module
+    assert "inputs={}" in module
+    pipeline = get_file(manifest, "pipeline.py")
+    assert "node_01_python_script.run()" in pipeline
 
 
 def test_notebook_with_server_only_api_adds_warning():
@@ -329,6 +358,34 @@ def test_custom_node_exported_as_module(MarkerColumnNode):
     assert "_custom_node_2.process(" in pipeline
 
 
+def test_custom_node_module_name_collision_disambiguated():
+    """Two distinct custom-node classes whose names collapse to the same module
+    stem get distinct modules, and each import points at its own class."""
+
+    class MarkerColumn(CustomNodeBase):
+        node_name: str = "Marker A"
+        number_of_inputs: int = 1
+        number_of_outputs: int = 1
+
+    class Marker_Column(CustomNodeBase):  # noqa: N801 - intentional stem collision with MarkerColumn
+        node_name: str = "Marker B"
+        number_of_inputs: int = 1
+        number_of_outputs: int = 1
+
+    converter = FlowGraphToProjectConverter(create_basic_flow())
+    assert converter._register_custom_node_source(object(), MarkerColumn) is True
+    assert converter._register_custom_node_source(object(), Marker_Column) is True
+
+    custom_modules = {path for path in converter.module_files if path.startswith("custom_nodes/")}
+    assert custom_modules == {"custom_nodes/marker_column.py", "custom_nodes/marker_column_2.py"}
+    assert "from custom_nodes.marker_column import MarkerColumn" in converter.imports
+    assert "from custom_nodes.marker_column_2 import Marker_Column" in converter.imports
+
+    # The same class registered twice reuses its module (no spurious _3).
+    assert converter._register_custom_node_source(object(), MarkerColumn) is True
+    assert len({p for p in converter.module_files if p.startswith("custom_nodes/")}) == 2
+
+
 # ---------------------------------------------------------------------------
 # Shim behaviour
 # ---------------------------------------------------------------------------
@@ -360,7 +417,7 @@ def test_shim_read_input_unknown_name_lists_available(shim_context):
 
 
 def test_shim_requires_active_context():
-    with pytest.raises(RuntimeError, match="run_node"):
+    with pytest.raises(RuntimeError, match="node_context"):
         project_shim.read_input()
 
 
@@ -382,29 +439,48 @@ def test_shim_server_only_apis_raise():
         project_shim.read_catalog_table("table")
 
 
-def test_shim_run_node_executes_module_and_falls_back(tmp_path, monkeypatch):
-    package_dir = tmp_path / "notebooks"
-    package_dir.mkdir()
-    (package_dir / "__init__.py").write_text("")
-    (package_dir / "publishes.py").write_text(
-        "import flowfile_ctx\n"
-        "df = flowfile_ctx.read_input()\n"
-        "flowfile_ctx.publish_output(df.with_columns(b=2 * df.collect_schema().len()))\n"
-    )
-    (package_dir / "passthrough.py").write_text("import flowfile_ctx  # noqa: F401\n")
-    monkeypatch.syspath_prepend(str(tmp_path))
-    # The notebook modules import the shim by its in-project name
-    monkeypatch.setitem(sys.modules, "flowfile_ctx", project_shim)
-
+def test_shim_node_context_collects_outputs_and_falls_back():
     frame = pl.LazyFrame({"a": [1, 2]})
-    published = project_shim.run_node("notebooks.publishes", {"main": [frame]}, ["main"])
-    assert published["main"].collect().columns == ["a", "b"]
 
-    fallback = project_shim.run_node("notebooks.passthrough", {"main": [frame]}, ["main"])
-    assert fallback["main"] is frame
+    with project_shim.node_context({"main": [frame]}, ["main"]) as ctx:
+        df = project_shim.read_input()
+        project_shim.publish_output(df.with_columns(b=pl.lit(2)))
+    assert ctx.results()["main"].collect().columns == ["a", "b"]
 
-    with pytest.raises(RuntimeError, match="did not publish"):
-        project_shim.run_node("notebooks.passthrough", {"main": [frame]}, ["main", "rejected"])
+    # Nothing published -> the primary output falls back to the first input frame
+    with project_shim.node_context({"main": [frame]}, ["main"]) as ctx:
+        pass
+    assert ctx.results()["main"] is frame
+
+    # A declared secondary output that was never published falls back to the
+    # primary result (mirrors the Flowfile runtime), instead of raising.
+    with project_shim.node_context({"main": [frame]}, ["main", "rejected"]) as ctx:
+        project_shim.publish_output(project_shim.read_input().with_columns(c=pl.lit(1)))
+    primary = ctx.results()["main"]
+    assert primary.collect().columns == ["a", "c"]
+    assert ctx.results()["rejected"] is primary
+
+
+def test_shim_node_context_guards():
+    frame = pl.LazyFrame({"a": [1]})
+
+    # Nested contexts are rejected before the global context is touched
+    with project_shim.node_context({"main": [frame]}, ["main"]):
+        with pytest.raises(RuntimeError, match="nested"):
+            with project_shim.node_context({"main": [frame]}, ["main"]):
+                pass
+
+    # Results are only available after the with-block exits
+    pending = project_shim.node_context({"main": [frame]}, ["main"])
+    with pytest.raises(RuntimeError, match="after the with-block"):
+        pending.results()
+
+    # Exceptions in the notebook code propagate (not masked by missing-output
+    # collection) and the global context is cleared
+    with pytest.raises(ValueError, match="boom"):
+        with project_shim.node_context({"main": [frame]}, ["main"]):
+            raise ValueError("boom")
+    assert project_shim._current_context is None
 
 
 # ---------------------------------------------------------------------------

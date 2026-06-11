@@ -189,7 +189,7 @@ const exportCode = () => {
 
 .mode-toggle {
   display: flex;
-  border: 1px solid var(--color-border, #444);
+  border: 1px solid var(--color-border);
   border-radius: var(--border-radius-md);
   overflow: hidden;
 }
@@ -212,7 +212,7 @@ const exportCode = () => {
 }
 
 .toggle-button:not(.active):hover {
-  background: var(--color-bg-hover, #333);
+  background: var(--color-background-tertiary);
 }
 
 .header-actions {

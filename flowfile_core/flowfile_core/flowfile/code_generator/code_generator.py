@@ -3,7 +3,7 @@ import typing
 
 import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
-from polars_expr_transformer import PolarsCodeGenError, to_polars_code
+from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code, to_polars_code
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
@@ -23,6 +23,42 @@ class UnsupportedNodeError(Exception):
         self.node_id = node_id
         self.reason = reason
         super().__init__(f"Cannot generate code for node '{node_type}' (node_id={node_id}): {reason}")
+
+
+def _try_translate_to_ff_code(formula: str) -> str | None:
+    """Translate a flowfile formula into native ``ff.``-prefixed FlowFrame expression code.
+
+    Returns the validated code string, or None so callers fall back to the
+    legacy ``flowfile_formula(s)`` emission (which is always correct). Mirrors
+    flowfile_frame.flow_frame._try_translate_flowfile_formulas: generate via
+    polars_expr_transformer.to_flowframe_code, then validate by eval'ing in a
+    restricted namespace and checking the result is a FlowFrame Expr.
+    """
+    try:
+        generated = to_flowframe_code(formula)
+    except PolarsCodeGenError:
+        return None
+    except Exception as e:
+        logger.debug(f"to_flowframe_code failed for {formula!r}: {e}")
+        return None
+    if not generated:
+        return None
+    try:
+        # Lazy imports: flowfile/flowfile_frame import flowfile_core, so a
+        # module-level import here would be circular.
+        import datetime
+
+        import flowfile as ff_module
+        from flowfile_frame.expr import Expr as FlowFrameExpr
+    except ImportError:
+        logger.debug("flowfile package unavailable; cannot validate generated ff code")
+        return None
+    try:
+        result = eval(generated, {"__builtins__": {}}, {"ff": ff_module, "pl": pl, "datetime": datetime})  # noqa: S307
+    except Exception as e:
+        logger.debug(f"Generated ff code failed validation for {formula!r}: {e}")
+        return None
+    return generated if isinstance(result, FlowFrameExpr) else None
 
 
 class FlowGraphCodeConverter:
@@ -1607,7 +1643,7 @@ class FlowGraphCodeConverter:
                 "from flowfile_core.flowfile.node_designer import ("
                 "CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, "
                 "IncomingColumns, ColumnSelector, NumericInput, TextInput, "
-                "DropdownSelector, TextArea, Toggle)"
+                "ColumnActionInput, SliderInput, ToggleSwitch)"
             )
         return True
 
@@ -2080,9 +2116,13 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             return
 
         if settings.filter_input.is_advanced():
-            self._add_code(
-                f'{var_name} = {input_df}.filter(flowfile_formula="{settings.filter_input.advanced_filter}")'
-            )
+            ff_code = _try_translate_to_ff_code(settings.filter_input.advanced_filter)
+            if ff_code:
+                self._add_code(f"{var_name} = {input_df}.filter({ff_code})")
+            else:
+                self._add_code(
+                    f"{var_name} = {input_df}.filter(flowfile_formula={settings.filter_input.advanced_filter!r})"
+                )
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
@@ -2098,10 +2138,14 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         pass_var = f"{var_name}_pass"
         fail_var = f"{var_name}_fail"
         if settings.filter_input.is_advanced():
-            self._add_code(
-                f'{pass_var}, {fail_var} = {input_df}.filter_split('
-                f'flowfile_formula="{settings.filter_input.advanced_filter}")'
-            )
+            ff_code = _try_translate_to_ff_code(settings.filter_input.advanced_filter)
+            if ff_code:
+                self._add_code(f"{pass_var}, {fail_var} = {input_df}.filter_split({ff_code})")
+            else:
+                self._add_code(
+                    f"{pass_var}, {fail_var} = {input_df}.filter_split("
+                    f"flowfile_formula={settings.filter_input.advanced_filter!r})"
+                )
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
@@ -2119,13 +2163,22 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self._add_code("")
 
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle formula nodes using FlowFrame's native flowfile_formulas parameter."""
+        """Handle formula nodes, preferring native ff expressions over the flowfile_formulas parameter."""
         input_df = input_vars.get("main", "df")
         formula = settings.function.function
         col_name = settings.function.field.name
         data_type = settings.function.field.data_type
 
-        if data_type not in (None, "Auto"):
+        ff_code = _try_translate_to_ff_code(formula)
+        if ff_code:
+            expr_str = f'({ff_code}).alias("{col_name}")'
+            if data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+                output_type = convert_pl_type_to_string(cast_str_to_polars_type(data_type))
+                if output_type[:3] != f"{self.framework}.":
+                    output_type = f"{self.framework}.{output_type}"
+                expr_str += f".cast({output_type})"
+            self._add_code(f"{var_name} = {input_df}.with_columns({expr_str})")
+        elif data_type not in (None, transform_schema.AUTO_DATA_TYPE):
             self._add_code(
                 f"{var_name} = {input_df}.with_columns("
                 f"flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}], "

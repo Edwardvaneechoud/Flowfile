@@ -1323,6 +1323,181 @@ def test_formula_node(export_func):
     assert_frame_equal(result_df, expected_df)
 
 
+def test_flowframe_formula_native_expression():
+    """FlowFrame export prefers native ff expressions over the flowfile_formulas parameter."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="total", data_type="Auto"),
+            function="[price] * [quantity]"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, 'ff.col("price")', 'ff.col("quantity")', 'alias("total")')
+    assert "flowfile_formulas" not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_flowframe_formula_native_cast():
+    """A formula with an explicit output data type gets a native ff cast appended."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="total", data_type="Integer"),
+            function="[price] * [quantity]"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, 'ff.col("price")', 'alias("total")', "cast(ff.Int64)")
+    assert "flowfile_formulas" not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_flowframe_formula_fallback_untranslatable():
+    """Untranslatable formulas fall back to the flowfile_formulas parameter."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+    flow.get_node(1).get_resulting_data().collect()
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="total", data_type="Double"),
+            function="string_similarity([region], 'Noorden')"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "flowfile_formulas=")
+    assert 'ff.col("region")' not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_flowframe_filter_advanced_native():
+    """FlowFrame export translates advanced filters to native ff predicates."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="advanced",
+            advanced_filter="[age] > 25 AND [salary] > 60000"
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, '.filter((ff.col("age")', 'ff.col("salary")')
+    assert "flowfile_formula=" not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_flowframe_filter_advanced_fallback():
+    """Untranslatable advanced filters fall back to the flowfile_formula parameter."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="advanced",
+            advanced_filter="string_similarity([name], 'Alice') > 0.8"
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "flowfile_formula=")
+    assert 'ff.col("name")' not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_flowframe_filter_split_native_and_fallback():
+    """filter_split translates advanced filters natively and falls back when untranslatable."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                advanced_filter="[age] > 30",
+                filter_type="advanced",
+            ),
+            split_mode=True,
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_record_count(input_schema.NodeRecordCount(flow_id=1, node_id=3, depending_on_id=2))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, output_handle="output-1"))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, 'filter_split(ff.col("age")', "df_2_pass", "df_2_fail", "df_3 = df_2_fail")
+    assert "flowfile_formula=" not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+    fallback_flow = create_basic_flow()
+    fallback_flow = create_sample_dataframe_node(fallback_flow)
+    fallback_flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                advanced_filter="string_similarity([name], 'Alice') > 0.8",
+                filter_type="advanced",
+            ),
+            split_mode=True,
+        )
+    )
+    add_connection(fallback_flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    fallback_code = export_flow_to_flowframe(fallback_flow)
+    verify_code_contains(fallback_code, "filter_split(flowfile_formula=")
+    verify_if_execute(fallback_code)
+
+
 @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
 def test_pivot_operation(export_func):
     """Test pivot operation"""

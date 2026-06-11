@@ -6,7 +6,8 @@ single script, emits a runnable project tree:
 - ``pipeline.py`` — the FlowFrame pipeline (``run_etl_pipeline()``)
 - ``main.py`` — entry point
 - ``pyproject.toml`` / ``README.md`` — scaffolding
-- ``notebooks/node_XX_<slug>.py`` — one verbatim module per python_script node
+- ``notebooks/node_XX_<slug>.py`` — one module per python_script node, the
+  node's code preserved verbatim inside a ``run()`` function
 - ``flowfile_ctx.py`` — local shim so notebook modules run without a kernel
 - ``custom_nodes/<module>.py`` — verbatim source per user-defined node
 """
@@ -14,6 +15,7 @@ single script, emits a runnable project tree:
 import importlib.metadata
 import inspect
 import io
+import keyword
 import re
 import zipfile
 from pathlib import Path
@@ -43,18 +45,18 @@ _SERVER_ONLY_CTX_APIS = (
 
 _CUSTOM_NODE_FALLBACK_IMPORTS = (
     "from flowfile_core.flowfile.node_designer import (\n"
+    "    ColumnActionInput,\n"
     "    ColumnSelector,\n"
     "    CustomNodeBase,\n"
-    "    DropdownSelector,\n"
     "    IncomingColumns,\n"
     "    MultiSelect,\n"
     "    NodeSettings,\n"
     "    NumericInput,\n"
     "    Section,\n"
     "    SingleSelect,\n"
-    "    TextArea,\n"
+    "    SliderInput,\n"
     "    TextInput,\n"
-    "    Toggle,\n"
+    "    ToggleSwitch,\n"
     ")\n"
 )
 
@@ -78,7 +80,20 @@ def _dependency_pin(distribution: str, package_name: str) -> str:
 
 
 def _read_shim_source() -> str:
-    return Path(__file__).with_name("project_shim.py").read_text(encoding="utf-8")
+    """Return the ``project_shim.py`` source to ship into exported projects.
+
+    In a source/pip install ``__file__`` resolves to the ``.py`` on disk. In a
+    PyInstaller build the module is stored as bytecode, so the sibling source is
+    only present when bundled as data (see ``build_backends`` —
+    ``get_code_generator_datas``); fall back to ``inspect.getsource`` so a clear
+    value is still produced rather than an unhandled error.
+    """
+    try:
+        return Path(__file__).with_name("project_shim.py").read_text(encoding="utf-8")
+    except OSError:
+        from flowfile_core.flowfile.code_generator import project_shim
+
+        return inspect.getsource(project_shim)
 
 
 class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
@@ -93,31 +108,37 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         self.module_files: dict[str, str] = {}
         self.has_notebooks = False
         self.warnings: list[str] = []
+        # Maps a stable class identity -> the module stem its source was written
+        # to, so the same custom-node class reuses one module and two *different*
+        # classes never collide onto the same custom_nodes/<stem>.py.
+        self._custom_node_modules: dict[str, str] = {}
 
     # --- python_script (notebook) nodes -------------------------------------------------
 
     def _handle_python_script(
         self, settings: input_schema.NodePythonScript, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Emit the notebook node as its own module plus a run_node() call site."""
+        """Emit the notebook node as its own module exposing run(), plus the call site."""
         node = self.flow_graph.get_node(settings.node_id)
         module_stem = self._notebook_module_stem(settings)
-        self.module_files[f"notebooks/{module_stem}.py"] = self._build_notebook_module(settings)
+        bindings, main_items = self._notebook_input_bindings(node)
+        self.module_files[f"notebooks/{module_stem}.py"] = self._build_notebook_module(
+            settings, bindings, main_items
+        )
         self.has_notebooks = True
-        self.imports.add("import flowfile_ctx")
+        self.imports.add(f"from notebooks import {module_stem}")
         self._collect_notebook_warnings(settings)
 
         output_names = settings.output_names or ["main"]
         node_label = settings.description or f"node {settings.node_id}"
         outputs_var = f"_nb_{settings.node_id}_outputs"
+        call_args = ", ".join(
+            f"{b['param']}={b['args'][0]}" if len(b["args"]) == 1 else f"{b['param']}=[{', '.join(b['args'])}]"
+            for b in bindings
+        )
 
         self._add_code(f"# Notebook node {settings.node_id}: {node_label}")
-        self._add_code(f"{outputs_var} = flowfile_ctx.run_node(")
-        self._add_code(f'    "notebooks.{module_stem}",')
-        self._add_code(f"    inputs={self._build_notebook_inputs_literal(node)},")
-        self._add_code(f"    output_names={output_names!r},")
-        self._add_code(f"    node_name={node_label!r},")
-        self._add_code(")")
+        self._add_code(f"{outputs_var} = {module_stem}.run({call_args})")
         for index, name in enumerate(output_names):
             out_var = var_name if index == 0 else f"{var_name}_{name}"
             self._add_code(f'{out_var} = ff.FlowFrame({outputs_var}["{name}"])')
@@ -128,8 +149,51 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         slug = _sanitize_identifier(settings.description or "", "python_script")
         return f"node_{settings.node_id:02d}_{slug}"
 
-    def _build_notebook_module(self, settings: input_schema.NodePythonScript) -> str:
-        """Build the notebook module: a small generated header plus the user code verbatim."""
+    def _notebook_input_bindings(self, node: FlowNode | None) -> tuple[list[dict], list[str]]:
+        """Resolve a notebook node's inputs to run() parameter bindings.
+
+        Input names follow the same rule the kernel uses at runtime
+        (FlowGraph._resolve_input_names): the source node's ``node_reference``
+        when set, otherwise ``df_<node_id>`` — so verbatim ``read_input(name)``
+        calls keep working.
+
+        Returns ``(bindings, main_items)``: one binding per unique input name
+        in first-seen edge order, ``{"name": <input name>, "param": <safe
+        parameter identifier>, "args": [<pipeline exprs like "df_5.data">]}``,
+        plus the per-edge expressions (in edge order) used to synthesize the
+        ``"main"`` key inside run().
+        """
+        bindings: list[dict] = []
+        if node is None:
+            return bindings, []
+        by_name: dict[str, dict] = {}
+        used_params: set[str] = set()
+        edge_refs: list[tuple[dict, int]] = []
+        for source_node in node.all_inputs:
+            ref = getattr(source_node.setting_input, "node_reference", None)
+            name = ref if ref else f"df_{source_node.node_id}"
+            upstream_var = self._resolve_upstream_var(node, source_node.node_id, f"df_{source_node.node_id}")
+            entry = by_name.get(name)
+            if entry is None:
+                param = _sanitize_identifier(name, f"df_{source_node.node_id}")
+                if keyword.iskeyword(param) or param in used_params:
+                    param = f"{param}_{source_node.node_id}"
+                used_params.add(param)
+                entry = {"name": name, "param": param, "args": []}
+                by_name[name] = entry
+                bindings.append(entry)
+            edge_refs.append((entry, len(entry["args"])))
+            entry["args"].append(f"{upstream_var}.data")
+        main_items = [
+            entry["param"] if len(entry["args"]) == 1 else f"{entry['param']}[{index}]"
+            for entry, index in edge_refs
+        ]
+        return bindings, main_items
+
+    def _build_notebook_module(
+        self, settings: input_schema.NodePythonScript, bindings: list[dict], main_items: list[str]
+    ) -> str:
+        """Build the notebook module: the user code verbatim inside a run() function."""
         script_input = settings.python_script_input
         if script_input.cells:
             cell_blocks = [f"# %%\n{cell.code.rstrip()}" for cell in script_input.cells if cell.code.strip()]
@@ -138,38 +202,45 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             body = script_input.code.rstrip()
 
         label = (settings.description or f"Notebook node {settings.node_id}").replace('"""', "'''")
-        header = (
+        node_label = settings.description or f"node {settings.node_id}"
+        output_names = settings.output_names or ["main"]
+
+        params = ", ".join(
+            f"{b['param']}: pl.LazyFrame" if len(b["args"]) == 1 else f"{b['param']}: list[pl.LazyFrame]"
+            for b in bindings
+        )
+        entries = [
+            f'"{b["name"]}": [{b["param"]}]' if len(b["args"]) == 1 else f'"{b["name"]}": {b["param"]}'
+            for b in bindings
+        ]
+        if bindings and all(b["name"] != "main" for b in bindings):
+            entries.append(f'"main": [{", ".join(main_items)}]')
+        inputs_literal = "{" + ", ".join(entries) + "}"
+
+        if body:
+            indented = "\n".join(f"        {line}" if line.strip() else "" for line in body.split("\n"))
+        else:
+            indented = "        pass"
+
+        return (
             f'"""{label}\n\n'
             f"Code preserved verbatim from Flowfile notebook node {settings.node_id}.\n"
             '"""\n'
-            "import flowfile_ctx  # noqa: F401\n"
+            "import polars as pl\n"
+            "\n"
+            "import flowfile_ctx\n"
+            "\n"
+            "\n"
+            f"def run({params}) -> dict[str, pl.LazyFrame]:\n"
+            f'    """Notebook node {settings.node_id}: {node_label!r}."""\n'
+            "    with flowfile_ctx.node_context(\n"
+            f"        inputs={inputs_literal},\n"
+            f"        output_names={output_names!r},\n"
+            f"        node_name={node_label!r},\n"
+            "    ) as ctx:\n"
+            f"{indented}\n"
+            "    return ctx.results()\n"
         )
-        return f"{header}\n{body}\n" if body else header
-
-    def _build_notebook_inputs_literal(self, node: FlowNode | None) -> str:
-        """Build the inputs dict literal passed to flowfile_ctx.run_node().
-
-        Input names follow the same rule the kernel uses at runtime
-        (FlowGraph._resolve_input_names): the source node's ``node_reference``
-        when set, otherwise ``df_<node_id>`` — so verbatim ``read_input(name)``
-        calls keep working. A ``"main"`` key always lists all inputs in order.
-        """
-        if node is None:
-            return "{}"
-        named: dict[str, list[str]] = {}
-        ordered: list[str] = []
-        for source_node in node.all_inputs:
-            ref = getattr(source_node.setting_input, "node_reference", None)
-            name = ref if ref else f"df_{source_node.node_id}"
-            upstream_var = self._resolve_upstream_var(node, source_node.node_id, f"df_{source_node.node_id}")
-            named.setdefault(name, []).append(f"{upstream_var}.data")
-            ordered.append(f"{upstream_var}.data")
-        if "main" not in named and ordered:
-            named["main"] = ordered
-        if not named:
-            return "{}"
-        entries = ", ".join(f'"{name}": [{", ".join(frames)}]' for name, frames in named.items())
-        return "{" + entries + "}"
 
     def _collect_notebook_warnings(self, settings: input_schema.NodePythonScript) -> None:
         script_input = settings.python_script_input
@@ -188,9 +259,9 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
     def _register_custom_node_source(self, node: FlowNode, custom_node_class: type) -> bool:
         """Ship the custom node's source file as its own module instead of inlining it."""
         class_name = custom_node_class.__name__
-        module_name = _sanitize_identifier(camel_case_to_snake_case(class_name), "custom_node")
-        rel_path = f"custom_nodes/{module_name}.py"
-        if rel_path not in self.module_files:
+        class_key = f"{custom_node_class.__module__}.{custom_node_class.__qualname__}"
+        module_name = self._custom_node_modules.get(class_key)
+        if module_name is None:
             source = self._read_custom_node_source_file(custom_node_class)
             if source is None:
                 try:
@@ -205,9 +276,22 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
                         f"# Node {node.node_id}: User-defined node '{node.node_type}' - Source code unavailable"
                     )
                     return False
-            self.module_files[rel_path] = source if source.endswith("\n") else source + "\n"
+            module_name = self._unique_custom_module_name(class_name)
+            self.module_files[f"custom_nodes/{module_name}.py"] = source if source.endswith("\n") else source + "\n"
+            self._custom_node_modules[class_key] = module_name
         self.imports.add(f"from custom_nodes.{module_name} import {class_name}")
         return True
+
+    def _unique_custom_module_name(self, class_name: str) -> str:
+        """A custom_nodes module stem unique across distinct classes (suffixes on collision)."""
+        base = _sanitize_identifier(camel_case_to_snake_case(class_name), "custom_node")
+        used = set(self._custom_node_modules.values())
+        candidate = base
+        suffix = 2
+        while candidate in used:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        return candidate
 
     # --- project assembly ----------------------------------------------------------------
 
@@ -289,9 +373,11 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         ]
         if self.has_notebooks:
             lines += [
-                "- `notebooks/` — one module per notebook node, code preserved verbatim.",
+                "- `notebooks/` — one module per notebook node, the node's code preserved "
+                "verbatim inside a `run()` function.",
                 "- `flowfile_ctx.py` — local stand-in for the kernel `flowfile_ctx` API so the "
-                "notebook modules run without a Flowfile server. Artifacts are pickled to "
+                "notebook code runs without a Flowfile server (each `run()` executes inside "
+                "`flowfile_ctx.node_context(...)`). Artifacts are pickled to "
                 "`.artifacts/`; `get_shared_location()` resolves into `.shared/`.",
             ]
         if any(path.startswith("custom_nodes/") for path in self.module_files):

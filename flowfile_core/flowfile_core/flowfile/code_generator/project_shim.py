@@ -1,9 +1,11 @@
 """Standalone ``flowfile_ctx`` shim shipped with exported Flowfile projects.
 
 This module mirrors the ``flowfile_ctx`` API that notebook (Python script)
-nodes use inside Flowfile's kernel containers, so exported notebook modules
-run unchanged outside Flowfile. Inputs and outputs are exchanged in memory
-as Polars LazyFrames instead of parquet files on a shared volume.
+nodes use inside Flowfile's kernel containers, so exported notebook code runs
+unchanged outside Flowfile. Each notebook module wraps its code in a ``run()``
+function that executes inside ``node_context()``; inputs and outputs are
+exchanged in memory as Polars LazyFrames instead of parquet files on a shared
+volume.
 
 Differences from the kernel runtime:
 
@@ -17,7 +19,6 @@ Differences from the kernel runtime:
 from __future__ import annotations
 
 import pickle
-import runpy
 from pathlib import Path
 from typing import Any, Literal
 
@@ -33,42 +34,79 @@ _current_context: dict[str, Any] | None = None
 # ===== Pipeline-facing helper =====
 
 
-def run_node(
-    module_name: str,
+class NodeContext:
+    """Execution context for one notebook node; create via :func:`node_context`.
+
+    While the with-block is open, the node-facing helpers (``read_input``,
+    ``publish_output``, ...) resolve against this context. The collected
+    results stay available on the object after the block exits, so the
+    notebook module's ``run()`` ends with ``return ctx.results()``.
+    """
+
+    def __init__(self, inputs: dict[str, list[pl.LazyFrame]], output_names: list[str], node_name: str = ""):
+        self._inputs = inputs
+        self._output_names = output_names
+        self.node_name = node_name
+        self._outputs: dict[str, pl.LazyFrame] = {}
+        self._results: dict[str, pl.LazyFrame] | None = None
+
+    def __enter__(self) -> NodeContext:
+        global _current_context
+        if _current_context is not None:
+            raise RuntimeError("flowfile_ctx.node_context() does not support nested notebook execution")
+        # Share self._outputs with the global context so publish_output() writes
+        # stay readable on this object after the global is cleared.
+        _current_context = {"inputs": self._inputs, "outputs": self._outputs, "node_name": self.node_name}
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        global _current_context
+        _current_context = None
+        # Only collect on a clean exit so a missing-output error never masks
+        # an exception raised by the notebook code itself.
+        if exc_type is None:
+            self._results = self._collect_results()
+        return False
+
+    def _collect_results(self) -> dict[str, pl.LazyFrame]:
+        results: dict[str, pl.LazyFrame] = {}
+        for index, name in enumerate(self._output_names):
+            if name in self._outputs:
+                results[name] = self._outputs[name]
+            elif index == 0:
+                results[name] = _first_input_frame(self._inputs)
+            else:
+                # Mirror the Flowfile runtime: a declared secondary output the
+                # notebook never published falls back to the primary result
+                # (flow_graph silently skips missing outputs; downstream nodes
+                # read the primary), so a flow that runs in Flowfile keeps
+                # running once exported instead of raising here.
+                primary = results.get(self._output_names[0])
+                results[name] = primary if primary is not None else _first_input_frame(self._inputs)
+        return results
+
+    def results(self) -> dict[str, pl.LazyFrame]:
+        """Return the node's outputs keyed by output name (after the with-block exits)."""
+        if self._results is None:
+            raise RuntimeError("node_context() results are only available after the with-block exits")
+        return self._results
+
+
+def node_context(
     inputs: dict[str, list[pl.LazyFrame]],
     output_names: list[str],
     node_name: str = "",
-) -> dict[str, pl.LazyFrame]:
-    """Execute a notebook module with *inputs* available through this shim.
+) -> NodeContext:
+    """Open the context a notebook module's ``run()`` function executes inside.
 
-    Mirrors the kernel contract: the module reads its inputs via
+    Mirrors the kernel contract: the notebook code reads its inputs via
     ``read_input``/``read_inputs`` and publishes results via
-    ``publish_output``. When the module does not publish the primary
-    (first) output, the first input frame is passed through unchanged.
+    ``publish_output``. When the code does not publish the primary (first)
+    output, the first input frame is passed through unchanged; a declared
+    secondary output that was never published falls back to the primary result
+    (matching the Flowfile runtime, which silently skips missing outputs).
     """
-    global _current_context
-    if _current_context is not None:
-        raise RuntimeError("flowfile_ctx.run_node() does not support nested notebook execution")
-    context: dict[str, Any] = {"inputs": inputs, "outputs": {}, "node_name": node_name or module_name}
-    _current_context = context
-    try:
-        runpy.run_module(module_name, run_name="__main__")
-    finally:
-        _current_context = None
-
-    published: dict[str, pl.LazyFrame] = context["outputs"]
-    results: dict[str, pl.LazyFrame] = {}
-    for index, name in enumerate(output_names):
-        if name in published:
-            results[name] = published[name]
-        elif index == 0:
-            results[name] = _first_input_frame(inputs)
-        else:
-            raise RuntimeError(
-                f"Notebook node '{context['node_name']}' declared output '{name}' but did not publish it. "
-                f"Published outputs: {sorted(published)}"
-            )
-    return results
+    return NodeContext(inputs, output_names, node_name)
 
 
 def _first_input_frame(inputs: dict[str, list[pl.LazyFrame]]) -> pl.LazyFrame:
@@ -84,8 +122,8 @@ def _first_input_frame(inputs: dict[str, list[pl.LazyFrame]]) -> pl.LazyFrame:
 def _get_context() -> dict[str, Any]:
     if _current_context is None:
         raise RuntimeError(
-            "flowfile_ctx has no active node context. Notebook modules must be executed "
-            "through flowfile_ctx.run_node() (see pipeline.py)."
+            "flowfile_ctx has no active node context. Notebook code must run inside "
+            "flowfile_ctx.node_context() — call the module's run() function (see pipeline.py)."
         )
     return _current_context
 

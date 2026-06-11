@@ -268,7 +268,7 @@ onMounted(fetchManifest);
 .file-list {
   width: 240px;
   flex-shrink: 0;
-  border: 1px solid var(--color-border, #444);
+  border: 1px solid var(--color-border);
   border-radius: var(--border-radius-md);
   overflow-y: auto;
   padding: 6px;
@@ -293,17 +293,26 @@ onMounted(fetchManifest);
 }
 
 .file-entry:hover {
-  background: var(--color-bg-hover, #333);
+  background: var(--color-background-tertiary);
 }
 
 .file-entry.active {
-  background: var(--color-accent);
-  color: var(--color-text-inverse);
+  background: var(--color-accent-subtle, #e8f0fe);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
 }
 
 .file-preview {
   flex: 1;
   min-width: 0;
+  min-height: 200px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  overflow: hidden;
+}
+
+.file-preview :deep(.cm-editor) {
+  min-height: 200px;
 }
 
 .save-hint {
@@ -313,7 +322,7 @@ onMounted(fetchManifest);
 }
 
 .save-hint code {
-  background: var(--color-background-secondary, #333);
+  background: var(--color-background-secondary);
   padding: 2px 6px;
   border-radius: 4px;
 }
