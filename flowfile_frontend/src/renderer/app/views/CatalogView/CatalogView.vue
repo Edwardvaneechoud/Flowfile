@@ -592,7 +592,7 @@ async function pollActiveRuns() {
   // When runs finish, refresh related data
   if (hadActiveRuns && !hasActiveRuns) {
     const loads: Promise<void>[] = [
-      catalogStore.loadRuns(),
+      catalogStore.loadRuns(catalogStore.selectedFlowId),
       catalogStore.loadSchedules(),
       catalogStore.loadStats(),
     ];
@@ -1043,7 +1043,7 @@ async function handleRunNow(scheduleId: number) {
     await CatalogApi.triggerScheduleNow(scheduleId);
     await Promise.all([
       catalogStore.loadActiveRuns(),
-      catalogStore.loadRuns(),
+      catalogStore.loadRuns(catalogStore.selectedFlowId),
       catalogStore.loadSchedules(),
     ]);
   } catch (e: any) {
@@ -1093,7 +1093,7 @@ async function handleCancelScheduleRun(schedule: FlowSchedule) {
     await Promise.all([
       catalogStore.loadActiveRuns(),
       catalogStore.loadSchedules(),
-      catalogStore.loadRuns(),
+      catalogStore.loadRuns(catalogStore.selectedFlowId),
       catalogStore.loadStats(),
     ]);
     ElMessage.success("Run cancelled");

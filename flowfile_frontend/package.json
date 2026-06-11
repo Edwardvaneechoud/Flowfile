@@ -1,6 +1,6 @@
 {
   "name": "Flowfile",
-  "version": "0.11.3",
+  "version": "0.11.4",
   "description": "A tool for designing and executing data flows",
   "scripts": {
     "dev": "tauri dev",
@@ -48,7 +48,7 @@
     "ts-loader": "^9.5.1",
     "typescript": "~5.6.3",
     "vite": "^6.4.2",
-    "vitest": "^3.2.4",
+    "vitest": "^3.2.6",
     "vue-eslint-parser": "^8.3.0",
     "vue-tsc": "^2.0.19"
   },

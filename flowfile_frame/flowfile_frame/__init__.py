@@ -156,4 +156,4 @@ DataFrame = FlowFrame  # Alias for compatibility with generated code
 try:
     __version__ = version("Flowfile")
 except PackageNotFoundError:
-    __version__ = "0.11.3"
+    __version__ = "0.11.4"

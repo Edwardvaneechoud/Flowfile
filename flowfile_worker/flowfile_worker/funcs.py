@@ -554,8 +554,9 @@ def write_parquet(
         df = collect_lazy_frame(lf)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         df.write_parquet(output_path)
-        # Flush to disk to prevent race conditions when another process reads
-        with open(output_path, "rb") as f:
+        # Flush to disk to prevent race conditions when another process reads.
+        # "rb+" — os.fsync needs a writable fd on Windows (EBADF on read-only handles)
+        with open(output_path, "rb+") as f:
             os.fsync(f.fileno())
         flowfile_logger.info(f"write_parquet completed: {len(df)} records written to {output_path}")
         with progress.get_lock():

@@ -8,7 +8,7 @@
 
       <section aria-label="Start building">
         <h2 class="welcome-section-title welcome-section-title--tight">Start building</h2>
-        <p class="welcome-section-sub">Three ways to start a visual data flow</p>
+        <p class="welcome-section-sub">Design data transformations and visually</p>
         <div class="welcome-primary">
           <article class="welcome-tile welcome-tile--primary">
             <button class="tile-main" @click="emit('create')">
