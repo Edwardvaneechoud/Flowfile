@@ -1,17 +1,12 @@
 <template>
-  <div class="groups-view">
-    <div class="header">
-      <div>
-        <h2 class="page-title">User Groups</h2>
-        <p class="page-description">
-          A group is a named set of users you share resources with — secrets, connections, tables,
-          flows, models, and visuals. Sharing a resource with a group grants it to every member at
-          once. Only administrators can create groups.
-        </p>
-      </div>
-      <el-button v-if="isAdmin" type="primary" @click="openCreate">
-        <i class="fa-solid fa-plus" />&nbsp;Create group
-      </el-button>
+  <div class="groups-container">
+    <div class="mb-3">
+      <h2 class="page-title">User Groups</h2>
+      <p class="page-description">
+        A group is a named set of users you share resources with — secrets, connections, tables,
+        flows, models, and visuals. Sharing a resource with a group grants it to every member at
+        once. Only administrators can create groups.
+      </p>
     </div>
 
     <!-- Roles explainer -->
@@ -51,57 +46,123 @@
       </ul>
     </div>
 
-    <el-table v-loading="loading" :data="groups" class="groups-table" empty-text="No groups yet">
-      <el-table-column prop="name" label="Name" min-width="160" />
-      <el-table-column prop="description" label="Description" min-width="200" />
-      <el-table-column label="Members" width="110">
-        <template #default="{ row }">{{ row.member_count }}</template>
-      </el-table-column>
-      <el-table-column label="My role" width="120">
-        <template #default="{ row }">
-          <el-tag v-if="row.my_role" size="small">{{ row.my_role }}</el-tag>
-          <span v-else>—</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="Actions" width="200">
-        <template #default="{ row }">
-          <el-button size="small" text type="primary" @click="openDetail(row.id)">Manage</el-button>
-          <el-button
-            v-if="canAdminister(row)"
-            size="small"
-            text
-            type="danger"
-            @click="confirmDelete(row)"
-          >
-            Delete
-          </el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <!-- Add Group Card -->
+    <div v-if="isAdmin" class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Add New Group</h3>
+      </div>
+      <div class="card-content">
+        <form class="form" @submit.prevent="createGroup">
+          <div class="form-grid">
+            <div class="form-field">
+              <label for="new-group-name" class="form-label">Name</label>
+              <input
+                id="new-group-name"
+                v-model="newGroup.name"
+                type="text"
+                class="form-input"
+                placeholder="data-team"
+                required
+              />
+            </div>
+            <div class="form-field">
+              <label for="new-group-description" class="form-label">Description (optional)</label>
+              <input
+                id="new-group-description"
+                v-model="newGroup.description"
+                type="text"
+                class="form-input"
+                placeholder="What is this group for?"
+              />
+            </div>
+          </div>
+          <p v-if="createError" class="error-text">{{ createError }}</p>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" :disabled="!newGroup.name || creating">
+              <i class="fa-solid fa-plus"></i>
+              {{ creating ? "Creating..." : "Create Group" }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
 
-    <!-- Create group -->
-    <el-dialog v-model="showCreate" title="Create group" width="440px">
-      <el-form label-position="top">
-        <el-form-item label="Name">
-          <el-input v-model="newGroup.name" placeholder="data-team" />
-        </el-form-item>
-        <el-form-item label="Description">
-          <el-input v-model="newGroup.description" type="textarea" :rows="2" />
-        </el-form-item>
-      </el-form>
-      <p v-if="createError" class="error-text">{{ createError }}</p>
-      <template #footer>
-        <el-button @click="showCreate = false">Cancel</el-button>
-        <el-button
-          type="primary"
-          :loading="creating"
-          :disabled="!newGroup.name"
-          @click="createGroup"
-        >
-          Create
-        </el-button>
-      </template>
-    </el-dialog>
+    <!-- Groups List Card -->
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Groups ({{ groups.length }})</h3>
+      </div>
+      <div class="card-content">
+        <div v-if="loading" class="loading-state">
+          <div class="loading-spinner"></div>
+          <p>Loading groups...</p>
+        </div>
+
+        <div v-else-if="groups.length === 0" class="empty-state">
+          <i class="fa-solid fa-users"></i>
+          <p class="empty-state__title">No groups yet</p>
+          <p class="empty-state__subtitle">
+            {{
+              isAdmin
+                ? "Create a group above to share resources with a set of users at once."
+                : "An administrator can create groups and add you to them."
+            }}
+          </p>
+        </div>
+
+        <div v-else class="groups-table-container">
+          <table class="groups-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Description</th>
+                <th>Members</th>
+                <th>My role</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="group in groups" :key="group.id">
+                <td>
+                  <div class="group-cell">
+                    <i class="fa-solid fa-users"></i>
+                    <span>{{ group.name }}</span>
+                  </div>
+                </td>
+                <td>{{ group.description || "—" }}</td>
+                <td>{{ group.member_count }}</td>
+                <td>
+                  <span v-if="group.my_role" :class="['role-pill', `role-${group.my_role}`]">
+                    {{ group.my_role }}
+                  </span>
+                  <span v-else>—</span>
+                </td>
+                <td>
+                  <div class="action-buttons">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-secondary"
+                      @click="openDetail(group.id)"
+                    >
+                      {{ canManage(group) ? "Manage" : "View" }}
+                    </button>
+                    <button
+                      v-if="canAdminister(group)"
+                      type="button"
+                      class="btn btn-sm btn-danger"
+                      title="Delete group"
+                      @click="confirmDelete(group)"
+                    >
+                      <i class="fa-solid fa-trash-alt"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
 
     <!-- Group detail / member management -->
     <el-dialog
@@ -184,7 +245,6 @@ const loading = ref(false);
 const groups = ref<UserGroup[]>([]);
 const allUsers = ref<User[]>([]);
 
-const showCreate = ref(false);
 const creating = ref(false);
 const createError = ref("");
 const newGroup = ref({ name: "", description: "" });
@@ -198,6 +258,10 @@ const addRole = ref<GroupRole>("member");
 
 function canAdminister(group: UserGroup): boolean {
   return isAdmin.value || group.my_role === "owner";
+}
+
+function canManage(group: UserGroup): boolean {
+  return isAdmin.value || ["owner", "manager"].includes(group.my_role ?? "");
 }
 
 const canManageMembers = computed(
@@ -221,12 +285,6 @@ async function loadGroups() {
   }
 }
 
-function openCreate() {
-  newGroup.value = { name: "", description: "" };
-  createError.value = "";
-  showCreate.value = true;
-}
-
 async function createGroup() {
   creating.value = true;
   createError.value = "";
@@ -235,7 +293,7 @@ async function createGroup() {
       name: newGroup.value.name,
       description: newGroup.value.description,
     });
-    showCreate.value = false;
+    newGroup.value = { name: "", description: "" };
     await loadGroups();
   } catch (e: any) {
     createError.value = e?.response?.data?.detail || "Failed to create group.";
@@ -324,23 +382,10 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.groups-view {
-  padding: 16px 24px;
-}
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 16px;
-}
-.page-title {
-  margin: 0;
-}
-.page-description {
-  margin: 4px 0 0;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  max-width: 70ch;
+.groups-container {
+  padding: var(--spacing-4);
+  max-width: 1200px;
+  margin: 0 auto;
 }
 .roles-toggle {
   display: inline-flex;
@@ -384,12 +429,14 @@ onMounted(() => {
 }
 .role-pill {
   flex-shrink: 0;
+  display: inline-block;
   width: 72px;
   text-align: center;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
+  text-transform: capitalize;
 }
 .role-owner {
   color: var(--el-color-warning);
@@ -403,8 +450,44 @@ onMounted(() => {
   color: var(--el-text-color-secondary);
   background: var(--el-fill-color);
 }
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--spacing-4);
+}
+.groups-table-container {
+  overflow-x: auto;
+}
 .groups-table {
   width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+.groups-table th,
+.groups-table td {
+  padding: var(--spacing-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-light);
+}
+.groups-table th {
+  background-color: var(--color-background-muted);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+.groups-table tr:hover {
+  background-color: var(--color-background-hover);
+}
+.group-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+.group-cell i {
+  color: var(--color-accent);
+}
+.action-buttons {
+  display: flex;
+  gap: var(--spacing-2);
 }
 .detail-roles-note {
   margin: 0 0 12px;
