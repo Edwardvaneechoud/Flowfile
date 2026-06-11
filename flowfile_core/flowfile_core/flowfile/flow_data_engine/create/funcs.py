@@ -6,12 +6,12 @@ from polars._typing import CsvEncoding
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import df_from_calamine_xlsx, df_from_openpyxl
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.schemas import input_schema
+from shared.path_utils import is_url
 
 
 def create_from_json(received_table: input_schema.ReceivedTable):
     f = received_table.abs_file_path
-    gbs_to_load = os.path.getsize(f) / 1024 / 1000 / 1000
-    low_mem = gbs_to_load > 10
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 10
 
     if not isinstance(received_table.table_settings, input_schema.InputJsonTable):
         raise ValueError("Received table settings are not of type InputJsonTable")
@@ -83,8 +83,7 @@ def create_from_path_csv(received_table: input_schema.ReceivedTable) -> pl.LazyF
     table_settings: input_schema.InputCsvTable = received_table.table_settings
 
     f = received_table.abs_file_path
-    gbs_to_load = os.path.getsize(f) / 1024 / 1000 / 1000
-    low_mem = gbs_to_load > 10
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 10
 
     if table_settings.encoding.upper() in ("UTF-8", "UTF8", "UTF8-LOSSY", "UTF-8-LOSSY"):
         encoding: CsvEncoding = standardize_utf8_encoding(table_settings.encoding)
@@ -145,8 +144,9 @@ def create_random(number_of_records: int = 1000) -> pl.LazyFrame:
 def create_from_path_parquet(received_table: input_schema.ReceivedTable) -> pl.LazyFrame:
     if not isinstance(received_table.table_settings, input_schema.InputParquetTable):
         raise ValueError("Received table settings are not of type InputParquetTable")
-    low_mem = (os.path.getsize(received_table.abs_file_path) / 1024 / 1000 / 1000) > 2
-    return pl.scan_parquet(source=received_table.abs_file_path, low_memory=low_mem)
+    f = received_table.abs_file_path
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 2
+    return pl.scan_parquet(source=f, low_memory=low_mem)
 
 
 def create_from_path_excel(received_table: input_schema.ReceivedTable):

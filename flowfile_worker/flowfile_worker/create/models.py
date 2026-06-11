@@ -4,6 +4,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from shared.path_utils import is_url
+
 
 class MinimalFieldInfo(BaseModel):
     name: str
@@ -118,6 +120,9 @@ class ReceivedTable(BaseModel):
 
     def set_absolute_filepath(self):
         """Resolves the path to an absolute file path."""
+        if is_url(self.path):
+            self.abs_file_path = self.path
+            return
         base_path = Path(self.path).expanduser()
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path

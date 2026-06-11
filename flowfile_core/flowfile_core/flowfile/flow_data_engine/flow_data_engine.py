@@ -69,6 +69,7 @@ from shared.cloud_storage import (
 )
 from shared.cloud_storage.utils import normalize_delta_path
 from shared.cloud_storage.writers import write_to_cloud
+from shared.path_utils import is_url
 
 T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 
@@ -1580,7 +1581,7 @@ class FlowDataEngine:
         Returns:
             The file size in bytes, or 0 if the original path is unknown.
         """
-        if self._org_path is not None:
+        if self._org_path is not None and not is_url(self._org_path):
             return os.path.getsize(self._org_path)
         return 0
 

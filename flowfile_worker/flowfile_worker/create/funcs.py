@@ -11,6 +11,7 @@ from flowfile_worker.create.models import (
 )
 from flowfile_worker.create.read_excel_tables import df_from_calamine_xlsx, df_from_openpyxl
 from flowfile_worker.create.utils import create_fake_data
+from shared.path_utils import is_url
 
 
 def create_from_path_json(received_table: ReceivedTable):
@@ -18,8 +19,7 @@ def create_from_path_json(received_table: ReceivedTable):
         raise ValueError("Received table settings are not of type InputJsonTable")
     input_table_settings: InputJsonTable = received_table.table_settings
     f = received_table.abs_file_path
-    gbs_to_load = os.path.getsize(f) / 1024 / 1000 / 1000
-    low_mem = gbs_to_load > 10
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 10
     if input_table_settings.encoding.upper() == "UTF8" or input_table_settings.encoding.upper() == "UTF-8":
         try:
             df = pl.scan_csv(
@@ -75,8 +75,7 @@ def create_from_path_csv(received_table: ReceivedTable) -> pl.DataFrame:
     if not isinstance(received_table.table_settings, InputCsvTable):
         raise ValueError("Received table settings are not of type InputCsvTable")
     input_table_settings: InputCsvTable = received_table.table_settings
-    gbs_to_load = os.path.getsize(f) / 1024 / 1000 / 1000
-    low_mem = gbs_to_load > 10
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 10
     if input_table_settings.encoding.upper() == "UTF8" or input_table_settings.encoding.upper() == "UTF-8":
         try:
             df = pl.scan_csv(
@@ -134,8 +133,9 @@ def create_random(number_of_records: int = 1000) -> pl.LazyFrame:
 def create_from_path_parquet(received_table: ReceivedTable):
     if not isinstance(received_table.table_settings, InputParquetTable):
         raise ValueError("Received table settings are not of type InputParquetTable")
-    low_mem = (os.path.getsize(received_table.abs_file_path) / 1024 / 1000 / 1000) > 2
-    return pl.scan_parquet(source=received_table.abs_file_path, low_memory=low_mem)
+    f = received_table.abs_file_path
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 2
+    return pl.scan_parquet(source=f, low_memory=low_mem)
 
 
 def create_from_path_excel(received_table: ReceivedTable):
