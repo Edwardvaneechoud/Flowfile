@@ -193,4 +193,58 @@ describe('Lazy schema propagation', () => {
     // A successfully-executed node is not falsely flagged unresolved.
     expect(pivotResult?.schemaResolved).toBe(true)
   })
+
+  // Regression: applying propagation results used to rebuild settings sub-objects
+  // unconditionally, retriggering the settings watcher → propagate → … forever.
+  it('converges — applying results does not retrigger the settings watcher', async () => {
+    vi.useFakeTimers()
+    try {
+      const store = useFlowStore()
+      const readId = store.addNode('read', 0, 0)
+      const selectId = store.addNode('select', 200, 0)
+      connect(store, readId, selectId)
+      // Seed the source schema (applyPropagatedSchemas skips source nodes).
+      store.nodeResults.set(readId, { schema: [{ name: 'a', data_type: 'Int64' }] })
+
+      runPythonWithResult.mockResolvedValue({
+        [readId]: { schema: [{ name: 'a', data_type: 'Int64' }], schema_resolved: true },
+        [selectId]: { schema: [{ name: 'a', data_type: 'Int64' }], schema_resolved: true }
+      })
+
+      const propagateCalls = () =>
+        runPythonWithResult.mock.calls.filter((c) => (c[0] as string).includes('propagate_schemas')).length
+
+      await store.propagateSchemas()
+      for (let i = 0; i < 10; i++) await vi.runAllTimersAsync()
+      const settled = propagateCalls()
+      for (let i = 0; i < 10; i++) await vi.runAllTimersAsync()
+      expect(propagateCalls()).toBe(settled)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('re-propagation is idempotent — node and result identities stay stable', async () => {
+    const store = useFlowStore()
+    const readId = store.addNode('read', 0, 0)
+    const selectId = store.addNode('select', 200, 0)
+    connect(store, readId, selectId)
+    store.nodeResults.set(readId, { schema: [{ name: 'a', data_type: 'Int64' }] })
+
+    runPythonWithResult.mockResolvedValue({
+      [readId]: { schema: [{ name: 'a', data_type: 'Int64' }], schema_resolved: true },
+      [selectId]: { schema: [{ name: 'a', data_type: 'Int64' }], schema_resolved: true }
+    })
+
+    await store.propagateSchemas()
+    const nodeAfterFirst = store.getNode(selectId)
+    const selectInputAfterFirst = (nodeAfterFirst?.settings as any).select_input
+    const resultAfterFirst = store.getNodeResult(selectId)
+    expect(selectInputAfterFirst?.length).toBe(1)
+
+    await store.propagateSchemas()
+    expect(store.getNode(selectId)).toBe(nodeAfterFirst)
+    expect((store.getNode(selectId)?.settings as any).select_input).toBe(selectInputAfterFirst)
+    expect(store.getNodeResult(selectId)).toBe(resultAfterFirst)
+  })
 })

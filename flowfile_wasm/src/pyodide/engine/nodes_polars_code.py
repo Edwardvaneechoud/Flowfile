@@ -1,4 +1,6 @@
+import contextlib
 import gc
+import io
 from typing import Any
 
 import polars as pl
@@ -225,16 +227,19 @@ def build_polars_code_schema(input_lfs: list[pl.LazyFrame], settings: dict) -> p
         return input_lfs[0]
 
     global_vars = {"pl": pl}
-    try:
-        exec(code, global_vars, local_vars)
-    except SyntaxError:
-        result = eval(code, global_vars, local_vars)
-        lf = _to_lazyframe(result)
-        if lf is None:
-            raise ValueError("Code must produce a DataFrame or LazyFrame") from None
-        return lf
+    # Schema inference runs the user code on every propagation pass; swallow its
+    # stdout so print() statements don't spam the console (real runs keep printing).
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            exec(code, global_vars, local_vars)
+        except SyntaxError:
+            result = eval(code, global_vars, local_vars)
+            lf = _to_lazyframe(result)
+            if lf is None:
+                raise ValueError("Code must produce a DataFrame or LazyFrame") from None
+            return lf
 
-    result_lf, error_msg = _extract_result(code, global_vars, local_vars, len(input_lfs) > 0)
+        result_lf, error_msg = _extract_result(code, global_vars, local_vars, len(input_lfs) > 0)
     if error_msg:
         raise ValueError(error_msg)
     return result_lf

@@ -235,3 +235,19 @@ def test_unpivot_missing_value_column_raises():
             lf(id=[1], q1=[10]),
             {"unpivot_input": {"index_columns": ["id"], "value_columns": ["ghost"]}},
         )
+
+
+# --------------------------------------------------------------------------- #
+# build_polars_code_schema
+# --------------------------------------------------------------------------- #
+def test_polars_code_schema_build_swallows_user_stdout(capsys):
+    settings = {"polars_code_input": {"polars_code": 'print("PRINT_MARKER")\noutput_df = input_df'}}
+
+    out = engine.build_polars_code_schema([lf(a=[1])], settings)
+    assert out.collect_schema().names() == ["a"]
+    assert "PRINT_MARKER" not in capsys.readouterr().out
+
+    # Real execution keeps the user's prints visible.
+    assert engine.execute_read_csv(1, "a\n1\n", {})["success"] is True
+    assert engine.execute_polars_code(2, [1], settings)["success"] is True
+    assert "PRINT_MARKER" in capsys.readouterr().out

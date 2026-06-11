@@ -18,12 +18,27 @@ import { FLOW_TEMPLATES } from '../../src/config/templates'
 
 const publicUrl = (rel: string) => resolve(process.cwd(), 'public', rel)
 
+// Read nodes sourced from this repo's raw.githubusercontent URLs (the demo
+// CSVs live at the repo root, not in public/) resolve to the local checkout.
+const RAW_REPO_PREFIX = 'https://raw.githubusercontent.com/edwardvaneechoud/Flowfile/main/'
+
 function readText(rel: string): string {
   return readFileSync(publicUrl(rel), 'utf-8')
 }
 
-function csvHeaders(rel: string): string[] {
-  const text = readText(rel)
+/** Local filesystem path of a read node's CSV (remote repo URL or dataDir). */
+function readNodeCsvPath(node: Node, dataDir: string): string {
+  const s = node.setting_input ?? {}
+  const remotePath: string = s.received_file?.path ?? ''
+  if (remotePath.startsWith(RAW_REPO_PREFIX)) {
+    return resolve(process.cwd(), '..', remotePath.slice(RAW_REPO_PREFIX.length))
+  }
+  const fileName = s.file_name || s.received_file?.name
+  return publicUrl(dataDir + fileName)
+}
+
+function csvHeaders(absPath: string): string[] {
+  const text = readFileSync(absPath, 'utf-8')
   const firstLine = text.split(/\r?\n/).find((l) => l.length > 0) ?? ''
   return firstLine.split(',').map((c) => c.trim())
 }
@@ -106,7 +121,7 @@ describe('Built-in flow templates', () => {
         for (const r of reads) {
           const fileName = r.setting_input?.file_name || r.setting_input?.received_file?.name
           expect(fileName, `read node #${r.id} has a file_name`).toBeTruthy()
-          const headers = csvHeaders(template.dataDir + fileName)
+          const headers = csvHeaders(readNodeCsvPath(r, template.dataDir))
           expect(headers.length, `${fileName} has headers`).toBeGreaterThan(0)
         }
       })
@@ -116,8 +131,7 @@ describe('Built-in flow templates', () => {
         const allowed = new Set<string>()
         for (const n of flow.nodes) {
           if (n.type === 'read') {
-            const fileName = n.setting_input?.file_name || n.setting_input?.received_file?.name
-            for (const h of csvHeaders(template.dataDir + fileName)) allowed.add(h)
+            for (const h of csvHeaders(readNodeCsvPath(n, template.dataDir))) allowed.add(h)
           }
           for (const p of producedColumns(n)) allowed.add(p)
         }

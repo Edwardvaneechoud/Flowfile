@@ -489,19 +489,20 @@ export const useFlowStore = defineStore('flow', () => {
     if (ready) debouncedPropagateSchemas()
   })
 
-  // Watch for node settings changes to trigger schema propagation
+  // Watch for node settings changes to trigger schema propagation. The source
+  // is a single string so Vue's Object.is comparison skips no-op re-runs
+  // (e.g. node drags churning the Map) instead of firing on every mutation.
   watch(
     () => {
-      const settingsSnapshot: Record<number, string> = {}
+      const parts: string[] = []
       nodes.value.forEach((node, id) => {
-        settingsSnapshot[id] = JSON.stringify(node.settings)
+        parts.push(`${id}:${JSON.stringify(node.settings)}`)
       })
-      return settingsSnapshot
+      return parts.join('\n')
     },
     () => {
       debouncedPropagateSchemas()
-    },
-    { deep: true }
+    }
   )
 
   loadCatalogDatasets()
@@ -1286,8 +1287,10 @@ gc.collect()
 
   /**
    * Sync a node's settings with its input schema
-   * This updates column-based settings (like select_input) when upstream schema changes
-   * Returns true if settings were modified (triggers re-set in nodes Map for reactivity)
+   * This updates column-based settings (like select_input) when upstream schema changes.
+   * Mutations are gated on a real value change so a no-op sync never retriggers
+   * the settings watcher (which would loop schema propagation forever).
+   * Returns true if settings were modified.
    */
   function syncNodeSettingsWithSchema(node: FlowNode, inputSchema: ColumnSchema[], rightInputSchema?: ColumnSchema[] | null): boolean {
     const settings = node.settings as any
@@ -1333,9 +1336,10 @@ gc.collect()
 
       newSelectInput.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0))
 
-      settings.select_input = newSelectInput
-      node.settings = settings
-      modified = true
+      if (JSON.stringify(settings.select_input ?? null) !== JSON.stringify(newSelectInput)) {
+        settings.select_input = newSelectInput
+        modified = true
+      }
     }
 
     if (node.type === 'group_by') {
@@ -1348,9 +1352,11 @@ gc.collect()
         is_available: inputColumnNames.has(col.old_name)
       }))
 
-      settings.groupby_input = { ...groupbyInput, agg_cols: newAggCols }
-      node.settings = settings
-      modified = true
+      const newGroupbyInput = { ...groupbyInput, agg_cols: newAggCols }
+      if (JSON.stringify(settings.groupby_input ?? null) !== JSON.stringify(newGroupbyInput)) {
+        settings.groupby_input = newGroupbyInput
+        modified = true
+      }
     }
 
     if (node.type === 'join' && rightInputSchema) {
@@ -1375,12 +1381,14 @@ gc.collect()
       const sortInput = settings.sort_input as any[]
       if (sortInput && Array.isArray(sortInput)) {
         const inputColumnNames = new Set(inputSchema.map(c => c.name))
-        settings.sort_input = sortInput.map((col: any) => ({
+        const newSortInput = sortInput.map((col: any) => ({
           ...col,
           is_available: inputColumnNames.has(col.column)
         }))
-        node.settings = settings
-        modified = true
+        if (JSON.stringify(settings.sort_input) !== JSON.stringify(newSortInput)) {
+          settings.sort_input = newSortInput
+          modified = true
+        }
       }
     }
 
@@ -1475,8 +1483,7 @@ result
         ? (nodeResults.value.get(node.rightInputId)?.schema || null)
         : null
       if (inputSchema && inputSchema.length > 0) {
-        const modified = syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
-        if (modified) nodes.value.set(nodeId, { ...node })
+        syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
       }
 
       const info = res[String(nodeId)]
@@ -1490,6 +1497,9 @@ result
       // couldn't resolve it (e.g. pivot), so don't flag it as unresolved.
       const resolved = info.schema_resolved === true
         || (existing?.success === true && !!(existing?.schema && existing.schema.length > 0))
+      // Skip no-op writes: a fresh result object would re-render the whole canvas.
+      if (existing && existing.schemaResolved === resolved
+        && JSON.stringify(existing.schema ?? null) === JSON.stringify(outputSchema ?? null)) continue
       nodeResults.value.set(nodeId, {
         ...existing,
         success: wasExecuted ? existing!.success : undefined,
@@ -1560,11 +1570,7 @@ result
       }
 
       if (inputSchema && inputSchema.length > 0) {
-        const modified = syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
-        // Trigger Vue reactivity by re-setting the node in the Map
-        if (modified) {
-          nodes.value.set(nodeId, { ...node })
-        }
+        syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
       }
 
       // For polars_code/formula nodes, try lazy execution if input data is available
@@ -1591,6 +1597,10 @@ result
 
         if (inferredSchema) {
           const existingResult = nodeResults.value.get(nodeId)
+          // Skip no-op writes: a fresh result object would re-render the whole canvas.
+          if (existingResult && JSON.stringify(existingResult.schema ?? null) === JSON.stringify(inferredSchema)) {
+            continue
+          }
           // Preserve success if it was explicitly set (true OR false means it was executed)
           const wasExecuted = existingResult?.success !== undefined
           nodeResults.value.set(nodeId, {

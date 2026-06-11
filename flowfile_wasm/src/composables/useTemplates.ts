@@ -2,9 +2,9 @@
  * Template loading composable.
  *
  * Loads a built-in template into the live flow: fetches the flow YAML, imports
- * it, then fetches each read node's CSV (the node self-describes its file name)
- * and re-applies it as file content + inferred schema — mirroring how the demo
- * loads. Designed to be wrapped by the tabs store's `openWith` so a template
+ * it, then loads each read node's CSV — from the node's remote URL when it has
+ * one (received_file.path, like the demo), otherwise from the template's local
+ * dataDir. Designed to be wrapped by the tabs store's `openWith` so a template
  * opens in its own tab without disturbing other open flows.
  */
 
@@ -52,10 +52,17 @@ export function useTemplates() {
       // Name the flow after the template so its tab/label reads nicely.
       flowStore.currentFlowName = template.name
 
-      // Load every read node's CSV from the template's data directory.
+      // Load every read node's CSV: URL-sourced nodes go through the standard
+      // remote path, the rest come from the template's data directory.
+      const remoteNodeIds: number[] = []
       for (const node of flowData.nodes) {
         if (node.type !== 'read') continue
         const settings = node.setting_input as NodeReadSettings | undefined
+        const path = settings?.received_file?.path ?? ''
+        if (path.startsWith('http://') || path.startsWith('https://')) {
+          remoteNodeIds.push(node.id)
+          continue
+        }
         const fileName = settings?.file_name || settings?.received_file?.name
         if (!fileName) continue
 
@@ -68,6 +75,15 @@ export function useTemplates() {
         const schema = inferSchemaFromCsv(csv, true, ',')
         if (schema) {
           flowStore.setSourceNodeSchema(node.id, schema)
+        }
+      }
+
+      if (remoteNodeIds.length) {
+        const failures = await flowStore.refetchRemoteFiles(remoteNodeIds)
+        if (failures.length) {
+          throw new Error(
+            `Failed to fetch template data: ${failures.map((f) => f.fileName).join(', ')}`
+          )
         }
       }
 
