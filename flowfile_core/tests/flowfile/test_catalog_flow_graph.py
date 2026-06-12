@@ -748,7 +748,9 @@ class TestResolveVirtualTable:
                 result = _resolve_virtual_table(is_optimized=False, serialized_lf=None, catalog_table_id=42)
 
         assert isinstance(result, pl.LazyFrame)
-        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(42, run_location=None, node_logger=None)
+        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(
+            42, user_id=None, run_location=None, node_logger=None
+        )
 
     def test_resolve_optimized_without_serialized_lf_falls_back(self):
         """When is_optimized=True but serialized_lf is None, should fall back to service resolution."""
@@ -766,7 +768,9 @@ class TestResolveVirtualTable:
 
                 _resolve_virtual_table(is_optimized=True, serialized_lf=None, catalog_table_id=99)
 
-        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(99, run_location=None, node_logger=None)
+        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(
+            99, user_id=None, run_location=None, node_logger=None
+        )
 
 
 class TestWriteCatalogDeltaLocal:
