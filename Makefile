@@ -274,5 +274,20 @@ check_stubs: stubs
 	fi
 	@echo "Stubs are in sync."
 
+# Regenerate the formula function reference (docs/users/formulas/functions.md)
+# from the polars-expr-transformer docstrings. Run after bumping the
+# polars-expr-transformer pin.
+formula_docs:
+	@echo "Generating formula function reference..."
+	$(POETRY_RUN) python tools/generate_formula_docs.py
+
+# Drift check: regenerate and fail if the committed page changed.
+check_formula_docs: formula_docs
+	@if ! git diff --exit-code -- docs/users/formulas/functions.md; then \
+		echo "ERROR: formula docs are out of sync. Run 'make formula_docs' and commit the result."; \
+		exit 1; \
+	fi
+	@echo "Formula docs are in sync."
+
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test test_coverage stubs check_stubs
+.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test test_coverage stubs check_stubs formula_docs check_formula_docs

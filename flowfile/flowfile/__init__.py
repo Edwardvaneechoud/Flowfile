@@ -12,7 +12,7 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("Flowfile")
 except PackageNotFoundError:
-    __version__ = "0.11.4"
+    __version__ = "0.12.0"
 
 import logging
 import os

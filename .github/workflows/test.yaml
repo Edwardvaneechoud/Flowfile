@@ -28,6 +28,7 @@ jobs:
       kernel: ${{ steps.filter.outputs.kernel }}
       frontend: ${{ steps.filter.outputs.frontend }}
       docs: ${{ steps.filter.outputs.docs }}
+      formula_docs: ${{ steps.filter.outputs.formula_docs }}
       shared: ${{ steps.filter.outputs.shared }}
       any_backend: ${{ steps.filter.outputs.any_backend }}
       test_workflow: ${{ steps.filter.outputs.test_workflow }}
@@ -57,6 +58,11 @@ jobs:
             docs:
               - 'docs/**'
               - 'mkdocs.yml'
+            formula_docs:
+              - 'tools/generate_formula_docs.py'
+              - 'docs/users/formulas/functions.md'
+              - 'pyproject.toml'
+              - 'poetry.lock'
             shared:
               - 'shared/**'
               - 'test_utils/**'
@@ -418,6 +424,36 @@ jobs:
       - name: Check stub drift
         run: make check_stubs
 
+  # Formula docs drift check - functions.md is generated from the
+  # polars-expr-transformer docstrings; fail if the committed page is stale
+  # (e.g. after bumping the pin or editing the generator without regenerating).
+  check-formula-docs:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.formula_docs == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.poetry/bin" >> $GITHUB_PATH
+
+      - name: Install Dependencies
+        run: poetry install --no-interaction --no-ansi --with dev
+
+      - name: Check formula docs drift
+        run: make check_formula_docs
+
   # Frontend web build test - runs when frontend changes or test workflow changes
   test-web:
     needs: detect-changes
@@ -486,7 +522,7 @@ jobs:
 
   # Summary job - always runs to provide status
   test-summary:
-    needs: [detect-changes, backend-tests, backend-tests-windows, kernel-tests, check-stubs, test-web, docs-test]
+    needs: [detect-changes, backend-tests, backend-tests-windows, kernel-tests, check-stubs, check-formula-docs, test-web, docs-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -510,6 +546,7 @@ jobs:
           echo "  - Backend Tests (Windows): ${{ needs.backend-tests-windows.result }}"
           echo "  - Kernel Tests: ${{ needs.kernel-tests.result }}"
           echo "  - Stub Drift: ${{ needs.check-stubs.result }}"
+          echo "  - Formula Docs Drift: ${{ needs.check-formula-docs.result }}"
           echo "  - Web Tests: ${{ needs.test-web.result }}"
           echo "  - Docs Test: ${{ needs.docs-test.result }}"
 
@@ -518,6 +555,7 @@ jobs:
              [[ "${{ needs.backend-tests-windows.result }}" == "failure" ]] || \
              [[ "${{ needs.kernel-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.check-stubs.result }}" == "failure" ]] || \
+             [[ "${{ needs.check-formula-docs.result }}" == "failure" ]] || \
              [[ "${{ needs.test-web.result }}" == "failure" ]] || \
              [[ "${{ needs.docs-test.result }}" == "failure" ]]; then
             echo ""

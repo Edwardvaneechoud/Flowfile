@@ -20,19 +20,25 @@ The fundamental building blocks of Flowfile pipelines.
 
 ---
 
-### [Formula Syntax](expressions.md)
-Flowfile's Excel-like formula syntax for expressions.
+### [Expressions](expressions.md)
+Polars-style column operations — the default way to express transformations.
 
 **You'll learn:**
-- When to use `[column]` vs `ff.col("column")`
-- Supported operations and functions
-- How formulas translate to Polars
-- Best practices for each syntax
+- Column references, arithmetic, and conditional logic with `ff.col` / `ff.when`
+- Filtering with expression predicates
+- How expressions compose into one lazy query plan
 
-**Key takeaways:**
-- Formulas make simple operations more readable
-- Great for users coming from Excel/Tableau
-- Both syntaxes can be mixed in the same pipeline
+---
+
+### [Formulas in Python](formulas.md)
+The FlowFrame methods that accept Flowfile formula strings.
+
+**You'll learn:**
+- Creating columns with `with_columns(flowfile_formulas=...)`
+- Filtering with `filter(flowfile_formula=...)` and `filter_split`
+- When to reach for a formula instead of an expression
+
+**Key takeaway:** the formula language itself (syntax, operators, all functions) is documented separately in the [Formula Language guide](../../formulas/index.md).
 
 ## Quick Overview
 
@@ -90,7 +96,8 @@ Understanding these concepts helps you:
 ## Learn More
 
 - **Deep dive:** Read the full [FlowFrame and FlowGraph guide](design-concepts.md)
-- **Expressions:** Master the [Formula Syntax](expressions.md)
+- **Expressions:** Learn [Polars-style expressions](expressions.md)
+- **Formulas:** Use the [formula-accepting methods](formulas.md)
 - **Practice:** Try the [tutorials](../tutorials/index.md)
 
 ---

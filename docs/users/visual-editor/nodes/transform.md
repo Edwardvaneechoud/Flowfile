@@ -47,18 +47,20 @@ This transformation helps in creating unique keys, tracking row order, or struct
 
 ### ![Formula](../../../assets/images/nodes/formula.png){ width="50" height="50" } Formula  
 
-The **Formula** node allows you to create new columns or modify existing ones using custom expressions. It supports a wide range of operations, including mathematical calculations, string manipulations, and conditional logic.
+The **Formula** node creates a new column — or replaces an existing one — by evaluating a formula for every row. Formulas are written in the [Flowfile formula language](../../formulas/index.md): reference columns as `[column]`, call any of the [95 built-in functions](../../formulas/functions.md), and use `if ... then ... else ... endif` for conditional logic.
+
+!!! tip "Try formulas in your browser"
+    The [interactive formula playground](https://edwardvaneechoud.github.io/polars_expr_transformer/) lets you experiment with the full language against sample data — nothing to install.
 
 ---
 
 #### **Key Features**
 
-- Create new columns dynamically  
-- Modify existing columns using expressions  
-- Perform mathematical operations (`+`, `-`, `*`, `/`)  
-- Apply string functions (`concat`, `uppercase`, `lowercase`)  
-- Use conditional logic
-- Use date time transformations
+- Create new columns or replace existing ones  
+- Math, string, date/time, and type-conversion [functions](../../formulas/functions.md)  
+- Conditional logic with `if ... then ... elseif ... else ... endif`  
+- Autocomplete for column names and functions, with inline function documentation, in the formula editor  
+- Compiles to a native Polars expression — no row-by-row Python overhead
 
 ---
 
@@ -66,27 +68,26 @@ The **Formula** node allows you to create new columns or modify existing ones us
 
 1. Drag the **Formula** node onto your canvas.  
 2. Connect input data.  
-3. Write your formula expression.  
-4. Preview the results.  
-5. Configure column names and data types.  
+3. Set the output column name.  
+4. Write your formula, e.g. `round([price] * (1 - [discount]), 2)`.  
+5. Preview the results and optionally set a data type.  
 
 ---
 
 #### **Configuration Options**
 
-| Parameter       | Description                                                |
-|-----------------|------------------------------------------------------------|
-| **Column Name** | The name of the new or modified column.                    |
-| **Formula**     | The expression used to compute values for the column.      |
-| **Data Type**   | The expected data type of the resulting column (optional). |
+| Parameter       | Description                                                                                                      |
+|-----------------|------------------------------------------------------------------------------------------------------------------|
+| **Column Name** | The name of the new or modified column.                                                                          |
+| **Formula**     | The [formula](../../formulas/index.md) used to compute values for the column.                                    |
+| **Data Type**   | The data type of the resulting column. Defaults to `Auto`, which infers the type from the formula; set it explicitly to force a cast. |
 
 ---
 
 #### **Behavior**
 
-- If a **new column** is created, it will be added to the dataset.  
-- If an **existing column** is modified, its values will be updated based on the formula.  
-- If no data type is specified, the result defaults to `String`.  
+- If the column name is **new**, the column is added to the dataset.  
+- If the column name **already exists**, its values are replaced with the formula result.  
 
 This transformation is useful for feature engineering, data cleaning, and enriching datasets with computed values.
 
@@ -130,14 +131,15 @@ This transformation ensures that datasets are structured efficiently before furt
 
 ### ![Filter Data](../../../assets/images/nodes/filter.png){ width="50" height="50" } Filter Data
 
-The **Filter Data** node keeps only rows that match a specified condition. Enter a formula that evaluates to `true` or `false`, and only `true` rows remain.
+The **Filter Data** node keeps only rows that match a specified condition.
 
 ---
 
 #### **Key Features**  
 
-- Apply **custom conditions** to filter data  
-- Use **operators** (`or`, `and`, `<`,)  
+- **Basic mode**: pick a column, an operator, and a value — no syntax needed  
+- **Advanced mode**: write a [formula](../../formulas/index.md) that evaluates to `true` or `false`; only `true` rows remain  
+- **Split mode**: route matching rows to one output and non-matching rows to a second output, instead of dropping them  
 - Support for **string, numeric, and date filtering**  
 
 ---
@@ -146,20 +148,21 @@ The **Filter Data** node keeps only rows that match a specified condition. Enter
 
 1. Drag the **Filter Data** node onto your canvas.  
 2. Connect input data.  
-3. Enter a filter formula (e.g., `[City] = 'Amsterdam'`).  
-4. Apply the filter to keep matching rows.  
+3. Choose **basic** mode and fill in the condition, or **advanced** mode and enter a filter formula (e.g., `[City] = 'Amsterdam'`).  
+4. (Optional) Enable **split mode** to keep the non-matching rows on a second output.  
 
 ---
 
-#### **Example Filters**  
+#### **Example Filters (advanced mode)**  
 
-| Expression                          | Description                                                 |
-|-------------------------------------|-------------------------------------------------------------|
-| `[City] = 'Amsterdam'`              | Keep rows where `City` is "Amsterdam".                      |
-| `[Age] > 30`                        | Keep rows where `Age` is greater than 30.                   |
-| `[Country] = 'USA' &&[Sales] > 100` | Keep rows where `Country` is "USA" and `Sales` is over 100. |
+| Expression                              | Description                                                 |
+|-----------------------------------------|-------------------------------------------------------------|
+| `[City] = 'Amsterdam'`                  | Keep rows where `City` is "Amsterdam".                      |
+| `[Age] > 30`                            | Keep rows where `Age` is greater than 30.                   |
+| `[Country] = 'USA' and [Sales] > 100`   | Keep rows where `Country` is "USA" and `Sales` is over 100. |
+| `is_not_empty([email])`                 | Keep rows that have an email address.                       |
 
-Use this node to refine datasets efficiently.
+Advanced filters use the [Flowfile formula language](../../formulas/index.md) — any formula that returns `true`/`false` works, including [functions](../../formulas/functions.md) like `contains()`, `between()`, or `is_empty()`.
 
 ---
 
