@@ -485,6 +485,37 @@ def trigger_delta_version_preview(
     return CatalogTablePreview.model_validate(response.json())
 
 
+def trigger_optimize_catalog_table(
+    table_name: str,
+    z_order_columns: list[str] | None = None,
+) -> dict:
+    """Ask the worker to optimize (compact / Z-order) a Delta catalog table.
+
+    *table_name* is the bare directory name inside the catalog tables directory.
+    """
+    payload = {"table_path": table_name, "z_order_columns": z_order_columns}
+    response = requests.post(f"{WORKER_URL}/catalog/optimize", json=payload, timeout=600)
+    if not response.ok:
+        raise RuntimeError(f"Worker optimize failed: {response.text}")
+    return response.json()
+
+
+def trigger_vacuum_catalog_table(
+    table_name: str,
+    retention_hours: int = 168,
+    dry_run: bool = True,
+) -> dict:
+    """Ask the worker to vacuum tombstoned files from a Delta catalog table.
+
+    *table_name* is the bare directory name inside the catalog tables directory.
+    """
+    payload = {"table_path": table_name, "retention_hours": retention_hours, "dry_run": dry_run}
+    response = requests.post(f"{WORKER_URL}/catalog/vacuum", json=payload, timeout=600)
+    if not response.ok:
+        raise RuntimeError(f"Worker vacuum failed: {response.text}")
+    return response.json()
+
+
 def get_results(file_ref: str) -> Status | None:
     f = requests.get(f"{WORKER_URL}/status/{file_ref}")
     if f.status_code == 200:

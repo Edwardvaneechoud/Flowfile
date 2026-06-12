@@ -2005,6 +2005,7 @@ class FlowFrame:
         path: str,
         connection_name: str | None = None,
         write_mode: Literal["overwrite", "append"] = "overwrite",
+        partition_by: list[str] | None = None,
         description: str | None = None,
     ) -> FlowFrame:
         """
@@ -2016,6 +2017,8 @@ class FlowFrame:
                 that a user can create. If None, uses the default connection. Defaults to None.
             write_mode (Literal["overwrite", "append"], optional): The write mode for the Delta table.
                 "overwrite" replaces existing data, "append" adds to existing data. Defaults to "overwrite".
+            partition_by (Optional[List[str]], optional): Delta partition columns (applied at table
+                creation; writes to an existing table must match its partitioning).
             description (Optional[str], optional): Description of this operation for the ETL graph.
         Returns:
             FlowFrame: A new child data frame representing the written data.
@@ -2027,6 +2030,7 @@ class FlowFrame:
             depends_on_node_id=self.node_id,
             write_mode=write_mode,
             file_format="delta",
+            partition_by=partition_by,
             description=description,
         )
         return self._create_child_frame(new_node_id)
@@ -2066,6 +2070,7 @@ class FlowFrame:
         namespace_id: int | None = None,
         write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite",
         merge_keys: list[str] | None = None,
+        partition_by: list[str] | None = None,
         description: str | None = None,
     ) -> FlowFrame:
         """Write the data frame to the Flowfile catalog.
@@ -2079,6 +2084,8 @@ class FlowFrame:
                 (requires the flow to be registered with the catalog first;
                 see :func:`flowfile_frame.register_flow_with_catalog`).
             merge_keys: Column names for merge operations (required for upsert/update/delete).
+            partition_by: Delta partition columns (applied at table creation; appends
+                must match the existing partitioning).
             description: Optional description for this operation.
 
         Returns:
@@ -2097,6 +2104,7 @@ class FlowFrame:
             namespace_id=namespace_id,
             write_mode=write_mode,
             merge_keys=merge_keys,
+            partition_by=partition_by,
             description=description,
         )
         return self._create_child_frame(new_node_id)

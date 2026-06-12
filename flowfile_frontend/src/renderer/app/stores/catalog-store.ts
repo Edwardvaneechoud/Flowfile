@@ -416,6 +416,28 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
+    async optimizeTable(tableId: number, zOrderColumns?: string[] | null) {
+      const result = await CatalogApi.optimizeTable(tableId, zOrderColumns);
+      if (this.selectedTable && this.selectedTable.id === tableId) {
+        this.selectedTable.size_bytes = result.size_bytes;
+      }
+      await this.loadTableHistory(tableId);
+      await this.loadAllTables();
+      return result;
+    },
+
+    async vacuumTable(tableId: number, retentionHours: number, dryRun: boolean) {
+      const result = await CatalogApi.vacuumTable(tableId, retentionHours, dryRun);
+      if (!dryRun) {
+        if (this.selectedTable && this.selectedTable.id === tableId) {
+          this.selectedTable.size_bytes = result.size_bytes;
+        }
+        await this.loadTableHistory(tableId);
+        await this.loadAllTables();
+      }
+      return result;
+    },
+
     selectVersion(version: number | null) {
       this.selectedVersion = version;
       if (this.selectedTableId !== null) {

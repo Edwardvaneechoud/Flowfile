@@ -28,10 +28,14 @@ import type {
   NamespaceCreate,
   NamespaceTree,
   NamespaceUpdate,
+  OptimizeTableRequest,
+  OptimizeTableResponse,
   PaginatedFlowRuns,
   QueryVirtualTableCreate,
   SchedulerStatus,
   SqlQueryResult,
+  VacuumTableRequest,
+  VacuumTableResponse,
   VirtualFlowTableCreate,
   VirtualFlowTableUpdate,
   VisualizationComputeResponse,
@@ -211,6 +215,27 @@ export class CatalogApi {
     return response.data;
   }
 
+  /** Resolve a catalog table by name (+ optional namespace). Returns null when
+   *  no such table exists (404), so callers can use it as an existence check.
+   *  Other failures (network, 5xx) are rethrown so they aren't mistaken for
+   *  "table does not exist". */
+  static async resolveTableByName(
+    name: string,
+    namespaceId?: number | null,
+  ): Promise<CatalogTable | null> {
+    try {
+      const params: Record<string, any> = { q: name };
+      if (namespaceId !== undefined && namespaceId !== null) params.namespace_id = namespaceId;
+      const response = await axios.get<{ table: CatalogTable }>("/catalog/tables/resolve", {
+        params,
+      });
+      return response.data.table;
+    } catch (e: any) {
+      if (e?.response?.status === 404) return null;
+      throw e;
+    }
+  }
+
   static async getTable(tableId: number): Promise<CatalogTable> {
     const response = await axios.get<CatalogTable>(`/catalog/tables/${tableId}`);
     return response.data;
@@ -250,6 +275,31 @@ export class CatalogApi {
 
   static async getTableHistory(tableId: number): Promise<DeltaTableHistory> {
     const response = await axios.get<DeltaTableHistory>(`/catalog/tables/${tableId}/history`);
+    return response.data;
+  }
+
+  static async optimizeTable(
+    tableId: number,
+    zOrderColumns?: string[] | null,
+  ): Promise<OptimizeTableResponse> {
+    const body: OptimizeTableRequest = { z_order_columns: zOrderColumns ?? null };
+    const response = await axios.post<OptimizeTableResponse>(
+      `/catalog/tables/${tableId}/optimize`,
+      body,
+    );
+    return response.data;
+  }
+
+  static async vacuumTable(
+    tableId: number,
+    retentionHours: number,
+    dryRun: boolean,
+  ): Promise<VacuumTableResponse> {
+    const body: VacuumTableRequest = { retention_hours: retentionHours, dry_run: dryRun };
+    const response = await axios.post<VacuumTableResponse>(
+      `/catalog/tables/${tableId}/vacuum`,
+      body,
+    );
     return response.data;
   }
 

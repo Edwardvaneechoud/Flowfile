@@ -34,6 +34,7 @@ def add_write_to_catalog(
     namespace_id: int | None = None,
     write_mode: str = "overwrite",
     merge_keys: list[str] | None = None,
+    partition_by: list[str] | None = None,
     description: str | None = None,
 ) -> int:
     """Add a catalog writer node to the flow graph.
@@ -46,6 +47,7 @@ def add_write_to_catalog(
         namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
         write_mode: How to handle existing data.
         merge_keys: Column names for merge operations.
+        partition_by: Delta partition columns (applied at table creation).
         description: Optional description for the node.
 
     Returns:
@@ -69,6 +71,7 @@ def add_write_to_catalog(
             namespace_id=resolved_namespace_id,
             write_mode=write_mode,
             merge_keys=merge_keys or [],
+            partition_by=partition_by or [],
         ),
     )
 
@@ -238,6 +241,7 @@ def write_catalog_table(
     namespace_id: int | None = None,
     write_mode: WriteMode = "overwrite",
     merge_keys: list[str] | None = None,
+    partition_by: list[str] | None = None,
     description: str | None = None,
 ) -> None:
     """Write a LazyFrame to the Flowfile catalog as a Delta table.
@@ -258,6 +262,7 @@ def write_catalog_table(
               (requires the flow to be registered with the catalog first;
               see :func:`flowfile_frame.register_flow_with_catalog`).
         merge_keys: Column names to use as merge keys (required for upsert/update/delete).
+        partition_by: Delta partition columns (applied at table creation).
         description: Optional description for the table.
 
     Raises:
@@ -270,5 +275,6 @@ def write_catalog_table(
         namespace_id=namespace_id,
         write_mode=write_mode,
         merge_keys=merge_keys,
+        partition_by=partition_by,
         description=description,
     )

@@ -84,6 +84,8 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceOut,
     NamespaceTree,
     NamespaceUpdate,
+    OptimizeTableRequest,
+    OptimizeTableResponse,
     PaginatedFlowRuns,
     QueryVirtualTableCreate,
     QueryVirtualTableUpdate,
@@ -93,6 +95,8 @@ from flowfile_core.schemas.catalog_schema import (
     SqlQueryRequest,
     SqlQueryResult,
     TableFavoriteOut,
+    VacuumTableRequest,
+    VacuumTableResponse,
     VirtualFlowTableCreate,
     VirtualFlowTableUpdate,
     VisualizationAdHocComputeRequest,
@@ -703,6 +707,30 @@ def get_table_history(
 ):
     """Return version history for a Delta catalog table."""
     return service.get_table_history(table_id, limit=limit)
+
+
+@router.post("/tables/{table_id}/optimize", response_model=OptimizeTableResponse)
+@handle_catalog_exceptions()
+def optimize_table(
+    table_id: int,
+    body: OptimizeTableRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Compact (and optionally Z-order) a Delta catalog table."""
+    return service.optimize_table(table_id, z_order_columns=body.z_order_columns)
+
+
+@router.post("/tables/{table_id}/vacuum", response_model=VacuumTableResponse)
+@handle_catalog_exceptions()
+def vacuum_table(
+    table_id: int,
+    body: VacuumTableRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Vacuum tombstoned files from a Delta catalog table (dry-run by default)."""
+    return service.vacuum_table(table_id, retention_hours=body.retention_hours, dry_run=body.dry_run)
 
 
 # Table Favorites

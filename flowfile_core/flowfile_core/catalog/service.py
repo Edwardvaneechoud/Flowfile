@@ -99,8 +99,10 @@ from flowfile_core.schemas.catalog_schema import (
     FlowScheduleOut,
     GlobalArtifactOut,
     NamespaceTree,
+    OptimizeTableResponse,
     PaginatedFlowRuns,
     SqlQueryResult,
+    VacuumTableResponse,
     VisualizationComputeResponse,
     VisualizationCreate,
     VisualizationFieldsResponse,
@@ -753,6 +755,7 @@ class CatalogService:
         row_count: int | None = None,
         column_count: int | None = None,
         size_bytes: int | None = None,
+        partition_columns: list[str] | None = None,
     ) -> CatalogTableOut:
         """Register an already-materialized table (Delta or Parquet) without copying its data."""
         self._require_namespace_writable(namespace_id)
@@ -769,6 +772,7 @@ class CatalogService:
             row_count,
             column_count,
             size_bytes,
+            partition_columns,
         )
 
     def register_table_from_parquet(
@@ -809,6 +813,7 @@ class CatalogService:
         row_count: int | None = None,
         column_count: int | None = None,
         size_bytes: int | None = None,
+        partition_columns: list[str] | None = None,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table in-place, preserving its ID."""
         self._require_manage("catalog_table", table_id)
@@ -824,6 +829,7 @@ class CatalogService:
             row_count,
             column_count,
             size_bytes,
+            partition_columns,
         )
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:
@@ -1036,6 +1042,19 @@ class CatalogService:
         """Return the version history for a Delta catalog table."""
         self._require_use("catalog_table", table_id)
         return self._previews.get_table_history(table_id, limit)
+
+    def optimize_table(self, table_id: int, z_order_columns: list[str] | None = None) -> OptimizeTableResponse:
+        """Compact (and optionally Z-order) a Delta catalog table."""
+        return self._tables.optimize_table(table_id, z_order_columns)
+
+    def vacuum_table(
+        self,
+        table_id: int,
+        retention_hours: int = 168,
+        dry_run: bool = True,
+    ) -> VacuumTableResponse:
+        """Vacuum tombstoned files from a Delta catalog table."""
+        return self._tables.vacuum_table(table_id, retention_hours=retention_hours, dry_run=dry_run)
 
     def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
         """Add a table to the user's favourites (idempotent)."""

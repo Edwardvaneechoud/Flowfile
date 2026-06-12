@@ -5279,6 +5279,38 @@ def test_cloud_storage_writer_handler_unified():
     verify_code_contains(code_output, "ff.write_to_cloud_storage(", "s3://bucket/output.parquet", "my_conn")
     assert "import flowfile as ff" in converter.imports
     assert "ff.FlowFrame(" not in code_output
+
+
+def test_cloud_storage_writer_handler_delta_partition_by():
+    """Partitioned delta cloud writes must emit partition_by in the generated call."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    settings = input_schema.NodeCloudStorageWriter(
+        flow_id=1,
+        node_id=2,
+        user_id=1,
+        cloud_storage_settings=cloud_ss.CloudStorageWriteSettings(
+            resource_path="s3://bucket/output_delta",
+            connection_name="my_conn",
+            file_format="delta",
+            write_mode="append",
+            partition_by=["region", "year"],
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter.node_var_mapping[1] = "df_1"
+    converter.last_node_var = "df_1"
+    converter._handle_cloud_storage_writer(settings, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(
+        code_output,
+        "ff.write_to_cloud_storage(",
+        'write_mode="append"',
+        "partition_by=['region', 'year']",
+    )
     assert "df_2 = df_1" in code_output
 
 

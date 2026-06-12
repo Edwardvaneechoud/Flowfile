@@ -481,6 +481,9 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     column_count = Column(Integer, nullable=True)
     size_bytes = Column(Integer, nullable=True)
 
+    # Delta partitioning: JSON array of partition column names (NULL = unpartitioned)
+    partition_columns = Column(Text, nullable=True)
+
     # Lineage: which flow produced this table
     source_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
     source_run_id = Column(Integer, ForeignKey("flow_runs.id"), nullable=True)

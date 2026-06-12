@@ -689,6 +689,7 @@ export interface CloudStorageWriteSettings extends CloudStorageSettings {
   parquet_compression: ParquetCompression;
   csv_delimiter: string;
   csv_encoding: CsvEncoding;
+  partition_by?: string[] | null;
 }
 
 // External Source Types
@@ -768,6 +769,7 @@ export interface CatalogWriteSettings {
   description: string | null;
   write_mode: CatalogWriteMode;
   merge_keys: string[];
+  partition_by: string[];
 }
 
 export interface NodeCatalogWriter extends NodeBase {

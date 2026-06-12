@@ -42,6 +42,7 @@
           <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
           {{ table.is_favorite ? "Favorited" : "Favorite" }}
         </button>
+        <TableMaintenance v-if="table.table_type !== 'virtual'" :table="table" />
         <button
           v-if="canShare(table)"
           class="action-btn-lg"
@@ -104,6 +105,14 @@
       <div v-if="table.table_type !== 'virtual'" class="meta-card">
         <span class="meta-label">Size</span>
         <span class="meta-value">{{ formatSize(table.size_bytes) }}</span>
+      </div>
+      <div v-if="table.partition_columns && table.partition_columns.length > 0" class="meta-card">
+        <span class="meta-label">Partitioned by</span>
+        <span class="partition-chips">
+          <span v-for="col in table.partition_columns" :key="col" class="partition-chip">
+            {{ col }}
+          </span>
+        </span>
       </div>
       <div class="meta-card">
         <span class="meta-label">Created</span>
@@ -343,6 +352,7 @@ import { ref, computed } from "vue";
 import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../../types";
 import { formatDate, formatNumber, formatSize } from "./catalog-formatters";
 import VisualizationsTab from "./VisualizationsTab.vue";
+import TableMaintenance from "./TableMaintenance.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
@@ -530,6 +540,23 @@ function formatCell(value: any): string {
 .action-btn-lg.active {
   color: var(--color-warning);
   border-color: var(--color-warning);
+}
+
+.partition-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-1);
+  margin-top: var(--spacing-1);
+}
+.partition-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--spacing-2);
+  background: var(--color-primary-soft, rgba(59, 130, 246, 0.1));
+  color: var(--color-primary);
+  border-radius: var(--border-radius-sm, 4px);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
 }
 
 /* ========== Meta Grid (override minmax for table) ========== */
