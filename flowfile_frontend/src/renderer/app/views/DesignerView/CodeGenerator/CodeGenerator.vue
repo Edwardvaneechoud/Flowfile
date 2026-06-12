@@ -15,8 +15,14 @@
         >
           Polars
         </button>
+        <button
+          :class="['toggle-button', { active: codeMode === 'project' }]"
+          @click="setMode('project')"
+        >
+          Project
+        </button>
       </div>
-      <div class="header-actions">
+      <div v-if="codeMode !== 'project'" class="header-actions">
         <button class="refresh-button" :disabled="loading" @click="refreshCode">
           <svg
             v-if="!loading"
@@ -51,7 +57,8 @@
         </button>
       </div>
     </div>
-    <codemirror v-model="code" :extensions="extensions" :disabled="true" />
+    <ProjectExport v-if="codeMode === 'project'" />
+    <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
   </div>
 </template>
 
@@ -62,9 +69,10 @@ import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
+import ProjectExport from "./ProjectExport.vue";
 import { useNodeStore } from "../../../stores/column-store";
 
-type CodeMode = "flowframe" | "polars";
+type CodeMode = "flowframe" | "polars" | "project";
 
 const code = ref("");
 const loading = ref(false);
@@ -82,12 +90,14 @@ const extensions = [
   }),
 ];
 
-const endpointMap: Record<CodeMode, string> = {
+const endpointMap: Partial<Record<CodeMode, string>> = {
   flowframe: "/editor/code_to_flowframe",
   polars: "/editor/code_to_polars",
 };
 
 const fetchCode = async () => {
+  // Project mode fetches its own manifest in ProjectExport.vue.
+  if (codeMode.value === "project") return;
   loading.value = true;
   try {
     const endpoint = endpointMap[codeMode.value];
@@ -179,7 +189,7 @@ const exportCode = () => {
 
 .mode-toggle {
   display: flex;
-  border: 1px solid var(--color-border, #444);
+  border: 1px solid var(--color-border);
   border-radius: var(--border-radius-md);
   overflow: hidden;
 }
@@ -202,7 +212,7 @@ const exportCode = () => {
 }
 
 .toggle-button:not(.active):hover {
-  background: var(--color-bg-hover, #333);
+  background: var(--color-background-tertiary);
 }
 
 .header-actions {
