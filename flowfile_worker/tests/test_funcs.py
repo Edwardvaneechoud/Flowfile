@@ -24,6 +24,7 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     # noinspection PyUnresolvedReferences
+    from utils import cloud_storage_connection_settings, is_docker_available
 
 
 def test_write_parquet(tmp_path):
@@ -47,6 +48,7 @@ def test_write_parquet(tmp_path):
     assert pl.read_parquet(output_path)["value"].to_list() == [1, 2, 3]
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_write_to_cloud_storage(cloud_storage_connection_settings):
     write_settings = WriteSettings(
         resource_path="s3://worker-test-bucket/func_test_write.parquet",
@@ -71,6 +73,7 @@ def test_write_to_cloud_storage(cloud_storage_connection_settings):
         pytest.fail(f"Write to cloud storage failed: {e}")
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_write_to_cloud_storage_partitioned_delta(cloud_storage_connection_settings):
     from shared.delta_utils import get_delta_partition_columns
 
