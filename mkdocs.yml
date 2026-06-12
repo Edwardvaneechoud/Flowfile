@@ -41,6 +41,10 @@ theme:
 
 extra_css:
   - stylesheets/extra.css
+  - stylesheets/formula-reference.css
+
+extra_javascript:
+  - javascripts/formula-reference.js
 
 
 plugins:
@@ -81,6 +85,10 @@ nav:
   - User Guides:
     - Overview: users/index.md
 
+    - Formulas:
+      - Formula Language: users/formulas/index.md
+      - Function Reference: users/formulas/functions.md
+
     - Visual Editor:
       - Getting Started: users/visual-editor/index.md
       - Building Flows: users/visual-editor/building-flows.md
@@ -116,7 +124,8 @@ nav:
       - Core Concepts:
         - Overview: users/python-api/concepts/index.md
         - FlowFrame & FlowGraph: users/python-api/concepts/design-concepts.md
-        - Formula Syntax: users/python-api/concepts/expressions.md
+        - Expressions: users/python-api/concepts/expressions.md
+        - Formulas in Python: users/python-api/concepts/formulas.md
       - API Reference:
         - Overview: users/python-api/reference/index.md
         - Reading Data: users/python-api/reference/reading-data.md
@@ -154,6 +163,5 @@ nav:
     - Visualizations & Graphic Walker: for-developers/visualizations.md
     - Create Custom Nodes: for-developers/creating-custom-nodes.md
     - Building more custom Nodes: for-developers/custom-node-tutorial.md
-    - Extending ML Nodes: for-developers/extending-ml-nodes.md
 
   - Community: community.md

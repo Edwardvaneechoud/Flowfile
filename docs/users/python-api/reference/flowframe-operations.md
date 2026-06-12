@@ -1,6 +1,6 @@
 # DataFrame Operations
 
-Core operations for transforming data. All standard Polars operations are supported with additional Flowfile features.
+Core operations for transforming data. All standard Polars operations are supported with additional Flowfile features. The `flowfile_formula` examples below use the [Flowfile formula language](../../formulas/index.md).
 
 ## Filtering
 
