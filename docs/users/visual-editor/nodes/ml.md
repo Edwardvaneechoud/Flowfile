@@ -261,6 +261,6 @@ The catalog path is also supported — pass `model_name=` (and optionally
 ---
 
 !!! info "For contributors"
-    Adding a new algorithm to the registry is a backend-only change. See
-    [Extending ML Nodes](../../../for-developers/extending-ml-nodes.md)
-    for the recipe.
+    Adding a new algorithm to the registry is a backend-only change. See the
+    [developer documentation](../../../for-developers/index.md) for how the
+    backend is organized.

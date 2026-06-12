@@ -43,7 +43,7 @@ Flowfile Lite ships **18 nodes** across 5 categories — the same canvas, settin
 It also supports **exporting a flow to a standalone Python/Polars script** and a lightweight **in-browser catalog** (CSV-only) for saving and reusing tables between flows.
 
 !!! tip "No Formula node? Use Polars Code"
-    Flowfile Lite swaps the visual **Formula** node for the **Polars Code** node, where you can write any Polars expression directly (with autocompletion). Everything `with_columns` does in the full build is available here as code.
+    Flowfile Lite swaps the visual [**Formula** node](../visual-editor/nodes/transform.md#formula) for the **Polars Code** node, where you can write any Polars expression directly (with autocompletion). Everything `with_columns` does in the full build is available here as code.
 
 ---
 

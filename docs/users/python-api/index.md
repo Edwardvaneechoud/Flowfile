@@ -38,7 +38,8 @@ Get up and running in 5 minutes with your first pipeline.
 ### [Core Concepts](concepts/index.md)
 
 - [FlowFrame and FlowGraph](concepts/design-concepts.md) - Fundamental building blocks
-- [Formula Syntax](concepts/expressions.md) - Flowfile's Excel-like expressions
+- [Expressions](concepts/expressions.md) - Polars-style column operations
+- [Formulas in Python](concepts/formulas.md) - Methods that accept the Excel-like [formula language](../formulas/index.md)
 
 ### [API Reference](reference/index.md)
 

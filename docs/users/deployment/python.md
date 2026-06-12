@@ -17,7 +17,10 @@ import flowfile as ff
 df = ff.read_csv("data.csv")
 
 # Transform
-df = df.with_formula("total", "price * quantity")
+df = df.with_columns(
+    flowfile_formulas=["[price] * [quantity]"],
+    output_column_names=["total"],
+)
 
 # Write
 df.write_csv("output.csv")
