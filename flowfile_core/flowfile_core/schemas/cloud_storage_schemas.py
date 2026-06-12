@@ -6,6 +6,7 @@ from typing import Literal
 import polars as pl
 from pydantic import BaseModel, SecretStr, field_validator
 
+from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 
 CloudStorageType = Literal["s3", "adls", "gcs"]
@@ -150,6 +151,8 @@ class FullCloudStorageConnectionInterface(AuthSettingsInput):
     gcs_project_id: str | None = None
     endpoint_url: str | None = None
     verify_ssl: bool = True
+    id: int | None = None
+    access: AccessInfo | None = None
 
 
 class CloudStorageSettings(BaseModel):

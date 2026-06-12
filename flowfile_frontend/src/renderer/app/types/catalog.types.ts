@@ -1,5 +1,6 @@
 // Catalog TypeScript interfaces
 // Maps to backend schemas in catalog_schema.py
+import type { AccessInfo } from "./sharing.types";
 
 // Namespace (Unity Catalog-style hierarchy)
 
@@ -12,6 +13,7 @@ export interface CatalogNamespace {
   owner_id: number;
   created_at: string;
   updated_at: string;
+  access?: AccessInfo | null;
 }
 
 export interface NamespaceTree extends CatalogNamespace {
@@ -83,6 +85,7 @@ export interface FlowRegistration {
   artifact_count: number;
   tables_produced: CatalogTableSummary[];
   tables_read: CatalogTableSummary[];
+  access?: AccessInfo | null;
 }
 
 export interface FlowRegistrationCreate {
@@ -154,6 +157,7 @@ export interface GlobalArtifact {
   created_at: string | null;
   updated_at: string | null;
   blob_exists: boolean;
+  access?: AccessInfo | null;
 }
 
 // Catalog Table
@@ -203,6 +207,7 @@ export interface CatalogTable {
   partition_columns: string[] | null;
   created_at: string;
   updated_at: string;
+  access?: AccessInfo | null;
 }
 
 export interface OptimizeTableRequest {
@@ -435,6 +440,7 @@ export interface CatalogVisualization {
   table_full_name?: string | null;
   table_type?: string | null;
   namespace_name?: string | null;
+  access?: AccessInfo | null;
 }
 
 export interface VisualizationCreatePayload {

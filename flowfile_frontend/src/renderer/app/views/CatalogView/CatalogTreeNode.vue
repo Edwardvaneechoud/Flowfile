@@ -10,8 +10,17 @@
         class="ns-icon"
       ></i>
       <span class="ns-name">{{ node.name }}</span>
+      <SharedBadge :access="node.access" />
       <span v-if="totalFlows > 0" class="ns-count">{{ totalFlows }}</span>
       <div class="tree-actions" @click.stop>
+        <button
+          v-if="isMultiUser && isOwned(node)"
+          class="action-btn"
+          title="Share namespace"
+          @click="$emit('namespaceShare', node)"
+        >
+          <i class="fa-solid fa-share-nodes"></i>
+        </button>
         <button
           v-if="node.level === 0"
           class="action-btn"
@@ -63,6 +72,7 @@
           @create-schema="$emit('createSchema', $event)"
           @delete-table="$emit('deleteTable', $event)"
           @delete-flow="$emit('deleteFlow', $event)"
+          @namespace-share="$emit('namespaceShare', $event)"
         />
       </div>
 
@@ -262,6 +272,10 @@ import { SYSTEM_NAMESPACE_NAMES } from "../../types";
 import type { GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
+import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
+
+const { isMultiUser, isOwned } = useResourceSharing();
 
 type TreeSectionRef = InstanceType<typeof TreeSection> | null;
 
@@ -301,6 +315,7 @@ defineEmits([
   "createSchema",
   "deleteTable",
   "deleteFlow",
+  "namespaceShare",
 ]);
 
 function containsFlow(node: NamespaceTree, flowId: number): boolean {

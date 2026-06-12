@@ -11,6 +11,7 @@
       <i :class="iconClass" class="viz-card-icon"></i>
       <div class="viz-card-title">
         <span class="viz-name">{{ viz.name }}</span>
+        <SharedBadge :access="viz.access" />
         <span v-if="viz.chart_type" class="viz-chart-type">{{ viz.chart_type }}</span>
       </div>
       <el-dropdown trigger="click" @click.stop>
@@ -21,7 +22,11 @@
               <el-icon><Edit /></el-icon>
               Open
             </el-dropdown-item>
-            <el-dropdown-item divided @click.stop="emit('delete')">
+            <el-dropdown-item v-if="canShare(viz)" @click.stop="emit('share')">
+              <el-icon><Share /></el-icon>
+              Share
+            </el-dropdown-item>
+            <el-dropdown-item v-if="canManage(viz)" divided @click.stop="emit('delete')">
               <el-icon><Delete /></el-icon>
               Delete
             </el-dropdown-item>
@@ -58,15 +63,19 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { Delete, Edit, MoreFilled } from "@element-plus/icons-vue";
+import { Delete, Edit, MoreFilled, Share } from "@element-plus/icons-vue";
 import type { CatalogVisualization } from "../../types";
 import { formatDate } from "./catalog-formatters";
+import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const props = defineProps<{
   viz: CatalogVisualization;
 }>();
 
-const emit = defineEmits<{ (e: "edit"): void; (e: "delete"): void }>();
+const emit = defineEmits<{ (e: "edit"): void; (e: "delete"): void; (e: "share"): void }>();
+
+const { canShare, canManage } = useResourceSharing();
 
 const iconClass = computed(() =>
   props.viz.source_type === "sql"

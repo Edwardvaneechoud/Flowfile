@@ -55,6 +55,8 @@ export const convertConnectionInterfacePytoTs = (
     sslEnabled: pythonConnectionInterface.ssl_enabled,
     url: pythonConnectionInterface.url,
     database: pythonConnectionInterface.database,
+    id: pythonConnectionInterface.id,
+    access: pythonConnectionInterface.access,
   };
 };
 

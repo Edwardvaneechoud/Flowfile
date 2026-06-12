@@ -97,6 +97,8 @@ def create_default_catalog_namespace(db: Session):
     if not local_user:
         return
 
+    # Seeded namespaces are public containers: visible to every user in multi-user
+    # mode even though the catalog is otherwise private-by-default (auth/sharing.py).
     general = db.query(db_models.CatalogNamespace).filter_by(name="General", parent_id=None).first()
     if not general:
         general = db_models.CatalogNamespace(
@@ -105,6 +107,7 @@ def create_default_catalog_namespace(db: Session):
             level=0,
             description="Default catalog",
             owner_id=local_user.id,
+            is_public=True,
         )
         db.add(general)
         db.commit()
@@ -118,6 +121,7 @@ def create_default_catalog_namespace(db: Session):
             level=1,
             description="Default schema for user flows",
             owner_id=local_user.id,
+            is_public=True,
         )
         db.add(default_schema)
         db.commit()
@@ -131,6 +135,7 @@ def create_default_catalog_namespace(db: Session):
             level=1,
             description="Quick-created flows that have not yet been named",
             owner_id=local_user.id,
+            is_public=True,
         )
         db.add(unnamed_schema)
         db.commit()
@@ -145,6 +150,7 @@ def create_default_catalog_namespace(db: Session):
             level=1,
             description="Flows saved to disk at user-chosen paths",
             owner_id=local_user.id,
+            is_public=True,
         )
         db.add(local_schema)
         db.commit()

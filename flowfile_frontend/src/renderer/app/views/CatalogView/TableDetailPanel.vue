@@ -21,6 +21,7 @@
             >SQL Virtual</span
           >
           <span v-else-if="table.table_type === 'virtual'" class="virtual-badge">Virtual</span>
+          <SharedBadge :access="table.access" />
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
@@ -43,6 +44,16 @@
         </button>
         <TableMaintenance v-if="table.table_type !== 'virtual'" :table="table" />
         <button
+          v-if="canShare(table)"
+          class="action-btn-lg"
+          title="Share table"
+          @click="showShareDialog = true"
+        >
+          <i class="fa-solid fa-share-nodes"></i>
+          Share
+        </button>
+        <button
+          v-if="canManage(table)"
           class="btn btn-danger btn-sm"
           title="Delete table"
           @click="emit('deleteTable', table.id)"
@@ -52,6 +63,14 @@
         </button>
       </div>
     </div>
+
+    <ShareDialog
+      v-model="showShareDialog"
+      resource-type="catalog_table"
+      :resource-id="table.id"
+      :resource-name="table.name"
+      :can-manage-grants="canManageGrants(table)"
+    />
 
     <!-- File missing banner (physical tables only) -->
     <div v-if="table.table_type !== 'virtual' && !table.file_exists" class="missing-banner">
@@ -334,8 +353,13 @@ import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../..
 import { formatDate, formatNumber, formatSize } from "./catalog-formatters";
 import VisualizationsTab from "./VisualizationsTab.vue";
 import TableMaintenance from "./TableMaintenance.vue";
+import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const showReadByModal = ref(false);
+const showShareDialog = ref(false);
+const { canShare, canManage, canManageGrants } = useResourceSharing();
 
 const props = defineProps<{
   table: CatalogTable;

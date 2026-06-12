@@ -5,6 +5,7 @@
 
     <div
       v-for="(categoryInfo, category) in categories"
+      v-show="!searchQuery || filteredNodes[category]"
       :key="category"
       class="category-container"
       :data-tutorial-category="category"
@@ -13,14 +14,14 @@
       <button class="category-header" @click="toggleCategory(category as CategoryKey)">
         <span class="category-title">{{ categoryInfo.name }}</span>
         <el-icon class="category-icon">
-          <ArrowDown v-if="openCategories[category as CategoryKey]" />
+          <ArrowDown v-if="isCategoryOpen(category as CategoryKey)" />
           <ArrowRight v-else />
         </el-icon>
       </button>
 
       <!-- Category Content -->
       <div
-        v-if="openCategories[category as CategoryKey] && filteredNodes[category]"
+        v-if="isCategoryOpen(category as CategoryKey) && filteredNodes[category]"
         class="category-content"
       >
         <div
@@ -106,7 +107,13 @@ const filteredNodes = computed(() => {
   return filtered;
 });
 
+const isCategoryOpen = (category: CategoryKey) => {
+  if (searchQuery.value) return !!filteredNodes.value[category];
+  return openCategories.value[category];
+};
+
 const toggleCategory = (category: CategoryKey) => {
+  if (searchQuery.value) return;
   openCategories.value[category] = !openCategories.value[category];
 };
 

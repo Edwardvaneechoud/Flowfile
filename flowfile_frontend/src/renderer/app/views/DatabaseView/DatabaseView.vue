@@ -58,6 +58,7 @@
                 <i class="fa-solid fa-database"></i>
                 <span>{{ connection.connectionName }}</span>
                 <span class="badge">{{ connection.databaseType }}</span>
+                <SharedBadge :access="connection.access" />
               </div>
               <div class="connection-details">
                 <span>{{
@@ -68,11 +69,26 @@
               </div>
             </div>
             <div class="connection-actions">
-              <button type="button" class="btn btn-secondary" @click="showEditModal(connection)">
+              <button
+                v-if="isMultiUser && isOwned(connection) && connection.id != null"
+                type="button"
+                class="btn btn-secondary"
+                @click="openShare(connection)"
+              >
+                <i class="fa-solid fa-share-nodes"></i>
+                <span>Share</span>
+              </button>
+              <button
+                v-if="canManage(connection)"
+                type="button"
+                class="btn btn-secondary"
+                @click="showEditModal(connection)"
+              >
                 <i class="fa-solid fa-edit"></i>
                 <span>Modify</span>
               </button>
               <button
+                v-if="canManage(connection)"
                 type="button"
                 class="btn btn-danger"
                 @click="showDeleteModal(connection.connectionName)"
@@ -107,6 +123,15 @@
         @cancel="dialogVisible = false"
       />
     </el-dialog>
+
+    <ShareDialog
+      v-if="shareConnection && shareConnection.id != null"
+      v-model="showShareDialog"
+      resource-type="database_connection"
+      :resource-id="shareConnection.id"
+      :resource-name="shareConnection.connectionName"
+      :can-manage-grants="canManageGrants(shareConnection)"
+    />
 
     <el-dialog
       v-model="deleteDialogVisible"
@@ -149,6 +174,9 @@ import {
 } from "./databaseConnectionTypes";
 import type { DatabaseType } from "./databaseConnectionTypes";
 import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
+import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 
 // State
 const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
@@ -160,6 +188,15 @@ const isSubmitting = ref(false);
 const isDeleting = ref(false);
 const connectionToDelete = ref("");
 const activeConnection = ref<FullDatabaseConnection | undefined>(undefined);
+
+const { isMultiUser, isOwned, canManage, canManageGrants } = useResourceSharing();
+const showShareDialog = ref(false);
+const shareConnection = ref<FullDatabaseConnectionInterface | null>(null);
+
+const openShare = (c: FullDatabaseConnectionInterface) => {
+  shareConnection.value = c;
+  showShareDialog.value = true;
+};
 
 const fetchConnections = async () => {
   isLoading.value = true;

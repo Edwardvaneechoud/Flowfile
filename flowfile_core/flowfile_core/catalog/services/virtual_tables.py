@@ -10,10 +10,12 @@ from typing import TYPE_CHECKING, Literal
 
 import polars as pl
 
+from flowfile_core.auth import sharing
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
 from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
 from flowfile_core.catalog.exceptions import (
     FlowNotFoundError,
+    NotAuthorizedError,
     TableNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
@@ -295,6 +297,15 @@ class VirtualTableService:
         rewritten_query = rewrite_qualified_references(table.sql_query, alias_to_table.keys())
         referenced_ids = {tbl.id for alias, tbl in alias_to_table.items() if is_table_reference(alias, rewritten_query)}
 
+        if sharing.sharing_enabled() and user_id is not None and referenced_ids:
+            db = getattr(self.repo, "_db", None)
+            if db is None:
+                # No session to verify grants with: fail closed.
+                raise NotAuthorizedError(user_id, "use a table referenced by this query")
+            for ref_id in referenced_ids:
+                if not sharing.user_id_can_use(db, user_id, "catalog_table", ref_id):
+                    raise NotAuthorizedError(user_id, "use a table referenced by this query")
+
         sql_context = pl.SQLContext()
         for tbl_id in referenced_ids:
             t = next(tbl for tbl in all_tables if tbl.id == tbl_id)
@@ -415,9 +426,18 @@ class VirtualTableService:
             if table.file_path and is_delta_table(Path(table.file_path))
         }
 
-    def resolve_all_queryable_tables(self) -> tuple[dict[str, str], dict[str, int]]:
-        """Return Delta + virtual name maps, keyed by qualified name and by bare name (when unique)."""
+    def resolve_all_queryable_tables(
+        self, accessible_table_ids: set[int] | None = None
+    ) -> tuple[dict[str, str], dict[str, int]]:
+        """Return Delta + virtual name maps, keyed by qualified name and by bare name (when unique).
+
+        ``accessible_table_ids`` (set in multi-user mode) restricts the registered
+        tables to the ones the requesting user may read, so SQL cannot reach a
+        table the user cannot see.
+        """
         tables = self.repo.list_tables()
+        if accessible_table_ids is not None:
+            tables = [t for t in tables if t.id in accessible_table_ids]
         bare_counts: dict[str, int] = {}
         for t in tables:
             if t.table_type == "virtual" or (t.file_path and is_delta_table(Path(t.file_path))):

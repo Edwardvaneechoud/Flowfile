@@ -8,6 +8,7 @@ from pydantic import SecretStr
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from flowfile_core.auth import sharing
 from flowfile_core.auth.models import SecretInput
 from flowfile_core.auth.secrets import get_master_key
 from flowfile_core.database import models as db_models
@@ -125,15 +126,30 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
 def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
     with get_db_context() as db:
         user_id = current_user_id
+        # (user_id, name) is not unique at the DB level; order by id so resolution
+        # is deterministic. An own secret always shadows a granted one.
         db_secret = (
             db.query(db_models.Secret)
             .filter(and_(db_models.Secret.user_id == user_id, db_models.Secret.name == secret_name))
+            .order_by(db_models.Secret.id.asc())
             .first()
         )
         if db_secret:
             return db_secret.encrypted_value
-        else:
-            return None
+        # Group-shared fallback (lowest id wins on name collisions). The ciphertext
+        # stays keyed to its owner via the embedded user id, so both core and the
+        # worker decrypt it without re-encryption.
+        granted_ids = sharing.granted_resource_ids(db, user_id, "secret")
+        if granted_ids:
+            shared_secret = (
+                db.query(db_models.Secret)
+                .filter(db_models.Secret.name == secret_name, db_models.Secret.id.in_(granted_ids))
+                .order_by(db_models.Secret.id.asc())
+                .first()
+            )
+            if shared_secret:
+                return shared_secret.encrypted_value
+        return None
 
 
 def store_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.Secret:
@@ -161,5 +177,6 @@ def delete_secret(db: Session, secret_name: str, user_id: int) -> None:
     if not db_secret:
         raise HTTPException(status_code=404, detail="Secret not found")
 
+    sharing.delete_grants_for_resource(db, "secret", db_secret.id)
     db.delete(db_secret)
     db.commit()

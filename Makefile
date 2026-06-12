@@ -7,7 +7,7 @@ KEY_FILE := master_key.txt
 # Detect OS
 ifeq ($(OS),Windows_NT)
 	RMRF := del /f /s /q
-	RMDIR := rmdir /s /q
+	RMDIR := rmdir /s /qg
 	CD := cd /d
 	POETRY_RUN := poetry run
 	NULL_OUTPUT := >NUL 2>NUL

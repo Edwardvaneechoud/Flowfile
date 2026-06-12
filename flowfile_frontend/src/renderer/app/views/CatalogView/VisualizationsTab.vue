@@ -23,8 +23,18 @@
         :viz="viz"
         @edit="openEditor(viz)"
         @delete="onDelete(viz)"
+        @share="onShare(viz)"
       />
     </div>
+
+    <ShareDialog
+      v-if="shareViz"
+      v-model="showShareDialog"
+      resource-type="visualization"
+      :resource-id="shareViz.id"
+      :resource-name="shareViz.name"
+      :can-manage-grants="canManageGrants(shareViz)"
+    />
 
     <el-dialog
       v-model="editorOpen"
@@ -54,8 +64,18 @@ import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAp
 import type { CatalogVisualization, VizSourceDescriptor } from "../../types";
 import VisualizationCard from "./VisualizationCard.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
+import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const props = defineProps<{ tableId: number }>();
+
+const { canManageGrants } = useResourceSharing();
+const shareViz = ref<CatalogVisualization | null>(null);
+const showShareDialog = ref(false);
+const onShare = (viz: CatalogVisualization) => {
+  shareViz.value = viz;
+  showShareDialog.value = true;
+};
 
 const store = useCatalogStore();
 const appearance = useGraphicWalkerAppearance();

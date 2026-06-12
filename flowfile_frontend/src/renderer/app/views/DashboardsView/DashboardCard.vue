@@ -11,6 +11,7 @@
       <i class="fa-solid fa-table-cells-large dash-card-icon"></i>
       <div class="dash-card-title">
         <span class="dash-name">{{ dashboard.name }}</span>
+        <SharedBadge :access="dashboard.access" />
         <span class="dash-tile-count">{{ tileCount }} tile{{ tileCount === 1 ? "" : "s" }}</span>
       </div>
       <el-dropdown trigger="click" @click.stop>
@@ -20,10 +21,13 @@
             <el-dropdown-item @click.stop="emit('view')">
               <el-icon><View /></el-icon> View
             </el-dropdown-item>
-            <el-dropdown-item @click.stop="emit('edit')">
+            <el-dropdown-item v-if="canManage(dashboard)" @click.stop="emit('edit')">
               <el-icon><Edit /></el-icon> Edit
             </el-dropdown-item>
-            <el-dropdown-item divided @click.stop="emit('delete')">
+            <el-dropdown-item v-if="canShare(dashboard)" @click.stop="emit('share')">
+              <el-icon><Share /></el-icon> Share
+            </el-dropdown-item>
+            <el-dropdown-item v-if="canManage(dashboard)" divided @click.stop="emit('delete')">
               <el-icon><Delete /></el-icon> Delete
             </el-dropdown-item>
           </el-dropdown-menu>
@@ -48,9 +52,11 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { Delete, Edit, MoreFilled, View } from "@element-plus/icons-vue";
+import { Delete, Edit, MoreFilled, Share, View } from "@element-plus/icons-vue";
 import { formatDate } from "../CatalogView/catalog-formatters";
 import type { Dashboard } from "../../types";
+import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const props = defineProps<{ dashboard: Dashboard }>();
 
@@ -58,7 +64,10 @@ const emit = defineEmits<{
   (e: "view"): void;
   (e: "edit"): void;
   (e: "delete"): void;
+  (e: "share"): void;
 }>();
+
+const { canShare, canManage } = useResourceSharing();
 
 const tileCount = computed(() => props.dashboard.layout.tiles.length);
 </script>

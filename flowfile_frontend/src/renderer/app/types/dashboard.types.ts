@@ -1,5 +1,7 @@
 // Dashboards — TS mirror of flowfile_core/schemas/catalog_schema.py
 
+import type { AccessInfo } from "./sharing.types";
+
 export type DashboardTileType = "viz" | "text";
 
 export interface DashboardTile {
@@ -63,6 +65,7 @@ export interface Dashboard {
   created_by: number | null;
   created_at: string;
   updated_at: string;
+  access?: AccessInfo | null;
 }
 
 export interface DashboardCreatePayload {

@@ -35,6 +35,7 @@ from flowfile_core.catalog import (
     NamespaceNotFoundError,
     NestingLimitError,
     NoSnapshotError,
+    NotAuthorizedError,
     RunNotFoundError,
     ScheduleNotFoundError,
     SQLAlchemyCatalogRepository,
@@ -45,6 +46,7 @@ from flowfile_core.catalog import (
     VisualizationExistsError,
     VisualizationNotFoundError,
 )
+from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
@@ -122,10 +124,17 @@ router = APIRouter(
 )
 
 
-def get_catalog_service(db: Session = Depends(get_db)) -> CatalogService:
-    """FastAPI dependency that provides a configured ``CatalogService``."""
+def get_catalog_service(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_user_or_internal_service),
+) -> CatalogService:
+    """FastAPI dependency that provides a configured ``CatalogService``.
+
+    The ``AccessResolver`` makes the catalog private-by-default in multi-user
+    mode (no-op for admins, the kernel internal-service principal, and electron).
+    """
     repo = SQLAlchemyCatalogRepository(db)
-    return CatalogService(repo)
+    return CatalogService(repo, access=AccessResolver(db, current_user))
 
 
 # Exception → HTTP mapping
@@ -135,6 +144,7 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     NamespaceExistsError: (409, "Namespace with this name already exists at this level"),
     NestingLimitError: (422, "Cannot nest deeper than catalog -> schema"),
     NamespaceNotEmptyError: (422, "Cannot delete namespace with children or flows"),
+    NotAuthorizedError: (403, None),
     FlowNotFoundError: (404, "Flow not found"),
     FlowHasArtifactsError: (409, None),
     FlowAlreadyRunningError: (409, "Flow already has an active run"),
