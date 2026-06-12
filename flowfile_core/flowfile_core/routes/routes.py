@@ -86,6 +86,11 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     create_engine_from_db_settings,
     create_sql_source_from_db_settings,
 )
+from flowfile_core.routes._connection_sharing import (
+    authorize_connection_mutation,
+    changed_target_fields,
+    require_credentials_on_target_change,
+)
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
@@ -662,10 +667,23 @@ def update_db_connection(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Updates an existing database connection."""
+    """Updates an existing database connection (own, or group-shared with manage access)."""
     logger.info(f"Updating database connection {input_connection.connection_name}")
+    db_connection = get_database_connection(db, input_connection.connection_name, current_user.id)
+    if db_connection is None:
+        raise HTTPException(404, "Database connection not found")
+    if authorize_connection_mutation(db, current_user, "database_connection", db_connection):
+        changed = changed_target_fields(
+            db_connection, input_connection, ("host", "port", "database", "database_type", "ssl_enabled")
+        )
+        require_credentials_on_target_change(
+            changed,
+            has_new_credentials=bool(input_connection.password.get_secret_value()),
+            has_bundled_secrets=db_connection.password_id is not None,
+        )
     try:
-        update_database_connection(db, input_connection, current_user.id)
+        # Owner's user_id keeps a rotated password encrypted under the OWNER's key.
+        update_database_connection(db, input_connection, db_connection.user_id)
     except ValueError:
         raise HTTPException(404, "Database connection not found") from None
     except Exception as e:
@@ -678,12 +696,13 @@ def update_db_connection(
 def delete_db_connection(
     connection_name: str, current_user=Depends(get_current_active_user), db: Session = Depends(get_db)
 ):
-    """Deletes a stored database connection."""
+    """Deletes a stored database connection (own, or group-shared with manage access)."""
     logger.info(f"Deleting database connection {connection_name}")
     db_connection = get_database_connection(db, connection_name, current_user.id)
     if db_connection is None:
         raise HTTPException(404, "Database connection not found")
-    delete_database_connection(db, connection_name, current_user.id)
+    authorize_connection_mutation(db, current_user, "database_connection", db_connection)
+    delete_database_connection(db, connection_name, db_connection.user_id)
     return {"message": "Database connection deleted successfully"}
 
 
@@ -1972,8 +1991,9 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     from flowfile_core.templates.data_downloader import ensure_template_data
 
     _tpl_logger = _logging.getLogger("flowfile_core.templates.create")
-    _tpl_logger.info("create_from_template START: template_id=%s user_id=%s",
-                     template_id, getattr(current_user, "id", None))
+    _tpl_logger.info(
+        "create_from_template START: template_id=%s user_id=%s", template_id, getattr(current_user, "id", None)
+    )
 
     try:
         required_files = get_template_required_files(template_id)

@@ -356,6 +356,7 @@
     "kernelManager": "Kernel Manager",
     "fileManager": "File Manager",
     "admin": "User Management",
+    "groups": "User Groups",
     "popovers": "Popovers",
     "chat": "Chat",
     "maplibre-maps": "MapLibre Maps",

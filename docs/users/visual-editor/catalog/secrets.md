@@ -62,5 +62,18 @@ Reference secrets by name when configuring connections. The encrypted value is d
 ## Encryption
 
 - **Algorithm**: Fernet (AES-128-CBC + HMAC-SHA256)
-- **Isolation**: Each user's secrets stored separately
+- **Isolation**: each user's secrets are encrypted with their own key, derived from the master key
 - **Storage**: Encrypted in SQLite database
+
+## Shared Secrets (Docker / multi-user mode)
+
+In Docker mode a secret can be shared with a user group, letting members run flows
+with the credential without ever seeing its value. Sharing changes nothing about
+how the secret is stored: it stays encrypted under the owner's key, and the owner's
+identity is embedded in the stored value itself. At runtime Flowfile reads the owner
+id from the value and derives the owner's key to decrypt — the identity of the user
+running the flow is only used to check that they have been granted access. Revoking
+the share takes effect immediately, with no rotation needed.
+
+See [Group-Based Sharing](../../../for-developers/docker-deployment.md#group-based-sharing-multi-user-mode)
+for the full sharing model.

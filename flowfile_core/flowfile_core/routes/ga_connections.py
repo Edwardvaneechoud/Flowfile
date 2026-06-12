@@ -40,6 +40,7 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     upsert_ga_connection_with_refresh_token,
     upsert_ga_connection_with_service_account,
 )
+from flowfile_core.routes._connection_sharing import authorize_connection_mutation
 from flowfile_core.schemas.google_analytics_schemas import (
     FullGoogleAnalyticsConnectionInterface,
     GoogleAnalyticsConnectionMetadata,
@@ -300,14 +301,18 @@ def update_ga_connection_endpoint(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Update description + default property id. Does NOT touch the credential —
-    use the OAuth flow for that."""
+    """Update description + default property id (own, or group-shared with manage
+    access). Does NOT touch the credential — use the OAuth flow for that."""
     logger.info("Update GA connection %s", input_connection.connection_name)
+    db_conn = get_ga_connection(db, input_connection.connection_name, current_user.id)
+    if db_conn is None:
+        raise HTTPException(404, "Google Analytics connection not found")
+    authorize_connection_mutation(db, current_user, "ga_connection", db_conn)
     try:
         update_ga_connection_metadata(
             db,
             connection_name=input_connection.connection_name,
-            user_id=current_user.id,
+            user_id=db_conn.user_id,
             description=input_connection.description,
             default_property_id=input_connection.default_property_id,
         )
@@ -326,7 +331,8 @@ def delete_ga_connection_endpoint(
     db_conn = get_ga_connection(db, connection_name, current_user.id)
     if db_conn is None:
         raise HTTPException(404, "Google Analytics connection not found")
-    delete_ga_connection(db, connection_name, current_user.id)
+    authorize_connection_mutation(db, current_user, "ga_connection", db_conn)
+    delete_ga_connection(db, connection_name, db_conn.user_id)
     return {"message": "Google Analytics connection deleted successfully"}
 
 
