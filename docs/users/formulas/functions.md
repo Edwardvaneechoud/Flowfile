@@ -2,7 +2,7 @@
 
 # Function Reference
 
-All 95 built-in functions of the [Flowfile formula language](index.md). Unless noted, every argument accepts a literal value, a `[column]` reference or a nested expression. Click *Try it ▸* to load an example into the [interactive playground](https://edwardvaneechoud.github.io/polars_expr_transformer/).
+All 95 built-in functions of the [Flowfile formula language](index.md). This reference is generated from the library's docstrings. Unless noted, every argument accepts a literal value, a `[column]` reference or a nested expression. Click *Try it ▸* to load an example into the [interactive playground](https://edwardvaneechoud.github.io/polars_expr_transformer/).
 
 <input class="fn-search" type="search" placeholder="Search functions… (e.g. 'date', 'trim', 'null')" aria-label="Search functions">
 
