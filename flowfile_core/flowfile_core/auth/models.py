@@ -1,5 +1,7 @@
 from pydantic import BaseModel, SecretStr
 
+from flowfile_core.schemas.sharing_schema import AccessInfo
+
 
 class Token(BaseModel):
     access_token: str
@@ -58,8 +60,14 @@ class SecretInput(BaseModel):
     value: SecretStr
 
 
-class Secret(SecretInput):
+class Secret(BaseModel):
+    name: str
+    # None on group-shared rows: non-owners never receive the value field — not
+    # even the SecretStr mask of the ciphertext.
+    value: SecretStr | None = None
     user_id: str
+    id: int | None = None
+    access: AccessInfo | None = None
 
 
 class SecretInDB(BaseModel):

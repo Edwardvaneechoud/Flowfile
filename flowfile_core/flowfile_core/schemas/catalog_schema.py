@@ -9,6 +9,7 @@ from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from flowfile_core.schemas.sharing_schema import AccessInfo
 from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
 
 # ==================== Namespace Schemas ====================
@@ -34,6 +35,9 @@ class NamespaceOut(BaseModel):
     owner_id: int
     created_at: datetime
     updated_at: datetime
+    # How the requesting user accesses this resource (multi-user mode); None when
+    # unrestricted (admin / electron / internal) — the frontend shows no badge then.
+    access: AccessInfo | None = None
 
     model_config = {"from_attributes": True}
 
@@ -83,6 +87,7 @@ class FlowRegistrationOut(BaseModel):
     artifact_count: int = 0
     tables_produced: list["CatalogTableSummary"] = Field(default_factory=list)
     tables_read: list["CatalogTableSummary"] = Field(default_factory=list)
+    access: AccessInfo | None = None
 
     model_config = {"from_attributes": True}
 
@@ -184,6 +189,7 @@ class GlobalArtifactOut(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     blob_exists: bool = True  # False when the backing blob is missing (filesystem backend only)
+    access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -314,6 +320,7 @@ class CatalogTableOut(BaseModel):
     source_table_versions: str | None = None
     created_at: datetime
     updated_at: datetime
+    access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -451,6 +458,7 @@ class VisualizationOut(BaseModel):
     table_full_name: str | None = None
     table_type: str | None = None
     namespace_name: str | None = None
+    access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -619,6 +627,7 @@ class DashboardOut(BaseModel):
     created_by: int | None = None
     created_at: datetime
     updated_at: datetime
+    access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

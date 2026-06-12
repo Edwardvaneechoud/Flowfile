@@ -24,6 +24,7 @@ from flowfile_core.artifacts.exceptions import (
     ArtifactUploadError,
     NamespaceNotFoundError,
 )
+from flowfile_core.auth import sharing
 from flowfile_core.catalog.exceptions import FlowNotFoundError
 from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact
 from flowfile_core.schemas.artifact_schema import (
@@ -492,6 +493,7 @@ class ArtifactService:
                 )
 
         artifact.status = "deleted"
+        sharing.delete_grants_for_resource(self.db, "global_artifact", artifact_id)
         self.db.commit()
 
         return 1
@@ -535,6 +537,7 @@ class ArtifactService:
                         exc,
                     )
             artifact.status = "deleted"
+            sharing.delete_grants_for_resource(self.db, "global_artifact", artifact.id)
             count += 1
 
         self.db.commit()
@@ -554,12 +557,7 @@ class ArtifactService:
         """
         if namespace_id is not None:
             return
-        rows = (
-            self.db.query(GlobalArtifact.namespace_id)
-            .filter_by(name=name, status="active")
-            .distinct()
-            .all()
-        )
+        rows = self.db.query(GlobalArtifact.namespace_id).filter_by(name=name, status="active").distinct().all()
         namespaces = [r[0] for r in rows]
         if len(namespaces) > 1:
             raise AmbiguousArtifactError(name, namespaces)

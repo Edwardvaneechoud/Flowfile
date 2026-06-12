@@ -22,6 +22,7 @@
             <button class="btn-icon-inline" title="Rename" @click="startRename">
               <i class="fa-solid fa-pen"></i>
             </button>
+            <SharedBadge :access="flow.access" />
           </template>
         </div>
         <p v-if="flow.description" class="description">{{ flow.description }}</p>
@@ -60,6 +61,16 @@
           {{ flow.is_favorite ? "Favorited" : "Favorite" }}
         </button>
         <button
+          v-if="canShare(flow)"
+          class="action-btn-lg"
+          title="Share flow"
+          @click="showShareDialog = true"
+        >
+          <i class="fa-solid fa-share-nodes"></i>
+          Share
+        </button>
+        <button
+          v-if="canManage(flow)"
           class="btn btn-danger btn-sm"
           title="Delete flow"
           @click="$emit('deleteFlow', flow.id)"
@@ -69,6 +80,14 @@
         </button>
       </div>
     </div>
+
+    <ShareDialog
+      v-model="showShareDialog"
+      resource-type="flow"
+      :resource-id="flow.id"
+      :resource-name="flow.name"
+      :can-manage-grants="canManageGrants(flow)"
+    />
 
     <!-- File missing banner -->
     <div v-if="!flow.file_exists" class="missing-banner">
@@ -308,8 +327,13 @@ import RunHistoryTable from "./RunHistoryTable.vue";
 import { CollapsibleSection, EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
 import ApiEndpointPanel from "./ApiEndpointPanel.vue";
+import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const catalogStore = useCatalogStore();
+const showShareDialog = ref(false);
+const { canShare, canManage, canManageGrants } = useResourceSharing();
 
 const props = defineProps<{
   flow: FlowRegistration;

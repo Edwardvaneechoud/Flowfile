@@ -14,6 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, SecretStr
 
+from flowfile_core.schemas.sharing_schema import AccessInfo
+
 GoogleAnalyticsAuthMethod = Literal["oauth", "service_account"]
 
 
@@ -47,3 +49,5 @@ class FullGoogleAnalyticsConnectionInterface(BaseModel):
     default_property_id: str | None = None
     auth_method: GoogleAnalyticsAuthMethod = "oauth"
     oauth_user_email: str | None = None
+    id: int | None = None
+    access: AccessInfo | None = None

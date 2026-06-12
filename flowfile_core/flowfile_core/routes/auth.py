@@ -5,6 +5,7 @@ import os
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from flowfile_core.auth import sharing
 from flowfile_core.auth.jwt import (
     create_access_token,
     create_refresh_token,
@@ -112,6 +113,11 @@ async def create_user(
     user_data: UserCreate, current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)
 ):
     """Create a new user (admin only)"""
+    if user_data.username == sharing.INTERNAL_SERVICE_USERNAME:
+        # Reserved sentinel: sharing classifies principals as the synthetic kernel
+        # identity by this username, so a real user named this way would be locked
+        # out of their own resources.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username is reserved")
     existing_user = db.query(db_models.User).filter(db_models.User.username == user_data.username).first()
     if existing_user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
@@ -225,10 +231,24 @@ async def delete_user(
     if user.id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete your own account")
 
-    # Delete user's secrets and connections first (cascade)
-    db.query(db_models.Secret).filter(db_models.Secret.user_id == user_id).delete()
-    db.query(db_models.DatabaseConnection).filter(db_models.DatabaseConnection.user_id == user_id).delete()
-    db.query(db_models.CloudStorageConnection).filter(db_models.CloudStorageConnection.user_id == user_id).delete()
+    # Personal credential rows — everything keyed by user_id in the sharing
+    # registry: secrets + all connection types — die with the user, including any
+    # sharing grants on them: SQLite reuses rowids, so a stale grant would attach
+    # to a future resource created with the same id. Catalog content
+    # (owner_id/created_by keyed) is deliberately retained, so its grants stay
+    # meaningful. Groups the user ran persist; global admins can administer them.
+    for resource_type, spec in sharing.RESOURCE_REGISTRY.items():
+        if spec.owner_attr != "user_id":
+            continue
+        resource_ids = [row[0] for row in db.query(spec.model.id).filter(spec.model.user_id == user_id)]
+        if not resource_ids:
+            continue
+        db.query(db_models.ResourceGrant).filter(
+            db_models.ResourceGrant.resource_type == resource_type,
+            db_models.ResourceGrant.resource_id.in_(resource_ids),
+        ).delete(synchronize_session=False)
+        db.query(spec.model).filter(spec.model.id.in_(resource_ids)).delete(synchronize_session=False)
+    sharing.delete_memberships_for_user(db, user_id)
 
     db.delete(user)
     db.commit()
