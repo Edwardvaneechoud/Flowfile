@@ -6,11 +6,22 @@ import pytest
 
 import flowfile_frame as ff
 
+try:
+    # noinspection PyUnresolvedReferences
+    from tests.utils import is_docker_available
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_frame/tests/utils.py")))
+    # noinspection PyUnresolvedReferences
+    from utils import is_docker_available
+
 
 def _writer_settings(df, child):
     return df.flow_graph.get_node(child.node_id).setting_input.cloud_storage_settings
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_write_delta_threads_partition_by():
     df = ff.from_dict({"a": [1, 2], "b": ["x", "y"]})
     child = df.write_delta(
@@ -21,6 +32,7 @@ def test_write_delta_threads_partition_by():
     assert settings.file_format == "delta"
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_write_delta_default_no_partition():
     df = ff.from_dict({"a": [1, 2], "b": ["x", "y"]})
     child = df.write_delta("s3://flowfile-test/partition_thread_tbl2", connection_name="minio-flowframe-test")

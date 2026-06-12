@@ -306,6 +306,47 @@ def test_write_to_s3_with_aws_keys(
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_write_partitioned_delta_to_s3(
+        source_flow_data_engine: FlowDataEngine,
+        aws_access_key_connection: FullCloudStorageConnection,
+):
+    """Partitioned delta cloud write: partition columns must land on the table."""
+    from shared.delta_utils import get_delta_partition_columns
+
+    aws_access_key_connection.aws_allow_unsafe_html = True
+    resource_path = "s3://flowfile-test/write_test_delta_partitioned"
+    write_settings = CloudStorageWriteSettings(
+        resource_path=resource_path,
+        file_format="delta",
+        write_mode="overwrite",
+        partition_by=["is_active"],
+        auth_mode="access_key",
+    )
+    source_flow_data_engine.to_cloud_storage_obj(
+        CloudStorageWriteSettingsInternal(
+            connection=aws_access_key_connection,
+            write_settings=write_settings,
+        )
+    )
+
+    storage_options = {
+        "aws_access_key_id": "minioadmin",
+        "aws_secret_access_key": "minioadmin",
+        "aws_region": "us-east-1",
+        "endpoint_url": "http://localhost:9000",
+        "aws_allow_http": "true",
+    }
+    assert get_delta_partition_columns(resource_path, storage_options=storage_options) == ["is_active"]
+
+    read_settings = CloudStorageReadSettingsInternal(
+        connection=aws_access_key_connection,
+        read_settings=CloudStorageReadSettings.model_validate(write_settings.model_dump()),
+    )
+    read_back = FlowDataEngine.from_cloud_storage_obj(read_settings)
+    assert read_back.get_number_of_records(force_calculate=True) == 5
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 @pytest.mark.parametrize("test_case", S3_WRITE_TEST_CASES, ids=lambda tc: tc.id)
 def test_write_to_s3_with_aws_env_vars(
         test_case: S3TestWriteCase,
