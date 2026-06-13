@@ -38,34 +38,8 @@ SALES_FLOW_NAME = "Sales by Region"
 SALES_FLOW_ID = 920002
 SALES_SUMMARY_TABLE = "sales_by_region"
 
-# Flattened Frankfurter response (rates.<CUR> columns) -> long (date, base, currency, rate).
-FX_RESHAPE_CODE = """
-output_df = (
-    input_df
-    .unpivot(index="date", on=cs.starts_with("rates."), variable_name="currency", value_name="rate")
-    .with_columns(
-        col("currency").str.strip_prefix("rates."),
-        col("date").str.to_date(),
-        lit("USD").alias("base"),
-        col("rate").cast(Float64),
-    )
-    .select(["date", "base", "currency", "rate"])
-)
-"""
-
-# Aggregate the demo sales table into revenue per region.
-SALES_AGG_CODE = """
-output_df = (
-    input_df
-    .group_by("region")
-    .agg(
-        pl.len().alias("order_count"),
-        col("amount").sum().round(2).alias("total_revenue"),
-        col("amount").mean().round(2).alias("avg_order_value"),
-    )
-    .sort("total_revenue", descending=True)
-)
-"""
+# Major currencies present in the frankfurter.app USD-base response.
+FX_CURRENCIES = ["GBP", "JPY", "CHF", "AUD", "CAD", "CNY"]
 
 
 def _ensure_namespace(service, repo, db, name, parent_id, owner_id, description):
@@ -179,7 +153,7 @@ def _gen_sales(customers: pl.DataFrame, products: pl.DataFrame, regions: pl.Data
 
 
 def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> FlowGraph:
-    """Build the FX-sync flow graph: REST read -> reshape -> catalog upsert."""
+    """Build the FX-sync flow graph: REST read -> select (rename/drop) -> catalog upsert."""
     flow_settings = schemas.FlowSettings(
         flow_id=FX_FLOW_ID,
         name=FX_FLOW_NAME,
@@ -199,14 +173,18 @@ def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> F
             rest_api_settings=input_schema.RestApiSettings(url=FX_URL, method="GET", record_path=""),
         )
     )
-    graph.add_polars_code(
-        input_schema.NodePolarsCode(
+    select_input = [transform_schema.SelectInput(old_name="date", new_name="date", keep=True, position=0)]
+    for i, cur in enumerate(FX_CURRENCIES, start=1):
+        select_input.append(transform_schema.SelectInput(old_name=f"rates.{cur}", new_name=cur, keep=True, position=i))
+    graph.add_select(
+        input_schema.NodeSelect(
             flow_id=FX_FLOW_ID,
             node_id=2,
             user_id=user_id,
-            depending_on_ids=[1],
-            description="Reshape rates to long format",
-            polars_code_input=transform_schema.PolarsCodeInput(polars_code=FX_RESHAPE_CODE),
+            depending_on_id=1,
+            keep_missing=False,
+            description="Keep date + major currencies",
+            select_input=select_input,
         )
     )
     graph.add_catalog_writer(
@@ -220,8 +198,8 @@ def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> F
                 table_name=FX_TABLE,
                 namespace_id=market_namespace_id,
                 write_mode="upsert",
-                merge_keys=["date", "currency"],
-                description="Daily USD foreign-exchange rates (ECB via frankfurter.app)",
+                merge_keys=["date"],
+                description="Daily USD exchange rates for major currencies (ECB via frankfurter.app)",
             ),
         )
     )
@@ -252,14 +230,21 @@ def _build_sales_flow(user_id: int, analytics_namespace_id: int, flow_path: Path
             description="Read demo sales table",
         )
     )
-    graph.add_polars_code(
-        input_schema.NodePolarsCode(
+    graph.add_group_by(
+        input_schema.NodeGroupBy(
             flow_id=SALES_FLOW_ID,
             node_id=2,
             user_id=user_id,
-            depending_on_ids=[1],
-            description="Aggregate revenue per region",
-            polars_code_input=transform_schema.PolarsCodeInput(polars_code=SALES_AGG_CODE),
+            depending_on_id=1,
+            description="Revenue per region",
+            groupby_input=transform_schema.GroupByInput(
+                agg_cols=[
+                    transform_schema.AggColl("region", "groupby", "region"),
+                    transform_schema.AggColl("unit_price", "count", "order_count"),
+                    transform_schema.AggColl("amount", "sum", "total_revenue"),
+                    transform_schema.AggColl("amount", "mean", "avg_order_value"),
+                ]
+            ),
         )
     )
     graph.add_catalog_writer(
