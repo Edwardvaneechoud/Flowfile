@@ -129,6 +129,7 @@ const aggOptions: (AggOption | GroupByOption)[] = [
   "groupby",
   "sum",
   "max",
+  "mean",
   "median",
   "min",
   "count",
@@ -248,6 +249,7 @@ interface SingleColumnAggOption {
 const singleColumnAggOptions: SingleColumnAggOption[] = [
   { value: "count", label: "Count" },
   { value: "max", label: "Max" },
+  { value: "mean", label: "Mean" },
   { value: "median", label: "Median" },
   { value: "min", label: "Min" },
   { value: "sum", label: "Sum" },
