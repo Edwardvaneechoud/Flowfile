@@ -19,7 +19,9 @@ include = [
     { path = "flowfile/flowfile/web/static/**/*", format = "sdist" },
     { path = "flowfile/flowfile/web/static/**/*", format = "wheel" },
     { path = "flowfile/flowfile/py.typed", format = "sdist" },
-    { path = "flowfile/flowfile/py.typed", format = "wheel" }
+    { path = "flowfile/flowfile/py.typed", format = "wheel" },
+    { path = "flowfile_core/flowfile_core/catalog/demo_flows/*.yaml", format = "sdist" },
+    { path = "flowfile_core/flowfile_core/catalog/demo_flows/*.yaml", format = "wheel" }
 ]
 
 [tool.poetry.dependencies]

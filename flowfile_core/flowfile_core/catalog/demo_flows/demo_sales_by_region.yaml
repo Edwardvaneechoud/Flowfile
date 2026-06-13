@@ -1,0 +1,94 @@
+flowfile_version: 0.12.0
+flowfile_id: 920002
+flowfile_name: demo_sales_by_region
+flowfile_settings:
+  description: Aggregate the demo sales table into revenue per region
+  execution_mode: Performance
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: catalog_reader
+  is_start_node: true
+  description: Read demo sales table
+  node_reference: null
+  x_position: 0
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [2]
+  output_handles: [output-0]
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    catalog_table_id: null
+    catalog_full_table_name: sales_analytics.sales
+    catalog_table_name: null
+    catalog_namespace_id: null
+    delta_version: null
+    sql_query: null
+    is_virtual_optimized: null
+- id: 2
+  type: group_by
+  is_start_node: false
+  description: Revenue per region
+  node_reference: null
+  x_position: 200
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [3]
+  output_handles: [output-0]
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    groupby_input:
+      agg_cols:
+      - old_name: region
+        agg: groupby
+        new_name: region
+        output_type: null
+      - old_name: unit_price
+        agg: count
+        new_name: order_count
+        output_type: Int64
+      - old_name: amount
+        agg: sum
+        new_name: total_revenue
+        output_type: null
+      - old_name: amount
+        agg: mean
+        new_name: avg_order_value
+        output_type: Float64
+- id: 3
+  type: catalog_writer
+  is_start_node: false
+  description: Write sales_by_region
+  node_reference: null
+  x_position: 400
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: []
+  output_handles: []
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    catalog_write_settings:
+      table_name: sales_by_region
+      namespace_id: 6
+      description: Revenue per region, derived from the demo sales table
+      write_mode: overwrite
+      merge_keys: []
+      partition_by: []
+groups: []
