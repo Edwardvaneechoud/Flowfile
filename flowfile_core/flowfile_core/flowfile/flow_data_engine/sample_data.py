@@ -5,7 +5,6 @@ from random import randint
 from typing import Any
 
 import polars as pl
-from faker import Faker
 
 
 def create_fake_data(n_records: int = 1000, optimized: bool = True) -> pl.DataFrame:
@@ -18,6 +17,8 @@ def create_fake_data(n_records: int = 1000, optimized: bool = True) -> pl.DataFr
     Returns:
         pl.DataFrame
     """
+    from faker import Faker
+
     fake = Faker()
     selector = partial(randint, 0)
 
@@ -78,6 +79,8 @@ def create_fake_data(n_records: int = 1000, optimized: bool = True) -> pl.DataFr
 def create_fake_data_raw(
     n_records: int = 1000, col_selection: list[str] = None
 ) -> Generator[dict[str, Any], None, None]:
+    from faker import Faker
+
     fake = Faker()
     selector = partial(randint, 0)
 
