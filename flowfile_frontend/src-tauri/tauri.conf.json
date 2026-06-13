@@ -28,7 +28,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' https://apis.google.com; connect-src 'self' http://127.0.0.1:* http://localhost:* https://accounts.google.com https://apis.google.com ipc: http://ipc.localhost; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; worker-src 'self' blob:; frame-src 'self' https://accounts.google.com",
+      "csp": "default-src 'self' https://apis.google.com; connect-src 'self' http://127.0.0.1:* http://localhost:* https://accounts.google.com https://apis.google.com ipc: http://ipc.localhost; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://apis.google.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; worker-src 'self' blob:; frame-src 'self' https://accounts.google.com",
       "assetProtocol": {
         "enable": true,
         "scope": []
