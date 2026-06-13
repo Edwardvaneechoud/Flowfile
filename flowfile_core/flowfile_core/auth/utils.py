@@ -7,8 +7,9 @@ def get_local_user_id() -> int:
     """Resolve the local_user's ID from the database for CLI execution."""
     try:
         from flowfile_core.database import models as db_models
-        from flowfile_core.database.connection import SessionLocal
+        from flowfile_core.database.connection import SessionLocal, ensure_db_initialized
 
+        ensure_db_initialized()
         db = SessionLocal()
         try:
             local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()

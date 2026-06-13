@@ -54,8 +54,6 @@ from polars.datatypes import (
     Utf8,
 )
 
-from flowfile.api import open_graph_in_editor
-from flowfile.web import start_server as start_web_ui
 from flowfile_core.flowfile import node_designer
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
@@ -252,4 +250,21 @@ __all__ = [
     "Field",
     "start_web_ui",
 ]
+
+
+def __getattr__(name: str):
+    # The web UI / editor entry points pull the FastAPI server stack (uvicorn,
+    # fastapi) and `requests`; resolve them lazily so a plain `import flowfile`
+    # for the dataframe API stays light.
+    if name == "open_graph_in_editor":
+        from flowfile.api import open_graph_in_editor
+
+        return open_graph_in_editor
+    if name == "start_web_ui":
+        from flowfile.web import start_server as start_web_ui
+
+        return start_web_ui
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 logging.getLogger("PipelineHandler").setLevel(logging.WARNING)
