@@ -154,7 +154,12 @@ def _gen_sales(customers: pl.DataFrame, products: pl.DataFrame, regions: pl.Data
 
 
 def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> FlowGraph:
-    """Build the FX-sync flow: REST read -> select majors -> unpivot to long -> catalog upsert."""
+    """Build the FX-sync flow.
+
+    REST read -> select majors -> unpivot (numeric) -> filter -> name columns,
+    then two outputs: a date-cast long ``fx_rates`` table and a ``fx_sync_log``
+    stats row per sync date.
+    """
     flow_settings = schemas.FlowSettings(
         flow_id=FX_FLOW_ID,
         name=FX_FLOW_NAME,
@@ -174,9 +179,11 @@ def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> F
             rest_api_settings=input_schema.RestApiSettings(url=FX_URL, method="GET", record_path=""),
         )
     )
-    select_input = [transform_schema.SelectInput(old_name="date", new_name="date", keep=True, position=0)]
-    for i, cur in enumerate(FX_CURRENCIES, start=1):
-        select_input.append(transform_schema.SelectInput(old_name=f"rates.{cur}", new_name=cur, keep=True, position=i))
+    majors = [
+        transform_schema.SelectInput(old_name="date", new_name="date", keep=True),
+        transform_schema.SelectInput(old_name="amount", new_name="amount", keep=True),
+    ]
+    majors += [transform_schema.SelectInput(old_name=f"rates.{c}", new_name=c, keep=True) for c in FX_CURRENCIES]
     graph.add_select(
         input_schema.NodeSelect(
             flow_id=FX_FLOW_ID,
@@ -185,7 +192,7 @@ def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> F
             depending_on_id=1,
             keep_missing=False,
             description="Keep date + major currencies",
-            select_input=select_input,
+            select_input=majors,
         )
     )
     graph.add_unpivot(
@@ -195,7 +202,24 @@ def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> F
             user_id=user_id,
             depending_on_id=2,
             description="Currencies to long format",
-            unpivot_input=transform_schema.UnpivotInput(index_columns=["date"], value_columns=list(FX_CURRENCIES)),
+            unpivot_input=transform_schema.UnpivotInput(
+                index_columns=["date", "amount"],
+                data_type_selector="numeric",
+                data_type_selector_mode="data_type",
+            ),
+        )
+    )
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=FX_FLOW_ID,
+            node_id=9,
+            user_id=user_id,
+            depending_on_id=3,
+            description="variable != amount",
+            filter_input=transform_schema.FilterInput(
+                mode="basic",
+                basic_filter=transform_schema.BasicFilter(field="variable", operator="not_equals", value="amount"),
+            ),
         )
     )
     graph.add_select(
@@ -203,22 +227,36 @@ def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> F
             flow_id=FX_FLOW_ID,
             node_id=4,
             user_id=user_id,
-            depending_on_id=3,
+            depending_on_id=9,
             keep_missing=False,
             description="Name currency/rate columns",
             select_input=[
-                transform_schema.SelectInput(old_name="date", new_name="date", keep=True, position=0),
-                transform_schema.SelectInput(old_name="variable", new_name="currency", keep=True, position=1),
-                transform_schema.SelectInput(old_name="value", new_name="rate", keep=True, position=2),
+                transform_schema.SelectInput(old_name="date", new_name="date", keep=True),
+                transform_schema.SelectInput(old_name="variable", new_name="currency", keep=True),
+                transform_schema.SelectInput(old_name="value", new_name="rate", keep=True),
             ],
         )
     )
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=FX_FLOW_ID,
+            node_id=8,
+            user_id=user_id,
+            depending_on_id=4,
+            description="date = to_date([date])",
+            function=transform_schema.FunctionInput(
+                field=transform_schema.FieldInput(name="date", data_type="Datetime"),
+                function="to_date([date])",
+            ),
+        )
+    )
+    # Output 1: the long fx_rates table (date cast to a real date).
     graph.add_catalog_writer(
         input_schema.NodeCatalogWriter(
             flow_id=FX_FLOW_ID,
             node_id=5,
             user_id=user_id,
-            depending_on_id=4,
+            depending_on_id=8,
             description=f"Upsert into {FX_TABLE}",
             catalog_write_settings=input_schema.CatalogWriteSettings(
                 table_name=FX_TABLE,
@@ -229,7 +267,7 @@ def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> F
             ),
         )
     )
-    # Second output: a per-sync stats row that accumulates into a log over days.
+    # Output 2: a per-sync stats row that accumulates into a log over days.
     graph.add_group_by(
         input_schema.NodeGroupBy(
             flow_id=FX_FLOW_ID,
@@ -264,7 +302,7 @@ def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> F
             ),
         )
     )
-    for a, b in ((1, 2), (2, 3), (3, 4), (4, 5), (4, 6), (6, 7)):
+    for a, b in ((1, 2), (2, 3), (3, 9), (9, 4), (4, 8), (8, 5), (4, 6), (6, 7)):
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(a, b, "main"))
     graph.apply_layout()
     return graph
