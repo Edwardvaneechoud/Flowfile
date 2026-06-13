@@ -73,11 +73,15 @@
           <div v-if="catalogStore.loading" class="loading-state">Loading...</div>
           <div v-else-if="catalogStore.tree.length === 0" class="empty-state">
             <p>No catalogs yet.</p>
-            <button class="btn-primary btn-sm" @click="showCreateNamespace = true">
-              Create your first catalog
+            <button class="btn btn-primary btn-sm" @click="showCreateNamespace = true">
+              <i class="fa-solid fa-plus"></i> Create your first catalog
             </button>
-            <button class="btn btn-ghost btn-sm" :disabled="demoBusy" @click="handleLoadDemoData">
-              Load demo data
+            <button
+              class="btn btn-secondary btn-sm"
+              :disabled="demoBusy"
+              @click="handleLoadDemoData"
+            >
+              <i class="fa-solid fa-flask"></i> Load demo data
             </button>
           </div>
           <div v-else>
@@ -463,19 +467,19 @@
           </p>
           <button
             v-if="!hasDemoCatalog"
-            class="btn-primary btn-sm"
+            class="btn btn-primary btn-sm demo-card-btn"
             :disabled="demoBusy"
             @click="handleLoadDemoData"
           >
-            Load demo data
+            <i class="fa-solid fa-flask"></i> Load demo data
           </button>
           <button
             v-else
-            class="btn btn-ghost btn-sm"
+            class="btn btn-ghost btn-sm demo-card-btn"
             :disabled="demoBusy"
             @click="handleRemoveDemoData"
           >
-            Remove demo data
+            <i class="fa-solid fa-broom"></i> Remove demo data
           </button>
         </div>
       </div>
@@ -1883,6 +1887,10 @@ onUnmounted(() => {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   line-height: 1.5;
+}
+
+.catalog-view .info-card .demo-card-btn {
+  margin-top: var(--spacing-3);
 }
 </style>
 

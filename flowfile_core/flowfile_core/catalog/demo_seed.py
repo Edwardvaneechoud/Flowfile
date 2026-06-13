@@ -34,6 +34,10 @@ FX_FLOW_ID = 920001
 FX_URL = "https://api.frankfurter.app/latest?base=USD"
 FX_CRON = "0 6 * * *"
 
+SALES_FLOW_NAME = "Sales by Region"
+SALES_FLOW_ID = 920002
+SALES_SUMMARY_TABLE = "sales_by_region"
+
 # Flattened Frankfurter response (rates.<CUR> columns) -> long (date, base, currency, rate).
 FX_RESHAPE_CODE = """
 output_df = (
@@ -46,6 +50,20 @@ output_df = (
         col("rate").cast(Float64),
     )
     .select(["date", "base", "currency", "rate"])
+)
+"""
+
+# Aggregate the demo sales table into revenue per region.
+SALES_AGG_CODE = """
+output_df = (
+    input_df
+    .group_by("region")
+    .agg(
+        pl.len().alias("order_count"),
+        col("amount").sum().round(2).alias("total_revenue"),
+        col("amount").mean().round(2).alias("avg_order_value"),
+    )
+    .sort("total_revenue", descending=True)
 )
 """
 
@@ -212,9 +230,67 @@ def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> F
     return graph
 
 
+def _build_sales_flow(user_id: int, analytics_namespace_id: int, flow_path: Path) -> FlowGraph:
+    """Build the sales-summary flow: read demo sales -> aggregate -> catalog write."""
+    flow_settings = schemas.FlowSettings(
+        flow_id=SALES_FLOW_ID,
+        name=SALES_FLOW_NAME,
+        path=str(flow_path),
+        description="Aggregate the demo sales table into revenue per region",
+        track_history=False,
+    )
+    graph = FlowGraph(flow_settings=flow_settings)
+    graph.flow_settings.execution_location = "local"
+
+    graph.add_catalog_reader(
+        input_schema.NodeCatalogReader(
+            flow_id=SALES_FLOW_ID,
+            node_id=1,
+            user_id=user_id,
+            catalog_table_name="sales",
+            catalog_namespace_id=analytics_namespace_id,
+            description="Read demo sales table",
+        )
+    )
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=SALES_FLOW_ID,
+            node_id=2,
+            user_id=user_id,
+            depending_on_ids=[1],
+            description="Aggregate revenue per region",
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=SALES_AGG_CODE),
+        )
+    )
+    graph.add_catalog_writer(
+        input_schema.NodeCatalogWriter(
+            flow_id=SALES_FLOW_ID,
+            node_id=3,
+            user_id=user_id,
+            depending_on_id=2,
+            description=f"Write {SALES_SUMMARY_TABLE}",
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name=SALES_SUMMARY_TABLE,
+                namespace_id=analytics_namespace_id,
+                write_mode="overwrite",
+                description="Revenue per region, derived from the demo sales table",
+            ),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2, "main"))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3, "main"))
+    return graph
+
+
 def seed_demo_catalog(user_id: int = 1) -> dict:
     """Create the demo catalog (static tables + daily FX-sync flow). Idempotent."""
-    summary: dict = {"tables_created": [], "flow_registration_id": None, "schedule_id": None, "fx_populate": "skipped"}
+    summary: dict = {
+        "tables_created": [],
+        "flow_registration_id": None,
+        "sales_flow_registration_id": None,
+        "schedule_id": None,
+        "fx_populate": "skipped",
+    }
 
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
@@ -226,6 +302,7 @@ def seed_demo_catalog(user_id: int = 1) -> dict:
         )
         market = _ensure_namespace(service, repo, db, SCHEMA_MARKET, demo.id, user_id, "Daily-synced market data")
         market_id = market.id
+        analytics_id = analytics.id
 
         regions = _gen_regions()
         products = _gen_products()
@@ -242,6 +319,19 @@ def seed_demo_catalog(user_id: int = 1) -> dict:
                 service, df, name=name, namespace_id=analytics.id, owner_id=user_id, description=desc
             ):
                 summary["tables_created"].append(name)
+
+    # Sales-by-region flow: reads the demo sales table and writes an aggregated
+    # summary table. Source data is static, so it just runs once at seed time.
+    sales_flow_path = storage.python_editor_flows_directory / "demo_sales_by_region.yaml"
+    sales_graph = _build_sales_flow(user_id, analytics_id, sales_flow_path)
+    summary["sales_flow_registration_id"] = register_python_editor_flow(
+        sales_graph, name=SALES_FLOW_NAME, namespace_id=analytics_id, flow_path=str(sales_flow_path), user_id=user_id
+    )
+    try:
+        sales_graph.execution_location = "local"
+        sales_graph.run_graph()
+    except Exception:
+        logger.info("Sales-by-region populate skipped", exc_info=True)
 
     fx_flow_path = storage.python_editor_flows_directory / "demo_fx_sync.yaml"
     graph = _build_fx_flow(user_id, market_id, fx_flow_path)
