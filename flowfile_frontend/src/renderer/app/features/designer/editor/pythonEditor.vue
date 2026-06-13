@@ -138,33 +138,7 @@ defineExpose({ insertTextAtCursor });
   background-color: rgba(255, 85, 85, 0.1);
   border-radius: 4px;
 }
-
-/* Polars-specific syntax highlighting - component specific */
-.cm-variable.cm-polars {
-  color: #50fa7b;
-}
-
-.cm-property.cm-polars {
-  color: #8be9fd;
-}
-
-.cm-keyword {
-  color: #ff79c6;
-}
-
-.cm-function {
-  color: #50fa7b;
-}
-
-.cm-string {
-  color: #f1fa8c;
-}
-
-.cm-number {
-  color: #bd93f9;
-}
-
-.cm-comment {
-  color: #6272a4;
-}
+/* Syntax highlighting is supplied by python() + oneDark (Lezer-generated
+   classes); no hand-rolled .cm-* rules — they were dead here and leaked
+   globally onto the formula editor. */
 </style>

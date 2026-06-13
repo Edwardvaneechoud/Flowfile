@@ -66,25 +66,33 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 5px;
+  padding: 5px 8px;
+  margin-right: 4px;
   cursor: pointer;
-  transition: background-color 0.3s;
+  color: var(--color-text-tertiary);
+  border: 1px solid transparent;
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    border-color 0.15s;
   border-radius: 5px;
 }
 
 .radio-option.selected {
-  background-color: #e0f7fa; /* Change this color as needed */
+  background-color: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
-.radio-option:hover {
-  background-color: #b2ebf2; /* Change this color as needed */
+.radio-option:not(.selected):hover {
+  background-color: var(--color-background-hover);
+  color: var(--color-text-secondary);
 }
 
 .icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-right: 5px;
   width: 16px; /* Adjust the size as needed */
   height: 16px; /* Adjust the size as needed */
   z-index: 1;

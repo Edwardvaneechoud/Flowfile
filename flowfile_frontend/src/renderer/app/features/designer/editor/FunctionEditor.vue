@@ -163,6 +163,63 @@ const insertTextAtCursor = (text: string) => {
 const code = ref(props.editorString);
 const view = shallowRef<EditorView | null>(null);
 
+type HighlightType = "comment" | "string" | "column" | "function";
+interface HighlightSpan {
+  start: number;
+  end: number;
+  type: HighlightType;
+}
+
+// Lower number = higher priority when two spans overlap.
+const HIGHLIGHT_PRIORITY: Record<HighlightType, number> = {
+  comment: 0,
+  string: 1,
+  column: 2,
+  function: 3,
+};
+
+const HIGHLIGHT_CLASS: Record<HighlightType, string> = {
+  comment: "cm-ff-comment",
+  string: "cm-ff-string",
+  column: "cm-ff-column",
+  function: "cm-ff-function",
+};
+
+// Faithful TS port of the backend `find_comment_spans`
+// (polars_expr_transformer/process/expression_validator.py): the single source
+// of truth for what counts as a `//` comment. Quote state resets every line; a
+// `//` inside a quoted run on its line is not a comment; a comment runs to the
+// end of its line. Returns absolute doc offsets. Must run on the full document,
+// never a visible-range slice — quote parity is line-local.
+const findCommentSpans = (text: string): Array<{ start: number; end: number }> => {
+  const spans: Array<{ start: number; end: number }> = [];
+  let offset = 0;
+  for (const line of text.split("\n")) {
+    let insideSingle = false;
+    let insideDouble = false;
+    const len = line.length;
+    for (let pos = 0; pos < len; pos++) {
+      const ch = line[pos];
+      if (ch === "'" && !insideDouble) {
+        insideSingle = !insideSingle;
+      } else if (ch === '"' && !insideSingle) {
+        insideDouble = !insideDouble;
+      } else if (
+        ch === "/" &&
+        pos + 1 < len &&
+        line[pos + 1] === "/" &&
+        !insideSingle &&
+        !insideDouble
+      ) {
+        spans.push({ start: offset + pos, end: offset + len });
+        break;
+      }
+    }
+    offset += len + 1; // + newline
+  }
+  return spans;
+};
+
 const highlightPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
@@ -180,49 +237,69 @@ const highlightPlugin = ViewPlugin.fromClass(
     buildDecorations(view: EditorView) {
       const builder = new RangeSetBuilder<Decoration>();
       const { doc } = view.state;
+      const visible = view.visibleRanges;
+
+      // Comments are computed over the whole document (quote parity is
+      // line-local) and take priority: text inside a comment is never re-colored
+      // as function/column/string, mirroring the backend masking comments before
+      // tokenizing.
+      const commentSpans = findCommentSpans(doc.toString());
+      const intersectsVisible = (s: number, e: number) =>
+        visible.some((r) => s < r.to && e > r.from);
+      const overlapsComment = (s: number, e: number) =>
+        commentSpans.some((c) => s < c.end && e > c.start);
+
+      const spans: HighlightSpan[] = [];
+      for (const c of commentSpans) {
+        if (c.end > c.start && intersectsVisible(c.start, c.end)) {
+          spans.push({ start: c.start, end: c.end, type: "comment" });
+        }
+      }
 
       const regexFunction = /\b([a-zA-Z_]\w*)\(/g;
       const regexColumn = /\[[^\]]+\]/g;
       const regexString = /(["'])(?:(?=(\\?))\2.)*?\1/g;
 
-      const matches = [];
+      const pushToken = (start: number, end: number, type: HighlightType) => {
+        if (end > start && !overlapsComment(start, end)) {
+          spans.push({ start, end, type });
+        }
+      };
 
-      for (let { from, to } of view.visibleRanges) {
+      for (const { from, to } of visible) {
         const text = doc.sliceString(from, to);
-        let match;
+        let match: RegExpExecArray | null;
 
         regexFunction.lastIndex = 0;
         while ((match = regexFunction.exec(text)) !== null) {
           const start = from + match.index;
-          const end = start + match[1].length;
-          matches.push({ start, end, type: "function" });
+          pushToken(start, start + match[1].length, "function");
         }
 
         regexColumn.lastIndex = 0;
         while ((match = regexColumn.exec(text)) !== null) {
           const start = from + match.index;
-          const end = start + match[0].length;
-          matches.push({ start, end, type: "column" });
+          pushToken(start, start + match[0].length, "column");
         }
 
         regexString.lastIndex = 0;
         while ((match = regexString.exec(text)) !== null) {
           const start = from + match.index;
-          const end = start + match[0].length;
-          matches.push({ start, end, type: "string" });
+          pushToken(start, start + match[0].length, "string");
         }
       }
 
-      matches.sort((a, b) => a.start - b.start);
+      // Sort by position, then priority, and sweep to a strictly sorted,
+      // non-overlapping set — the two invariants RangeSetBuilder requires.
+      spans.sort(
+        (a, b) => a.start - b.start || HIGHLIGHT_PRIORITY[a.type] - HIGHLIGHT_PRIORITY[b.type],
+      );
 
-      for (const match of matches) {
-        if (match.type === "function") {
-          builder.add(match.start, match.end, Decoration.mark({ class: "cm-function" }));
-        } else if (match.type === "column") {
-          builder.add(match.start, match.end, Decoration.mark({ class: "cm-column" }));
-        } else if (match.type === "string") {
-          builder.add(match.start, match.end, Decoration.mark({ class: "cm-string" }));
-        }
+      let lastEnd = -1;
+      for (const span of spans) {
+        if (span.start < lastEnd) continue; // overlaps a claimed region
+        builder.add(span.start, span.end, Decoration.mark({ class: HIGHLIGHT_CLASS[span.type] }));
+        lastEnd = span.end;
       }
 
       return builder.finish();
@@ -242,10 +319,17 @@ const aiCompletions: CompletionSource = createAiCompletionSource({
 });
 
 const extensions: Extension[] = [
+  // Syntax colors live here (not a global stylesheet) so CodeMirror scopes them
+  // to this editor instance — another editor's styles can no longer repaint our
+  // tokens. Classes are namespaced `cm-ff-*` for the same reason.
   EditorView.theme({
     "&": { fontSize: "12px" },
     ".cm-content": { fontSize: "12px" },
     ".cm-gutters": { fontSize: "12px" },
+    ".cm-ff-function": { color: "var(--color-code-keyword)", fontWeight: "bold" },
+    ".cm-ff-column": { color: "var(--color-code-string)" },
+    ".cm-ff-string": { color: "var(--color-code-function)" },
+    ".cm-ff-comment": { color: "var(--color-text-tertiary)", fontStyle: "italic" },
   }),
   EditorState.tabSize.of(2),
   autocompletion({
@@ -274,18 +358,6 @@ defineExpose({ insertTextAtCursor });
   display: flex;
   flex-direction: column;
 }
-
-/* Custom syntax highlighting - these are specific to this editor */
-.cm-function {
-  color: var(--color-code-keyword);
-  font-weight: bold;
-}
-
-.cm-column {
-  color: var(--color-code-string);
-}
-
-.cm-string {
-  color: var(--color-code-function);
-}
+/* Token colors are defined in the editor's EditorView.theme (cm-ff-*) so they
+   stay scoped to this instance — see the extensions array above. */
 </style>
