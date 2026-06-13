@@ -9,8 +9,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from flowfile_core.ai import router as ai_router
 from flowfile_core.ai.admin_routes import router as ai_admin_router
@@ -23,6 +24,8 @@ from flowfile_core.configs.settings import (
     WORKER_PORT,
     WORKER_URL,
 )
+from flowfile_core.database.connection import ensure_db_initialized
+from flowfile_core.exceptions import FlowfileHTTPException
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.lsp.admin_routes import router as lsp_admin_router
 from flowfile_core.lsp.routes import router as lsp_router
@@ -68,6 +71,10 @@ async def shutdown_handler(app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     print("Starting core application...")
+
+    # DB init/migration used to run as an import side effect of flowfile_core;
+    # it's now deferred, so run it explicitly at server startup (idempotent).
+    ensure_db_initialized()
 
     # Only auto-start scheduler if explicitly opted in via env var
     if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "").lower() in ("true", "1", "yes"):
@@ -122,6 +129,13 @@ app = FastAPI(
     description="Backend for the Flowfile application",
     lifespan=shutdown_handler,
 )
+
+
+@app.exception_handler(FlowfileHTTPException)
+async def _flowfile_http_exception_handler(request: Request, exc: FlowfileHTTPException):
+    """Map engine/secret FlowfileHTTPExceptions to the same JSON response FastAPI's
+    built-in HTTPException handler produces (keeps flow_graph fastapi-import-free)."""
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 # The Tauri 2 desktop shell loads the renderer from a custom protocol — the
 # exact origin differs per OS (`tauri://localhost` on macOS/iOS, `http://tauri.localhost`
@@ -275,6 +289,10 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
     OFFLOAD_TO_WORKER.set(False)
+
+    # Standalone CLI run: no FastAPI lifespan, and get_run_user_id below reads the
+    # catalog DB via shared models (bypassing core's get_db guard), so init here.
+    ensure_db_initialized()
 
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 

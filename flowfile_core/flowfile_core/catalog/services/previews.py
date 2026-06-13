@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 
 import polars as pl
-from deltalake import DeltaTable
 
 from flowfile_core.catalog.delta_utils import (
     is_delta_table,
@@ -188,6 +187,8 @@ class TablePreviewService:
             except (RuntimeError, OSError, ValueError, KeyError):
                 logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
 
+        from deltalake import DeltaTable
+
         delta_table = DeltaTable(table_path, version=version, storage_options=storage_options)
         dataset = delta_table.to_pyarrow_dataset()
         pa_table = dataset.head(limit)
@@ -238,6 +239,8 @@ class TablePreviewService:
                 return trigger_delta_history(_catalog_table_dir_name(table_path), limit, storage=storage_payload)
             except (RuntimeError, OSError, ValueError, KeyError):
                 logger.warning("Worker delta history read failed, falling back to local", exc_info=True)
+
+        from deltalake import DeltaTable
 
         delta_table = DeltaTable(table_path, without_files=True, storage_options=storage_options)
         raw_history = delta_table.history(limit)

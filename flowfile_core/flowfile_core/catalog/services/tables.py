@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from deltalake import DeltaTable
-from pyarrow import dataset as ds
 from sqlalchemy.orm.attributes import flag_modified
 
 from flowfile_core.catalog.delta_utils import (
@@ -231,12 +229,16 @@ class TableService:
         path = Path(table_path)
 
         if storage_format == "delta" or (storage_format is None and is_delta_table(path)):
+            from deltalake import DeltaTable
+
             delta_table = DeltaTable(str(path))
             pa_schema = delta_table.schema().to_arrow()
             schema_list = [{"name": field.name, "dtype": str(field.type)} for field in pa_schema]
             row_count = delta_table.to_pyarrow_dataset().count_rows()
             size_bytes = get_delta_table_size_bytes(path)
         else:
+            from pyarrow import dataset as ds
+
             dataset = ds.dataset(str(path), format="parquet")
             schema_list = [{"name": field.name, "dtype": str(field.type)} for field in dataset.schema]
             row_count = dataset.count_rows()

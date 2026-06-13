@@ -20,6 +20,12 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
 
     OFFLOAD_TO_WORKER.set(False)
 
+    # DB init is no longer an import side effect; get_run_user_id below reads the
+    # catalog DB via shared models (bypassing core's get_db guard), so init here.
+    from flowfile_core.database.connection import ensure_db_initialized
+
+    ensure_db_initialized()
+
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
     path = Path(flow_path)

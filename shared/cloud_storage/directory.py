@@ -8,9 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import boto3
-from botocore.exceptions import ClientError
-
 
 def get_first_file_from_cloud_dir(source: str, storage_options: dict[str, Any] | None = None) -> str:
     """Get the first file matching the extension from a cloud storage directory.
@@ -145,6 +142,8 @@ def _remove_wildcards_from_prefix(prefix: str) -> str:
 
 def _create_s3_client(storage_options: dict[str, Any] | None):
     """Create boto3 S3 client with optional credentials."""
+    import boto3
+
     if storage_options is None:
         return boto3.client("s3")
 
@@ -158,6 +157,8 @@ def _create_s3_client(storage_options: dict[str, Any] | None):
 
 def _get_first_file(s3_client, bucket_name: str, base_prefix: str, file_extension: str) -> dict[Any, Any]:
     """List objects and return the first file matching the extension."""
+    from botocore.exceptions import ClientError
+
     try:
         paginator = s3_client.get_paginator("list_objects_v2")
         pages = paginator.paginate(Bucket=bucket_name, Prefix=base_prefix)

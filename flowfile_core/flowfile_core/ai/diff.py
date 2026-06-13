@@ -610,8 +610,7 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
         # AI modules (executor, audit, providers) deliberately keep out of
         # their import-time graph; this ``diff`` module imports lightly so
         # tests can stub ``flow_graph`` symbols where needed.
-        from fastapi import HTTPException
-
+        from flowfile_core.exceptions import FlowfileHTTPException
         from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 
         for add in diff.additions:
@@ -670,7 +669,7 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
             connection = input_schema.NodeConnection.model_validate(c.connection)
             try:
                 delete_connection(flow, connection)
-            except HTTPException as exc:
+            except FlowfileHTTPException as exc:
                 # Narrow catch: only the "Connection does not exist" 422 gets
                 # swallowed. ``add_connection``'s cycle-detection 422 lives in
                 # the other loop and is unaffected; any other HTTPException

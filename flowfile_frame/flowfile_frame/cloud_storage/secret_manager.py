@@ -1,4 +1,3 @@
-from flowfile_core.auth.jwt import create_access_token, get_current_user_sync
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_cloud_connection,
@@ -9,6 +8,10 @@ from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnecti
 
 
 def get_current_user_id() -> int | None:
+    # Imported lazily: flowfile_core.auth.jwt is a FastAPI router module, so a
+    # top-level import would drag FastAPI into `import flowfile_frame`.
+    from flowfile_core.auth.jwt import create_access_token, get_current_user_sync
+
     access_token = create_access_token(data={"sub": "local_user"})
     with get_db_context() as db:
         current_user_id = get_current_user_sync(access_token, db).id
@@ -25,6 +28,8 @@ def create_cloud_storage_connection(connection: FullCloudStorageConnection) -> N
     Returns:
         None
     """
+    from flowfile_core.auth.jwt import create_access_token, get_current_user_sync
+
     access_token = create_access_token(data={"sub": "local_user"})
 
     with get_db_context() as db:

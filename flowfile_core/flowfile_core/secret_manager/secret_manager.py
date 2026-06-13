@@ -3,7 +3,6 @@ import base64
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from fastapi.exceptions import HTTPException
 from pydantic import SecretStr
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
@@ -13,6 +12,7 @@ from flowfile_core.auth.models import SecretInput
 from flowfile_core.auth.secrets import get_master_key
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.exceptions import FlowfileHTTPException
 
 # Version identifier for key derivation scheme (allows future migrations)
 KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"
@@ -195,7 +195,7 @@ def delete_secret(db: Session, secret_name: str, user_id: int) -> None:
     )
 
     if not db_secret:
-        raise HTTPException(status_code=404, detail="Secret not found")
+        raise FlowfileHTTPException(status_code=404, detail="Secret not found")
 
     sharing.delete_grants_for_resource(db, "secret", db_secret.id)
     db.delete(db_secret)

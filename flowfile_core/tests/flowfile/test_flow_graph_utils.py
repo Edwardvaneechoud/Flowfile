@@ -1,7 +1,7 @@
 
 import pytest
 
-from fastapi import HTTPException
+from flowfile_core.exceptions import FlowfileHTTPException
 
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, validate_connection
 from flowfile_core.flowfile.flow_graph_utils import _create_node_id_mapping, _validate_input, combine_flow_graphs
@@ -456,7 +456,7 @@ def _build_chain_for_cycle_tests() -> FlowGraph:
 
 def test_add_connection_rejects_self_loop():
     graph = _build_chain_for_cycle_tests()
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(FlowfileHTTPException) as exc:
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 2))
     assert exc.value.status_code == 422
     assert "cycle" in exc.value.detail.lower()
@@ -465,7 +465,7 @@ def test_add_connection_rejects_self_loop():
 def test_add_connection_rejects_direct_back_edge():
     graph = _build_chain_for_cycle_tests()
     # 1 -> 2 exists; adding 2 -> 1 closes a 2-cycle.
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(FlowfileHTTPException) as exc:
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 1))
     assert exc.value.status_code == 422
 
@@ -473,7 +473,7 @@ def test_add_connection_rejects_direct_back_edge():
 def test_add_connection_rejects_transitive_back_edge():
     graph = _build_chain_for_cycle_tests()
     # Chain is 1 -> 2 -> 3; closing 3 -> 1 would form a 3-cycle.
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(FlowfileHTTPException) as exc:
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 1))
     assert exc.value.status_code == 422
 

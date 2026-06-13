@@ -12,7 +12,6 @@ import shutil
 from pathlib import Path
 
 import pyarrow as pa
-from deltalake import DeltaTable
 
 from shared.delta_models import SourceTableVersion
 from shared.delta_utils import get_delta_size_bytes
@@ -39,6 +38,8 @@ def check_source_versions_current(source_table_versions_json: str | None) -> boo
     except (ValueError, KeyError, TypeError):
         logger.warning("Could not parse source_table_versions JSON, treating as stale")
         return False
+
+    from deltalake import DeltaTable
 
     for sv in versions:
         try:
@@ -85,6 +86,8 @@ def get_delta_table_size_bytes(path: str | Path) -> int:
 
 def read_delta_preview(path: str, n_rows: int = 100) -> pa.Table:
     """Read the first N rows from a Delta table using PyArrow."""
+    from deltalake import DeltaTable
+
     dt = DeltaTable(str(path))
 
     dataset = dt.to_pyarrow_dataset()
