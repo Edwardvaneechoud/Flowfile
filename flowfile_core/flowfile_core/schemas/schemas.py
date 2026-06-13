@@ -53,6 +53,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "kafka_source": input_schema.NodeKafkaSource,
     "google_analytics_reader": input_schema.NodeGoogleAnalyticsReader,
     "rest_api_reader": input_schema.NodeRestApiReader,
+    "run_flow": input_schema.NodeRunFlow,
     "external_source": input_schema.NodeExternalSource,
     "promise": input_schema.NodePromise,
     "user_defined": input_schema.UserDefinedNode,

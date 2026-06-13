@@ -10,7 +10,7 @@ from copy import deepcopy
 from functools import partial
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from time import time
+from time import sleep, time
 from typing import Any, Literal, NamedTuple, Union
 from uuid import uuid1
 
@@ -83,6 +83,7 @@ from flowfile_core.flowfile.parameter_resolver import (
     find_unresolved_in_model,
     restore_parameters,
 )
+from flowfile_core.flowfile.run_flow_guard import guard_sub_flow
 from flowfile_core.flowfile.schema_callbacks import (
     calculate_cross_join_schema,
     calculate_fuzzy_match_schema,
@@ -4186,6 +4187,210 @@ class FlowGraph:
             self._node_db[node_rest_api_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_rest_api_reader.node_id)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_run_flow(self, node_run_flow: input_schema.NodeRunFlow) -> None:
+        """Adds a node that runs a saved sub-flow once per input row.
+
+        For each input row, the mapped input-column values are injected into the
+        sub-flow's ``${param}`` references; the sub-flow runs (sequentially, with an
+        optional inter-run delay) and its single ``api_response`` node's output is
+        captured. Per-row outputs are unioned (diagonal concat) and a
+        ``__param_value__`` / ``__param_<name>__`` column records the value used.
+
+        Each per-row result is materialised on the worker under a unique ref and
+        concatenated lazily, so the core never holds full datasets. v1 runs rows
+        sequentially because sub-flow runs share flow_id-keyed scratch dirs.
+        """
+
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
+            return self._execute_run_flow_node(node_run_flow, fl)
+
+        def schema_callback() -> list[FlowfileColumn]:
+            return self._predict_run_flow_schema(node_run_flow)
+
+        self.add_node_step(
+            node_id=node_run_flow.node_id,
+            function=_func,
+            node_type="run_flow",
+            setting_input=node_run_flow,
+            schema_callback=schema_callback,
+            input_node_ids=[node_run_flow.depending_on_id],
+        )
+
+    @staticmethod
+    def _run_flow_param_specs(
+        settings: input_schema.NodeRunFlow,
+    ) -> list[tuple[str, str, str]]:
+        """Active (param_name, input_column, output_column) tuples for the mappings.
+
+        The output column is ``__param_value__`` for a single mapping, else one
+        ``__param_<name>__`` per mapped parameter.
+        """
+        mappings = [m for m in settings.parameter_mappings if m.param_name and m.input_column]
+        single = len(mappings) == 1
+        return [
+            (m.param_name, m.input_column, "__param_value__" if single else f"__param_{m.param_name}__")
+            for m in mappings
+        ]
+
+    @staticmethod
+    def _resolve_run_flow_path(settings: input_schema.NodeRunFlow) -> str | None:
+        """Resolve the sub-flow's filesystem path (own ``flow_reference``, else registration)."""
+        if settings.flow_reference:
+            return settings.flow_reference
+        if settings.flow_registration_id is not None:
+            from flowfile_core.flowfile.catalog_helpers import find_registration_by_registration_id
+
+            snap = find_registration_by_registration_id(settings.flow_registration_id)
+            if snap is not None:
+                return snap.flow_path
+        return None
+
+    def _predict_run_flow_schema(self, settings: input_schema.NodeRunFlow) -> list[FlowfileColumn]:
+        """Predict output columns: the sub-flow's api_response schema plus the param column(s).
+
+        Never returns empty — an empty schema_callback makes the engine fall back to
+        running ``_func`` during prediction, which would execute the sub-flow.
+        """
+        specs = self._run_flow_param_specs(settings)
+        param_cols = [FlowfileColumn.from_input(out_col, "String") for (_, _, out_col) in specs]
+        sub_cols: list[FlowfileColumn] = []
+        flow_path = self._resolve_run_flow_path(settings)
+        if flow_path:
+            from flowfile_core.flowfile.manage.io_flowfile import open_flow
+
+            # The guard also breaks self-referential flows: predicting the sub-flow's
+            # api_response schema traverses back into the nested run_flow node, which
+            # would otherwise open the same flow forever.
+            try:
+                with guard_sub_flow(str(Path(flow_path).resolve())):
+                    sub_flow = open_flow(Path(flow_path), user_id=settings.user_id)
+                    api_nodes = [n for n in sub_flow.nodes if n.node_type == "api_response"]
+                    if len(api_nodes) == 1:
+                        predicted = api_nodes[0].get_predicted_schema()
+                        sub_cols = list(predicted) if predicted else []
+            except Exception as e:  # noqa: BLE001 - incl. recursion; prediction is best-effort
+                logger.warning(f"Run-flow schema prediction failed: {e}")
+        schema = sub_cols + param_cols
+        if not schema:
+            schema = [FlowfileColumn.from_input("__param_value__", "String")]
+        return schema
+
+    def _materialize_run_flow_row(self, lf: pl.LazyFrame, node_id: int | str, index: int) -> pl.LazyFrame:
+        """Materialise one row's sub-flow output to a stable, uniquely-named location.
+
+        Sequential sub-flow runs reuse the sub-flow's flow_id-keyed Arrow IPC output
+        path, so a lazy reference captured this iteration would be overwritten by the
+        next run. Offloading to the worker with a per-iteration ``file_ref`` writes a
+        distinct file and returns a lazy scan over it (core never collects). Falls
+        back to an in-core collect only in local mode or when no worker is reachable.
+        """
+        if self.execution_location == "local":
+            return lf.collect().lazy()
+        try:
+            fetcher = ExternalDfFetcher(
+                lf=lf,
+                file_ref=f"__runflow_{node_id}_{index}",
+                flow_id=self.flow_id,
+                node_id=node_id,
+                wait_on_completion=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - worker unreachable; degrade to in-core
+            logger.warning("Run-flow worker offload unavailable (%s); materializing row %s in core", exc, index)
+            return lf.collect().lazy()
+        if fetcher.has_error:
+            if fetcher.error_code == -1:
+                logger.warning("Run-flow worker materialize was killed; materializing row %s in core", index)
+                return lf.collect().lazy()
+            raise ValueError(fetcher.error_description or "Run-flow worker materialize failed")
+        return fetcher.get_result()
+
+    def _execute_run_flow_node(self, settings: input_schema.NodeRunFlow, fl: FlowDataEngine) -> FlowDataEngine:
+        """Run the sub-flow once per input row and return the unioned, lazily-built result."""
+        from flowfile_core.flowfile.api_runner import _first_error, _flow_run_lock
+        from flowfile_core.flowfile.manage.io_flowfile import open_flow
+
+        flow_path = self._resolve_run_flow_path(settings)
+        if not flow_path:
+            raise ValueError("Run-flow node has no sub-flow selected.")
+
+        specs = self._run_flow_param_specs(settings)
+        max_rows = max(0, settings.max_rows)
+
+        # Bounded, columns-limited collect to drive iteration (head+1 detects overflow).
+        input_lf = fl.data_frame.lazy() if isinstance(fl.data_frame, pl.DataFrame) else fl.data_frame
+        mapped_cols = list(dict.fromkeys(input_col for (_, input_col, _) in specs))
+        if mapped_cols:
+            driver_df = input_lf.select(mapped_cols).head(max_rows + 1).collect()
+        else:
+            total = input_lf.select(pl.len()).collect().item()
+            driver_df = pl.DataFrame({"__row__": range(min(total, max_rows + 1))})
+
+        if driver_df.height > max_rows:
+            self.flow_logger.warning(
+                f"Run-flow node {settings.node_id}: input exceeds max_rows={max_rows}; "
+                f"running the first {max_rows} rows and skipping the rest."
+            )
+            driver_df = driver_df.head(max_rows)
+
+        sub_flow = open_flow(Path(flow_path), user_id=settings.user_id)
+        api_nodes = [n for n in sub_flow.nodes if n.node_type == "api_response"]
+        if len(api_nodes) == 0:
+            raise ValueError("Run-flow sub-flow has no API Response node to define its output.")
+        if len(api_nodes) > 1:
+            raise ValueError("Run-flow sub-flow has more than one API Response node.")
+        api_node = api_nodes[0]
+
+        sub_flow.flow_settings.execution_mode = "Performance"
+        sub_flow.flow_settings.execution_location = self.execution_location
+        params_by_name = {p.name: p for p in sub_flow.flow_settings.parameters}
+
+        results: list[pl.LazyFrame] = []
+        n_iter = driver_df.height
+        with guard_sub_flow(str(Path(flow_path).resolve())):
+            for i, row in enumerate(driver_df.iter_rows(named=True)):
+                for param_name, input_col, _ in specs:
+                    param = params_by_name.get(param_name)
+                    if param is not None:
+                        value = row.get(input_col)
+                        param.default_value = "" if value is None else str(value)
+                with _flow_run_lock(sub_flow.flow_id):
+                    run_info = sub_flow.run_graph()
+                if run_info is None or not run_info.success:
+                    raise ValueError(_first_error(run_info) or f"Run-flow sub-flow failed on row {i}")
+                data = api_node.get_resulting_data()
+                if data is None:
+                    unconfigured = [n.node_id for n in sub_flow.nodes if not n.is_setup]
+                    if unconfigured:
+                        raise ValueError(
+                            f"Run-flow sub-flow has unconfigured node(s) {sorted(unconfigured)} that were "
+                            "saved without settings. Open the sub-flow, finish configuring/connecting every "
+                            "node, run it once to confirm it produces data, then re-save it."
+                        )
+                    detail = api_node.results.errors or _first_error(run_info)
+                    raise ValueError(
+                        "Run-flow sub-flow API Response node produced no data"
+                        + (
+                            f": {detail}"
+                            if detail
+                            else ". Check that the API Response node is connected to the branch whose "
+                            "data you want returned, and that the sub-flow runs and produces rows on its own."
+                        )
+                    )
+                row_lf = data.data_frame
+                if isinstance(row_lf, pl.DataFrame):
+                    row_lf = row_lf.lazy()
+                for _param_name, input_col, out_col in specs:
+                    value = row.get(input_col)
+                    row_lf = row_lf.with_columns(pl.lit("" if value is None else str(value)).alias(out_col))
+                results.append(self._materialize_run_flow_row(row_lf, settings.node_id, i))
+                if settings.delay_seconds and i < n_iter - 1:
+                    sleep(settings.delay_seconds)
+
+        if not results:
+            return FlowDataEngine()
+        return FlowDataEngine(pl.concat(results, how="diagonal_relaxed"))
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:

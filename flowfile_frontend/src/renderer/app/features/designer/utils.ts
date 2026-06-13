@@ -52,6 +52,7 @@ const BUILTIN_ICONS = new Set([
   "apply_model.svg",
   "evaluate_model.svg",
   "wait_for.svg",
+  "run_flow.svg",
 ]);
 
 const DEFAULT_ICON = "user-defined-icon.png";

@@ -585,3 +585,21 @@ def test_parameter_change_invalidates_predicted_schema():
     finally:
         os.unlink(csv_a)
         os.unlink(csv_b)
+
+
+# REST API node
+
+
+def test_rest_api_url_parameter_reaches_worker_settings():
+    """${param} in a REST API url resolves into the settings sent to the worker."""
+    from flowfile_core.flowfile.parameter_resolver import apply_parameters_in_place
+    from flowfile_core.flowfile.sources.external_sources.rest_api_source import build_rest_api_worker_settings
+
+    node = input_schema.NodeRestApiReader(
+        flow_id=1,
+        node_id=1,
+        rest_api_settings=input_schema.RestApiSettings(url="https://finnhub.io/api/v1/quote?symbol=${ticker}"),
+    )
+    apply_parameters_in_place(node, {"ticker": "AAPL"})
+    worker_settings = build_rest_api_worker_settings(node, None)
+    assert worker_settings.url == "https://finnhub.io/api/v1/quote?symbol=AAPL"

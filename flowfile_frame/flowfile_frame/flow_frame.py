@@ -417,6 +417,65 @@ class FlowFrame:
         except AttributeError:
             raise ValueError("Could not execute the function") from None
 
+    def run_flow(
+        self,
+        flow_reference: str | None = None,
+        *,
+        flow_registration_id: int | None = None,
+        parameter_mappings: dict[str, str] | list[Any] | None = None,
+        delay_seconds: float = 0.0,
+        max_rows: int = 1000,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """Run a saved sub-flow once per input row, mapping input columns to its ${parameters}.
+
+        For each input row the mapped column values are injected into the sub-flow's
+        ``${param}`` references; the sub-flow runs (sequentially, with an optional
+        ``delay_seconds`` between runs) and its single ``api_response`` node's output is
+        captured. Per-row outputs are unioned and a ``__param_value__`` /
+        ``__param_<name>__`` column records the value(s) used.
+
+        Args:
+            flow_reference: Filesystem path to the saved sub-flow (``.flowfile`` /
+                ``.yaml`` / ``.json``). Canonical reference.
+            flow_registration_id: Catalog registration id of the sub-flow; resolved to a
+                path at run time when ``flow_reference`` is not given.
+            parameter_mappings: Maps the sub-flow's ${parameters} to input columns —
+                either a dict ``{"ticker": "symbol"}`` (param -> column) or a list of
+                ``{"param_name": ..., "input_column": ...}`` dicts.
+            delay_seconds: Optional delay between per-row runs (rate-limit friendly).
+            max_rows: Cap on the number of input rows processed.
+            description: Optional node description.
+
+        Returns:
+            FlowFrame: A FlowFrame backed by the Run-flow node's unioned output.
+        """
+        from flowfile_core.schemas.input_schema import NodeRunFlow, ParameterMapping
+        from flowfile_frame.rest_api import get_current_user_id
+
+        if isinstance(parameter_mappings, dict):
+            mappings = [ParameterMapping(param_name=str(k), input_column=str(v)) for k, v in parameter_mappings.items()]
+        elif parameter_mappings:
+            mappings = [m if isinstance(m, ParameterMapping) else ParameterMapping(**m) for m in parameter_mappings]
+        else:
+            mappings = []
+
+        new_node_id = generate_node_id()
+        settings = NodeRunFlow(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            user_id=get_current_user_id(),
+            depending_on_id=self.node_id,
+            description=description,
+            flow_reference=flow_reference,
+            flow_registration_id=flow_registration_id,
+            parameter_mappings=mappings,
+            delay_seconds=delay_seconds,
+            max_rows=max_rows,
+        )
+        self.flow_graph.add_run_flow(settings)
+        return self._create_child_frame(new_node_id)
+
     @staticmethod
     def _generate_sort_polars_code(
         pure_sort_expr_strs: list[str],

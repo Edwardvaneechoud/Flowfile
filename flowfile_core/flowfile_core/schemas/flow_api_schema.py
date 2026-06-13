@@ -123,6 +123,20 @@ class PublishableFlow(BaseModel):
     file_exists: bool = True
 
 
+class RunnableFlow(BaseModel):
+    """A flow that can be run as a sub-flow (has an api_response node).
+
+    Surfaced by the Run-flow node's picker. Unlike ``PublishableFlow`` this carries the
+    flow's path (stored as the node's canonical ``flow_reference``) and does not exclude
+    flows already published as endpoints — a flow can be both an API and a sub-flow.
+    """
+
+    registration_id: int
+    name: str
+    flow_path: str
+    file_exists: bool = True
+
+
 class ApiKeyCreate(BaseModel):
     """Request body to mint a new API key for an endpoint."""
 
