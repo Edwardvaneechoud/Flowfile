@@ -1268,14 +1268,21 @@ def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenam
 
 
 @router.get("/node", response_model=output_model.NodeData, tags=["editor"])
-def get_node(flow_id: int, node_id: int, get_data: bool = False):
-    """Retrieves the complete state and data preview for a single node."""
+def get_node(flow_id: int, node_id: int, get_data: bool = False, include_output: bool = True):
+    """Retrieves the complete state and data preview for a single node.
+
+    When ``include_output`` is False the node's own output preview
+    (``main_output``) is skipped. The settings panel only needs the input
+    schemas, and computing the output can be expensive for data-dependent nodes
+    (e.g. a pivot must materialize data to determine its output columns), so the
+    editor opens settings with ``include_output=false`` for an instant response.
+    """
     logging.info(f"Getting node {node_id} from flow {flow_id}")
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(422, "Not found")
-    v = node.get_node_data(flow_id=flow.flow_id, include_example=get_data)
+    v = node.get_node_data(flow_id=flow.flow_id, include_example=get_data, include_output=include_output)
     return v
 
 
