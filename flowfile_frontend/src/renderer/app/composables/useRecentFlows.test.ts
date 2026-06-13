@@ -175,4 +175,19 @@ describe("useRecentFlows", () => {
 
     expect(recentFlows.value[0].catalogRef).toBe("General.marketing.a");
   });
+
+  it("records a catalogId when provided", () => {
+    const { recentFlows, recordFlow } = useRecentFlows();
+    recordFlow({ path: "/flows/a.yaml", name: "a", catalogRef: "General.default.a", catalogId: 7 });
+
+    expect(recentFlows.value[0].catalogId).toBe(7);
+  });
+
+  it("keeps catalogId on re-records without one", () => {
+    const { recentFlows, recordFlow } = useRecentFlows();
+    recordFlow({ path: "/flows/a.yaml", catalogId: 7 });
+    recordFlow({ path: "/flows/a.yaml" });
+
+    expect(recentFlows.value[0].catalogId).toBe(7);
+  });
 });

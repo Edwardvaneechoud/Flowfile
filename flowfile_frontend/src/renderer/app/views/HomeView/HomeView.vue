@@ -6,6 +6,7 @@
     @open="openDialogVisible = true"
     @browse-templates="browseTemplates"
     @open-recent="handleOpenRecent"
+    @remove-recent="handleRemoveRecent"
     @start-tutorial="handleStartTutorial"
   />
 
@@ -31,7 +32,7 @@ import { gettingStartedTutorial } from "../../components/tutorial/tutorials";
 const router = useRouter();
 const nodeStore = useNodeStore();
 const tutorialStore = useTutorialStore();
-const { recentFlows, recordFlowFromSettings, refreshCatalogRefs } = useRecentFlows();
+const { recentFlows, recordFlowFromSettings, refreshCatalogRefs, removeFlow } = useRecentFlows();
 const { openFlow } = useFlowOpener();
 
 const openDialogVisible = ref(false);
@@ -120,6 +121,9 @@ const handleOpenRecent = async (flowPath: string) => {
   const flowId = await openFlow(flowPath);
   if (flowId !== null) goToDesigner();
 };
+
+// Non-destructive: only clears the localStorage entry, never the file.
+const handleRemoveRecent = (flowPath: string) => removeFlow(flowPath);
 
 // The tutorial's data-tutorial anchors live in the designer header, so route
 // there first (mirrors Sidebar's guard).

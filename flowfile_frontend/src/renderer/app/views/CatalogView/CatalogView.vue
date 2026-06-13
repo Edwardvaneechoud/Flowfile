@@ -177,7 +177,7 @@
           @view-schedule-runs="navigateToScheduleRuns"
           @toggle-favorite="catalogStore.toggleFavorite($event)"
           @toggle-follow="catalogStore.toggleFollow($event)"
-          @open-flow="openFlowInDesigner($event)"
+          @open-flow="catalogStore.selectedFlow && openFlowInDesigner(catalogStore.selectedFlow)"
           @select-table="selectTable($event)"
           @delete-flow="handleDeleteFlow($event)"
           @rename-flow="handleRenameFlow"
@@ -525,6 +525,8 @@ import VisualizationViewer from "./VisualizationViewer.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { useRecentFlows } from "../../composables/useRecentFlows";
+import { findNamespacePath } from "../../types";
 import { catalogTabs } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
@@ -544,6 +546,7 @@ const route = useRoute();
 
 const catalogStore = useCatalogStore();
 const flowStore = useFlowStore();
+const { recordFlow } = useRecentFlows();
 
 // Namespace sharing (one dialog for the whole tree).
 const { canManageGrants } = useResourceSharing();
@@ -783,7 +786,7 @@ function onFlowMenuSelect(action: string) {
   const flow = flowMenu.value?.flow;
   if (!flow) return;
   if (action === "view") selectFlow(flow.id);
-  else if (action === "open") openFlowInDesigner(flow.flow_path);
+  else if (action === "open") openFlowInDesigner(flow);
   else if (action === "runs") {
     flowDetailFocusRuns.value = true;
     selectFlow(flow.id);
@@ -1091,10 +1094,23 @@ async function openRunSnapshot(runId: number) {
   }
 }
 
-async function openFlowInDesigner(flowPath: string) {
+async function openFlowInDesigner(
+  flow: Pick<FlowRegistration, "flow_path" | "name" | "namespace_id" | "id">,
+) {
   try {
-    const flowId = await FlowApi.importFlow(flowPath);
+    const flowId = await FlowApi.importFlow(flow.flow_path);
     flowStore.setFlowId(flowId);
+    // Catalog opens were never landing in recents (the home screen looked empty
+    // in docker, where flows are opened from the catalog rather than a file
+    // dialog). Record here, building catalogRef exactly like refreshCatalogRefs.
+    const nsPath =
+      flow.namespace_id != null ? findNamespacePath(catalogStore.tree, flow.namespace_id) : [];
+    recordFlow({
+      path: flow.flow_path,
+      name: flow.name,
+      catalogRef: nsPath.length ? `${nsPath.join(".")}.${flow.name}` : undefined,
+      catalogId: flow.id,
+    });
     router.push({ name: "designer" });
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to open flow");
