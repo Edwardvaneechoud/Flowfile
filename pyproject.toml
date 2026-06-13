@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.12.0"
+version = "0.12.1"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -19,7 +19,9 @@ include = [
     { path = "flowfile/flowfile/web/static/**/*", format = "sdist" },
     { path = "flowfile/flowfile/web/static/**/*", format = "wheel" },
     { path = "flowfile/flowfile/py.typed", format = "sdist" },
-    { path = "flowfile/flowfile/py.typed", format = "wheel" }
+    { path = "flowfile/flowfile/py.typed", format = "wheel" },
+    { path = "flowfile_core/flowfile_core/catalog/demo_flows/*.yaml", format = "sdist" },
+    { path = "flowfile_core/flowfile_core/catalog/demo_flows/*.yaml", format = "wheel" }
 ]
 
 [tool.poetry.dependencies]

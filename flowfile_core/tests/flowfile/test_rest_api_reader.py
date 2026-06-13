@@ -2,8 +2,8 @@
 
 Covers schema inference from a sample, credential resolution (stored secret by
 name, or inline plaintext), worker-settings construction, and node execution.
-All fetching is offloaded to the worker, so execution is tested with a mocked
-``ExternalRestApiFetcher`` — the core never makes an HTTP call.
+Local flows fetch in-process (mocked ``fetch_rest_api``); remote flows offload to
+the worker (mocked ``ExternalRestApiFetcher``) — the core never makes a real HTTP call.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def _add_reader(graph: FlowGraph, node: input_schema.NodeRestApiReader) -> None:
 
 
 class _FakeFetcher:
-    """Stands in for ExternalRestApiFetcher so the core never hits the worker/network."""
+    """Stands in for ExternalRestApiFetcher (remote/worker path) so the core never hits the worker/network."""
 
     last: dict = {}
     result = pl.LazyFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
@@ -61,6 +61,19 @@ class _FakeFetcher:
 
     def get_result(self):
         return _FakeFetcher.result
+
+
+def _patch_local_fetch(monkeypatch, result: pl.DataFrame) -> dict:
+    """Patch the in-process fetch engine (local execution path); returns a dict capturing the call."""
+    captured: dict = {}
+
+    def _fake(settings, *, secret=None):
+        captured["settings"] = settings
+        captured["secret"] = secret
+        return result
+
+    monkeypatch.setattr("shared.rest_api.fetch.fetch_rest_api", _fake)
+    return captured
 
 
 # --- schema inference ---------------------------------------------------------
@@ -145,14 +158,43 @@ def test_add_reader_clears_inline_plaintext_and_registers_node():
     assert registered.name == "rest_api_reader"
 
 
-# --- execution (worker-only, mocked fetcher) ---------------------------------
+# --- execution (local in-process / remote worker, both mocked) ---------------
 
 
-def test_execution_uses_worker_fetcher_and_stamps_schema(monkeypatch):
+def test_execution_local_fetches_in_process_and_stamps_schema(monkeypatch):
+    """Local execution fetches in-process via ``fetch_rest_api`` (no worker) and stamps the schema."""
+
+    def _no_worker(*args, **kwargs):
+        raise AssertionError("local execution must not use the worker fetcher")
+
+    monkeypatch.setattr(flow_graph_module, "ExternalRestApiFetcher", _no_worker)
+    captured = _patch_local_fetch(monkeypatch, pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]}))
+
+    graph = _graph(execution_location="local")
+    node = _make_node(
+        url="https://x/api",
+        auth=input_schema.RestApiAuthSettings(auth_type="bearer", secret="tok"),
+        pagination=input_schema.RestApiPaginationSettings(pagination_type="offset", page_size=2),
+    )
+    _add_reader(graph, node)
+
+    df = graph.get_node(1).get_resulting_data().data_frame.collect()
+
+    assert captured["settings"].url == "https://x/api"
+    assert captured["settings"].auth.bearer_token_encrypted is not None
+    assert captured["secret"] == "tok"  # the encrypted token is decrypted before the in-process fetch
+    assert df.height == 3
+    assert sorted(df["id"].to_list()) == [1, 2, 3]
+    assert node.fields is not None
+    assert {f.name for f in node.fields} == {"id", "name"}
+
+
+def test_execution_remote_offloads_to_worker_and_stamps_schema(monkeypatch):
+    """Remote execution offloads to the worker fetcher and stamps the schema."""
     monkeypatch.setattr(flow_graph_module, "ExternalRestApiFetcher", _FakeFetcher)
     _FakeFetcher.result = pl.LazyFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
 
-    graph = _graph(execution_location="local")  # even local must offload to the worker
+    graph = _graph(execution_location="remote")
     node = _make_node(
         url="https://x/api",
         auth=input_schema.RestApiAuthSettings(auth_type="bearer", secret="tok"),
@@ -171,8 +213,7 @@ def test_execution_uses_worker_fetcher_and_stamps_schema(monkeypatch):
 
 
 def test_execution_empty_result_returns_empty_frame(monkeypatch):
-    monkeypatch.setattr(flow_graph_module, "ExternalRestApiFetcher", _FakeFetcher)
-    _FakeFetcher.result = pl.LazyFrame({})
+    _patch_local_fetch(monkeypatch, pl.DataFrame({}))
 
     graph = _graph(execution_location="local")
     node = _make_node(url="https://x/api", record_path="items")
@@ -231,8 +272,7 @@ def test_build_worker_settings_routes_bearer_and_basic():
 def test_execution_aligns_fetched_frame_to_cached_schema(monkeypatch):
     """When the node has sampled fields, the fetched frame is aligned to them:
     a missing column is added as a typed null and column order follows the schema."""
-    monkeypatch.setattr(flow_graph_module, "ExternalRestApiFetcher", _FakeFetcher)
-    _FakeFetcher.result = pl.LazyFrame({"id": [1, 2], "name": ["a", "b"]})
+    _patch_local_fetch(monkeypatch, pl.DataFrame({"id": [1, 2], "name": ["a", "b"]}))
 
     graph = _graph(execution_location="local")
     node = _make_node(url="https://x/api")
@@ -248,13 +288,12 @@ def test_execution_aligns_fetched_frame_to_cached_schema(monkeypatch):
     assert df["extra"].null_count() == 2
 
 
-def test_read_api_builds_graph_and_executes_via_worker(monkeypatch):
+def test_read_api_builds_graph_and_executes_locally(monkeypatch):
     """``flowfile_frame.read_api`` coerces auth/pagination, builds the node, and
-    materialises through the (faked) worker fetcher — no real HTTP, no live worker."""
+    materialises in-process — read_api graphs are local, so no real HTTP, no live worker."""
     import flowfile_frame as ff
 
-    monkeypatch.setattr(flow_graph_module, "ExternalRestApiFetcher", _FakeFetcher)
-    _FakeFetcher.result = pl.LazyFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
+    captured = _patch_local_fetch(monkeypatch, pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]}))
 
     frame = ff.read_api(
         "https://x/api",
@@ -265,7 +304,7 @@ def test_read_api_builds_graph_and_executes_via_worker(monkeypatch):
 
     assert df.height == 3
     assert sorted(df["id"].to_list()) == [1, 2, 3]
-    settings = _FakeFetcher.last["settings"]
+    settings = captured["settings"]
     assert settings.url == "https://x/api"
     assert settings.auth.bearer_token_encrypted is not None
     assert settings.pagination.pagination_type.value == "offset"
