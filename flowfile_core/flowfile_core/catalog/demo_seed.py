@@ -30,6 +30,7 @@ SCHEMA_MARKET = "market"
 
 FX_FLOW_NAME = "Daily FX Sync"
 FX_TABLE = "fx_rates"
+FX_LOG_TABLE = "fx_sync_log"
 FX_FLOW_ID = 920001
 FX_URL = "https://api.frankfurter.app/latest?base=USD"
 FX_CRON = "0 6 * * *"
@@ -153,7 +154,7 @@ def _gen_sales(customers: pl.DataFrame, products: pl.DataFrame, regions: pl.Data
 
 
 def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> FlowGraph:
-    """Build the FX-sync flow graph: REST read -> select (rename/drop) -> catalog upsert."""
+    """Build the FX-sync flow: REST read -> select majors -> unpivot to long -> catalog upsert."""
     flow_settings = schemas.FlowSettings(
         flow_id=FX_FLOW_ID,
         name=FX_FLOW_NAME,
@@ -187,24 +188,85 @@ def _build_fx_flow(user_id: int, market_namespace_id: int, flow_path: Path) -> F
             select_input=select_input,
         )
     )
-    graph.add_catalog_writer(
-        input_schema.NodeCatalogWriter(
+    graph.add_unpivot(
+        input_schema.NodeUnpivot(
             flow_id=FX_FLOW_ID,
             node_id=3,
             user_id=user_id,
             depending_on_id=2,
+            description="Currencies to long format",
+            unpivot_input=transform_schema.UnpivotInput(index_columns=["date"], value_columns=list(FX_CURRENCIES)),
+        )
+    )
+    graph.add_select(
+        input_schema.NodeSelect(
+            flow_id=FX_FLOW_ID,
+            node_id=4,
+            user_id=user_id,
+            depending_on_id=3,
+            keep_missing=False,
+            description="Name currency/rate columns",
+            select_input=[
+                transform_schema.SelectInput(old_name="date", new_name="date", keep=True, position=0),
+                transform_schema.SelectInput(old_name="variable", new_name="currency", keep=True, position=1),
+                transform_schema.SelectInput(old_name="value", new_name="rate", keep=True, position=2),
+            ],
+        )
+    )
+    graph.add_catalog_writer(
+        input_schema.NodeCatalogWriter(
+            flow_id=FX_FLOW_ID,
+            node_id=5,
+            user_id=user_id,
+            depending_on_id=4,
             description=f"Upsert into {FX_TABLE}",
             catalog_write_settings=input_schema.CatalogWriteSettings(
                 table_name=FX_TABLE,
                 namespace_id=market_namespace_id,
                 write_mode="upsert",
-                merge_keys=["date"],
+                merge_keys=["date", "currency"],
                 description="Daily USD exchange rates for major currencies (ECB via frankfurter.app)",
             ),
         )
     )
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2, "main"))
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3, "main"))
+    # Second output: a per-sync stats row that accumulates into a log over days.
+    graph.add_group_by(
+        input_schema.NodeGroupBy(
+            flow_id=FX_FLOW_ID,
+            node_id=6,
+            user_id=user_id,
+            depending_on_id=4,
+            description="Per-date sync stats",
+            groupby_input=transform_schema.GroupByInput(
+                agg_cols=[
+                    transform_schema.AggColl("date", "groupby", "date"),
+                    transform_schema.AggColl("currency", "count", "currencies"),
+                    transform_schema.AggColl("rate", "min", "min_rate"),
+                    transform_schema.AggColl("rate", "max", "max_rate"),
+                    transform_schema.AggColl("rate", "mean", "avg_rate"),
+                ]
+            ),
+        )
+    )
+    graph.add_catalog_writer(
+        input_schema.NodeCatalogWriter(
+            flow_id=FX_FLOW_ID,
+            node_id=7,
+            user_id=user_id,
+            depending_on_id=6,
+            description=f"Upsert into {FX_LOG_TABLE}",
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name=FX_LOG_TABLE,
+                namespace_id=market_namespace_id,
+                write_mode="upsert",
+                merge_keys=["date"],
+                description="Daily FX sync log: currency count and rate stats per sync date",
+            ),
+        )
+    )
+    for a, b in ((1, 2), (2, 3), (3, 4), (4, 5), (4, 6), (6, 7)):
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(a, b, "main"))
+    graph.apply_layout()
     return graph
 
 
@@ -264,6 +326,7 @@ def _build_sales_flow(user_id: int, analytics_namespace_id: int, flow_path: Path
     )
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2, "main"))
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3, "main"))
+    graph.apply_layout()
     return graph
 
 
