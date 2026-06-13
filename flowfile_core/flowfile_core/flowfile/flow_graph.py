@@ -20,6 +20,7 @@ import yaml
 from fastapi.exceptions import HTTPException
 from pyarrow.parquet import ParquetFile
 
+from flowfile_core.auth import sharing
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import check_source_versions_current, delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -27,6 +28,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
@@ -135,7 +137,7 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
 )
 from flowfile_core.utils.arrow_reader import get_read_top_n
-from shared.delta_utils import get_delta_size_bytes, merge_into_delta
+from shared.delta_utils import get_delta_partition_columns, get_delta_size_bytes, merge_into_delta
 from shared.delta_utils import write_delta as _write_delta
 from shared.google_analytics.models import (
     GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
@@ -369,19 +371,27 @@ def _resolve_virtual_table(
     run_location: Literal["remote", "local"] | None = None,
     node_logger: NodeLogger = None,
     source_table_versions: str | None = None,
+    user_id: int | None = None,
 ) -> pl.LazyFrame:
     """Resolve a virtual table to a LazyFrame.
 
     Optimized tables deserialize a stored execution plan if source table
     versions are still current; otherwise falls back to re-executing
     the producer flow via CatalogService.
+
+    ``user_id`` (the flow's executing principal) is threaded into
+    ``resolve_virtual_flow_table`` so a query virtual table's referenced-table
+    grants are enforced during flow execution, not just on the API path. ``None``
+    means an internal/unscoped run (scheduler, CLI, electron) → unrestricted.
     """
     if is_optimized and serialized_lf and check_source_versions_current(source_table_versions):
         return pl.LazyFrame.deserialize(_io.BytesIO(serialized_lf))
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
         svc = CatalogService(repo)
-        return svc.resolve_virtual_flow_table(catalog_table_id, run_location=run_location, node_logger=node_logger)
+        return svc.resolve_virtual_flow_table(
+            catalog_table_id, user_id=user_id, run_location=run_location, node_logger=node_logger
+        )
 
 
 class CatalogSqlTables(NamedTuple):
@@ -400,15 +410,43 @@ def ml_flow_model_path(flow_id: int, train_node_id: int | str) -> Path:
     return storage.get_flow_cache_directory(flow_id) / "ml_models" / f"{train_node_id}.json"
 
 
-def _resolve_catalog_sql_tables(node_id: int | str) -> CatalogSqlTables:
-    """Resolve all catalog tables (physical Delta + virtual) for a SQL query node."""
+def _accessible_catalog_table_ids(db, user_id: int | None) -> set[int] | None:
+    """Catalog-table ids the executing principal may read, or ``None`` for unrestricted.
+
+    ``None`` means no filtering: internal/scheduler/CLI runs (``user_id is None``),
+    electron/single-user mode (sharing disabled), or an admin. A ``user_id`` that
+    doesn't resolve to a ``User`` row denies everything (a stale/forged id must
+    never widen access).
+    """
+    if user_id is None or not sharing.sharing_enabled():
+        return None
+    user = db.get(db_models.User, user_id)
+    if user is None:
+        return set()
+    if getattr(user, "is_admin", False):
+        return None
+    from flowfile_core.catalog.access import AccessResolver
+
+    return AccessResolver(db, user).accessible_ids("catalog_table")
+
+
+def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) -> CatalogSqlTables:
+    """Resolve all catalog tables (physical Delta + virtual) for a SQL query node.
+
+    In multi-user mode the registered tables are restricted to those the
+    executing ``user_id`` may read, mirroring ``CatalogService.execute_sql_query``;
+    a query referencing an inaccessible table simply finds it unregistered.
+    """
     table_paths: dict[str, str] = {}
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]] = {}
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
+            accessible = _accessible_catalog_table_ids(db, user_id)
             seen_names: set[str] = set()
             for t in repo.list_tables():
+                if accessible is not None and t.id not in accessible:
+                    continue
                 if t.name in seen_names:
                     logger.warning(
                         "Duplicate table name %r in catalog SQL context for node %s; "
@@ -444,6 +482,9 @@ class CatalogTableInfo(NamedTuple):
     serialized_lf: bytes | None
     is_optimized: bool
     source_table_versions: str | None = None
+    # False when the executing principal may not read the table; the reader
+    # node's compute then fails closed instead of scanning the data.
+    authorized: bool = True
 
 
 def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogReader") -> CatalogTableInfo:
@@ -477,6 +518,19 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                             node_catalog_reader.node_id,
                             exc_info=True,
                         )
+
+            # Authorize the executing principal (node.user_id, server-stamped and
+            # excluded from serialization) against the resolved table. user_id None
+            # → internal/scheduler/CLI run or electron mode → unrestricted.
+            effective_id = table_record.id if table_record is not None else node_catalog_reader.catalog_table_id
+            if effective_id is not None:
+                if not sharing.user_id_can_use(db, node_catalog_reader.user_id, "catalog_table", effective_id):
+                    return CatalogTableInfo(None, "physical", None, False, None, authorized=False)
+            elif sharing.sharing_enabled() and node_catalog_reader.user_id is not None:
+                # Restricted run resolving purely by name with no concrete table id
+                # to authorize: fail closed instead of falling through to a path.
+                return CatalogTableInfo(None, "physical", None, False, None, authorized=False)
+
             if table_record is not None:
                 table_type = table_record.table_type
                 if table_type == "virtual":
@@ -507,13 +561,16 @@ def _write_catalog_delta_local(
     dest_path: Path,
     delta_mode: str,
     merge_keys: list[str] | None,
+    partition_by: list[str] | None = None,
 ) -> TableWriteMetadata | None:
     """Write a Delta table locally. Returns metadata dict, or ``None`` when the write was skipped."""
     dest = str(dest_path)
     if delta_mode in ("upsert", "update", "delete"):
-        wrote = merge_into_delta(df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=merge_keys)
+        wrote = merge_into_delta(
+            df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=merge_keys, partition_by=partition_by
+        )
     else:
-        wrote = _write_delta(df.data_frame, dest, mode=delta_mode)
+        wrote = _write_delta(df.data_frame, dest, mode=delta_mode, partition_by=partition_by)
     if not wrote:
         return None
     return {
@@ -563,6 +620,7 @@ def _register_catalog_table(
     meta_kwargs: TableWriteMetadata,
 ) -> None:
     """Register or update the catalog table entry, cleaning up orphaned storage on failure for new tables."""
+    partition_columns = get_delta_partition_columns(dest_path) if is_delta_table(dest_path) else []
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -574,6 +632,7 @@ def _register_catalog_table(
                     source_registration_id=source_registration_id,
                     description=settings.description,
                     storage_format="delta",
+                    partition_columns=partition_columns,
                     **meta_kwargs,
                 )
             else:
@@ -585,6 +644,7 @@ def _register_catalog_table(
                     description=settings.description,
                     source_registration_id=source_registration_id,
                     storage_format="delta",
+                    partition_columns=partition_columns,
                     **meta_kwargs,
                 )
     except Exception:
@@ -783,13 +843,14 @@ def _handle_physical_table_write(
             "output_path": str(dest_path),
             "merge_mode": delta_mode,
             "merge_keys": settings.merge_keys,
+            "partition_by": settings.partition_by,
         }
     else:
         op_type = "write_delta"
-        op_kwargs = {"output_path": str(dest_path), "mode": delta_mode}
+        op_kwargs = {"output_path": str(dest_path), "mode": delta_mode, "partition_by": settings.partition_by}
 
     if graph.flow_settings.execution_location == "local":
-        meta_kwargs = _write_catalog_delta_local(df, dest_path, delta_mode, settings.merge_keys)
+        meta_kwargs = _write_catalog_delta_local(df, dest_path, delta_mode, settings.merge_keys, settings.partition_by)
     else:
         meta_kwargs = _write_catalog_delta_remote(
             flow_id=graph.flow_id,
@@ -3411,7 +3472,7 @@ class FlowGraph:
         """
 
         sql_code = node_catalog_reader.sql_query
-        resolved = _resolve_catalog_sql_tables(node_catalog_reader.node_id)
+        resolved = _resolve_catalog_sql_tables(node_catalog_reader.node_id, node_catalog_reader.user_id)
         table_paths = resolved.table_paths
         virtual_tables = resolved.virtual_tables
 
@@ -3431,6 +3492,7 @@ class FlowGraph:
                         node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
                         run_location=self.execution_location,
                         source_table_versions=stv,
+                        user_id=node_catalog_reader.user_id,
                     ),
                 )
             return FlowDataEngine(ctx.execute(sql_code))
@@ -3475,8 +3537,14 @@ class FlowGraph:
         _is_optimized = info.is_optimized
         _catalog_table_id = node_catalog_reader.catalog_table_id
         _source_table_versions = info.source_table_versions
+        _authorized = info.authorized
+        _user_id = node_catalog_reader.user_id
 
         def _func() -> FlowDataEngine:
+            if not _authorized:
+                raise PermissionError(
+                    f"Not authorized to read the catalog table for node {node_catalog_reader.node_id}"
+                )
             if _table_type == "virtual":
                 return FlowDataEngine(
                     _resolve_virtual_table(
@@ -3486,6 +3554,7 @@ class FlowGraph:
                         node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
                         run_location=self.execution_location,
                         source_table_versions=_source_table_versions,
+                        user_id=_user_id,
                     )
                 )
 
@@ -3936,7 +4005,9 @@ class FlowGraph:
                         ),
                     )
                 # OAuth needs the per-instance client config; service accounts don't.
-                oauth_cfg = get_google_oauth_config(db, node_ga_reader.user_id) if auth_method == "oauth" else None
+                # Resolved from the CONNECTION OWNER, not the run user: a group-shared
+                # OAuth connection must use the owner's Google client config.
+                oauth_cfg = get_google_oauth_config(db, db_conn.user_id) if auth_method == "oauth" else None
 
             common_kwargs = dict(
                 property_id=ga_settings.property_id,

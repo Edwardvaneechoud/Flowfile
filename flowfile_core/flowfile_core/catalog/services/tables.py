@@ -10,11 +10,13 @@ from uuid import uuid4
 
 from deltalake import DeltaTable
 from pyarrow import dataset as ds
+from sqlalchemy.orm.attributes import flag_modified
 
 from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
     get_delta_table_size_bytes,
     is_delta_table,
+    is_legacy_parquet,
     table_exists,
 )
 from flowfile_core.catalog.exceptions import (
@@ -32,12 +34,16 @@ from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
 from flowfile_core.database.models import CatalogNamespace, CatalogTable, TableFavorite
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    trigger_optimize_catalog_table,
     trigger_read_table_metadata,
+    trigger_vacuum_catalog_table,
 )
 from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
     ColumnSchema,
     FlowSummary,
+    OptimizeTableResponse,
+    VacuumTableResponse,
 )
 from shared.storage_config import storage
 
@@ -219,6 +225,17 @@ class TableService:
         except (json.JSONDecodeError, KeyError, TypeError):
             return []
 
+    @staticmethod
+    def _parse_partition_columns(table: CatalogTable) -> list[str] | None:
+        """Parse the JSON-encoded partition columns from a catalog table."""
+        raw = getattr(table, "partition_columns", None)
+        if not raw:
+            return None
+        try:
+            return list(json.loads(raw))
+        except (json.JSONDecodeError, TypeError):
+            return None
+
     def _resolve_flow_name(self, registration_id: int | None) -> str | None:
         """Look up a flow registration name by id, returning None when absent."""
         if not registration_id:
@@ -329,6 +346,7 @@ class TableService:
             sql_query=getattr(table, "sql_query", None),
             polars_plan=getattr(table, "polars_plan", None),
             source_table_versions=getattr(table, "source_table_versions", None),
+            partition_columns=self._parse_partition_columns(table),
             created_at=table.created_at,
             updated_at=table.updated_at,
         )
@@ -387,6 +405,7 @@ class TableService:
                     sql_query=getattr(table, "sql_query", None),
                     polars_plan=getattr(table, "polars_plan", None),
                     source_table_versions=getattr(table, "source_table_versions", None),
+                    partition_columns=self._parse_partition_columns(table),
                     created_at=table.created_at,
                     updated_at=table.updated_at,
                 )
@@ -488,6 +507,7 @@ class TableService:
         row_count: int | None = None,
         column_count: int | None = None,
         size_bytes: int | None = None,
+        partition_columns: list[str] | None = None,
     ) -> CatalogTableOut:
         """Register an already-materialized table (Delta or Parquet) in the catalog."""
         self.validate_table_registration(name, namespace_id)
@@ -512,6 +532,7 @@ class TableService:
             source_registration_id=source_registration_id,
             source_run_id=source_run_id,
             storage_format=storage_format,
+            partition_columns=partition_columns,
         )
 
     def register_table_from_parquet(
@@ -549,6 +570,7 @@ class TableService:
         row_count: int | None = None,
         column_count: int | None = None,
         size_bytes: int | None = None,
+        partition_columns: list[str] | None = None,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table **in-place**."""
         table = self.repo.get_table(table_id)
@@ -581,6 +603,8 @@ class TableService:
         table.row_count = row_count
         table.column_count = column_count
         table.size_bytes = size_bytes
+        if partition_columns is not None:
+            table.partition_columns = json.dumps(partition_columns) if partition_columns else None
         if source_registration_id is not None:
             table.source_registration_id = source_registration_id
         if source_run_id is not None:
@@ -608,6 +632,7 @@ class TableService:
         source_registration_id: int | None,
         source_run_id: int | None,
         storage_format: str = "delta",
+        partition_columns: list[str] | None = None,
     ) -> CatalogTableOut:
         table = CatalogTable(
             name=name,
@@ -620,11 +645,88 @@ class TableService:
             row_count=row_count,
             column_count=column_count,
             size_bytes=size_bytes,
+            partition_columns=json.dumps(partition_columns) if partition_columns else None,
             source_registration_id=source_registration_id,
             source_run_id=source_run_id,
         )
         table = self.repo.create_table(table)
         return self.table_to_out(table)
+
+    # ---- Delta maintenance (optimize / vacuum) --------------------------- #
+
+    def _require_delta_table_path(self, table: CatalogTable) -> Path:
+        """Guard: ensure *table* is a physical on-disk Delta table, else raise ``ValueError``."""
+        if getattr(table, "table_type", "physical") == "virtual" or not table.file_path:
+            raise ValueError(f"Table '{table.name}' is virtual and has no Delta storage to maintain")
+        path = Path(table.file_path)
+        if table.storage_format != "delta" or is_legacy_parquet(path) or not is_delta_table(path):
+            raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be optimized or vacuumed")
+        return path
+
+    def _update_table_size(self, table: CatalogTable, size_bytes: int | None) -> None:
+        """Persist a recomputed size after a maintenance op."""
+        if size_bytes is None:
+            return
+        table.size_bytes = size_bytes
+        # Maintenance must not look like a data change: table-trigger schedules fire on
+        # updated_at, so force the current value into the UPDATE to suppress onupdate.
+        flag_modified(table, "updated_at")
+        self.repo.update_table(table)
+
+    def optimize_table(self, table_id: int, z_order_columns: list[str] | None = None) -> OptimizeTableResponse:
+        """Compact (and optionally Z-order) a Delta catalog table, refreshing its size."""
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        data_path = self._require_delta_table_path(table)
+
+        if z_order_columns:
+            valid = {c.name for c in self._parse_schema_columns(table)}
+            missing = [c for c in z_order_columns if c not in valid]
+            if missing:
+                raise ValueError(f"z_order_columns not in table schema: {missing}")
+
+        if _should_offload():
+            result = trigger_optimize_catalog_table(data_path.name, z_order_columns)
+            metrics, size_bytes = result.get("metrics", {}), result.get("size_bytes")
+        else:
+            from shared.delta_utils import optimize_delta
+
+            metrics = optimize_delta(str(data_path), z_order_columns=z_order_columns or None)
+            size_bytes = get_delta_table_size_bytes(data_path)
+
+        self._update_table_size(table, size_bytes)
+        return OptimizeTableResponse(metrics=metrics, size_bytes=size_bytes)
+
+    def vacuum_table(
+        self,
+        table_id: int,
+        retention_hours: int = 168,
+        dry_run: bool = True,
+    ) -> VacuumTableResponse:
+        """Vacuum tombstoned files from a Delta catalog table; refresh size on a real run."""
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        data_path = self._require_delta_table_path(table)
+
+        if _should_offload():
+            result = trigger_vacuum_catalog_table(data_path.name, retention_hours, dry_run)
+            files, size_bytes = result.get("files_removed", []), result.get("size_bytes")
+        else:
+            from shared.delta_utils import vacuum_delta
+
+            files = vacuum_delta(str(data_path), retention_hours=retention_hours, dry_run=dry_run)
+            size_bytes = get_delta_table_size_bytes(data_path)
+
+        if not dry_run:
+            self._update_table_size(table, size_bytes)
+        return VacuumTableResponse(
+            dry_run=dry_run,
+            files_removed=list(files),
+            file_count=len(files),
+            size_bytes=size_bytes,
+        )
 
     # ---- Path resolution ------------------------------------------------- #
 

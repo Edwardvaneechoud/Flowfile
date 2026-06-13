@@ -13,6 +13,7 @@ from flowfile_core.flowfile.manage.compatibility_enhancements import (
     ensure_description,
     ensure_compatibility_node_read,
     ensure_compatibility_node_output,
+    ensure_compatibility_node_cloud_storage_writer,
     ensure_flow_settings,
 )
 from flowfile_core.schemas import input_schema, schemas
@@ -229,6 +230,40 @@ class TestEnsureDescription:
         node = NodeLike()
         ensure_description(node)
         assert node.description == "existing"
+
+
+class TestEnsureCompatibilityNodeCloudStorageWriter:
+    """Test ensure_compatibility_node_cloud_storage_writer function."""
+
+    @staticmethod
+    def _make_node():
+        from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettings
+
+        settings = CloudStorageWriteSettings(resource_path="s3://bucket/table", file_format="delta")
+        return input_schema.NodeCloudStorageWriter(
+            flow_id=1, node_id=1, user_id=1, cloud_storage_settings=settings
+        )
+
+    def test_adds_missing_partition_by(self):
+        node = self._make_node()
+        # Simulate a pickle written before partition_by existed: the field is absent from __dict__
+        del node.cloud_storage_settings.__dict__["partition_by"]
+        with pytest.raises(AttributeError):
+            _ = node.cloud_storage_settings.partition_by
+
+        ensure_compatibility_node_cloud_storage_writer(node)
+        assert node.cloud_storage_settings.partition_by is None
+
+    def test_preserves_existing_partition_by(self):
+        node = self._make_node()
+        node.cloud_storage_settings.partition_by = ["region"]
+        ensure_compatibility_node_cloud_storage_writer(node)
+        assert node.cloud_storage_settings.partition_by == ["region"]
+
+    def test_handles_missing_settings(self):
+        node = MagicMock()
+        node.cloud_storage_settings = None
+        ensure_compatibility_node_cloud_storage_writer(node)
 
 
 class TestEnsureFlowSettings:

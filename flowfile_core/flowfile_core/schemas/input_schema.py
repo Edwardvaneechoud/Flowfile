@@ -18,6 +18,7 @@ from pydantic import (
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
+from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.schemas.yaml_types import (
     NodeCrossJoinYaml,
     NodeFuzzyMatchYaml,
@@ -869,6 +870,8 @@ class FullDatabaseConnectionInterface(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    id: int | None = None
+    access: AccessInfo | None = None
 
 
 class DatabaseSettings(BaseModel):
@@ -1383,11 +1386,14 @@ class CatalogWriteSettings(BaseModel):
     description: str | None = None
     write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite"
     merge_keys: list[str] = Field(default_factory=list)
+    partition_by: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_merge_keys(self) -> "CatalogWriteSettings":
         if self.write_mode in ("upsert", "update", "delete") and not self.merge_keys:
             raise ValueError(f"merge_keys must be non-empty when write_mode is '{self.write_mode}'")
+        if self.partition_by and self.write_mode == "virtual":
+            raise ValueError("partition_by is not allowed for virtual tables")
         return self
 
 

@@ -195,7 +195,7 @@ class SharedFilesystemStorage(ArtifactStorageBackend):
 
     def exists(self, storage_key: str) -> bool:
         """Check if blob exists in permanent storage."""
-        return (self.permanent / storage_key).exists()
+        return (self.permanent / storage_key).is_file()
 
     def _compute_sha256(self, path: Path) -> str:
         """Compute SHA-256 hash of a file using streaming to handle large files."""

@@ -9,6 +9,7 @@ from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from flowfile_core.schemas.sharing_schema import AccessInfo
 from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
 
 # ==================== Namespace Schemas ====================
@@ -34,6 +35,9 @@ class NamespaceOut(BaseModel):
     owner_id: int
     created_at: datetime
     updated_at: datetime
+    # How the requesting user accesses this resource (multi-user mode); None when
+    # unrestricted (admin / electron / internal) — the frontend shows no badge then.
+    access: AccessInfo | None = None
 
     model_config = {"from_attributes": True}
 
@@ -83,6 +87,7 @@ class FlowRegistrationOut(BaseModel):
     artifact_count: int = 0
     tables_produced: list["CatalogTableSummary"] = Field(default_factory=list)
     tables_read: list["CatalogTableSummary"] = Field(default_factory=list)
+    access: AccessInfo | None = None
 
     model_config = {"from_attributes": True}
 
@@ -184,6 +189,7 @@ class GlobalArtifactOut(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     blob_exists: bool = True  # False when the backing blob is missing (filesystem backend only)
+    access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -312,8 +318,10 @@ class CatalogTableOut(BaseModel):
     sql_query: str | None = None
     polars_plan: str | None = None
     source_table_versions: str | None = None
+    partition_columns: list[str] | None = None
     created_at: datetime
     updated_at: datetime
+    access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -358,6 +366,42 @@ class DeltaTableHistory(BaseModel):
 
     current_version: int
     history: list[DeltaVersionCommit] = Field(default_factory=list)
+
+
+# ==================== Delta Maintenance Schemas ====================
+
+
+class OptimizeTableRequest(BaseModel):
+    """Request to compact (and optionally Z-order) a Delta catalog table."""
+
+    z_order_columns: list[str] | None = None
+
+
+class OptimizeTableResponse(BaseModel):
+    """Result of an optimize operation: raw deltalake metrics + table size after."""
+
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    size_bytes: int | None = None
+
+
+class VacuumTableRequest(BaseModel):
+    """Request to vacuum tombstoned files from a Delta catalog table.
+
+    ``dry_run`` (default) only lists what would be removed. Retention below the
+    Delta 168h minimum is permitted (the retention guard is relaxed server-side).
+    """
+
+    retention_hours: int = Field(default=168, ge=0)
+    dry_run: bool = True
+
+
+class VacuumTableResponse(BaseModel):
+    """Result of a vacuum operation."""
+
+    dry_run: bool
+    files_removed: list[str] = Field(default_factory=list)
+    file_count: int = 0
+    size_bytes: int | None = None
 
 
 # ==================== SQL Query Schemas ====================
@@ -451,6 +495,7 @@ class VisualizationOut(BaseModel):
     table_full_name: str | None = None
     table_type: str | None = None
     namespace_name: str | None = None
+    access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -619,6 +664,7 @@ class DashboardOut(BaseModel):
     created_by: int | None = None
     created_at: datetime
     updated_at: datetime
+    access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

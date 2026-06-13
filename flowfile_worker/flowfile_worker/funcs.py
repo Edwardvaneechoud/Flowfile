@@ -578,6 +578,7 @@ def write_delta(
     file_path: str,
     output_path: str,
     mode: str = "overwrite",
+    partition_by: list[str] | None = None,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -594,7 +595,7 @@ def write_delta(
 
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
-        wrote = _write_delta(df, output_path, mode=mode)
+        wrote = _write_delta(df, output_path, mode=mode, partition_by=partition_by)
 
         if not wrote:
             queue.put({"skipped": True})
@@ -636,6 +637,7 @@ def merge_delta(
     output_path: str,
     merge_mode: str = "upsert",
     merge_keys: list[str] | None = None,
+    partition_by: list[str] | None = None,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -653,7 +655,9 @@ def merge_delta(
 
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
-        wrote = merge_into_delta(df, output_path, merge_mode=merge_mode, merge_keys=merge_keys)
+        wrote = merge_into_delta(
+            df, output_path, merge_mode=merge_mode, merge_keys=merge_keys, partition_by=partition_by
+        )
 
         if not wrote:
             queue.put({"skipped": True})
@@ -724,6 +728,67 @@ def materialize_catalog_table_task(
                 "row_count": df.height,
                 "column_count": len(df.columns),
                 "size_bytes": size_bytes,
+            }
+        )
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def optimize_catalog_table_task(
+    table_path: str,
+    z_order_columns: list[str] | None,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+):
+    """Subprocess task: compact (and optionally Z-order) a Delta catalog table.
+
+    *table_path* is the absolute, already-validated table directory (the route
+    resolves it in the parent process so this works regardless of the child's
+    storage configuration).
+    """
+    try:
+        from shared.delta_utils import optimize_delta
+
+        metrics = optimize_delta(table_path, z_order_columns=z_order_columns or None)
+        queue.put({"metrics": metrics, "size_bytes": _get_delta_size_bytes(Path(table_path))})
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def vacuum_catalog_table_task(
+    table_path: str,
+    retention_hours: int,
+    dry_run: bool,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+):
+    """Subprocess task: vacuum tombstoned files from a Delta catalog table.
+
+    *table_path* is the absolute, already-validated table directory.
+    """
+    try:
+        from shared.delta_utils import vacuum_delta
+
+        files = vacuum_delta(table_path, retention_hours=retention_hours, dry_run=dry_run)
+        queue.put(
+            {
+                "files_removed": list(files),
+                "file_count": len(files),
+                "size_bytes": _get_delta_size_bytes(Path(table_path)),
             }
         )
         with progress.get_lock():

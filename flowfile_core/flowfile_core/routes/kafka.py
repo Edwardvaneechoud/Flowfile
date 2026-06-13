@@ -27,6 +27,10 @@ from flowfile_core.kafka.connection_manager import (
     test_kafka_connection,
     update_kafka_connection,
 )
+from flowfile_core.routes._connection_sharing import (
+    authorize_connection_mutation,
+    require_credentials_on_target_change,
+)
 from flowfile_core.schemas.catalog_schema import FlowRegistrationOut
 from flowfile_core.schemas.kafka_schemas import (
     KafkaConnectionCreate,
@@ -81,9 +85,33 @@ def update_kafka_connection_route(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Update an existing Kafka connection."""
+    """Update an existing Kafka connection (own, or group-shared with manage access)."""
+    db_conn = get_kafka_connection(db, connection_id, current_user.id)
+    if db_conn is None:
+        raise HTTPException(status_code=404, detail=f"Kafka connection {connection_id} not found")
+    if authorize_connection_mutation(db, current_user, "kafka_connection", db_conn):
+        provided = update.model_fields_set
+        changed = [
+            field
+            for field in (
+                "bootstrap_servers",
+                "security_protocol",
+                "sasl_mechanism",
+                "schema_registry_url",
+                "ssl_ca_location",
+                "ssl_cert_location",
+            )
+            if field in provided and getattr(update, field) != getattr(db_conn, field)
+        ]
+        has_new_credentials = bool(
+            (update.sasl_password is not None and update.sasl_password.get_secret_value())
+            or (update.ssl_key_pem is not None and update.ssl_key_pem.get_secret_value())
+        )
+        has_bundled_secrets = db_conn.sasl_password_id is not None or db_conn.ssl_key_id is not None
+        require_credentials_on_target_change(changed, has_new_credentials, has_bundled_secrets)
     try:
-        return update_kafka_connection(db, connection_id, update, current_user.id)
+        # Owner's user_id keeps rotated secrets encrypted under the OWNER's key.
+        return update_kafka_connection(db, connection_id, update, db_conn.user_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from None
 
@@ -94,9 +122,13 @@ def delete_kafka_connection_route(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Delete a Kafka connection."""
+    """Delete a Kafka connection (own, or group-shared with manage access)."""
+    db_conn = get_kafka_connection(db, connection_id, current_user.id)
+    if db_conn is None:
+        raise HTTPException(status_code=404, detail=f"Kafka connection {connection_id} not found")
+    authorize_connection_mutation(db, current_user, "kafka_connection", db_conn)
     try:
-        delete_kafka_connection(db, connection_id, current_user.id)
+        delete_kafka_connection(db, connection_id, db_conn.user_id)
         return {"message": "Kafka connection deleted successfully"}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from None

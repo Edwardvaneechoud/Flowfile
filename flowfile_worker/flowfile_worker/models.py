@@ -203,6 +203,28 @@ class CatalogMaterializeResponse(BaseModel):
     size_bytes: int
 
 
+class CatalogOptimizeRequest(BaseModel):
+    table_path: str  # Bare table directory name (no path separators)
+    z_order_columns: list[str] | None = None
+
+
+class CatalogOptimizeResponse(BaseModel):
+    metrics: dict = {}
+    size_bytes: int | None = None
+
+
+class CatalogVacuumRequest(BaseModel):
+    table_path: str  # Bare table directory name (no path separators)
+    retention_hours: int = 168
+    dry_run: bool = True
+
+
+class CatalogVacuumResponse(BaseModel):
+    files_removed: list[str] = []
+    file_count: int = 0
+    size_bytes: int | None = None
+
+
 class TableMetadataRequest(BaseModel):
     table_path: str  # Bare table directory name (no path separators)
 

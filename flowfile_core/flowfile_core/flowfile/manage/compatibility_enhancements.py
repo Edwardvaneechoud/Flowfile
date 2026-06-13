@@ -400,6 +400,15 @@ def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
             node_polars.polars_code_input = new_polars_code_input
 
 
+def ensure_compatibility_node_cloud_storage_writer(node_writer: input_schema.NodeCloudStorageWriter):
+    """Ensure CloudStorageWriteSettings pickled before partition_by existed has the field."""
+    settings = getattr(node_writer, "cloud_storage_settings", None)
+    if settings is None:
+        return
+    if "partition_by" not in settings.__dict__:
+        object.__setattr__(settings, "__dict__", {**settings.__dict__, "partition_by": None})
+
+
 def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: str):
     """Ensure flow_settings exists and has all required fields."""
     if not hasattr(flow_storage_obj, "flow_settings") or flow_storage_obj.flow_settings is None:
@@ -476,6 +485,8 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_filter(setting_input)
         elif class_name == "NodeGroupBy":
             ensure_compatibility_node_groupby(setting_input)
+        elif class_name == "NodeCloudStorageWriter":
+            ensure_compatibility_node_cloud_storage_writer(setting_input)
         ensure_description(setting_input)
 
     return flow_storage_obj

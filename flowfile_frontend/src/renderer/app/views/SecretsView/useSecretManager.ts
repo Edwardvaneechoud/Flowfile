@@ -34,7 +34,9 @@ export function useSecretManager() {
   };
 
   const addSecret = async (secretInput: SecretInput) => {
-    if (secrets.value.some((s) => s.name === secretInput.name)) {
+    // Only own secrets block creation — a same-named group-shared secret is
+    // shadowed by your own (the backend resolves own-first), so don't reject it.
+    if (secrets.value.some((s) => s.name === secretInput.name && s.access?.is_owner !== false)) {
       throw new Error(`Secret with name "${secretInput.name}" already exists.`);
     }
 

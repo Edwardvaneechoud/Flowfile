@@ -11,14 +11,26 @@ import os
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from flowfile_core.auth import sharing
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import Secret, SecretInput
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import delete_secret as delete_secret_action
 from flowfile_core.secret_manager.secret_manager import store_secret
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
+
+_OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
+
+
+def _shared_secret_rows(db: Session, user_id: int) -> list[Secret]:
+    """Group-shared secrets as metadata-only rows: no value, not even masked ciphertext."""
+    return [
+        Secret(name=row.name, value=None, user_id=str(row.user_id), id=row.id, access=access)
+        for row, access in sharing.shared_resource_rows(db, user_id, "secret")
+    ]
 
 
 @router.get("/secrets", response_model=list[Secret])
@@ -41,7 +53,16 @@ async def get_secrets(current_user=Depends(get_current_active_user), db: Session
 
     secrets = []
     for db_secret in db_secrets:
-        secrets.append(Secret(name=db_secret.name, value=db_secret.encrypted_value, user_id=str(db_secret.user_id)))
+        secrets.append(
+            Secret(
+                name=db_secret.name,
+                value=db_secret.encrypted_value,
+                user_id=str(db_secret.user_id),
+                id=db_secret.id,
+                access=_OWNER_ACCESS,
+            )
+        )
+    secrets.extend(_shared_secret_rows(db, user_id))
 
     return secrets
 
@@ -78,7 +99,13 @@ async def create_secret(
         raise HTTPException(status_code=400, detail="Secret with this name already exists")
 
     stored_secret = store_secret(db, secret, user_id)
-    return Secret(name=stored_secret.name, value=stored_secret.encrypted_value, user_id=str(user_id))
+    return Secret(
+        name=stored_secret.name,
+        value=stored_secret.encrypted_value,
+        user_id=str(user_id),
+        id=stored_secret.id,
+        access=_OWNER_ACCESS,
+    )
 
 
 @router.get("/secrets/{secret_name}", response_model=Secret)
@@ -106,13 +133,26 @@ async def get_secret(
     db_secret = (
         db.query(db_models.Secret)
         .filter(db_models.Secret.user_id == user_id, db_models.Secret.name == secret_name)
+        .order_by(db_models.Secret.id.asc())
         .first()
     )
 
-    if not db_secret:
-        raise HTTPException(status_code=404, detail="Secret not found")
+    if db_secret:
+        return Secret(
+            name=db_secret.name,
+            value=db_secret.encrypted_value,
+            user_id=str(db_secret.user_id),
+            id=db_secret.id,
+            access=_OWNER_ACCESS,
+        )
 
-    return Secret(name=db_secret.name, value=db_secret.encrypted_value, user_id=str(db_secret.user_id))
+    # Shared-only match: metadata without the value (mirrors get_encrypted_secret's
+    # own-shadows-shared, lowest-id-wins resolution).
+    shared = [row for row in _shared_secret_rows(db, user_id) if row.name == secret_name]
+    if shared:
+        return shared[0]
+
+    raise HTTPException(status_code=404, detail="Secret not found")
 
 
 @router.delete("/secrets/{secret_name}", status_code=204)

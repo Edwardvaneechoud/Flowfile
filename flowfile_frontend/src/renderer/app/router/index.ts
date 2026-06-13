@@ -138,6 +138,12 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/AdminView/AdminView.vue"),
         meta: { requiresAdmin: true, hideInElectron: true },
       },
+      {
+        name: "groups",
+        path: "groups",
+        component: () => import("../views/GroupsView/GroupsView.vue"),
+        meta: { dockerOnly: true },
+      },
     ],
   },
   {

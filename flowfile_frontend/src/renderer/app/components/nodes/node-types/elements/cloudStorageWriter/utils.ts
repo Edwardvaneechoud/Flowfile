@@ -19,6 +19,7 @@ export const createNodeCloudStorageWriter = (
     parquet_compression: "snappy",
     csv_delimiter: ",",
     csv_encoding: "utf8",
+    partition_by: [],
   };
 
   const nodeWriter: NodeCloudStorageWriter = {

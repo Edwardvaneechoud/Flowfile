@@ -42,6 +42,7 @@ def write_df_to_cloud(df: pl.LazyFrame, settings: CloudStorageWriteSettings, log
         write_mode=write_settings.write_mode,
         compression=write_settings.parquet_compression,
         separator=write_settings.csv_delimiter,
+        partition_by=write_settings.partition_by,
         use_pyarrow=use_pyarrow,
         logger=logger,
     )

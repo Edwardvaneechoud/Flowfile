@@ -38,7 +38,9 @@ from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.routes import router
 from flowfile_core.routes.secrets import router as secrets_router
+from flowfile_core.routes.shares import router as shares_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
+from flowfile_core.routes.user_groups import router as user_groups_router
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
@@ -156,6 +158,9 @@ app.include_router(artifacts_router)
 app.include_router(ml_router)
 app.include_router(logs_router, tags=["logs"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
+# Group-based sharing (multi-user mode only; both routers 404 in electron mode).
+app.include_router(user_groups_router, prefix="/user-groups", tags=["user-groups"])
+app.include_router(shares_router, prefix="/shares", tags=["shares"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
 app.include_router(ga_connections_router, prefix="/ga_connections", tags=["ga_connections"])

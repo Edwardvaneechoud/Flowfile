@@ -112,6 +112,30 @@
         </div>
 
         <div
+          v-if="nodeCloudStorageWriter.cloud_storage_settings.file_format === 'delta'"
+          class="format-options"
+        >
+          <h5 class="subsection-title">Delta Options</h5>
+          <div class="form-group">
+            <label for="partition-by">Partition by (optional)</label>
+            <el-select
+              id="partition-by"
+              v-model="nodeCloudStorageWriter.cloud_storage_settings.partition_by"
+              multiple
+              filterable
+              size="small"
+              placeholder="Select partition columns"
+            >
+              <el-option v-for="col in availableColumns" :key="col" :label="col" :value="col" />
+            </el-select>
+            <p class="field-hint">
+              Set at table creation; writes to an existing table must match its partitioning. Use
+              low-cardinality columns.
+            </p>
+          </div>
+        </div>
+
+        <div
           v-if="nodeCloudStorageWriter.cloud_storage_settings.write_mode === 'overwrite'"
           class="info-box info-warn"
         >
@@ -162,6 +186,7 @@ defineProps<Props>();
 const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
 const nodeCloudStorageWriter = ref<NodeCloudStorageWriter | null>(null);
+const availableColumns = ref<string[]>([]);
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeCloudStorageWriter,
@@ -177,6 +202,7 @@ const handleFileFormatChange = () => {
 
     if (format !== "delta") {
       settings.write_mode = "overwrite";
+      settings.partition_by = [];
     }
 
     if (format === "parquet" && !settings.parquet_compression) {
@@ -226,6 +252,12 @@ const loadNodeData = async (nodeId: number) => {
       nodeCloudStorageWriter.value = hasValidSetup
         ? nodeData.setting_input
         : createNodeCloudStorageWriter(nodeStore.flow_id, nodeId);
+
+      availableColumns.value = nodeData.main_input?.columns ?? [];
+      // Ensure partition_by exists for nodes saved before partitioning support
+      if (!nodeCloudStorageWriter.value!.cloud_storage_settings.partition_by) {
+        nodeCloudStorageWriter.value!.cloud_storage_settings.partition_by = [];
+      }
 
       if (nodeCloudStorageWriter.value?.cloud_storage_settings.connection_name) {
         await setConnectionOnConnectionName(
@@ -282,6 +314,12 @@ defineExpose({
   font-size: 0.875rem;
   font-weight: 600;
   color: #718096;
+}
+
+.field-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary, #718096);
 }
 
 .format-options {

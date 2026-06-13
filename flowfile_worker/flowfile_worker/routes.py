@@ -3,6 +3,7 @@ import gc
 import json
 import os
 import uuid
+from queue import Empty
 
 import polars as pl
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
@@ -563,6 +564,113 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
             row_count=result["row_count"],
             column_count=result["column_count"],
             size_bytes=result["size_bytes"],
+        )
+    finally:
+        del p, progress, error_message, queue
+        gc.collect()
+
+
+def _drain_then_join(p, queue) -> dict | None:
+    """Read the subprocess result *before* joining: a child cannot exit until its
+    queued payload fits through the pipe (~64KB), so join-first deadlocks on large
+    results (e.g. a vacuum's file list)."""
+    result = None
+    while True:
+        try:
+            result = queue.get(timeout=0.5)
+            break
+        except Empty:
+            if not p.is_alive():
+                try:
+                    result = queue.get(timeout=1)
+                except Empty:
+                    pass
+                break
+    p.join()
+    return result
+
+
+@router.post("/catalog/optimize", response_model=models.CatalogOptimizeResponse)
+def optimize_catalog_table(payload: models.CatalogOptimizeRequest) -> models.CatalogOptimizeResponse:
+    """Compact (and optionally Z-order) a Delta catalog table in a spawned subprocess."""
+    try:
+        resolved_path = str(_validate_catalog_path(payload.table_path))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    queue = mp_context.Queue(maxsize=1)
+    p = mp_context.Process(
+        target=funcs.optimize_catalog_table_task,
+        kwargs={
+            "table_path": resolved_path,
+            "z_order_columns": payload.z_order_columns,
+            "progress": progress,
+            "error_message": error_message,
+            "queue": queue,
+        },
+    )
+    p.start()
+    result = _drain_then_join(p, queue)
+    try:
+        with progress.get_lock():
+            final_progress = progress.value
+        if final_progress != 100 or result is None:
+            with error_message.get_lock():
+                err = error_message.value.decode().rstrip("\x00")
+            logger.error(f"Catalog optimize subprocess failed: {err}")
+            raise HTTPException(
+                status_code=500,
+                detail={"error_type": "optimize_failure", "message": err or "subprocess returned no result"},
+            )
+        return models.CatalogOptimizeResponse(
+            metrics=result.get("metrics", {}), size_bytes=result.get("size_bytes")
+        )
+    finally:
+        del p, progress, error_message, queue
+        gc.collect()
+
+
+@router.post("/catalog/vacuum", response_model=models.CatalogVacuumResponse)
+def vacuum_catalog_table(payload: models.CatalogVacuumRequest) -> models.CatalogVacuumResponse:
+    """Vacuum tombstoned files from a Delta catalog table in a spawned subprocess."""
+    try:
+        resolved_path = str(_validate_catalog_path(payload.table_path))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    queue = mp_context.Queue(maxsize=1)
+    p = mp_context.Process(
+        target=funcs.vacuum_catalog_table_task,
+        kwargs={
+            "table_path": resolved_path,
+            "retention_hours": payload.retention_hours,
+            "dry_run": payload.dry_run,
+            "progress": progress,
+            "error_message": error_message,
+            "queue": queue,
+        },
+    )
+    p.start()
+    result = _drain_then_join(p, queue)
+    try:
+        with progress.get_lock():
+            final_progress = progress.value
+        if final_progress != 100 or result is None:
+            with error_message.get_lock():
+                err = error_message.value.decode().rstrip("\x00")
+            logger.error(f"Catalog vacuum subprocess failed: {err}")
+            raise HTTPException(
+                status_code=500,
+                detail={"error_type": "vacuum_failure", "message": err or "subprocess returned no result"},
+            )
+        return models.CatalogVacuumResponse(
+            files_removed=result.get("files_removed", []),
+            file_count=result.get("file_count", 0),
+            size_bytes=result.get("size_bytes"),
         )
     finally:
         del p, progress, error_message, queue

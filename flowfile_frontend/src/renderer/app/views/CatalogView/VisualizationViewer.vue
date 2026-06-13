@@ -24,6 +24,7 @@
             "
           ></i>
           <span class="viz-source-label">{{ sourceLabel }}</span>
+          <SharedBadge :access="viz?.access" />
           <button
             v-if="viz?.source_type === 'sql' && viz.sql_query"
             class="viz-toggle-sql"
@@ -54,6 +55,9 @@
             />
           </el-select>
         </div>
+        <el-button v-if="viz && canShare(viz)" size="small" @click="showShareDialog = true">
+          <i class="fa-solid fa-share-nodes" />&nbsp;Share
+        </el-button>
         <el-button size="small" :disabled="saving || loadingData" @click="reload">Reset</el-button>
         <el-button
           type="primary"
@@ -66,6 +70,15 @@
         </el-button>
       </div>
     </div>
+
+    <ShareDialog
+      v-if="viz"
+      v-model="showShareDialog"
+      resource-type="visualization"
+      :resource-id="viz.id"
+      :resource-name="viz.name"
+      :can-manage-grants="canManageGrants(viz)"
+    />
 
     <div class="viz-scroll-area">
       <pre
@@ -113,6 +126,12 @@ import { captureThumbnail } from "../../composables/useChartThumbnail";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 import { toPlainJson } from "../../utils/structuredClone";
 import type { CatalogVisualization, VisualizationUpdatePayload } from "../../types";
+import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
+
+const showShareDialog = ref(false);
+const { canShare, canManageGrants } = useResourceSharing();
 
 const props = defineProps<{
   vizId: number;

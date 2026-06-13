@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -159,6 +160,9 @@ class CatalogNamespace(Base):
     level = Column(Integer, nullable=False, default=0)  # 0=catalog, 1=schema
     description = Column(Text, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Visible to every user as a tree container in multi-user mode (set on the seeded
+    # system namespaces); contents stay per-user filtered. See auth/sharing.py.
+    is_public = Column(Boolean, nullable=False, default=False, server_default="0")
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -477,6 +481,9 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     column_count = Column(Integer, nullable=True)
     size_bytes = Column(Integer, nullable=True)
 
+    # Delta partitioning: JSON array of partition column names (NULL = unpartitioned)
+    partition_columns = Column(Text, nullable=True)
+
     # Lineage: which flow produced this table
     source_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
     source_run_id = Column(Integer, ForeignKey("flow_runs.id"), nullable=True)
@@ -717,3 +724,71 @@ class AiProviderCredential(Base):
     api_key_secret = relationship("Secret", foreign_keys=[api_key_secret_id], lazy="joined")
 
     __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_ai_provider_per_user"),)
+
+
+# ==================== User Groups & Resource Sharing ====================
+
+
+class UserGroup(Base):
+    """A named set of users that resources can be shared with (multi-user mode only).
+
+    Distinct from node-canvas groups (``/editor/create_group/``) — always
+    ``user_groups``/``UserGroup`` in code and ``/user-groups`` in routes.
+    """
+
+    __tablename__ = "user_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class UserGroupMembership(Base):
+    """Membership of a user in a group.
+
+    ``role`` controls group administration only (``owner``/``manager`` may manage
+    members); resource permissions come from ``ResourceGrant``. Only global admins
+    create groups, after which group owners run them.
+    """
+
+    __tablename__ = "user_group_memberships"
+
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("user_groups.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    role = Column(String, nullable=False, default="member")  # "owner" | "manager" | "member"
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("group_id", "user_id", name="uq_group_member"),)
+
+
+class ResourceGrant(Base):
+    """Grant of ``use`` or ``manage`` on one resource to one group.
+
+    Polymorphic by design: SQLite FK enforcement is off and deletes are explicit
+    app-level cascades anyway, so per-resource grant tables would buy nothing.
+    Every resource-delete path must call ``auth.sharing.delete_grants_for_resource``
+    — SQLite reuses rowids, so a stale grant would silently attach to a future
+    resource (the same hazard documented on ``FlowRegistration.flow_uuid``).
+    """
+
+    __tablename__ = "resource_grants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # One of the auth/sharing.py RESOURCE_REGISTRY keys: "secret",
+    # "database_connection", "cloud_connection", "ga_connection",
+    # "kafka_connection", "catalog_namespace", "catalog_table", "flow".
+    resource_type = Column(String, nullable=False, index=True)
+    resource_id = Column(Integer, nullable=False)
+    group_id = Column(Integer, ForeignKey("user_groups.id"), nullable=False, index=True)
+    permission = Column(String, nullable=False, default="use")  # "use" | "manage" (secrets: "use" only)
+    granted_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("resource_type", "resource_id", "group_id", name="uq_resource_group_grant"),
+        Index("ix_resource_grants_resource", "resource_type", "resource_id"),
+    )

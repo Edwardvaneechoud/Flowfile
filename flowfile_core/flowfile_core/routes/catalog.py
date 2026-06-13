@@ -35,6 +35,7 @@ from flowfile_core.catalog import (
     NamespaceNotFoundError,
     NestingLimitError,
     NoSnapshotError,
+    NotAuthorizedError,
     RunNotFoundError,
     ScheduleNotFoundError,
     SQLAlchemyCatalogRepository,
@@ -45,6 +46,7 @@ from flowfile_core.catalog import (
     VisualizationExistsError,
     VisualizationNotFoundError,
 )
+from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
@@ -82,6 +84,8 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceOut,
     NamespaceTree,
     NamespaceUpdate,
+    OptimizeTableRequest,
+    OptimizeTableResponse,
     PaginatedFlowRuns,
     QueryVirtualTableCreate,
     QueryVirtualTableUpdate,
@@ -91,6 +95,8 @@ from flowfile_core.schemas.catalog_schema import (
     SqlQueryRequest,
     SqlQueryResult,
     TableFavoriteOut,
+    VacuumTableRequest,
+    VacuumTableResponse,
     VirtualFlowTableCreate,
     VirtualFlowTableUpdate,
     VisualizationAdHocComputeRequest,
@@ -118,10 +124,17 @@ router = APIRouter(
 )
 
 
-def get_catalog_service(db: Session = Depends(get_db)) -> CatalogService:
-    """FastAPI dependency that provides a configured ``CatalogService``."""
+def get_catalog_service(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_user_or_internal_service),
+) -> CatalogService:
+    """FastAPI dependency that provides a configured ``CatalogService``.
+
+    The ``AccessResolver`` makes the catalog private-by-default in multi-user
+    mode (no-op for admins, the kernel internal-service principal, and electron).
+    """
     repo = SQLAlchemyCatalogRepository(db)
-    return CatalogService(repo)
+    return CatalogService(repo, access=AccessResolver(db, current_user))
 
 
 # Exception → HTTP mapping
@@ -131,6 +144,7 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     NamespaceExistsError: (409, "Namespace with this name already exists at this level"),
     NestingLimitError: (422, "Cannot nest deeper than catalog -> schema"),
     NamespaceNotEmptyError: (422, "Cannot delete namespace with children or flows"),
+    NotAuthorizedError: (403, None),
     FlowNotFoundError: (404, "Flow not found"),
     FlowHasArtifactsError: (409, None),
     FlowAlreadyRunningError: (409, "Flow already has an active run"),
@@ -693,6 +707,30 @@ def get_table_history(
 ):
     """Return version history for a Delta catalog table."""
     return service.get_table_history(table_id, limit=limit)
+
+
+@router.post("/tables/{table_id}/optimize", response_model=OptimizeTableResponse)
+@handle_catalog_exceptions()
+def optimize_table(
+    table_id: int,
+    body: OptimizeTableRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Compact (and optionally Z-order) a Delta catalog table."""
+    return service.optimize_table(table_id, z_order_columns=body.z_order_columns)
+
+
+@router.post("/tables/{table_id}/vacuum", response_model=VacuumTableResponse)
+@handle_catalog_exceptions()
+def vacuum_table(
+    table_id: int,
+    body: VacuumTableRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Vacuum tombstoned files from a Delta catalog table (dry-run by default)."""
+    return service.vacuum_table(table_id, retention_hours=body.retention_hours, dry_run=body.dry_run)
 
 
 # Table Favorites
