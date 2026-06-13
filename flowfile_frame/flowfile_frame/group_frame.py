@@ -105,7 +105,10 @@ class GroupByFrame:
             elif isinstance(col_expr, Expr):
                 if col_expr.is_complex:
                     return False
-                agg_cols.append(transform_schema.AggColl(old_name=col_expr.column_name, agg="groupby"))
+                old_name = getattr(col_expr, "_initial_column_name", col_expr.column_name) or col_expr.column_name
+                agg_cols.append(
+                    transform_schema.AggColl(old_name=old_name, agg="groupby", new_name=col_expr.column_name)
+                )
             elif isinstance(col_expr, Selector):
                 return False
             else:

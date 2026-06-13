@@ -288,6 +288,18 @@ class TestGroupByFrame:
         if len(north_a) > 0:
             assert north_a["sales"][0] == 250  # 100 + 150
 
+    def test_group_by_rename_group_keys_count(self, sales_data):
+        """Test the alias use in the group by expression"""
+        df = sales_data.group_by(col("product").alias("product_name")).len()
+        pl_df = sales_data.data.group_by(pl.col("product").alias("product_name")).len()
+        assert_frame_equal(df.data, pl_df, check_row_order=False)
+
+    def test_group_by_rename_group_keys_agg(self, sales_data):
+        """Test the alias use in the group by expression"""
+        df = sales_data.group_by(col("product").alias("product_name")).agg(col("sales").sum())
+        pl_df = sales_data.data.group_by(pl.col("product").alias("product_name")).agg(pl.col("sales").sum())
+        assert_frame_equal(df.data, pl_df, check_row_order=False)
+
     def test_group_by_mixed_column_types(self, sales_data):
         """Test grouping with a mix of string columns and expressions."""
         sales_with_date = sales_data.with_columns(
