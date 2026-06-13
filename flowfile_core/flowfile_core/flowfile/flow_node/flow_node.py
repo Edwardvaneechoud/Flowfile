@@ -1628,12 +1628,17 @@ class FlowNode:
                 data=[],
             )
 
-    def get_node_data(self, flow_id: int, include_example: bool = False) -> NodeData:
+    def get_node_data(self, flow_id: int, include_example: bool = False, include_output: bool = True) -> NodeData:
         """Gathers all necessary data for representing the node in the UI.
 
         Args:
             flow_id: The ID of the parent flow.
             include_example: If True, includes data samples.
+            include_output: If True, computes this node's own output preview
+                (``main_output``). The settings panel only needs the input
+                schemas, so callers that just open settings pass False to skip
+                the potentially expensive output-schema prediction (e.g. a pivot
+                must materialize data to determine its output columns).
 
         Returns:
             A `NodeData` object.
@@ -1651,7 +1656,7 @@ class FlowNode:
             node.left_input = self.left_input.get_table_example()
         if self.right_input:
             node.right_input = self.right_input.get_table_example()
-        if self.is_setup:
+        if self.is_setup and include_output:
             node.main_output = self.get_table_example(include_example)
         node = setting_generator.get_setting_generator(self.node_type)(node)
 

@@ -517,7 +517,9 @@ const loadFieldsFromSchema = async () => {
     // Give the backend a moment to process and update the schema
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    const nodeData = await nodeStore.getNodeData(props.modelValue.node_id, false);
+    // Auto-detect needs the node's computed output schema, so opt back into
+    // include_output (settings opens skip it for speed).
+    const nodeData = await nodeStore.getNodeData(props.modelValue.node_id, false, true);
 
     if (nodeData?.main_output?.table_schema) {
       outputFieldConfig.fields = nodeData.main_output.table_schema.map((col: any) => ({

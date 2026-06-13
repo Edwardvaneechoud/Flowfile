@@ -3,9 +3,28 @@
     <div v-if="showSideBar" class="options-container" :style="{ width: treeNodeWidth }">
       <sidebar v-model="optionSelection" :options="radioOptions" />
       <div class="divider" />
+      <div class="search-box">
+        <i class="fas fa-search search-icon" />
+        <input
+          v-model="filterText"
+          class="search-input"
+          type="text"
+          :placeholder="optionSelection === 'fields' ? 'Filter fields' : 'Filter functions'"
+        />
+        <i v-if="filterText" class="fas fa-times clear-icon" @click="filterText = ''" />
+      </div>
       <div class="selector">
-        <column-selector v-if="optionSelection === 'fields'" @value-selected="handleNodeSelected" />
-        <func-selector v-else ref="func-selector" @value-selected="handleNodeSelected" />
+        <column-selector
+          v-if="optionSelection === 'fields'"
+          :filter-text="filterText"
+          @value-selected="handleNodeSelected"
+        />
+        <func-selector
+          v-else
+          ref="func-selector"
+          :filter-text="filterText"
+          @value-selected="handleNodeSelected"
+        />
       </div>
     </div>
     <div class="resizer" @mousedown="initResize"></div>
@@ -15,6 +34,7 @@
         class="prism-editor-ref"
         :editor-string="code"
         :columns="nodeStore.nodeData?.main_input?.columns"
+        :column-types="columnTypes"
         :flow-id="nodeStore.flow_id"
         :node-id="nodeStore.node_id"
         @update-editor-string="handleCodeChange"
@@ -34,7 +54,8 @@ import InstantFuncResults from "./instantFuncResults.vue";
 import debounce from "lodash/debounce";
 import FuncSelector from "./FuncSelector/FuncSelector.vue";
 
-const optionSelection = ref("");
+const optionSelection = ref("fields");
+const filterText = ref("");
 const nodeStore = useNodeStore();
 
 const radioOptions = [
@@ -61,6 +82,15 @@ const showHideOptions = () => {
 };
 
 const showSideBar = computed(() => parseInt(treeNodeWidth.value.replace("px", "")) > 50);
+
+const columnTypes = computed<Record<string, string>>(() => {
+  const schema = nodeStore.nodeData?.main_input?.table_schema ?? [];
+  const map: Record<string, string> = {};
+  for (const col of schema) {
+    map[col.name] = col.data_type;
+  }
+  return map;
+});
 
 const handleCodeChange = (newCode: string) => {
   code.value = newCode;
@@ -164,5 +194,53 @@ const stopResize = () => {
 .divider {
   border-top: 1px solid var(--color-border-primary);
   padding-bottom: 10px;
+}
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.search-box .search-icon {
+  position: absolute;
+  left: 7px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 22px 4px 22px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  background-color: var(--color-background-secondary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 2px var(--color-focus-ring-accent);
+}
+
+.search-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.search-box .clear-icon {
+  position: absolute;
+  right: 7px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.search-box .clear-icon:hover {
+  color: var(--color-text-secondary);
 }
 </style>

@@ -25,6 +25,7 @@ from flowfile_core.routes.routes import (
     output_model,
 )
 from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
+from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.transform_schema import SelectInput
 from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
 from shared.storage_config import storage
@@ -1199,6 +1200,60 @@ def test_python_script_node_data_before_run():
     assert node_data.main_output is not None
     assert node_data.main_output.columns == ["name", "city"], "Predicted schema should pass through input columns"
     assert node_data.main_output.data == [], "Node data should be empty before run"
+
+
+def test_get_node_skips_output_schema_when_not_requested():
+    """Opening node settings can skip the node's own output preview (`main_output`).
+
+    For data-dependent nodes like pivot, predicting the output columns requires
+    materializing data — work the settings panel never needs, since it only uses
+    the input schemas. `include_output=false` must skip it; the default and an
+    explicit `include_output=true` must still compute it.
+    """
+    flow_id = create_flow_with_manual_input()  # node 1: manual_input with columns ['name', 'city']
+
+    add_node(flow_id, 2, node_type="pivot", pos_x=200, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    connect_node(flow_id, connection)
+
+    pivot_settings = input_schema.NodePivot(
+        flow_id=flow_id,
+        node_id=2,
+        pos_x=200,
+        pos_y=0,
+        depending_on_ids=[1],
+        pivot_input=transform_schema.PivotInput(
+            index_columns=["city"],
+            pivot_column="name",
+            value_col="name",
+            aggregations=["count"],
+        ),
+    )
+    r = client.post("/update_settings/", json=pivot_settings.model_dump(), params={"node_type": "pivot"})
+    assert r.status_code == 200
+
+    # Without include_output the expensive pivot output prediction is skipped,
+    # but the input schema the settings panel needs is still returned.
+    response = client.get("/node", params={"flow_id": flow_id, "node_id": 2, "include_output": False})
+    assert response.status_code == 200
+    node_data = output_model.NodeData(**response.json())
+    assert node_data.main_output is None, "main_output should be skipped when include_output=false"
+    assert node_data.main_input is not None, "input schema is still needed by the settings panel"
+    assert node_data.main_input.columns == ["name", "city"]
+    assert node_data.setting_input is not None
+
+    # The default and an explicit include_output=true still compute the pivoted output.
+    for params in (
+        {"flow_id": flow_id, "node_id": 2},
+        {"flow_id": flow_id, "node_id": 2, "include_output": True},
+    ):
+        response = client.get("/node", params=params)
+        assert response.status_code == 200
+        node_data = output_model.NodeData(**response.json())
+        assert node_data.main_output is not None, f"main_output should be computed for params={params}"
+        # The single 'count' pivot widens unique 'name' values into columns.
+        assert "city" in node_data.main_output.columns
+        assert "John" in node_data.main_output.columns
 
 
 def test_get_node_data_after_run():

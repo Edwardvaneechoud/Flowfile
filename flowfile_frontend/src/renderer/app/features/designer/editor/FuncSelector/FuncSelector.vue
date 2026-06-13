@@ -1,10 +1,12 @@
 <template>
-  <div v-for="expressionGroup in apiData" :key="expressionGroup.expression_type" class="tree-node">
-    <div @click="toggle(expressionGroup)">
-      <span>{{ expressionGroup.expression_type }}</span>
-      <span v-if="expressionGroup.expressions" class="toggle-icon">
-        {{ isOpen(expressionGroup) ? "▼" : "▶" }}
-      </span>
+  <div
+    v-for="expressionGroup in filteredData"
+    :key="expressionGroup.expression_type"
+    class="tree-node"
+  >
+    <div class="tree-header" @click="toggle(expressionGroup)">
+      <span class="toggle-icon">{{ isOpen(expressionGroup) ? "▼" : "▶" }}</span>
+      <span class="category-name">{{ humanize(expressionGroup.expression_type) }}</span>
     </div>
     <ul v-if="expressionGroup.expressions && isOpen(expressionGroup)" class="tree-subview">
       <li
@@ -12,30 +14,37 @@
         :key="expression.name"
         class="tree-leaf"
       >
-        <div>
-          <pop-over :content="formatDoc(expression.doc)" :title="expression.name">
-            <div class="cool-button-container">
-              <button class="cool-button" @click="handleButtonClick(expression.name)">
-                {{ expression.name }}
-              </button>
-            </div>
-          </pop-over>
-        </div>
+        <pop-over :content="formatDoc(expression.doc)" :title="expression.name">
+          <div class="cool-button-container">
+            <button class="cool-button" @click="handleButtonClick(expression.name)">
+              {{ expression.name }}
+            </button>
+          </div>
+        </pop-over>
       </li>
     </ul>
   </div>
+  <div v-if="filteredData.length === 0" class="empty-hint">No matching functions</div>
 </template>
 
 <script lang="ts" setup>
-import { ref, defineEmits, onMounted, nextTick } from "vue";
+import { ref, computed, defineEmits, onMounted, nextTick } from "vue";
 import PopOver from "../PopOver.vue";
 import { useNodeStore } from "../../../../stores/column-store";
+
+const props = defineProps<{ filterText?: string }>();
 
 const nodeStore = useNodeStore();
 
 const formatDoc = (doc: string | null): string => {
   if (!doc) return "";
   return doc.replace(/\n/g, "<br>");
+};
+
+// "date_functions" -> "Date functions"
+const humanize = (key: string): string => {
+  const s = key.replace(/_/g, " ").trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
 const emit = defineEmits<{
@@ -67,52 +76,73 @@ const toggle = (expressionGroup: ExpressionGroup) => {
   }
 };
 
+const isFiltering = computed(() => (props.filterText?.trim().length ?? 0) > 0);
+
+// While a filter is active, only matching expressions (and their groups) are
+// shown; groups not matching are dropped entirely.
+const filteredData = computed<ExpressionGroup[]>(() => {
+  const q = props.filterText?.trim().toLowerCase() ?? "";
+  if (!q) return apiData.value;
+  return apiData.value
+    .map((g) => ({
+      ...g,
+      expressions: g.expressions.filter((e) => e.name.toLowerCase().includes(q)),
+    }))
+    .filter((g) => g.expressions.length > 0);
+});
+
+// Auto-expand every visible group while filtering; otherwise honor manual state.
 const isOpen = (expressionGroup: ExpressionGroup) => {
-  const key = expressionGroup.expression_type;
-  return openNodes.value.has(key);
+  if (isFiltering.value) return true;
+  return openNodes.value.has(expressionGroup.expression_type);
 };
+
+const apiData = ref<ExpressionGroup[]>([]);
 
 onMounted(async () => {
   await nextTick();
   apiData.value = await nodeStore.getExpressionsOverview();
 });
-
-const apiData = ref<ExpressionGroup[]>([
-  {
-    expression_type: "date_functions",
-    expressions: [
-      {
-        name: "add_days",
-        doc: "\n    Add a specified number of days to a date or timestamp.\n\n    Parameters:\n    - s (Any): The date or timestamp to add days to. Can be a Flowfile expression or any other value.\n    - days (int): The number of days to add.\n\n    Returns:\n    - pl.Expr: A Flowfile expression representing the result of adding `days` to `s`.\n\n    Note: If `s` is not a Flowfile expression, it will be converted into one.\n    ",
-      },
-      {
-        name: "add_hours",
-        doc: "\n    Add a specified number of hours to a timestamp.\n\n    Parameters:\n    - s (Any): The timestamp to add hours to. Can be a Flowfile expression or any other value.\n    - hours (int): The number of hours to add.\n\n    Returns:\n    - pl.Expr: A Flowfile expression representing the result of adding `hours` to `s`.\n\n    Note: If `s` is not a Flowfile expression, it will be converted into one.\n    ",
-      },
-      // Add more expressions as needed
-    ],
-  },
-  // Add more expression groups as needed
-]);
 </script>
 
 <style scoped>
-.toggle-icon {
-  margin-left: 10px;
-  font-weight: bold;
-}
-
 .tree-node {
   color: var(--color-text-primary);
 }
 
+.tree-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 5px;
+  cursor: pointer;
+  border-radius: 4px;
+  user-select: none;
+}
+
+.tree-header:hover {
+  background-color: var(--color-background-hover);
+}
+
+.toggle-icon {
+  font-size: 9px;
+  width: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.category-name {
+  font-weight: 600;
+  font-size: 12px;
+}
+
 .tree-subview {
   list-style-type: none;
-  padding-left: 20px;
+  padding-left: 18px;
+  margin: 2px 0;
 }
 
 .tree-leaf {
-  margin-bottom: 5px;
+  margin-bottom: 2px;
 }
 
 .cool-button-container {
@@ -127,7 +157,7 @@ const apiData = ref<ExpressionGroup[]>([
   border: none;
   color: var(--color-text-primary);
   background-color: transparent;
-  padding: 3px 3px;
+  padding: 3px 5px;
   text-align: left;
   display: inline-block;
   margin: 1px 0;
@@ -140,5 +170,12 @@ const apiData = ref<ExpressionGroup[]>([
 
 .cool-button:hover {
   background-color: var(--color-background-hover);
+}
+
+.empty-hint {
+  padding: 6px 5px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--color-text-muted);
 }
 </style>

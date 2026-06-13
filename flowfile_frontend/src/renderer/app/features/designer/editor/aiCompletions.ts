@@ -69,12 +69,20 @@ export function createAiCompletionSource(opts: CreateAiCompletionSourceOptions):
   return async (context: CompletionContext): Promise<CompletionResult | null> => {
     cancelDebounce();
 
+    // AI suggestions only fire on an explicit request (Cmd/Ctrl+Space) — never
+    // automatically while typing. This keeps the LLM from running in the
+    // background on every keystroke; the static `polarsCompletions` source still
+    // populates the dropdown as you type.
+    if (!context.explicit) {
+      return null;
+    }
+
     // Determine the active prefix — match a contiguous run of word / dot /
     // bracket / paren chars before the cursor. We don't try to be clever
     // about Polars syntax; the backend gets the prefix string and decides.
     const word = context.matchBefore(/[\w.[\]("']*$/);
     const partial = word?.text ?? "";
-    if (!context.explicit && partial.length < MIN_CHARS_BEFORE_AI) {
+    if (partial.length < MIN_CHARS_BEFORE_AI) {
       return null;
     }
 

@@ -254,6 +254,64 @@ export const generateCronExpression = async (
   }
 };
 
+// Node code generation — POST /ai/generate_node_code. Plain-English + the
+// node's upstream schema → a code snippet for polars_code / sql_query /
+// python_script nodes.
+
+export interface GenerateNodeCodeRequest {
+  flowId: number;
+  nodeId: number | string;
+  prompt: string;
+  provider?: string;
+  model?: string | null;
+  timeout?: number;
+}
+
+export interface NodeCodeGenerationResponse {
+  code: string | null;
+  explanation: string | null;
+  degraded: boolean;
+  reason: string | null;
+}
+
+interface PyNodeCodeGenerationResponse {
+  code: string | null;
+  explanation: string | null;
+  degraded: boolean;
+  reason: string | null;
+}
+
+export const generateNodeCode = async (
+  body: GenerateNodeCodeRequest,
+  signal?: AbortSignal,
+): Promise<NodeCodeGenerationResponse> => {
+  const payload: Record<string, unknown> = {
+    flow_id: body.flowId,
+    node_id: body.nodeId,
+    prompt: body.prompt,
+  };
+  if (body.provider !== undefined) payload.provider = body.provider;
+  if (body.model !== undefined && body.model !== null) payload.model = body.model;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<PyNodeCodeGenerationResponse>(
+      "/ai/generate_node_code",
+      payload,
+      { signal },
+    );
+    return {
+      code: response.data.code,
+      explanation: response.data.explanation,
+      degraded: response.data.degraded,
+      reason: response.data.reason,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
 // Edge ghost-node suggestions — non-streaming JSON wrapper around
 // /ai/suggest_next_node.
 
@@ -498,13 +556,7 @@ export type AgentStage =
   | "fill_settings"
   | "single_stage_op";
 
-export type AgentOpKind =
-  | "add"
-  | "modify"
-  | "delete"
-  | "connect"
-  | "disconnect"
-  | "other";
+export type AgentOpKind = "add" | "modify" | "delete" | "connect" | "disconnect" | "other";
 
 export interface AgentSessionState {
   sessionId: string;

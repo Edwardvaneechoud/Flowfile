@@ -5,6 +5,14 @@
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
+      <div v-if="aiGenerateEnabled && showEditor && nodePolarsCode" class="code-toolbar">
+        <AiGenerateCodeButton
+          :flow-id="Number(nodePolarsCode.flow_id)"
+          :node-id="nodePolarsCode.node_id"
+          node-type="polars_code"
+          @code-generated="applyGeneratedCode"
+        />
+      </div>
       <pythonEditor
         v-if="showEditor && nodePolarsCode"
         ref="editorChild"
@@ -23,6 +31,8 @@ import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import pythonEditor from "../../../../../features/designer/editor/pythonEditor.vue";
+import AiGenerateCodeButton from "../../../../../features/designer/editor/AiGenerateCodeButton.vue";
+import { AI_GENERATE_CODE_ENABLED as aiGenerateEnabled } from "../../../../../stores/ai-code-generator-store";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { createPolarsCodeNode } from "./utils";
 
@@ -36,6 +46,7 @@ const dataLoaded = ref(false);
 interface EditorChildType {
   showHideOptions: () => void;
   showTools: boolean;
+  setCode?: (text: string) => void;
 }
 
 const editorChild = ref<EditorChildType | null>(null);
@@ -55,6 +66,14 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 const handleEditorUpdate = (newCode: string) => {
   if (nodePolarsCode.value && nodePolarsCode.value.polars_code_input) {
     nodePolarsCode.value.polars_code_input.polars_code = newCode;
+  }
+};
+
+const applyGeneratedCode = (code: string) => {
+  // setCode updates the CodeMirror view; its emit syncs back to the model.
+  editorChild.value?.setCode?.(code);
+  if (nodePolarsCode.value?.polars_code_input) {
+    nodePolarsCode.value.polars_code_input.polars_code = code;
   }
 };
 
@@ -82,3 +101,11 @@ const loadNodeData = async (nodeId: number) => {
 
 defineExpose({ loadNodeData, pushNodeData, saveSettings });
 </script>
+
+<style scoped>
+.code-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+</style>
