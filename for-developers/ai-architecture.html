@@ -1,0 +1,4459 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/for-developers/ai-architecture.html">
+      
+      
+        <link rel="prev" href="kernel-architecture.html">
+      
+      
+        <link rel="next" href="visualizations.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>AI Integration Architecture - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ai-integration-architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AI Integration Architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quickstart
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/index.html" class="md-tabs__link">
+          
+  
+  
+  User Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/deployment/index.html" class="md-tabs__link">
+          
+  
+  
+  Deployment
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../ai/index.html" class="md-tabs__link">
+          
+  
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="index.html" class="md-tabs__link">
+          
+  
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formulas
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Formulas
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/formulas/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formula Language
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/formulas/functions.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Function Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Visual Editor
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/building-flows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_3" id="__nav_3_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Node Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/input.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Input Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/transform.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transform Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/combine.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Combine Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/aggregate.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregate Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/output.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/ml.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machine Learning Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_4" id="__nav_3_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Catalog
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/catalog/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/catalog/virtual-tables.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Virtual Tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/catalog/visualizations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/catalog/schedules.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schedules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/catalog/sql-editor.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SQL Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/catalog/secrets.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Secrets & Encryption
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_5" id="__nav_3_3_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/kernels.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/node-designer.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Designer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_6" id="__nav_3_3_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/tutorials/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/tutorials/database-connectivity.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect to PostgreSQL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/tutorials/cloud-connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manage Cloud Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/tutorials/code-generator.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export to Python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/settings.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/quickstart.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_3" id="__nav_3_4_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Core Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/concepts/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/concepts/design-concepts.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlowFrame & FlowGraph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/concepts/expressions.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Expressions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/concepts/formulas.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formulas in Python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_4" id="__nav_3_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/reading-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/writing-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/catalog-references.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/data-types.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Types
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/flowframe-operations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DataFrame Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/aggregations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/joins.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Joins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/cloud-connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloud Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/visual-ui.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual UI Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_5" id="__nav_3_4_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/tutorials/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/tutorials/flowfile_frame_api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows with Code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deployment
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/deployment/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/deployment/lite.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flowfile Lite (Browser)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/deployment/desktop.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop App
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/deployment/python.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Package
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/deployment/docker.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    AI Assistant
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai/providers.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    For Developers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="design-philosophy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Philosophy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="flowfile-core.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="python-api-reference.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internal API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="kernel-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Integration Architecture
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ai-architecture.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Integration Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#module-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Module map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layer-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feature-flag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feature flag
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#routes-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Routes catalog
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provider-abstraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider abstraction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#byok-and-model-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BYOK and model resolution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sessions-and-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sessions and context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sessions and context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agentsession" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AgentSession
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#drift-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Drift detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context-assembly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context assembly
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-planner-state-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The planner state machine
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The planner state machine">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#event-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Event types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#three-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three surfaces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool execution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool execution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#schema-prediction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema prediction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#refusal-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refusal paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-catalog-narrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool catalog narrowing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#graphdiff-and-acceptreject" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GraphDiff and accept/reject
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-safety-scheduler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit, safety, scheduler
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prompt-logging-debug" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prompt logging (debug)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streaming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#intent-router" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Intent router
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#frontend-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frontend integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adding-a-new-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a new surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="visualizations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizations & Graphic Walker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="creating-custom-nodes.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Create Custom Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="custom-node-tutorial.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building more custom Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#module-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Module map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layer-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feature-flag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feature flag
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#routes-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Routes catalog
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provider-abstraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider abstraction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#byok-and-model-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BYOK and model resolution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sessions-and-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sessions and context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sessions and context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agentsession" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AgentSession
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#drift-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Drift detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context-assembly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context assembly
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-planner-state-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The planner state machine
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The planner state machine">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#event-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Event types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#three-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three surfaces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool execution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool execution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#schema-prediction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema prediction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#refusal-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refusal paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-catalog-narrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool catalog narrowing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#graphdiff-and-acceptreject" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GraphDiff and accept/reject
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-safety-scheduler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit, safety, scheduler
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prompt-logging-debug" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prompt logging (debug)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streaming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#intent-router" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Intent router
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#frontend-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frontend integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adding-a-new-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a new surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="ai-integration-architecture">AI Integration Architecture</h1>
+<p>This page is the developer's tour of the AI subsystem under <code>flowfile_core/flowfile_core/ai/</code> and <code>flowfile_frontend/src/renderer/app/features/ai/</code>. Read <a href="../ai/index.html">AI Assistant</a> and <a href="../ai/providers.html">Provider Setup</a> first if you need user-facing context.</p>
+<p>The AI integration is organised in five layers: <strong>routes</strong> translate HTTP into Pydantic shapes, <strong>sessions/context</strong> hold per-run state and assemble prompts, the <strong>planner</strong> runs the agent loop, <strong>tools</strong> validate and stage graph edits, and <strong>providers</strong> abstract the LLM. A handful of cross-cutting modules — feature flag, prompt log, scheduler, audit, safety — wrap the whole thing.</p>
+<hr />
+<h2 id="module-map">Module map</h2>
+<div class="highlight"><pre><span></span><code>flowfile_core/flowfile_core/ai/
+├── routes.py                     # Aggregates all sub-routers; flag gate
+├── feature_flag.py               # FEATURE_FLAG_AI dependency
+├── admin_routes.py               # POST /system/feature_flags/ai
+│
+├── chat_routes.py                # /ai/chat/stream + /ai/chat/preview
+├── agent_routes.py               # /ai/agent/* (start/resume/followup/abort/state)
+├── inline_action_routes.py       # /ai/inline_action
+├── command_palette_routes.py     # /ai/command_palette
+├── autocomplete_routes.py        # /ai/autocomplete/{formula,join_keys}
+├── suggest_next_node_routes.py   # /ai/suggest_next_node
+├── lineage_routes.py             # /ai/lineage_question
+├── run_failure_routes.py         # /ai/explain_run_failure
+├── docgen_routes.py              # /ai/generate_documentation
+├── intent_router_routes.py       # /ai/route (chat ↔ agent classifier)
+├── diff_routes.py                # /ai/diff/{stage,{id}/accept,{id}/reject}
+├── byok_routes.py                # /ai/providers (CRUD + test)
+│
+├── sessions.py                   # AgentSession, snapshot, drift detection
+├── session_store.py              # In-memory + disk-backed repos
+├── byok.py                       # get_configured_provider, env fallback
+├── credentials.py                # ProviderCredential CRUD, Fernet
+├── intent_router.py              # Lightweight chat-vs-edit classifier
+├── command_palette.py            # Cmd+K orchestration
+├── autocomplete.py               # Formula / join-key suggestions
+├── suggest_next_node.py          # Ghost-node suggestions
+│
+├── agents/
+│   ├── planner.py                # run_planner_session — the agent loop
+│   ├── copilot.py                # Chat surface helpers
+│   ├── assist.py                 # Inline / cmd_k assist helpers
+│   └── live_observation.py       # agent_live runtime feedback
+│
+├── context/
+│   ├── builder.py                # render_prompt_context
+│   ├── budget.py                 # Token-budget truncation
+│   └── mentions.py               # @flow / @node:id parsing
+│
+├── tools/
+│   ├── executor.py               # execute_tool_call dispatcher
+│   ├── registry.py               # build_tool_catalog (per-surface narrowing)
+│   ├── graph_ops.py              # add_*, connect, delete_*
+│   ├── schema_ops.py              # update_column_*
+│   ├── codegen_ops.py            # regenerate / refactor for code nodes
+│   ├── meta_ops.py               # classify_intent, pick_*, fill_*, verify
+│   ├── classification.py         # node-type classifier
+│   ├── predictor.py              # Schema prediction (mirror + dry-run)
+│   ├── dry_run.py                # Polars / Python dry-run cache
+│   └── node_docs.py              # NODE_AGENT_PAYLOAD_EXAMPLES
+│
+├── providers/
+│   ├── base.py                   # Provider Protocol, Message, ToolCall, ToolSpec
+│   ├── _litellm_base.py          # LiteLLMProvider base
+│   ├── registry.py               # PROVIDERS dict, provider_factory
+│   ├── anthropic.py              # AnthropicProvider
+│   ├── openai.py                 # OpenAIProvider
+│   ├── google.py                 # GoogleProvider
+│   ├── groq.py                   # GroqProvider
+│   ├── openrouter.py             # OpenRouterProvider
+│   └── ollama.py                 # OllamaProvider
+│
+├── prompts/                      # Markdown system prompts
+│   ├── base.md, copilot.md, planner.md, assist.md
+│   └── stage_{plan,classify,pick_type,pick_upstream,fill_settings,verify_completion}.md
+│
+├── diff.py                       # GraphDiff, bundle_staged_results, apply_diff
+├── diff_store.py                 # Diff persistence
+├── audit.py                      # AuditEvent + record_event
+├── safety.py                     # PII regex scrub, samples prep
+├── streaming.py                  # SSE wrapping for async generators
+├── scheduler.py                  # Per-provider RPM/RPD scheduler
+├── prompt_log.py                 # Daily JSONL prompt log
+└── replay_buffer.py              # Per-session replay buffer
+</code></pre></div>
+<p>Frontend mirror:</p>
+<div class="highlight"><pre><span></span><code>flowfile_frontend/src/renderer/app/
+├── api/ai.api.ts                              # Axios client for /ai/*
+├── stores/
+│   ├── ai-store.ts                            # Chat drawer + mode toggle
+│   ├── ai-agent-store.ts                      # Agent session state + events
+│   ├── ai-autocomplete-store.ts               # Formula/join suggestions
+│   ├── ai-command-palette-store.ts            # Cmd+K state
+│   ├── ai-diff-store.ts                       # Pending diffs
+│   └── ai-ghost-node-store.ts                 # Ghost-node suggestions
+├── features/ai/
+│   ├── AiAssistant.vue                        # Drawer (chat + agent panel)
+│   ├── AiAgentRun.vue / AiAgentEvent.vue
+│   ├── AiCommandPalette.vue
+│   ├── AiInlineActions.vue
+│   ├── AiDiffPanel.vue / AiDiffPreview.vue
+│   ├── AiGhostNode.vue
+│   ├── AiMentionAutocomplete.vue / mentionVocabulary.ts
+│   └── markdown.ts (+ test)
+└── views/AiProvidersView/AiSettingsTab.vue    # BYOK panel
+</code></pre></div>
+<hr />
+<h2 id="layer-overview">Layer overview</h2>
+<pre class="mermaid"><code>flowchart TD
+    UI[Frontend stores&lt;br/&gt;ai-store / ai-agent-store / ai-diff-store]
+    R[Routes layer&lt;br/&gt;chat / agent / inline_action / cmd_k / autocomplete /&lt;br/&gt;suggest_next_node / lineage / run_failure / docgen / diff / byok]
+    S[Sessions + Context&lt;br/&gt;sessions.py · session_store.py · context/builder.py]
+    P[Planner loop&lt;br/&gt;agents/planner.py — run_planner_session]
+    T[Tools&lt;br/&gt;tools/executor.py · registry.py · predictor.py · meta_ops]
+    PR[Providers&lt;br/&gt;providers/_litellm_base.py + per-vendor subclasses]
+    L[litellm → LLM]
+
+    UI --&gt; R
+    R --&gt; S
+    R --&gt; P
+    P --&gt; T
+    P --&gt; PR
+    T -.staged_payload.-&gt; P
+    PR --&gt; L
+    S --&gt; P</code></pre>
+<p>The agent loop calls into both <strong>tools</strong> (to stage graph edits) and <strong>providers</strong> (to ask the LLM what to do next). Sessions and context are read by both routes (for setup) and the planner (during the loop).</p>
+<hr />
+<h2 id="feature-flag">Feature flag</h2>
+<p><code>flowfile_core/flowfile_core/ai/feature_flag.py</code> exposes:</p>
+<ul>
+<li><code>is_ai_enabled() -&gt; bool</code> — live read of <code>settings.FEATURE_FLAG_AI</code>, a <code>MutableBool</code> initialised from the <code>FEATURE_FLAG_AI</code> env var at process start (default <code>"1"</code> — <strong>on</strong>; set <code>FEATURE_FLAG_AI=false</code> to opt out).</li>
+<li><code>require_ai_enabled()</code> — FastAPI dependency raising <code>HTTPException(503)</code> when the flag is off.</li>
+</ul>
+<p>The dependency is wired once on the aggregate router:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># flowfile_core/flowfile_core/ai/routes.py</span>
+<span class="n">router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">dependencies</span><span class="o">=</span><span class="p">[</span><span class="n">Depends</span><span class="p">(</span><span class="n">require_ai_enabled</span><span class="p">)])</span>
+<span class="n">router</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">byok_router</span><span class="p">)</span>
+<span class="n">router</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">chat_router</span><span class="p">)</span>
+<span class="c1"># ... all other AI sub-routers</span>
+</code></pre></div>
+<p>So every AI endpoint inherits the gate without per-route boilerplate. The MutableBool can also be flipped at runtime via <code>POST /system/feature_flags/ai</code> (see <code>admin_routes.py</code>) without restarting the process — useful for incident response.</p>
+<hr />
+<h2 id="routes-catalog">Routes catalog</h2>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Method</th>
+<th>Request</th>
+<th>Response</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/ai/health</code></td>
+<td>GET</td>
+<td>—</td>
+<td><code>{"status": "skeleton"}</code></td>
+<td><code>routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/chat/stream</code></td>
+<td>POST</td>
+<td><code>ChatStreamRequest</code></td>
+<td>SSE text stream</td>
+<td><code>chat_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/chat/preview</code></td>
+<td>POST</td>
+<td><code>ChatStreamRequest</code></td>
+<td><code>ChatPreviewResponse</code> (no LLM call)</td>
+<td><code>chat_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/agent/start</code></td>
+<td>POST</td>
+<td><code>AgentStartRequest</code></td>
+<td>SSE planner events</td>
+<td><code>agent_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/agent/{session_id}/resume</code></td>
+<td>POST</td>
+<td><code>AgentResumeRequest</code></td>
+<td>SSE planner events</td>
+<td><code>agent_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/agent/{session_id}/followup</code></td>
+<td>POST</td>
+<td><code>AgentFollowupRequest</code></td>
+<td>SSE planner events</td>
+<td><code>agent_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/agent/{session_id}/abort</code></td>
+<td>POST</td>
+<td>—</td>
+<td><code>AgentAbortResponse</code></td>
+<td><code>agent_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/agent/{session_id}</code></td>
+<td>GET</td>
+<td>—</td>
+<td><code>AgentStateResponse</code></td>
+<td><code>agent_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/inline_action</code></td>
+<td>POST</td>
+<td><code>InlineActionRequest</code></td>
+<td>SSE text stream</td>
+<td><code>inline_action_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/command_palette</code></td>
+<td>POST</td>
+<td><code>CommandPaletteRequest</code></td>
+<td><code>CommandPaletteResponse</code></td>
+<td><code>command_palette_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/route</code></td>
+<td>POST</td>
+<td><code>RouteRequest</code></td>
+<td><code>RouteResponse</code></td>
+<td><code>intent_router_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/autocomplete/formula</code></td>
+<td>POST</td>
+<td><code>FormulaAutocompleteRequest</code></td>
+<td>JSON</td>
+<td><code>autocomplete_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/autocomplete/join_keys</code></td>
+<td>POST</td>
+<td><code>JoinKeyAutocompleteRequest</code></td>
+<td>JSON</td>
+<td><code>autocomplete_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/suggest_next_node</code></td>
+<td>POST</td>
+<td><code>SuggestNextNodeRequest</code></td>
+<td><code>NextNodeSuggestionsResponse</code></td>
+<td><code>suggest_next_node_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/lineage_question</code></td>
+<td>POST</td>
+<td><code>LineageQuestionRequest</code></td>
+<td>SSE text stream</td>
+<td><code>lineage_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/explain_run_failure</code></td>
+<td>POST</td>
+<td><code>ExplainRunFailureRequest</code></td>
+<td>SSE text stream</td>
+<td><code>run_failure_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/generate_documentation</code></td>
+<td>POST</td>
+<td><code>GenerateDocumentationRequest</code></td>
+<td>SSE markdown stream</td>
+<td><code>docgen_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/diff/stage</code></td>
+<td>POST</td>
+<td><code>StageDiffRequest</code></td>
+<td><code>StageDiffResponse</code></td>
+<td><code>diff_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/diff/{id}/accept</code></td>
+<td>POST</td>
+<td><code>AcceptDiffRequest</code></td>
+<td><code>AcceptDiffResponse</code></td>
+<td><code>diff_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/diff/{id}/reject</code></td>
+<td>POST</td>
+<td>—</td>
+<td><code>RejectDiffResponse</code></td>
+<td><code>diff_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/providers</code></td>
+<td>GET</td>
+<td>—</td>
+<td><code>list[ProviderListItem]</code></td>
+<td><code>byok_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/providers/{name}</code></td>
+<td>POST</td>
+<td><code>ProviderCredentialInput</code></td>
+<td><code>ProviderCredentialPublic</code></td>
+<td><code>byok_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/providers/{name}</code></td>
+<td>DELETE</td>
+<td>—</td>
+<td><code>204</code></td>
+<td><code>byok_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/ai/providers/{name}/test</code></td>
+<td>POST</td>
+<td>—</td>
+<td><code>ProviderTestResult</code></td>
+<td><code>byok_routes.py</code></td>
+</tr>
+<tr>
+<td><code>/system/feature_flags/ai</code></td>
+<td>POST/GET</td>
+<td><code>FeatureFlagState</code></td>
+<td><code>FeatureFlagState</code></td>
+<td><code>admin_routes.py</code></td>
+</tr>
+</tbody>
+</table>
+<p>Streaming endpoints emit Server-Sent Events with a 15-second keepalive frame so the connection survives long thinking. See <code>streaming.py</code>.</p>
+<hr />
+<h2 id="provider-abstraction">Provider abstraction</h2>
+<p>The <code>Provider</code> Protocol lives in <code>providers/base.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Provider</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+    <span class="n">name</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">default_model</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">supports_tools</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span>
+    <span class="n">supports_streaming</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span>
+    <span class="n">surface_models</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Message</span><span class="p">],</span>
+        <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ToolSpec</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">...</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ChatResponse</span><span class="p">:</span> <span class="o">...</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stream</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Message</span><span class="p">],</span>
+        <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ToolSpec</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">...</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncIterator</span><span class="p">[</span><span class="n">StreamChunk</span><span class="p">]:</span> <span class="o">...</span>
+</code></pre></div>
+<p><code>LiteLLMProvider</code> (in <code>_litellm_base.py</code>) is the concrete base. It builds a litellm-compatible kwargs dict, calls <code>litellm.acompletion</code> (lazily imported — the module deliberately keeps <code>litellm</code> out of the import graph until first use), and translates the response back into <code>ChatResponse</code> / <code>StreamChunk</code>. The base class is also where the <a href="#prompt-logging-debug">prompt log</a> hooks in.</p>
+<p>Per-vendor subclasses override class-level fields:</p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th><code>name</code></th>
+<th><code>model_prefix</code></th>
+<th><code>default_model</code></th>
+<th>Notable surface defaults</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AnthropicProvider</code></td>
+<td><code>anthropic</code></td>
+<td><code>anthropic/</code></td>
+<td><code>claude-sonnet-4-6</code></td>
+<td>Haiku 4.5 for Cmd+K / ghost / autocomplete / agent_staged; Opus 4.7 for <code>agent_complex</code></td>
+</tr>
+<tr>
+<td><code>OpenAIProvider</code></td>
+<td><code>openai</code></td>
+<td><code>""</code></td>
+<td><code>gpt-4.1-mini</code></td>
+<td><code>gpt-4.1</code> for <code>explain</code> / <code>agent_complex</code> / <code>docgen</code> / <code>lineage</code></td>
+</tr>
+<tr>
+<td><code>GoogleProvider</code></td>
+<td><code>google</code></td>
+<td><code>gemini/</code></td>
+<td><code>gemini-2.5-flash</code></td>
+<td><code>gemini-2.5-pro</code> for <code>agent_complex</code></td>
+</tr>
+<tr>
+<td><code>GroqProvider</code></td>
+<td><code>groq</code></td>
+<td><code>groq/</code></td>
+<td><code>qwen/qwen3-coder-30b-a3b-instruct</code></td>
+<td>One model across surfaces</td>
+</tr>
+<tr>
+<td><code>OpenRouterProvider</code></td>
+<td><code>openrouter</code></td>
+<td><code>openrouter/</code></td>
+<td><code>qwen/qwen3-coder-30b-a3b-instruct</code></td>
+<td><code>meta-llama/llama-3.3-70b-instruct</code> for <code>agent_staged</code> (free tier)</td>
+</tr>
+<tr>
+<td><code>OllamaProvider</code></td>
+<td><code>ollama</code></td>
+<td><code>ollama_chat/</code></td>
+<td><code>llama3.1:8b</code></td>
+<td><code>llama3.1:70b</code> for <code>agent_complex</code>. <code>default_api_base="http://localhost:11434"</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>provider_factory(name, *, model, surface, api_key, api_base)</code> in <code>providers/registry.py</code> is the construction entry point. The <code>PROVIDERS</code> dict registers all six classes; <code>list_supported_providers()</code> returns the names in registration order.</p>
+<hr />
+<h2 id="byok-and-model-resolution">BYOK and model resolution</h2>
+<p><code>flowfile_core/flowfile_core/ai/byok.py::get_configured_provider(db, user_id, provider, *, surface=None, model=None)</code> is the runtime entry point that downstream code calls when it needs a configured <code>Provider</code>. The resolution rules:</p>
+<p><strong>Credential lookup.</strong> <code>get_provider_credential(db, user_id, provider)</code> returns the (encrypted) credential row. If a row exists, the API key is decrypted via Fernet, <code>api_base</code> is read from the row, and <code>cred.default_model</code> is consulted.</p>
+<p><strong>Model resolution order</strong>:</p>
+<ol>
+<li>Explicit <code>model=</code> argument (caller wins — e.g., per-request override from the chat drawer).</li>
+<li><code>cred.default_model</code> (user preference).</li>
+<li><code>cls.surface_models[surface]</code> <strong>if it appears in the user's curated <code>cred.models</code> list</strong>.</li>
+<li>First entry of <code>cred.models</code> (curated list default).</li>
+<li><code>cls.surface_models[surface]</code> (class-level per-surface default).</li>
+<li><code>cls.default_model</code> (terminal fallback).</li>
+</ol>
+<p>Steps 3 and 4 (added in workstream W29) make multi-model curation work for OpenRouter and similar providers — users can pin a list of free-tier models and still get sensible per-surface routing when one of those models matches the surface preference.</p>
+<p><strong>Env-var fallback.</strong> If no credential row exists, <code>provider_factory(name)</code> is called with no <code>api_key</code> / <code>api_base</code>; litellm picks up the standard env var (e.g., <code>ANTHROPIC_API_KEY</code>). <code>detect_env_fallback(provider)</code> exists separately so <code>GET /ai/providers</code> can show users the distinction between "configured via key" and "configured via env" in the UI.</p>
+<p><strong>Failure mode.</strong> <code>ProviderNotConfiguredError</code> is raised only when the provider is <em>completely</em> unset — no row, no env var, and not Ollama (which has a sensible <code>default_api_base</code>).</p>
+<p>Credentials live in <code>flowfile_core.ai.credentials</code>. The DB row is keyed <code>(user_id, provider)</code>. The encrypted key is stored in the secrets table; the credential row carries <code>api_key_secret_id</code>. Deletion drops both atomically.</p>
+<hr />
+<h2 id="sessions-and-context">Sessions and context</h2>
+<h3 id="agentsession"><code>AgentSession</code></h3>
+<p>Defined in <code>flowfile_core/flowfile_core/ai/sessions.py</code>. The shape (abridged):</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">AgentSession</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">flow_id</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">user_id</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">surface</span><span class="p">:</span> <span class="n">PlannerSurface</span>  <span class="c1"># &quot;agent_complex&quot; | &quot;agent_staged&quot; | &quot;agent_live&quot;</span>
+    <span class="n">status</span><span class="p">:</span> <span class="n">SessionStatus</span>    <span class="c1"># &quot;running&quot; | &quot;paused_drift&quot; | &quot;paused_user_action&quot; |</span>
+                             <span class="c1"># &quot;awaiting_user_input&quot; | &quot;completed&quot; | &quot;aborted&quot; | &quot;failed&quot;</span>
+    <span class="n">samples_mode</span><span class="p">:</span> <span class="n">SamplesMode</span>  <span class="c1"># &quot;off&quot; | &quot;regex&quot;</span>
+    <span class="n">stage</span><span class="p">:</span> <span class="n">PlannerStage</span>       <span class="c1"># &quot;plan&quot; | &quot;classify&quot; | &quot;pick_type&quot; | &quot;pick_upstream&quot; |</span>
+                              <span class="c1"># &quot;fill_settings&quot; | &quot;single_stage_op&quot; | &quot;verify_completion&quot;</span>
+    <span class="n">picked_op_kind</span><span class="p">:</span> <span class="n">PlannerOpKind</span> <span class="o">|</span> <span class="kc">None</span>  <span class="c1"># &quot;add&quot; | &quot;modify&quot; | &quot;delete&quot; | &quot;connect&quot; |</span>
+                                          <span class="c1"># &quot;disconnect&quot; | &quot;other&quot;</span>
+    <span class="n">picked_node_type</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Message</span><span class="p">]</span>            <span class="c1"># full LLM conversation</span>
+    <span class="n">snapshot</span><span class="p">:</span> <span class="n">GraphSnapshot</span>            <span class="c1"># graph state at start, for drift detection</span>
+    <span class="n">staged_results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ToolExecutionResult</span><span class="p">]</span>
+    <span class="n">diff_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">step_count</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">max_steps</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">rationale</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">pause_reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">drift_detail</span><span class="p">:</span> <span class="n">DriftDetail</span> <span class="o">|</span> <span class="kc">None</span>
+</code></pre></div>
+<p>Sessions are persisted via <code>session_store.py</code>. The default repo is in-memory; a disk-backed <code>DiskSessionRepository</code> writes JSON files under <code>base_directory/ai_sessions/</code> so a session survives a backend restart and the user can re-attach via <code>POST /ai/agent/{session_id}/resume</code>.</p>
+<h3 id="drift-detection">Drift detection</h3>
+<p><code>GraphSnapshot</code> captures the set of node ids and node types at session start. Before each tool dispatch, the planner re-snapshots the live graph and compares — if the id set changed (or a node type flipped) the session flips to <code>paused_drift</code>, emits a <code>drift_detected</code> event, and waits for the user to pick <em>Resume</em> or <em>Discard</em>. This is intentionally id-set-only — settings drift was deliberately removed because it produced too many false-positive pauses.</p>
+<h3 id="context-assembly">Context assembly</h3>
+<p><code>context/builder.py::render_prompt_context(flow, pinned_node_ids, surface, samples_mode)</code> produces:</p>
+<ul>
+<li>A <strong>system prompt</strong> assembled from <code>prompts/base.md</code> plus the surface-specific overlay (<code>prompts/copilot.md</code>, <code>prompts/planner.md</code>, <code>prompts/stage_*.md</code>).</li>
+<li>A <strong>user message</strong> containing a deterministic JSON-markdown rendering of the flow: every node's id, type, settings, predicted output schema, plus optional sample rows. The walk is BFS upstream from pinned nodes (or the whole flow when nothing is pinned), bounded by <code>context/budget.py</code>'s token budget.</li>
+</ul>
+<p><code>context/mentions.py</code> parses <code>@flow</code> and <code>@node:42</code> references in user messages; mentions become pin signals for the BFS.</p>
+<hr />
+<h2 id="the-planner-state-machine">The planner state machine</h2>
+<p><code>agents/planner.py::run_planner_session(session, flow, provider, max_tokens, max_retries) -&gt; AsyncIterator[PlannerEvent]</code> is the agent loop. It's an async generator that yields one <code>PlannerEvent</code> per significant step.</p>
+<h3 id="event-types">Event types</h3>
+<div class="highlight"><pre><span></span><code><span class="n">PlannerEventName</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span>
+    <span class="s2">&quot;thinking&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;tool_call_proposed&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;tool_call_staged&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;tool_call_warned&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;tool_call_rejected&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;tool_call_applied&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;drift_detected&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;paused&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;retry&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;abort&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;complete&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;awaiting_user_input&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;stage_advanced&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;error&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;info&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+</code></pre></div>
+<p><code>awaiting_user_input</code> is emitted <em>instead of</em> <code>complete</code> when the planner ends with no tool calls AND no staged results AND the last assistant message looks like a clarifying question. The frontend renders <em>"Agent waiting for your reply…"</em> instead of <em>"Finished — nothing to stage."</em></p>
+<h3 id="three-surfaces">Three surfaces</h3>
+<p>The <code>surface</code> field on the start request picks the loop shape. Note: the <strong>backend default</strong> on <code>POST /ai/agent/start</code> is <code>"agent_staged"</code>, but the <strong>frontend drawer default</strong> (per-flow preference, persisted) is <code>"agent_live"</code> — that's the one most user sessions land on unless explicitly switched. A request with <code>surface="agent_complex"</code> against a <code>supports_tools=False</code> model returns <code>422</code> at validation.</p>
+<p><strong><code>agent_staged</code>.</strong> The big idea: smaller models can't reliably function-call against a wide tool catalog. Solution: expose <strong>one tool per LLM round</strong> so each round is a tightly-scoped enum / shape decision. Mode is <code>"stage"</code> — proposals accumulate and are bundled into a <code>GraphDiff</code> for accept/reject. State machine:</p>
+<div class="highlight"><pre><span></span><code>plan ──▶ classify ─[op_kind=add]──▶ pick_type ──▶ pick_upstream ──▶ fill_settings ──▶ classify
+                  ├─[modify/delete/connect/disconnect]──▶ single_stage_op ──▶ classify
+                  └─[other]──▶ (terminate or → verify_completion if opted in)
+</code></pre></div>
+<ul>
+<li><code>plan</code> exposes <code>flowfile.meta.emit_plan</code> — the LLM outlines the full multi-step plan as a structured narrative. Skipped (<code>skip_plan=True</code>) when the session was promoted from chat (the chat-mode response already produced a plan-shaped narrative).</li>
+<li><code>classify</code> exposes <code>flowfile.meta.classify_intent</code> and asks the LLM to pick a <code>PlannerOpKind</code> for the next step.</li>
+<li><code>pick_type</code> exposes <code>flowfile.meta.pick_node_type</code> (add path only).</li>
+<li><code>pick_upstream</code> exposes <code>flowfile.meta.pick_upstream</code> with the upstream id enum populated from <code>live_ids ∪ session.staged_node_ids</code>.</li>
+<li><code>fill_settings</code> exposes the picked node type's <code>flowfile.graph.add_&lt;type&gt;</code> tool with planner-injected fields stripped from its parameter schema.</li>
+<li><code>single_stage_op</code> (non-add path) exposes exactly one ops tool — <code>update_node_settings</code>, <code>delete_node</code>, <code>connect</code>, or <code>delete_connection</code>.</li>
+<li><code>verify_completion</code> (opt-in via <code>verify_plan_completion=True</code>) runs one extra round at the end so the LLM can confirm <code>is_complete=true</code> against the chat-mode plan or send control back to <code>classify</code>.</li>
+</ul>
+<p><strong><code>agent_complex</code>.</strong> Single-shot, full tool catalog in one call. Best for big models (Sonnet, Opus, GPT-4.1, Gemini Pro). The state machine field is unused; the planner runs each round as a free-form tool-using turn. Same <code>mode="stage"</code> and accept/reject GraphDiff flow as <code>agent_staged</code>. Higher rate-limit pressure, fewer round-trips.</p>
+<p><strong><code>agent_live</code>.</strong> Same state machine as <code>agent_staged</code>, but <code>mode="apply"</code> — each tool call <strong>mutates the live graph immediately</strong>, the affected subgraph is run (Performance) or a sample is evaluated (Development), and the runtime observation is fed back as the next tool reply. On runtime failure the just-added node is auto-deleted and the LLM retries up to <code>max_retries_per_step</code>. <strong>There is no bundled <code>staged_results</code> GraphDiff and no accept/reject step</strong> — <code>applied_results</code> on the session is the record of truth, and the canvas itself is the running record. This is the variant the frontend drawer defaults to.</p>
+<h3 id="session-lifecycle">Session lifecycle</h3>
+<p>Cold start: a <code>running</code> session with no live SSE stream is detected by <code>_looks_cold_started</code> and flipped to <code>paused_user_action</code>. The user re-attaches via <code>POST /ai/agent/{session_id}/resume?action=continue</code>. This avoids two SSE streams racing against the same session.</p>
+<p>Followups: after <code>complete</code> or <code>awaiting_user_input</code>, the user can send another message via <code>POST /ai/agent/{session_id}/followup</code> with <code>action="user_message"</code>. Rejecting a staged diff fires the same endpoint with <code>action="rejected_diff"</code> and an optional rejection note that becomes context for the next round.</p>
+<hr />
+<h2 id="tool-execution">Tool execution</h2>
+<p><code>flowfile_core/flowfile_core/ai/tools/executor.py::execute_tool_call(tool_name, tool_args, mode, ...)</code> is the single entry point for every tool the LLM emits. It dispatches by the tool-name domain prefix:</p>
+<table>
+<thead>
+<tr>
+<th>Domain</th>
+<th>Operations</th>
+<th>Handler</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>flowfile.graph.*</code></td>
+<td><code>add_&lt;node_type&gt;</code>, <code>connect</code>, <code>delete_node</code>, <code>delete_connection</code>, <code>update_node_settings</code></td>
+<td><code>graph_ops.py</code></td>
+</tr>
+<tr>
+<td><code>flowfile.schema.*</code></td>
+<td><code>update_column_name</code>, <code>update_column_type</code></td>
+<td><code>schema_ops.py</code></td>
+</tr>
+<tr>
+<td><code>flowfile.codegen.*</code></td>
+<td><code>regenerate_polars_code</code>, <code>refactor_python_script</code></td>
+<td><code>codegen_ops.py</code></td>
+</tr>
+<tr>
+<td><code>flowfile.meta.*</code></td>
+<td><code>classify_intent</code>, <code>emit_plan</code>, <code>pick_node_type</code>, <code>pick_upstream</code>, <code>fill_&lt;node&gt;_settings</code>, <code>verify_completion</code></td>
+<td><code>meta_ops.py</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>mode</code> is one of:</p>
+<ul>
+<li><strong><code>stage</code></strong> (default for the agent). Validate the args via the Pydantic settings model, run schema prediction, build a <code>StagedToolEntry</code>, and <strong>return</strong> it without touching the live graph. The planner accumulates these into <code>session.staged_results</code> and bundles them into a <code>GraphDiff</code> at the end of the run.</li>
+<li><strong><code>apply</code></strong>. Validate, then mutate the live graph immediately. Used by <code>agent_live</code> and by the Cmd+K palette / inline actions when the user accepts a staged diff.</li>
+</ul>
+<p>The result shape is <code>ToolExecutionResult</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">ToolExecutionResult</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">status</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;staged&quot;</span><span class="p">,</span> <span class="s2">&quot;applied&quot;</span><span class="p">,</span> <span class="s2">&quot;rejected&quot;</span><span class="p">]</span>
+    <span class="n">staged_node_payload</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">refusal_detail</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">audit_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="o">...</span>
+</code></pre></div>
+<h3 id="schema-prediction">Schema prediction</h3>
+<p><code>tools/predictor.py</code> predicts the output schema of an <code>add_&lt;node&gt;</code> <em>before</em> the node is added, so the planner can keep building on a node without committing first. Two strategies:</p>
+<ul>
+<li><strong>Mirror</strong> for static / source / passthrough nodes — read settings, return the deterministic schema.</li>
+<li><strong>Kernel dry-run</strong> for dynamic nodes (<code>polars_code</code>, <code>python_script</code>, <code>sql_query</code>) — execute the code in a sandboxed kernel, capture the output schema, cache the result by <code>(code_hash, input_schema_hash)</code> in <code>tools/dry_run.py</code>'s <code>DryRunCache</code>.</li>
+</ul>
+<h3 id="refusal-paths">Refusal paths</h3>
+<p>The executor rejects rather than passes through certain shapes:</p>
+<ul>
+<li><code>polars_code</code> bodies containing <code>import</code> statements (security boundary — the kernel runtime is sandboxed but Flowfile-level bans are clearer).</li>
+<li>Node settings that fail Pydantic validation (with a fully-formed error message including the JSON path and an example payload pulled from <code>tools/node_docs.py::NODE_AGENT_PAYLOAD_EXAMPLES</code>).</li>
+<li>Sink nodes used as upstreams (<code>_detect_sink_upstreams</code> / <code>_format_sink_upstream_refusal</code>).</li>
+</ul>
+<p>Refusals come back as <code>ToolExecutionResult(status="rejected", refusal_detail=...)</code>, which the planner echoes to the LLM as the next tool reply. The model can correct course and retry within <code>max_retries_per_step</code>.</p>
+<h3 id="tool-catalog-narrowing">Tool catalog narrowing</h3>
+<p><code>tools/registry.py::build_tool_catalog(*, surface=None)</code> returns the <code>list[ToolSpec]</code> to expose for the current surface. <code>agent_complex</code> gets the full catalog; <code>agent_staged</code> gets one or two tools depending on the current <code>PlannerStage</code>; <code>cmd_k</code> and inline surfaces get the single tool they need.</p>
+<hr />
+<h2 id="graphdiff-and-acceptreject">GraphDiff and accept/reject</h2>
+<p><code>diff.py::GraphDiff</code> is the unit of stageable change:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">GraphDiff</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">diff_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">flow_id</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">operations</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">StagedToolEntry</span><span class="p">]</span>   <span class="c1"># tool_name + audit_id + staged_node_payload</span>
+    <span class="n">applied_results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">AppliedNodeRecord</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">drifted_at</span><span class="p">:</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p><code>bundle_staged_results(staged_results)</code> packs the planner's <code>session.staged_results</code> into a <code>GraphDiff</code> at session end. <code>apply_diff(flow, diff)</code> is the atomic apply — drift check first, then mutate, then create one undo point. Reject just discards the diff.</p>
+<p><code>diff_store.py</code> keeps a UUID-keyed dict of pending diffs, with optional disk persistence so restarts don't lose work.</p>
+<p><code>diff_routes.py</code> exposes:</p>
+<ul>
+<li><code>POST /ai/diff/stage</code> — used by Cmd+K / inline surfaces to stage a non-agent diff.</li>
+<li><code>POST /ai/diff/{diff_id}/accept</code> — drift-checks then applies.</li>
+<li><code>POST /ai/diff/{diff_id}/reject</code> — discards. Body optionally includes a rejection note that the agent reads on its next round.</li>
+</ul>
+<hr />
+<h2 id="audit-safety-scheduler">Audit, safety, scheduler</h2>
+<p><strong>Audit</strong> (<code>audit.py</code>). Every tool call records an <code>AuditEvent</code> (<code>session_id</code>, <code>user_id</code>, <code>tool_name</code>, <code>result_status</code>, <code>provider</code>, <code>model</code>, redacted args). Used for compliance, replay, and the per-session activity log in the UI.</p>
+<p><strong>Safety</strong> (<code>safety.py</code>). <code>scrub_value_regex(value)</code> runs a configurable set of regexes for common PII patterns (emails, credit cards, SSNs, etc.) and replaces matches with markers. Also exposes <code>prepare_samples(...)</code> which the agent uses when <code>samples_mode="regex"</code> to scrub sample rows before they're shown to the LLM.</p>
+<p><strong>Scheduler</strong> (<code>scheduler.py</code>). <code>RateLimitScheduler</code> enforces per-provider RPM/RPD via in-memory deques. Read from env: <code>FLOWFILE_AI_&lt;PROVIDER&gt;_RPM</code> / <code>FLOWFILE_AI_&lt;PROVIDER&gt;_RPD</code> (e.g., <code>FLOWFILE_AI_ANTHROPIC_RPM=30</code>). On 429 the scheduler honors <code>Retry-After</code> independently of the local caps. <code>with_provider_retry(provider, ...)</code> and <code>stream_with_provider_retry(provider, ...)</code> are the opt-in wrappers; <code>byok.get_configured_provider</code> is <strong>not</strong> auto-wrapped — callers compose explicitly. A <code>RateLimitHint</code> callback piped into the SSE stream surfaces <em>"rate-limited, retrying in Ns"</em> toasts to the UI.</p>
+<hr />
+<h2 id="prompt-logging-debug">Prompt logging (debug)</h2>
+<p><code>prompt_log.py</code> is the dev-mode "what did the model actually see?" hatch. Off by default in production.</p>
+<p><strong>Enable</strong> (env vars on the core process):</p>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">FLOWFILE_AI_LOG_PROMPTS</span><span class="o">=</span><span class="nb">true</span><span class="w">        </span><span class="c1"># daily JSONL writes</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">FLOWFILE_AI_LOG_PROMPTS_SCRUB</span><span class="o">=</span><span class="nb">true</span><span class="w">  </span><span class="c1"># optional: scrub PII in user/tool messages</span>
+</code></pre></div>
+<p>Both flags are also <code>MutableBool</code>s and can be flipped at runtime via the settings module without restart.</p>
+<p><strong>Log location</strong>. <code>{base_directory}/ai_prompts/YYYY-MM-DD.jsonl</code> — one file per day, one line per LLM round-trip. <code>{base_directory}</code> is the same dir that owns <code>master_key.txt</code> / <code>temp/</code> / <code>system_logs/</code> (see <code>shared.storage_config.storage.base_directory</code>); on a local install this resolves to <code>~/.flowfile/</code>.</p>
+<p><strong>One line per LLM call.</strong> For streaming calls the wrapper accumulates content + tool-call deltas as the iterator yields and emits the entry at stream-end. If the stream errors mid-flight, the entry still lands with whatever was accumulated and <code>error</code> set.</p>
+<p><strong>Truncation.</strong> Entries past 256 KiB get older user/assistant message bodies replaced with <code>[...truncated, len=N chars]</code> markers, preserving the system prompt and the most recent 5 turns. Each line stays parseable by <code>jq</code>.</p>
+<p><strong>Scrubbing.</strong> When <code>FLOWFILE_AI_LOG_PROMPTS_SCRUB=true</code>, user/tool message bodies are run through <code>safety.scrub_value_regex</code> before write. System and assistant content are <em>not</em> scrubbed — those are exactly what you need to read to debug model behaviour.</p>
+<p><strong>Failure isolation.</strong> A logging error never crashes the LLM call; the wrapper swallows + warns on file-IO / serialisation failures.</p>
+<p><strong>CLI</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># tail the last 20 entries</span>
+python<span class="w"> </span>-m<span class="w"> </span>flowfile_core.ai.prompt_log<span class="w"> </span>tail<span class="w"> </span><span class="m">20</span>
+
+<span class="c1"># grep for a substring across recent entries (optional surface filter)</span>
+python<span class="w"> </span>-m<span class="w"> </span>flowfile_core.ai.prompt_log<span class="w"> </span>grep<span class="w"> </span><span class="s2">&quot;filter for Q4&quot;</span>
+python<span class="w"> </span>-m<span class="w"> </span>flowfile_core.ai.prompt_log<span class="w"> </span>grep<span class="w"> </span><span class="s2">&quot;agent_staged&quot;</span><span class="w"> </span>agent_staged
+</code></pre></div>
+<p>The CLI emits one JSON object per line; pipe through <code>jq</code> for ergonomic filtering.</p>
+<hr />
+<h2 id="streaming">Streaming</h2>
+<p><code>streaming.py</code> exposes:</p>
+<ul>
+<li><code>make_streaming_response(generator)</code> / <code>sse_stream(generator)</code> — wrap an async generator of strings or events as an SSE response.</li>
+<li><code>planner_events_sse(events)</code> — same shape but specialised for <code>PlannerEvent</code>, including the <code>event:</code> SSE header per event type so frontend handlers can dispatch on <code>EventSource.addEventListener('tool_call_staged', ...)</code>.</li>
+</ul>
+<p>A 15-second keepalive frame is emitted on every stream so connections survive long thinking.</p>
+<hr />
+<h2 id="intent-router">Intent router</h2>
+<p><code>intent_router.py::classify_intent(message, *, provider, surface="intent_classifier", ...)</code> runs a small fast model (Haiku, Flash, 4.1-mini) and returns a discriminated decision:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">RouteResponse</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">target</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;chat&quot;</span><span class="p">,</span> <span class="s2">&quot;agent&quot;</span><span class="p">]</span>
+    <span class="n">confidence</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;high&quot;</span><span class="p">]</span>
+    <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span>
+</code></pre></div>
+<p>The chat drawer's <em>Auto</em> mode hits <code>POST /ai/route</code> first, then dispatches to <code>/ai/chat/stream</code> or <code>/ai/agent/start</code> based on the result. Failure (timeout, parse error) defaults to <code>"chat"</code> — auto-promotion is a convenience, not a correctness requirement.</p>
+<hr />
+<h2 id="frontend-integration">Frontend integration</h2>
+<p>The frontend is Vue 3 + Pinia. The store / component split:</p>
+<ul>
+<li><strong><code>stores/ai-store.ts</code></strong> — chat drawer state, mode toggle (Chat / Auto / Agent), in-flight stream handle, message history.</li>
+<li><strong><code>stores/ai-agent-store.ts</code></strong> — agent session id, current <code>stage</code> / <code>picked_op_kind</code> / <code>picked_node_type</code>, event timeline, staged diff id. Also handles SSE subscription, including reconnect on cold-start.</li>
+<li><strong><code>stores/ai-diff-store.ts</code></strong> — pending diffs by id, accept/reject actions.</li>
+<li><strong><code>stores/ai-autocomplete-store.ts</code></strong> — formula / join-key suggestion cache with timeouts and degraded-flag handling.</li>
+<li><strong><code>stores/ai-command-palette-store.ts</code></strong> — Cmd+K palette state.</li>
+<li><strong><code>stores/ai-ghost-node-store.ts</code></strong> — edge-stub suggestion cache.</li>
+</ul>
+<p>Components in <code>features/ai/</code>:</p>
+<ul>
+<li><code>AiAssistant.vue</code> — the drawer (chat + agent).</li>
+<li><code>AiAgentRun.vue</code> / <code>AiAgentEvent.vue</code> — agent panel and per-event renderers.</li>
+<li><code>AiDiffPanel.vue</code> / <code>AiDiffPreview.vue</code> — diff review UI.</li>
+<li><code>AiInlineActions.vue</code> — the ✨ menu on a node.</li>
+<li><code>AiCommandPalette.vue</code> — Cmd+K.</li>
+<li><code>AiGhostNode.vue</code> — edge-stub suggestions.</li>
+<li><code>AiMentionAutocomplete.vue</code> (+ <code>mentionVocabulary.ts</code>) — <code>@flow</code> / <code>@node:id</code> completion.</li>
+</ul>
+<p>The BYOK panel lives in <code>views/AiProvidersView/AiSettingsTab.vue</code> and talks to the BYOK routes through <code>api/ai.api.ts</code>.</p>
+<hr />
+<h2 id="adding-a-new-surface">Adding a new surface</h2>
+<p>A typical recipe for a new AI feature:</p>
+<ol>
+<li>Decide whether it's read-only (chat-shape) or mutating (agent-shape).</li>
+<li>Pick a surface name (e.g. <code>my_new_feature</code>) and add a per-surface entry to each provider's <code>surface_models</code> dict in <code>providers/{anthropic,openai,...}.py</code>.</li>
+<li>Add a system prompt under <code>flowfile_core/flowfile_core/ai/prompts/</code>. Reuse <code>base.md</code> as a foundation.</li>
+<li>Add a route file <code>flowfile_core/flowfile_core/ai/my_feature_routes.py</code> with a Pydantic request model and a handler that:<ul>
+<li>Calls <code>byok.get_configured_provider(db, current_user.id, payload.provider, surface="my_new_feature", model=payload.model)</code>.</li>
+<li>Calls <code>context.builder.render_prompt_context(...)</code> for the user message.</li>
+<li>Either <code>await provider.chat(...)</code> for non-streaming, or <code>streaming.sse_stream(provider.stream(...))</code> for streaming.</li>
+<li>For mutating features: build a tool catalog via <code>tools.registry.build_tool_catalog(surface="my_new_feature")</code>, dispatch tool calls through <code>tools.executor.execute_tool_call(..., mode="stage")</code>, accumulate into <code>staged_results</code>, bundle into a <code>GraphDiff</code> via <code>diff.bundle_staged_results(...)</code>, register with <code>diff_store</code>, and return the <code>diff_id</code> so the frontend can render an accept/reject UI.</li>
+</ul>
+</li>
+<li>Mount the new sub-router on <code>routes.py::router.include_router(my_feature_router)</code> — the <code>require_ai_enabled</code> dependency is inherited automatically.</li>
+<li>Add the corresponding Pinia store and Vue components on the frontend.</li>
+<li>Don't forget to update <a href="../ai/index.html">AI Assistant overview</a> and <a href="../ai/providers.html">Provider Setup</a> once the user-visible behaviour is finalised.</li>
+</ol>
+<p>Existing surfaces are good templates — <code>chat_routes.py</code> for streaming chat, <code>command_palette_routes.py</code> for stage-and-return-diff, <code>agent_routes.py</code> for the full agent loop.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>
