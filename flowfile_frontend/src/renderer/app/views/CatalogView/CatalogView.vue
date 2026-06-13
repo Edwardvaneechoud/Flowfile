@@ -76,6 +76,9 @@
             <button class="btn-primary btn-sm" @click="showCreateNamespace = true">
               Create your first catalog
             </button>
+            <button class="btn btn-ghost btn-sm" :disabled="demoBusy" @click="handleLoadDemoData">
+              Load demo data
+            </button>
           </div>
           <div v-else>
             <CatalogTreeNode
@@ -449,6 +452,32 @@
             and manage schedules from the Schedules tab.
           </p>
         </div>
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-flask"></i>
+            <h4>Demo data</h4>
+          </div>
+          <p>
+            Load a self-contained <strong>Demo</strong> catalog with sample tables and a daily
+            foreign-exchange sync flow to explore Flowfile. Remove it again at any time.
+          </p>
+          <button
+            v-if="!hasDemoCatalog"
+            class="btn-primary btn-sm"
+            :disabled="demoBusy"
+            @click="handleLoadDemoData"
+          >
+            Load demo data
+          </button>
+          <button
+            v-else
+            class="btn btn-ghost btn-sm"
+            :disabled="demoBusy"
+            @click="handleRemoveDemoData"
+          >
+            Remove demo data
+          </button>
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -643,6 +672,46 @@ async function refreshAll() {
     ]);
   } finally {
     refreshing.value = false;
+  }
+}
+
+// --- Demo catalog (optional sample data) ---
+
+const demoBusy = ref(false);
+const hasDemoCatalog = computed(() => catalogStore.tree.some((n) => n.name === "Demo"));
+
+async function handleLoadDemoData() {
+  demoBusy.value = true;
+  try {
+    await CatalogApi.seedDemoCatalog();
+    await refreshAll();
+    ElMessage.success("Demo catalog loaded");
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to load demo data");
+  } finally {
+    demoBusy.value = false;
+  }
+}
+
+async function handleRemoveDemoData() {
+  try {
+    await ElMessageBox.confirm(
+      "This removes the Demo catalog and all of its sample tables, flows and schedules. This cannot be undone.",
+      "Remove demo data",
+      { confirmButtonText: "Remove", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  demoBusy.value = true;
+  try {
+    await CatalogApi.removeDemoCatalog();
+    await refreshAll();
+    ElMessage.success("Demo catalog removed");
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to remove demo data");
+  } finally {
+    demoBusy.value = false;
   }
 }
 

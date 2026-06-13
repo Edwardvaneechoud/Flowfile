@@ -60,6 +60,9 @@ pub fn build_child_env(core_port: u16, worker_port: u16) -> HashMap<String, Stri
         std::process::id().to_string(),
     );
 
+    // Run the embedded scheduler in the core sidecar so recurring flows fire.
+    env_vars.insert("FLOWFILE_SCHEDULER_ENABLED".into(), "true".into());
+
     // Mirror the discovered ports into env vars so the Python configs that
     // read them at import time also see the right values (CLI args also pass
     // them, but `flowfile_worker.configs` consults env vars in spawned-child

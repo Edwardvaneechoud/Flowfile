@@ -207,6 +207,27 @@ def handle_catalog_exceptions(**overrides: str):
     return decorator
 
 
+# Demo catalog (optional, one-click seed/teardown)
+
+
+@router.post("/seed-demo", tags=["demo"])
+@handle_catalog_exceptions()
+def seed_demo(current_user=Depends(get_current_active_user)):
+    """Populate the optional ``Demo`` catalog (sample tables + daily FX-sync flow)."""
+    from flowfile_core.catalog.demo_seed import seed_demo_catalog
+
+    return seed_demo_catalog(user_id=current_user.id)
+
+
+@router.post("/remove-demo", tags=["demo"])
+@handle_catalog_exceptions()
+def remove_demo(current_user=Depends(get_current_active_user)):
+    """Remove the ``Demo`` catalog and everything under it."""
+    from flowfile_core.catalog.demo_seed import remove_demo_catalog
+
+    return remove_demo_catalog(user_id=current_user.id)
+
+
 @router.get("/namespaces", response_model=list[NamespaceOut])
 def list_namespaces(
     parent_id: int | None = None,

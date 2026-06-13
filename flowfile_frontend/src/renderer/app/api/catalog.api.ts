@@ -570,4 +570,16 @@ export class CatalogApi {
   static async deleteDashboard(id: number): Promise<void> {
     await axios.delete(`/catalog/dashboards/${id}`);
   }
+
+  // ====== Demo catalog ======
+
+  static async seedDemoCatalog(): Promise<Record<string, unknown>> {
+    const response = await axios.post<Record<string, unknown>>("/catalog/seed-demo");
+    return response.data;
+  }
+
+  static async removeDemoCatalog(): Promise<Record<string, unknown>> {
+    const response = await axios.post<Record<string, unknown>>("/catalog/remove-demo");
+    return response.data;
+  }
 }
