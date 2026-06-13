@@ -29,6 +29,7 @@ from flowfile_core.ai.inline_action_routes import router as inline_action_router
 from flowfile_core.ai.intent_router_routes import router as intent_router
 from flowfile_core.ai.lineage_routes import router as lineage_router
 from flowfile_core.ai.local_model_routes import router as local_model_router
+from flowfile_core.ai.node_codegen_routes import router as node_codegen_router
 from flowfile_core.ai.run_failure_routes import router as run_failure_router
 from flowfile_core.ai.suggest_next_node_routes import router as suggest_next_node_router
 
@@ -48,6 +49,7 @@ router.include_router(agent_router)
 router.include_router(intent_router)
 router.include_router(local_model_router)
 router.include_router(generate_router)
+router.include_router(node_codegen_router)
 
 
 @router.get("/health")

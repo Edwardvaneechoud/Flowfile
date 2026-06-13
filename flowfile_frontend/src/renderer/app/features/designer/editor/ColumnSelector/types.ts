@@ -4,6 +4,8 @@ export interface ColumnSelectorInterface {
   node_type: string;
   level?: number;
   hasAction?: boolean;
+  data_type?: string;
+  data_type_group?: string;
 }
 
 export interface MenuContents {
