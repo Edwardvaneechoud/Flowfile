@@ -75,7 +75,12 @@ function persist(list: RecentFlow[]): void {
 const recentFlows = ref<RecentFlow[]>(readStored());
 
 export function useRecentFlows() {
-  function recordFlow(entry: { path: string; name?: string; catalogRef?: string }): void {
+  function recordFlow(entry: {
+    path: string;
+    name?: string;
+    catalogRef?: string;
+    catalogId?: number;
+  }): void {
     if (!entry.path) return;
     // Re-records without explicit metadata (e.g. reopening from the recents
     // list) keep the name/catalogRef/catalogId captured on the original open.
@@ -85,7 +90,7 @@ export function useRecentFlows() {
       name: entry.name || existing?.name || basenameNoExt(entry.path),
       lastOpened: Date.now(),
       catalogRef: entry.catalogRef ?? existing?.catalogRef,
-      catalogId: existing?.catalogId,
+      catalogId: entry.catalogId ?? existing?.catalogId,
     });
     persist(recentFlows.value);
   }

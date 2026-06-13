@@ -59,38 +59,66 @@
         <h2 class="welcome-section-title">Recent flows</h2>
         <ul v-if="recentFlows.length" class="recent-list">
           <li v-for="flow in recentFlows" :key="flow.path">
-            <el-dropdown class="recent-dropdown" trigger="contextmenu" placement="bottom-start">
-              <button class="recent-row" :title="flow.path" @click="emit('open-recent', flow.path)">
-                <i
-                  v-if="flow.catalogRef"
-                  class="fa-solid fa-folder-tree recent-icon recent-icon--catalog"
-                ></i>
-                <span v-else class="material-icons recent-icon">description</span>
-                <span class="recent-name">{{ flow.name }}</span>
-                <span class="recent-loc">
+            <el-tooltip placement="top" :show-after="400" :hide-after="0">
+              <template #content>
+                <div v-if="flow.catalogRef">{{ flow.catalogRef }}</div>
+                <div>{{ flow.path }}</div>
+              </template>
+              <el-dropdown class="recent-dropdown" trigger="contextmenu" placement="bottom-start">
+                <div
+                  class="recent-row"
+                  role="button"
+                  tabindex="0"
+                  @click="emit('open-recent', flow.path)"
+                  @keydown.enter="emit('open-recent', flow.path)"
+                  @keydown.space.prevent="emit('open-recent', flow.path)"
+                >
+                  <i
+                    v-if="flow.catalogRef"
+                    class="fa-solid fa-folder-tree recent-icon recent-icon--catalog"
+                  ></i>
+                  <span v-else class="material-icons recent-icon">description</span>
+                  <span class="recent-name">{{ displayName(flow) }}</span>
                   <span v-if="flow.catalogRef" class="recent-catalog-ref">
                     {{ flow.catalogRef }}
                   </span>
-                  <span v-else class="recent-path">{{ flow.path }}</span>
-                </span>
-                <span class="recent-time">{{ relativeTime(flow.lastOpened) }}</span>
-              </button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item @click="emit('open-recent', flow.path)">
-                    <span class="material-icons recent-menu-icon">open_in_new</span>
-                    Open flow
-                  </el-dropdown-item>
-                  <el-dropdown-item
-                    :disabled="flow.catalogId === undefined"
-                    @click="viewInCatalog(flow)"
+                  <span v-else-if="parentFolder(flow.path)" class="recent-folder">
+                    {{ parentFolder(flow.path) }}
+                  </span>
+                  <span class="recent-time">{{ relativeTime(flow.lastOpened) }}</span>
+                  <button
+                    class="recent-remove"
+                    type="button"
+                    :aria-label="`Remove ${displayName(flow)} from recents`"
+                    title="Remove from recents"
+                    @click.stop="emit('remove-recent', flow.path)"
+                    @keydown.enter.stop="emit('remove-recent', flow.path)"
+                    @keydown.space.stop.prevent="emit('remove-recent', flow.path)"
                   >
-                    <span class="material-icons recent-menu-icon">folder_open</span>
-                    View in catalog
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+                    <span class="material-icons">close</span>
+                  </button>
+                </div>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item @click="emit('open-recent', flow.path)">
+                      <span class="material-icons recent-menu-icon">open_in_new</span>
+                      Open flow
+                    </el-dropdown-item>
+                    <el-dropdown-item
+                      :disabled="flow.catalogId === undefined"
+                      @click="viewInCatalog(flow)"
+                    >
+                      <span class="material-icons recent-menu-icon">folder_open</span>
+                      View in catalog
+                    </el-dropdown-item>
+                    <el-dropdown-item divided @click="emit('remove-recent', flow.path)">
+                      <span class="material-icons recent-menu-icon">close</span>
+                      Remove from recents
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </el-tooltip>
           </li>
         </ul>
         <p v-else class="recent-empty">Flows you create or open will show up here.</p>
@@ -191,6 +219,7 @@ const emit = defineEmits<{
   (e: "open"): void;
   (e: "browse-templates"): void;
   (e: "open-recent", path: string): void;
+  (e: "remove-recent", path: string): void;
   (e: "start-tutorial"): void;
 }>();
 
@@ -216,6 +245,21 @@ const viewInCatalog = (flow: RecentFlow) => {
   if (flow.catalogId === undefined) return;
   router.push({ name: "catalog", query: { tab: "catalog", flowId: String(flow.catalogId) } });
 };
+
+const KNOWN_FLOW_EXTS = /\.(ya?ml|flowfile)$/i;
+
+// Display-only; never mutates the stored entry. Catalog names have no extension
+// and pass through unchanged.
+function displayName(flow: RecentFlow): string {
+  return flow.name.replace(KNOWN_FLOW_EXTS, "");
+}
+
+// Parent directory only (e.g. "unnamed_flows") — the orientation the chip shows
+// in place of the full path, which now lives in the row tooltip.
+function parentFolder(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts.length >= 2 ? parts[parts.length - 2] : "";
+}
 
 const relativeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 const RELATIVE_STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
@@ -495,31 +539,30 @@ function relativeTime(timestamp: number): string {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
-  flex-shrink: 0;
-  max-width: 45%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.recent-loc {
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-}
-
-.recent-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+}
+
+/* Muted parent-folder chip — quieter than the accent catalog ref badge. */
+.recent-folder {
+  flex-shrink: 0;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px var(--spacing-2);
+  background-color: var(--color-background-tertiary);
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-tertiary);
 }
 
 .recent-catalog-ref {
-  max-width: 100%;
+  flex-shrink: 0;
+  max-width: 45%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -535,6 +578,46 @@ function relativeTime(timestamp: number): string {
   flex-shrink: 0;
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
+}
+
+/* Remove-from-recents X — hidden until the row is hovered/focused. */
+.recent-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--border-radius-full);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--transition-fast),
+    color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.recent-row:hover .recent-remove,
+.recent-remove:focus-visible {
+  opacity: 1;
+}
+
+.recent-remove:hover {
+  color: var(--color-danger);
+  background-color: var(--color-danger-bg, rgba(239, 68, 68, 0.1));
+}
+
+.recent-remove:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.recent-remove .material-icons {
+  font-size: 15px;
 }
 
 .recent-empty {

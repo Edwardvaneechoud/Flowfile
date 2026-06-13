@@ -50,6 +50,7 @@
         ref="gridComponentRef"
         :default-col-def="defaultColDef"
         :column-defs="columnDefs"
+        :suppress-field-dot-notation="true"
         class="ag-theme-balham"
         :row-data="rowData"
         :style="{ width: '100%', height: gridHeightComputed }"

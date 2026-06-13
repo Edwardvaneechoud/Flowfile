@@ -150,7 +150,9 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="FlowFile: A visual ETL tool with a Polars-like API")
-    parser.add_argument("command", nargs="?", choices=["run"], help="Command to execute")
+    parser.add_argument(
+        "command", nargs="?", choices=["run", "seed-demo", "remove-demo"], help="Command to execute"
+    )
     parser.add_argument("component", nargs="?", choices=["ui", "core", "worker", "flow"], help="Component to run")
     parser.add_argument("file_path", nargs="?", help="Path to flow file (for 'flow' component)")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
@@ -191,6 +193,13 @@ def main():
                 print("Usage: flowfile run flow <path-to-flow-file>", file=sys.stderr)
                 sys.exit(1)
             sys.exit(run_flow(args.file_path, param_overrides=args.params, run_id=args.run_id))
+    elif args.command in ("seed-demo", "remove-demo"):
+        from flowfile_core.catalog.demo_seed import remove_demo_catalog, seed_demo_catalog
+
+        if args.command == "seed-demo":
+            print(f"Demo catalog seeded: {seed_demo_catalog()}")
+        else:
+            print(f"Demo catalog removed: {remove_demo_catalog()}")
     else:
         from importlib.metadata import PackageNotFoundError, version
 
@@ -207,6 +216,10 @@ def main():
         print("")
         print("  # Run a flow from a file")
         print("  flowfile run flow my_pipeline.yaml")
+        print("")
+        print("  # Load or remove the optional demo catalog")
+        print("  flowfile seed-demo")
+        print("  flowfile remove-demo")
         print("")
         print("  # Advanced: Run individual components")
         print("  flowfile run core  # Start only the core service")

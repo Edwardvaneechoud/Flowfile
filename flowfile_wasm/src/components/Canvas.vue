@@ -212,6 +212,7 @@
               :rowData="rowData"
               :columnDefs="columnDefs"
               :defaultColDef="defaultColDef"
+              :suppressFieldDotNotation="true"
               :pagination="true"
               :paginationPageSize="100"
               :enableCellTextSelection="true"

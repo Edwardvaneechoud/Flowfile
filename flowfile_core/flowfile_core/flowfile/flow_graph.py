@@ -4140,15 +4140,18 @@ class FlowGraph:
             return resolve_auth_secret_encrypted(auth, node_rest_api_reader.user_id)
 
         def _func() -> FlowDataEngine:
-            # All fetching happens in the worker; the core only orchestrates.
-            fetcher = ExternalRestApiFetcher(
-                build_rest_api_worker_settings(node_rest_api_reader, _resolve_secret_encrypted()),
-                wait_on_completion=False,
-            )
-            node._fetch_cached_df = fetcher
-            # ``get_result()`` returns a ``pl.LazyFrame`` deserialised from the
-            # worker's Arrow IPC file — never collect on the core service.
-            fl = FlowDataEngine(fetcher.get_result())
+            encrypted = _resolve_secret_encrypted()
+            worker_settings = build_rest_api_worker_settings(node_rest_api_reader, encrypted)
+            if self.execution_location == "local":
+                # No worker service in local runs — fetch in-process (cf. add_database_reader).
+                from shared.rest_api.fetch import fetch_rest_api
+
+                secret = decrypt_secret(encrypted).get_secret_value() if encrypted else None
+                fl = FlowDataEngine(fetch_rest_api(worker_settings, secret=secret).lazy())
+            else:
+                fetcher = ExternalRestApiFetcher(worker_settings, wait_on_completion=False)
+                node._fetch_cached_df = fetcher
+                fl = FlowDataEngine(fetcher.get_result())
             cols = schema_callback()
             # Align to the sampled schema (if any) so downstream nodes see stable
             # columns; with no sample yet, the fetched frame defines the schema.
