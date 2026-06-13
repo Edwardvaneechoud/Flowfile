@@ -6,7 +6,16 @@
       @request-save="saveSettings"
     >
       <div class="sql-editor-wrapper">
-        <h4 class="section-subtitle">SQL Query</h4>
+        <div class="sql-editor-header">
+          <h4 class="section-subtitle">SQL Query</h4>
+          <AiGenerateCodeButton
+            v-if="aiGenerateEnabled && nodeSqlQuery"
+            :flow-id="Number(nodeSqlQuery.flow_id)"
+            :node-id="nodeSqlQuery.node_id"
+            node-type="sql_query"
+            @code-generated="applyGeneratedCode"
+          />
+        </div>
         <p class="section-hint">
           Connected inputs are available as <code>input_1</code>, <code>input_2</code>, etc.
         </p>
@@ -41,6 +50,8 @@ import { createSqlQueryNode } from "./utils";
 
 import type { NodeSqlQuery } from "../../../baseNode/nodeInput";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import AiGenerateCodeButton from "../../../../../features/designer/editor/AiGenerateCodeButton.vue";
+import { AI_GENERATE_CODE_ENABLED as aiGenerateEnabled } from "../../../../../stores/ai-code-generator-store";
 
 const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
@@ -56,6 +67,12 @@ watch(sqlCode, (newCode) => {
     nodeSqlQuery.value.sql_query_input.sql_code = newCode;
   }
 });
+
+const applyGeneratedCode = (code: string) => {
+  // sqlCode is the codemirror v-model; assigning it updates the editor and the
+  // watcher above syncs it back to the node model.
+  sqlCode.value = code;
+};
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeSqlQuery,
@@ -96,8 +113,16 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   padding: 8px 0;
 }
 
+.sql-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
 .section-subtitle {
-  margin: 0 0 4px 0;
+  margin: 0;
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--color-text-secondary);

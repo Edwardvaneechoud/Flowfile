@@ -27,8 +27,10 @@ from flowfile_core.ai.node_codegen import (
     generate_node_code,
 )
 from flowfile_core.ai.providers import (
+    PROVIDERS,
     UnknownProviderError,
     is_resolvable_provider,
+    list_supported_providers,
     resolvable_provider_names,
 )
 from flowfile_core.auth.jwt import get_current_active_user
@@ -38,22 +40,62 @@ router = APIRouter()
 
 
 class GenerateNodeCodeRequest(BaseModel):
-    """Body for ``POST /ai/generate_node_code``."""
+    """Body for ``POST /ai/generate_node_code``.
+
+    ``provider`` is optional — ``None`` resolves to the first configured
+    provider, mirroring ``/ai/generate_cron``.
+    """
 
     flow_id: int
     node_id: int
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_LEN)
-    provider: str = Field(min_length=1)
+    provider: str | None = Field(default=None, min_length=1)
     model: str | None = None
     timeout: float = Field(default=DEFAULT_TIMEOUT_SECONDS, gt=0.0, le=60.0)
 
 
-def _ensure_known_provider(name: str) -> None:
-    if not is_resolvable_provider(name):
+def _ensure_known_provider(name: str | None) -> None:
+    if name is not None and not is_resolvable_provider(name):
         raise HTTPException(
             status_code=404,
             detail=f"Unknown provider {name!r}; supported: {resolvable_provider_names()}",
         )
+
+
+def _resolve_provider(db: Session, user_id: int, name: str | None, *, model: str | None):
+    """Resolve a configured provider, preferring ``name`` if given.
+
+    The generate-code button has no provider picker, so it must not dead-end when
+    the caller's preferred provider (e.g. the chat-selected one) has no key. We
+    try the preferred provider first, then fall back to any other configured
+    provider; the per-call ``model`` only applies to the preferred one. Only when
+    nothing at all is configured do we 409.
+    """
+    candidates: list[str] = []
+    if name is not None:
+        candidates.append(name)
+    candidates.extend(p for p in PROVIDERS if p != name)
+
+    for candidate in candidates:
+        try:
+            return get_configured_provider(
+                db,
+                user_id,
+                candidate,
+                surface="explain",
+                model=model if candidate == name else None,
+            )
+        except (ProviderNotConfiguredError, UnknownProviderError):
+            continue
+
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "No AI provider configured. Save an API key via "
+            "POST /ai/providers/{name} or set the relevant env var. "
+            f"Supported: {list_supported_providers()}"
+        ),
+    )
 
 
 @router.post("/generate_node_code", response_model=NodeCodeGenerationResponse, tags=["ai"])
@@ -88,18 +130,7 @@ async def generate_node_code_route(
             ),
         )
 
-    try:
-        provider = get_configured_provider(
-            db,
-            current_user.id,
-            body.provider,
-            surface="explain",
-            model=body.model,
-        )
-    except ProviderNotConfiguredError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except UnknownProviderError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    provider = _resolve_provider(db, current_user.id, body.provider, model=body.model)
 
     return await generate_node_code(
         flow=flow,

@@ -28,6 +28,8 @@ import { createAiCompletionSource } from "./aiCompletions";
 interface Props {
   editorString: string;
   columns?: string[];
+  // Column name → data type, used to annotate column completions.
+  columnTypes?: Record<string, string>;
   // Optional flow + node identity for the AI completion source. When
   // either is missing, the AI source short-circuits and only the static
   // `polarsCompletions` runs — used by the standalone editor preview where
@@ -38,6 +40,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   columns: () => [],
+  columnTypes: () => ({}),
   flowId: null,
   nodeId: null,
 });
@@ -93,6 +96,7 @@ const polarsCompletions: CompletionSource = (context: CompletionContext) => {
   const options: Array<{
     label: string;
     type: string;
+    detail?: string;
     info: string;
     apply: (view: EditorView) => void;
   }> = [];
@@ -124,10 +128,12 @@ const polarsCompletions: CompletionSource = (context: CompletionContext) => {
     props.columns
       .filter((column) => column.toLowerCase().startsWith(bracketContent))
       .forEach((column) => {
+        const dtype = props.columnTypes[column];
         options.push({
           label: column,
           type: "variable",
-          info: `Column: ${column}`,
+          detail: dtype,
+          info: dtype ? `Column: ${column} (${dtype})` : `Column: ${column}`,
           apply: (editorView: EditorView) => {
             editorView.dispatch({
               changes: {

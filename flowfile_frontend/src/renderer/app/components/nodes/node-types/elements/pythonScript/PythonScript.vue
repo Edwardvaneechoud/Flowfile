@@ -174,12 +174,31 @@
         <div v-if="inputNames.length > 0" class="setting-block">
           <label class="setting-label">Available Inputs</label>
           <div class="input-names-display">
-            <span v-for="inp in inputNames" :key="inp.name" class="input-name-tag">
-              {{ inp.name }}
-              <span class="input-name-type">({{ inp.source_node_type }})</span>
-            </span>
+            <el-dropdown
+              v-for="inp in inputNames"
+              :key="inp.name"
+              trigger="contextmenu"
+              placement="bottom-start"
+            >
+              <button
+                type="button"
+                class="input-name-tag"
+                :title="`Click to copy read_input for ${inp.name} · right-click for options`"
+                @click="copyReadInput(inp.name)"
+              >
+                {{ inp.name }}
+                <span class="input-name-type">({{ inp.source_node_type }})</span>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="copyReadInput(inp.name)">
+                    <i class="fa-solid fa-copy input-menu-icon" /> Copy to use
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <span class="input-names-hint">
-              Use flowfile.read_input("name") to read a specific input
+              Click an input to copy its flowfile_ctx.read_input("…") snippet
             </span>
           </div>
         </div>
@@ -189,6 +208,13 @@
           <div class="code-header">
             <label class="setting-label">Code</label>
             <div class="code-header-actions">
+              <AiGenerateCodeButton
+                v-if="aiGenerateEnabled && nodePythonScript"
+                :flow-id="Number(nodePythonScript.flow_id)"
+                :node-id="nodePythonScript.node_id"
+                node-type="python_script"
+                @code-generated="applyGeneratedCode"
+              />
               <button class="icon-button" title="Expand Editor" @click="showExpandedEditor = true">
                 <i class="fa-solid fa-expand"></i>
               </button>
@@ -275,6 +301,7 @@
 //   - Kernel control logic (~lines 570-700) is the obvious extraction target → useKernelControl composable
 import { ref, computed, watch, onUnmounted } from "vue";
 import { CodeLoader } from "vue-content-loader";
+import { ElMessage } from "element-plus";
 
 import { Position } from "@vue-flow/core";
 import { useNodeStore } from "../../../../../stores/node-store";
@@ -289,6 +316,8 @@ import { KernelApi } from "../../../../../api/kernel.api";
 import { FlowApi } from "../../../../../api/flow.api";
 import { outputHandle } from "../../../../../utils/outputHandle";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import AiGenerateCodeButton from "../../../../../features/designer/editor/AiGenerateCodeButton.vue";
+import { AI_GENERATE_CODE_ENABLED as aiGenerateEnabled } from "../../../../../stores/ai-code-generator-store";
 import FlowfileApiHelp from "./FlowfileApiHelp.vue";
 import NotebookEditor from "./NotebookEditor.vue";
 import { createPythonScriptNode, DEFAULT_PYTHON_SCRIPT_CODE } from "./utils";
@@ -550,6 +579,16 @@ const loadInputNames = async () => {
   }
 };
 
+const copyReadInput = async (name: string) => {
+  const snippet = `flowfile_ctx.read_input("${name}")`;
+  try {
+    await navigator.clipboard.writeText(snippet);
+    ElMessage.success({ message: `Copied ${snippet}`, duration: 2000 });
+  } catch {
+    ElMessage.error("Couldn't copy to clipboard");
+  }
+};
+
 const addOutputName = () => {
   outputNames.value.push(`output_${outputNames.value.length}`);
   handleOutputNamesChange();
@@ -631,6 +670,13 @@ watch(
 
 const handleCellsUpdate = (updatedCells: NotebookCell[]) => {
   cells.value = updatedCells;
+  syncCellsToNode();
+};
+
+const applyGeneratedCode = (code: string) => {
+  // Append the generated code as a new cell rather than overwriting existing
+  // work, then sync the combined code back to the node.
+  cells.value = [...cells.value, { id: crypto.randomUUID(), code, output: null }];
   syncCellsToNode();
 };
 
@@ -1010,15 +1056,15 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   align-items: center;
   gap: 0.25rem;
   padding: 0.15rem 0.5rem;
-  background-color: var(--el-color-primary-light-9, #ecf5ff);
-  color: var(--el-color-primary, #409eff);
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent);
   border-radius: 3px;
   font-size: 0.8rem;
 }
 
 .artifact-tag--published {
-  background-color: var(--el-color-success-light-9, #f0f9eb);
-  color: var(--el-color-success, #67c23a);
+  background-color: var(--color-background-tertiary);
+  color: var(--color-success);
 }
 
 .artifact-type {
@@ -1046,11 +1092,26 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   align-items: center;
   gap: 0.2rem;
   padding: 0.15rem 0.5rem;
-  background-color: var(--el-color-info-light-9, #f4f4f5);
-  color: var(--el-text-color-regular);
+  background-color: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-primary);
   border-radius: 3px;
   font-size: 0.8rem;
   font-family: var(--el-font-family, monospace);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.input-name-tag:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+.input-menu-icon {
+  margin-right: 0.4rem;
+  font-size: 0.8rem;
 }
 
 .input-name-type {

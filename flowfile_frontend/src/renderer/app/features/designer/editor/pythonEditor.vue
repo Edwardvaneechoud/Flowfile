@@ -78,6 +78,12 @@ const insertTextAtCursor = (text: string) => {
   }
 };
 
+// Replace the whole editor content. `code` is the v-model bound to CodeMirror,
+// so assigning it updates the view and fires the `update-editor-string` emit.
+const setCode = (text: string) => {
+  code.value = text;
+};
+
 const code = ref(props.editorString);
 const view = shallowRef<EditorView | null>(null);
 
@@ -122,7 +128,7 @@ watch(code, (newCode: string) => {
   emit("update-editor-string", newCode);
 });
 
-defineExpose({ insertTextAtCursor });
+defineExpose({ insertTextAtCursor, setCode });
 </script>
 
 <style>
@@ -138,7 +144,6 @@ defineExpose({ insertTextAtCursor });
   background-color: rgba(255, 85, 85, 0.1);
   border-radius: 4px;
 }
-/* Syntax highlighting is supplied by python() + oneDark (Lezer-generated
-   classes); no hand-rolled .cm-* rules — they were dead here and leaked
-   globally onto the formula editor. */
+/* Syntax highlighting comes from python() + oneDark (Lezer-generated classes);
+   no hand-rolled global .cm-* rules — they collide with other editors. */
 </style>

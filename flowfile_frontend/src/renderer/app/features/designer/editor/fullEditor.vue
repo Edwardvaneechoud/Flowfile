@@ -34,6 +34,7 @@
         class="prism-editor-ref"
         :editor-string="code"
         :columns="nodeStore.nodeData?.main_input?.columns"
+        :column-types="columnTypes"
         :flow-id="nodeStore.flow_id"
         :node-id="nodeStore.node_id"
         @update-editor-string="handleCodeChange"
@@ -81,6 +82,15 @@ const showHideOptions = () => {
 };
 
 const showSideBar = computed(() => parseInt(treeNodeWidth.value.replace("px", "")) > 50);
+
+const columnTypes = computed<Record<string, string>>(() => {
+  const schema = nodeStore.nodeData?.main_input?.table_schema ?? [];
+  const map: Record<string, string> = {};
+  for (const col of schema) {
+    map[col.name] = col.data_type;
+  }
+  return map;
+});
 
 const handleCodeChange = (newCode: string) => {
   code.value = newCode;
