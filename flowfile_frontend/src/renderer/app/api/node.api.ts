@@ -3,11 +3,20 @@ import type { NodeData, TableExample, NodeDescriptionResponse } from "../types";
 
 export class NodeApi {
   /**
-   * Get node data for a specific node
+   * Get node data for a specific node.
+   *
+   * `includeOutput` controls whether the backend computes the node's own output
+   * preview (`main_output`). The settings panel only needs the input schemas, so
+   * it defaults to false to avoid the potentially expensive output-schema
+   * prediction (e.g. a pivot must materialize data to list its output columns).
    */
-  static async getNodeData(flowId: number, nodeId: number): Promise<NodeData> {
+  static async getNodeData(
+    flowId: number,
+    nodeId: number,
+    includeOutput = false,
+  ): Promise<NodeData> {
     const response = await axios.get<NodeData>("/node", {
-      params: { flow_id: flowId, node_id: nodeId },
+      params: { flow_id: flowId, node_id: nodeId, include_output: includeOutput },
       headers: { accept: "application/json" },
     });
     return response.data;

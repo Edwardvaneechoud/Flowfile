@@ -102,7 +102,11 @@ export const useNodeStore = defineStore("node", {
 
   actions: {
     // ========== Node Data Management ==========
-    async getNodeData(nodeId: number, useCache = true): Promise<NodeData | null> {
+    async getNodeData(
+      nodeId: number,
+      useCache = true,
+      includeOutput = false,
+    ): Promise<NodeData | null> {
       const flowStore = useFlowStore();
 
       if (this.nodeId === nodeId && useCache) {
@@ -114,7 +118,7 @@ export const useNodeStore = defineStore("node", {
 
       try {
         console.log("Getting node data");
-        const data = await NodeApi.getNodeData(flowStore.flowId, nodeId);
+        const data = await NodeApi.getNodeData(flowStore.flowId, nodeId, includeOutput);
         this.nodeData = data;
         this.isLoaded = true;
         this.nodeExists = true;
