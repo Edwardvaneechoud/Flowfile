@@ -102,6 +102,9 @@
   /* Code editor colors */
   --color-code-bg: #282c34;
   --color-code-text: #abb2bf;
+  --color-code-keyword: #f08d49;
+  --color-code-string: #8ec07c;
+  --color-code-function: #b8bb26;
 
   /* Overlay/Modal colors */
   --color-overlay: rgba(0, 0, 0, 0.5);

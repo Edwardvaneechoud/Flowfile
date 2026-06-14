@@ -16,6 +16,7 @@ import sample from '../assets/icons/sample.png'
 import join from '../assets/icons/join.png'
 import crossJoin from '../assets/icons/cross_join.png'
 import union from '../assets/icons/union.png'
+import dynamicRename from '../assets/icons/dynamic_rename.svg'
 import groupBy from '../assets/icons/group_by.png'
 import pivot from '../assets/icons/pivot.png'
 import unpivot from '../assets/icons/unpivot.png'
@@ -41,6 +42,7 @@ export const iconUrls: Record<string, string> = {
   'join.png': join,
   'cross_join.png': crossJoin,
   'union.png': union,
+  'dynamic_rename.svg': dynamicRename,
   'group_by.png': groupBy,
   'pivot.png': pivot,
   'unpivot.png': unpivot,

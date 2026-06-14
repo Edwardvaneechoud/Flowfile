@@ -49,11 +49,12 @@ function emitUpdate() {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  color: var(--color-text-primary);
 }
 
 .settings-note {
   font-size: 12px;
-  color: #6272a4;
+  color: var(--color-text-tertiary);
   line-height: 1.5;
   margin: 0;
 }
@@ -65,29 +66,29 @@ function emitUpdate() {
 }
 
 .field label {
-  font-size: 10px;
-  color: #6272a4;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
 }
 
 .select-sm {
   padding: 6px 8px;
-  font-size: 12px;
-  background: #282c34;
-  color: #abb2bf;
-  border: 1px solid #3e4451;
-  border-radius: 3px;
+  font-size: 13px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
 }
 
 .select-sm:focus {
   outline: none;
-  border-color: #8be9fd;
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 2px var(--color-focus-ring-accent);
 }
 
 .hint {
   font-size: 11px;
-  color: #6272a4;
+  color: var(--color-text-tertiary);
   line-height: 1.4;
 }
 </style>

@@ -499,7 +499,7 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'sort', name: 'Sort', icon: 'sort.png', inputs: 1, outputs: 1 },
       { type: 'polars_code', name: 'Polars Code', icon: 'polars_code.png', inputs: 1, outputs: 1 },
       { type: 'unique', name: 'Unique', icon: 'unique.png', inputs: 1, outputs: 1 },
-      { type: 'rename', name: 'Rename', icon: 'select.png', inputs: 1, outputs: 1 },
+      { type: 'rename', name: 'Rename', icon: 'dynamic_rename.svg', inputs: 1, outputs: 1 },
       { type: 'record_id', name: 'Record ID', icon: 'record_id.png', inputs: 1, outputs: 1 },
       { type: 'head', name: 'Take Sample', icon: 'sample.png', inputs: 1, outputs: 1 }
     ]
