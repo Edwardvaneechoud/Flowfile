@@ -408,11 +408,8 @@ export const useFlowStore = defineStore('flow', () => {
     for (const [nodeId, content] of fileContents.value.entries()) {
       if (isBinary(content) || fileStorage.shouldUseIndexedDB(content)) {
         largeFileNodeIds.push(nodeId)
-        // Save asynchronously (don't await to avoid blocking). Guard the catch:
-        // this fire-and-forget save can run from a debounced timer after a test
-        // env tears down (mock reset → returns undefined), and `.catch` on a
-        // non-promise would throw. In production setFileContent always returns a
-        // promise, so this is a no-op there.
+        // Save asynchronously (don't await to avoid blocking). Promise.resolve
+        // guards against a non-promise return (mock reset after test teardown).
         Promise.resolve(fileStorage.setFileContent(nodeId, content)).catch(err => {
           console.error(`Failed to save large file for node ${nodeId} to IndexedDB:`, err)
         })

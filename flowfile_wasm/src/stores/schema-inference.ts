@@ -222,8 +222,7 @@ function inferUnpivotSchema(
 }
 
 /**
- * Infer output schema for a CROSS_JOIN node (cartesian product: left + right cols,
- * conflicting right columns get the suffix).
+ * Infer output schema for a CROSS_JOIN node
  */
 function inferCrossJoinSchema(
   leftSchema: ColumnSchema[],
@@ -243,7 +242,7 @@ function inferCrossJoinSchema(
 }
 
 /**
- * Infer output schema for a RECORD_ID node (prepends a UInt32 row-number column).
+ * Infer output schema for a RECORD_ID node
  */
 function inferRecordIdSchema(
   inputSchema: ColumnSchema[],
@@ -254,7 +253,7 @@ function inferRecordIdSchema(
 }
 
 /**
- * Infer output schema for a RENAME node (applies the old->new mapping in place).
+ * Infer output schema for a RENAME node
  */
 function inferRenameSchema(
   inputSchema: ColumnSchema[],
@@ -347,8 +346,7 @@ export function inferOutputSchema(
       }
       return inferCrossJoinSchema(inputSchema, rightInputSchema, settings as NodeCrossJoinSettings)
 
-    // Union is multi-input; the single primary inputSchema isn't enough to
-    // resolve a diagonal union, so defer to the Python data-free pass.
+    // Multi-input: defer to the Python pass.
     case 'union':
       return null
 

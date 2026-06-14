@@ -110,12 +110,8 @@ const extensions = [
   EditorView.lineWrapping
 ]
 
-/**
- * Translate every formula node's expression string into real Polars code via
- * the in-browser polars-expr-transformer (to_polars_code), e.g.
- * "[quantity] * 2" -> 'pl.col("quantity") * pl.lit(2)'. Returns node_id -> code.
- * Best-effort: on any failure the formula handler falls back to runtime translation.
- */
+// Translate each formula node's expression to Polars code (to_polars_code).
+// Best-effort: the handler falls back to runtime translation on failure.
 const translateFormulaNodes = async (): Promise<Record<number, string>> => {
   const out: Record<number, string> = {}
   const formulaNodes = [...flowStore.nodes.values()].filter(n => n.type === 'formula')
@@ -133,7 +129,7 @@ const translateFormulaNodes = async (): Promise<Record<number, string>> => {
       if (typeof polars === 'string' && polars.trim()) out[node.id] = polars.trim()
     }
   } catch {
-    // leave out partial; the formula handler emits a runtime-translation fallback
+    // handler falls back to runtime translation
   }
   return out
 }

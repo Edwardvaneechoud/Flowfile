@@ -130,8 +130,7 @@ const formula = ref(props.settings.function?.function || '')
 
 const columns = computed<ColumnSchema[]>(() => flowStore.getNodeInputSchema(props.nodeId))
 
-// Placeholder built from the node's real input columns so it reads as a relevant
-// hint, not a broken default referencing columns that don't exist.
+// Placeholder built from the node's real input columns.
 const editorPlaceholder = computed(() => {
   const cols = columns.value
   if (cols.length >= 2) return `e.g. [${cols[0].name}] + [${cols[1].name}]`
@@ -157,7 +156,7 @@ const filteredItems = computed<SidebarItem[]>(() => {
     .map(n => ({ label: n, insert: `${n}()` }))
 })
 
-// --- Syntax highlighting (ported from the desktop FunctionEditor) ---
+// Syntax highlighting
 type HighlightType = 'comment' | 'string' | 'column' | 'function'
 
 const HIGHLIGHT_PRIORITY: Record<HighlightType, number> = { comment: 0, string: 1, column: 2, function: 3 }
@@ -168,8 +167,6 @@ const HIGHLIGHT_CLASS: Record<HighlightType, string> = {
   function: 'cm-ff-function',
 }
 
-// Quote state resets every line; `//` inside a quoted run isn't a comment; a
-// comment runs to end of line. Mirrors the backend find_comment_spans.
 function findCommentSpans(text: string): Array<{ start: number; end: number }> {
   const spans: Array<{ start: number; end: number }> = []
   let offset = 0
@@ -246,7 +243,7 @@ const highlightPlugin = ViewPlugin.fromClass(
   { decorations: v => v.decorations },
 )
 
-// --- Autocomplete: functions (name + "(") and columns (inside "[") ---
+// Autocomplete: functions and [columns]
 const completions: CompletionSource = (context: CompletionContext) => {
   const functionWord = context.matchBefore(/\w+/)
   const columnWord = context.matchBefore(/\[\w*/)
@@ -302,7 +299,6 @@ const completions: CompletionSource = (context: CompletionContext) => {
 }
 
 const extensions: Extension[] = [
-  // Scoped token colors (cm-ff-*) — match the desktop formula editor.
   EditorView.theme({
     '&': { fontSize: '12px', backgroundColor: 'var(--color-background-primary)' },
     '.cm-content': { fontSize: '12px', caretColor: 'var(--color-text-primary)' },
@@ -318,7 +314,7 @@ const extensions: Extension[] = [
     '.cm-ff-column': { color: 'var(--color-code-string)' },
     '.cm-ff-string': { color: 'var(--color-code-function)' },
     '.cm-ff-comment': { color: 'var(--color-text-tertiary)', fontStyle: 'italic' },
-    // Autocomplete popup — theme it so non-selected items aren't invisible in dark mode.
+    // Theme the autocomplete popup (else invisible in dark mode).
     '.cm-tooltip': {
       backgroundColor: 'var(--color-background-secondary)',
       border: '1px solid var(--color-border-primary)',

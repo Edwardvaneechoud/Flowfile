@@ -88,8 +88,6 @@ def execute_cross_join(node_id: int, left_id: int, right_id: int, settings: dict
         return {"success": False, "error": format_error_lf("cross_join", node_id, e, left_lf)}
 
 
-# Map the friendly UI mode to Polars concat strategies. Relaxed variants cast to a
-# common supertype so e.g. Int64 + Float64 columns stack without erroring.
 _UNION_HOW = {
     "vertical": "vertical_relaxed",
     "diagonal": "diagonal_relaxed",
@@ -97,10 +95,7 @@ _UNION_HOW = {
 
 
 def build_union(lfs: list[pl.LazyFrame], settings: dict) -> pl.LazyFrame:
-    """Build the unioned (stacked) LazyFrame from N inputs (no store, no collect).
-
-    'vertical' requires matching columns; 'diagonal' takes the union of columns,
-    filling missing ones with null."""
+    """Build the unioned (stacked) LazyFrame from N inputs (no store, no collect)."""
     valid = [lf for lf in lfs if lf is not None]
     if not valid:
         raise ValueError("Union needs at least one connected input.")

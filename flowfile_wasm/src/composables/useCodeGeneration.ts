@@ -36,9 +36,7 @@ interface CodeGenerationOptions {
   nodes: Map<number, FlowNode>
   edges: FlowEdge[]
   flowName?: string
-  // Formula node id → translated Polars expression code (from to_polars_code),
-  // pre-computed in the browser. Lets the formula node emit real Polars instead
-  // of a runtime simple_function_to_expr() call.
+  // Formula node id → translated Polars expression code (to_polars_code).
   formulaCode?: Record<number, string>
 }
 
@@ -610,14 +608,12 @@ class FlowToPolarsConverter {
     const cast = dtype && dtype !== 'Auto' ? `.cast(pl.${dtype})` : ''
 
     if (translated) {
-      // Real Polars expression, translated from the formula via to_polars_code
-      // (e.g. "[quantity] * 2" -> pl.col("quantity") * pl.lit(2)). Matches desktop.
       this.addCode(`${varName} = ${inputDf}.with_columns((${translated})${cast}.alias(${toPythonValue(name)}))`)
       this.addCode('')
       return
     }
 
-    // Fallback (translator unavailable at generation time): translate at runtime.
+    // Fallback: translate at runtime.
     this.addCode(`# requires: pip install polars-expr-transformer`)
     this.addCode(`from polars_expr_transformer import simple_function_to_expr`)
     this.addCode(`${varName} = ${inputDf}.with_columns(`)

@@ -510,8 +510,7 @@ const nodeCategories = ref<NodeCategory[]>([
     nodes: [
       { type: 'join', name: 'Join', icon: 'join.png', inputs: 2, outputs: 1 },
       { type: 'cross_join', name: 'Cross Join', icon: 'cross_join.png', inputs: 2, outputs: 1 },
-      // Single input handle that accepts multiple connections (accumulates into
-      // inputIds), matching the polars_code multi-input pattern.
+      // inputs: 1 — single handle accepts multiple connections (like polars_code).
       { type: 'union', name: 'Union', icon: 'union.png', inputs: 1, outputs: 1 }
     ]
   },

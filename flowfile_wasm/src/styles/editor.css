@@ -102,8 +102,7 @@
   /* Code editor colors */
   --color-code-bg: #282c34;
   --color-code-text: #abb2bf;
-  /* Formula token colors — light-theme values (readable on white); the dark
-     theme overrides these with brighter gruvbox tones below. */
+  /* Formula token colors (light; dark overrides below) */
   --color-code-keyword: #6f42c1;
   --color-code-string: #116329;
   --color-code-function: #a31515;
@@ -265,7 +264,7 @@
   --color-background-selected: #0f3460;
   --color-background-muted: #1f1f3a;
 
-  /* Brighter formula token colors for the dark editor background. */
+  /* Formula token colors (dark) */
   --color-code-keyword: #f08d49;
   --color-code-string: #8ec07c;
   --color-code-function: #b8bb26;

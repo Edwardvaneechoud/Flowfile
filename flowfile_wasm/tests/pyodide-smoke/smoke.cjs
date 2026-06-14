@@ -218,11 +218,6 @@ execute_output(11, 10, json.loads(${j({ output_settings: { name: 'out.xlsx', fil
   }
 
   // --- Formula + parity nodes (Phase 4) ---
-  // Formula needs the micropip-installed expr engine; this is the authoritative
-  // check that polars-expr-transformer imports under real Pyodide + Polars 1.18
-  // (its polars_ds dep has no wasm wheel — must be lazy/optional upstream) and
-  // that execute_formula resolves in the flat namespace.
-  // Gated on publishing polars-expr-transformer==0.5.6.
   await run('micropip install polars-expr-transformer (pinned)', `
 import micropip
 await micropip.install(['polars-expr-transformer==0.5.6'])
@@ -236,7 +231,7 @@ execute_formula(20, 1, json.loads(${j({ function: { field: { name: 'age_plus', d
     console.error(`  [FAIL] execute_formula result: ${JSON.stringify(formulaRes)}`);
   }
 
-  // Parity executors (pure-Polars) — confirm they resolve in the flat namespace.
+  // Parity executors.
   pyodide.globals.set('_temp_content', 'tag\nx\ny\n');
   await run('execute_read_csv (second input)', `
 import json

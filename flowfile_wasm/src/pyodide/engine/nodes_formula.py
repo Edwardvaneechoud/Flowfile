@@ -4,7 +4,7 @@ from .errors import format_error_lf
 from .log import log_node
 from .state import get_lazyframe, get_schema, store_lazyframe
 
-# "Auto" (or anything unmapped) => no cast; keep the expression's natural dtype.
+# "Auto" / unmapped => no cast.
 _DTYPE_MAP = {
     "String": pl.String,
     "Utf8": pl.String,
@@ -19,9 +19,7 @@ _DTYPE_MAP = {
 
 
 def _to_expr(expr_text: str) -> pl.Expr:
-    # Lazy import: polars-expr-transformer is micropip-installed on demand and is
-    # NOT present when the engine package loads at boot. Importing at module top
-    # would break the whole engine bootstrap.
+    # Lazy: micropip-installed at runtime, absent when the engine imports at boot.
     from polars_expr_transformer import simple_function_to_expr
 
     return simple_function_to_expr(expr_text)

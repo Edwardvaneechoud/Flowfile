@@ -1,7 +1,4 @@
-"""Tests for the formula node and the cheap parity nodes (cross_join, union,
-record_id, rename). The formula node turns an expression string like
-``[a] + [b]`` into a Polars expression via polars-expr-transformer (lazily
-imported — it is micropip-installed in the browser)."""
+"""Tests for the formula node and the parity nodes (cross_join, union, record_id, rename)."""
 import engine
 
 
