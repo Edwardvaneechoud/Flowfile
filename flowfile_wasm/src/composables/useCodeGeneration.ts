@@ -12,6 +12,11 @@ import type {
   NodeJoinSettings,
   NodeSortSettings,
   NodeUniqueSettings,
+  NodeFormulaSettings,
+  NodeCrossJoinSettings,
+  NodeUnionSettings,
+  NodeRecordIdSettings,
+  NodeRenameSettings,
   NodePivotSettings,
   NodeUnpivotSettings,
   NodeSampleSettings,
@@ -31,6 +36,8 @@ interface CodeGenerationOptions {
   nodes: Map<number, FlowNode>
   edges: FlowEdge[]
   flowName?: string
+  // Formula node id → translated Polars expression code (to_polars_code).
+  formulaCode?: Record<number, string>
 }
 
 
@@ -71,11 +78,13 @@ class FlowToPolarsConverter {
   private codeLines: string[]
   private lastNodeVar: string | null
   private unsupportedNodes: Array<{ id: number; type: string; reason: string }>
+  private formulaCode: Record<number, string>
 
   constructor(options: CodeGenerationOptions) {
     this.nodes = options.nodes
     this.edges = options.edges
     this.flowName = options.flowName || 'Flow Pipeline'
+    this.formulaCode = options.formulaCode || {}
     this.nodeVarMapping = new Map()
     this.imports = new Set(['import polars as pl'])
     this.codeLines = []
@@ -200,6 +209,25 @@ class FlowToPolarsConverter {
         break
       case 'polars_code':
         this.handlePolarsCode(node.settings as PolarsCodeSettings, varName, inputVars)
+        break
+      case 'formula':
+        this.handleFormula(node.settings as NodeFormulaSettings, varName, inputVars, this.formulaCode[node.id])
+        break
+      case 'cross_join':
+        if (isJoinInputVars(inputVars)) {
+          this.handleCrossJoin(node.settings as NodeCrossJoinSettings, varName, inputVars)
+        } else {
+          console.error('Cross join input does not match interface JoinInputVars')
+        }
+        break
+      case 'union':
+        this.handleUnion(node.settings as NodeUnionSettings, varName, inputVars)
+        break
+      case 'record_id':
+        this.handleRecordId(node.settings as NodeRecordIdSettings, varName, inputVars)
+        break
+      case 'rename':
+        this.handleRename(node.settings as NodeRenameSettings, varName, inputVars)
         break
       case 'pivot':
         this.handlePivot(node.settings as NodePivotSettings, varName, inputVars)
@@ -527,6 +555,91 @@ class FlowToPolarsConverter {
     this.addCode(`    right_on=${JSON.stringify(rightOn)},`)
     this.addCode(`    how="${joinInput.how}"`)
     this.addCode(`)`)
+    this.addCode('')
+  }
+
+  private handleCrossJoin(settings: NodeCrossJoinSettings, varName: string, inputVars: { main: string; right: string }): void {
+    const leftDf = inputVars.main
+    const rightDf = inputVars.right
+    const suffix = settings.cross_join_input?.right_suffix || '_right'
+    this.addCode(`${varName} = ${leftDf}.join(`)
+    this.addCode(`    ${rightDf},`)
+    this.addCode(`    how="cross",`)
+    this.addCode(`    suffix=${toPythonValue(suffix)}`)
+    this.addCode(`)`)
+    this.addCode('')
+  }
+
+  private collectMainInputs(inputVars: Record<string, string>): string[] {
+    return Object.keys(inputVars)
+      .filter(k => k === 'main' || k.startsWith('main_'))
+      .sort((a, b) => (a === 'main' ? -1 : parseInt(a.slice(5))) - (b === 'main' ? -1 : parseInt(b.slice(5))))
+      .map(k => inputVars[k])
+  }
+
+  private handleUnion(settings: NodeUnionSettings, varName: string, inputVars: Record<string, string>): void {
+    const dfs = this.collectMainInputs(inputVars)
+    const how = (settings.union_input?.mode || 'diagonal') === 'vertical' ? 'vertical_relaxed' : 'diagonal_relaxed'
+    if (dfs.length <= 1) {
+      this.addCode(`${varName} = ${dfs[0] || 'df'}`)
+      this.addCode('')
+      return
+    }
+    this.addCode(`${varName} = pl.concat([${dfs.join(', ')}], how="${how}")`)
+    this.addCode('')
+  }
+
+  private handleFormula(
+    settings: NodeFormulaSettings,
+    varName: string,
+    inputVars: { main?: string },
+    translated?: string,
+  ): void {
+    const inputDf = inputVars.main || 'df'
+    const fn = settings.function
+    const name = fn?.field?.name || 'new_column'
+    const expr = (fn?.function || '').trim()
+    if (!expr) {
+      this.addCode(`${varName} = ${inputDf}`)
+      this.addCode('')
+      return
+    }
+    const dtype = fn?.field?.data_type
+    const cast = dtype && dtype !== 'Auto' ? `.cast(pl.${dtype})` : ''
+
+    if (translated) {
+      this.addCode(`${varName} = ${inputDf}.with_columns((${translated})${cast}.alias(${toPythonValue(name)}))`)
+      this.addCode('')
+      return
+    }
+
+    // Fallback: translate at runtime.
+    this.addCode(`# requires: pip install polars-expr-transformer`)
+    this.addCode(`from polars_expr_transformer import simple_function_to_expr`)
+    this.addCode(`${varName} = ${inputDf}.with_columns(`)
+    this.addCode(`    simple_function_to_expr(${toPythonValue(expr)})${cast}.alias(${toPythonValue(name)})`)
+    this.addCode(`)`)
+    this.addCode('')
+  }
+
+  private handleRecordId(settings: NodeRecordIdSettings, varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    const name = settings.record_id_input?.name || 'record_id'
+    const offset = settings.record_id_input?.offset ?? 1
+    this.addCode(`${varName} = ${inputDf}.with_row_index(name=${toPythonValue(name)}, offset=${offset})`)
+    this.addCode('')
+  }
+
+  private handleRename(settings: NodeRenameSettings, varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    const entries = (settings.rename_input || []).filter(r => r.old_name && r.new_name && r.old_name !== r.new_name)
+    if (entries.length === 0) {
+      this.addCode(`${varName} = ${inputDf}`)
+      this.addCode('')
+      return
+    }
+    const mapping = entries.map(r => `${JSON.stringify(r.old_name)}: ${JSON.stringify(r.new_name)}`).join(', ')
+    this.addCode(`${varName} = ${inputDf}.rename({${mapping}})`)
     this.addCode('')
   }
 

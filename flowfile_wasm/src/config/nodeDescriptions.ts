@@ -40,9 +40,29 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     title: 'Join',
     intro: 'Combine two datasets based on matching column values. Supports inner, left, right, full, semi, and anti joins.'
   },
+  cross_join: {
+    title: 'Cross Join',
+    intro: 'Pair every row of the left input with every row of the right input (cartesian product). No join keys required.'
+  },
+  union: {
+    title: 'Union',
+    intro: 'Stack the rows of all connected inputs into one table. Match by identical columns (vertical) or take the union of columns, null-filling gaps (diagonal).'
+  },
+  formula: {
+    title: 'Formula',
+    intro: 'Add a calculated column from a simple expression like [price] * 1.21 or concat([first], " ", [last]). Loads the formula engine from PyPI on first use.'
+  },
   unique: {
     title: 'Unique',
     intro: 'Remove duplicate rows from your data. Optionally specify which columns to consider for uniqueness.'
+  },
+  rename: {
+    title: 'Rename',
+    intro: 'Rename columns. Type a new name next to any column; leave blank to keep the original name.'
+  },
+  record_id: {
+    title: 'Record ID',
+    intro: 'Add a sequential row-number column to the start of the table. Choose the column name and the starting number.'
   },
   head: {
     title: 'Take Sample',

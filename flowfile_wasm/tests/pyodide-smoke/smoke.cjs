@@ -217,6 +217,55 @@ execute_output(11, 10, json.loads(${j({ output_settings: { name: 'out.xlsx', fil
     }
   }
 
+  // --- Formula + parity nodes (Phase 4) ---
+  await run('micropip install polars-expr-transformer (pinned)', `
+import micropip
+await micropip.install(['polars-expr-transformer==0.5.6'])
+`);
+  const formulaRes = await run('execute_formula', `
+import json
+execute_formula(20, 1, json.loads(${j({ function: { field: { name: 'age_plus', data_type: 'Int64' }, function: '[age] + 10' } })}))
+`);
+  if (!formulaRes || formulaRes.success !== true || !(formulaRes.schema || []).some((c) => c.name === 'age_plus')) {
+    failed.push('execute_formula result');
+    console.error(`  [FAIL] execute_formula result: ${JSON.stringify(formulaRes)}`);
+  }
+
+  // Parity executors.
+  pyodide.globals.set('_temp_content', 'tag\nx\ny\n');
+  await run('execute_read_csv (second input)', `
+import json
+execute_read_csv(30, _temp_content, json.loads(${j({ received_file: { table_settings: { has_headers: true, delimiter: ',' } } })}))
+`);
+  const recIdRes = await run('execute_record_id', `
+import json
+execute_record_id(21, 1, json.loads(${j({ record_id_input: { name: 'rid', offset: 1 } })}))
+`);
+  const renameRes = await run('execute_rename', `
+import json
+execute_rename(22, 1, json.loads(${j({ rename_input: [{ old_name: 'name', new_name: 'full_name' }] })}))
+`);
+  const crossRes = await run('execute_cross_join', `
+import json
+execute_cross_join(31, 1, 30, json.loads(${j({ cross_join_input: { right_suffix: '_r' } })}))
+`);
+  const unionRes = await run('execute_union', `
+import json
+execute_union(32, [1, 1], json.loads(${j({ union_input: { mode: 'diagonal' } })}))
+`);
+  for (const [label, res, col] of [['record_id', recIdRes, 'rid'], ['rename', renameRes, 'full_name']]) {
+    if (!res || res.success !== true || !(res.schema || []).some((c) => c.name === col)) {
+      failed.push(`${label} result`);
+      console.error(`  [FAIL] ${label} result: ${JSON.stringify(res)}`);
+    }
+  }
+  for (const [label, res] of [['cross_join', crossRes], ['union', unionRes]]) {
+    if (!res || res.success !== true) {
+      failed.push(`${label} result`);
+      console.error(`  [FAIL] ${label} result: ${JSON.stringify(res)}`);
+    }
+  }
+
   // --- Parquet chain (Phase 3) — engine IPC staging ⇄ parquet-wasm, both directions.
   // Uses parquet-wasm's esm build (the SAME artifact the browser CDN-loads),
   // initialized from the locally installed wasm. Requires:

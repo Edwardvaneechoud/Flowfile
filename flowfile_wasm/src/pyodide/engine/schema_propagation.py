@@ -5,9 +5,18 @@ import polars as pl
 from .dtypes import build_empty_lf_from_schema
 from .log import logger
 from .nodes_aggregate import build_group_by, build_unpivot
-from .nodes_combine import build_join
+from .nodes_combine import build_cross_join, build_join, build_union
+from .nodes_formula import build_formula
 from .nodes_polars_code import build_polars_code_schema
-from .nodes_transform import build_filter, build_head, build_select, build_sort, build_unique
+from .nodes_transform import (
+    build_filter,
+    build_head,
+    build_record_id,
+    build_rename,
+    build_select,
+    build_sort,
+    build_unique,
+)
 from .state import _SOURCE_TYPES, _schema_lazyframes, _schema_schemas
 
 
@@ -24,6 +33,9 @@ _SCHEMA_BUILDERS = {
     "unique": build_unique,
     "head": build_head,
     "unpivot": build_unpivot,
+    "formula": build_formula,
+    "record_id": build_record_id,
+    "rename": build_rename,
     "explore_data": _schema_identity,
     "output": _schema_identity,
     "external_output": _schema_identity,
@@ -39,15 +51,22 @@ def _build_schema_node(ntype: str, meta: dict) -> pl.LazyFrame | None:
     right = meta.get("right")
     settings = meta.get("settings", {})
 
-    if ntype == "join":
+    if ntype in ("join", "cross_join"):
         left_id = left if left is not None else (input_ids[0] if input_ids else None)
         left_lf = _schema_lazyframes.get(left_id)
         right_lf = _schema_lazyframes.get(right)
         if left_lf is None or right_lf is None:
             return None
-        return build_join(left_lf, right_lf, settings)
+        builder = build_cross_join if ntype == "cross_join" else build_join
+        return builder(left_lf, right_lf, settings)
 
-    if ntype in ("polars_code", "formula"):
+    if ntype == "union":
+        lfs = [_schema_lazyframes.get(i) for i in input_ids]
+        if not lfs or any(x is None for x in lfs):
+            return None
+        return build_union(lfs, settings)
+
+    if ntype == "polars_code":
         # input_ids is empty for a generator START node — build_polars_code_schema
         # handles zero inputs (it just runs the code, which produces output_df). Only
         # bail when a declared input exists but isn't resolved yet.

@@ -382,6 +382,11 @@ import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'
 import ExternalOutputSettings from './nodes/ExternalOutputSettings.vue'
 import WriteToCatalogSettings from './nodes/WriteToCatalogSettings.vue'
+const FormulaSettings = defineAsyncComponent(() => import('./nodes/FormulaSettings.vue'))
+import CrossJoinSettings from './nodes/CrossJoinSettings.vue'
+import UnionSettings from './nodes/UnionSettings.vue'
+import RecordIdSettings from './nodes/RecordIdSettings.vue'
+import RenameSettings from './nodes/RenameSettings.vue'
 import NodeSettingsWrapper from './nodes/NodeSettingsWrapper.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
@@ -490,9 +495,12 @@ const nodeCategories = ref<NodeCategory[]>([
     nodes: [
       { type: 'filter', name: 'Filter', icon: 'filter.png', inputs: 1, outputs: 1 },
       { type: 'select', name: 'Select', icon: 'select.png', inputs: 1, outputs: 1 },
+      { type: 'formula', name: 'Formula', icon: 'formula.png', inputs: 1, outputs: 1 },
       { type: 'sort', name: 'Sort', icon: 'sort.png', inputs: 1, outputs: 1 },
       { type: 'polars_code', name: 'Polars Code', icon: 'polars_code.png', inputs: 1, outputs: 1 },
       { type: 'unique', name: 'Unique', icon: 'unique.png', inputs: 1, outputs: 1 },
+      { type: 'rename', name: 'Rename', icon: 'dynamic_rename.svg', inputs: 1, outputs: 1 },
+      { type: 'record_id', name: 'Record ID', icon: 'record_id.png', inputs: 1, outputs: 1 },
       { type: 'head', name: 'Take Sample', icon: 'sample.png', inputs: 1, outputs: 1 }
     ]
   },
@@ -500,7 +508,10 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Combine Operations',
     isOpen: true,
     nodes: [
-      { type: 'join', name: 'Join', icon: 'join.png', inputs: 2, outputs: 1 }
+      { type: 'join', name: 'Join', icon: 'join.png', inputs: 2, outputs: 1 },
+      { type: 'cross_join', name: 'Cross Join', icon: 'cross_join.png', inputs: 2, outputs: 1 },
+      // inputs: 1 — single handle accepts multiple connections (like polars_code).
+      { type: 'union', name: 'Union', icon: 'union.png', inputs: 1, outputs: 1 }
     ]
   },
   {
@@ -849,9 +860,14 @@ function getSettingsComponent(type: string) {
     select: SelectSettings,
     group_by: GroupBySettings,
     join: JoinSettings,
+    cross_join: CrossJoinSettings,
+    union: UnionSettings,
     sort: SortSettings,
     polars_code: PolarsCodeSettings,
+    formula: FormulaSettings,
     unique: UniqueSettings,
+    rename: RenameSettings,
+    record_id: RecordIdSettings,
     head: HeadSettings,
     explore_data: ExploreData,
     pivot: PivotSettings,

@@ -216,6 +216,29 @@ export interface FunctionInput {
   function: string  // Polars expression
 }
 
+// CROSS JOIN / UNION / RECORD ID / RENAME SCHEMAS
+
+export interface CrossJoinInput {
+  right_suffix: string
+}
+
+export type UnionMode = 'vertical' | 'diagonal'
+
+export interface UnionInput {
+  /** 'vertical' requires matching columns; 'diagonal' unions columns (null-fills) */
+  mode: UnionMode
+}
+
+export interface RecordIdInput {
+  name: string
+  offset: number
+}
+
+export interface RenameMap {
+  old_name: string
+  new_name: string
+}
+
 // HEAD/SAMPLE SCHEMAS
 
 export interface SampleInput {
@@ -346,6 +369,24 @@ export interface NodeFormulaSettings extends NodeSingleInput {
   function?: FunctionInput  // Changed from 'function_input: FunctionInput[]' to match flowfile_core
 }
 
+export interface NodeCrossJoinSettings extends NodeMultiInput {
+  cross_join_input: CrossJoinInput
+  left_input_id?: number
+  right_input_id?: number
+}
+
+export interface NodeUnionSettings extends NodeMultiInput {
+  union_input: UnionInput
+}
+
+export interface NodeRecordIdSettings extends NodeSingleInput {
+  record_id_input: RecordIdInput
+}
+
+export interface NodeRenameSettings extends NodeSingleInput {
+  rename_input: RenameMap[]
+}
+
 export interface NodeSampleSettings extends NodeSingleInput {
   sample_size: number
 }
@@ -389,6 +430,10 @@ export type NodeSettings =
   | NodeJoinSettings
   | NodeUniqueSettings
   | NodeFormulaSettings
+  | NodeCrossJoinSettings
+  | NodeUnionSettings
+  | NodeRecordIdSettings
+  | NodeRenameSettings
   | NodeSampleSettings
   | NodePreviewSettings
   | NodePivotSettings
@@ -554,6 +599,8 @@ export const NODE_TYPES = {
   group_by: 'group_by',
   unique: 'unique',
   formula: 'formula',
+  record_id: 'record_id',
+  rename: 'rename',
   sample: 'sample',
 
   // Aggregate/reshape nodes
@@ -562,6 +609,8 @@ export const NODE_TYPES = {
 
   // Combine nodes
   join: 'join',
+  cross_join: 'cross_join',
+  union: 'union',
 
   // Output nodes
   explore_data: 'explore_data',  // Matches flowfile_core's 'explore_data' type
