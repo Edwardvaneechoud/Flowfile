@@ -408,8 +408,9 @@ export const useFlowStore = defineStore('flow', () => {
     for (const [nodeId, content] of fileContents.value.entries()) {
       if (isBinary(content) || fileStorage.shouldUseIndexedDB(content)) {
         largeFileNodeIds.push(nodeId)
-        // Save asynchronously (don't await to avoid blocking)
-        fileStorage.setFileContent(nodeId, content).catch(err => {
+        // Save asynchronously (don't await to avoid blocking). Promise.resolve
+        // guards against a non-promise return (mock reset after test teardown).
+        Promise.resolve(fileStorage.setFileContent(nodeId, content)).catch(err => {
           console.error(`Failed to save large file for node ${nodeId} to IndexedDB:`, err)
         })
       } else {
@@ -1567,7 +1568,7 @@ result
       }
 
       // For join nodes, also get right input schema
-      if (node.type === 'join' && node.rightInputId) {
+      if ((node.type === 'join' || node.type === 'cross_join') && node.rightInputId) {
         const rightResult = nodeResults.value.get(node.rightInputId)
         rightInputSchema = rightResult?.schema || null
       }
@@ -2178,6 +2179,76 @@ result
           break
         }
 
+        case 'formula': {
+          const inputId = node.inputIds[0]
+          if (!inputId) {
+            return failNode(nodeId, 'No input connected')
+          }
+          try {
+            await pyodideStore.ensurePyPackages(['polars-expr-transformer==0.5.6'])
+          } catch (err) {
+            return failNode(nodeId, err instanceof Error ? err.message : String(err))
+          }
+          result = await runPythonWithResult(`
+import json
+result = execute_formula(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          break
+        }
+
+        case 'cross_join': {
+          const leftId = node.leftInputId || node.inputIds[0]
+          const rightId = node.rightInputId
+          if (!leftId || !rightId) {
+            return failNode(nodeId, 'Both left and right inputs required for cross join')
+          }
+          result = await runPythonWithResult(`
+import json
+result = execute_cross_join(${nodeId}, ${leftId}, ${rightId}, json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          break
+        }
+
+        case 'union': {
+          if (node.inputIds.length < 1) {
+            return failNode(nodeId, 'No input connected')
+          }
+          result = await runPythonWithResult(`
+import json
+result = execute_union(${nodeId}, [${node.inputIds.join(', ')}], json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          break
+        }
+
+        case 'record_id': {
+          const inputId = node.inputIds[0]
+          if (!inputId) {
+            return failNode(nodeId, 'No input connected')
+          }
+          result = await runPythonWithResult(`
+import json
+result = execute_record_id(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          break
+        }
+
+        case 'rename': {
+          const inputId = node.inputIds[0]
+          if (!inputId) {
+            return failNode(nodeId, 'No input connected')
+          }
+          result = await runPythonWithResult(`
+import json
+result = execute_rename(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          break
+        }
+
         case 'unique': {
           const inputId = node.inputIds[0]
           if (!inputId) {
@@ -2648,13 +2719,54 @@ result
           sort_input: []
         } as any
 
-      case 'formula':
       case 'polars_code':
         return {
           ...base,
           polars_code_input: {
             polars_code: 'input_df'
           }
+        } as any
+
+      case 'formula':
+        return {
+          ...base,
+          function: {
+            field: { name: '', data_type: 'Auto' },
+            function: ''
+          }
+        } as any
+
+      case 'cross_join':
+        return {
+          ...base,
+          depending_on_ids: [],
+          cross_join_input: {
+            right_suffix: '_right'
+          }
+        } as any
+
+      case 'union':
+        return {
+          ...base,
+          depending_on_ids: [],
+          union_input: {
+            mode: 'diagonal'
+          }
+        } as any
+
+      case 'record_id':
+        return {
+          ...base,
+          record_id_input: {
+            name: 'record_id',
+            offset: 1
+          }
+        } as any
+
+      case 'rename':
+        return {
+          ...base,
+          rename_input: []
         } as any
 
       case 'unique':

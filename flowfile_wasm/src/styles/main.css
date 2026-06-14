@@ -110,6 +110,10 @@
   /* Code editor colors */
   --color-code-bg: #282c34;
   --color-code-text: #abb2bf;
+  /* Formula token colors (light; dark overrides below) */
+  --color-code-keyword: #6f42c1;
+  --color-code-string: #116329;
+  --color-code-function: #a31515;
 
   /* Overlay/Modal colors */
   --color-overlay: rgba(0, 0, 0, 0.5);
@@ -267,6 +271,11 @@
   --color-background-hover: #1e3a5f;
   --color-background-selected: #0f3460;
   --color-background-muted: #1f1f3a;
+
+  /* Formula token colors (dark) */
+  --color-code-keyword: #f08d49;
+  --color-code-string: #8ec07c;
+  --color-code-function: #b8bb26;
 
   --color-text-primary: #f1f5f9;
   --color-text-secondary: #cbd5e1;

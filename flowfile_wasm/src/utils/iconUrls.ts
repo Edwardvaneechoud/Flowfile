@@ -9,9 +9,14 @@ import filter from '../assets/icons/filter.png'
 import select from '../assets/icons/select.png'
 import sort from '../assets/icons/sort.png'
 import polarsCode from '../assets/icons/polars_code.png'
+import formula from '../assets/icons/formula.png'
 import unique from '../assets/icons/unique.png'
+import recordId from '../assets/icons/record_id.png'
 import sample from '../assets/icons/sample.png'
 import join from '../assets/icons/join.png'
+import crossJoin from '../assets/icons/cross_join.png'
+import union from '../assets/icons/union.png'
+import dynamicRename from '../assets/icons/dynamic_rename.svg'
 import groupBy from '../assets/icons/group_by.png'
 import pivot from '../assets/icons/pivot.png'
 import unpivot from '../assets/icons/unpivot.png'
@@ -30,9 +35,14 @@ export const iconUrls: Record<string, string> = {
   'select.png': select,
   'sort.png': sort,
   'polars_code.png': polarsCode,
+  'formula.png': formula,
   'unique.png': unique,
+  'record_id.png': recordId,
   'sample.png': sample,
   'join.png': join,
+  'cross_join.png': crossJoin,
+  'union.png': union,
+  'dynamic_rename.svg': dynamicRename,
   'group_by.png': groupBy,
   'pivot.png': pivot,
   'unpivot.png': unpivot,

@@ -55,3 +55,72 @@ def execute_join(node_id: int, left_id: int, right_id: int, settings: dict) -> d
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
         return {"success": False, "error": format_error_lf("join", node_id, e, left_lf)}
+
+
+def build_cross_join(left_lf: pl.LazyFrame, right_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
+    """Build the cross-joined (cartesian product) LazyFrame (no store, no collect)."""
+    suffix = (settings.get("cross_join_input") or {}).get("right_suffix", "_right")
+    return left_lf.join(right_lf, how="cross", suffix=suffix)
+
+
+@log_node
+def execute_cross_join(node_id: int, left_id: int, right_id: int, settings: dict) -> dict:
+    """Execute cross join node (lazy) - cartesian product of both inputs."""
+    left_lf = get_lazyframe(left_id)
+    right_lf = get_lazyframe(right_id)
+
+    if left_lf is None:
+        return {
+            "success": False,
+            "error": f"Cross join error on node #{node_id}: No left input data from node #{left_id}. Make sure the upstream node executed successfully.",
+        }
+    if right_lf is None:
+        return {
+            "success": False,
+            "error": f"Cross join error on node #{node_id}: No right input data from node #{right_id}. Make sure the upstream node executed successfully.",
+        }
+
+    try:
+        result_lf = build_cross_join(left_lf, right_lf, settings)
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
+    except Exception as e:
+        return {"success": False, "error": format_error_lf("cross_join", node_id, e, left_lf)}
+
+
+_UNION_HOW = {
+    "vertical": "vertical_relaxed",
+    "diagonal": "diagonal_relaxed",
+}
+
+
+def build_union(lfs: list[pl.LazyFrame], settings: dict) -> pl.LazyFrame:
+    """Build the unioned (stacked) LazyFrame from N inputs (no store, no collect)."""
+    valid = [lf for lf in lfs if lf is not None]
+    if not valid:
+        raise ValueError("Union needs at least one connected input.")
+    if len(valid) == 1:
+        return valid[0]
+    mode = (settings.get("union_input") or {}).get("mode", "diagonal")
+    how = _UNION_HOW.get(mode, "diagonal_relaxed")
+    return pl.concat(valid, how=how)
+
+
+@log_node
+def execute_union(node_id: int, input_ids: list[int], settings: dict) -> dict:
+    """Execute union node (lazy) - stacks rows from all connected inputs."""
+    lfs = [get_lazyframe(i) for i in input_ids]
+    missing = [i for i, lf in zip(input_ids, lfs, strict=True) if lf is None]
+    if missing:
+        return {
+            "success": False,
+            "error": f"Union error on node #{node_id}: No input data from node(s) #{missing}. Make sure the upstream nodes executed successfully.",
+        }
+
+    try:
+        result_lf = build_union(lfs, settings)
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
+    except Exception as e:
+        in_lf = lfs[0] if lfs else None
+        return {"success": False, "error": format_error_lf("union", node_id, e, in_lf)}

@@ -11,6 +11,9 @@ import type {
   NodeJoinSettings,
   NodePivotSettings,
   NodeUnpivotSettings,
+  NodeCrossJoinSettings,
+  NodeRecordIdSettings,
+  NodeRenameSettings,
   AggType,
   SelectInput,
   AggCol,
@@ -219,6 +222,54 @@ function inferUnpivotSchema(
 }
 
 /**
+ * Infer output schema for a CROSS_JOIN node
+ */
+function inferCrossJoinSchema(
+  leftSchema: ColumnSchema[],
+  rightSchema: ColumnSchema[],
+  settings: NodeCrossJoinSettings
+): ColumnSchema[] {
+  const rightSuffix = settings.cross_join_input?.right_suffix || '_right'
+  const leftNames = new Set(leftSchema.map(c => c.name))
+  const result: ColumnSchema[] = [...leftSchema]
+  for (const col of rightSchema) {
+    result.push({
+      name: leftNames.has(col.name) ? col.name + rightSuffix : col.name,
+      data_type: col.data_type
+    })
+  }
+  return result
+}
+
+/**
+ * Infer output schema for a RECORD_ID node
+ */
+function inferRecordIdSchema(
+  inputSchema: ColumnSchema[],
+  settings: NodeRecordIdSettings
+): ColumnSchema[] {
+  const name = settings.record_id_input?.name || 'record_id'
+  return [{ name, data_type: 'UInt32' }, ...inputSchema]
+}
+
+/**
+ * Infer output schema for a RENAME node
+ */
+function inferRenameSchema(
+  inputSchema: ColumnSchema[],
+  settings: NodeRenameSettings
+): ColumnSchema[] {
+  const renames = settings.rename_input || []
+  const map = new Map(
+    renames.filter(r => r.old_name && r.new_name).map(r => [r.old_name, r.new_name])
+  )
+  return inputSchema.map(col => ({
+    name: map.get(col.name) || col.name,
+    data_type: col.data_type
+  }))
+}
+
+/**
  * Infer output schema for a PIVOT node
  * Pivot output depends on unique values in the pivot column, which we can't know without execution
  * We return null to indicate that lazy execution is needed
@@ -288,6 +339,22 @@ export function inferOutputSchema(
         return null
       }
       return inferJoinSchema(inputSchema, rightInputSchema, settings as NodeJoinSettings)
+
+    case 'cross_join':
+      if (!rightInputSchema || rightInputSchema.length === 0) {
+        return null
+      }
+      return inferCrossJoinSchema(inputSchema, rightInputSchema, settings as NodeCrossJoinSettings)
+
+    // Multi-input: defer to the Python pass.
+    case 'union':
+      return null
+
+    case 'record_id':
+      return inferRecordIdSchema(inputSchema, settings as NodeRecordIdSettings)
+
+    case 'rename':
+      return inferRenameSchema(inputSchema, settings as NodeRenameSettings)
 
     // Pivot - can't infer without execution (depends on unique values)
     case 'pivot':
