@@ -228,6 +228,63 @@ def execute_head(node_id: int, input_id: int, settings: dict) -> dict:
         return {"success": False, "error": format_error_lf("head", node_id, e, input_lf)}
 
 
+def build_record_id(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
+    """Build a LazyFrame with a row-number column prepended (no store, no collect)."""
+    ri = settings.get("record_id_input") or {}
+    name = ri.get("name") or "record_id"
+    offset = int(ri.get("offset", 1))
+    return input_lf.with_row_index(name=name, offset=offset)
+
+
+@log_node
+def execute_record_id(node_id: int, input_id: int, settings: dict) -> dict:
+    """Execute record id node - adds a sequential row-number column (lazy)."""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
+        return {
+            "success": False,
+            "error": f"Record ID error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully.",
+        }
+
+    try:
+        result_lf = build_record_id(input_lf, settings)
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
+    except Exception as e:
+        return {"success": False, "error": format_error_lf("record_id", node_id, e, input_lf)}
+
+
+def build_rename(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
+    """Build a column-renamed LazyFrame from an old->new mapping (no store, no collect)."""
+    renames = settings.get("rename_input") or []
+    schema = input_lf.collect_schema()
+    mapping = {}
+    for r in renames:
+        old = r.get("old_name")
+        new = r.get("new_name")
+        if old and new and old != new and old in schema:
+            mapping[old] = new
+    return input_lf.rename(mapping) if mapping else input_lf
+
+
+@log_node
+def execute_rename(node_id: int, input_id: int, settings: dict) -> dict:
+    """Execute rename node - renames columns (lazy)."""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
+        return {
+            "success": False,
+            "error": f"Rename error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully.",
+        }
+
+    try:
+        result_lf = build_rename(input_lf, settings)
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
+    except Exception as e:
+        return {"success": False, "error": format_error_lf("rename", node_id, e, input_lf)}
+
+
 @log_node
 def execute_preview(node_id: int, input_id: int) -> dict:
     """Execute preview node - just passes through the LazyFrame"""

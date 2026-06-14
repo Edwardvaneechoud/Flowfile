@@ -10,3 +10,8 @@ pytest>=8,<9
 # (see ensurePyPackages calls in src/stores/flow-store.ts).
 openpyxl==3.1.5
 XlsxWriter==3.2.0
+# Formula node: turns "[a] + [b]"-style strings into Polars expressions, lazily
+# micropip-installed in the browser (FormulaSettings.vue / executeNode). 0.5.6+
+# makes the Rust polars-ds dep optional so it imports under Pyodide (no WASM
+# wheel for polars-ds); fuzzy string-distance functions are unavailable here.
+polars-expr-transformer==0.5.6

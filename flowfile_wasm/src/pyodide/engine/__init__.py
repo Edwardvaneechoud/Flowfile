@@ -16,8 +16,16 @@ from .nodes_aggregate import (
     execute_pivot,
     execute_unpivot,
 )
-from .nodes_combine import build_join, execute_join
+from .nodes_combine import (
+    build_cross_join,
+    build_join,
+    build_union,
+    execute_cross_join,
+    execute_join,
+    execute_union,
+)
 from .nodes_explore import execute_explore_data, prepare_visual_data
+from .nodes_formula import build_formula, execute_formula
 from .nodes_io import (
     execute_manual_input,
     execute_output,
@@ -31,6 +39,8 @@ from .nodes_polars_code import build_polars_code_schema, execute_polars_code
 from .nodes_transform import (
     build_filter,
     build_head,
+    build_record_id,
+    build_rename,
     build_select,
     build_sort,
     build_unique,
@@ -38,7 +48,8 @@ from .nodes_transform import (
     convert_filter_values,
     execute_filter,
     execute_head,
-    execute_preview,
+    execute_record_id,
+    execute_rename,
     execute_select,
     execute_sort,
     execute_unique,
@@ -108,6 +119,8 @@ __all__ = [
     # nodes: transform
     "build_filter",
     "build_head",
+    "build_record_id",
+    "build_rename",
     "build_select",
     "build_sort",
     "build_unique",
@@ -116,6 +129,8 @@ __all__ = [
     "execute_filter",
     "execute_head",
     "execute_preview",
+    "execute_record_id",
+    "execute_rename",
     "execute_select",
     "execute_sort",
     "execute_unique",
@@ -126,8 +141,15 @@ __all__ = [
     "execute_pivot",
     "execute_unpivot",
     # nodes: combine
+    "build_cross_join",
     "build_join",
+    "build_union",
+    "execute_cross_join",
     "execute_join",
+    "execute_union",
+    # nodes: formula
+    "build_formula",
+    "execute_formula",
     # nodes: polars code
     "build_polars_code_schema",
     "execute_polars_code",
