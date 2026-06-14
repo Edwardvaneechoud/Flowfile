@@ -77,7 +77,7 @@
       <div class="editor-pane">
         <codemirror
           v-model="formula"
-          placeholder="[column_a] + [column_b]"
+          :placeholder="editorPlaceholder"
           :style="{ height: '250px' }"
           :autofocus="false"
           :indent-with-tab="true"
@@ -124,11 +124,20 @@ const functionNames = ref<string[]>([])
 const tab = ref<'fields' | 'functions'>('fields')
 const filterText = ref('')
 
-const outputName = ref(props.settings.function?.field?.name || 'new_column')
+const outputName = ref(props.settings.function?.field?.name ?? '')
 const outputType = ref(props.settings.function?.field?.data_type || 'Auto')
 const formula = ref(props.settings.function?.function || '')
 
 const columns = computed<ColumnSchema[]>(() => flowStore.getNodeInputSchema(props.nodeId))
+
+// Placeholder built from the node's real input columns so it reads as a relevant
+// hint, not a broken default referencing columns that don't exist.
+const editorPlaceholder = computed(() => {
+  const cols = columns.value
+  if (cols.length >= 2) return `e.g. [${cols[0].name}] + [${cols[1].name}]`
+  if (cols.length === 1) return `e.g. [${cols[0].name}] * 2`
+  return 'e.g. [price] * 1.21'
+})
 
 interface SidebarItem {
   label: string
@@ -354,7 +363,7 @@ function emitUpdate() {
     ...props.settings,
     is_setup: outputName.value.trim().length > 0 && formula.value.trim().length > 0,
     function: {
-      field: { name: outputName.value.trim() || 'new_column', data_type: outputType.value },
+      field: { name: outputName.value.trim(), data_type: outputType.value },
       function: formula.value,
     },
   }

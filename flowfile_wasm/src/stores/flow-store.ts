@@ -2730,7 +2730,7 @@ result
         return {
           ...base,
           function: {
-            field: { name: 'new_column', data_type: 'Auto' },
+            field: { name: '', data_type: 'Auto' },
             function: ''
           }
         } as any
