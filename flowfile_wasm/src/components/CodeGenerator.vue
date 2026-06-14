@@ -78,7 +78,9 @@ import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView } from '@codemirror/view'
 import { useFlowStore } from '../stores/flow-store'
+import { usePyodideStore } from '../stores/pyodide-store'
 import { useCodeGeneration } from '../composables/useCodeGeneration'
+import type { NodeFormulaSettings } from '../types'
 
 const props = defineProps<{
   isVisible: boolean
@@ -89,6 +91,7 @@ const emit = defineEmits<{
 }>()
 
 const flowStore = useFlowStore()
+const pyodideStore = usePyodideStore()
 const { generateCode } = useCodeGeneration()
 
 const code = ref('')
@@ -107,15 +110,45 @@ const extensions = [
   EditorView.lineWrapping
 ]
 
-const generateCodeFromFlow = () => {
+/**
+ * Translate every formula node's expression string into real Polars code via
+ * the in-browser polars-expr-transformer (to_polars_code), e.g.
+ * "[quantity] * 2" -> 'pl.col("quantity") * pl.lit(2)'. Returns node_id -> code.
+ * Best-effort: on any failure the formula handler falls back to runtime translation.
+ */
+const translateFormulaNodes = async (): Promise<Record<number, string>> => {
+  const out: Record<number, string> = {}
+  const formulaNodes = [...flowStore.nodes.values()].filter(n => n.type === 'formula')
+  if (formulaNodes.length === 0 || !pyodideStore.isReady) return out
+  try {
+    await pyodideStore.ensurePyPackages(['polars-expr-transformer==0.5.6'])
+    for (const node of formulaNodes) {
+      const expr = (node.settings as NodeFormulaSettings)?.function?.function?.trim()
+      if (!expr) continue
+      const polars = await pyodideStore.runPythonWithResult(
+        'import json\n' +
+        'from polars_expr_transformer.process.polars_expr_transformer import to_polars_code\n' +
+        `to_polars_code(json.loads(${JSON.stringify(JSON.stringify(expr))}))`
+      )
+      if (typeof polars === 'string' && polars.trim()) out[node.id] = polars.trim()
+    }
+  } catch {
+    // leave out partial; the formula handler emits a runtime-translation fallback
+  }
+  return out
+}
+
+const generateCodeFromFlow = async () => {
   loading.value = true
   error.value = null
 
   try {
+    const formulaCode = await translateFormulaNodes()
     const generatedCode = generateCode({
       nodes: flowStore.nodes,
       edges: flowStore.edges,
-      flowName: 'WASM Flow'
+      flowName: 'WASM Flow',
+      formulaCode
     })
     code.value = generatedCode
   } catch (err) {

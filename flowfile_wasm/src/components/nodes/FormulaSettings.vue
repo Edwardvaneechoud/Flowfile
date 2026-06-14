@@ -309,6 +309,22 @@ const extensions: Extension[] = [
     '.cm-ff-column': { color: 'var(--color-code-string)' },
     '.cm-ff-string': { color: 'var(--color-code-function)' },
     '.cm-ff-comment': { color: 'var(--color-text-tertiary)', fontStyle: 'italic' },
+    // Autocomplete popup — theme it so non-selected items aren't invisible in dark mode.
+    '.cm-tooltip': {
+      backgroundColor: 'var(--color-background-secondary)',
+      border: '1px solid var(--color-border-primary)',
+      borderRadius: '4px',
+      color: 'var(--color-text-primary)',
+    },
+    '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+      color: 'var(--color-text-primary)',
+      padding: '2px 8px',
+    },
+    '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+      backgroundColor: 'var(--color-accent)',
+      color: 'var(--color-text-inverse)',
+    },
+    '.cm-completionDetail': { color: 'var(--color-text-muted)', fontStyle: 'italic' },
   }),
   EditorState.tabSize.of(2),
   autocompletion({ override: [completions], defaultKeymap: true, activateOnTyping: true, icons: false }),

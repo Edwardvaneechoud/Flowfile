@@ -36,6 +36,10 @@ interface CodeGenerationOptions {
   nodes: Map<number, FlowNode>
   edges: FlowEdge[]
   flowName?: string
+  // Formula node id → translated Polars expression code (from to_polars_code),
+  // pre-computed in the browser. Lets the formula node emit real Polars instead
+  // of a runtime simple_function_to_expr() call.
+  formulaCode?: Record<number, string>
 }
 
 
@@ -76,11 +80,13 @@ class FlowToPolarsConverter {
   private codeLines: string[]
   private lastNodeVar: string | null
   private unsupportedNodes: Array<{ id: number; type: string; reason: string }>
+  private formulaCode: Record<number, string>
 
   constructor(options: CodeGenerationOptions) {
     this.nodes = options.nodes
     this.edges = options.edges
     this.flowName = options.flowName || 'Flow Pipeline'
+    this.formulaCode = options.formulaCode || {}
     this.nodeVarMapping = new Map()
     this.imports = new Set(['import polars as pl'])
     this.codeLines = []
@@ -207,7 +213,7 @@ class FlowToPolarsConverter {
         this.handlePolarsCode(node.settings as PolarsCodeSettings, varName, inputVars)
         break
       case 'formula':
-        this.handleFormula(node.settings as NodeFormulaSettings, varName, inputVars)
+        this.handleFormula(node.settings as NodeFormulaSettings, varName, inputVars, this.formulaCode[node.id])
         break
       case 'cross_join':
         if (isJoinInputVars(inputVars)) {
@@ -585,7 +591,12 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleFormula(settings: NodeFormulaSettings, varName: string, inputVars: { main?: string }): void {
+  private handleFormula(
+    settings: NodeFormulaSettings,
+    varName: string,
+    inputVars: { main?: string },
+    translated?: string,
+  ): void {
     const inputDf = inputVars.main || 'df'
     const fn = settings.function
     const name = fn?.field?.name || 'new_column'
@@ -596,9 +607,19 @@ class FlowToPolarsConverter {
       return
     }
     const dtype = fn?.field?.data_type
+    const cast = dtype && dtype !== 'Auto' ? `.cast(pl.${dtype})` : ''
+
+    if (translated) {
+      // Real Polars expression, translated from the formula via to_polars_code
+      // (e.g. "[quantity] * 2" -> pl.col("quantity") * pl.lit(2)). Matches desktop.
+      this.addCode(`${varName} = ${inputDf}.with_columns((${translated})${cast}.alias(${toPythonValue(name)}))`)
+      this.addCode('')
+      return
+    }
+
+    // Fallback (translator unavailable at generation time): translate at runtime.
     this.addCode(`# requires: pip install polars-expr-transformer`)
     this.addCode(`from polars_expr_transformer import simple_function_to_expr`)
-    const cast = dtype && dtype !== 'Auto' ? `.cast(pl.${dtype})` : ''
     this.addCode(`${varName} = ${inputDf}.with_columns(`)
     this.addCode(`    simple_function_to_expr(${toPythonValue(expr)})${cast}.alias(${toPythonValue(name)})`)
     this.addCode(`)`)
