@@ -19,15 +19,25 @@
     </div>
 
     <div class="ws-init-field">
-      <label class="ws-init-label">Choose a parent folder</label>
+      <label class="ws-init-label">Choose a parent folder, then click Create project</label>
       <div class="ws-init-browser">
         <FileBrowser
+          ref="fileBrowserRef"
           mode="open"
           :allow-directory-selection="true"
-          @directory-selected="onDirectorySelected"
+          @directory-selected="createInFolder"
         />
       </div>
     </div>
+
+    <template #footer>
+      <div class="ws-dialog-footer">
+        <el-button @click="emit('update:modelValue', false)">Cancel</el-button>
+        <el-button type="primary" :disabled="!name.trim()" :loading="creating" @click="createHere">
+          Create project
+        </el-button>
+      </div>
+    </template>
   </el-dialog>
 </template>
 
@@ -45,6 +55,8 @@ const emit = defineEmits<{
 
 const store = useWorkspaceStore();
 const name = ref("");
+const creating = ref(false);
+const fileBrowserRef = ref<InstanceType<typeof FileBrowser> | null>(null);
 
 function slugify(value: string): string {
   return (
@@ -63,19 +75,35 @@ function joinPath(directory: string, child: string): string {
   return directory.endsWith(sep) ? `${directory}${child}` : `${directory}${sep}${child}`;
 }
 
-async function onDirectorySelected(directory: string) {
+function currentBrowserPath(): string | undefined {
+  return (fileBrowserRef.value as { getCurrentPath?: () => string } | null)?.getCurrentPath?.();
+}
+
+async function createInFolder(directory: string | null | undefined) {
   const projectName = name.value.trim();
   if (!projectName) {
     ElMessage.warning("Enter a project name first");
     return;
   }
+  if (!directory) {
+    ElMessage.warning("Choose a parent folder in the browser first");
+    return;
+  }
+  creating.value = true;
   try {
     await store.initProject(projectName, joinPath(directory, folderName.value));
     name.value = "";
     emit("update:modelValue", false);
     emit("created");
-  } catch (error) {
+  } catch {
     ElMessage.error(store.error ?? "Failed to create project");
+  } finally {
+    creating.value = false;
   }
+}
+
+// The footer CTA: create in whatever folder the browser is currently showing.
+function createHere() {
+  createInFolder(currentBrowserPath());
 }
 </script>

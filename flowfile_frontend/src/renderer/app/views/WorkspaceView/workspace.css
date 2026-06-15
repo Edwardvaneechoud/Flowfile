@@ -636,10 +636,21 @@
 }
 
 .ws-init-browser {
-  height: 50vh;
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   overflow: hidden;
+}
+
+/* The shared FileBrowser is a fixed 70vh; constrain it to fit the dialog so its
+   own bottom action bar ("Select This Directory") is never clipped. */
+.ws-init-browser .file-browser {
+  height: 46vh;
+}
+
+.ws-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-2);
 }
 
 .ws-spin {

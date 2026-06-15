@@ -551,6 +551,7 @@ defineExpose({
   loadCurrentDirectory,
   navigateUpDirectory,
   selectedFile: computed(() => selectedFile.value),
+  getCurrentPath: () => currentPath.value,
 });
 
 const calculateSortedFiles = () => {
