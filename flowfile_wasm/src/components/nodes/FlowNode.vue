@@ -258,7 +258,10 @@ function saveDescription() {
 }
 
 function onClick() {
+  // Single click opens the Settings panel only (the Table stays in whatever
+  // open/closed state it was). Matches the Canvas-level node-click handler.
   flowStore.selectNode(props.data.id)
+  flowStore.showSettings = true
 }
 
 function showContextMenu(event: MouseEvent) {

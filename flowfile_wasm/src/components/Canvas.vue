@@ -101,6 +101,7 @@
         fit-view-on-init
         @connect="onConnect"
         @node-click="onNodeClick"
+        @node-double-click="onNodeDoubleClick"
         @pane-click="onPaneClick"
         @pane-context-menu="onPaneContextMenu"
         @edges-change="onEdgesChange"
@@ -124,14 +125,14 @@
 
     <!-- Node Settings Panel -->
     <DraggablePanel
-      v-if="selectedNode"
+      v-if="selectedNode && showSettings"
       :title="getNodeDescription(selectedNode.type).title"
       panel-id="node-settings-panel"
       initial-position="right"
       :initial-width="450"
       :initial-top="toolbarHeight"
       :default-z-index="120"
-      :on-close="() => flowStore.selectNode(null)"
+      :on-close="closeSettings"
     >
       <NodeTitle
         :title="getNodeDescription(selectedNode.type).title"
@@ -167,7 +168,7 @@
 
     <!-- Data Preview Panel (hidden for explore_data nodes which have their own preview) -->
     <DraggablePanel
-      v-if="selectedNodeId !== null && selectedNode?.type !== 'explore_data'"
+      v-if="selectedNodeId !== null && showTablePreview && selectedNode?.type !== 'explore_data'"
       title="Table Preview"
       panel-id="data-preview-panel"
       initial-position="bottom"
@@ -176,6 +177,7 @@
       :default-z-index="110"
       group="bottomPanels"
       :sync-dimensions="true"
+      :on-close="closeTable"
     >
       <div class="data-preview">
         <!-- Loading state -->
@@ -423,7 +425,7 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
 const flowStore = useFlowStore()
 const zIndexStore = usePanelZIndexStore()
 const uiStore = useDesignerUiStore()
-const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
+const { nodes: flowNodes, edges: flowEdges, selectedNodeId, showSettings, showTablePreview, nodeResults, isExecuting } = storeToRefs(flowStore)
 const { isReady: pyodideReady } = storeToRefs(usePyodideStore())
 
 const { hasSeenDemo } = useDemo()
@@ -632,6 +634,7 @@ function onDrop(event: DragEvent) {
 
   const nodeId = flowStore.addNode(draggedNodeDef.type, position.x, position.y)
   flowStore.selectNode(nodeId)
+  showSettings.value = true
 
   pendingNodeAdjustment.value = nodeId
   draggedNodeDef = null
@@ -652,11 +655,36 @@ function onConnect(connection: Connection) {
 }
 
 function onNodeClick(event: { node: Node }) {
+  // Single click: open Settings only — never auto-opens the Table (mirrors the
+  // main flowfile_frontend). The Table flag is left untouched, so if the user
+  // already opened it, it stays open and retargets to this node.
   flowStore.selectNode(parseInt(event.node.id))
+  showSettings.value = true
+}
+
+// Double click a node: open BOTH the Settings panel and the Table preview.
+async function onNodeDoubleClick(event: { node: Node }) {
+  const nodeId = parseInt(event.node.id)
+  // Set the Table flag before selecting so selectNode's gated auto-fetch can
+  // materialize the preview for an already-run node.
+  showTablePreview.value = true
+  flowStore.selectNode(nodeId)
+  showSettings.value = true
+  const result = nodeResults.value.get(nodeId)
+  const node = flowNodes.value.get(nodeId)
+  if (node?.type !== 'explore_data' && !result?.success) {
+    await handleFetchData()
+  }
+  nextTick(() => {
+    zIndexStore.bringToFront('node-settings-panel')
+    zIndexStore.bringToFront('data-preview-panel')
+  })
 }
 
 function onPaneClick() {
   flowStore.selectNode(null)
+  showSettings.value = false
+  showTablePreview.value = false
   closePaneMenu()
 }
 
@@ -711,6 +739,7 @@ function pasteHere() {
   if (newId !== null) {
     pendingNodeAdjustment.value = newId
     flowStore.selectNode(newId)
+    showSettings.value = true
   }
   closePaneMenu()
 }
@@ -750,6 +779,13 @@ function onNodesChange(changes: NodeChange[]) {
 }
 
 function handleDeleteNode(nodeId: number) {
+  // Deleting the selected node leaves no panel target — close both panels and
+  // deselect so the Table doesn't linger pointing at a removed node.
+  if (nodeId === selectedNodeId.value) {
+    showSettings.value = false
+    showTablePreview.value = false
+    flowStore.selectNode(null)
+  }
   removeNodes(String(nodeId))
   flowStore.removeNode(nodeId)
 }
@@ -758,21 +794,38 @@ async function handleRunNode(nodeId: number) {
   await flowStore.executeNodeWithUpstream(nodeId)
 }
 
-// Edit: select the node (opens the settings panel) and surface it.
+// Edit (context menu): open the Settings panel only, and surface it.
 function handleEditNode(nodeId: number) {
   flowStore.selectNode(nodeId)
+  showSettings.value = true
   nextTick(() => zIndexStore.bringToFront('node-settings-panel'))
 }
 
-// View data: select the node, fetch its preview if needed, surface the preview.
+// View data (context menu): open the Table preview only (not Settings). Set the
+// flag before selecting so selectNode's gated auto-fetch can materialize the
+// preview for an already-run node; run the node here only if it hasn't run yet.
 async function handleViewData(nodeId: number) {
+  showTablePreview.value = true
   flowStore.selectNode(nodeId)
   const result = nodeResults.value.get(nodeId)
   const node = flowNodes.value.get(nodeId)
-  if (node?.type !== 'explore_data' && !(result?.success && result?.data)) {
+  if (node?.type !== 'explore_data' && !result?.success) {
     await handleFetchData()
   }
   nextTick(() => zIndexStore.bringToFront('data-preview-panel'))
+}
+
+// Each panel closes independently. Closing one keeps the other (and the node
+// selection) intact; closing the last open panel also clears the selection so
+// the node stops being highlighted.
+function closeSettings() {
+  showSettings.value = false
+  if (!showTablePreview.value) flowStore.selectNode(null)
+}
+
+function closeTable() {
+  showTablePreview.value = false
+  if (!showSettings.value) flowStore.selectNode(null)
 }
 
 function handleCopyNode(nodeId: number) {
@@ -1119,6 +1172,7 @@ function handleKeyDown(event: KeyboardEvent) {
     if (newId !== null) {
       pendingNodeAdjustment.value = newId
       flowStore.selectNode(newId)
+      showSettings.value = true
     }
   }
 }
