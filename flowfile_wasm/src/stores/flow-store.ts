@@ -139,6 +139,11 @@ export const useFlowStore = defineStore('flow', () => {
   const edges = ref<FlowEdge[]>([])
   const nodeResults = ref<Map<number, NodeResult>>(new Map())
   const selectedNodeId = ref<number | null>(null)
+  // Panel visibility is independent of selection: the Settings panel and the
+  // Table preview each have their own flag so a single click no longer forces
+  // both open (mirrors the main flowfile_frontend). Session-only — not persisted.
+  const showSettings = ref(false)
+  const showTablePreview = ref(false)
   const isExecuting = ref(false)
   const executionError = ref<string | null>(null)
   const nodeIdCounter = ref(0)
@@ -1159,7 +1164,9 @@ result
 
     selectedNodeId.value = id
 
-    if (id !== null) {
+    // Only materialize a preview when the Table panel is actually open — a plain
+    // settings-click should stay cheap and not run hidden compute.
+    if (id !== null && showTablePreview.value) {
       const result = nodeResults.value.get(id)
       if (result?.success && !hasPreviewCached(id)) {
         // Use more rows for explore_data nodes (Preview Settings)
@@ -2601,7 +2608,7 @@ result
 
       await propagateSchemas()
 
-      if (selectedNodeId.value !== null) {
+      if (selectedNodeId.value !== null && showTablePreview.value) {
         const result = nodeResults.value.get(selectedNodeId.value)
         if (result?.success) {
           const node = nodes.value.get(selectedNodeId.value)
@@ -2978,6 +2985,8 @@ result
       previewCache.value.clear()
       dirtyNodes.value.clear()
       selectedNodeId.value = null
+      showSettings.value = false
+      showTablePreview.value = false
       currentFlowName.value = (data as any)?.flowfile_name || 'Untitled Flow'
       // Raw FlowfileData (file/template/snapshot) carries no library identity;
       // callers that restore a saved flow set currentFlowId afterwards.
@@ -3352,6 +3361,8 @@ result
     previewCache.value.clear()
     dirtyNodes.value.clear()
     selectedNodeId.value = null
+    showSettings.value = false
+    showTablePreview.value = false
     nodeIdCounter.value = 0
     currentFlowName.value = 'Untitled Flow'
     currentFlowId.value = null
@@ -3429,6 +3440,8 @@ result
     edges,
     nodeResults,
     selectedNodeId,
+    showSettings,
+    showTablePreview,
     isExecuting,
     executionError,
     currentFlowName,
