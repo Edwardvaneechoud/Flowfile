@@ -792,3 +792,29 @@ class ResourceGrant(Base):
         UniqueConstraint("resource_type", "resource_id", "group_id", name="uq_resource_group_grant"),
         Index("ix_resource_grants_resource", "resource_type", "resource_id"),
     )
+
+
+class WorkspaceProject(Base):
+    """Maps this local catalog DB to a git-enabled project tree on disk.
+
+    The project tree (a directory that maps 1:1 to a git repo) is a deterministic,
+    secret-free projection of the DB. This row remembers where it lives so the
+    workspace router/CLI can operate on "the project" without re-supplying the
+    path, and tracks the last export for drift/history. ``project_id`` mirrors the
+    ``project_id`` in the tree's ``flowfile.project.yaml`` manifest.
+    """
+
+    __tablename__ = "workspace_projects"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(String(36), nullable=False, unique=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, nullable=False)
+    root_path = Column(String, nullable=False)
+    namespace_roots = Column(Text, nullable=True)  # JSON array of namespace root names
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    git_enabled = Column(Boolean, default=False, nullable=False, server_default="0")
+    last_export_sha = Column(String, nullable=True)  # git commit sha (Phase 2)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("owner_id", "root_path", name="uq_workspace_owner_root"),)

@@ -143,6 +143,110 @@ def _complete_run_if_needed(
         print(f"Warning: Failed to update run record {run_id}: {e}", file=sys.stderr)
 
 
+def run_project(action: str, root: str | None, name: str | None) -> int:
+    """Run a git-enabled project workspace command in-process.
+
+    Actions: ``init`` (create/refresh a project tree), ``export`` (DB -> files),
+    ``apply`` (files -> DB), ``status`` (manifest + drift). ``root`` is optional
+    for non-init actions: it falls back to the most recently registered project.
+    """
+    import json as _json
+
+    from flowfile_core.auth.utils import get_local_user_id
+    from flowfile_core.database import models as db_models
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.workspace.manifest import init_project
+    from flowfile_core.workspace.sync import WorkspaceSync
+
+    user_id = get_local_user_id()
+    with get_db_context() as db:
+        if action == "init":
+            if not root:
+                print("Error: 'project init' requires a path, e.g. flowfile project init <root>", file=sys.stderr)
+                return 1
+            manifest = init_project(root, name or Path(root).resolve().name)
+            row = (
+                db.query(db_models.WorkspaceProject)
+                .filter(
+                    db_models.WorkspaceProject.owner_id == user_id,
+                    db_models.WorkspaceProject.root_path == root,
+                )
+                .first()
+            )
+            ns = _json.dumps(manifest.namespace_roots)
+            if row is None:
+                db.add(
+                    db_models.WorkspaceProject(
+                        project_id=manifest.project_id,
+                        name=manifest.name,
+                        root_path=root,
+                        namespace_roots=ns,
+                        owner_id=user_id,
+                    )
+                )
+            else:
+                row.project_id = manifest.project_id
+                row.name = manifest.name
+                row.namespace_roots = ns
+            db.commit()
+            print(f"Initialized project '{manifest.name}' at {root}")
+            print(f"  project_id: {manifest.project_id}")
+            return 0
+
+        if not root:
+            row = (
+                db.query(db_models.WorkspaceProject)
+                .filter(db_models.WorkspaceProject.owner_id == user_id)
+                .order_by(db_models.WorkspaceProject.updated_at.desc())
+                .first()
+            )
+            if row is None:
+                print(
+                    "Error: no project path given and no registered project found. "
+                    "Run 'flowfile project init <root>' first.",
+                    file=sys.stderr,
+                )
+                return 1
+            root = row.root_path
+
+        sync = WorkspaceSync(db, user_id, root)
+        if action == "export":
+            result = sync.export()
+            print(f"Exported project at {result.project_root}")
+            print(f"  written={len(result.written)} unchanged={len(result.unchanged)} removed={len(result.removed)}")
+            print(f"  counts: {result.counts}")
+            if result.secret_requirements:
+                print(f"  secrets required: {[s.name for s in result.secret_requirements]}")
+            for warning in result.warnings:
+                print(f"  warning: {warning}", file=sys.stderr)
+            return 0
+        if action == "apply":
+            result = sync.apply()
+            print(f"Applied project at {result.project_root}")
+            print(f"  counts: {result.counts}")
+            if result.missing_secrets:
+                print(f"  missing secrets (set FLOWFILE_SECRET_*): {[s.name for s in result.missing_secrets]}")
+            for warning in result.warnings:
+                print(f"  warning: {warning}", file=sys.stderr)
+            return 0
+        if action == "status":
+            status = sync.status()
+            drift = status.drift
+            project_name = status.manifest.name if status.manifest else "(no manifest)"
+            print(f"Project: {project_name} at {status.project_root}")
+            print(f"  git_enabled={status.git_enabled} in_sync={drift.in_sync}")
+            if not drift.in_sync:
+                print(f"  db_ahead={drift.db_ahead}")
+                print(f"  files_ahead={drift.files_ahead}")
+                print(f"  conflict={drift.conflict}")
+            if status.secret_requirements:
+                print(f"  secrets required: {[s.name for s in status.secret_requirements]}")
+            return 0
+
+        print(f"Error: unknown project action '{action}'", file=sys.stderr)
+        return 1
+
+
 def main():
     """
     Display information about FlowFile when run directly as a module.
@@ -151,12 +255,18 @@ def main():
 
     parser = argparse.ArgumentParser(description="FlowFile: A visual ETL tool with a Polars-like API")
     parser.add_argument(
-        "command", nargs="?", choices=["run", "seed-demo", "remove-demo"], help="Command to execute"
+        "command", nargs="?", choices=["run", "project", "seed-demo", "remove-demo"], help="Command to execute"
     )
-    parser.add_argument("component", nargs="?", choices=["ui", "core", "worker", "flow"], help="Component to run")
-    parser.add_argument("file_path", nargs="?", help="Path to flow file (for 'flow' component)")
+    parser.add_argument(
+        "component",
+        nargs="?",
+        choices=["ui", "core", "worker", "flow", "init", "export", "apply", "status"],
+        help="Component to run / project action",
+    )
+    parser.add_argument("file_path", nargs="?", help="Path to flow file ('run flow') or project root ('project ...')")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
+    parser.add_argument("--name", default=None, help="Project name (for 'project init')")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
     parser.add_argument(
         "--param",
@@ -193,6 +303,12 @@ def main():
                 print("Usage: flowfile run flow <path-to-flow-file>", file=sys.stderr)
                 sys.exit(1)
             sys.exit(run_flow(args.file_path, param_overrides=args.params, run_id=args.run_id))
+    elif args.command == "project":
+        if not args.component or args.component not in ("init", "export", "apply", "status"):
+            print("Error: 'project' requires an action: init | export | apply | status", file=sys.stderr)
+            print("Usage: flowfile project <init|export|apply|status> [root] [--name NAME]", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(run_project(args.component, args.file_path, args.name))
     elif args.command in ("seed-demo", "remove-demo"):
         from flowfile_core.catalog.demo_seed import remove_demo_catalog, seed_demo_catalog
 
@@ -220,6 +336,12 @@ def main():
         print("  # Load or remove the optional demo catalog")
         print("  flowfile seed-demo")
         print("  flowfile remove-demo")
+        print("")
+        print("  # Git-enabled project: export/import the DB as a deterministic tree")
+        print("  flowfile project init ./my-project --name 'Sales Analytics'")
+        print("  flowfile project export ./my-project   # DB -> files")
+        print("  flowfile project apply ./my-project    # files -> DB (refill secrets via FLOWFILE_SECRET_*)")
+        print("  flowfile project status ./my-project")
         print("")
         print("  # Advanced: Run individual components")
         print("  flowfile run core  # Start only the core service")
