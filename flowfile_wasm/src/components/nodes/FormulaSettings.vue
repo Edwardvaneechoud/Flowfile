@@ -57,21 +57,48 @@
           <i v-if="filterText" class="fas fa-times clear-icon" @click="filterText = ''" />
         </div>
 
-        <ul class="item-list">
+        <!-- Fields: flat list with colored data-type badges -->
+        <ul v-if="tab === 'fields'" class="item-list">
           <li
-            v-for="item in filteredItems"
-            :key="item.label"
+            v-for="field in filteredFields"
+            :key="field.name"
             class="item"
-            :title="item.detail || item.label"
-            @click="insertItem(item)"
+            :title="field.dataType ? `${field.name} · ${field.dataType}` : field.name"
+            @click="insertAtCursor(field.insert)"
           >
-            <span class="item-name">{{ item.label }}</span>
-            <span v-if="item.detail" class="item-detail">{{ item.detail }}</span>
+            <span class="item-name">{{ field.name }}</span>
+            <span v-if="field.dataType" class="type-badge" :class="badgeClass(field.group)">
+              {{ field.dataType }}
+            </span>
           </li>
-          <li v-if="filteredItems.length === 0" class="item-empty">
-            {{ tab === 'fields' ? 'No input columns' : (functionNames.length ? 'No matches' : 'Loading functions…') }}
-          </li>
+          <li v-if="filteredFields.length === 0" class="item-empty">No input columns</li>
         </ul>
+
+        <!-- Functions: collapsible category tree with hover doc popovers -->
+        <div v-else class="fn-tree">
+          <div
+            v-for="grp in filteredFunctionGroups"
+            :key="grp.expression_type"
+            class="tree-node"
+          >
+            <div class="tree-header" @click="toggleCategory(grp.expression_type)">
+              <span class="toggle-icon">{{ isCategoryOpen(grp.expression_type) ? '▼' : '▶' }}</span>
+              <span class="category-name">{{ humanize(grp.expression_type) }}</span>
+            </div>
+            <ul v-if="isCategoryOpen(grp.expression_type)" class="tree-subview">
+              <li v-for="fn in grp.expressions" :key="fn.name" class="tree-leaf">
+                <PopOver :content="formatDoc(fn.doc)" :title="fn.name" placement="left">
+                  <button type="button" class="cool-button" @click="insertFunction(fn.name)">
+                    {{ fn.name }}
+                  </button>
+                </PopOver>
+              </li>
+            </ul>
+          </div>
+          <div v-if="filteredFunctionGroups.length === 0" class="item-empty">
+            {{ functionGroups.length ? 'No matches' : 'Loading functions…' }}
+          </div>
+        </div>
       </div>
 
       <div class="editor-pane">
@@ -102,6 +129,8 @@ import { autocompletion, CompletionSource, CompletionContext } from '@codemirror
 import { useFlowStore } from '../../stores/flow-store'
 import { usePyodideStore } from '../../stores/pyodide-store'
 import type { NodeFormulaSettings, ColumnSchema } from '../../types'
+import PopOver from '../common/PopOver.vue'
+import { dataTypeGroup, dataTypeBadgeClass, type DataTypeGroup } from '../../utils/dtypeGroup'
 
 const FORMULA_PACKAGE = 'polars-expr-transformer==0.5.6'
 const DATA_TYPES = ['Auto', 'String', 'Int64', 'Float64', 'Boolean', 'Date', 'Datetime']
@@ -119,10 +148,33 @@ const flowStore = useFlowStore()
 const pyodideStore = usePyodideStore()
 const view = shallowRef<EditorView | null>(null)
 const packageError = ref<string | null>(null)
-const functionNames = ref<string[]>([])
+
+interface FunctionDef {
+  name: string
+  doc: string
+}
+interface FunctionGroup {
+  expression_type: string
+  expressions: FunctionDef[]
+}
+
+const functionGroups = ref<FunctionGroup[]>([])
+// Flat, sorted name list derived from the grouped data — backs the autocomplete.
+const functionNames = computed<string[]>(() =>
+  functionGroups.value.flatMap(g => g.expressions.map(e => e.name)).sort(),
+)
+// name -> doc, used to enrich autocomplete entries (matches the desktop app).
+const functionDocs = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {}
+  for (const g of functionGroups.value) {
+    for (const e of g.expressions) map[e.name] = e.doc
+  }
+  return map
+})
 
 const tab = ref<'fields' | 'functions'>('fields')
 const filterText = ref('')
+const openCategories = ref<Set<string>>(new Set())
 
 const outputName = ref(props.settings.function?.field?.name ?? '')
 const outputType = ref(props.settings.function?.field?.data_type || 'Auto')
@@ -138,23 +190,57 @@ const editorPlaceholder = computed(() => {
   return 'e.g. [price] * 1.21'
 })
 
-interface SidebarItem {
-  label: string
-  detail?: string
+interface FieldItem {
+  name: string
+  dataType: string
+  group: DataTypeGroup
   insert: string
 }
 
-const filteredItems = computed<SidebarItem[]>(() => {
+const filteredFields = computed<FieldItem[]>(() => {
   const q = filterText.value.toLowerCase()
-  if (tab.value === 'fields') {
-    return columns.value
-      .filter(c => c.name.toLowerCase().includes(q))
-      .map(c => ({ label: c.name, detail: c.data_type, insert: `[${c.name}]` }))
-  }
-  return functionNames.value
-    .filter(n => n.toLowerCase().includes(q))
-    .map(n => ({ label: n, insert: `${n}()` }))
+  return columns.value
+    .filter(c => c.name.toLowerCase().includes(q))
+    .map(c => ({
+      name: c.name,
+      dataType: c.data_type,
+      group: dataTypeGroup(c.data_type),
+      insert: `[${c.name}]`,
+    }))
 })
+
+const badgeClass = dataTypeBadgeClass
+
+// "type_conversions" -> "Type conversions"
+function humanize(key: string): string {
+  const s = key.replace(/_/g, ' ').trim()
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function formatDoc(doc: string): string {
+  return doc ? doc.replace(/\n/g, '<br>') : ''
+}
+
+const isFilteringFunctions = computed(() => filterText.value.trim().length > 0)
+
+// While filtering, drop non-matching functions/groups; otherwise show all.
+const filteredFunctionGroups = computed<FunctionGroup[]>(() => {
+  const q = filterText.value.trim().toLowerCase()
+  if (!q) return functionGroups.value
+  return functionGroups.value
+    .map(g => ({ ...g, expressions: g.expressions.filter(e => e.name.toLowerCase().includes(q)) }))
+    .filter(g => g.expressions.length > 0)
+})
+
+// Auto-expand every visible group while filtering; otherwise honor manual state.
+function isCategoryOpen(key: string): boolean {
+  return isFilteringFunctions.value || openCategories.value.has(key)
+}
+
+function toggleCategory(key: string) {
+  if (openCategories.value.has(key)) openCategories.value.delete(key)
+  else openCategories.value.add(key)
+}
 
 // Syntax highlighting
 type HighlightType = 'comment' | 'string' | 'column' | 'function'
@@ -255,7 +341,13 @@ const completions: CompletionSource = (context: CompletionContext) => {
     return null
   }
 
-  const options: Array<{ label: string; type: string; detail?: string; apply: (v: EditorView) => void }> = []
+  const options: Array<{
+    label: string
+    type: string
+    detail?: string
+    info?: string
+    apply: (v: EditorView) => void
+  }> = []
 
   if (functionWord && context.state.sliceDoc(functionWord.from - 1, functionWord.from) !== '[') {
     const cur = functionWord.text.toLowerCase()
@@ -265,6 +357,7 @@ const completions: CompletionSource = (context: CompletionContext) => {
         options.push({
           label: n,
           type: 'function',
+          info: functionDocs.value[n] || `Function: ${n}`,
           apply: (ev: EditorView) => {
             const insert = `${n}(`
             ev.dispatch({
@@ -308,8 +401,18 @@ const extensions: Extension[] = [
       color: 'var(--color-text-muted)',
       border: 'none',
     },
-    '.cm-activeLine': { backgroundColor: 'var(--color-background-hover)' },
+    // The active line lives in the content layer, ABOVE CodeMirror's selection
+    // layer, so an opaque background here paints OVER (hides) the text selection
+    // on the cursor's line — that's the "selected row overrides the selected
+    // text" bug. Keep the active-line text background transparent; show the
+    // cursor-line cue only in the gutter, which never overlaps a selection.
+    '.cm-activeLine': { backgroundColor: 'transparent' },
     '.cm-activeLineGutter': { backgroundColor: 'var(--color-background-tertiary)' },
+    // Text selection: a clearly visible accent tint. drawSelection paints its own
+    // layer with a high-specificity base theme, so the focused rule needs
+    // !important to win.
+    '.cm-selectionBackground': { backgroundColor: 'rgba(8, 145, 178, 0.25)' },
+    '&.cm-focused .cm-selectionBackground': { backgroundColor: 'rgba(8, 145, 178, 0.40) !important' },
     '.cm-ff-function': { color: 'var(--color-code-keyword)', fontWeight: 'bold' },
     '.cm-ff-column': { color: 'var(--color-code-string)' },
     '.cm-ff-string': { color: 'var(--color-code-function)' },
@@ -345,13 +448,17 @@ function handleFormulaChange(value: string) {
   emitUpdate()
 }
 
-function insertItem(item: SidebarItem) {
+function insertAtCursor(text: string) {
   if (!view.value) return
   const head = view.value.state.selection.main.head
-  view.value.dispatch({ changes: { from: head, to: head, insert: item.insert } })
+  view.value.dispatch({ changes: { from: head, to: head, insert: text } })
   view.value.focus()
   formula.value = view.value.state.doc.toString()
   emitUpdate()
+}
+
+function insertFunction(name: string) {
+  insertAtCursor(`${name}()`)
 }
 
 function emitUpdate() {
@@ -366,14 +473,27 @@ function emitUpdate() {
   emit('update:settings', settings)
 }
 
+// Builds the same {expression_type, expressions:[{name, doc}]} structure the
+// desktop/web app serves from /editor/expression_doc — get_expression_overview()
+// returns pydantic instances, so flatten to plain dicts before they cross to JS.
+const GET_FUNCTIONS_PY = `from polars_expr_transformer.function_overview import get_expression_overview
+[
+    {
+        "expression_type": _o.expression_type,
+        "expressions": [
+            {"name": _e.name, "doc": _e.doc or ""}
+            for _e in _o.expressions
+        ],
+    }
+    for _o in get_expression_overview()
+]`
+
 onMounted(async () => {
   if (!pyodideStore.isReady) return
   try {
     await pyodideStore.ensurePyPackages([FORMULA_PACKAGE])
-    const names = await pyodideStore.runPythonWithResult(
-      'from polars_expr_transformer.function_overview import get_all_expressions\nget_all_expressions()'
-    )
-    if (Array.isArray(names)) functionNames.value = (names as string[]).slice().sort()
+    const groups = await pyodideStore.runPythonWithResult(GET_FUNCTIONS_PY)
+    if (Array.isArray(groups)) functionGroups.value = groups as FunctionGroup[]
   } catch (err) {
     packageError.value = err instanceof Error ? err.message : String(err)
   }
@@ -437,7 +557,7 @@ onMounted(async () => {
 }
 
 .sidebar {
-  flex: 0 0 180px;
+  flex: 0 0 200px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--color-border-primary);
@@ -529,7 +649,7 @@ onMounted(async () => {
 
 .item {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 6px;
   padding: 4px 10px;
@@ -551,10 +671,35 @@ onMounted(async () => {
   font-family: var(--font-family-mono, monospace);
 }
 
-.item-detail {
+/* Data-type badge pills — colors mirror the desktop/web app's column selector. */
+.type-badge {
   flex-shrink: 0;
   font-size: 10px;
-  color: var(--color-text-muted);
+  font-weight: 500;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.badge-numeric {
+  color: var(--color-info-hover);
+  background-color: var(--color-info-light);
+}
+
+.badge-string {
+  color: var(--color-success-hover);
+  background-color: var(--color-success-light);
+}
+
+.badge-date {
+  color: var(--color-warning-dark);
+  background-color: var(--color-warning-light);
+}
+
+.badge-other {
+  color: var(--color-text-tertiary);
+  background-color: var(--color-background-tertiary);
 }
 
 .item-empty {
@@ -562,6 +707,75 @@ onMounted(async () => {
   font-size: 11px;
   color: var(--color-text-muted);
   list-style: none;
+}
+
+/* Function category tree (Functions tab) */
+.fn-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.tree-node {
+  color: var(--color-text-primary);
+}
+
+.tree-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tree-header:hover {
+  background-color: var(--color-background-hover);
+}
+
+.toggle-icon {
+  font-size: 9px;
+  width: 10px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
+.category-name {
+  font-weight: 600;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-subview {
+  list-style-type: none;
+  padding-left: 18px;
+  margin: 2px 0;
+}
+
+.tree-leaf {
+  margin-bottom: 1px;
+}
+
+.cool-button {
+  width: 100%;
+  border: none;
+  color: var(--color-text-primary);
+  background-color: transparent;
+  padding: 3px 8px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-family-mono, monospace);
+  font-size: 12px;
+}
+
+.cool-button:hover {
+  background-color: var(--color-background-hover);
 }
 
 .editor-pane {

@@ -234,9 +234,27 @@ export interface RecordIdInput {
   offset: number
 }
 
-export interface RenameMap {
-  old_name: string
-  new_name: string
+export type RenameMode = 'prefix' | 'suffix' | 'formula' | 'first_row'
+export type ColumnSelectionMode = 'all' | 'list' | 'data_type'
+export type ReadableDataTypeGroup =
+  | 'Numeric'
+  | 'String'
+  | 'Date'
+  | 'Other'
+  | 'Boolean'
+  | 'Binary'
+  | 'Complex'
+
+/** Bulk-rename rule: one transform (rename_mode) applied to a set of columns
+ *  (selection_mode). Mirrors flowfile_core's transform_schema.DynamicRenameInput. */
+export interface DynamicRenameInput {
+  rename_mode: RenameMode
+  prefix: string
+  suffix: string
+  formula: string
+  selection_mode: ColumnSelectionMode
+  selected_columns: string[]
+  selected_data_type: ReadableDataTypeGroup | null
 }
 
 // HEAD/SAMPLE SCHEMAS
@@ -383,8 +401,8 @@ export interface NodeRecordIdSettings extends NodeSingleInput {
   record_id_input: RecordIdInput
 }
 
-export interface NodeRenameSettings extends NodeSingleInput {
-  rename_input: RenameMap[]
+export interface NodeDynamicRenameSettings extends NodeSingleInput {
+  dynamic_rename_input: DynamicRenameInput
 }
 
 export interface NodeSampleSettings extends NodeSingleInput {
@@ -433,7 +451,7 @@ export type NodeSettings =
   | NodeCrossJoinSettings
   | NodeUnionSettings
   | NodeRecordIdSettings
-  | NodeRenameSettings
+  | NodeDynamicRenameSettings
   | NodeSampleSettings
   | NodePreviewSettings
   | NodePivotSettings
@@ -600,7 +618,7 @@ export const NODE_TYPES = {
   unique: 'unique',
   formula: 'formula',
   record_id: 'record_id',
-  rename: 'rename',
+  dynamic_rename: 'dynamic_rename',
   sample: 'sample',
 
   // Aggregate/reshape nodes

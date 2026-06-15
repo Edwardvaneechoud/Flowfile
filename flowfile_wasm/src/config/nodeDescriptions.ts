@@ -56,9 +56,9 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     title: 'Unique',
     intro: 'Remove duplicate rows from your data. Optionally specify which columns to consider for uniqueness.'
   },
-  rename: {
+  dynamic_rename: {
     title: 'Rename',
-    intro: 'Rename columns. Type a new name next to any column; leave blank to keep the original name.'
+    intro: 'Bulk-rename columns by prefix, suffix, formula, or first row — applied to all columns, a chosen list, or by data type.'
   },
   record_id: {
     title: 'Record ID',
