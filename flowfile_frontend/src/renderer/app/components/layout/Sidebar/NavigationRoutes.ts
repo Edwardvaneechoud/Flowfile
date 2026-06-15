@@ -80,6 +80,13 @@ export default {
       ],
     },
     {
+      name: "workspace",
+      displayName: "menu.workspace",
+      meta: {
+        icon: "fa-solid fa-code-branch",
+      },
+    },
+    {
       name: "kernelManager",
       displayName: "menu.kernelManager",
       meta: {

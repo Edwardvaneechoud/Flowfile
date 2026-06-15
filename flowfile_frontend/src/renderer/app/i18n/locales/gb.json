@@ -353,6 +353,7 @@
     "connectionsSecrets": "Secrets",
     "connectionsAi": "AI Providers",
     "nodeDesigner": "Node Designer",
+    "workspace": "Workspace",
     "kernelManager": "Kernel Manager",
     "fileManager": "File Manager",
     "admin": "User Management",
