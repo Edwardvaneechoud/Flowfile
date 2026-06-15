@@ -107,6 +107,21 @@ _r["download"]["content"] if _r.get("success") else ("ERR:" + _r.get("error", ""
 
   // Other bridge entry points that cross module boundaries.
   await run('fetch_preview', 'fetch_preview(1, 100)');
+
+  // Date columns must survive the real toJs() bridge as strings, not PyProxies
+  // that render as '{}'. Only this layer (real Pyodide toJs) reproduces that bug —
+  // pytest never calls toJs.
+  await run('seed date frame', `import datetime, polars as pl
+store_lazyframe(40, pl.LazyFrame({"d": [datetime.date(2024, 1, 1)]}))`);
+  const dprev = await run('fetch_preview date cell', 'fetch_preview(40, 100)');
+  const dateCell = dprev?.data?.data?.[0]?.[0];
+  if (dateCell !== '2024-01-01') {
+    failed.push('date preview cell');
+    console.error(`  [FAIL] date preview cell: expected "2024-01-01", got ${JSON.stringify(dateCell)}`);
+  } else {
+    console.log('         date preview cell =', JSON.stringify(dateCell));
+  }
+
   await run('propagate_schemas', `
 import json
 propagate_schemas(
@@ -241,9 +256,9 @@ execute_read_csv(30, _temp_content, json.loads(${j({ received_file: { table_sett
 import json
 execute_record_id(21, 1, json.loads(${j({ record_id_input: { name: 'rid', offset: 1 } })}))
 `);
-  const renameRes = await run('execute_rename', `
+  const renameRes = await run('execute_dynamic_rename', `
 import json
-execute_rename(22, 1, json.loads(${j({ rename_input: [{ old_name: 'name', new_name: 'full_name' }] })}))
+execute_dynamic_rename(22, 1, json.loads(${j({ dynamic_rename_input: { rename_mode: 'prefix', prefix: 'x_', selection_mode: 'all' } })}))
 `);
   const crossRes = await run('execute_cross_join', `
 import json
@@ -253,11 +268,21 @@ execute_cross_join(31, 1, 30, json.loads(${j({ cross_join_input: { right_suffix:
 import json
 execute_union(32, [1, 1], json.loads(${j({ union_input: { mode: 'diagonal' } })}))
 `);
-  for (const [label, res, col] of [['record_id', recIdRes, 'rid'], ['rename', renameRes, 'full_name']]) {
+  for (const [label, res, col] of [['record_id', recIdRes, 'rid']]) {
     if (!res || res.success !== true || !(res.schema || []).some((c) => c.name === col)) {
       failed.push(`${label} result`);
       console.error(`  [FAIL] ${label} result: ${JSON.stringify(res)}`);
     }
+  }
+  // dynamic_rename: prefix-all should prefix every output column.
+  if (
+    !renameRes ||
+    renameRes.success !== true ||
+    !(renameRes.schema || []).length ||
+    !(renameRes.schema || []).every((c) => c.name.startsWith('x_'))
+  ) {
+    failed.push('dynamic_rename result');
+    console.error(`  [FAIL] dynamic_rename result: ${JSON.stringify(renameRes)}`);
   }
   for (const [label, res] of [['cross_join', crossRes], ['union', unionRes]]) {
     if (!res || res.success !== true) {

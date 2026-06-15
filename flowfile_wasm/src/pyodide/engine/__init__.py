@@ -6,7 +6,7 @@ The browser writes these files into Pyodide's virtual filesystem and runs
 pytest imports the package directly. See flowfile_wasm/CLAUDE.md.
 """
 
-from .dtypes import build_empty_lf_from_schema
+from .dtypes import build_empty_lf_from_schema, readable_data_type_group
 from .errors import format_error, format_error_lf
 from .log import logger, set_log_level
 from .nodes_aggregate import (
@@ -37,22 +37,24 @@ from .nodes_io import (
 )
 from .nodes_polars_code import build_polars_code_schema, execute_polars_code
 from .nodes_transform import (
+    build_dynamic_rename,
     build_filter,
     build_head,
     build_record_id,
-    build_rename,
     build_select,
     build_sort,
     build_unique,
     convert_filter_value,
     convert_filter_values,
+    execute_dynamic_rename,
     execute_filter,
     execute_head,
     execute_record_id,
-    execute_rename,
     execute_select,
     execute_sort,
     execute_unique,
+    preview_dynamic_rename,
+    resolve_dynamic_rename_map,
 )
 from .preview import (
     df_to_preview,
@@ -82,6 +84,7 @@ from .validation import (
 __all__ = [
     # dtypes
     "build_empty_lf_from_schema",
+    "readable_data_type_group",
     # errors
     "format_error",
     "format_error_lf",
@@ -117,23 +120,25 @@ __all__ = [
     "get_node_arrow",
     "list_excel_sheets",
     # nodes: transform
+    "build_dynamic_rename",
     "build_filter",
     "build_head",
     "build_record_id",
-    "build_rename",
     "build_select",
     "build_sort",
     "build_unique",
     "convert_filter_value",
     "convert_filter_values",
+    "execute_dynamic_rename",
     "execute_filter",
     "execute_head",
     "execute_preview",
     "execute_record_id",
-    "execute_rename",
     "execute_select",
     "execute_sort",
     "execute_unique",
+    "preview_dynamic_rename",
+    "resolve_dynamic_rename_map",
     # nodes: aggregate
     "build_group_by",
     "build_unpivot",

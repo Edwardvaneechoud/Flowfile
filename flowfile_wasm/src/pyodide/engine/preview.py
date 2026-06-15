@@ -2,6 +2,7 @@ import time
 
 import polars as pl
 
+from .dtypes import to_json_safe_value
 from .log import logger
 from .state import (
     _PREVIEW_CACHE_MAX_MEMORY_MB,
@@ -78,8 +79,11 @@ def materialize_preview(node_id: int, max_rows: int = 100) -> dict:
 
         preview_data = {
             "columns": preview_df.columns,
-            # Use native Polars rows() instead of numpy to reduce memory footprint
-            "data": [list(row) for row in preview_df.rows()] if len(preview_df) > 0 else [],
+            # Use native Polars rows() instead of numpy to reduce memory footprint;
+            # coerce temporal/decimal/bytes cells so they survive the toJs() bridge.
+            "data": (
+                [[to_json_safe_value(v) for v in row] for row in preview_df.rows()] if len(preview_df) > 0 else []
+            ),
             "total_rows": total_rows,
             "preview_rows": len(preview_df),
         }
@@ -163,7 +167,10 @@ def df_to_preview(df: pl.DataFrame, max_rows: int = 100) -> dict:
     preview_df = df.head(max_rows)
     return {
         "columns": df.columns,
-        # Use native Polars rows() instead of numpy to reduce memory footprint
-        "data": [list(row) for row in preview_df.rows()] if len(preview_df) > 0 else [],
+        # Use native Polars rows() instead of numpy to reduce memory footprint;
+        # coerce temporal/decimal/bytes cells so they survive the toJs() bridge.
+        "data": (
+            [[to_json_safe_value(v) for v in row] for row in preview_df.rows()] if len(preview_df) > 0 else []
+        ),
         "total_rows": len(df),
     }

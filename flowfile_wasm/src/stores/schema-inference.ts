@@ -13,12 +13,14 @@ import type {
   NodeUnpivotSettings,
   NodeCrossJoinSettings,
   NodeRecordIdSettings,
-  NodeRenameSettings,
+  NodeDynamicRenameSettings,
+  DynamicRenameInput,
   AggType,
   SelectInput,
   AggCol,
   JoinSettings
 } from '../types'
+import { dataTypeGroup } from '../utils/dtypeGroup'
 
 /**
  * Infer the output type for an aggregation function
@@ -253,16 +255,62 @@ function inferRecordIdSchema(
 }
 
 /**
- * Infer output schema for a RENAME node
+ * Resolve a dynamic-rename rule against an input schema, client-side. Ports the
+ * Python engine's _select_rename_targets + _compute_renamed_names (prefix/suffix
+ * only — formula/first_row need the engine, so they yield an empty map) plus the
+ * duplicate-collision check. Used for both the live preview and schema inference,
+ * so they never disagree.
  */
-function inferRenameSchema(
+export function resolveDynamicRenameMap(
   inputSchema: ColumnSchema[],
-  settings: NodeRenameSettings
-): ColumnSchema[] {
-  const renames = settings.rename_input || []
-  const map = new Map(
-    renames.filter(r => r.old_name && r.new_name).map(r => [r.old_name, r.new_name])
-  )
+  settings: DynamicRenameInput
+): { map: Map<string, string>; duplicates: string[] } {
+  const cols = inputSchema.map(c => ({ name: c.name, group: dataTypeGroup(c.data_type) }))
+
+  let targets: string[] = []
+  if (settings.selection_mode === 'all') {
+    targets = cols.map(c => c.name)
+  } else if (settings.selection_mode === 'list') {
+    const available = new Set(cols.map(c => c.name))
+    targets = (settings.selected_columns || []).filter(n => available.has(n))
+  } else if (settings.selection_mode === 'data_type') {
+    const wanted = settings.selected_data_type
+    targets = wanted ? cols.filter(c => c.group === wanted).map(c => c.name) : []
+  }
+
+  const map = new Map<string, string>()
+  for (const name of targets) {
+    let newName = name
+    if (settings.rename_mode === 'prefix') newName = `${settings.prefix || ''}${name}`
+    else if (settings.rename_mode === 'suffix') newName = `${name}${settings.suffix || ''}`
+    else continue // formula / first_row resolved by the engine
+    if (newName !== name) map.set(name, newName)
+  }
+
+  // Duplicate detection (mirrors _assert_rename_has_no_duplicates).
+  const untouched = new Set(cols.map(c => c.name).filter(n => !map.has(n)))
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+  for (const newName of map.values()) {
+    if (seen.has(newName) || untouched.has(newName)) duplicates.add(newName)
+    seen.add(newName)
+  }
+
+  return { map, duplicates: [...duplicates].sort() }
+}
+
+/**
+ * Infer output schema for a DYNAMIC RENAME node. prefix/suffix/all/list/data_type
+ * resolve client-side; formula and first_row depend on the engine/data, so return
+ * null to trigger lazy execution (like pivot/formula).
+ */
+function inferDynamicRenameSchema(
+  inputSchema: ColumnSchema[],
+  settings: NodeDynamicRenameSettings
+): ColumnSchema[] | null {
+  const dr = settings.dynamic_rename_input
+  if (!dr || dr.rename_mode === 'formula' || dr.rename_mode === 'first_row') return null
+  const { map } = resolveDynamicRenameMap(inputSchema, dr)
   return inputSchema.map(col => ({
     name: map.get(col.name) || col.name,
     data_type: col.data_type
@@ -353,8 +401,8 @@ export function inferOutputSchema(
     case 'record_id':
       return inferRecordIdSchema(inputSchema, settings as NodeRecordIdSettings)
 
-    case 'rename':
-      return inferRenameSchema(inputSchema, settings as NodeRenameSettings)
+    case 'dynamic_rename':
+      return inferDynamicRenameSchema(inputSchema, settings as NodeDynamicRenameSettings)
 
     // Pivot - can't infer without execution (depends on unique values)
     case 'pivot':

@@ -1,0 +1,162 @@
+<!-- Hover popover, ported from the desktop/web app's editor PopOver so the WASM
+     Formula node's function docs look identical. Teleports to <body> and clamps
+     to the viewport so it works inside the narrow settings drawer. -->
+<template>
+  <div class="popover-container">
+    <div
+      ref="referenceEl"
+      class="popover-reference"
+      @mouseenter="showPopover"
+      @mouseleave="hidePopover"
+    >
+      <slot></slot>
+    </div>
+
+    <Teleport v-if="visible" to="body">
+      <div
+        ref="popoverEl"
+        :style="popoverStyle"
+        class="popover"
+        :class="{ 'popover--left': props.placement === 'left' }"
+      >
+        <h3 v-if="props.title !== ''">{{ props.title }}</h3>
+        <!-- eslint-disable-next-line vue/no-v-html -->
+        <p class="content" v-html="props.content"></p>
+      </div>
+    </Teleport>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, nextTick, onMounted, onBeforeUnmount } from 'vue'
+
+const visible = ref(false)
+const referenceEl = ref<HTMLElement | null>(null)
+const popoverEl = ref<HTMLElement | null>(null)
+
+const props = defineProps({
+  content: { type: String, required: true },
+  title: { type: String, default: '' },
+  placement: {
+    type: String as () => 'top' | 'bottom' | 'left' | 'right',
+    default: 'top',
+  },
+  minWidth: { type: Number, default: 100 },
+  zIndex: { type: Number, default: 9999 },
+})
+
+const popoverStyle = ref({
+  top: '0px',
+  left: '0px',
+  zIndex: props.zIndex.toString(),
+})
+
+const showPopover = () => {
+  if (!props.content) return
+  visible.value = true
+  nextTick(() => updatePosition())
+}
+
+const hidePopover = () => {
+  visible.value = false
+}
+
+const updatePosition = () => {
+  if (!referenceEl.value || !popoverEl.value) return
+
+  const referenceRect = referenceEl.value.getBoundingClientRect()
+  const popoverRect = popoverEl.value.getBoundingClientRect()
+  const offset = 20
+
+  let top = 0
+  let left = 0
+
+  switch (props.placement) {
+    case 'top':
+      top = referenceRect.top - popoverRect.height - offset
+      left = referenceRect.left + referenceRect.width / 2 - popoverRect.width / 2
+      break
+    case 'bottom':
+      top = referenceRect.bottom + offset
+      left = referenceRect.left + referenceRect.width / 2 - popoverRect.width / 2
+      break
+    case 'left':
+      top = referenceRect.top + referenceRect.height / 2 - popoverRect.height / 2
+      left = referenceRect.left - popoverRect.width - offset
+      break
+    case 'right':
+      top = referenceRect.top + referenceRect.height / 2 - popoverRect.height / 2
+      left = referenceRect.right + offset
+      break
+  }
+
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+
+  if (left < 10) left = 10
+  if (left + popoverRect.width > viewportWidth - 10) {
+    left = viewportWidth - popoverRect.width - 10
+  }
+  if (top < 10) top = 10
+  if (top + popoverRect.height > viewportHeight - 10) {
+    top = viewportHeight - popoverRect.height - 10
+  }
+
+  popoverStyle.value = {
+    top: `${top}px`,
+    left: `${left}px`,
+    zIndex: props.zIndex.toString(),
+  }
+}
+
+const onResize = () => {
+  if (visible.value) updatePosition()
+}
+
+onMounted(() => window.addEventListener('resize', onResize))
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+</script>
+
+<style scoped>
+.popover-container {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.popover {
+  position: fixed;
+  padding: 10px;
+  background-color: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-primary);
+  border-radius: 4px;
+  box-shadow: var(--shadow-lg);
+  min-width: v-bind('props.minWidth + "px"');
+  max-width: 320px;
+  color: var(--color-text-primary);
+}
+
+.popover--left {
+  min-width: 200px;
+}
+
+.popover-reference {
+  cursor: pointer;
+}
+
+.popover h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+  font-family: var(--font-family-base);
+}
+
+.popover p {
+  margin: 0;
+  font-size: 12px;
+  font-family: var(--font-family-base);
+}
+
+.content {
+  white-space: pre-wrap;
+}
+</style>

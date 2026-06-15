@@ -129,7 +129,7 @@ const iconMap: Record<string, string> = {
   sort: 'sort.png',
   polars_code: 'polars_code.png',
   unique: 'unique.png',
-  rename: 'dynamic_rename.svg',
+  dynamic_rename: 'dynamic_rename.svg',
   record_id: 'record_id.png',
   head: 'sample.png',
   explore_data: 'explore_data.png',

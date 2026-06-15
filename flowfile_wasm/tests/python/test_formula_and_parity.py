@@ -111,16 +111,75 @@ def test_record_id_offset_and_dtype():
     assert out.columns == ["rid", "a"]
 
 
-# --- rename ------------------------------------------------------------------
+# --- dynamic rename ----------------------------------------------------------
 
-def test_rename_mapping_skips_missing():
+def test_dynamic_rename_prefix_all():
     import polars as pl
 
-    out = engine.build_rename(
+    out = engine.build_dynamic_rename(
         pl.LazyFrame({"a": [1], "b": [2]}),
-        {"rename_input": [{"old_name": "a", "new_name": "A"}, {"old_name": "gone", "new_name": "X"}]},
+        {"dynamic_rename_input": {"rename_mode": "prefix", "prefix": "p_", "selection_mode": "all"}},
     ).collect()
-    assert out.columns == ["A", "b"]
+    assert out.columns == ["p_a", "p_b"]
+
+
+def test_dynamic_rename_list_skips_missing():
+    import polars as pl
+
+    out = engine.build_dynamic_rename(
+        pl.LazyFrame({"a": [1], "b": [2]}),
+        {
+            "dynamic_rename_input": {
+                "rename_mode": "suffix",
+                "suffix": "_x",
+                "selection_mode": "list",
+                "selected_columns": ["a", "gone"],
+            }
+        },
+    ).collect()
+    assert out.columns == ["a_x", "b"]
+
+
+def test_dynamic_rename_data_type_selection():
+    import polars as pl
+
+    # String group only targets the string column; Boolean folds into Numeric (mirrors core).
+    out = engine.build_dynamic_rename(
+        pl.LazyFrame({"n": [1], "s": ["x"], "f": [1.0]}),
+        {
+            "dynamic_rename_input": {
+                "rename_mode": "prefix",
+                "prefix": "str_",
+                "selection_mode": "data_type",
+                "selected_data_type": "String",
+            }
+        },
+    ).collect()
+    assert out.columns == ["n", "str_s", "f"]
+
+
+def test_dynamic_rename_duplicate_raises():
+    import polars as pl
+    import pytest
+
+    with pytest.raises(ValueError):
+        engine.resolve_dynamic_rename_map(
+            [("a", "Numeric"), ("b", "String")],
+            {"rename_mode": "formula", "formula": '"b"', "selection_mode": "list", "selected_columns": ["a"]},
+        )
+
+
+def test_dynamic_rename_first_row_promotes_and_drops():
+    import polars as pl
+
+    engine.store_lazyframe(1, pl.LazyFrame({"a": ["x", "1", "2"], "b": ["y", "3", "4"]}))
+    res = engine.execute_dynamic_rename(
+        2, 1, {"dynamic_rename_input": {"rename_mode": "first_row", "selection_mode": "all"}}
+    )
+    assert res["success"], res.get("error")
+    out = engine.get_lazyframe(2).collect()
+    assert out.columns == ["x", "y"]
+    assert out.height == 2  # first row consumed as headers
 
 
 # --- schema propagation (data-free) ------------------------------------------
@@ -135,11 +194,27 @@ def test_schema_propagation_resolves_new_nodes():
                   "settings": _formula_settings("c", "[a] + [b]")},
             "3": {"type": "record_id", "input_ids": [2], "left": 2, "right": None,
                   "settings": {"record_id_input": {"name": "rid", "offset": 1}}},
-            "4": {"type": "rename", "input_ids": [3], "left": 3, "right": None,
-                  "settings": {"rename_input": [{"old_name": "a", "new_name": "A"}]}},
+            "4": {"type": "dynamic_rename", "input_ids": [3], "left": 3, "right": None,
+                  "settings": {"dynamic_rename_input": {"rename_mode": "prefix", "prefix": "r_",
+                                                        "selection_mode": "all"}}},
         },
     }
     res = engine.propagate_schemas(graph, source)
     assert res["2"]["schema_resolved"] and "c" in _names(res["2"]["schema"])
     assert "rid" in _names(res["3"]["schema"])
-    assert "A" in _names(res["4"]["schema"])
+    assert res["4"]["schema_resolved"] and "r_a" in _names(res["4"]["schema"])
+
+
+def test_schema_propagation_first_row_unresolved():
+    source = {"1": [{"name": "a", "data_type": "Int64"}, {"name": "b", "data_type": "Int64"}]}
+    graph = {
+        "order": [1, 2],
+        "nodes": {
+            "1": {"type": "manual_input", "input_ids": [], "left": None, "right": None, "settings": {}},
+            "2": {"type": "dynamic_rename", "input_ids": [1], "left": 1, "right": None,
+                  "settings": {"dynamic_rename_input": {"rename_mode": "first_row", "selection_mode": "all"}}},
+        },
+    }
+    res = engine.propagate_schemas(graph, source)
+    # first_row column names depend on row data, so the schema can't be resolved statically.
+    assert res["2"]["schema_resolved"] is False

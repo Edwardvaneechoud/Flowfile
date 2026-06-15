@@ -110,6 +110,27 @@ function toPythonJson(value: unknown): string {
   return JSON.stringify(JSON.stringify(value))
 }
 
+function defaultDynamicRenameInput() {
+  return {
+    rename_mode: 'prefix',
+    prefix: '',
+    suffix: '',
+    formula: '',
+    selection_mode: 'all',
+    selected_columns: [],
+    selected_data_type: null,
+  }
+}
+
+// A legacy `rename` node (an arbitrary 1:1 old->new map) can't be expressed as a
+// single dynamic-rename rule, so migrate by type only with default settings.
+function migrateLegacyRenameSettings(settings: any): any {
+  if (!settings) return settings
+  if (!settings.dynamic_rename_input) settings.dynamic_rename_input = defaultDynamicRenameInput()
+  delete settings.rename_input
+  return settings
+}
+
 export const useFlowStore = defineStore('flow', () => {
   const pyodideStore = usePyodideStore()
 
@@ -191,6 +212,7 @@ export const useFlowStore = defineStore('flow', () => {
             let nodeType = flowfileNode.type
             if (nodeType === 'read_csv') nodeType = 'read'
             if (nodeType === 'preview') nodeType = 'explore_data'
+            if (nodeType === 'rename') nodeType = 'dynamic_rename'
 
             // Migrate old settings field names
             let settings = flowfileNode.setting_input as NodeSettings
@@ -198,6 +220,7 @@ export const useFlowStore = defineStore('flow', () => {
               (settings as any).received_file = (settings as any).received_table
               delete (settings as any).received_table
             }
+            if (nodeType === 'dynamic_rename') settings = migrateLegacyRenameSettings(settings)
 
             // Get description and node_reference from FlowfileNode level (this is where flowfile_core stores them)
             const nodeDescription = flowfileNode.description || ''
@@ -2236,14 +2259,23 @@ result
           break
         }
 
-        case 'rename': {
+        case 'dynamic_rename': {
           const inputId = node.inputIds[0]
           if (!inputId) {
             return failNode(nodeId, 'No input connected')
           }
+          // Formula mode needs the lazily-installed expression package.
+          const renameMode = (node.settings as any)?.dynamic_rename_input?.rename_mode
+          if (renameMode === 'formula') {
+            try {
+              await pyodideStore.ensurePyPackages(['polars-expr-transformer==0.5.6'])
+            } catch (err) {
+              return failNode(nodeId, err instanceof Error ? err.message : String(err))
+            }
+          }
           result = await runPythonWithResult(`
 import json
-result = execute_rename(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
+result = execute_dynamic_rename(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -2763,10 +2795,10 @@ result
           }
         } as any
 
-      case 'rename':
+      case 'dynamic_rename':
         return {
           ...base,
-          rename_input: []
+          dynamic_rename_input: defaultDynamicRenameInput()
         } as any
 
       case 'unique':
@@ -2970,6 +3002,7 @@ result
         let nodeType = flowfileNode.type
         if (nodeType === 'read_csv') nodeType = 'read'
         if (nodeType === 'preview') nodeType = 'explore_data'
+        if (nodeType === 'rename') nodeType = 'dynamic_rename'
 
         // Migrate old settings field names
         let settings = flowfileNode.setting_input as NodeSettings
@@ -2977,6 +3010,7 @@ result
           (settings as any).received_file = (settings as any).received_table
           delete (settings as any).received_table
         }
+        if (nodeType === 'dynamic_rename') settings = migrateLegacyRenameSettings(settings)
 
         // Get description and node_reference from FlowfileNode level (this is where flowfile_core stores them)
         const nodeDescription = flowfileNode.description || ''

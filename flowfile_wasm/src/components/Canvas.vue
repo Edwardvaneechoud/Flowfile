@@ -386,7 +386,7 @@ const FormulaSettings = defineAsyncComponent(() => import('./nodes/FormulaSettin
 import CrossJoinSettings from './nodes/CrossJoinSettings.vue'
 import UnionSettings from './nodes/UnionSettings.vue'
 import RecordIdSettings from './nodes/RecordIdSettings.vue'
-import RenameSettings from './nodes/RenameSettings.vue'
+import DynamicRenameSettings from './nodes/DynamicRenameSettings.vue'
 import NodeSettingsWrapper from './nodes/NodeSettingsWrapper.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
@@ -499,7 +499,7 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'sort', name: 'Sort', icon: 'sort.png', inputs: 1, outputs: 1 },
       { type: 'polars_code', name: 'Polars Code', icon: 'polars_code.png', inputs: 1, outputs: 1 },
       { type: 'unique', name: 'Unique', icon: 'unique.png', inputs: 1, outputs: 1 },
-      { type: 'rename', name: 'Rename', icon: 'dynamic_rename.svg', inputs: 1, outputs: 1 },
+      { type: 'dynamic_rename', name: 'Rename', icon: 'dynamic_rename.svg', inputs: 1, outputs: 1 },
       { type: 'record_id', name: 'Record ID', icon: 'record_id.png', inputs: 1, outputs: 1 },
       { type: 'head', name: 'Take Sample', icon: 'sample.png', inputs: 1, outputs: 1 }
     ]
@@ -866,7 +866,7 @@ function getSettingsComponent(type: string) {
     polars_code: PolarsCodeSettings,
     formula: FormulaSettings,
     unique: UniqueSettings,
-    rename: RenameSettings,
+    dynamic_rename: DynamicRenameSettings,
     record_id: RecordIdSettings,
     head: HeadSettings,
     explore_data: ExploreData,

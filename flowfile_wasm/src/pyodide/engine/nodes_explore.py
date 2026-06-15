@@ -3,6 +3,7 @@ from typing import Any
 
 import polars as pl
 
+from .dtypes import to_json_safe_value
 from .errors import format_error_lf
 from .log import log_node, logger
 from .state import get_lazyframe, get_schema, store_lazyframe
@@ -69,26 +70,9 @@ def _gw_prepare_row(row_dict: dict[str, Any]) -> dict[str, Any]:
     """Make a row JSON-safe for the JS side.
 
     Polars temporal/bytes values don't survive Pyodide's default dict
-    conversion; coerce them to primitive strings/numbers.
+    conversion; coerce them to primitive strings/numbers (see to_json_safe_value).
     """
-    import datetime as _dt
-
-    out: dict[str, Any] = {}
-    for k, v in row_dict.items():
-        if v is None:
-            out[k] = None
-        elif isinstance(v, _dt.datetime | _dt.date | _dt.time):
-            out[k] = v.isoformat()
-        elif isinstance(v, _dt.timedelta):
-            out[k] = v.total_seconds()
-        elif isinstance(v, bytes | bytearray):
-            try:
-                out[k] = v.decode("utf-8", errors="replace")
-            except Exception:
-                out[k] = str(v)
-        else:
-            out[k] = v
-    return out
+    return {k: to_json_safe_value(v) for k, v in row_dict.items()}
 
 
 @log_node

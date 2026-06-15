@@ -9,10 +9,10 @@ from .nodes_combine import build_cross_join, build_join, build_union
 from .nodes_formula import build_formula
 from .nodes_polars_code import build_polars_code_schema
 from .nodes_transform import (
+    build_dynamic_rename,
     build_filter,
     build_head,
     build_record_id,
-    build_rename,
     build_select,
     build_sort,
     build_unique,
@@ -35,7 +35,7 @@ _SCHEMA_BUILDERS = {
     "unpivot": build_unpivot,
     "formula": build_formula,
     "record_id": build_record_id,
-    "rename": build_rename,
+    "dynamic_rename": build_dynamic_rename,
     "explore_data": _schema_identity,
     "output": _schema_identity,
     "external_output": _schema_identity,
@@ -137,6 +137,22 @@ def propagate_schemas(graph_json: dict, source_schemas: dict, known_schemas: dic
                     "schema": pivot_known or [],
                     "schema_resolved": bool(pivot_known),
                     "error": None if pivot_known else "Pivot output columns depend on the data; run the flow.",
+                }
+                continue
+            elif ntype == "dynamic_rename" and meta.get("settings", {}).get("dynamic_rename_input", {}).get(
+                "rename_mode"
+            ) in ("first_row", "formula"):
+                # first_row names come from row data; formula needs the lazily-loaded
+                # expression package (absent during data-free propagation). Seed
+                # downstream from the last-known schema, like pivot.
+                seed = _seed_from_known(key)
+                if seed is not None:
+                    _schema_lazyframes[nid] = seed
+                dr_known = known.get(key)
+                results[key] = {
+                    "schema": dr_known or [],
+                    "schema_resolved": bool(dr_known),
+                    "error": None if dr_known else "Rename output depends on the data; run the flow.",
                 }
                 continue
             else:
