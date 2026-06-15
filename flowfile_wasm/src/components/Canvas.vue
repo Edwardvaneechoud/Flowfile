@@ -95,6 +95,7 @@
         v-model:nodes="vueNodes"
         v-model:edges="vueEdges"
         :node-types="nodeTypes"
+        :edge-types="edgeTypes"
         :default-viewport="{ zoom: 0.5 }"
         :connection-mode="ConnectionMode.Strict"
         class="custom-node-flow"
@@ -104,6 +105,8 @@
         @node-double-click="onNodeDoubleClick"
         @pane-click="onPaneClick"
         @pane-context-menu="onPaneContextMenu"
+        @edge-mouse-enter="onEdgeMouseEnter"
+        @edge-mouse-leave="onEdgeMouseLeave"
         @edges-change="onEdgesChange"
         @nodes-change="onNodesChange"
       >
@@ -341,7 +344,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent, watch } from 'vue'
+import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent, provide, watch } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
@@ -364,6 +367,7 @@ ModuleRegistry.registerModules([ClientSideRowModelModule])
 
 import DraggablePanel from './common/DraggablePanel.vue'
 import FlowNode from './nodes/FlowNode.vue'
+import DeletableEdge from './DeletableEdge.vue'
 import NodeTitle from './nodes/NodeTitle.vue'
 import ReadFileSettings from './nodes/ReadFileSettings.vue'
 import ManualInputSettings from './nodes/ManualInputSettings.vue'
@@ -461,6 +465,13 @@ const selectedOutputHandle = ref('output-0')
 
 const nodeTypes: Record<string, any> = {
   'flow-node': markRaw(FlowNode)
+}
+
+// All edges render through DeletableEdge so hovering a connection reveals a
+// delete button, matching flowfile_frontend. Edges carry no explicit `type`,
+// so VueFlow resolves them to the `default` entry.
+const edgeTypes: Record<string, any> = {
+  default: markRaw(DeletableEdge)
 }
 
 // Get icon URL - uses explicit imports for library build compatibility
@@ -749,6 +760,44 @@ function onEdgesChange(changes: EdgeChange[]) {
     }
   })
 }
+
+// --- Connection delete affordance -------------------------------------------
+// Hovering an edge reveals a small round button (× turning red on hover) that
+// removes the connection — the same UX as flowfile_frontend's DeletableEdge.
+// `hoveredEdgeId` tracks which edge is hovered; a short leave-delay lets the
+// cursor cross from the SVG edge onto the HTML button without it vanishing.
+// All three are provided to DeletableEdge.vue. The button calls VueFlow's
+// removeEdges(), which fires @edges-change → onEdgesChange → store removal.
+const hoveredEdgeId = ref<string | null>(null)
+let edgeLeaveTimer: ReturnType<typeof setTimeout> | null = null
+
+function cancelEdgeLeave() {
+  if (edgeLeaveTimer !== null) {
+    clearTimeout(edgeLeaveTimer)
+    edgeLeaveTimer = null
+  }
+}
+
+function scheduleEdgeLeave(id: string) {
+  cancelEdgeLeave()
+  edgeLeaveTimer = setTimeout(() => {
+    if (hoveredEdgeId.value === id) hoveredEdgeId.value = null
+    edgeLeaveTimer = null
+  }, 150)
+}
+
+function onEdgeMouseEnter({ edge }: { edge: Edge }) {
+  cancelEdgeLeave()
+  hoveredEdgeId.value = edge.id
+}
+
+function onEdgeMouseLeave({ edge }: { edge: Edge }) {
+  scheduleEdgeLeave(edge.id)
+}
+
+provide('hoveredEdgeId', hoveredEdgeId)
+provide('cancelEdgeLeave', cancelEdgeLeave)
+provide('scheduleEdgeLeave', scheduleEdgeLeave)
 
 function onNodesChange(changes: NodeChange[]) {
   changes.forEach(change => {
@@ -1205,6 +1254,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('click', handlePaneMenuClickOutside)
+  cancelEdgeLeave()
   uiStore.clearActions()
   if (flowStore.offOutput) {
     flowStore.offOutput(handleOutputCallback)
