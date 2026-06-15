@@ -467,9 +467,6 @@ const nodeTypes: Record<string, any> = {
   'flow-node': markRaw(FlowNode)
 }
 
-// All edges render through DeletableEdge so hovering a connection reveals a
-// delete button, matching flowfile_frontend. Edges carry no explicit `type`,
-// so VueFlow resolves them to the `default` entry.
 const edgeTypes: Record<string, any> = {
   default: markRaw(DeletableEdge)
 }
@@ -761,13 +758,8 @@ function onEdgesChange(changes: EdgeChange[]) {
   })
 }
 
-// --- Connection delete affordance -------------------------------------------
-// Hovering an edge reveals a small round button (× turning red on hover) that
-// removes the connection — the same UX as flowfile_frontend's DeletableEdge.
-// `hoveredEdgeId` tracks which edge is hovered; a short leave-delay lets the
-// cursor cross from the SVG edge onto the HTML button without it vanishing.
-// All three are provided to DeletableEdge.vue. The button calls VueFlow's
-// removeEdges(), which fires @edges-change → onEdgesChange → store removal.
+// Reveal a delete button on the hovered edge; the leave-delay lets the cursor
+// reach the button. Provided to DeletableEdge.vue.
 const hoveredEdgeId = ref<string | null>(null)
 let edgeLeaveTimer: ReturnType<typeof setTimeout> | null = null
 

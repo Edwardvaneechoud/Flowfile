@@ -1,11 +1,3 @@
-<!--
-  Custom VueFlow edge that reveals a small round delete button (× turning red
-  on hover) when its connection is hovered, mirroring flowfile_frontend's
-  DeletableEdge. The hover state and leave-delay helpers are provided by the
-  parent Canvas so the cursor can cross from the SVG edge onto the HTML button
-  without it disappearing. Clicking the button removes the connection, which
-  flows through Canvas's @edges-change handler into the flow store.
--->
 <script setup lang="ts">
 import { computed, inject, type Ref } from 'vue'
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, useVueFlow } from '@vue-flow/core'
