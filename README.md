@@ -105,7 +105,13 @@ Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a
 
 ## Quick Start
 
-**Try it in your browser** (no install, 14 essential nodes, runs entirely on Pyodide): [demo.flowfile.org](https://demo.flowfile.org)
+**Try it in your browser** (no install, 20+ nodes, runs entirely on Pyodide): [demo.flowfile.org](https://demo.flowfile.org)
+
+**Embed the editor in your own app** — the browser editor also ships as a standalone Vue component, [`flowfile-editor`](https://www.npmjs.com/package/flowfile-editor), so you can drop a Polars-powered visual ETL canvas into any web app with zero backend:
+
+```bash
+npm install flowfile-editor
+```
 
 **Python package** — the fastest way to run the full thing locally:
 

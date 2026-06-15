@@ -1,6 +1,35 @@
 # flowfile-editor
 
-An embeddable, browser-based data flow editor powered by [Pyodide](https://pyodide.org/) and [Polars](https://pola.rs/). Design data transformation pipelines visually — all computation runs in the browser via WebAssembly.
+> A visual ETL editor you can drop into any web app — Polars pipelines that run
+> **entirely in the browser**. No backend, no server round-trips, data never leaves
+> the page.
+
+<p>
+  <a href="https://demo.flowfile.org"><b>▶ Live demo</b></a> ·
+  <a href="https://www.npmjs.com/package/flowfile-editor">npm</a> ·
+  <a href="https://github.com/Edwardvaneechoud/Flowfile">Full platform</a>
+</p>
+
+Build CSV / Excel / Parquet transformation pipelines on a drag-and-drop canvas —
+joins, filters, group-bys, pivots, formulas, and a raw Polars code node.
+[Polars](https://pola.rs/) runs in WebAssembly via [Pyodide](https://pyodide.org/),
+so every operation executes client-side. Ship it as a single `<FlowfileEditor />`
+Vue component, drive it from your own UI, and read results back as Arrow.
+
+**Why flowfile-editor**
+
+- **🦀 Real Polars, in the browser** — a full lazy DAG with 20+ node types
+  (joins, formula, dynamic rename, pivots, union, record id, a raw Polars node), not a toy.
+- **🔌 One component to embed** — `<FlowfileEditor />` with a ref API
+  (`executeFlow`, `setInputData`, `getNodeResult`) and events (`ready`, `output`, …).
+- **🔒 Zero backend** — nothing to host, nothing to secure; the user's data stays
+  on their machine.
+- **🏹 Arrow-native I/O** — push/pull frames as Arrow IPC bytes; pairs cleanly with
+  duckdb-wasm or arrow-js.
+
+> Want the full platform — databases, cloud storage, Kafka, a Delta catalog, a
+> scheduler, and an AI assistant? That's [Flowfile](https://github.com/Edwardvaneechoud/Flowfile)
+> (`pip install flowfile`). This package is its browser-native core, embeddable on its own.
 
 ## Install
 
@@ -194,9 +223,14 @@ If your page sets a CSP, the editor needs network access to:
 
 ## Available Node Types
 
-**Input:** Read File (CSV/Excel/Parquet), Manual Input, External Data
-**Transform:** Filter, Select, Group By, Join, Sort, Unique, Take Sample, Pivot, Unpivot, Polars Code
-**Output:** Preview, Output (download), External Output (emits to host)
+**Input:** Read File (CSV/Excel/Parquet), Manual Input, External Data, Read from Catalog
+**Transform:** Filter, Select, Formula, Sort, Polars Code, Unique, Rename (dynamic), Record ID, Take Sample
+**Combine:** Join, Cross Join, Union
+**Aggregate / reshape:** Group By, Pivot, Unpivot
+**Output:** Explore Data, Output (download), Write to Catalog, External Output (emits to host)
+
+> The default palette ships 20+ node types. Hosts can show/hide categories and
+> node types via the `nodeCategories` prop.
 
 ## TypeScript
 
