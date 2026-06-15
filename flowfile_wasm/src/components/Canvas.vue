@@ -266,9 +266,11 @@
           </div>
         </div>
 
-        <!-- Empty state with fetch-to-run button -->
+        <!-- Empty placeholder: opening the Table never runs the flow, so an
+             un-executed node shows this instead of auto-running. Data appears
+             only when the user explicitly runs it (this button, or Run flow). -->
         <div v-else class="no-data">
-          <p class="no-data-text">This node hasn't produced data yet. Fetch it to preview the output.</p>
+          <p class="no-data-text">This node hasn't run yet. Click Run (or Fetch data) to compute and preview its output.</p>
           <button
             class="fetch-data-button"
             :disabled="isFetching || isExecuting || !pyodideReady"
@@ -663,18 +665,14 @@ function onNodeClick(event: { node: Node }) {
 }
 
 // Double click a node: open BOTH the Settings panel and the Table preview.
-async function onNodeDoubleClick(event: { node: Node }) {
+// Opening never executes — an already-run node shows its rows via selectNode's
+// gated preview fetch; an un-run node shows the placeholder. Running the node is
+// an explicit action (the Table's "Fetch data" button, or Run).
+function onNodeDoubleClick(event: { node: Node }) {
   const nodeId = parseInt(event.node.id)
-  // Set the Table flag before selecting so selectNode's gated auto-fetch can
-  // materialize the preview for an already-run node.
   showTablePreview.value = true
   flowStore.selectNode(nodeId)
   showSettings.value = true
-  const result = nodeResults.value.get(nodeId)
-  const node = flowNodes.value.get(nodeId)
-  if (node?.type !== 'explore_data' && !result?.success) {
-    await handleFetchData()
-  }
   nextTick(() => {
     zIndexStore.bringToFront('node-settings-panel')
     zIndexStore.bringToFront('data-preview-panel')
@@ -801,17 +799,12 @@ function handleEditNode(nodeId: number) {
   nextTick(() => zIndexStore.bringToFront('node-settings-panel'))
 }
 
-// View data (context menu): open the Table preview only (not Settings). Set the
-// flag before selecting so selectNode's gated auto-fetch can materialize the
-// preview for an already-run node; run the node here only if it hasn't run yet.
-async function handleViewData(nodeId: number) {
+// View data (context menu): open the Table preview only (not Settings). Opening
+// never executes — an already-run node shows its rows via selectNode's gated
+// preview fetch; an un-run node shows the placeholder with a "Fetch data" button.
+function handleViewData(nodeId: number) {
   showTablePreview.value = true
   flowStore.selectNode(nodeId)
-  const result = nodeResults.value.get(nodeId)
-  const node = flowNodes.value.get(nodeId)
-  if (node?.type !== 'explore_data' && !result?.success) {
-    await handleFetchData()
-  }
   nextTick(() => zIndexStore.bringToFront('data-preview-panel'))
 }
 
