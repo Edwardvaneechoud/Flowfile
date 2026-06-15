@@ -432,41 +432,118 @@
   color: var(--color-text-primary);
 }
 
-/* ---------- Git guide ---------- */
-.ws-guide {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-3);
-  margin-top: var(--spacing-3);
+/* ---------- History ---------- */
+.ws-btn-sm {
+  padding: var(--spacing-1) var(--spacing-3);
+  font-size: var(--font-size-sm);
 }
 
-.ws-snippet {
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  overflow: hidden;
+.ws-link {
+  color: var(--color-accent);
+  cursor: pointer;
+  font-weight: var(--font-weight-medium);
 }
 
-.ws-snippet-head {
+.ws-link:hover {
+  text-decoration: underline;
+}
+
+.ws-commits {
+  list-style: none;
+  margin: var(--spacing-2) 0 0;
+  padding: 0;
+}
+
+.ws-commit {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-1-5) var(--spacing-3);
-  background: var(--color-background-secondary);
+  gap: var(--spacing-3);
+  padding: var(--spacing-2-5) var(--spacing-1);
   border-bottom: 1px solid var(--color-border-light);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-secondary);
 }
 
-.ws-snippet pre {
-  margin: 0;
-  padding: var(--spacing-3);
+.ws-commit:last-child {
+  border-bottom: none;
+}
+
+.ws-commit-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ws-commit-line {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.ws-commit-sha {
+  flex-shrink: 0;
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
+  color: var(--color-accent);
+}
+
+.ws-commit-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+}
+
+.ws-commit-meta {
+  margin-top: 2px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.ws-commit-actions {
+  display: flex;
+  gap: var(--spacing-1);
+  flex-shrink: 0;
+}
+
+/* ---------- Diff viewer ---------- */
+.ws-diff {
+  max-height: 62vh;
+  overflow: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
   background: var(--color-background-primary);
+  padding: var(--spacing-2) 0;
+}
+
+.ws-diff-line {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+  padding: 0 var(--spacing-3);
+}
+
+.ws-diff-add {
+  background: var(--color-success-light);
+  color: var(--color-success-hover);
+}
+
+.ws-diff-del {
+  background: var(--color-danger-light);
+  color: var(--color-danger-hover);
+}
+
+.ws-diff-hunk {
+  color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+
+.ws-diff-meta {
+  color: var(--color-text-tertiary);
+}
+
+.ws-diff-ctx {
+  color: var(--color-text-secondary);
 }
 
 /* ---------- Empty state ---------- */

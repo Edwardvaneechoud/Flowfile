@@ -86,3 +86,25 @@ class WorkspaceStatus(BaseModel):
     git_enabled: bool = False
     drift: DriftReport = Field(default_factory=DriftReport)
     secret_requirements: list[SecretRequirement] = Field(default_factory=list)
+
+
+class GitCommit(BaseModel):
+    """One entry in the project's git history (Phase 2)."""
+
+    sha: str
+    short_sha: str
+    author: str
+    email: str | None = None
+    date: str  # ISO 8601
+    subject: str
+
+
+class WorkspaceGitHistory(BaseModel):
+    """Git history + working-tree state for ``/workspace/history``."""
+
+    git_available: bool
+    is_repo: bool
+    branch: str | None = None
+    dirty: bool = False
+    uncommitted: list[str] = Field(default_factory=list)
+    commits: list[GitCommit] = Field(default_factory=list)

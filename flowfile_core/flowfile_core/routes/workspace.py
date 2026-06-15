@@ -24,13 +24,16 @@ from sqlalchemy.orm import Session
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from flowfile_core.workspace.git_backend import GitBackend, GitError
 from flowfile_core.workspace.layout import ProjectLayout
 from flowfile_core.workspace.manifest import init_project
 from flowfile_core.workspace.models import (
+    GitCommit,
     ProjectManifest,
     SecretRequirement,
     WorkspaceApplyResult,
     WorkspaceExportResult,
+    WorkspaceGitHistory,
     WorkspaceStatus,
 )
 from flowfile_core.workspace.sync import WorkspaceSync
@@ -181,3 +184,119 @@ def list_workspace_projects(
         )
         for row in rows
     ]
+
+
+# ----------------------------------------------------------------------------
+# Embedded git: history, commit, diff, restore (Phase 2).
+# Git runs only on these explicit actions — never automatically on export.
+# ----------------------------------------------------------------------------
+
+
+class WorkspaceCommitRequest(BaseModel):
+    root_path: str | None = None
+    message: str = "Update Flowfile project"
+
+
+class WorkspaceRestoreRequest(BaseModel):
+    root_path: str | None = None
+    sha: str
+    apply: bool = True  # also rebuild the runtime DB from the restored files
+
+
+class CommitResponse(BaseModel):
+    committed: bool
+    sha: str | None = None
+    branch: str | None = None
+
+
+class DiffResponse(BaseModel):
+    sha: str | None = None
+    diff: str = ""
+
+
+class RestoreResponse(BaseModel):
+    commit_sha: str | None = None
+    applied: WorkspaceApplyResult | None = None
+
+
+@router.get("/history", response_model=WorkspaceGitHistory)
+def workspace_history(
+    root_path: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Git history + working-tree state for the project (empty if git is absent)."""
+    root = _resolve_root(db, current_user.id, root_path)
+    git = GitBackend(root)
+    if not git.available():
+        return WorkspaceGitHistory(git_available=False, is_repo=False)
+    if not git.is_repo():
+        return WorkspaceGitHistory(git_available=True, is_repo=False)
+    status = git.status()
+    return WorkspaceGitHistory(
+        git_available=True,
+        is_repo=True,
+        branch=status["branch"],
+        dirty=status["dirty"],
+        uncommitted=status["uncommitted"],
+        commits=[GitCommit(**c) for c in git.log(limit)],
+    )
+
+
+@router.post("/commit", response_model=CommitResponse)
+def workspace_commit(
+    body: WorkspaceCommitRequest,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Snapshot the current project tree (initializes the repo on first commit)."""
+    root = _resolve_root(db, current_user.id, body.root_path)
+    git = GitBackend(root)
+    if not git.available():
+        raise HTTPException(status_code=400, detail="git is not available on the server")
+    try:
+        sha = git.commit(body.message)
+    except GitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return CommitResponse(committed=sha is not None, sha=sha, branch=git.current_branch())
+
+
+@router.get("/diff", response_model=DiffResponse)
+def workspace_diff(
+    root_path: str | None = Query(default=None),
+    sha: str | None = Query(default=None),
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Diff for a commit (``sha`` given) or the uncommitted working-tree changes."""
+    root = _resolve_root(db, current_user.id, root_path)
+    git = GitBackend(root)
+    if not git.available() or not git.is_repo():
+        return DiffResponse(sha=sha, diff="")
+    diff = git.commit_patch(sha) if sha else git.worktree_diff()
+    return DiffResponse(sha=sha, diff=diff)
+
+
+@router.post("/restore", response_model=RestoreResponse)
+def workspace_restore(
+    body: WorkspaceRestoreRequest,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Roll the project back to a commit: restore files, snapshot, then re-apply.
+
+    A new commit records the rollback (so it is itself undoable), and — when
+    ``apply`` is set — the runtime catalog is rebuilt from the restored files.
+    """
+    root = _resolve_root(db, current_user.id, body.root_path)
+    git = GitBackend(root)
+    if not git.available() or not git.is_repo():
+        raise HTTPException(status_code=400, detail="No git history for this project")
+    try:
+        git.restore(body.sha)
+        new_sha = git.commit(f"Restore to {body.sha[:8]}")
+    except GitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    applied = WorkspaceSync(db, current_user.id, root).apply() if body.apply else None
+    return RestoreResponse(commit_sha=new_sha, applied=applied)

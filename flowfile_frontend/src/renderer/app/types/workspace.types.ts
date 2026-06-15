@@ -65,6 +65,42 @@ export interface WorkspaceInitRequest {
   namespace_roots?: string[];
 }
 
+// ---- Embedded git (Phase 2) ----
+
+export interface GitCommit {
+  sha: string;
+  short_sha: string;
+  author: string;
+  email?: string | null;
+  date: string; // ISO 8601
+  subject: string;
+}
+
+export interface WorkspaceGitHistory {
+  git_available: boolean;
+  is_repo: boolean;
+  branch?: string | null;
+  dirty: boolean;
+  uncommitted: string[];
+  commits: GitCommit[];
+}
+
+export interface CommitResponse {
+  committed: boolean;
+  sha: string | null;
+  branch: string | null;
+}
+
+export interface DiffResponse {
+  sha: string | null;
+  diff: string;
+}
+
+export interface RestoreResponse {
+  commit_sha: string | null;
+  applied: WorkspaceApplyResult | null;
+}
+
 // Mirror the backend's env_var_name(): FLOWFILE_SECRET_<UPPER_SNAKE_NAME>.
 export function workspaceSecretEnvVar(name: string): string {
   const upper = name
