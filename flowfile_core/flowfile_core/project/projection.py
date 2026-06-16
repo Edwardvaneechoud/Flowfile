@@ -7,6 +7,7 @@ useless on another machine).
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from pathlib import Path
@@ -16,13 +17,16 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.catalog.services.tables import _is_managed_table_path
 from flowfile_core.database.models import (
+    CatalogDashboard,
     CatalogNamespace,
     CatalogTable,
+    CatalogVisualization,
     CloudStorageConnection,
     DatabaseConnection,
     FlowRegistration,
     FlowSchedule,
     GlobalArtifact,
+    Kernel,
     Secret,
 )
 from flowfile_core.project import manifest
@@ -410,6 +414,127 @@ def regenerate_models_manifest(db: Session, root: Path, owner_id: int) -> None:
     write_yaml(manifest.models_manifest_path(root), {"models": entries})
 
 
+# --- kernels -----------------------------------------------------------------
+
+
+def _kernel_entry(kernel: Kernel) -> dict:
+    """A kernel's portable definition: stable ``id`` (the key, round-trips verbatim), display name,
+    image flavour, requested packages, and resource limits. Bake-time details (resolved_packages,
+    the resolved image tag) are intentionally omitted — they are host-specific and would churn the
+    file on a rebake."""
+    entry: dict = {
+        "id": kernel.id,
+        "name": kernel.name,
+        "image_flavour": kernel.image_flavour,
+        "packages": sorted(json.loads(kernel.packages) if kernel.packages else []),
+        "cpu_cores": kernel.cpu_cores,
+        "memory_gb": kernel.memory_gb,
+        "gpu": kernel.gpu,
+    }
+    if kernel.custom_image:
+        entry["custom_image"] = kernel.custom_image
+    return entry
+
+
+def regenerate_kernels_manifest(db: Session, root: Path, owner_id: int) -> None:
+    """kernels.yaml mirrors the owner's kernel definitions so the compute setup round-trips with the
+    project. Only the definition is recorded — import recreates the config row; the container is
+    still started on demand (no auto-bake, and Docker is never required to project or import)."""
+    rows = db.query(Kernel).filter(Kernel.user_id == owner_id).all()
+    entries = [_kernel_entry(k) for k in rows]
+    entries.sort(key=lambda e: (e["name"], e["id"]))
+    write_yaml(manifest.kernels_manifest_path(root), {"kernels": entries})
+
+
+# --- visualizations & dashboards ---------------------------------------------
+
+
+def _table_ref(db: Session, table_id: int | None) -> dict | None:
+    """Portable ``{catalog, schema, name}`` reference to a catalog table (``None`` when absent)."""
+    if table_id is None:
+        return None
+    table = db.get(CatalogTable, table_id)
+    if table is None:
+        return None
+    ns = _namespace_path(db, table.namespace_id) or {"catalog": None, "schema": None}
+    return {**ns, "name": table.name}
+
+
+def _viz_uuid_for_id(db: Session, viz_id: int | None) -> str | None:
+    if viz_id is None:
+        return None
+    viz = db.get(CatalogVisualization, viz_id)
+    return viz.viz_uuid if viz is not None else None
+
+
+def _visualization_entry(db: Session, viz: CatalogVisualization) -> dict:
+    entry: dict = {
+        "viz_uuid": viz.viz_uuid,
+        "name": viz.name,
+        "namespace": _namespace_path(db, viz.namespace_id),
+        "source_type": viz.source_type or "table",
+        "spec": json.loads(viz.spec_json) if viz.spec_json else [],
+    }
+    if (viz.source_type or "table") == "sql":
+        entry["sql_query"] = viz.sql_query
+    else:
+        entry["source_table"] = _table_ref(db, viz.catalog_table_id)
+    for key in ("description", "chart_type", "spec_gw_version"):
+        value = getattr(viz, key)
+        if value is not None:
+            entry[key] = value
+    return entry
+
+
+def regenerate_visualizations_manifest(db: Session, root: Path, owner_id: int) -> None:
+    """visualizations.yaml mirrors the owner's saved charts keyed by stable ``viz_uuid``: the
+    GraphicWalker spec plus a portable source (``{catalog, schema}`` namespace + source table by
+    name, or inline SQL). The client-side PNG thumbnail is never committed — it re-exports on the
+    next view, like table data and model blobs are never committed."""
+    rows = db.query(CatalogVisualization).filter(CatalogVisualization.created_by == owner_id).all()
+    entries = [_visualization_entry(db, v) for v in rows]
+    entries.sort(key=lambda e: (e["name"], e["viz_uuid"]))
+    write_yaml(manifest.visualizations_manifest_path(root), {"visualizations": entries})
+
+
+def _portable_layout(db: Session, layout: dict) -> dict:
+    """Rewrite a dashboard layout's machine-local references to portable handles so the canvas
+    round-trips: each tile's ``viz_id`` → ``viz_uuid``, each filter's ``datasource_id`` →
+    ``{catalog, schema, name}``. A reference whose target is gone resolves to ``None`` (the tile
+    surfaces a placeholder at view time — the same decoupled behaviour as a deleted viz)."""
+    out = copy.deepcopy(layout)
+    for tile in out.get("tiles") or []:
+        if "viz_id" in tile:
+            tile["viz_uuid"] = _viz_uuid_for_id(db, tile.pop("viz_id"))
+    for flt in out.get("filters") or []:
+        if "datasource_id" in flt:
+            flt["datasource"] = _table_ref(db, flt.pop("datasource_id"))
+    return out
+
+
+def _dashboard_entry(db: Session, dashboard: CatalogDashboard) -> dict:
+    layout = json.loads(dashboard.layout_json) if dashboard.layout_json else {}
+    entry: dict = {
+        "dashboard_uuid": dashboard.dashboard_uuid,
+        "name": dashboard.name,
+        "namespace": _namespace_path(db, dashboard.namespace_id),
+        "layout": _portable_layout(db, layout),
+    }
+    if dashboard.description is not None:
+        entry["description"] = dashboard.description
+    return entry
+
+
+def regenerate_dashboards_manifest(db: Session, root: Path, owner_id: int) -> None:
+    """dashboards.yaml mirrors the owner's dashboards keyed by stable ``dashboard_uuid``. Tiles
+    reference their visualization by portable ``viz_uuid`` and filters their datasource by portable
+    table name, so the canvas re-links to local ids on another machine."""
+    rows = db.query(CatalogDashboard).filter(CatalogDashboard.created_by == owner_id).all()
+    entries = [_dashboard_entry(db, d) for d in rows]
+    entries.sort(key=lambda e: (e["name"], e["dashboard_uuid"]))
+    write_yaml(manifest.dashboards_manifest_path(root), {"dashboards": entries})
+
+
 # --- full projection ---------------------------------------------------------
 
 # Project dirs that mirror the DB; everything in them is pruned to the written set on full projection.
@@ -454,4 +579,7 @@ def project_all(db: Session, root: Path, owner_id: int) -> None:
     regenerate_namespace_manifest(db, root, owner_id)
     regenerate_tables_manifest(db, root, owner_id)
     regenerate_models_manifest(db, root, owner_id)
+    regenerate_kernels_manifest(db, root, owner_id)
+    regenerate_visualizations_manifest(db, root, owner_id)
+    regenerate_dashboards_manifest(db, root, owner_id)
     _prune_orphan_files(root, written - {None})

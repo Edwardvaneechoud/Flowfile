@@ -42,6 +42,17 @@ def _classify_path(path: str) -> tuple[str, str]:
         return "cloud connection", stem
     if path.startswith("schedules/"):
         return "schedule", stem
+    # Root-level manifests mirror a whole resource category; show the category rather than "settings".
+    if "/" not in path:
+        manifest_kinds = {
+            "secrets": "secrets",
+            "namespaces": "namespaces",
+            "tables": "catalog tables",
+            "models": "models",
+            "kernels": "kernels",
+        }
+        if stem in manifest_kinds:
+            return manifest_kinds[stem], stem
     return "settings", name
 
 
@@ -187,6 +198,36 @@ class ProjectSyncService:
                 projection.regenerate_models_manifest(db, proj.root, proj.owner_id)
         except Exception:
             logger.warning("Project models-manifest projection failed", exc_info=True)
+
+    def kernels_changed(self, user_id: int | None) -> None:
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            return
+        try:
+            with get_db_context() as db:
+                projection.regenerate_kernels_manifest(db, proj.root, proj.owner_id)
+        except Exception:
+            logger.warning("Project kernels-manifest projection failed", exc_info=True)
+
+    def visualizations_changed(self, user_id: int | None) -> None:
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            return
+        try:
+            with get_db_context() as db:
+                projection.regenerate_visualizations_manifest(db, proj.root, proj.owner_id)
+        except Exception:
+            logger.warning("Project visualizations-manifest projection failed", exc_info=True)
+
+    def dashboards_changed(self, user_id: int | None) -> None:
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            return
+        try:
+            with get_db_context() as db:
+                projection.regenerate_dashboards_manifest(db, proj.root, proj.owner_id)
+        except Exception:
+            logger.warning("Project dashboards-manifest projection failed", exc_info=True)
 
     # --- lifecycle (explicit user actions via /project router + CLI) ----------
 

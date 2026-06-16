@@ -666,14 +666,69 @@ class KernelManager:
             # one-line warning).
             logger.exception("Could not restore kernels from database")
 
+    def reconcile_configs_from_db(self) -> None:
+        """Sync the in-memory kernel registry with the persisted configs after a project import.
+
+        Rows added by the import (open/restore/reload) appear as STOPPED kernels; rows removed by a
+        prune are dropped from memory and their container cleaned up best-effort. A running kernel
+        keeps its live container — only a STOPPED kernel's cached config is refreshed to match the
+        imported definition (a running container still reflects the config it was started with)."""
+        try:
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.kernel.persistence import get_all_kernels
+
+            with get_db_context() as db:
+                rows = {cfg.id: (cfg, resolved, uid) for cfg, resolved, uid in get_all_kernels(db)}
+        except Exception:
+            logger.warning("Could not reconcile kernels from database", exc_info=True)
+            return
+        # Drop kernels no longer in the DB (pruned by a restore/reload); cleanup reads _kernels, so
+        # it must run before the pop.
+        for kernel_id in list(self._kernels):
+            if kernel_id not in rows:
+                self._cleanup_container(kernel_id)
+                self._kernels.pop(kernel_id, None)
+                self._kernel_owners.pop(kernel_id, None)
+                self._scratch_flow_ids.pop(kernel_id, None)
+        # Add missing rows as STOPPED kernels; refresh the cached config of stopped ones.
+        for kernel_id, (config, resolved_packages, user_id) in rows.items():
+            existing = self._kernels.get(kernel_id)
+            if existing is None:
+                self._kernels[kernel_id] = KernelInfo(
+                    id=config.id,
+                    name=config.name,
+                    state=KernelState.STOPPED,
+                    packages=config.packages,
+                    resolved_packages=resolved_packages,
+                    memory_gb=config.memory_gb,
+                    cpu_cores=config.cpu_cores,
+                    gpu=config.gpu,
+                    image_flavour=config.image_flavour,
+                    custom_image=config.custom_image,
+                )
+                self._kernel_owners[kernel_id] = user_id
+            elif existing.state == KernelState.STOPPED:
+                existing.name = config.name
+                existing.packages = config.packages
+                existing.resolved_packages = resolved_packages
+                existing.memory_gb = config.memory_gb
+                existing.cpu_cores = config.cpu_cores
+                existing.gpu = config.gpu
+                existing.image_flavour = config.image_flavour
+                existing.custom_image = config.custom_image
+                self._kernel_owners[kernel_id] = user_id
+
     def _persist_kernel(self, kernel: KernelInfo, user_id: int) -> None:
-        """Save a kernel record to the database."""
+        """Save a kernel record to the database, then re-project the project's kernels manifest."""
         try:
             from flowfile_core.database.connection import get_db_context
             from flowfile_core.kernel.persistence import save_kernel
 
             with get_db_context() as db:
                 save_kernel(db, kernel, user_id)
+            from flowfile_core.project import project_sync
+
+            project_sync.kernels_changed(user_id)
         except Exception as exc:
             logger.warning("Could not persist kernel '%s': %s", kernel.id, exc)
 
@@ -1419,6 +1474,7 @@ class KernelManager:
 
     async def delete_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
+        owner_id = self._kernel_owners.get(kernel_id)  # capture before the pop, for the project hook
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             await self.stop_kernel(kernel_id)
         had_packages = bool(kernel.packages)
@@ -1431,6 +1487,12 @@ class KernelManager:
         self._remove_kernel_from_db(kernel_id)
         if had_packages:
             self._remove_derived_image(kernel_id)
+        # Re-project the kernels manifest (regenerated wholesale, so firing after the row is gone is
+        # correct). Owner may be None for a kernel restored before owners were tracked — the hook
+        # no-ops on None.
+        from flowfile_core.project import project_sync
+
+        project_sync.kernels_changed(owner_id)
         logger.info("Deleted kernel '%s'", kernel_id)
 
     def shutdown_all(self) -> None:

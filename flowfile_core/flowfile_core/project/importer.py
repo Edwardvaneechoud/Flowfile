@@ -7,8 +7,10 @@ dead-ends (the user fills them in later).
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
+import uuid
 from pathlib import Path
 
 import yaml
@@ -20,13 +22,16 @@ from flowfile_core.catalog.delta_utils import table_exists
 from flowfile_core.catalog.exceptions import NamespaceNotEmptyError
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
+    CatalogDashboard,
     CatalogNamespace,
     CatalogTable,
+    CatalogVisualization,
     CloudStorageConnection,
     DatabaseConnection,
     FlowRegistration,
     FlowSchedule,
     GlobalArtifact,
+    Kernel,
 )
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -44,6 +49,7 @@ from flowfile_core.project.models import SetupResult
 from flowfile_core.project.normalize import safe_stem, write_yaml
 from flowfile_core.project.projection import _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
 from flowfile_core.project.secrets_resolver import load_dotenv, placeholder_name, resolve
+from flowfile_core.schemas.catalog_schema import DashboardLayout
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.schemas.input_schema import FullDatabaseConnection
 from flowfile_core.secret_manager.secret_manager import (
@@ -356,6 +362,135 @@ def _import_artifacts(root: Path, owner_id: int) -> set[int]:
     return kept
 
 
+def _import_kernels(root: Path, owner_id: int) -> set[str]:
+    """Recreate the owner's kernel definitions from kernels.yaml; return the kept ids.
+
+    Upserts the Kernel config row by its stable id (only the definition — flavour, requested
+    packages, resource limits). The derived image is not baked and no container is started: an
+    imported kernel comes up STOPPED and is launched on demand, exactly like a freshly-created one.
+    ``resolved_packages`` stays empty until the kernel is next baked on this machine."""
+    kept: set[str] = set()
+    for entry in _read_yaml(manifest.kernels_manifest_path(root)).get("kernels", []) or []:
+        name = entry.get("name")
+        if not name:
+            continue
+        kernel_id = entry.get("id") or str(uuid.uuid4())
+        with get_db_context() as db:
+            existing = db.query(Kernel).filter(Kernel.id == kernel_id).first()
+            kernel = existing or Kernel(id=kernel_id, user_id=owner_id, resolved_packages="[]")
+            kernel.name = name
+            kernel.user_id = owner_id
+            kernel.packages = json.dumps(entry.get("packages") or [])
+            kernel.cpu_cores = entry.get("cpu_cores", 2.0)
+            kernel.memory_gb = entry.get("memory_gb", 4.0)
+            kernel.gpu = bool(entry.get("gpu", False))
+            kernel.image_flavour = entry.get("image_flavour") or "base"
+            kernel.custom_image = entry.get("custom_image")
+            if existing is None:
+                db.add(kernel)
+            db.commit()
+            kept.add(kernel_id)
+    return kept
+
+
+def _resolve_table_ref(ref: dict | None, owner_id: int) -> int | None:
+    """Portable ``{catalog, schema, name}`` → this install's catalog_table_id (None when absent)."""
+    if not ref or not ref.get("name"):
+        return None
+    ns_id = _resolve_namespace(ref.get("catalog"), ref.get("schema"), owner_id, create=False)
+    with get_db_context() as db:
+        table = SQLAlchemyCatalogRepository(db).get_table_by_name(ref["name"], ns_id)
+        return table.id if table else None
+
+
+def _resolve_viz_id_by_uuid(viz_uuid: str | None) -> int | None:
+    if not viz_uuid:
+        return None
+    with get_db_context() as db:
+        viz = db.query(CatalogVisualization).filter_by(viz_uuid=viz_uuid).first()
+        return viz.id if viz else None
+
+
+def _import_visualizations(root: Path, owner_id: int) -> set[str]:
+    """Recreate the owner's saved charts from visualizations.yaml; return the kept viz_uuids.
+
+    Upserts by viz_uuid. The source table is re-resolved by its portable ``{catalog, schema, name}``
+    (tables.yaml rebuilds physical tables first, so it is normally present); a table-source viz whose
+    table is still absent keeps its definition with a null source rather than being dropped. The
+    PNG thumbnail isn't restored — it re-exports on the next view."""
+    kept: set[str] = set()
+    for entry in _read_yaml(manifest.visualizations_manifest_path(root)).get("visualizations", []) or []:
+        name = entry.get("name")
+        if not name:
+            continue
+        viz_uuid = entry.get("viz_uuid") or str(uuid.uuid4())
+        ns_id = _resolve_entry_namespace(entry.get("namespace") or {}, owner_id)
+        source_type = entry.get("source_type") or "table"
+        table_id = _resolve_table_ref(entry.get("source_table"), owner_id) if source_type == "table" else None
+        with get_db_context() as db:
+            existing = db.query(CatalogVisualization).filter_by(viz_uuid=viz_uuid).first()
+            viz = existing or CatalogVisualization(viz_uuid=viz_uuid, created_by=owner_id)
+            viz.name = name
+            viz.description = entry.get("description")
+            viz.chart_type = entry.get("chart_type")
+            viz.spec_json = json.dumps(entry.get("spec") or [])
+            viz.spec_gw_version = entry.get("spec_gw_version")
+            viz.source_type = source_type
+            viz.catalog_table_id = table_id
+            viz.sql_query = entry.get("sql_query") if source_type == "sql" else None
+            viz.namespace_id = ns_id
+            viz.created_by = owner_id
+            if existing is None:
+                db.add(viz)
+            db.commit()
+            kept.add(viz_uuid)
+    return kept
+
+
+def _localize_layout(layout: dict, owner_id: int) -> dict:
+    """Inverse of projection._portable_layout: each tile's ``viz_uuid`` → local ``viz_id``, each
+    filter's ``datasource`` → local ``datasource_id``. Unresolvable references become ``None`` (the
+    tile renders a placeholder), matching the decoupled-tile design."""
+    out = copy.deepcopy(layout)
+    for tile in out.get("tiles") or []:
+        if "viz_uuid" in tile:
+            tile["viz_id"] = _resolve_viz_id_by_uuid(tile.pop("viz_uuid"))
+    for flt in out.get("filters") or []:
+        if "datasource" in flt:
+            flt["datasource_id"] = _resolve_table_ref(flt.pop("datasource"), owner_id)
+    return out
+
+
+def _import_dashboards(root: Path, owner_id: int) -> set[str]:
+    """Recreate the owner's dashboards from dashboards.yaml; return the kept dashboard_uuids.
+
+    Runs after visualizations so each tile's ``viz_uuid`` resolves to a local viz id. Upserts by
+    dashboard_uuid; the localized layout is re-validated through ``DashboardLayout`` so it is stored
+    in the same canonical shape the app writes (keeping the round-trip byte-identical)."""
+    kept: set[str] = set()
+    for entry in _read_yaml(manifest.dashboards_manifest_path(root)).get("dashboards", []) or []:
+        name = entry.get("name")
+        if not name:
+            continue
+        dashboard_uuid = entry.get("dashboard_uuid") or str(uuid.uuid4())
+        ns_id = _resolve_entry_namespace(entry.get("namespace") or {}, owner_id)
+        layout = DashboardLayout.model_validate(_localize_layout(entry.get("layout") or {}, owner_id))
+        with get_db_context() as db:
+            existing = db.query(CatalogDashboard).filter_by(dashboard_uuid=dashboard_uuid).first()
+            dashboard = existing or CatalogDashboard(dashboard_uuid=dashboard_uuid, created_by=owner_id)
+            dashboard.name = name
+            dashboard.description = entry.get("description")
+            dashboard.namespace_id = ns_id
+            dashboard.layout_json = layout.model_dump_json()
+            dashboard.layout_version = layout.grid.version
+            dashboard.created_by = owner_id
+            if existing is None:
+                db.add(dashboard)
+            db.commit()
+            kept.add(dashboard_uuid)
+    return kept
+
+
 def _import_flow(data: dict, owner_id: int) -> bool:
     flow_uuid = data.get("flow_uuid")
     if not flow_uuid:
@@ -458,6 +593,9 @@ def _prune_removed(
     kept_namespace_ids: set[int],
     kept_table_ids: set[int],
     kept_artifact_ids: set[int],
+    kept_kernel_ids: set[str],
+    kept_viz_uuids: set[str],
+    kept_dashboard_uuids: set[str],
 ) -> None:
     """Delete the owner's resources that are no longer present in the project files.
 
@@ -467,6 +605,27 @@ def _prune_removed(
     Pruning never removes data — table data is kept (``delete_file=False``) and a model is soft-deleted
     so its blob survives. Best-effort per resource: failures are logged and skipped.
     """
+    # Kernels are independent of the catalog graph, so order is free. Delete only the config row
+    # (the running container, if any, is dropped by the manager reconcile that follows the import).
+    from flowfile_core.kernel.persistence import delete_kernel
+
+    with get_db_context() as db:
+        for kernel in db.query(Kernel).filter(Kernel.user_id == owner_id).all():
+            if kernel.id not in kept_kernel_ids:
+                try:
+                    delete_kernel(db, kernel.id)
+                except Exception:
+                    logger.warning("Project prune: could not remove kernel %s", kernel.id, exc_info=True)
+    # Dashboards then visualizations (tiles reference viz by value, not FK, so order is free). The
+    # GraphicWalker spec is the whole artifact — there is no separate blob to preserve.
+    with get_db_context() as db:
+        for dashboard in db.query(CatalogDashboard).filter(CatalogDashboard.created_by == owner_id).all():
+            if dashboard.dashboard_uuid not in kept_dashboard_uuids:
+                db.query(CatalogDashboard).filter_by(id=dashboard.id).delete()
+        for viz in db.query(CatalogVisualization).filter(CatalogVisualization.created_by == owner_id).all():
+            if viz.viz_uuid not in kept_viz_uuids:
+                db.query(CatalogVisualization).filter_by(id=viz.id).delete()
+        db.commit()
     # Models first (soft-delete, keep the blob): a kept flow's pruned artifact just goes inactive; a
     # pruned flow's are hard-deleted by delete_flow below.
     with get_db_context() as db:
@@ -533,6 +692,24 @@ def _prune_removed(
                 logger.warning("Project prune: could not delete namespace %s", ns.id, exc_info=True)
 
 
+def _reconcile_kernel_manager() -> None:
+    """Best-effort: refresh an already-running kernel manager's in-memory registry after an import.
+
+    Kernels are cached in the ``KernelManager`` singleton (unlike tables/models, read fresh per
+    request), so an imported row needs the manager told about it to surface without a restart. This
+    only touches a manager that already exists — it never forces Docker construction here (a manager
+    built later loads the imported rows itself via ``_restore_kernels_from_db``). Failures are
+    swallowed; the DB rows are authoritative regardless and appear on the next core start."""
+    try:
+        import flowfile_core.kernel as kernel_pkg
+
+        manager = getattr(kernel_pkg, "_manager", None)
+        if manager is not None:
+            manager.reconcile_configs_from_db()
+    except Exception:
+        logger.debug("Kernel manager reconcile after import skipped", exc_info=True)
+
+
 def import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResult:
     """Rebuild this install's environment from the project folder. Always completes.
 
@@ -582,11 +759,27 @@ def _do_import_project(root: Path, owner_id: int, prune: bool = False) -> SetupR
     # Tables + models after flows so their namespace and source-flow lineage resolve.
     kept_table_ids = _import_tables(root, owner_id)
     kept_artifact_ids = _import_artifacts(root, owner_id)
+    kept_kernel_ids = _import_kernels(root, owner_id)
+    # Visualizations after tables (source re-links by name); dashboards after visualizations
+    # (tiles re-link by viz_uuid).
+    kept_viz_uuids = _import_visualizations(root, owner_id)
+    kept_dashboard_uuids = _import_dashboards(root, owner_id)
 
     if prune:
         _prune_removed(
-            owner_id, kept_flow_uuids, kept_db, kept_cloud, kept_namespace_ids, kept_table_ids, kept_artifact_ids
+            owner_id,
+            kept_flow_uuids,
+            kept_db,
+            kept_cloud,
+            kept_namespace_ids,
+            kept_table_ids,
+            kept_artifact_ids,
+            kept_kernel_ids,
+            kept_viz_uuids,
+            kept_dashboard_uuids,
         )
+
+    _reconcile_kernel_manager()
 
     from flowfile_core.project import git_ops
 

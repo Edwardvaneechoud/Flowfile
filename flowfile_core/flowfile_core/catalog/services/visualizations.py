@@ -58,6 +58,22 @@ from flowfile_core.schemas.catalog_schema import (
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
 
+
+def _project_sync_visualizations(user_id: int) -> None:
+    """Mirror a viz create/update/delete into the active project's visualizations.yaml (no-op when
+    no project is active; never raises)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.visualizations_changed(user_id)
+
+
+def _project_sync_dashboards(user_id: int) -> None:
+    """Mirror a dashboard create/update/delete into the active project's dashboards.yaml (no-op when
+    no project is active; never raises)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.dashboards_changed(user_id)
+
 # polars-gw workflow that returns rows un-aggregated (raw select-all).
 _GW_RAW_SELECT_ALL_PAYLOAD: dict = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
 
@@ -244,6 +260,7 @@ class VisualizationService:
             created = self.repo.create_visualization(viz)
         except IntegrityError as exc:
             raise VisualizationExistsError(payload.name, payload.catalog_table_id or 0) from exc
+        _project_sync_visualizations(user_id)
         return self._viz_to_out(created)
 
     def update_visualization(self, viz_id: int, payload: VisualizationUpdate, user_id: int) -> VisualizationOut:
@@ -279,6 +296,7 @@ class VisualizationService:
             updated = self.repo.update_visualization(viz)
         except IntegrityError as exc:
             raise VisualizationExistsError(viz.name, viz.catalog_table_id or 0) from exc
+        _project_sync_visualizations(user_id)
         return self._viz_to_out(updated)
 
     def delete_visualization(self, viz_id: int, user_id: int) -> None:
@@ -286,6 +304,7 @@ class VisualizationService:
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
         self.repo.delete_visualization(viz_id)
+        _project_sync_visualizations(user_id)
 
     # ---- Dashboards CRUD ------------------------------------------------ #
 
@@ -352,6 +371,7 @@ class VisualizationService:
             created_by=user_id,
         )
         created = self.repo.create_dashboard(dashboard)
+        _project_sync_dashboards(user_id)
         return self._dashboard_to_out(created)
 
     def update_dashboard(self, dashboard_id: int, payload: DashboardUpdate, user_id: int) -> DashboardOut:
@@ -377,6 +397,7 @@ class VisualizationService:
             dashboard.layout_version = payload.layout.grid.version
         dashboard.updated_at = datetime.now(timezone.utc)
         updated = self.repo.update_dashboard(dashboard)
+        _project_sync_dashboards(user_id)
         return self._dashboard_to_out(updated)
 
     def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
@@ -384,6 +405,7 @@ class VisualizationService:
         if dashboard is None:
             raise DashboardNotFoundError(dashboard_id=dashboard_id)
         self.repo.delete_dashboard(dashboard_id)
+        _project_sync_dashboards(user_id)
 
     # ---- Compute -------------------------------------------------------- #
 

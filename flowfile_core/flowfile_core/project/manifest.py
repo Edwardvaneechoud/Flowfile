@@ -94,3 +94,15 @@ def tables_manifest_path(root: Path) -> Path:
 
 def models_manifest_path(root: Path) -> Path:
     return root / "models.yaml"
+
+
+def kernels_manifest_path(root: Path) -> Path:
+    return root / "kernels.yaml"
+
+
+def visualizations_manifest_path(root: Path) -> Path:
+    return root / "visualizations.yaml"
+
+
+def dashboards_manifest_path(root: Path) -> Path:
+    return root / "dashboards.yaml"

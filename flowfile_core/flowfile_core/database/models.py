@@ -551,6 +551,9 @@ class CatalogVisualization(Base):
     __tablename__ = "catalog_visualizations"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Stable identity for the git-backed project projection (the machine-local ``id`` doesn't
+    # round-trip). Mirrors ``FlowRegistration.flow_uuid``.
+    viz_uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     chart_type = Column(String, nullable=True)
@@ -586,6 +589,9 @@ class CatalogDashboard(Base):
     __tablename__ = "catalog_dashboards"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Stable identity for the git-backed project projection; also what a tile's portable
+    # ``viz_uuid`` reference resolves against. Mirrors ``FlowRegistration.flow_uuid``.
+    dashboard_uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     layout_json = Column(Text, nullable=False)
