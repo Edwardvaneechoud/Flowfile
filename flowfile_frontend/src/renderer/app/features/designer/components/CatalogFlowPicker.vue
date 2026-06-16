@@ -127,7 +127,10 @@ const loadFlows = async (namespaceId: number) => {
   flowsLoading.value = true;
   flowsError.value = null;
   try {
-    flows.value = await CatalogApi.getFlows(namespaceId);
+    const fetched = await CatalogApi.getFlows(namespaceId);
+    // Hide ghost rows whose backing file was deleted — they can't be a valid
+    // overwrite target and otherwise linger in the list after a rename.
+    flows.value = fetched.filter((f) => f.file_exists);
     emit("flows-loaded", flows.value);
   } catch (err: unknown) {
     console.error("Failed to load catalog flows", err);
@@ -171,7 +174,17 @@ watch(
 
 onMounted(loadTree);
 
-defineExpose({ reload: loadTree });
+// Reload the namespace tree AND re-fetch the currently-selected namespace's
+// flows. ``loadTree`` alone only refreshes flows when no namespace is selected
+// yet, so callers re-opening the picker need this to escape a stale list.
+const refresh = async () => {
+  await loadTree();
+  if (selectedNamespaceId.value !== null) {
+    await loadFlows(selectedNamespaceId.value);
+  }
+};
+
+defineExpose({ reload: loadTree, refresh });
 </script>
 
 <style scoped>

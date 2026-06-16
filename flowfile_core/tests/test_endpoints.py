@@ -574,8 +574,9 @@ def test_save_flow_to_catalog_refuses_overwrite_of_foreign_file():
             db.commit()
 
 
-def test_save_flow_to_catalog_unlinks_old_file_on_rename():
-    """Renaming a catalog-saved flow removes the previous managed yaml."""
+def test_save_flow_to_catalog_keeps_old_file_on_rename():
+    """Saving a catalog flow under a new name is a copy, not a move: the previous
+    managed yaml survives so Save-As never destroys the original."""
     from flowfile_core.database.models import FlowRegistration
 
     first_name = "rename_before"
@@ -612,8 +613,8 @@ def test_save_flow_to_catalog_unlinks_old_file_on_rename():
         )
         assert resp_second.status_code == 200, f"Second save failed: {resp_second.text}"
         assert second_expected.exists(), "Second-name file should exist after rename save"
-        assert not first_expected.exists(), (
-            f"Old managed file {first_expected} should have been unlinked on rename"
+        assert first_expected.exists(), (
+            f"Save-As under a new name must not delete the original file {first_expected}"
         )
     finally:
         for p in (first_expected, locals().get("second_expected")):
@@ -2160,6 +2161,53 @@ def test_save_flow_path_traversal_with_dots():
 
     response = client.post("/save_flow", params={"flow_id": flow_id, "flow_path": "../../../etc/malicious.yaml"})
     assert response.status_code == 403, "Path traversal with .. should be blocked"
+
+
+def test_save_flow_to_catalog_allows_name_with_spaces():
+    """A flow name with spaces is a free-form display label, not a filename. The
+    save must succeed (200), the catalog must register the exact name typed, and
+    the file on disk must use a slugified, filesystem-safe ``{flow_id}_{slug}.yaml``
+    name (no spaces). Regression guard for the old filename-regex rejection."""
+    from flowfile_core.database.models import User
+
+    cat = client.post("/catalog/namespaces", json={"name": "SpaceCat"}).json()
+    schema = client.post("/catalog/namespaces", json={"name": "SpaceSchema", "parent_id": cat["id"]}).json()
+    ns_id = schema["id"]
+
+    with get_db_context() as db:
+        user_id = db.query(User).first().id
+    flow_id = flow_file_handler.add_flow(name="space_scratch", user_id=user_id)
+
+    new_flow_id = None
+    try:
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id, "flow_name": "market analytics", "namespace_id": ns_id},
+        )
+        assert resp.status_code == 200, resp.text
+        new_flow_id = resp.json()
+
+        # The filename is a slug of the display name, prefixed with the originating
+        # flow id; the space must never reach disk.
+        saved_path = Path(flow_file_handler.get_flow(new_flow_id).flow_settings.path)
+        assert saved_path.name == f"{flow_id}_market_analytics.yaml", saved_path.name
+        assert " " not in saved_path.name
+        assert saved_path.exists()
+
+        # The catalog registration keeps exactly what the user typed.
+        names = {f["name"] for f in client.get("/catalog/flows", params={"namespace_id": ns_id}).json()}
+        assert "market analytics" in names, names
+    finally:
+        for fid in (flow_id, new_flow_id):
+            if fid is None:
+                continue
+            saved = flow_file_handler.get_flow(fid)
+            if saved is not None:
+                Path(saved.flow_settings.path).unlink(missing_ok=True)
+            try:
+                flow_file_handler.delete_flow(fid)
+            except Exception:
+                pass
 
 
 def test_get_excel_sheet_names_path_traversal_blocked(monkeypatch):
