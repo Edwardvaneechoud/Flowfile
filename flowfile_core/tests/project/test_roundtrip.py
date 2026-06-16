@@ -5,8 +5,11 @@ tears down its own project + resources so the project_sync singleton never
 leaks projection side-effects into other tests.
 """
 
+import json
 import os
+import shutil
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 import yaml
@@ -14,7 +17,13 @@ import yaml
 from flowfile_core import flow_file_handler
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import CatalogNamespace, FlowRegistration, FlowSchedule
+from flowfile_core.database.models import (
+    CatalogNamespace,
+    CatalogTable,
+    FlowRegistration,
+    FlowSchedule,
+    GlobalArtifact,
+)
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_database_connection,
@@ -87,9 +96,10 @@ def _snapshot(root: Path) -> dict[str, bytes]:
         for p in sorted((root / sub).rglob("*")):
             if p.is_file():
                 out[str(p.relative_to(root))] = p.read_bytes()
-    secrets = root / "secrets.yaml"
-    if secrets.exists():
-        out["secrets.yaml"] = secrets.read_bytes()
+    for fname in ("secrets.yaml", "namespaces.yaml", "tables.yaml", "models.yaml"):
+        f = root / fname
+        if f.exists():
+            out[fname] = f.read_bytes()
     return out
 
 
@@ -482,6 +492,48 @@ def test_flow_move_reprojects_namespace(tmp_path):
         project_sync.close_project(OWNER)
 
 
+def test_public_namespace_recreated_on_import(tmp_path):
+    """A public schema that isn't seeded on this machine (e.g. a demo-seeded catalog) must be
+    recreated on import — not skipped — so flows/tables land in their real schema."""
+    project_sync.close_project(OWNER)
+    flow_uuid, _, _ = _make_flow_in_namespace(tmp_path, "demo_flow", "DemoCat", "demo_schema")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Public NS Test", OWNER)
+        # Mark the catalog + schema public, as a demo-seeded namespace would be, then re-project.
+        with get_db_context() as db:
+            for nm in ("DemoCat", "demo_schema"):
+                db.query(CatalogNamespace).filter_by(name=nm).first().is_public = True
+            db.commit()
+        with get_db_context() as db:
+            projection.project_all(db, root, OWNER)
+        cats = {c["catalog"]: c for c in yaml.safe_load((root / "namespaces.yaml").read_text(encoding="utf-8"))["namespaces"]}
+        assert cats["DemoCat"]["is_public"] is True
+
+        # Fresh machine: the public namespaces don't exist; rebuild from files.
+        project_sync.close_project(OWNER)
+        _delete_flow(flow_uuid)
+        _cleanup_custom_namespaces(["DemoCat"])
+        with get_db_context() as db:
+            assert db.query(CatalogNamespace).filter_by(name="demo_schema").first() is None
+
+        from flowfile_core.project.importer import import_project
+
+        import_project(root, OWNER)
+
+        with get_db_context() as db:
+            cat = db.query(CatalogNamespace).filter_by(name="DemoCat", parent_id=None).first()
+            assert cat is not None and cat.is_public is True  # recreated, is_public preserved
+            sch = db.query(CatalogNamespace).filter_by(name="demo_schema", parent_id=cat.id).first()
+            assert sch is not None and sch.is_public is True
+            reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+            assert reg is not None and reg.namespace_id == sch.id  # flow lands in its real schema
+    finally:
+        _delete_flow(flow_uuid)
+        _cleanup_custom_namespaces(["DemoCat"])
+        project_sync.close_project(OWNER)
+
+
 def test_flow_filed_by_flowfile_name_with_catalog_label(tmp_path):
     project_sync.close_project(OWNER)
     flow_uuid = _make_flow_named(tmp_path, "fa_internal", "FA Catalog")
@@ -568,5 +620,382 @@ def test_root_commit_changes_lists_files(tmp_path):
         assert "project.yaml" in paths
         assert any(p.startswith("flows/") for p in paths)
     finally:
+        _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)
+
+
+# --- catalog tables + models (the catalog-data versioning feature) --------------
+
+
+def _reg_id(flow_uuid: str) -> int:
+    with get_db_context() as db:
+        return db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first().id
+
+
+def _make_table(name: str, namespace_id: int | None = None) -> tuple[int, Path]:
+    """Write a real managed Delta table and register it (under the active project if one is open)."""
+    import polars as pl
+
+    table_dir = storage.catalog_tables_directory / f"{name}_{uuid4().hex[:8]}"
+    df = pl.DataFrame({"id": [1, 2], "label": ["a", "b"]})
+    df.write_delta(str(table_dir), mode="overwrite")
+    schema = [{"name": c, "dtype": str(dt)} for c, dt in df.schema.items()]
+    size = sum(p.stat().st_size for p in table_dir.rglob("*") if p.is_file())
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        out = svc.register_table_from_data(
+            name=name,
+            table_path=str(table_dir),
+            owner_id=OWNER,
+            namespace_id=namespace_id,
+            storage_format="delta",
+            schema=schema,
+            row_count=df.height,
+            column_count=df.width,
+            size_bytes=size,
+        )
+    return out.id, table_dir
+
+
+def _make_sql_view(name: str, sql_query: str) -> int:
+    schema = [{"name": "id", "dtype": "Int64"}]
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        table = CatalogTable(
+            name=name,
+            owner_id=OWNER,
+            file_path=None,
+            storage_format="delta",
+            table_type="virtual",
+            sql_query=sql_query,
+            schema_json=json.dumps(schema),
+            column_count=len(schema),
+        )
+        repo.create_table(table)
+        return table.id
+
+
+def _make_flow_virtual(name: str, producer_reg_id: int) -> int:
+    schema = [{"name": "id", "dtype": "Int64"}]
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        table = CatalogTable(
+            name=name,
+            owner_id=OWNER,
+            file_path=None,
+            storage_format="delta",
+            table_type="virtual",
+            producer_registration_id=producer_reg_id,
+            schema_json=json.dumps(schema),
+            column_count=len(schema),
+        )
+        repo.create_table(table)
+        return table.id
+
+
+def _make_artifact(name: str, src_reg_id: int, version: int = 1) -> int:
+    with get_db_context() as db:
+        artifact = GlobalArtifact(
+            name=name,
+            owner_id=OWNER,
+            version=version,
+            status="active",
+            source_registration_id=src_reg_id,
+            serialization_format="joblib",
+            python_type="sklearn.tree.DecisionTreeClassifier",
+            tags=json.dumps(["ml"]),
+        )
+        db.add(artifact)
+        db.commit()
+        db.refresh(artifact)
+        return artifact.id
+
+
+def _tables_yaml(root: Path) -> dict:
+    data = yaml.safe_load((root / "tables.yaml").read_text(encoding="utf-8"))
+    return {t["name"]: t for t in data["tables"]}
+
+
+def _models_yaml(root: Path) -> dict:
+    data = yaml.safe_load((root / "models.yaml").read_text(encoding="utf-8"))
+    return {(m["name"], m["version"]): m for m in data["models"]}
+
+
+def _get_table_out(name: str, namespace_id: int | None = None):
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        t = svc.repo.get_table_by_name(name, namespace_id)
+        return svc.get_table(t.id) if t else None
+
+
+def _delete_table_row_only(name: str) -> None:
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        for t in db.query(CatalogTable).filter_by(name=name).all():
+            svc.delete_table(t.id, delete_file=False)
+
+
+def _delete_tables_by_name(name: str) -> None:
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        for t in db.query(CatalogTable).filter_by(name=name).all():
+            try:
+                svc.delete_table(t.id, delete_file=True)
+            except Exception:
+                pass
+
+
+def _delete_artifacts(name: str) -> None:
+    with get_db_context() as db:
+        db.query(GlobalArtifact).filter_by(name=name).delete()
+        db.commit()
+
+
+def test_table_projection_deterministic_and_stub_free(tmp_path):
+    project_sync.close_project(OWNER)
+    name = f"proj_tbl_{uuid4().hex[:6]}"
+    _, table_dir = _make_table(name)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Tbl Det", OWNER)
+        entry = _tables_yaml(root)[name]
+        assert entry["table_type"] == "physical"
+        assert entry["pointer"] == {"type": "managed", "name": table_dir.name}
+        assert {c["name"] for c in entry["schema"]} == {"id", "label"}
+        # Volatile data stats + the absolute path are stripped (a data write must not churn the file).
+        assert "row_count" not in entry and "size_bytes" not in entry and "file_path" not in entry
+
+        snap1 = _snapshot(root)
+        with get_db_context() as db:
+            projection.project_all(db, root, OWNER)
+        assert _snapshot(root) == snap1, "re-projecting an unchanged table must be byte-identical"
+    finally:
+        _delete_tables_by_name(name)
+        project_sync.close_project(OWNER)
+
+
+def test_table_round_trips_and_stubs_on_clean_db(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    name = f"rt_tbl_{uuid4().hex[:6]}"
+    _, table_dir = _make_table(name)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Tbl RT", OWNER)
+        project_sync.close_project(OWNER)
+
+        # Same machine, data present: re-import re-points to the existing Delta dir.
+        _delete_table_row_only(name)
+        import_project(root, OWNER)
+        out = _get_table_out(name)
+        assert out is not None and out.file_exists is True
+        assert {c.name for c in out.schema_columns} == {"id", "label"}
+
+        # Fresh machine, data gone: re-import yields a schema-preserving stub.
+        _delete_table_row_only(name)
+        shutil.rmtree(table_dir)
+        import_project(root, OWNER)
+        out = _get_table_out(name)
+        assert out is not None and out.file_exists is False
+        assert {c.name for c in out.schema_columns} == {"id", "label"}
+    finally:
+        _delete_tables_by_name(name)
+        project_sync.close_project(OWNER)
+
+
+def test_sql_view_round_trips_without_sql_and_excludes_flow_virtual(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    view = f"v_{uuid4().hex[:6]}"
+    flow_virtual = f"fv_{uuid4().hex[:6]}"
+    flow_uuid, _ = _make_flow(tmp_path, f"vt_flow_{uuid4().hex[:6]}")
+    query = "SELECT id FROM nonexistent_source"
+    _make_sql_view(view, query)
+    _make_flow_virtual(flow_virtual, _reg_id(flow_uuid))
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "View Test", OWNER)
+        names = _tables_yaml(root)
+        assert view in names and names[view]["table_type"] == "virtual"
+        assert names[view]["sql_query"] == query
+        assert flow_virtual not in names  # flow-produced virtual table is excluded
+
+        # Re-import on a clean DB must NOT execute the SQL (the upstream doesn't exist).
+        project_sync.close_project(OWNER)
+        _delete_tables_by_name(view)
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            t = SQLAlchemyCatalogRepository(db).get_table_by_name(view, None)
+            assert t is not None and t.table_type == "virtual" and t.sql_query == query
+            assert {c["name"] for c in json.loads(t.schema_json)} == {"id"}
+    finally:
+        _delete_tables_by_name(view)
+        _delete_tables_by_name(flow_virtual)
+        _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)
+
+
+def test_model_round_trips_and_upserts_by_version(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    model = f"mdl_{uuid4().hex[:6]}"
+    flow_uuid, _ = _make_flow(tmp_path, f"mdl_flow_{uuid4().hex[:6]}")
+    _make_artifact(model, _reg_id(flow_uuid), version=1)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Model Test", OWNER)
+        m = _models_yaml(root)[(model, 1)]
+        assert m["source_flow_uuid"] == flow_uuid and m["serialization_format"] == "joblib"
+        assert "storage_key" not in m and "sha256" not in m and "size_bytes" not in m
+
+        project_sync.close_project(OWNER)
+        _delete_artifacts(model)
+        import_project(root, OWNER)
+        import_project(root, OWNER)  # twice: upsert by version must not bloat
+        with get_db_context() as db:
+            rows = db.query(GlobalArtifact).filter_by(name=model).all()
+            assert len(rows) == 1 and rows[0].version == 1 and rows[0].status == "active"
+    finally:
+        _delete_artifacts(model)
+        _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)
+
+
+def test_model_skipped_when_source_flow_absent(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    model = f"orphan_{uuid4().hex[:6]}"
+    flow_uuid, _ = _make_flow(tmp_path, f"orphan_flow_{uuid4().hex[:6]}")
+    _make_artifact(model, _reg_id(flow_uuid))
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Orphan Test", OWNER)
+        assert (model, 1) in _models_yaml(root)
+
+        # Drop the source flow (from files + DB) and the artifact, then rebuild: the model can't import.
+        project_sync.close_project(OWNER)
+        for p in (root / "flows").glob("*.flow.yaml"):
+            p.unlink()
+        _delete_artifacts(model)
+        _delete_flow(flow_uuid)
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            assert db.query(GlobalArtifact).filter_by(name=model).first() is None
+    finally:
+        _delete_artifacts(model)
+        _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)
+
+
+def test_prune_keeps_table_data_and_model_blob(tmp_path):
+    from flowfile_core.project.normalize import write_yaml
+
+    project_sync.close_project(OWNER)
+    name = f"keep_tbl_{uuid4().hex[:6]}"
+    model = f"keep_mdl_{uuid4().hex[:6]}"
+    flow_uuid, _ = _make_flow(tmp_path, f"keep_flow_{uuid4().hex[:6]}")
+    _, table_dir = _make_table(name)
+    _make_artifact(model, _reg_id(flow_uuid))
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Keep Test", OWNER)
+        # Remove only the table + model from the manifests; keep the flow.
+        write_yaml(root / "tables.yaml", {"tables": []})
+        write_yaml(root / "models.yaml", {"models": []})
+        project_sync.reload_from_disk(OWNER)
+
+        with get_db_context() as db:
+            # Table row pruned, but its Delta data is kept on disk.
+            assert SQLAlchemyCatalogRepository(db).get_table_by_name(name, None) is None
+            # Model soft-deleted (blob never touched), flow kept so it stays soft (not hard-deleted).
+            rows = db.query(GlobalArtifact).filter_by(name=model).all()
+            assert rows and all(r.status == "deleted" for r in rows)
+            assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is not None
+        assert table_dir.exists() and (table_dir / "_delta_log").exists()
+    finally:
+        _delete_tables_by_name(name)
+        _delete_artifacts(model)
+        _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)
+
+
+def test_prune_removes_flow_with_its_artifact(tmp_path):
+    from flowfile_core.project.normalize import write_yaml
+
+    project_sync.close_project(OWNER)
+    name = f"ord_tbl_{uuid4().hex[:6]}"
+    model = f"ord_mdl_{uuid4().hex[:6]}"
+    flow_uuid, schema_id, _ = _make_flow_in_namespace(tmp_path, f"ord_flow_{uuid4().hex[:6]}", "OrdCat", "OrdSchema")
+    _, table_dir = _make_table(name, namespace_id=schema_id)
+    _make_artifact(model, _reg_id(flow_uuid))
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Ord Test", OWNER)
+        # Restore to an empty version: flow + its artifact + table + custom namespace all removed.
+        for p in (root / "flows").glob("*.flow.yaml"):
+            p.unlink()
+        write_yaml(root / "tables.yaml", {"tables": []})
+        write_yaml(root / "models.yaml", {"models": []})
+        write_yaml(root / "namespaces.yaml", {"namespaces": []})
+
+        project_sync.reload_from_disk(OWNER)  # must not raise FlowHasArtifactsError
+
+        with get_db_context() as db:
+            assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None
+            assert SQLAlchemyCatalogRepository(db).get_table_by_name(name, schema_id) is None
+            # Emptied custom namespace is deletable (table + flow pruned before it).
+            assert db.query(CatalogNamespace).filter_by(name="OrdSchema").first() is None
+            assert db.query(CatalogNamespace).filter_by(name="OrdCat", parent_id=None).first() is None
+        assert table_dir.exists()  # data is kept even on a full prune
+    finally:
+        _delete_tables_by_name(name)
+        _delete_artifacts(model)
+        _delete_flow(flow_uuid)
+        _cleanup_custom_namespaces(["OrdCat"])
+        project_sync.close_project(OWNER)
+
+
+def test_table_and_model_hooks_and_failure_isolation(tmp_path, monkeypatch):
+    from flowfile_core.artifacts import get_storage_backend
+    from flowfile_core.artifacts.service import ArtifactService
+
+    project_sync.close_project(OWNER)
+    name = f"hook_tbl_{uuid4().hex[:6]}"
+    model = f"hook_mdl_{uuid4().hex[:6]}"
+    flow_uuid, _ = _make_flow(tmp_path, f"hook_flow_{uuid4().hex[:6]}")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Hook Test", OWNER)
+
+        # Table create/delete hooks add then drop the entry.
+        _make_table(name)
+        assert name in _tables_yaml(root)
+        _delete_table_row_only(name)
+        assert name not in _tables_yaml(root)
+
+        # Model finalize/delete hooks: simulate finalize via the service hook, then delete via the service.
+        _make_artifact(model, _reg_id(flow_uuid))
+        project_sync.artifacts_changed(OWNER)
+        assert (model, 1) in _models_yaml(root)
+        with get_db_context() as db:
+            ArtifactService(db, get_storage_backend()).delete_all_versions(model)
+        assert (model, 1) not in _models_yaml(root)
+
+        # A projection failure must never break the primary mutation.
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("projection boom")
+
+        monkeypatch.setattr(projection, "regenerate_tables_manifest", _boom)
+        _make_table(f"{name}_2")
+        with get_db_context() as db:
+            assert SQLAlchemyCatalogRepository(db).get_table_by_name(f"{name}_2", None) is not None
+    finally:
+        _delete_tables_by_name(name)
+        _delete_tables_by_name(f"{name}_2")
+        _delete_artifacts(model)
         _delete_flow(flow_uuid)
         project_sync.close_project(OWNER)

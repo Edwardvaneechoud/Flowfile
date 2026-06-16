@@ -14,12 +14,15 @@ from pathlib import Path
 import yaml
 from sqlalchemy.orm import Session
 
+from flowfile_core.catalog.services.tables import _is_managed_table_path
 from flowfile_core.database.models import (
     CatalogNamespace,
+    CatalogTable,
     CloudStorageConnection,
     DatabaseConnection,
     FlowRegistration,
     FlowSchedule,
+    GlobalArtifact,
     Secret,
 )
 from flowfile_core.project import manifest
@@ -319,6 +322,94 @@ def regenerate_namespace_manifest(db: Session, root: Path, owner_id: int) -> Non
     write_yaml(manifest.namespaces_manifest_path(root), {"namespaces": out})
 
 
+# --- catalog tables ----------------------------------------------------------
+
+
+def _table_pointer(table: CatalogTable) -> dict:
+    """Portable pointer to a physical table's data. Managed tables store only the dir basename
+    (rebuilt under catalog_tables_directory on import); external paths are stored verbatim and
+    round-trip on the same machine only. The data itself is never committed (catalog_tables/ is
+    gitignored)."""
+    if table.file_path and _is_managed_table_path(table.file_path):
+        return {"type": "managed", "name": Path(table.file_path).name}
+    if table.file_path:
+        return {"type": "external", "path": table.file_path}
+    return {"type": "none"}
+
+
+def _table_entry(db: Session, table: CatalogTable) -> dict:
+    entry: dict = {
+        "name": table.name,
+        "namespace": _namespace_path(db, table.namespace_id),
+        "table_type": table.table_type,
+        "storage_format": table.storage_format,
+    }
+    if table.description is not None:
+        entry["description"] = table.description
+    schema = json.loads(table.schema_json) if table.schema_json else []
+    entry["schema"] = [{"name": c["name"], "dtype": c["dtype"]} for c in schema]
+    if table.partition_columns:
+        entry["partition_columns"] = json.loads(table.partition_columns)
+    if table.table_type == "virtual":
+        entry["sql_query"] = table.sql_query
+    else:
+        entry["pointer"] = _table_pointer(table)
+    if table.source_registration_id:
+        reg = db.get(FlowRegistration, table.source_registration_id)
+        if reg is not None:
+            entry["source_flow_uuid"] = reg.flow_uuid
+    return entry
+
+
+def regenerate_tables_manifest(db: Session, root: Path, owner_id: int) -> None:
+    """tables.yaml mirrors the owner's physical tables and SQL-view virtual tables as
+    definition + schema + a portable data pointer. Flow-produced virtual tables are skipped
+    (their serialized plan isn't portable; re-running the producer flow rebuilds them). Volatile
+    data stats (row/size counts, run id, timestamps) are stripped so a pure data write doesn't
+    churn the file."""
+    rows = db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id).all()
+    entries = [_table_entry(db, t) for t in rows if not (t.table_type == "virtual" and not t.sql_query)]
+    entries.sort(key=lambda e: (e["name"], json.dumps(e.get("namespace"), sort_keys=True)))
+    write_yaml(manifest.tables_manifest_path(root), {"tables": entries})
+
+
+# --- models (global artifacts) -----------------------------------------------
+
+
+def _artifact_entry(db: Session, a: GlobalArtifact) -> dict:
+    entry: dict = {
+        "name": a.name,
+        "namespace": _namespace_path(db, a.namespace_id),
+        "version": a.version,
+        "serialization_format": a.serialization_format,
+    }
+    reg = db.get(FlowRegistration, a.source_registration_id)
+    if reg is not None:
+        entry["source_flow_uuid"] = reg.flow_uuid
+    for key in ("python_type", "python_module", "description"):
+        value = getattr(a, key)
+        if value is not None:
+            entry[key] = value
+    tags = json.loads(a.tags) if a.tags else []
+    if tags:
+        entry["tags"] = tags
+    return entry
+
+
+def regenerate_models_manifest(db: Session, root: Path, owner_id: int) -> None:
+    """models.yaml mirrors the owner's active global artifacts as definition + lineage. The blob
+    lives outside the project (global_artifacts_directory) and is never committed; on a fresh clone
+    the row reappears and the blob refills when its producing flow re-runs."""
+    rows = (
+        db.query(GlobalArtifact)
+        .filter(GlobalArtifact.owner_id == owner_id, GlobalArtifact.status == "active")
+        .all()
+    )
+    entries = [_artifact_entry(db, a) for a in rows]
+    entries.sort(key=lambda e: (e["name"], json.dumps(e.get("namespace"), sort_keys=True), e["version"]))
+    write_yaml(manifest.models_manifest_path(root), {"models": entries})
+
+
 # --- full projection ---------------------------------------------------------
 
 # Project dirs that mirror the DB; everything in them is pruned to the written set on full projection.
@@ -361,4 +452,6 @@ def project_all(db: Session, root: Path, owner_id: int) -> None:
         written.add(project_cloud_connection(db, root, conn.connection_name, owner_id))
     regenerate_secret_manifest(db, root, owner_id)
     regenerate_namespace_manifest(db, root, owner_id)
+    regenerate_tables_manifest(db, root, owner_id)
+    regenerate_models_manifest(db, root, owner_id)
     _prune_orphan_files(root, written - {None})

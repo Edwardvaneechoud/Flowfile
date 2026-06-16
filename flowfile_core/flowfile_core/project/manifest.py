@@ -86,3 +86,11 @@ def secrets_manifest_path(root: Path) -> Path:
 
 def namespaces_manifest_path(root: Path) -> Path:
     return root / "namespaces.yaml"
+
+
+def tables_manifest_path(root: Path) -> Path:
+    return root / "tables.yaml"
+
+
+def models_manifest_path(root: Path) -> Path:
+    return root / "models.yaml"

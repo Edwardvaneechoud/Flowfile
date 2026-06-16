@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from flowfile_core import __version__
@@ -57,6 +58,18 @@ def _friendly_changes(raw: list[dict]) -> list[dict]:
 class ProjectSyncService:
     def __init__(self) -> None:
         self._by_owner: dict[int, ActiveProject] | None = None  # None = not loaded yet
+        self._suppressed = False  # while True, all projection hooks are no-ops (set during import)
+
+    @contextmanager
+    def suppress_projection(self):
+        """Disable projection hooks for the duration. Used during import so the file→DB rebuild can
+        never trigger a DB→file regeneration that would overwrite the manifests it is reading."""
+        prev = self._suppressed
+        self._suppressed = True
+        try:
+            yield
+        finally:
+            self._suppressed = prev
 
     # --- active-project cache -------------------------------------------------
 
@@ -75,7 +88,7 @@ class ProjectSyncService:
             return {}
 
     def get_active_project(self, user_id: int | None) -> ActiveProject | None:
-        if user_id is None:
+        if user_id is None or self._suppressed:
             return None
         return self._load().get(user_id)
 
@@ -154,6 +167,26 @@ class ProjectSyncService:
                 projection.regenerate_namespace_manifest(db, proj.root, proj.owner_id)
         except Exception:
             logger.warning("Project namespace-manifest projection failed", exc_info=True)
+
+    def tables_changed(self, user_id: int | None) -> None:
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            return
+        try:
+            with get_db_context() as db:
+                projection.regenerate_tables_manifest(db, proj.root, proj.owner_id)
+        except Exception:
+            logger.warning("Project tables-manifest projection failed", exc_info=True)
+
+    def artifacts_changed(self, user_id: int | None) -> None:
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            return
+        try:
+            with get_db_context() as db:
+                projection.regenerate_models_manifest(db, proj.root, proj.owner_id)
+        except Exception:
+            logger.warning("Project models-manifest projection failed", exc_info=True)
 
     # --- lifecycle (explicit user actions via /project router + CLI) ----------
 
