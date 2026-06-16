@@ -9,32 +9,24 @@
         :projects="store.projects"
         :selected-root="store.selectedRoot"
         :status="store.status"
+        :has-changes="store.hasChanges"
         :pending-count="store.pendingChangeCount"
-        :exporting="store.exporting"
-        :applying="store.applying"
+        :busy="busy"
         :loading="store.loadingStatus"
         @select="onSelectProject"
-        @export="onExport"
-        @apply="onApply"
+        @checkpoint="onCheckpoint"
+        @load-from-files="onLoadFromFiles"
         @refresh="onRefresh"
         @new="initDialogVisible = true"
       />
 
       <div class="workspace-body">
-        <DriftPanel v-if="store.status" :drift="store.status.drift" />
-        <ExportResultPanel v-if="store.lastExport" :result="store.lastExport" />
-        <ApplyResultPanel v-if="store.lastApply" :result="store.lastApply" />
+        <ChangesPanel v-if="store.hasChanges && store.status" :drift="store.status.drift" />
         <RequiredSecretsPanel
           v-if="store.requiredSecrets.length"
           :secrets="store.requiredSecrets"
         />
-        <HistoryPanel
-          :history="store.history"
-          :committing="store.committing"
-          @commit="onCommit"
-          @view-diff="onViewDiff"
-          @restore="onRestore"
-        />
+        <HistoryPanel :history="store.history" @view-diff="onViewDiff" @restore="onRestore" />
       </div>
     </template>
 
@@ -55,9 +47,7 @@ import { useWorkspaceStore } from "../../stores/workspace-store";
 import type { GitCommit } from "../../types";
 import WorkspaceEmptyState from "./WorkspaceEmptyState.vue";
 import WorkspaceHeader from "./WorkspaceHeader.vue";
-import DriftPanel from "./DriftPanel.vue";
-import ExportResultPanel from "./ExportResultPanel.vue";
-import ApplyResultPanel from "./ApplyResultPanel.vue";
+import ChangesPanel from "./ChangesPanel.vue";
 import RequiredSecretsPanel from "./RequiredSecretsPanel.vue";
 import HistoryPanel from "./HistoryPanel.vue";
 import InitProjectDialog from "./InitProjectDialog.vue";
@@ -71,6 +61,7 @@ const ready = ref(false);
 const diffDialog = reactive({ visible: false, title: "", diff: "", loading: false });
 
 const loadingInitial = computed(() => !ready.value && store.loadingProjects);
+const busy = computed(() => store.exporting || store.applying || store.committing);
 
 onMounted(async () => {
   try {
@@ -97,74 +88,52 @@ async function onRefresh() {
   await store.refresh();
 }
 
-async function onExport() {
+async function onCheckpoint() {
+  let message: string;
   try {
-    const result = await store.exportProject();
-    const changed = result.written.length + result.removed.length;
-    ElMessage.success(
-      changed
-        ? `Exported — ${result.written.length} written, ${result.removed.length} removed`
-        : "Already up to date — nothing to export",
-    );
-    if (result.warnings.length) {
-      ElMessage.warning(`${result.warnings.length} warning(s) — see "Last export" below`);
+    const result = await ElMessageBox.prompt("Name this checkpoint", "Create checkpoint", {
+      confirmButtonText: "Create",
+      cancelButtonText: "Cancel",
+      inputValue: `Checkpoint ${new Date().toLocaleString()}`,
+      inputValidator: (v) => (v && v.trim() ? true : "A name is required"),
+    });
+    message = result.value.trim();
+  } catch {
+    return; // cancelled
+  }
+  try {
+    const { exported } = await store.createCheckpoint(message);
+    ElMessage.success("Checkpoint created");
+    if (exported.warnings.length) {
+      ElMessage.warning(`${exported.warnings.length} item(s) skipped — ${exported.warnings[0]}`);
     }
   } catch {
-    ElMessage.error(store.error ?? "Export failed");
+    ElMessage.error(store.error ?? "Failed to create checkpoint");
   }
 }
 
-async function onApply() {
+async function onLoadFromFiles() {
   try {
     await ElMessageBox.confirm(
-      "Apply rewrites your runtime catalog from the project files: flows, connections and " +
-        "cron/interval schedules are upserted (managed schedules are replaced). Secret values are " +
-        "refilled from environment variables / .env — missing ones are reported, not fatal.",
-      "Apply project to database?",
-      { confirmButtonText: "Apply", cancelButtonText: "Cancel", type: "warning" },
+      "Load the project files into the app? This rebuilds the runtime catalog from the files on " +
+        "disk (flows, connections, cron/interval schedules) — use it after cloning the project or " +
+        "editing files outside the app. Missing secret values are reported, not fatal.",
+      "Load from files",
+      { confirmButtonText: "Load", cancelButtonText: "Cancel", type: "warning" },
     );
   } catch {
     return; // cancelled
   }
   try {
     const result = await store.applyProject();
-    ElMessage.success("Applied project to the database");
+    ElMessage.success("Loaded project from files");
     if (result.missing_secrets.length) {
       ElMessage.warning(
-        `${result.missing_secrets.length} secret value(s) missing — set FLOWFILE_SECRET_* and apply again`,
+        `${result.missing_secrets.length} secret value(s) missing — set FLOWFILE_SECRET_* and load again`,
       );
     }
   } catch {
-    ElMessage.error(store.error ?? "Apply failed");
-  }
-}
-
-function onProjectCreated() {
-  ElMessage.success("Project created and exported");
-}
-
-async function onCommit() {
-  let message: string;
-  try {
-    const result = await ElMessageBox.prompt("Describe this snapshot", "Commit", {
-      confirmButtonText: "Commit",
-      cancelButtonText: "Cancel",
-      inputValue: "Update Flowfile project",
-      inputValidator: (v) => (v && v.trim() ? true : "A message is required"),
-    });
-    message = result.value;
-  } catch {
-    return; // cancelled
-  }
-  try {
-    const result = await store.commit(message.trim());
-    if (result.committed) {
-      ElMessage.success("Committed snapshot");
-    } else {
-      ElMessage.info("Nothing to commit — already up to date");
-    }
-  } catch {
-    ElMessage.error(store.error ?? "Commit failed");
+    ElMessage.error(store.error ?? "Failed to load from files");
   }
 }
 
@@ -188,8 +157,8 @@ async function onRestore(commit: GitCommit) {
   try {
     await ElMessageBox.confirm(
       `Restore the project to “${commit.subject}” (${commit.short_sha})? This rewrites the project ` +
-        "files and re-applies them to the database. A new snapshot records the rollback so you can undo it.",
-      "Restore version",
+        "files and re-applies them to the app. A new checkpoint records the rollback so you can undo it.",
+      "Restore checkpoint",
       { confirmButtonText: "Restore", cancelButtonText: "Cancel", type: "warning" },
     );
   } catch {
@@ -201,5 +170,9 @@ async function onRestore(commit: GitCommit) {
   } catch {
     ElMessage.error(store.error ?? "Restore failed");
   }
+}
+
+function onProjectCreated() {
+  ElMessage.success("Project created");
 }
 </script>

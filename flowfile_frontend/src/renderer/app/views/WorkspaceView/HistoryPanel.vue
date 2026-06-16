@@ -1,35 +1,17 @@
 <template>
   <section class="ws-card">
     <header class="ws-card-head">
-      <h3 class="ws-card-title"><i class="fa-solid fa-clock-rotate-left" /> History</h3>
-      <button
-        v-if="history?.git_available"
-        class="ws-btn ws-btn-primary ws-btn-sm"
-        :disabled="committing"
-        @click="emit('commit')"
-      >
-        <span v-if="committing" class="ws-spin" />
-        <i v-else class="fa-solid fa-code-commit" /> Commit
-      </button>
+      <h3 class="ws-card-title"><i class="fa-solid fa-clock-rotate-left" /> Checkpoints</h3>
     </header>
 
     <p v-if="!history || !history.git_available" class="ws-muted">
-      Git isn't available on the server, so in-app history is disabled. You can still version the
+      Git isn't available on the server, so checkpoints are disabled. You can still version the
       exported folder with git manually.
     </p>
 
     <template v-else>
-      <div v-if="history.dirty" class="ws-alert ws-alert-warn">
-        <i class="fa-solid fa-pen" />
-        <div>
-          {{ history.uncommitted.length }} uncommitted change(s).
-          <a class="ws-link" @click="emit('view-diff', null)">View</a> — commit to snapshot this
-          version.
-        </div>
-      </div>
-
       <p v-if="!history.commits.length" class="ws-muted">
-        No snapshots yet — commit to start tracking history.
+        No checkpoints yet — click “Create checkpoint” to save the current state.
       </p>
 
       <ul v-else class="ws-commits">
@@ -47,7 +29,7 @@
             </button>
             <button
               class="ws-icon-btn"
-              title="Restore this version"
+              title="Restore this checkpoint"
               @click="emit('restore', commit)"
             >
               <i class="fa-solid fa-clock-rotate-left" />
@@ -62,9 +44,8 @@
 <script setup lang="ts">
 import type { GitCommit, WorkspaceGitHistory } from "../../types";
 
-defineProps<{ history: WorkspaceGitHistory | null; committing: boolean }>();
+defineProps<{ history: WorkspaceGitHistory | null }>();
 const emit = defineEmits<{
-  (e: "commit"): void;
   (e: "view-diff", sha: string | null): void;
   (e: "restore", commit: GitCommit): void;
 }>();

@@ -36,26 +36,35 @@
     </div>
 
     <div class="ws-actions">
-      <button class="ws-btn" :disabled="loading" @click="emit('refresh')">
-        <i class="fa-solid fa-rotate" :class="{ 'fa-spin': loading }" /> Refresh
-      </button>
       <button
         class="ws-btn ws-btn-primary"
-        :disabled="exporting || applying"
-        @click="emit('export')"
+        :disabled="!hasChanges || busy"
+        :title="
+          hasChanges
+            ? 'Snapshot the current state'
+            : 'Nothing has changed since your last checkpoint'
+        "
+        @click="emit('checkpoint')"
       >
-        <span v-if="exporting" class="ws-spin" />
-        <i v-else class="fa-solid fa-arrow-up-from-bracket" /> Export
-      </button>
-      <button
-        class="ws-btn ws-btn-warning"
-        :disabled="applying || exporting"
-        @click="emit('apply')"
-      >
-        <span v-if="applying" class="ws-spin" />
-        <i v-else class="fa-solid fa-arrow-down-to-bracket" /> Apply
+        <span v-if="busy" class="ws-spin" />
+        <i v-else class="fa-solid fa-bookmark" /> Create checkpoint
       </button>
       <button class="ws-btn" @click="emit('new')"><i class="fa-solid fa-plus" /> New</button>
+      <el-dropdown trigger="click" @command="onCommand">
+        <button class="ws-btn ws-btn-icon" title="More actions">
+          <i class="fa-solid fa-ellipsis-vertical" />
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="refresh" :disabled="loading">
+              <i class="fa-solid fa-rotate" /> Refresh
+            </el-dropdown-item>
+            <el-dropdown-item command="load" divided :disabled="busy">
+              <i class="fa-solid fa-arrow-down-to-bracket" /> Load from files…
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
     </div>
   </header>
 </template>
@@ -69,16 +78,16 @@ const props = defineProps<{
   projects: WorkspaceProjectInfo[];
   selectedRoot: string | null;
   status: WorkspaceStatus | null;
+  hasChanges: boolean;
   pendingCount: number;
-  exporting: boolean;
-  applying: boolean;
+  busy: boolean;
   loading: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "select", root: string): void;
-  (e: "export"): void;
-  (e: "apply"): void;
+  (e: "checkpoint"): void;
+  (e: "load-from-files"): void;
   (e: "refresh"): void;
   (e: "new"): void;
 }>();
@@ -92,13 +101,7 @@ const sync = computed(() => {
     return { label: "Checking…", cls: "neutral", icon: "fa-solid fa-rotate fa-spin" };
   }
   const drift = props.status?.drift;
-  if (!drift) {
-    return { label: "Unknown", cls: "neutral", icon: "fa-solid fa-circle-question" };
-  }
-  if (drift.in_sync) {
-    return { label: "In sync", cls: "ok", icon: "fa-solid fa-circle-check" };
-  }
-  if (drift.conflict.length) {
+  if (drift && drift.conflict.length) {
     const n = drift.conflict.length;
     return {
       label: `${n} conflict${n > 1 ? "s" : ""}`,
@@ -106,9 +109,21 @@ const sync = computed(() => {
       icon: "fa-solid fa-triangle-exclamation",
     };
   }
-  const n = props.pendingCount;
-  return { label: `${n} change${n > 1 ? "s" : ""}`, cls: "warn", icon: "fa-solid fa-pen" };
+  if (props.hasChanges) {
+    const n = props.pendingCount;
+    return {
+      label: n > 0 ? `${n} unsaved change${n > 1 ? "s" : ""}` : "Unsaved changes",
+      cls: "warn",
+      icon: "fa-solid fa-pen",
+    };
+  }
+  return { label: "Up to date", cls: "ok", icon: "fa-solid fa-circle-check" };
 });
+
+function onCommand(command: string) {
+  if (command === "refresh") emit("refresh");
+  if (command === "load") emit("load-from-files");
+}
 
 async function copy(text: string | null) {
   if (!text) return;

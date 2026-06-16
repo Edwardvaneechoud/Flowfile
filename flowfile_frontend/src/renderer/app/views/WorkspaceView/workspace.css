@@ -210,6 +210,12 @@
   border-color: var(--color-warning-hover);
 }
 
+.ws-btn-icon {
+  padding: var(--spacing-2);
+  width: 38px;
+  justify-content: center;
+}
+
 .ws-icon-btn {
   display: inline-flex;
   align-items: center;

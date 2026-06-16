@@ -67,6 +67,12 @@ export const useWorkspaceStore = defineStore("workspace", {
       const d = state.status?.drift;
       return d ? d.db_ahead.length + d.files_ahead.length + d.conflict.length : 0;
     },
+    // Anything to checkpoint: the DB differs from the exported tree, or the tree
+    // has changes not yet committed to git.
+    hasChanges: (state): boolean => {
+      const driftChanged = state.status?.drift ? !state.status.drift.in_sync : false;
+      return driftChanged || (state.history?.dirty ?? false);
+    },
   },
 
   actions: {
@@ -188,6 +194,29 @@ export const useWorkspaceStore = defineStore("workspace", {
       this.lastExport = null;
       this.lastApply = null;
       await this.refresh();
+    },
+
+    // The one primary action: snapshot the current environment. Exports the DB
+    // to files, then records a git checkpoint — surfaced to the user as a single
+    // "Create checkpoint" step.
+    async createCheckpoint(
+      message: string,
+    ): Promise<{ exported: WorkspaceExportResult; committed: CommitResponse }> {
+      if (!this.selectedRoot) throw new Error("No project selected");
+      this.committing = true;
+      this.error = null;
+      try {
+        const exported = await WorkspaceApi.export(this.selectedRoot);
+        this.lastExport = exported;
+        const committed = await WorkspaceApi.commit(this.selectedRoot, message);
+        await this.refresh();
+        return { exported, committed };
+      } catch (error) {
+        this.error = errMessage(error, "Failed to create checkpoint");
+        throw error;
+      } finally {
+        this.committing = false;
+      }
     },
 
     async commit(message: string): Promise<CommitResponse> {
