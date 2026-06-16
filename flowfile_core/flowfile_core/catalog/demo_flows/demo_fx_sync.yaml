@@ -76,6 +76,8 @@ nodes:
     keep_missing: false
     select_input:
     - old_name: date
+    - old_name: amount
+    - old_name: base
     - old_name: rates.GBP
       new_name: GBP
     - old_name: rates.JPY
@@ -88,31 +90,52 @@ nodes:
       new_name: CAD
     - old_name: rates.CNY
       new_name: CNY
-    - old_name: amount
-    - old_name: base
     - old_name: rates.BRL
+      new_name: BRL
     - old_name: rates.CZK
+      new_name: CZK
     - old_name: rates.DKK
+      new_name: DKK
     - old_name: rates.HKD
+      new_name: HKD
     - old_name: rates.HUF
+      new_name: HUF
     - old_name: rates.IDR
+      new_name: IDR
     - old_name: rates.ILS
+      new_name: ILS
     - old_name: rates.INR
+      new_name: INR
     - old_name: rates.ISK
+      new_name: ISK
     - old_name: rates.KRW
+      new_name: KRW
     - old_name: rates.MXN
+      new_name: MXN
     - old_name: rates.MYR
+      new_name: MYR
     - old_name: rates.NOK
+      new_name: NOK
     - old_name: rates.NZD
+      new_name: NZD
     - old_name: rates.PHP
+      new_name: PHP
     - old_name: rates.PLN
+      new_name: PLN
     - old_name: rates.RON
+      new_name: RON
     - old_name: rates.SEK
+      new_name: SEK
     - old_name: rates.SGD
+      new_name: SGD
     - old_name: rates.THB
+      new_name: THB
     - old_name: rates.TRY
+      new_name: TRY
     - old_name: rates.USD
+      new_name: USD
     - old_name: rates.ZAR
+      new_name: ZAR
     sorted_by: none
 - id: 3
   type: unpivot

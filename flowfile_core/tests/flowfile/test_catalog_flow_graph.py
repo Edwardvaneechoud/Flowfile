@@ -137,6 +137,72 @@ class TestCatalogWriter:
             assert len(tables) == 1
             assert tables[0].source_registration_id == reg_id
 
+    def test_cli_runner_records_producer_lineage(self):
+        """The subprocess flow runner (manual-trigger / scheduled runs) must stamp
+        source_registration_id before run_graph so produced tables record producer
+        lineage. Regression: canvas runs resolved the registration but the CLI
+        runners did not, so manual/scheduled runs lost lineage.
+
+        Exercises flowfile.__main__.run_flow (the non-frozen subprocess path);
+        flowfile_core.main._run_flow_cli is an identical mirror for frozen builds.
+        """
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        ns_id = _create_namespace()
+
+        # Build a physical catalog_writer flow with NO in-memory
+        # source_registration_id, then persist it — the state a manual/scheduled
+        # run loads from disk before executing.
+        graph = _create_graph(execution_location="local")
+        _add_manual_input(graph, SAMPLE_DATA, node_id=1)
+        graph.add_node_promise(
+            input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
+        )
+        graph.add_catalog_writer(
+            input_schema.NodeCatalogWriter(
+                flow_id=graph.flow_id,
+                node_id=2,
+                depending_on_id=1,
+                catalog_write_settings=input_schema.CatalogWriteSettings(
+                    table_name="cli_produced_table",
+                    namespace_id=ns_id,
+                ),
+                user_id=1,
+            )
+        )
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            flow_path = Path(tmp) / "producer_flow.yaml"
+            graph.save_flow(str(flow_path))
+            # open_flow stamps the resolved path; register at that exact string so
+            # resolve_source_registration_id finds the registration by path.
+            resolved_path = str(flow_path.resolve())
+            reg_id = _create_flow_registration(ns_id, name="producer_flow", path=resolved_path)
+
+            prev_offload = OFFLOAD_TO_WORKER.value
+            prev_env = {k: os.environ.get(k) for k in ("FLOWFILE_SINGLE_FILE_MODE", "FLOWFILE_WORKER_PORT")}
+            try:
+                from flowfile.__main__ import run_flow
+
+                exit_code = run_flow(resolved_path, run_id=None)
+            finally:
+                OFFLOAD_TO_WORKER.set(prev_offload)
+                for key, value in prev_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        assert exit_code == 0
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            tables = repo.list_tables(namespace_id=ns_id)
+            assert len(tables) == 1
+            assert tables[0].name == "cli_produced_table"
+            assert tables[0].source_registration_id == reg_id
+
     def test_writer_overwrite_mode_replaces_table(self, execution_location):
         """With write_mode='overwrite', running twice should replace the table and preserve its ID."""
         ns_id = _create_namespace()
@@ -484,6 +550,84 @@ class TestSyncCatalogReadLinks:
             assert len(links) == 0
 
         os.unlink(save_path)
+
+    def test_reader_backfills_identity_from_full_name(self):
+        """A reader referenced only by catalog_full_table_name gets its
+        catalog_table_id / namespace_id / table_name back-filled on add, so the
+        settings form populates on reopen and read-lineage can be recorded."""
+        ns_id = _create_namespace()
+
+        df = pl.DataFrame(SAMPLE_DATA)
+        tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
+        df.write_parquet(tmp.name)
+        tmp.close()
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            table_out = svc.register_table(name="named_table", file_path=tmp.name, owner_id=1, namespace_id=ns_id)
+        table_id = table_out.id
+
+        graph = _create_graph()
+        graph.add_node_promise(
+            input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        )
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            catalog_full_table_name="TestSch.named_table",
+        )
+        graph.add_catalog_reader(reader)
+
+        assert reader.catalog_table_id == table_id
+        assert reader.catalog_namespace_id == ns_id
+        assert reader.catalog_table_name == "named_table"
+
+        os.unlink(tmp.name)
+
+    def test_register_python_editor_flow_records_named_reader_link(self):
+        """register_python_editor_flow records read links for readers referenced
+        only by full table name (regression: the demo flow's reader produced no
+        read lineage)."""
+        from flowfile_core.flowfile.catalog_helpers import register_python_editor_flow
+
+        ns_id = _create_namespace()
+
+        df = pl.DataFrame(SAMPLE_DATA)
+        tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
+        df.write_parquet(tmp.name)
+        tmp.close()
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            table_out = svc.register_table(
+                name="demo_named_table", file_path=tmp.name, owner_id=1, namespace_id=ns_id
+            )
+        table_id = table_out.id
+
+        graph = _create_graph()
+        graph.add_node_promise(
+            input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        )
+        graph.add_catalog_reader(
+            input_schema.NodeCatalogReader(
+                flow_id=graph.flow_id,
+                node_id=1,
+                catalog_full_table_name="TestSch.demo_named_table",
+                user_id=1,
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmpd:
+            flow_path = str(Path(tmpd) / "named_reader_flow.yaml")
+            reg_id = register_python_editor_flow(
+                graph, name="named_reader_flow", namespace_id=ns_id, flow_path=flow_path, user_id=1
+            )
+
+        with get_db_context() as db:
+            link = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=reg_id).first()
+            assert link is not None
+
+        os.unlink(tmp.name)
 
 
 # Round-trip: write → read
