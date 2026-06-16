@@ -53,17 +53,18 @@ def deterministic_flow_id(flow_uuid: str) -> int:
     return int(hashlib.sha256(flow_uuid.encode()).hexdigest(), 16) & 0xFFFFFFFF
 
 
-def normalize_flow_data(data: dict, flow_uuid: str) -> dict:
+def normalize_flow_data(data: dict, flow_uuid: str, catalog_name: str) -> dict:
     """Strip volatile fields from a FlowfileData dict; key it by the stable flow_uuid.
 
     ``flowfile_id`` (timestamp+host+random) and ``source_registration_id`` (a machine-local
     FK) are the only volatile fields that reach the projected file; everything else in
-    ``FlowfileData`` is already deterministic. The injected ``flow_uuid`` is ignored by the
-    ``FlowfileData`` loader (unknown keys) but read by the importer to re-link the flow.
+    ``FlowfileData`` is already deterministic. ``flow_uuid`` and ``catalog_name`` are injected
+    for the importer (the loader ignores unknown keys): ``flow_uuid`` re-links the flow,
+    ``catalog_name`` restores its friendly catalog label without being the filename key.
     """
     data = dict(data)
     data["flowfile_id"] = deterministic_flow_id(flow_uuid)
     settings = data.get("flowfile_settings")
     if isinstance(settings, dict):
         settings["source_registration_id"] = None
-    return {"flow_uuid": flow_uuid, **data}
+    return {"flow_uuid": flow_uuid, "catalog_name": catalog_name, **data}

@@ -496,6 +496,7 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElCheckbox, ElLoading, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useProjectStore } from "../../stores/project-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
@@ -545,6 +546,7 @@ const router = useRouter();
 const route = useRoute();
 
 const catalogStore = useCatalogStore();
+const projectStore = useProjectStore();
 const flowStore = useFlowStore();
 const { recordFlow } = useRecentFlows();
 
@@ -1047,6 +1049,7 @@ async function handleDeleteFlow(flowId: number) {
   if (!result) return;
   try {
     await CatalogApi.deleteFlow(flowId, result.deleteFile);
+    projectStore.onSourceChanged();
     catalogStore.selectedFlowId = null;
     await Promise.all([
       catalogStore.loadTree(),

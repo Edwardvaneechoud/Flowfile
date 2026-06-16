@@ -29,6 +29,31 @@ from flowfile_core.project.models import ActiveProject, SetupResult
 logger = logging.getLogger(__name__)
 
 
+def _classify_path(path: str) -> tuple[str, str]:
+    """Map a project file path to a (kind, label) for a friendly change summary."""
+    name = path.split("/")[-1]
+    if path.startswith("flows/") and name.endswith(".flow.yaml"):
+        return "flow", name[: -len(".flow.yaml")]
+    stem = name[: -len(".yaml")] if name.endswith(".yaml") else name
+    if path.startswith("connections/database/"):
+        return "database connection", stem
+    if path.startswith("connections/cloud/"):
+        return "cloud connection", stem
+    if path.startswith("schedules/"):
+        return "schedule", stem
+    return "settings", name
+
+
+def _friendly_changes(raw: list[dict]) -> list[dict]:
+    """Turn `git diff --name-status` rows into `{change, kind, label, path}` for the restore preview."""
+    out: list[dict] = []
+    for item in raw:
+        change = {"D": "removed", "A": "added"}.get(item["status"][0], "modified")
+        kind, label = _classify_path(item["path"])
+        out.append({"change": change, "kind": kind, "label": label, "path": item["path"]})
+    return out
+
+
 class ProjectSyncService:
     def __init__(self) -> None:
         self._by_owner: dict[int, ActiveProject] | None = None  # None = not loaded yet
@@ -64,9 +89,20 @@ class ProjectSyncService:
             with get_db_context() as db:
                 reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).first()
                 if reg is not None and reg.owner_id == proj.owner_id:
-                    projection.project_flow(proj.root, reg)
+                    target = projection.project_flow(proj.root, reg)
+                    if target is not None:
+                        projection.remove_stale_flow_files(proj.root, reg.flow_uuid, target)
         except Exception:
             logger.warning("Project flow projection failed for %s", flow_path, exc_info=True)
+
+    def flow_deleted(self, flow_uuid: str, user_id: int | None) -> None:
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            return
+        try:
+            projection.remove_flow(proj.root, flow_uuid=flow_uuid)
+        except Exception:
+            logger.warning("Project flow-delete projection failed for %s", flow_uuid, exc_info=True)
 
     def connection_changed(self, kind: str, connection_name: str, user_id: int | None, deleted: bool = False) -> None:
         proj = self.get_active_project(user_id)
@@ -150,10 +186,62 @@ class ProjectSyncService:
             repository.set_head_sha(db, proj.id, git_ops.head_sha(proj.root))
         return sha
 
+    def restore_version(self, user_id: int, sha: str, label: str | None = None) -> SetupResult:
+        """Reset files to ``sha``, rebuild + prune the DB to match, and record it as a new version.
+
+        Restore is one complete action: the working tree is reset to ``sha`` (deletions included),
+        the DB is rebuilt and pruned to match, and a "Restore: …" commit is made so history stays
+        clean with no dangling unsaved state.
+        """
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            raise RuntimeError("No active project")
+        git_ops.restore(proj.root, sha)
+        result = import_project(proj.root, proj.owner_id, prune=True)
+        message = f"Restore: {label}" if label else f"Restore version {sha[:8]}"
+        git_ops.commit_all(proj.root, message)
+        with get_db_context() as db:
+            repository.set_head_sha(db, proj.id, git_ops.head_sha(proj.root))
+        return result
+
+    def reload_from_disk(self, user_id: int) -> SetupResult:
+        """Accept on-disk (external) changes by rebuilding + pruning the DB to match the files."""
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            raise RuntimeError("No active project")
+        return import_project(proj.root, proj.owner_id, prune=True)
+
+    def changes_for_version(self, user_id: int, sha: str) -> list[dict]:
+        """Friendly summary of what restoring ``sha`` would change vs the latest saved version."""
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            raise RuntimeError("No active project")
+        return _friendly_changes(git_ops.diff_name_status(proj.root, "HEAD", sha))
+
+    def version_diff(self, user_id: int, sha: str) -> list[dict]:
+        """Friendly changelog of what a specific version changed vs the one before it."""
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            raise RuntimeError("No active project")
+        return _friendly_changes(git_ops.changes_in(proj.root, sha))
+
+    def uncommitted_changes(self, user_id: int) -> list[dict]:
+        """Friendly summary of the unsaved working-tree changes (what a Save version would record)."""
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            raise RuntimeError("No active project")
+        return _friendly_changes(git_ops.uncommitted_changes(proj.root))
+
     def close_project(self, owner_id: int) -> None:
         with get_db_context() as db:
             repository.deactivate_owner(db, owner_id)
         self._load().pop(owner_id, None)
+
+    def has_uncommitted_changes(self, user_id: int) -> bool:
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            return False
+        return git_ops.is_dirty(proj.root)
 
     def has_external_changes(self, user_id: int) -> bool:
         proj = self.get_active_project(user_id)

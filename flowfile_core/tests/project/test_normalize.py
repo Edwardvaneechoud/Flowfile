@@ -40,20 +40,21 @@ def test_deterministic_flow_id_is_stable_and_32bit():
 
 
 def test_normalize_strips_volatile_fields():
-    nd = normalize_flow_data(_flow_data(111111), "b3f1-uuid")
+    nd = normalize_flow_data(_flow_data(111111), "b3f1-uuid", "Daily FX Sync")
     assert nd["flow_uuid"] == "b3f1-uuid"
+    assert nd["catalog_name"] == "Daily FX Sync"
     assert nd["flowfile_id"] == deterministic_flow_id("b3f1-uuid")
     assert nd["flowfile_settings"]["source_registration_id"] is None
 
 
 def test_normalize_is_idempotent_regardless_of_input_id():
     # Two different volatile ids must normalize to byte-identical YAML.
-    a = dump_yaml(normalize_flow_data(_flow_data(111111), "u"))
-    b = dump_yaml(normalize_flow_data(_flow_data(999999), "u"))
+    a = dump_yaml(normalize_flow_data(_flow_data(111111), "u", "Daily FX Sync"))
+    b = dump_yaml(normalize_flow_data(_flow_data(999999), "u", "Daily FX Sync"))
     assert a == b
     # Re-normalizing the output changes nothing.
-    once = normalize_flow_data(_flow_data(1), "u")
-    twice = normalize_flow_data(once, "u")
+    once = normalize_flow_data(_flow_data(1), "u", "Daily FX Sync")
+    twice = normalize_flow_data(once, "u", "Daily FX Sync")
     assert dump_yaml(once) == dump_yaml(twice)
 
 
@@ -95,8 +96,9 @@ def test_load_dotenv(tmp_path):
 
 
 def test_normalize_output_loads_back_as_yaml():
-    # The projected file must remain parseable YAML (FlowfileData ignores the extra key).
-    nd = normalize_flow_data(_flow_data(5), "u")
+    # The projected file must remain parseable YAML (FlowfileData ignores the extra keys).
+    nd = normalize_flow_data(_flow_data(5), "u", "Daily FX Sync")
     reloaded = yaml.safe_load(dump_yaml(nd))
     assert reloaded["flowfile_id"] == deterministic_flow_id("u")
     assert "flow_uuid" in reloaded
+    assert reloaded["catalog_name"] == "Daily FX Sync"

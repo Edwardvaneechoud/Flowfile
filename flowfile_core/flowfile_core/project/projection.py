@@ -57,21 +57,74 @@ def _load_flow_data(flow_path: str) -> dict | None:
     return json.loads(text) if p.suffix.lower() == ".json" else yaml.safe_load(text)
 
 
-def project_flow(root: Path, reg: FlowRegistration) -> None:
+def _name_stem(name: str | None) -> str:
+    """Clean file stem for a flow name. Strips a trailing ``.flow`` so a flow saved to
+    ``x.flow.yaml`` (name becomes ``x.flow``) doesn't project to ``x.flow.flow.yaml``."""
+    name = name or ""
+    if name.endswith(".flow"):
+        name = name[: -len(".flow")]
+    return safe_stem(name)
+
+
+def _flow_stem(reg: FlowRegistration) -> str:
+    """The flow's file stem: its intrinsic ``flowfile_name`` (stable across the DB↔files round-trip)."""
+    data = _load_flow_data(reg.flow_path) or {}
+    return _name_stem(data.get("flowfile_name") or reg.name)
+
+
+def project_flow(root: Path, reg: FlowRegistration) -> Path | None:
     data = _load_flow_data(reg.flow_path)
     if data is None:
-        return
-    target = manifest.flows_dir(root) / f"{safe_stem(reg.name)}.flow.yaml"
+        return None
+    stem = _name_stem(data.get("flowfile_name") or reg.name)
+    target = manifest.flows_dir(root) / f"{stem}.flow.yaml"
     if target.exists():
         existing = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
         if existing.get("flow_uuid") not in (None, reg.flow_uuid):
-            target = manifest.flows_dir(root) / f"{safe_stem(reg.name)}_{reg.flow_uuid[:8]}.flow.yaml"
-    write_yaml(target, normalize_flow_data(data, reg.flow_uuid))
+            target = manifest.flows_dir(root) / f"{stem}_{reg.flow_uuid[:8]}.flow.yaml"
+    write_yaml(target, normalize_flow_data(data, reg.flow_uuid, reg.name))
+    return target
 
 
-def remove_flow(root: Path, name: str) -> None:
-    for p in manifest.flows_dir(root).glob(f"{safe_stem(name)}*.flow.yaml"):
-        p.unlink(missing_ok=True)
+def remove_flow(root: Path, flow_uuid: str | None = None, name: str | None = None) -> None:
+    """Remove a flow's projected file and its schedule file.
+
+    Matches by ``flow_uuid`` (filename-independent — the projected name is derived from the flow's
+    intrinsic ``flowfile_name``, which the caller may no longer have after a delete); falls back to a
+    name-stem glob when only a name is known.
+    """
+    flows_dir = manifest.flows_dir(root)
+    if flow_uuid:
+        for p in flows_dir.glob("*.flow.yaml"):
+            try:
+                data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+            if data.get("flow_uuid") == flow_uuid:
+                p.unlink(missing_ok=True)
+                stem = _name_stem(data.get("flowfile_name") or p.name)
+                manifest.schedules_dir(root).joinpath(f"{stem}.yaml").unlink(missing_ok=True)
+    elif name:
+        stem = _name_stem(name)
+        for p in flows_dir.glob(f"{stem}*.flow.yaml"):
+            p.unlink(missing_ok=True)
+        manifest.schedules_dir(root).joinpath(f"{stem}.yaml").unlink(missing_ok=True)
+
+
+def remove_stale_flow_files(root: Path, flow_uuid: str, keep: Path) -> None:
+    """After (re)projecting a flow, drop any other file carrying the same ``flow_uuid`` — e.g. an
+    old name left behind by a rename — plus its now-orphaned schedule file."""
+    for p in manifest.flows_dir(root).glob("*.flow.yaml"):
+        if p == keep:
+            continue
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        if data.get("flow_uuid") == flow_uuid:
+            p.unlink(missing_ok=True)
+            stem = _name_stem(data.get("flowfile_name") or p.name)
+            manifest.schedules_dir(root).joinpath(f"{stem}.yaml").unlink(missing_ok=True)
 
 
 # --- connections -------------------------------------------------------------
@@ -115,26 +168,30 @@ def _cloud_connection_dict(db: Session, conn: CloudStorageConnection) -> dict:
     return d
 
 
-def project_database_connection(db: Session, root: Path, name: str, owner_id: int) -> None:
+def project_database_connection(db: Session, root: Path, name: str, owner_id: int) -> Path | None:
     conn = (
         db.query(DatabaseConnection)
         .filter(DatabaseConnection.connection_name == name, DatabaseConnection.user_id == owner_id)
         .first()
     )
     if conn is None:
-        return
-    write_yaml(manifest.connections_dir(root, "database") / f"{safe_stem(name)}.yaml", _db_connection_dict(db, conn))
+        return None
+    target = manifest.connections_dir(root, "database") / f"{safe_stem(name)}.yaml"
+    write_yaml(target, _db_connection_dict(db, conn))
+    return target
 
 
-def project_cloud_connection(db: Session, root: Path, name: str, owner_id: int) -> None:
+def project_cloud_connection(db: Session, root: Path, name: str, owner_id: int) -> Path | None:
     conn = (
         db.query(CloudStorageConnection)
         .filter(CloudStorageConnection.connection_name == name, CloudStorageConnection.user_id == owner_id)
         .first()
     )
     if conn is None:
-        return
-    write_yaml(manifest.connections_dir(root, "cloud") / f"{safe_stem(name)}.yaml", _cloud_connection_dict(db, conn))
+        return None
+    target = manifest.connections_dir(root, "cloud") / f"{safe_stem(name)}.yaml"
+    write_yaml(target, _cloud_connection_dict(db, conn))
+    return target
 
 
 def remove_connection(root: Path, kind: str, name: str) -> None:
@@ -156,7 +213,9 @@ def _schedule_dict(s: FlowSchedule) -> dict:
     }
 
 
-def project_schedules_for_registration(db: Session, root: Path, reg: FlowRegistration) -> None:
+def project_schedules_for_registration(
+    db: Session, root: Path, reg: FlowRegistration, stem: str | None = None
+) -> Path | None:
     schedules = (
         db.query(FlowSchedule)
         .filter(
@@ -166,11 +225,14 @@ def project_schedules_for_registration(db: Session, root: Path, reg: FlowRegistr
         .order_by(FlowSchedule.id.asc())
         .all()
     )
-    target = manifest.schedules_dir(root) / f"{safe_stem(reg.name)}.yaml"
+    # Share the flow's file stem so a flow and its schedule always line up (caller passes the
+    # resolved stem in full projection; the single-schedule hook recomputes it).
+    target = manifest.schedules_dir(root) / f"{stem or _flow_stem(reg)}.yaml"
     if not schedules:
         target.unlink(missing_ok=True)
-        return
+        return None
     write_yaml(target, {"flow_uuid": reg.flow_uuid, "schedules": [_schedule_dict(s) for s in schedules]})
+    return target
 
 
 # --- secret manifest (standalone secrets only) -------------------------------
@@ -194,15 +256,43 @@ def regenerate_secret_manifest(db: Session, root: Path, owner_id: int) -> None:
 
 # --- full projection ---------------------------------------------------------
 
+# Project dirs that mirror the DB; everything in them is pruned to the written set on full projection.
+_MIRRORED_DIRS = ("flows", "connections/database", "connections/cloud", "schedules")
+
+
+def _prune_orphan_files(root: Path, written: set[Path]) -> None:
+    """Delete project files with no matching DB resource so the folder is an exact mirror.
+
+    Only touches ``.yaml`` files under the mirrored dirs; ``project.yaml``, ``.gitignore`` and
+    ``secrets.yaml`` live at the root and are never swept.
+    """
+    for rel in _MIRRORED_DIRS:
+        d = root / rel
+        if not d.exists():
+            continue
+        for p in d.glob("*.yaml"):
+            if p not in written:
+                p.unlink(missing_ok=True)
+
 
 def project_all(db: Session, root: Path, owner_id: int) -> None:
+    written: set[Path] = set()
+    # Order by flow_uuid so the bare-vs-suffixed filename for same-named flows is stable across runs.
     for reg in (
-        db.query(FlowRegistration).filter(FlowRegistration.owner_id == owner_id).order_by(FlowRegistration.name.asc())
+        db.query(FlowRegistration)
+        .filter(FlowRegistration.owner_id == owner_id)
+        .order_by(FlowRegistration.flow_uuid.asc())
     ):
-        project_flow(root, reg)
-        project_schedules_for_registration(db, root, reg)
+        flow_path = project_flow(root, reg)
+        if flow_path is not None:
+            written.add(flow_path)
+        stem = flow_path.name[: -len(".flow.yaml")] if flow_path is not None else None
+        sched_path = project_schedules_for_registration(db, root, reg, stem)
+        if sched_path is not None:
+            written.add(sched_path)
     for conn in db.query(DatabaseConnection).filter(DatabaseConnection.user_id == owner_id):
-        project_database_connection(db, root, conn.connection_name, owner_id)
+        written.add(project_database_connection(db, root, conn.connection_name, owner_id))
     for conn in db.query(CloudStorageConnection).filter(CloudStorageConnection.user_id == owner_id):
-        project_cloud_connection(db, root, conn.connection_name, owner_id)
+        written.add(project_cloud_connection(db, root, conn.connection_name, owner_id))
     regenerate_secret_manifest(db, root, owner_id)
+    _prune_orphan_files(root, written - {None})

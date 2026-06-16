@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
 from flowfile_core import flow_file_handler
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
@@ -57,7 +58,7 @@ def _make_flow(tmp_path: Path, name: str) -> tuple[str, str]:
             flow_id=424242, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"a": 1}])
         )
     )
-    flow_path = str(tmp_path / f"{name}.flow.yaml")
+    flow_path = str(tmp_path / f"{name}.yaml")
     graph.save_flow(flow_path)
     auto_register_flow(flow_path, name, OWNER)
     with get_db_context() as db:
@@ -250,3 +251,125 @@ def test_no_op_when_no_active_project(monkeypatch):
     monkeypatch.setattr(projection, "project_flow", _boom)
     # No active project -> hook returns immediately, never touching projection.
     project_sync.flow_saved("/some/path.flow.yaml", OWNER)
+
+
+# --- churn / naming-stability regressions (the reported bug) ------------------
+
+
+def _make_flow_named(tmp_path: Path, flowfile_name: str, catalog_name: str, flow_id: int = 424242) -> str:
+    """Create a flow whose internal flowfile_name differs from its catalog name (the demo's shape)."""
+    handler = FlowfileHandler()
+    handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name=flowfile_name, path="."))
+    graph = handler.get_flow(flow_id)
+    graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=flow_id, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"a": 1}])
+        )
+    )
+    flow_path = str(tmp_path / f"{flowfile_name}.yaml")
+    graph.save_flow(flow_path)
+    auto_register_flow(flow_path, catalog_name, OWNER)
+    with get_db_context() as db:
+        reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
+        assert reg is not None
+        return reg.flow_uuid
+
+
+def _delete_flow(flow_uuid: str) -> None:
+    with get_db_context() as db:
+        reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+        if reg is None:
+            return
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        svc.delete_flow(reg.id, delete_file=True)
+
+
+def test_flow_filed_by_flowfile_name_with_catalog_label(tmp_path):
+    project_sync.close_project(OWNER)
+    flow_uuid = _make_flow_named(tmp_path, "fa_internal", "FA Catalog")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "FileName Test", OWNER)
+        # Filed by the intrinsic flowfile_name, NOT the catalog name; no suffixed duplicate.
+        assert (root / "flows" / "fa_internal.flow.yaml").exists()
+        assert not (root / "flows" / "FA_Catalog.flow.yaml").exists()
+        assert list((root / "flows").glob("fa_internal_*.flow.yaml")) == []
+        doc = yaml.safe_load((root / "flows" / "fa_internal.flow.yaml").read_text(encoding="utf-8"))
+        assert doc["catalog_name"] == "FA Catalog"
+        assert doc["flowfile_name"] == "fa_internal"
+    finally:
+        _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)
+
+
+def test_no_rename_churn_after_restore(tmp_path):
+    from flowfile_core.project import git_ops
+
+    if not git_ops.git_available():
+        pytest.skip("git not available")
+    project_sync.close_project(OWNER)
+    flow_uuid = _make_flow_named(tmp_path, "fb_internal", "FB Catalog", flow_id=424242)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Churn Test", OWNER)
+        sha_v1 = git_ops.head_sha(root)
+        before = (root / "flows" / "fb_internal.flow.yaml").read_bytes()
+
+        second_uuid = _make_flow_named(tmp_path, "fb_second", "FB Second", flow_id=424243)
+        project_sync.save_version(OWNER, "add second")
+        assert (root / "flows" / "fb_second.flow.yaml").exists()
+
+        # Restore to v1, then Save again — the original bug surfaced on this post-restore save.
+        project_sync.restore_version(OWNER, sha_v1, "v1")
+        project_sync.save_version(OWNER, "after restore")
+
+        # No rename churn: same single file, byte-identical, no suffixed twin, second flow pruned.
+        assert (root / "flows" / "fb_internal.flow.yaml").read_bytes() == before
+        assert list((root / "flows").glob("fb_internal_*.flow.yaml")) == []
+        assert list((root / "flows").glob("fb_second*.flow.yaml")) == []
+        # Catalog display name preserved across the round-trip.
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+            assert reg is not None and reg.name == "FB Catalog"
+    finally:
+        _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)
+
+
+def test_save_version_prunes_orphan_file(tmp_path):
+    project_sync.close_project(OWNER)
+    flow_uuid = _make_flow_named(tmp_path, "fc_internal", "FC Catalog")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Prune Test", OWNER)
+        assert (root / "flows" / "fc_internal.flow.yaml").exists()
+
+        _delete_flow(flow_uuid)
+        project_sync.save_version(OWNER, "removed flow")
+        # Exact-mirror: the orphaned project file is swept on Save version.
+        assert not (root / "flows" / "fc_internal.flow.yaml").exists()
+    finally:
+        project_sync.close_project(OWNER)
+
+
+def test_root_commit_changes_lists_files(tmp_path):
+    from flowfile_core.project import git_ops
+
+    if not git_ops.git_available():
+        pytest.skip("git not available")
+    project_sync.close_project(OWNER)
+    flow_uuid = _make_flow_named(tmp_path, "fd_internal", "FD Catalog")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Root Diff Test", OWNER)
+        sha = git_ops.head_sha(root)
+        changes = git_ops.changes_in(root, sha)
+        # The initial commit must list its files (not show an empty "No file changes").
+        assert changes
+        paths = {c["path"] for c in changes}
+        assert "project.yaml" in paths
+        assert any(p.startswith("flows/") for p in paths)
+    finally:
+        _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)

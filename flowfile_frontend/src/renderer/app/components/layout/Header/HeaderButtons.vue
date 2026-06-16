@@ -290,6 +290,7 @@ import CreateDialog from "../../../features/designer/components/CreateDialog.vue
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
+import { useProjectStore } from "../../../stores/project-store";
 import { useRecentFlows } from "../../../composables/useRecentFlows";
 import {
   createFlow,
@@ -306,6 +307,7 @@ import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
+const projectStore = useProjectStore();
 const { recordFlowFromSettings } = useRecentFlows();
 
 const modalVisibleForOpen = ref(false);
@@ -452,6 +454,7 @@ const handleSaveDialogComplete = (flowId: number) => {
   } else {
     emit("flowSaved", flowId);
   }
+  projectStore.onSourceChanged();
   if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
     setTimeout(() => {
       tutorialStore.nextStep();
@@ -481,6 +484,7 @@ const openSaveModal = async () => {
     try {
       await saveFlowSilent(nodeStore.flow_id);
       emit("flowSaved", nodeStore.flow_id);
+      projectStore.onSourceChanged();
       ElMessage.success("Flow saved successfully");
       if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
         setTimeout(() => {

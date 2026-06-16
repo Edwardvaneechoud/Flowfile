@@ -16,11 +16,18 @@ from pydantic import SecretStr
 from flowfile_core import flow_file_handler
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import FlowRegistration
+from flowfile_core.database.models import (
+    CloudStorageConnection,
+    DatabaseConnection,
+    FlowRegistration,
+    FlowSchedule,
+)
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     _get_own_cloud_connection,
     _get_own_database_connection,
+    delete_cloud_connection,
+    delete_database_connection,
     store_cloud_connection,
     store_database_connection,
     update_cloud_connection,
@@ -29,7 +36,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.project import manifest, repository
 from flowfile_core.project.models import SetupResult
 from flowfile_core.project.normalize import safe_stem, write_yaml
-from flowfile_core.project.projection import _CLOUD_SECRETS
+from flowfile_core.project.projection import _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
 from flowfile_core.project.secrets_resolver import load_dotenv, placeholder_name, resolve
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.schemas.input_schema import FullDatabaseConnection
@@ -129,83 +136,154 @@ def _import_flow(data: dict, owner_id: int) -> bool:
     flow_uuid = data.get("flow_uuid")
     if not flow_uuid:
         return False
-    name = data.get("flowfile_name") or "flow"
+    flowfile_name = data.get("flowfile_name") or "flow"
+    catalog_name = data.get("catalog_name") or flowfile_name  # friendly display label; preserved, not the key
     with get_db_context() as db:
         existing = db.query(FlowRegistration).filter(FlowRegistration.flow_uuid == flow_uuid).first()
         runtime_path = (
             Path(existing.flow_path)
             if existing
-            else storage.flows_directory / "project" / f"{safe_stem(name)}_{flow_uuid[:8]}.flow.yaml"
+            else storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
         )
-    write_yaml(runtime_path, data)  # flow_uuid key is ignored by the FlowfileData loader
+    write_yaml(runtime_path, data)  # flow_uuid / catalog_name keys are ignored by the FlowfileData loader
     flow_file_handler.import_flow(runtime_path, user_id=owner_id)
     if existing is None:
-        auto_register_flow(str(runtime_path), name, owner_id)
-        with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(runtime_path)).first()
-            if reg and reg.flow_uuid != flow_uuid:
-                reg.flow_uuid = flow_uuid
+        auto_register_flow(str(runtime_path), catalog_name, owner_id)
+    # Reconcile identity + display name to the file (keeps flow_uuid stable for determinism and
+    # the catalog name round-tripping on open/restore/reload).
+    with get_db_context() as db:
+        reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(runtime_path)).first()
+        if reg:
+            changed = reg.flow_uuid != flow_uuid or reg.name != catalog_name
+            reg.flow_uuid = flow_uuid
+            reg.name = catalog_name
+            if changed:
                 db.commit()
     return True
 
 
 def _import_schedules(data: dict, owner_id: int) -> int:
     flow_uuid = data.get("flow_uuid")
-    schedules = data.get("schedules") or []
-    if not flow_uuid or not schedules:
+    if not flow_uuid:
         return 0
-    count = 0
+    schedules = data.get("schedules") or []
     with get_db_context() as db:
         reg = db.query(FlowRegistration).filter(FlowRegistration.flow_uuid == flow_uuid).first()
         if reg is None:
             return 0
         service = CatalogService(SQLAlchemyCatalogRepository(db))
-        existing = {s.name: s for s in service.list_schedules(registration_id=reg.id) if s.name}
+        # The schedule file is the source of truth for this flow's interval/cron schedules, so
+        # replace them wholesale. A name-based upsert duplicated nameless schedules on every
+        # open/restore/reload (they can't be matched by name).
+        for s in (
+            db.query(FlowSchedule)
+            .filter(
+                FlowSchedule.registration_id == reg.id,
+                FlowSchedule.schedule_type.in_(_PROJECTABLE_SCHEDULE_TYPES),
+            )
+            .all()
+        ):
+            service.delete_schedule(s.id)
+        count = 0
+        seen: set[tuple] = set()
         for sd in schedules:
-            sd_name = sd.get("name")
-            if sd_name and sd_name in existing:
-                service.update_schedule(
-                    existing[sd_name].id,
-                    enabled=sd.get("enabled"),
-                    interval_seconds=sd.get("interval_seconds"),
-                    cron_expression=sd.get("cron_expression"),
-                    cron_timezone=sd.get("cron_timezone"),
-                    description=sd.get("description"),
-                )
-            else:
-                service.create_schedule(
-                    registration_id=reg.id,
-                    owner_id=owner_id,
-                    schedule_type=sd["schedule_type"],
-                    interval_seconds=sd.get("interval_seconds"),
-                    cron_expression=sd.get("cron_expression"),
-                    cron_timezone=sd.get("cron_timezone"),
-                    enabled=sd.get("enabled", True),
-                    name=sd_name,
-                    description=sd.get("description"),
-                )
+            if sd.get("schedule_type") not in _PROJECTABLE_SCHEDULE_TYPES:
+                continue
+            sig = (
+                sd.get("schedule_type"),
+                sd.get("interval_seconds"),
+                sd.get("cron_expression"),
+                sd.get("cron_timezone"),
+                sd.get("name"),
+            )
+            if sig in seen:  # collapse already-duplicated entries so existing dupes self-heal
+                continue
+            seen.add(sig)
+            service.create_schedule(
+                registration_id=reg.id,
+                owner_id=owner_id,
+                schedule_type=sd["schedule_type"],
+                interval_seconds=sd.get("interval_seconds"),
+                cron_expression=sd.get("cron_expression"),
+                cron_timezone=sd.get("cron_timezone"),
+                enabled=sd.get("enabled", True),
+                name=sd.get("name"),
+                description=sd.get("description"),
+            )
             count += 1
     return count
 
 
-def import_project(root: Path, owner_id: int) -> SetupResult:
-    """Rebuild this install's environment from the project folder. Always completes."""
+def _prune_removed(owner_id: int, kept_flow_uuids: set[str], kept_db: set[str], kept_cloud: set[str]) -> None:
+    """Delete the owner's flows/connections that are no longer present in the project files.
+
+    A project mirrors the owner's whole environment, so on restore/reload the files are the complete
+    intended set. Best-effort per resource: a failure (e.g. a flow with artifacts) is logged and skipped.
+    """
+    with get_db_context() as db:
+        service = CatalogService(SQLAlchemyCatalogRepository(db))
+        for reg in db.query(FlowRegistration).filter(FlowRegistration.owner_id == owner_id).all():
+            if reg.flow_uuid in kept_flow_uuids:
+                continue
+            try:
+                for s in service.list_schedules(registration_id=reg.id):
+                    service.delete_schedule(s.id)
+                service.delete_flow(reg.id, delete_file=True)
+            except Exception:
+                logger.warning("Project prune: could not remove flow %s", reg.flow_uuid, exc_info=True)
+    with get_db_context() as db:
+        for conn in db.query(DatabaseConnection).filter(DatabaseConnection.user_id == owner_id).all():
+            if conn.connection_name not in kept_db:
+                try:
+                    delete_database_connection(db, conn.connection_name, owner_id)
+                except Exception:
+                    logger.warning("Project prune: could not remove db conn %s", conn.connection_name, exc_info=True)
+    with get_db_context() as db:
+        for conn in db.query(CloudStorageConnection).filter(CloudStorageConnection.user_id == owner_id).all():
+            if conn.connection_name not in kept_cloud:
+                try:
+                    delete_cloud_connection(db, conn.connection_name, owner_id)
+                except Exception:
+                    logger.warning("Project prune: could not remove cloud conn %s", conn.connection_name, exc_info=True)
+
+
+def import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResult:
+    """Rebuild this install's environment from the project folder. Always completes.
+
+    With ``prune=True`` (restore / reload) the owner's flows and connections that are absent from the
+    files are deleted, so the DB ends up matching the files exactly. ``prune=False`` (open) is additive.
+    """
     dotenv = load_dotenv(root)
     result = SetupResult()
 
     _import_standalone_secrets(root, owner_id, dotenv, result)
 
+    kept_db: set[str] = set()
     for f in sorted(manifest.connections_dir(root, "database").glob("*.yaml")):
-        _import_db_connection(_read_yaml(f), owner_id, dotenv, result)
+        data = _read_yaml(f)
+        _import_db_connection(data, owner_id, dotenv, result)
+        if data.get("connection_name"):
+            kept_db.add(data["connection_name"])
+    kept_cloud: set[str] = set()
     for f in sorted(manifest.connections_dir(root, "cloud").glob("*.yaml")):
-        _import_cloud_connection(_read_yaml(f), owner_id, dotenv, result)
+        data = _read_yaml(f)
+        _import_cloud_connection(data, owner_id, dotenv, result)
+        if data.get("connection_name"):
+            kept_cloud.add(data["connection_name"])
 
+    kept_flow_uuids: set[str] = set()
     for f in sorted(manifest.flows_dir(root).glob("*.flow.yaml")):
-        if _import_flow(_read_yaml(f), owner_id):
+        data = _read_yaml(f)
+        if _import_flow(data, owner_id):
             result.imported_flows += 1
+        if data.get("flow_uuid"):
+            kept_flow_uuids.add(data["flow_uuid"])
 
     for f in sorted(manifest.schedules_dir(root).glob("*.yaml")):
         result.imported_schedules += _import_schedules(_read_yaml(f), owner_id)
+
+    if prune:
+        _prune_removed(owner_id, kept_flow_uuids, kept_db, kept_cloud)
 
     from flowfile_core.project import git_ops
 

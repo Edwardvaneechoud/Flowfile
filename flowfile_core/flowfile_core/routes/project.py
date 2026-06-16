@@ -10,11 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from flowfile_core.auth.jwt import get_current_active_user
-from flowfile_core.project import project_sync
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.project import git_ops, project_sync
 from flowfile_core.project.models import ActiveProject
+from flowfile_core.secret_manager.secret_manager import SecretInput, upsert_secret
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -30,6 +32,16 @@ class OpenProjectRequest(BaseModel):
 
 class SaveVersionRequest(BaseModel):
     message: str
+
+
+class RestoreRequest(BaseModel):
+    sha: str
+    label: str | None = None
+
+
+class PlaceholderSecret(BaseModel):
+    name: str
+    value: str
 
 
 def _payload(project: ActiveProject) -> dict:
@@ -60,6 +72,7 @@ def get_active(current_user=Depends(get_current_active_user)) -> dict:
     return {
         "project": _payload(project),
         "has_external_changes": project_sync.has_external_changes(current_user.id),
+        "dirty": project_sync.has_uncommitted_changes(current_user.id),
     }
 
 
@@ -70,3 +83,71 @@ def save_version(req: SaveVersionRequest, current_user=Depends(get_current_activ
     except RuntimeError as e:
         raise HTTPException(409, str(e)) from e
     return {"sha": sha}
+
+
+@router.get("/versions")
+def list_versions(limit: int = 50, current_user=Depends(get_current_active_user)) -> dict:
+    project = project_sync.get_active_project(current_user.id)
+    if project is None:
+        raise HTTPException(409, "No active project")
+    return {"versions": git_ops.log(project.root, limit)}
+
+
+@router.post("/restore")
+def restore_version(req: RestoreRequest, current_user=Depends(get_current_active_user)) -> dict:
+    try:
+        result = project_sync.restore_version(current_user.id, req.sha, req.label)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    return result.to_dict()
+
+
+@router.get("/versions/{sha}/changes")
+def version_changes(sha: str, current_user=Depends(get_current_active_user)) -> dict:
+    try:
+        changes = project_sync.changes_for_version(current_user.id, sha)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"changes": changes}
+
+
+@router.get("/versions/{sha}/diff")
+def version_diff(sha: str, current_user=Depends(get_current_active_user)) -> dict:
+    try:
+        changes = project_sync.version_diff(current_user.id, sha)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"changes": changes}
+
+
+@router.get("/uncommitted")
+def uncommitted(current_user=Depends(get_current_active_user)) -> dict:
+    try:
+        changes = project_sync.uncommitted_changes(current_user.id)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"changes": changes}
+
+
+@router.post("/reload")
+def reload_project(current_user=Depends(get_current_active_user)) -> dict:
+    try:
+        result = project_sync.reload_from_disk(current_user.id)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    return result.to_dict()
+
+
+@router.post("/close")
+def close_project(current_user=Depends(get_current_active_user)) -> dict:
+    project_sync.close_project(current_user.id)
+    return {"ok": True}
+
+
+@router.post("/secrets")
+def fill_secrets(req: list[PlaceholderSecret], current_user=Depends(get_current_active_user)) -> dict:
+    with get_db_context() as db:
+        for item in req:
+            upsert_secret(db, SecretInput(name=item.name, value=SecretStr(item.value)), current_user.id)
+    project_sync.secret_changed(current_user.id)
+    return {"updated": len(req)}

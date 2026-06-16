@@ -75,6 +75,75 @@ def log(root: Path, limit: int = 50) -> list[dict]:
 
 
 def restore(root: Path, sha: str) -> None:
-    """Check the project files at ``sha`` back into the working tree."""
+    """Reset the index + working tree to exactly match ``sha`` (including deletions); HEAD unchanged.
+
+    Unlike ``checkout <sha> -- .`` this removes files that were added after ``sha``, so a restore
+    truly reverts to that version's content.
+    """
     if is_repo(root):
-        Repo(str(root)).git.checkout(sha, "--", ".")
+        Repo(str(root)).git.read_tree("-u", "--reset", sha)
+
+
+def _parse_name_status(out: str) -> list[dict]:
+    changes: list[dict] = []
+    for line in out.splitlines():
+        parts = line.strip().split("\t")
+        if len(parts) >= 2 and parts[0]:
+            changes.append({"status": parts[0], "path": parts[-1]})
+    return changes
+
+
+def diff_name_status(root: Path, a: str, b: str) -> list[dict]:
+    """``git diff --name-status a b`` → ``[{"status", "path"}]``. Empty on any error."""
+    if not is_repo(root):
+        return []
+    try:
+        return _parse_name_status(Repo(str(root)).git.diff("--name-status", a, b))
+    except Exception:
+        return []
+
+
+def changes_in(root: Path, sha: str) -> list[dict]:
+    """What commit ``sha`` changed vs its parent. ``--root`` makes the parentless initial
+    commit list all its files (added) instead of showing an empty diff."""
+    if not is_repo(root):
+        return []
+    try:
+        return _parse_name_status(Repo(str(root)).git.diff_tree("--no-commit-id", "--name-status", "-r", "--root", sha))
+    except Exception:
+        return []
+
+
+def uncommitted_changes(root: Path) -> list[dict]:
+    """Working-tree changes vs the last version (incl. untracked new files), as name-status rows."""
+    if not is_repo(root):
+        return []
+    try:
+        out = Repo(str(root)).git.status("--porcelain")
+    except Exception:
+        return []
+    changes: list[dict] = []
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        code, path = line[:2], line[3:].strip()
+        if "->" in path:  # rename: report the new path
+            path = path.split("->")[-1].strip()
+        if code == "??" or "A" in code:
+            status = "A"
+        elif "D" in code:
+            status = "D"
+        else:
+            status = "M"
+        changes.append({"status": status, "path": path})
+    return changes
+
+
+def is_dirty(root: Path) -> bool:
+    """True when the working tree has changes (incl. untracked) to save as a version."""
+    if not is_repo(root):
+        return False
+    try:
+        return Repo(str(root)).is_dirty(untracked_files=True)
+    except Exception:
+        return False

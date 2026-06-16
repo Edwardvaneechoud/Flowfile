@@ -80,6 +80,13 @@ export default {
       ],
     },
     {
+      name: "project",
+      displayName: "menu.project",
+      meta: {
+        icon: "fa-solid fa-clock-rotate-left",
+      },
+    },
+    {
       name: "kernelManager",
       displayName: "menu.kernelManager",
       meta: {

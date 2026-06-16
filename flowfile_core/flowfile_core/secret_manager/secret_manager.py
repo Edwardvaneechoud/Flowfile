@@ -167,6 +167,26 @@ def store_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.Se
     return db_secret
 
 
+def upsert_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.Secret:
+    """Create the secret, or overwrite the value of the user's existing one.
+
+    Updates the lowest-id own row (the one ``get_encrypted_secret`` resolves) rather
+    than inserting a duplicate — this is how placeholder secrets get their value filled.
+    """
+    existing = (
+        db.query(db_models.Secret)
+        .filter(db_models.Secret.user_id == user_id, db_models.Secret.name == secret.name)
+        .order_by(db_models.Secret.id.asc())
+        .first()
+    )
+    if existing is None:
+        return store_secret(db, secret, user_id)
+    existing.encrypted_value = encrypt_secret(secret.value.get_secret_value(), user_id)
+    db.commit()
+    db.refresh(existing)
+    return existing
+
+
 def delete_secret(db: Session, secret_name: str, user_id: int) -> None:
     db_secret = (
         db.query(db_models.Secret)

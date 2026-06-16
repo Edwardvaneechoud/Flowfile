@@ -404,6 +404,19 @@ class SQLAlchemyCatalogRepository:
     def delete_flow(self, registration_id: int) -> None:
         self._db.query(FlowFavorite).filter_by(registration_id=registration_id).delete()
         self._db.query(FlowFollow).filter_by(registration_id=registration_id).delete()
+        # Schedules don't FK-cascade; a flow can't have schedules without the flow, so drop them
+        # (and their trigger-table links) — otherwise they'd be orphaned on the flow's deletion.
+        schedule_ids = [
+            row[0]
+            for row in self._db.query(FlowSchedule.id).filter_by(registration_id=registration_id).all()
+        ]
+        if schedule_ids:
+            self._db.query(ScheduleTriggerTable).filter(
+                ScheduleTriggerTable.schedule_id.in_(schedule_ids)
+            ).delete(synchronize_session=False)
+            self._db.query(FlowSchedule).filter(FlowSchedule.registration_id == registration_id).delete(
+                synchronize_session=False
+            )
         # Remove published API endpoints and their keys. SQLite FK enforcement is
         # off so these don't cascade: a leftover key would stay enabled (a real
         # revocation gap) and the unique slug would stay occupied, blocking

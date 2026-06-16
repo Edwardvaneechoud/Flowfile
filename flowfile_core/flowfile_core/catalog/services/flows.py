@@ -21,6 +21,14 @@ from flowfile_core.schemas.catalog_schema import (
 
 logger = logging.getLogger(__name__)
 
+
+def _project_sync_flow_deleted(flow_uuid: str, owner_id: int) -> None:
+    """Mirror a flow deletion into the active project folder (no-op when none active)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.flow_deleted(flow_uuid, owner_id)
+
+
 # Process-local memo of (registration_id, flow_path) tuples we've already
 # warned about. The first sighting of a missing file is genuinely useful (it
 # can flag a misconfigured volume mount), but every subsequent /catalog/flows
@@ -198,6 +206,7 @@ class FlowRegistrationService:
             raise FlowHasArtifactsError(registration_id, artifact_count)
 
         flow_path = flow.flow_path
+        flow_uuid, owner_id = flow.flow_uuid, flow.owner_id
         self.repo.delete_flow(registration_id)
 
         if delete_file and flow_path and self.repo.count_flows_by_path(flow_path) == 0:
@@ -207,6 +216,8 @@ class FlowRegistrationService:
                 pass
             except OSError:
                 logger.warning("Failed to delete flow file %s", flow_path, exc_info=True)
+
+        _project_sync_flow_deleted(flow_uuid, owner_id)
 
     def get_flow(self, registration_id: int, user_id: int) -> FlowRegistrationOut:
         """Get an enriched flow registration."""
