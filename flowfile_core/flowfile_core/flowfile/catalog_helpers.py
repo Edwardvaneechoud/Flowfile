@@ -304,6 +304,9 @@ def register_python_editor_flow(
 
     flow.flow_settings.source_registration_id = reg_id
 
+    # save_flow above synced read-links before the id existed; re-sync now it's set.
+    flow._sync_catalog_read_links()
+
     return reg_id
 
 

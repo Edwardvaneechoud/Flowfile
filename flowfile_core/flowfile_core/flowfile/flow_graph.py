@@ -485,6 +485,10 @@ class CatalogTableInfo(NamedTuple):
     # False when the executing principal may not read the table; the reader
     # node's compute then fails closed instead of scanning the data.
     authorized: bool = True
+    # Resolved identity, surfaced for back-filling name-only readers.
+    table_id: int | None = None
+    namespace_id: int | None = None
+    table_name: str | None = None
 
 
 def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogReader") -> CatalogTableInfo:
@@ -494,6 +498,9 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     serialized_lf: bytes | None = None
     is_optimized: bool = False
     source_table_versions: str | None = None
+    resolved_table_id: int | None = None
+    resolved_namespace_id: int | None = None
+    resolved_table_name: str | None = None
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -532,6 +539,9 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                 return CatalogTableInfo(None, "physical", None, False, None, authorized=False)
 
             if table_record is not None:
+                resolved_table_id = table_record.id
+                resolved_namespace_id = table_record.namespace_id
+                resolved_table_name = table_record.name
                 table_type = table_record.table_type
                 if table_type == "virtual":
                     is_optimized = table_record.is_optimized
@@ -553,6 +563,9 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
         serialized_lf=serialized_lf,
         is_optimized=is_optimized,
         source_table_versions=source_table_versions,
+        table_id=resolved_table_id,
+        namespace_id=resolved_namespace_id,
+        table_name=resolved_table_name,
     )
 
 
@@ -3527,6 +3540,15 @@ class FlowGraph:
         """
 
         info = _resolve_catalog_table_info(node_catalog_reader)
+
+        # Back-fill id from a name-only reference so the settings form and read
+        # lineage (both keyed on catalog_table_id) work.
+        if node_catalog_reader.catalog_table_id is None and info.table_id is not None:
+            node_catalog_reader.catalog_table_id = info.table_id
+            if node_catalog_reader.catalog_namespace_id is None:
+                node_catalog_reader.catalog_namespace_id = info.namespace_id
+            if node_catalog_reader.catalog_table_name is None:
+                node_catalog_reader.catalog_table_name = info.table_name
 
         is_virtual_optimized: bool | None = info.is_optimized if info.table_type == "virtual" else None
 
