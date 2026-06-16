@@ -683,24 +683,86 @@ def test_save_flow_to_catalog_rejects_duplicate_name_in_namespace():
             db.commit()
 
 
-def test_save_flow_to_catalog_rejects_filename_with_separators():
-    """A flow_name containing path separators must be rejected with 403."""
+def test_save_flow_to_catalog_slugifies_separators_no_traversal():
+    """A flow_name containing path separators is slugified into a safe filename
+    under the managed dir — never used to traverse out of it."""
+    from flowfile_core.database.models import FlowRegistration
+
     base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
-    source_path = str(base_dir / "separator_rejection_source.yaml")
+    source_path = str(base_dir / "separator_slug_source.yaml")
     remove_flow(source_path)
 
-    ns = client.post("/catalog/namespaces", json={"name": "NsSeparatorReject_endpoint"}).json()
+    ns = client.post("/catalog/namespaces", json={"name": "NsSeparatorSlug_endpoint"}).json()
     assert "id" in ns, "Namespace not created"
 
     flow_id = client.post("editor/create_flow", params={"flow_path": source_path}).json()
+    # "../evil" slugifies to "evil"; the only legitimate target is under the managed dir.
+    expected = storage.flows_directory / f"{flow_id}_evil.yaml"
+    traversal_target = storage.flows_directory.parent / "evil.yaml"
+    for p in (expected, traversal_target):
+        if p.exists():
+            p.unlink()
     try:
         resp = client.post(
             "/save_flow_to_catalog",
             params={"flow_id": flow_id, "flow_name": "../evil", "namespace_id": ns["id"]},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert expected.exists(), f"Slugified file missing under managed dir: {expected}"
+        assert not traversal_target.exists(), "Save must not escape the managed flows directory"
+
+        # The raw name is preserved as the display label; only the filename is slugified.
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(expected)).one()
+            assert reg.name == "../evil"
     finally:
         remove_flow(source_path)
+        for p in (expected, traversal_target):
+            if p.exists():
+                p.unlink()
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(expected)).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_save_flow_to_catalog_allows_name_with_spaces():
+    """Regression: a friendly flow name with spaces saves successfully — the name
+    is a free-form display label and only the on-disk filename is slugified."""
+    from flowfile_core.database.models import FlowRegistration
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    source_path = str(base_dir / "spaced_name_source.yaml")
+    remove_flow(source_path)
+
+    ns = client.post("/catalog/namespaces", json={"name": "NsSpacedName_endpoint"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    flow_id = client.post("editor/create_flow", params={"flow_path": source_path}).json()
+    expected = storage.flows_directory / f"{flow_id}_market_analytics.yaml"
+    if expected.exists():
+        expected.unlink()
+    try:
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id, "flow_name": "market analytics", "namespace_id": ns["id"]},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert expected.exists(), f"Slugified file missing: {expected}"
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(expected)).one()
+            assert reg.name == "market analytics", "Display name should preserve the spaces"
+    finally:
+        remove_flow(source_path)
+        if expected.exists():
+            expected.unlink()
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(expected)).delete(
+                synchronize_session=False
+            )
+            db.commit()
 
 
 def test_create_flow_registers_in_selected_namespace():

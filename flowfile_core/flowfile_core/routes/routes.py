@@ -101,7 +101,11 @@ from shared.storage_config import storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
-_MANAGED_FLOW_STEM_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+# A flow's name is a free-form display label. Only the derived on-disk filename
+# must be filesystem-safe, so we slugify the name to this alphabet (the same
+# allowlist enforced by resolve_managed_flow_path) by replacing every run of
+# disallowed characters with a single underscore.
+_MANAGED_FLOW_STEM_DISALLOWED_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
 def get_node_model(setting_name_ref: str):
@@ -1586,22 +1590,25 @@ def save_flow_to_catalog(
     two flows with the same user-chosen name in different namespaces cannot overwrite
     each other. Returns the (possibly new) flow id so the frontend can switch to it.
     """
-    stem = flow_name.strip()
-    if not stem:
+    display_name = flow_name.strip()
+    # Strip a managed extension the user may have typed so the display name and
+    # the on-disk filename stay in sync (``.yaml`` is appended below).
+    display_name = re.sub(r"\.(ya?ml|json)$", "", display_name, flags=re.IGNORECASE).strip()
+    if not display_name:
         raise HTTPException(422, "flow_name must not be empty")
-    # Reject path separators and parent-traversal before any sanitization so
-    # callers can't launder ``../evil`` through ``Path(...).name``.
-    if "/" in stem or "\\" in stem or ".." in stem:
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
-    stem = stem.rsplit(".yaml", 1)[0].rsplit(".yml", 1)[0].rsplit(".json", 1)[0]
-    if not _MANAGED_FLOW_STEM_RE.fullmatch(stem):
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+    # The name is a free-form DISPLAY label (spaces, mixed case and punctuation
+    # are all fine) — it is stored as the registration name and used for the
+    # collision check below. Only the derived on-disk filename must be safe, so
+    # slugify a separate stem and prefix it with the flow id; path separators and
+    # ``..`` cannot survive the slug, and resolve_managed_flow_path re-validates
+    # the result against the same allowlist as a defense-in-depth backstop.
+    safe_stem = _MANAGED_FLOW_STEM_DISALLOWED_RE.sub("_", display_name).strip("_-") or "flow"
 
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
 
-    filename = f"{int(flow_id)}_{stem}.yaml"
+    filename = f"{int(flow_id)}_{safe_stem}.yaml"
     flow_path = resolve_managed_flow_path(filename)
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
@@ -1614,12 +1621,12 @@ def save_flow_to_catalog(
 
     # Pre-save name-collision check: reject BEFORE writing any YAML so a failed save doesn't leave orphaned files
     # on disk.
-    existing_by_name = find_registration_by_name(stem, namespace_id)
+    existing_by_name = find_registration_by_name(display_name, namespace_id)
     if existing_by_name is not None and existing_by_name.id != source_registration_id:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"A flow named '{stem}' already exists in this namespace. "
+                f"A flow named '{display_name}' already exists in this namespace. "
                 "Select it in the catalog picker to overwrite, or choose a different name."
             ),
         )
@@ -1638,11 +1645,12 @@ def save_flow_to_catalog(
 
     user_id = current_user.id if current_user else None
 
-    # Always register under the user-typed ``stem`` rather than the filename
-    # (``{flow_id}_{stem}``) so the catalog picker shows exactly what the user
-    # typed — and so the name-collision check below compares apples to apples.
+    # Always register under the user-typed ``display_name`` rather than the
+    # filename (``{flow_id}_{safe_stem}``) so the catalog picker shows exactly
+    # what the user typed — and so the name-collision check above compares apples
+    # to apples.
     def _register(fp: str, _n: str, uid: int | None) -> None:
-        register_flow_in_namespace(fp, stem, uid, namespace_id)
+        register_flow_in_namespace(fp, display_name, uid, namespace_id)
 
     if is_new_path:
         try:
@@ -1675,7 +1683,7 @@ def save_flow_to_catalog(
     resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
     try:
-        register_flow_in_namespace(flow_path, stem, user_id, namespace_id)
+        register_flow_in_namespace(flow_path, display_name, user_id, namespace_id)
     except FlowPathNamespaceCollision as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
     except FlowNameNamespaceCollision as err:

@@ -290,11 +290,12 @@ const handleSaveFlow = async (flowPath: string) => {
 
 const catalogFilePath = computed(() => {
   // Display-only preview of the final catalog path. Must mirror the backend
-  // convention in /save_flow_to_catalog (``{flow_id}_{stem}.yaml`` under the
-  // managed flows dir) so the user sees what will actually be written.
+  // convention in /save_flow_to_catalog (``{flow_id}_{safe_stem}.yaml`` under the
+  // managed flows dir) so the user sees what will actually be written. The flow
+  // name is a free-form label; the filename stem is slugified to [A-Za-z0-9_-].
   const dir = catalogFlowsDir.value || "~/.flowfile/flows";
-  const raw = catalogFlowName.value.trim() || "flow";
-  const stem = raw.replace(/\.(yaml|yml|json)$/i, "");
+  const raw = catalogFlowName.value.trim().replace(/\.(yaml|yml|json)$/i, "");
+  const stem = raw.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^[_-]+|[_-]+$/g, "") || "flow";
   const sep = dir.includes("\\") ? "\\" : "/";
   return `${dir}${sep}${props.flowId}_${stem}.yaml`;
 });
