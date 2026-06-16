@@ -207,6 +207,9 @@ class WorkspaceProject(Base):
     # Git HEAD we last projected/imported at; differs from the live HEAD only when git
     # changed the working tree from outside the app (pull / restore / fresh clone).
     last_synced_head_sha = Column(String(40), nullable=True)
+    # Mirrors project.yaml's track_data_artifacts (the manifest is the source of truth): when
+    # False, catalog tables + global artifacts are excluded from the git-tracked project.
+    track_data_artifacts = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 

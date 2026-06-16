@@ -91,7 +91,9 @@ class ProjectSyncService:
             by_owner: dict[int, ActiveProject] = {}
             with get_db_context() as db:
                 for p in repository.get_active_projects(db):
-                    by_owner[p.owner_id] = ActiveProject(p.id, p.name, Path(p.folder_path), p.owner_id)
+                    by_owner[p.owner_id] = ActiveProject(
+                        p.id, p.name, Path(p.folder_path), p.owner_id, p.track_data_artifacts
+                    )
             self._by_owner = by_owner
             return by_owner
         except Exception:
@@ -181,7 +183,7 @@ class ProjectSyncService:
 
     def tables_changed(self, user_id: int | None) -> None:
         proj = self.get_active_project(user_id)
-        if proj is None:
+        if proj is None or not proj.track_data_artifacts:
             return
         try:
             with get_db_context() as db:
@@ -191,7 +193,7 @@ class ProjectSyncService:
 
     def artifacts_changed(self, user_id: int | None) -> None:
         proj = self.get_active_project(user_id)
-        if proj is None:
+        if proj is None or not proj.track_data_artifacts:
             return
         try:
             with get_db_context() as db:
@@ -231,17 +233,25 @@ class ProjectSyncService:
 
     # --- lifecycle (explicit user actions via /project router + CLI) ----------
 
-    def init_project(self, folder_path: str, name: str, owner_id: int) -> ActiveProject:
+    def init_project(
+        self, folder_path: str, name: str, owner_id: int, track_data_artifacts: bool = True
+    ) -> ActiveProject:
         root = Path(folder_path).expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
         existing = read_manifest(root)
-        m = existing or ProjectManifest(name=name, project_id=str(uuid.uuid4()), created_with_version=__version__)
+        # A new project takes the requested toggle; re-initializing an existing one keeps its manifest value.
+        m = existing or ProjectManifest(
+            name=name,
+            project_id=str(uuid.uuid4()),
+            created_with_version=__version__,
+            track_data_artifacts=track_data_artifacts,
+        )
         write_manifest(root, m)
         write_gitignore(root)
         git_ops.init(root)
         with get_db_context() as db:
-            row = repository.upsert_active(db, m.name, str(root), owner_id)
-            project = ActiveProject(row.id, m.name, root, owner_id)
+            row = repository.upsert_active(db, m.name, str(root), owner_id, m.track_data_artifacts)
+            project = ActiveProject(row.id, m.name, root, owner_id, m.track_data_artifacts)
             projection.project_all(db, root, owner_id)
         sha = git_ops.commit_all(root, "Initialize Flowfile project")
         with get_db_context() as db:
@@ -255,8 +265,8 @@ class ProjectSyncService:
         if m is None:
             raise FileNotFoundError(f"No Flowfile project at {root} (missing {MANIFEST_NAME})")
         with get_db_context() as db:
-            row = repository.upsert_active(db, m.name, str(root), owner_id)
-            project = ActiveProject(row.id, m.name, root, owner_id)
+            row = repository.upsert_active(db, m.name, str(root), owner_id, m.track_data_artifacts)
+            project = ActiveProject(row.id, m.name, root, owner_id, m.track_data_artifacts)
         self._load()[owner_id] = project
         return project, import_project(root, owner_id)
 
@@ -321,6 +331,24 @@ class ProjectSyncService:
         with get_db_context() as db:
             repository.deactivate_owner(db, owner_id)
         self._load().pop(owner_id, None)
+
+    def update_settings(self, user_id: int, track_data_artifacts: bool) -> bool:
+        """Flip the track-data-artifacts toggle: rewrite project.yaml + the DB mirror, then
+        re-project so tables.yaml / models.yaml are dropped (off) or regenerated (on)."""
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            raise RuntimeError("No active project")
+        m = read_manifest(proj.root)
+        if m is None:
+            raise RuntimeError("No active project")
+        m.track_data_artifacts = track_data_artifacts
+        write_manifest(proj.root, m)
+        with get_db_context() as db:
+            repository.set_track_data_artifacts(db, proj.id, track_data_artifacts)
+        proj.track_data_artifacts = track_data_artifacts
+        with get_db_context() as db:
+            projection.project_all(db, proj.root, proj.owner_id)
+        return track_data_artifacts
 
     def has_uncommitted_changes(self, user_id: int) -> bool:
         proj = self.get_active_project(user_id)

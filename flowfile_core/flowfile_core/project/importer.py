@@ -591,8 +591,8 @@ def _prune_removed(
     kept_db: set[str],
     kept_cloud: set[str],
     kept_namespace_ids: set[int],
-    kept_table_ids: set[int],
-    kept_artifact_ids: set[int],
+    kept_table_ids: set[int] | None,
+    kept_artifact_ids: set[int] | None,
     kept_kernel_ids: set[str],
     kept_viz_uuids: set[str],
     kept_dashboard_uuids: set[str],
@@ -603,7 +603,8 @@ def _prune_removed(
     intended set. Order matters: models and tables are pruned before flows (a flow can't be deleted
     while it still owns artifacts), and namespaces last (so emptied custom ones become deletable).
     Pruning never removes data — table data is kept (``delete_file=False``) and a model is soft-deleted
-    so its blob survives. Best-effort per resource: failures are logged and skipped.
+    so its blob survives. A ``None`` kept-set means that category isn't tracked by this project, so it
+    is left entirely alone (never pruned). Best-effort per resource: failures are logged and skipped.
     """
     # Kernels are independent of the catalog graph, so order is free. Delete only the config row
     # (the running container, if any, is dropped by the manager reconcile that follows the import).
@@ -627,26 +628,28 @@ def _prune_removed(
                 db.query(CatalogVisualization).filter_by(id=viz.id).delete()
         db.commit()
     # Models first (soft-delete, keep the blob): a kept flow's pruned artifact just goes inactive; a
-    # pruned flow's are hard-deleted by delete_flow below.
-    with get_db_context() as db:
-        for a in (
-            db.query(GlobalArtifact)
-            .filter(GlobalArtifact.owner_id == owner_id, GlobalArtifact.status == "active")
-            .all()
-        ):
-            if a.id not in kept_artifact_ids:
-                a.status = "deleted"
-        db.commit()
+    # pruned flow's are hard-deleted by delete_flow below. None = not tracked here, leave them all.
+    if kept_artifact_ids is not None:
+        with get_db_context() as db:
+            for a in (
+                db.query(GlobalArtifact)
+                .filter(GlobalArtifact.owner_id == owner_id, GlobalArtifact.status == "active")
+                .all()
+            ):
+                if a.id not in kept_artifact_ids:
+                    a.status = "deleted"
+            db.commit()
     # Tables before flows (keep the data); skip flow-virtual tables (not projected, not ours to prune).
-    with get_db_context() as db:
-        service = CatalogService(SQLAlchemyCatalogRepository(db))
-        for table in db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id).all():
-            if table.id in kept_table_ids or (table.table_type == "virtual" and not table.sql_query):
-                continue
-            try:
-                service.delete_table(table.id, delete_file=False)
-            except Exception:
-                logger.warning("Project prune: could not remove table %s", table.name, exc_info=True)
+    if kept_table_ids is not None:
+        with get_db_context() as db:
+            service = CatalogService(SQLAlchemyCatalogRepository(db))
+            for table in db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id).all():
+                if table.id in kept_table_ids or (table.table_type == "virtual" and not table.sql_query):
+                    continue
+                try:
+                    service.delete_table(table.id, delete_file=False)
+                except Exception:
+                    logger.warning("Project prune: could not remove table %s", table.name, exc_info=True)
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
         for reg in db.query(FlowRegistration).filter(FlowRegistration.owner_id == owner_id).all():
@@ -756,9 +759,12 @@ def _do_import_project(root: Path, owner_id: int, prune: bool = False) -> SetupR
     for f in sorted(manifest.schedules_dir(root).glob("*.yaml")):
         result.imported_schedules += _import_schedules(_read_yaml(f), owner_id)
 
-    # Tables + models after flows so their namespace and source-flow lineage resolve.
-    kept_table_ids = _import_tables(root, owner_id)
-    kept_artifact_ids = _import_artifacts(root, owner_id)
+    # Tables + models after flows so their namespace and source-flow lineage resolve. When the
+    # project opts out of tracking them, skip import and signal prune to leave them alone (None).
+    m = manifest.read_manifest(root)
+    track_data_artifacts = m is None or m.track_data_artifacts
+    kept_table_ids = _import_tables(root, owner_id) if track_data_artifacts else None
+    kept_artifact_ids = _import_artifacts(root, owner_id) if track_data_artifacts else None
     kept_kernel_ids = _import_kernels(root, owner_id)
     # Visualizations after tables (source re-links by name); dashboards after visualizations
     # (tiles re-link by viz_uuid).

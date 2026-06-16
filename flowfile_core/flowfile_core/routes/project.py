@@ -24,6 +24,11 @@ router = APIRouter(dependencies=[Depends(get_current_active_user)])
 class InitProjectRequest(BaseModel):
     folder_path: str
     name: str | None = None
+    track_data_artifacts: bool = True
+
+
+class UpdateSettingsRequest(BaseModel):
+    track_data_artifacts: bool
 
 
 class OpenProjectRequest(BaseModel):
@@ -45,13 +50,18 @@ class PlaceholderSecret(BaseModel):
 
 
 def _payload(project: ActiveProject) -> dict:
-    return {"id": project.id, "name": project.name, "folder_path": str(project.root)}
+    return {
+        "id": project.id,
+        "name": project.name,
+        "folder_path": str(project.root),
+        "track_data_artifacts": project.track_data_artifacts,
+    }
 
 
 @router.post("/init")
 def init_project(req: InitProjectRequest, current_user=Depends(get_current_active_user)) -> dict:
     name = req.name or Path(req.folder_path).expanduser().name
-    project = project_sync.init_project(req.folder_path, name, current_user.id)
+    project = project_sync.init_project(req.folder_path, name, current_user.id, req.track_data_artifacts)
     return {"project": _payload(project)}
 
 
@@ -74,6 +84,15 @@ def get_active(current_user=Depends(get_current_active_user)) -> dict:
         "has_external_changes": project_sync.has_external_changes(current_user.id),
         "dirty": project_sync.has_uncommitted_changes(current_user.id),
     }
+
+
+@router.put("/settings")
+def update_settings(req: UpdateSettingsRequest, current_user=Depends(get_current_active_user)) -> dict:
+    try:
+        value = project_sync.update_settings(current_user.id, req.track_data_artifacts)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"track_data_artifacts": value}
 
 
 @router.post("/versions")

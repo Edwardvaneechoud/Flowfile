@@ -31,6 +31,9 @@ class ProjectManifest:
     project_id: str
     created_with_version: str
     project_format: int = PROJECT_FORMAT
+    # All-or-nothing toggle: when False, catalog tables (tables.yaml) and global artifacts
+    # (models.yaml) are kept out of the project — not projected, committed, imported, or pruned.
+    track_data_artifacts: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -38,6 +41,7 @@ class ProjectManifest:
             "name": self.name,
             "project_id": self.project_id,
             "created_with_version": self.created_with_version,
+            "track_data_artifacts": self.track_data_artifacts,
         }
 
 
@@ -59,6 +63,7 @@ def read_manifest(root: Path) -> ProjectManifest | None:
         project_id=data.get("project_id", ""),
         created_with_version=data.get("created_with_version", ""),
         project_format=data.get("project_format", PROJECT_FORMAT),
+        track_data_artifacts=data.get("track_data_artifacts", True),
     )
 
 

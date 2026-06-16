@@ -12,6 +12,7 @@ class ActiveProject:
     name: str
     root: Path
     owner_id: int
+    track_data_artifacts: bool = True
 
 
 @dataclass

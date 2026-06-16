@@ -577,8 +577,15 @@ def project_all(db: Session, root: Path, owner_id: int) -> None:
         written.add(project_cloud_connection(db, root, conn.connection_name, owner_id))
     regenerate_secret_manifest(db, root, owner_id)
     regenerate_namespace_manifest(db, root, owner_id)
-    regenerate_tables_manifest(db, root, owner_id)
-    regenerate_models_manifest(db, root, owner_id)
+    # Catalog tables + global artifacts are opt-out per project (manifest.track_data_artifacts).
+    # When off, drop the root manifests (they aren't swept by _prune_orphan_files).
+    m = manifest.read_manifest(root)
+    if m is None or m.track_data_artifacts:
+        regenerate_tables_manifest(db, root, owner_id)
+        regenerate_models_manifest(db, root, owner_id)
+    else:
+        manifest.tables_manifest_path(root).unlink(missing_ok=True)
+        manifest.models_manifest_path(root).unlink(missing_ok=True)
     regenerate_kernels_manifest(db, root, owner_id)
     regenerate_visualizations_manifest(db, root, owner_id)
     regenerate_dashboards_manifest(db, root, owner_id)
