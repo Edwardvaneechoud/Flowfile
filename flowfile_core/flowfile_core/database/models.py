@@ -190,6 +190,27 @@ class FlowRegistration(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class WorkspaceProject(Base):
+    """A git-friendly project folder mirroring this install's flows/connections/schedules.
+
+    The folder is a deterministic, secret-free projection of the catalog DB. The DB stays
+    the runtime source of truth; this row just maps it to its on-disk project tree.
+    """
+
+    __tablename__ = "workspace_projects"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    folder_path = Column(String, nullable=False, unique=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    is_active = Column(Boolean, default=False, nullable=False)
+    # Git HEAD we last projected/imported at; differs from the live HEAD only when git
+    # changed the working tree from outside the app (pull / restore / fresh clone).
+    last_synced_head_sha = Column(String(40), nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class FlowRun(Base):
     """Persistent record of every flow execution, with a snapshot of the flow version."""
 
