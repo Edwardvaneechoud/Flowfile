@@ -307,3 +307,50 @@ def test_status_reports_drift(ws_user, storage_tmp, project_root):
         _make_db_connection(db, ws_user, "second_pg", "pw2")
         drift2 = sync.diff_drift()
         assert "connections/database/second_pg.yaml" in drift2.db_ahead
+
+
+def test_restore_recreates_deleted_flow(ws_user, storage_tmp, project_root):
+    """Delete a flow → checkpoint → restore the earlier checkpoint → flow is back."""
+    from flowfile_core.workspace.git_backend import GitBackend
+
+    if not GitBackend.available():
+        import pytest
+
+        pytest.skip("git binary not installed")
+
+    from shared.storage_config import storage
+
+    uuid_x = str(uuid.uuid4())
+    uuid_z = str(uuid.uuid4())
+    with get_db_context() as db:
+        for name, flow_uuid in [("flow_x", uuid_x), ("flow_z", uuid_z)]:
+            flow_path = storage.flows_directory / f"{name}.flow.yaml"
+            _write_flow(flow_path, name, None)
+            _register_flow(db, ws_user, name, flow_path, flow_uuid)
+        init_project(project_root, "Test")
+        WorkspaceSync(db, ws_user, project_root).export()
+
+    git = GitBackend(project_root)
+    checkpoint_a = git.commit("A: both flows")
+
+    # Remove flow_z, then checkpoint the removal (export prunes the file + commit).
+    with get_db_context() as db:
+        db.query(db_models.FlowRegistration).filter_by(flow_uuid=uuid_z).delete()
+        db.commit()
+        WorkspaceSync(db, ws_user, project_root).export()
+    git.commit("B: removed flow_z")
+
+    with get_db_context() as db:
+        assert db.query(db_models.FlowRegistration).filter_by(flow_uuid=uuid_z).first() is None
+
+    # Restore the earlier checkpoint and rebuild the DB from it.
+    git.restore(checkpoint_a)
+    git.commit("Restore to A")
+    with get_db_context() as db:
+        result = WorkspaceSync(db, ws_user, project_root).apply()
+        assert result.counts.get("flow") == 2
+
+    with get_db_context() as db:
+        reg = db.query(db_models.FlowRegistration).filter_by(flow_uuid=uuid_z).first()
+        assert reg is not None, "restored checkpoint must recreate the deleted flow"
+        assert Path(reg.flow_path).exists()

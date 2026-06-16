@@ -44,6 +44,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useWorkspaceStore } from "../../stores/workspace-store";
+import { useCatalogStore } from "../../stores/catalog-store";
 import type { GitCommit } from "../../types";
 import WorkspaceEmptyState from "./WorkspaceEmptyState.vue";
 import WorkspaceHeader from "./WorkspaceHeader.vue";
@@ -62,6 +63,33 @@ const diffDialog = reactive({ visible: false, title: "", diff: "", loading: fals
 
 const loadingInitial = computed(() => !ready.value && store.loadingProjects);
 const busy = computed(() => store.exporting || store.applying || store.committing);
+
+// A human summary of what an apply/restore loaded into the runtime.
+function summarizeApply(counts: Record<string, number>): string {
+  const flows = counts.flow ?? 0;
+  const schedules = counts.schedule ?? 0;
+  const connections =
+    (counts.database_connection ?? 0) +
+    (counts.cloud_connection ?? 0) +
+    (counts.ga_connection ?? 0) +
+    (counts.kafka_connection ?? 0);
+  const parts: string[] = [];
+  if (flows) parts.push(`${flows} flow${flows > 1 ? "s" : ""}`);
+  if (connections) parts.push(`${connections} connection${connections > 1 ? "s" : ""}`);
+  if (schedules) parts.push(`${schedules} schedule${schedules > 1 ? "s" : ""}`);
+  return parts.join(", ");
+}
+
+// Apply/restore rewrites the runtime catalog, so the Catalog view's cached flow
+// list is now stale — refresh it (best-effort) so restored flows show up.
+async function refreshCatalog() {
+  try {
+    const catalog = useCatalogStore();
+    await Promise.allSettled([catalog.loadAllFlows(), catalog.loadTree()]);
+  } catch {
+    /* best-effort */
+  }
+}
 
 onMounted(async () => {
   try {
@@ -126,12 +154,14 @@ async function onLoadFromFiles() {
   }
   try {
     const result = await store.applyProject();
-    ElMessage.success("Loaded project from files");
+    const summary = summarizeApply(result.counts);
+    ElMessage.success(summary ? `Loaded — ${summary}` : "Loaded project from files");
     if (result.missing_secrets.length) {
       ElMessage.warning(
         `${result.missing_secrets.length} secret value(s) missing — set FLOWFILE_SECRET_* and load again`,
       );
     }
+    await refreshCatalog();
   } catch {
     ElMessage.error(store.error ?? "Failed to load from files");
   }
@@ -165,8 +195,17 @@ async function onRestore(commit: GitCommit) {
     return; // cancelled
   }
   try {
-    await store.restore(commit.sha);
-    ElMessage.success(`Restored to ${commit.short_sha}`);
+    const result = await store.restore(commit.sha);
+    const summary = result.applied ? summarizeApply(result.applied.counts) : "";
+    ElMessage.success(
+      summary ? `Restored ${commit.short_sha} — ${summary}` : `Restored to ${commit.short_sha}`,
+    );
+    if (result.applied?.warnings.length) {
+      ElMessage.warning(
+        `${result.applied.warnings.length} item(s) skipped — ${result.applied.warnings[0]}`,
+      );
+    }
+    await refreshCatalog();
   } catch {
     ElMessage.error(store.error ?? "Restore failed");
   }
