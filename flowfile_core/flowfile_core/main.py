@@ -312,6 +312,11 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
     flow_name = flow.flow_settings.name or f"Flow {flow.flow_id}"
     _cli_logger.debug("Running flow: %s (id=%s), nodes: %d", flow_name, flow.flow_id, len(flow.nodes))
 
+    # Stamp registration id before running so writes record producer lineage (mirrors canvas).
+    from flowfile_core.flowfile.catalog_helpers import resolve_source_registration_id
+
+    resolve_source_registration_id(flow)
+
     try:
         result = flow.run_graph()
     except Exception as e:

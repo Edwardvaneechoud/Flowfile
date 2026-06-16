@@ -84,6 +84,11 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
     flow.print_tree()
     print("-" * 40)
 
+    # Stamp registration id before running so writes record producer lineage (mirrors canvas).
+    from flowfile_core.flowfile.catalog_helpers import resolve_source_registration_id
+
+    resolve_source_registration_id(flow)
+
     try:
         result = flow.run_graph()
     except Exception as e:

@@ -65,6 +65,7 @@
             <div class="form-group">
               <label>Browse the catalog</label>
               <catalog-flow-picker
+                ref="catalogPickerRef"
                 v-model="selectedRegistrationId"
                 :hide-system-namespaces="true"
                 @select-flow="handleOverwriteTargetSelected"
@@ -158,7 +159,18 @@ const emit = defineEmits(["save-complete", "save-cancelled", "update:visible"]);
 const isVisible = ref(props.visible);
 const initialPath = ref("");
 
-const saveMode = ref<"file" | "catalog">("file");
+// Persist the last-used source (file vs catalog) so the dialog reopens on
+// whichever source was used last. Intentionally shares the Open dialog's key
+// so the file/catalog preference is consistent across open and save.
+const DIALOG_MODE_STORAGE_KEY = "openDialog_mode";
+
+function loadSaveMode(): "file" | "catalog" {
+  return localStorage.getItem(DIALOG_MODE_STORAGE_KEY) === "catalog" ? "catalog" : "file";
+}
+
+const saveMode = ref<"file" | "catalog">(loadSaveMode());
+
+watch(saveMode, (m) => localStorage.setItem(DIALOG_MODE_STORAGE_KEY, m));
 
 // Catalog options
 const registerInCatalog = ref(true);
@@ -186,6 +198,8 @@ const fileBrowserRef = ref<{
   navigateUpDirectory: () => Promise<void>;
   selectedFile: FileInfo | null;
 } | null>(null);
+
+const catalogPickerRef = ref<{ refresh: () => Promise<void> } | null>(null);
 
 watch(
   () => props.visible,
@@ -219,6 +233,11 @@ const updateInitialPath = async () => {
   selectedRegistrationId.value = null;
   overwriteTargetHint.value = "";
 
+  // Re-fetch the catalog listing every open — the dialog content persists
+  // across open/close, so without this the picker shows the flow list as it
+  // was on first mount (stale after saves/renames).
+  await catalogPickerRef.value?.refresh();
+
   // Always refresh the managed catalog flows directory — this is the target
   // for the Catalog tab and must never be influenced by the user's last
   // browsed directory.
@@ -232,7 +251,15 @@ const updateInitialPath = async () => {
     const settings = await getFlowSettings(props.flowId);
     if (settings?.path) {
       const fileName = settings.path.split(/[/\\]/).pop() ?? "";
-      catalogFlowName.value = fileName.replace(/\.(yaml|yml|json)$/i, "");
+      let stem = fileName.replace(/\.(yaml|yml|json)$/i, "");
+      // Managed catalog flows are stored as ``{flow_id}_{name}.yaml`` — the id
+      // prefix is a filename collision-avoidance trick that must never surface
+      // to users. Strip it only for internal/managed paths so a user's own
+      // ``2024_report.yaml`` is left intact.
+      if (isInternalFlowfilePath(settings.path)) {
+        stem = stem.replace(/^\d+_/, "");
+      }
+      catalogFlowName.value = settings.display_name?.trim() || stem;
 
       // Only seed the file-browser initial path from the current flow path
       // when that path lives in a real user directory.  Quick-created flows
@@ -290,14 +317,16 @@ const handleSaveFlow = async (flowPath: string) => {
 
 const catalogFilePath = computed(() => {
   // Display-only preview of the final catalog path. Must mirror the backend
-  // convention in /save_flow_to_catalog (``{flow_id}_{safe_stem}.yaml`` under the
+  // convention in /save_flow_to_catalog (``{flow_id}_{slug}.yaml`` under the
   // managed flows dir) so the user sees what will actually be written. The flow
-  // name is a free-form label; the filename stem is slugified to [A-Za-z0-9_-].
+  // name is a free-form label, but the filename is a filesystem-safe slug of it.
   const dir = catalogFlowsDir.value || "~/.flowfile/flows";
   const raw = catalogFlowName.value.trim().replace(/\.(yaml|yml|json)$/i, "");
-  const stem = raw.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^[_-]+|[_-]+$/g, "") || "flow";
+  // Mirror the backend slug (_MANAGED_FLOW_STEM_DISALLOWED_RE): collapse runs of
+  // characters outside [A-Za-z0-9_-] into a single underscore and trim separators.
+  const slug = raw.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^[_-]+|[_-]+$/g, "") || "flow";
   const sep = dir.includes("\\") ? "\\" : "/";
-  return `${dir}${sep}${props.flowId}_${stem}.yaml`;
+  return `${dir}${sep}${props.flowId}_${slug}.yaml`;
 });
 
 const normalizedCatalogName = computed(() =>

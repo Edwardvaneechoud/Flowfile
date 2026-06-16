@@ -291,6 +291,7 @@ import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import { useProjectStore } from "../../../stores/project-store";
+import { useCatalogStore } from "../../../stores/catalog-store";
 import { useRecentFlows } from "../../../composables/useRecentFlows";
 import {
   createFlow,
@@ -308,7 +309,8 @@ const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
 const projectStore = useProjectStore();
-const { recordFlowFromSettings } = useRecentFlows();
+const catalogStore = useCatalogStore();
+const { recordFlowFromSettings, refreshCatalogRefs } = useRecentFlows();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -455,6 +457,10 @@ const handleSaveDialogComplete = (flowId: number) => {
     emit("flowSaved", flowId);
   }
   projectStore.onSourceChanged();
+  // A catalog save adds/updates a registration; refresh the cached listing so
+  // the Catalog view and recents reflect it without a manual reload.
+  catalogStore.loadAllFlows();
+  refreshCatalogRefs();
   if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
     setTimeout(() => {
       tutorialStore.nextStep();
