@@ -15,6 +15,7 @@ import yaml
 from sqlalchemy.orm import Session
 
 from flowfile_core.database.models import (
+    CatalogNamespace,
     CloudStorageConnection,
     DatabaseConnection,
     FlowRegistration,
@@ -72,7 +73,24 @@ def _flow_stem(reg: FlowRegistration) -> str:
     return _name_stem(data.get("flowfile_name") or reg.name)
 
 
-def project_flow(root: Path, reg: FlowRegistration) -> Path | None:
+def _namespace_path(db: Session, namespace_id: int | None) -> dict | None:
+    """Resolve a flow's namespace_id to portable ``{"catalog", "schema"}`` names.
+
+    Flows live under a schema (level 1); returns the parent catalog + schema name. A level-0
+    row (or a missing parent) yields ``schema: None``. ``None`` when the flow has no namespace.
+    """
+    if namespace_id is None:
+        return None
+    ns = db.get(CatalogNamespace, namespace_id)
+    if ns is None:
+        return None
+    if ns.parent_id is None:
+        return {"catalog": ns.name, "schema": None}
+    parent = db.get(CatalogNamespace, ns.parent_id)
+    return {"catalog": parent.name if parent else ns.name, "schema": ns.name}
+
+
+def project_flow(root: Path, reg: FlowRegistration, namespace: dict | None = None) -> Path | None:
     data = _load_flow_data(reg.flow_path)
     if data is None:
         return None
@@ -82,7 +100,7 @@ def project_flow(root: Path, reg: FlowRegistration) -> Path | None:
         existing = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
         if existing.get("flow_uuid") not in (None, reg.flow_uuid):
             target = manifest.flows_dir(root) / f"{stem}_{reg.flow_uuid[:8]}.flow.yaml"
-    write_yaml(target, normalize_flow_data(data, reg.flow_uuid, reg.name))
+    write_yaml(target, normalize_flow_data(data, reg.flow_uuid, reg.name, namespace))
     return target
 
 
@@ -254,6 +272,53 @@ def regenerate_secret_manifest(db: Session, root: Path, owner_id: int) -> None:
     write_yaml(manifest.secrets_manifest_path(root), {"required_secrets": standalone})
 
 
+# --- namespace manifest (custom, non-public catalogs/schemas) ----------------
+
+
+def _namespace_entry(name_key: str, name: str, description: str | None, is_public: bool) -> dict:
+    """A manifest row: ``name_key`` ("catalog" or "name"), then optional description/is_public so
+    custom namespaces stay clutter-free (those keys only appear when meaningful)."""
+    entry = {name_key: name}
+    if description is not None:
+        entry["description"] = description
+    if is_public:
+        entry["is_public"] = True
+    return entry
+
+
+def regenerate_namespace_manifest(db: Session, root: Path, owner_id: int) -> None:
+    """namespaces.yaml mirrors the owner's catalog tree by name — seeded system namespaces
+    (General + default/Unnamed Flows/Local Flows/...) and custom catalogs/schemas alike — as a
+    nested ``catalog -> schemas`` structure so the hierarchy is visible and versioned.
+
+    ``is_public`` marks the seeder-managed system namespaces: the import path resolves those to
+    existing rows (never recreating them as private duplicates) and the prune path never deletes
+    them. Custom (non-public) namespaces are the ones import recreates and restore/reload prune."""
+    rows = db.query(CatalogNamespace).filter(CatalogNamespace.owner_id == owner_id).all()
+    catalogs: dict[str, dict] = {}
+    schemas: dict[str, list[dict]] = {}
+    for ns in rows:
+        if ns.parent_id is None:
+            catalogs[ns.name] = _namespace_entry("catalog", ns.name, ns.description, bool(ns.is_public))
+    for ns in rows:
+        if ns.parent_id is not None:
+            parent = db.get(CatalogNamespace, ns.parent_id)
+            catalog_name = parent.name if parent else ns.name
+            if catalog_name not in catalogs:  # parent owned by another user (e.g. shared public General)
+                catalogs[catalog_name] = _namespace_entry(
+                    "catalog", catalog_name, parent.description if parent else None, bool(parent and parent.is_public)
+                )
+            schemas.setdefault(catalog_name, []).append(
+                _namespace_entry("name", ns.name, ns.description, bool(ns.is_public))
+            )
+    out: list[dict] = []
+    for catalog_name in sorted(catalogs):
+        entry = dict(catalogs[catalog_name])
+        entry["schemas"] = sorted(schemas.get(catalog_name, []), key=lambda s: s["name"])
+        out.append(entry)
+    write_yaml(manifest.namespaces_manifest_path(root), {"namespaces": out})
+
+
 # --- full projection ---------------------------------------------------------
 
 # Project dirs that mirror the DB; everything in them is pruned to the written set on full projection.
@@ -283,7 +348,7 @@ def project_all(db: Session, root: Path, owner_id: int) -> None:
         .filter(FlowRegistration.owner_id == owner_id)
         .order_by(FlowRegistration.flow_uuid.asc())
     ):
-        flow_path = project_flow(root, reg)
+        flow_path = project_flow(root, reg, _namespace_path(db, reg.namespace_id))
         if flow_path is not None:
             written.add(flow_path)
         stem = flow_path.name[: -len(".flow.yaml")] if flow_path is not None else None
@@ -295,4 +360,5 @@ def project_all(db: Session, root: Path, owner_id: int) -> None:
     for conn in db.query(CloudStorageConnection).filter(CloudStorageConnection.user_id == owner_id):
         written.add(project_cloud_connection(db, root, conn.connection_name, owner_id))
     regenerate_secret_manifest(db, root, owner_id)
+    regenerate_namespace_manifest(db, root, owner_id)
     _prune_orphan_files(root, written - {None})

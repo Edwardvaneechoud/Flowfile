@@ -89,7 +89,8 @@ class ProjectSyncService:
             with get_db_context() as db:
                 reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).first()
                 if reg is not None and reg.owner_id == proj.owner_id:
-                    target = projection.project_flow(proj.root, reg)
+                    namespace = projection._namespace_path(db, reg.namespace_id)
+                    target = projection.project_flow(proj.root, reg, namespace)
                     if target is not None:
                         projection.remove_stale_flow_files(proj.root, reg.flow_uuid, target)
         except Exception:
@@ -143,6 +144,16 @@ class ProjectSyncService:
                 projection.regenerate_secret_manifest(db, proj.root, proj.owner_id)
         except Exception:
             logger.warning("Project secret-manifest projection failed", exc_info=True)
+
+    def namespace_changed(self, user_id: int | None) -> None:
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            return
+        try:
+            with get_db_context() as db:
+                projection.regenerate_namespace_manifest(db, proj.root, proj.owner_id)
+        except Exception:
+            logger.warning("Project namespace-manifest projection failed", exc_info=True)
 
     # --- lifecycle (explicit user actions via /project router + CLI) ----------
 

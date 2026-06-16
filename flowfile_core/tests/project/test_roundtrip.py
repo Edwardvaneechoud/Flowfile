@@ -14,7 +14,7 @@ import yaml
 from flowfile_core import flow_file_handler
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import FlowRegistration, FlowSchedule
+from flowfile_core.database.models import CatalogNamespace, FlowRegistration, FlowSchedule
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_database_connection,
@@ -283,6 +283,203 @@ def _delete_flow(flow_uuid: str) -> None:
             return
         svc = CatalogService(SQLAlchemyCatalogRepository(db))
         svc.delete_flow(reg.id, delete_file=True)
+
+
+# --- namespace placement / projection (the catalog-mirroring feature) ----------
+
+
+def _make_flow_in_namespace(
+    tmp_path: Path, flowfile_name: str, catalog: str, schema: str, flow_id: int = 424242
+) -> tuple[str, int, int]:
+    """Build a flow and register it under an explicit custom ``catalog > schema`` (not Local Flows)."""
+    handler = FlowfileHandler()
+    handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name=flowfile_name, path="."))
+    graph = handler.get_flow(flow_id)
+    graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=flow_id, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"a": 1}])
+        )
+    )
+    flow_path = str(tmp_path / f"{flowfile_name}.yaml")
+    graph.save_flow(flow_path)
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        cat = svc.repo.get_namespace_by_name(catalog, None) or svc.create_namespace(name=catalog, owner_id=OWNER)
+        sch = svc.repo.get_namespace_by_name(schema, cat.id) or svc.create_namespace(
+            name=schema, owner_id=OWNER, parent_id=cat.id
+        )
+        reg = FlowRegistration(name=flowfile_name, flow_path=flow_path, namespace_id=sch.id, owner_id=OWNER)
+        db.add(reg)
+        db.commit()
+        db.refresh(reg)
+        return reg.flow_uuid, sch.id, cat.id
+
+
+def _cleanup_custom_namespaces(catalog_names: list[str]) -> None:
+    with get_db_context() as db:
+        for cat_name in catalog_names:
+            cat = db.query(CatalogNamespace).filter_by(name=cat_name, parent_id=None).first()
+            if cat is None:
+                continue
+            ids = [cat.id] + [c.id for c in db.query(CatalogNamespace).filter_by(parent_id=cat.id).all()]
+            db.query(FlowRegistration).filter(FlowRegistration.namespace_id.in_(ids)).delete(synchronize_session=False)
+            db.query(CatalogNamespace).filter(CatalogNamespace.id.in_(ids)).delete(synchronize_session=False)
+            db.commit()
+
+
+def test_custom_namespace_round_trips_on_clean_db(tmp_path):
+    project_sync.close_project(OWNER)
+    flow_uuid, schema_id, catalog_id = _make_flow_in_namespace(tmp_path, "ns_flow", "Analytics", "Marts")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "NS Test", OWNER)
+        # The flow file carries its catalog placement by name.
+        doc = yaml.safe_load((root / "flows" / "ns_flow.flow.yaml").read_text(encoding="utf-8"))
+        assert doc["namespace"] == {"catalog": "Analytics", "schema": "Marts"}
+        # namespaces.yaml mirrors the catalog tree: custom Analytics > Marts plus seeded system ones.
+        cats = {c["catalog"]: c for c in yaml.safe_load((root / "namespaces.yaml").read_text(encoding="utf-8"))["namespaces"]}
+        assert {s["name"] for s in cats["Analytics"]["schemas"]} == {"Marts"}
+        assert not cats["Analytics"].get("is_public")
+        assert cats["General"].get("is_public") is True  # seeded system namespaces are listed too
+
+        # Simulate a fresh machine: close the project (files stay committed), drop the flow + custom
+        # namespaces from the DB, then rebuild from the files.
+        project_sync.close_project(OWNER)
+        _delete_flow(flow_uuid)
+        _cleanup_custom_namespaces(["Analytics"])
+        with get_db_context() as db:
+            assert db.get(CatalogNamespace, schema_id) is None
+
+        from flowfile_core.project.importer import import_project
+
+        import_project(root, OWNER)
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+            assert reg is not None
+            ns = db.get(CatalogNamespace, reg.namespace_id)
+            assert ns is not None and ns.name == "Marts"  # restored in place, NOT Local Flows
+            parent = db.get(CatalogNamespace, ns.parent_id)
+            assert parent is not None and parent.name == "Analytics"
+    finally:
+        _delete_flow(flow_uuid)
+        _cleanup_custom_namespaces(["Analytics"])
+        project_sync.close_project(OWNER)
+
+
+def test_namespaced_flow_projection_round_trips_byte_identical(tmp_path):
+    project_sync.close_project(OWNER)
+    flow_uuid, _, _ = _make_flow_in_namespace(tmp_path, "det_ns_flow", "DetCat", "DetSchema")
+    root = tmp_path / "project"
+
+    def snap() -> dict[str, bytes]:
+        s = _snapshot(root)
+        ns = root / "namespaces.yaml"
+        if ns.exists():
+            s["namespaces.yaml"] = ns.read_bytes()
+        return s
+
+    try:
+        project_sync.init_project(str(root), "Det NS Test", OWNER)
+        snap1 = snap()
+        with get_db_context() as db:
+            projection.project_all(db, root, OWNER)
+        assert snap() == snap1, "re-projecting an unchanged namespaced flow must be byte-identical"
+
+        from flowfile_core.project.importer import import_project
+
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            projection.project_all(db, root, OWNER)
+        assert snap() == snap1, "project->import->project must round-trip with a namespaced flow"
+    finally:
+        _delete_flow(flow_uuid)
+        _cleanup_custom_namespaces(["DetCat"])
+        project_sync.close_project(OWNER)
+
+
+def test_reload_prunes_emptied_custom_namespace(tmp_path):
+    project_sync.close_project(OWNER)
+    flow_uuid, _, _ = _make_flow_in_namespace(tmp_path, "del_flow", "DelCat", "DelSchema")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Del Test", OWNER)
+        assert (root / "flows" / "del_flow.flow.yaml").exists()
+
+        # Simulate restoring a version that no longer has the flow or its custom namespace.
+        for p in (root / "flows").glob("*.flow.yaml"):
+            p.unlink()
+        from flowfile_core.project.normalize import write_yaml
+
+        write_yaml(root / "namespaces.yaml", {"namespaces": []})
+
+        project_sync.reload_from_disk(OWNER)
+
+        with get_db_context() as db:
+            assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None
+            assert db.query(CatalogNamespace).filter_by(name="DelSchema").first() is None
+            assert db.query(CatalogNamespace).filter_by(name="DelCat", parent_id=None).first() is None
+            # Seeded public namespaces are never pruned.
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            assert general is not None
+            assert db.query(CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first() is not None
+    finally:
+        _delete_flow(flow_uuid)
+        _cleanup_custom_namespaces(["DelCat"])
+        project_sync.close_project(OWNER)
+
+
+def test_namespace_hook_updates_manifest_under_active_project(tmp_path):
+    project_sync.close_project(OWNER)
+    root = tmp_path / "project"
+    ns_file = root / "namespaces.yaml"
+
+    def catalogs() -> dict:
+        return {c["catalog"]: c for c in yaml.safe_load(ns_file.read_text(encoding="utf-8"))["namespaces"]}
+
+    try:
+        project_sync.init_project(str(root), "Hook Test", OWNER)
+        assert "General" in catalogs() and "HookCat" not in catalogs()
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            cat_id = svc.create_namespace(name="HookCat", owner_id=OWNER).id
+            svc.create_namespace(name="HookSchema", owner_id=OWNER, parent_id=cat_id).id
+        assert {s["name"] for s in catalogs()["HookCat"]["schemas"]} == {"HookSchema"}
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            schema_id = svc.repo.get_namespace_by_name("HookSchema", cat_id).id
+            svc.delete_namespace(schema_id)
+            svc.delete_namespace(cat_id)
+        assert "HookCat" not in catalogs() and "General" in catalogs()  # seeded untouched
+    finally:
+        _cleanup_custom_namespaces(["HookCat"])
+        project_sync.close_project(OWNER)
+
+
+def test_flow_move_reprojects_namespace(tmp_path):
+    project_sync.close_project(OWNER)
+    flow_uuid, _, catalog_id = _make_flow_in_namespace(tmp_path, "mv_flow", "MoveCat", "SchemaA")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Move Test", OWNER)
+        doc = yaml.safe_load((root / "flows" / "mv_flow.flow.yaml").read_text(encoding="utf-8"))
+        assert doc["namespace"] == {"catalog": "MoveCat", "schema": "SchemaA"}
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            schema_b_id = svc.create_namespace(name="SchemaB", owner_id=OWNER, parent_id=catalog_id).id
+            reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+            svc.update_flow(registration_id=reg.id, requesting_user_id=OWNER, namespace_id=schema_b_id)
+
+        doc = yaml.safe_load((root / "flows" / "mv_flow.flow.yaml").read_text(encoding="utf-8"))
+        assert doc["namespace"] == {"catalog": "MoveCat", "schema": "SchemaB"}
+    finally:
+        _delete_flow(flow_uuid)
+        _cleanup_custom_namespaces(["MoveCat"])
+        project_sync.close_project(OWNER)
 
 
 def test_flow_filed_by_flowfile_name_with_catalog_label(tmp_path):

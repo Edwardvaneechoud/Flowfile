@@ -15,8 +15,10 @@ from pydantic import SecretStr
 
 from flowfile_core import flow_file_handler
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+from flowfile_core.catalog.exceptions import NamespaceNotEmptyError
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
+    CatalogNamespace,
     CloudStorageConnection,
     DatabaseConnection,
     FlowRegistration,
@@ -132,12 +134,79 @@ def _import_cloud_connection(data: dict, owner_id: int, dotenv: dict, result: Se
     result.imported_connections += 1
 
 
+def _resolve_namespace(
+    catalog_name: str | None,
+    schema_name: str | None,
+    owner_id: int,
+    description: str | None = None,
+    create: bool = True,
+) -> int | None:
+    """Resolve the catalog (level 0) then schema (level 1) by name; return the schema id (or the
+    catalog id when no schema). Reuses seeded rows (name lookups ignore owner); idempotent.
+    With ``create`` (custom namespaces) a missing row is created with ``description``; without it
+    (seeder-managed system namespaces) a missing row yields None instead of a private duplicate."""
+    if not catalog_name:
+        return None
+    with get_db_context() as db:
+        service = CatalogService(SQLAlchemyCatalogRepository(db))
+        catalog = service.repo.get_namespace_by_name(catalog_name, None)
+        if catalog is None:
+            if not create:
+                return None
+            catalog = service.create_namespace(
+                name=catalog_name, owner_id=owner_id, description=None if schema_name else description
+            )
+        if not schema_name:
+            return catalog.id
+        schema = service.repo.get_namespace_by_name(schema_name, catalog.id)
+        if schema is None:
+            if not create:
+                return None
+            schema = service.create_namespace(
+                name=schema_name, owner_id=owner_id, parent_id=catalog.id, description=description
+            )
+        return schema.id
+
+
+def _import_namespaces(root: Path, owner_id: int) -> set[int]:
+    """Recreate the owner's namespaces from namespaces.yaml (nested ``catalog -> schemas``); return
+    the set of ids that must survive a prune. Seeded ``is_public`` entries resolve-only (the seeder
+    owns them); custom entries are get-or-created."""
+    catalogs = _read_yaml(manifest.namespaces_manifest_path(root)).get("namespaces", []) or []
+    kept: set[int] = set()
+    for catalog in sorted(catalogs, key=lambda c: c.get("catalog") or ""):
+        catalog_name = catalog.get("catalog")
+        if not catalog_name:
+            continue
+        cat_id = _resolve_namespace(
+            catalog_name, None, owner_id, catalog.get("description"), create=not catalog.get("is_public")
+        )
+        if cat_id is not None:
+            kept.add(cat_id)
+        for schema in catalog.get("schemas") or []:
+            schema_name = schema.get("name")
+            if not schema_name:
+                continue
+            sch_id = _resolve_namespace(
+                catalog_name, schema_name, owner_id, schema.get("description"), create=not schema.get("is_public")
+            )
+            if sch_id is not None:
+                kept.add(sch_id)
+    return kept
+
+
 def _import_flow(data: dict, owner_id: int) -> bool:
     flow_uuid = data.get("flow_uuid")
     if not flow_uuid:
         return False
     flowfile_name = data.get("flowfile_name") or "flow"
     catalog_name = data.get("catalog_name") or flowfile_name  # friendly display label; preserved, not the key
+    ns = data.get("namespace") or {}
+    # Resolve-only: every namespace a flow belongs to is either seeded or already created by
+    # _import_namespaces (which runs first), so we never create one here.
+    target_ns_id = (
+        _resolve_namespace(ns.get("catalog"), ns.get("schema"), owner_id, create=False) if ns.get("catalog") else None
+    )
     with get_db_context() as db:
         existing = db.query(FlowRegistration).filter(FlowRegistration.flow_uuid == flow_uuid).first()
         runtime_path = (
@@ -145,18 +214,24 @@ def _import_flow(data: dict, owner_id: int) -> bool:
             if existing
             else storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
         )
-    write_yaml(runtime_path, data)  # flow_uuid / catalog_name keys are ignored by the FlowfileData loader
+    write_yaml(runtime_path, data)  # flow_uuid / catalog_name / namespace keys are ignored by the FlowfileData loader
     flow_file_handler.import_flow(runtime_path, user_id=owner_id)
     if existing is None:
         auto_register_flow(str(runtime_path), catalog_name, owner_id)
-    # Reconcile identity + display name to the file (keeps flow_uuid stable for determinism and
-    # the catalog name round-tripping on open/restore/reload).
+    # Reconcile identity + display name + namespace placement to the file (keeps flow_uuid stable for
+    # determinism, the catalog name round-tripping, and the flow landing in its real schema on import).
     with get_db_context() as db:
         reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(runtime_path)).first()
         if reg:
-            changed = reg.flow_uuid != flow_uuid or reg.name != catalog_name
+            changed = (
+                reg.flow_uuid != flow_uuid
+                or reg.name != catalog_name
+                or (target_ns_id is not None and reg.namespace_id != target_ns_id)
+            )
             reg.flow_uuid = flow_uuid
             reg.name = catalog_name
+            if target_ns_id is not None:
+                reg.namespace_id = target_ns_id
             if changed:
                 db.commit()
     return True
@@ -214,8 +289,14 @@ def _import_schedules(data: dict, owner_id: int) -> int:
     return count
 
 
-def _prune_removed(owner_id: int, kept_flow_uuids: set[str], kept_db: set[str], kept_cloud: set[str]) -> None:
-    """Delete the owner's flows/connections that are no longer present in the project files.
+def _prune_removed(
+    owner_id: int,
+    kept_flow_uuids: set[str],
+    kept_db: set[str],
+    kept_cloud: set[str],
+    kept_namespace_ids: set[int],
+) -> None:
+    """Delete the owner's flows/connections/namespaces that are no longer present in the project files.
 
     A project mirrors the owner's whole environment, so on restore/reload the files are the complete
     intended set. Best-effort per resource: a failure (e.g. a flow with artifacts) is logged and skipped.
@@ -245,6 +326,24 @@ def _prune_removed(owner_id: int, kept_flow_uuids: set[str], kept_db: set[str], 
                     delete_cloud_connection(db, conn.connection_name, owner_id)
                 except Exception:
                     logger.warning("Project prune: could not remove cloud conn %s", conn.connection_name, exc_info=True)
+    # Namespaces last: flows were pruned above, so an emptied custom schema is now deletable. Delete
+    # schemas (level 1) before catalogs (level 0); seeded is_public namespaces are excluded entirely.
+    with get_db_context() as db:
+        service = CatalogService(SQLAlchemyCatalogRepository(db))
+        owned = (
+            db.query(CatalogNamespace)
+            .filter(CatalogNamespace.owner_id == owner_id, CatalogNamespace.is_public.is_(False))
+            .all()
+        )
+        for ns in sorted(owned, key=lambda n: -(n.level or 0)):
+            if ns.id in kept_namespace_ids:
+                continue
+            try:
+                service.delete_namespace(ns.id)
+            except NamespaceNotEmptyError:
+                logger.info("Project prune: namespace %s still has tables/flows; skipping", ns.id)
+            except Exception:
+                logger.warning("Project prune: could not delete namespace %s", ns.id, exc_info=True)
 
 
 def import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResult:
@@ -271,6 +370,8 @@ def import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResul
         if data.get("connection_name"):
             kept_cloud.add(data["connection_name"])
 
+    kept_namespace_ids = _import_namespaces(root, owner_id)
+
     kept_flow_uuids: set[str] = set()
     for f in sorted(manifest.flows_dir(root).glob("*.flow.yaml")):
         data = _read_yaml(f)
@@ -283,7 +384,7 @@ def import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResul
         result.imported_schedules += _import_schedules(_read_yaml(f), owner_id)
 
     if prune:
-        _prune_removed(owner_id, kept_flow_uuids, kept_db, kept_cloud)
+        _prune_removed(owner_id, kept_flow_uuids, kept_db, kept_cloud, kept_namespace_ids)
 
     from flowfile_core.project import git_ops
 

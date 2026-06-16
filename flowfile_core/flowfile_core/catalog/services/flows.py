@@ -29,6 +29,13 @@ def _project_sync_flow_deleted(flow_uuid: str, owner_id: int) -> None:
     project_sync.flow_deleted(flow_uuid, owner_id)
 
 
+def _project_sync_flow_saved(flow_path: str, owner_id: int) -> None:
+    """Re-project a flow file (e.g. after a namespace move) into the active project (no-op when none)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.flow_saved(flow_path, owner_id)
+
+
 # Process-local memo of (registration_id, flow_path) tuples we've already
 # warned about. The first sighting of a missing file is genuinely useful (it
 # can flag a misconfigured volume mount), but every subsequent /catalog/flows
@@ -182,6 +189,8 @@ class FlowRegistrationService:
         flow = self.repo.get_flow(registration_id)
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
+        ns_changed = namespace_id is not None and flow.namespace_id != namespace_id
+        moved_path, moved_owner = flow.flow_path, flow.owner_id
         if name is not None:
             flow.name = name
         if description is not None:
@@ -189,6 +198,8 @@ class FlowRegistrationService:
         if namespace_id is not None:
             flow.namespace_id = namespace_id
         flow = self.repo.update_flow(flow)
+        if ns_changed and moved_path:
+            _project_sync_flow_saved(moved_path, moved_owner)
         return self.enrich_flow_registration(flow, requesting_user_id)
 
     def delete_flow(self, registration_id: int, delete_file: bool = False) -> None:

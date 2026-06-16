@@ -82,3 +82,7 @@ def schedules_dir(root: Path) -> Path:
 
 def secrets_manifest_path(root: Path) -> Path:
     return root / "secrets.yaml"
+
+
+def namespaces_manifest_path(root: Path) -> Path:
+    return root / "namespaces.yaml"
