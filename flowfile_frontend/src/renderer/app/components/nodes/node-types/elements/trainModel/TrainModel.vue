@@ -62,6 +62,7 @@
                 clearable
                 filterable
                 :loading="loadingNamespaces"
+                @change="onNamespaceChange"
               >
                 <el-option label="Default (flow's namespace)" :value="null" />
                 <el-option
@@ -167,7 +168,11 @@ function flattenNamespaceTree(
       // Hide system-managed schemas so only "default" + user-created namespaces
       // are offered as a publish target.
       if (!(parentLabel === "General" && SYSTEM_NAMESPACE_NAMES.has(node.name))) {
-        out.push({ id: node.id, label });
+        out.push({
+          id: node.id,
+          label,
+          full: parentLabel ? `${parentLabel}.${node.name}` : node.name,
+        });
       }
     }
     if (node.children && node.children.length) {
@@ -180,6 +185,22 @@ function flattenNamespaceTree(
 const namespaceOptions = computed(() =>
   flattenNamespaceTree(namespaceTree.value, null).sort((a, b) => a.label.localeCompare(b.label)),
 );
+
+// Keep the portable "catalog.schema" name in sync with the numeric selection (id is install-local).
+function onNamespaceChange(id: number | null) {
+  const settings = nodeTrainModel.value?.train_input;
+  if (!settings) return;
+  const match = namespaceOptions.value.find((ns) => ns.id === id);
+  settings.namespace_full_name = match ? match.full : null;
+}
+
+// Restore the numeric selection from the portable name on load (imported flows carry only the name).
+function reconcileNamespaceSelection() {
+  const settings = nodeTrainModel.value?.train_input;
+  if (!settings || settings.namespace_id != null || !settings.namespace_full_name) return;
+  const match = namespaceOptions.value.find((ns) => ns.full === settings.namespace_full_name);
+  if (match) settings.namespace_id = match.id;
+}
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeTrainModel,
@@ -247,12 +268,14 @@ const loadNodeData = async (nodeId: number) => {
         publish_to_catalog: false,
         model_name: "",
         namespace_id: null,
+        namespace_full_name: null,
         catalog_description: null,
         catalog_tags: [],
       };
     } else if (nodeTrainModel.value.train_input.params == null) {
       nodeTrainModel.value.train_input.params = {};
     }
+    reconcileNamespaceSelection();
     dataLoaded.value = true;
   }
 };

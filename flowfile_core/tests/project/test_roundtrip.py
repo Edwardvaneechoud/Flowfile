@@ -774,7 +774,9 @@ def test_table_projection_deterministic_and_stub_free(tmp_path):
         project_sync.close_project(OWNER)
 
 
-def test_table_round_trips_and_stubs_on_clean_db(tmp_path):
+def test_table_round_trips_and_rebuilds_from_schema(tmp_path):
+    import polars as pl
+
     from flowfile_core.project.importer import import_project
 
     project_sync.close_project(OWNER)
@@ -785,20 +787,23 @@ def test_table_round_trips_and_stubs_on_clean_db(tmp_path):
         project_sync.init_project(str(root), "Tbl RT", OWNER)
         project_sync.close_project(OWNER)
 
-        # Same machine, data present: re-import re-points to the existing Delta dir.
+        # Same machine, data present: re-import re-points to the existing Delta dir (data untouched).
         _delete_table_row_only(name)
         import_project(root, OWNER)
         out = _get_table_out(name)
         assert out is not None and out.file_exists is True
         assert {c.name for c in out.schema_columns} == {"id", "label"}
+        assert pl.read_delta(str(table_dir)).height == 2
 
-        # Fresh machine, data gone: re-import yields a schema-preserving stub.
+        # Fresh machine, data gone: re-import rebuilds a real 0-row Delta from the stored schema.
         _delete_table_row_only(name)
         shutil.rmtree(table_dir)
         import_project(root, OWNER)
         out = _get_table_out(name)
-        assert out is not None and out.file_exists is False
+        assert out is not None and out.file_exists is True  # rebuilt + queryable, not a dangling stub
         assert {c.name for c in out.schema_columns} == {"id", "label"}
+        rebuilt = pl.read_delta(str(table_dir))
+        assert rebuilt.height == 0 and set(rebuilt.columns) == {"id", "label"}
     finally:
         _delete_tables_by_name(name)
         project_sync.close_project(OWNER)
@@ -998,4 +1003,98 @@ def test_table_and_model_hooks_and_failure_isolation(tmp_path, monkeypatch):
         _delete_tables_by_name(f"{name}_2")
         _delete_artifacts(model)
         _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)
+
+
+# --- portable namespace references for catalog-writer / model nodes -------------
+
+
+def test_namespace_resolver_by_full_name(tmp_path):
+    project_sync.close_project(OWNER)
+    try:
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            cat = svc.create_namespace(name="ResCat", owner_id=OWNER)
+            sch = svc.create_namespace(name="ResSchema", owner_id=OWNER, parent_id=cat.id)
+            cat_id, sch_id = cat.id, sch.id
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            assert svc.resolve_namespace_id_by_full_name("ResCat.ResSchema") == sch_id
+            assert svc.resolve_namespace_id_by_full_name("ResCat") == cat_id
+            assert svc.resolve_namespace_id_by_full_name("ResCat.Nope") is None
+            assert svc.resolve_namespace_id_by_full_name("Nope.Nope") is None
+            assert svc.resolve_namespace_id_by_full_name(None) is None
+    finally:
+        _cleanup_custom_namespaces(["ResCat"])
+
+
+def test_strip_node_namespace_ids_only_when_name_present():
+    from flowfile_core.project.normalize import _strip_node_namespace_ids
+
+    data = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "catalog_writer",
+                "catalog_write_settings": {
+                    "table_name": "t",
+                    "namespace_id": 6,
+                    "namespace_full_name": "Demo.sales_analytics",
+                },
+            },
+            {
+                "id": 2,
+                "type": "train_model",
+                "train_input": {"model_name": "m", "namespace_id": 7, "namespace_full_name": "Demo.market"},
+            },
+            {"id": 3, "type": "apply_model", "apply_input": {"model_name": "m", "namespace_id": 9}},
+            {"id": 4, "type": "manual_input"},
+        ]
+    }
+    _strip_node_namespace_ids(data)
+    writer = data["nodes"][0]["catalog_write_settings"]
+    assert writer["namespace_full_name"] == "Demo.sales_analytics" and writer["namespace_id"] is None
+    train = data["nodes"][1]["train_input"]
+    assert train["namespace_full_name"] == "Demo.market" and train["namespace_id"] is None
+    # No portable name → the (possibly stale) id is left untouched, never rewritten.
+    apply = data["nodes"][2]["apply_input"]
+    assert apply["namespace_id"] == 9 and "namespace_full_name" not in apply
+
+
+def test_flow_writer_projects_portable_namespace(tmp_path):
+    project_sync.close_project(OWNER)
+    flow_uuid, schema_id, _ = _make_flow_in_namespace(tmp_path, "wr_flow", "WrCat", "WrSchema")
+    root = tmp_path / "project"
+    # Inject a catalog_writer node carrying the portable name (as the editor now stores) + the id.
+    with get_db_context() as db:
+        flow_path = Path(db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first().flow_path)
+    doc = yaml.safe_load(flow_path.read_text(encoding="utf-8"))
+    doc["nodes"].append(
+        {
+            "id": 99,
+            "type": "catalog_writer",
+            "catalog_write_settings": {
+                "table_name": "out_tbl",
+                "namespace_id": schema_id,
+                "namespace_full_name": "WrCat.WrSchema",
+                "write_mode": "overwrite",
+            },
+        }
+    )
+    flow_path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    try:
+        project_sync.init_project(str(root), "Writer NS", OWNER)
+        projected = yaml.safe_load((root / "flows" / "wr_flow.flow.yaml").read_text(encoding="utf-8"))
+        writer = next(n for n in projected["nodes"] if n["type"] == "catalog_writer")
+        ws = writer["catalog_write_settings"]
+        assert ws["namespace_full_name"] == "WrCat.WrSchema"  # portable name preserved
+        assert ws["namespace_id"] is None  # install-local id dropped
+
+        snap1 = _snapshot(root)
+        with get_db_context() as db:
+            projection.project_all(db, root, OWNER)
+        assert _snapshot(root) == snap1, "re-projection with a writer node must be byte-identical"
+    finally:
+        _delete_flow(flow_uuid)
+        _cleanup_custom_namespaces(["WrCat"])
         project_sync.close_project(OWNER)

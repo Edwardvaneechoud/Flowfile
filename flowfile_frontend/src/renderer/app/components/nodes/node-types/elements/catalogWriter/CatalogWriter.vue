@@ -19,6 +19,7 @@
           size="small"
           placeholder="Select namespace"
           clearable
+          @change="onNamespaceChange"
         >
           <el-option
             v-for="ns in catalogNamespaces"
@@ -200,7 +201,25 @@ const { saveSettings, pushNodeData } = useNodeSettings({
   },
 });
 
-const catalogNamespaces = ref<{ id: number; label: string }[]>([]);
+const catalogNamespaces = ref<{ id: number; label: string; full: string }[]>([]);
+
+// Keep the portable name in sync with the numeric selection. ``namespace_full_name`` ("catalog.schema")
+// is what survives recreation on another machine; the id is install-local. Mirrors the catalog reader.
+function onNamespaceChange(id: number | null) {
+  const settings = nodeData.value?.catalog_write_settings;
+  if (!settings) return;
+  const match = catalogNamespaces.value.find((ns) => ns.id === id);
+  settings.namespace_full_name = match ? match.full : null;
+}
+
+// On load, an imported flow may carry only ``namespace_full_name`` (id nulled by projection). Restore
+// the numeric selection from the name so the dropdown shows it; runs once both options + data exist.
+function reconcileNamespaceSelection() {
+  const settings = nodeData.value?.catalog_write_settings;
+  if (!settings || settings.namespace_id != null || !settings.namespace_full_name) return;
+  const match = catalogNamespaces.value.find((ns) => ns.full === settings.namespace_full_name);
+  if (match) settings.namespace_id = match.id;
+}
 
 // Tab state — determines whether we're in physical write or virtual mode
 const activeTab = ref<"physical" | "virtual">("physical");
@@ -345,12 +364,14 @@ onMounted(async () => {
         catalogNamespaces.value.push({
           id: schema.id,
           label: `${catalog.name} / ${schema.name}`,
+          full: `${catalog.name}.${schema.name}`,
         });
       }
     }
   } catch {
     // Catalog not available
   }
+  reconcileNamespaceSelection();
 });
 
 async function loadNodeData(nodeId: number) {
@@ -370,6 +391,7 @@ async function loadNodeData(nodeId: number) {
       catalog_write_settings: {
         table_name: "",
         namespace_id: null,
+        namespace_full_name: null,
         description: null,
         write_mode: "overwrite",
         merge_keys: [],
@@ -396,6 +418,7 @@ async function loadNodeData(nodeId: number) {
     physicalWriteMode.value = mode;
   }
 
+  reconcileNamespaceSelection();
   dataLoaded.value = true;
 }
 

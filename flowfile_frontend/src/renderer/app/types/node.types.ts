@@ -766,6 +766,7 @@ export type CatalogWriteMode =
 export interface CatalogWriteSettings {
   table_name: string;
   namespace_id: number | null;
+  namespace_full_name?: string | null;
   description: string | null;
   write_mode: CatalogWriteMode;
   merge_keys: string[];
@@ -1050,6 +1051,7 @@ export interface TrainModelSettings {
   publish_to_catalog: boolean;
   model_name: string;
   namespace_id?: number | null;
+  namespace_full_name?: string | null;
   catalog_description?: string | null;
   catalog_tags: string[];
 }
@@ -1066,6 +1068,7 @@ export interface ApplyModelSettings {
   model_name: string;
   model_version: number | null;
   namespace_id?: number | null;
+  namespace_full_name?: string | null;
   output_column: string;
 }
 
@@ -1094,6 +1097,7 @@ export interface CatalogNamespaceTree extends CatalogNamespaceOut {
 export interface NamespaceOption {
   id: number;
   label: string;
+  full: string; // portable "catalog.schema" reference (id is install-local)
 }
 
 export interface NodeApplyModel extends NodeSingleInput {

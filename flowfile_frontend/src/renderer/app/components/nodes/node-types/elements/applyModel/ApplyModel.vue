@@ -178,7 +178,11 @@ function flattenNamespaceTree(
   for (const node of tree) {
     const label = parentLabel ? `${parentLabel} > ${node.name}` : node.name;
     if (node.level >= 1) {
-      out.push({ id: node.id, label });
+      out.push({
+        id: node.id,
+        label,
+        full: parentLabel ? `${parentLabel}.${node.name}` : node.name,
+      });
     }
     if (node.children && node.children.length) {
       out.push(...flattenNamespaceTree(node.children, label));
@@ -190,6 +194,19 @@ function flattenNamespaceTree(
 const namespaceOptions = computed(() =>
   flattenNamespaceTree(namespaceTree.value, null).sort((a, b) => a.label.localeCompare(b.label)),
 );
+
+// Portable "catalog.schema" for a namespace id (the id is install-local; the name survives recreation).
+function fullNameForId(id: number | null): string | null {
+  return namespaceOptions.value.find((ns) => ns.id === id)?.full ?? null;
+}
+
+// Restore the numeric selection from the portable name on load (imported flows carry only the name).
+function reconcileNamespaceSelection() {
+  const settings = nodeApplyModel.value?.apply_input;
+  if (!settings || settings.namespace_id != null || !settings.namespace_full_name) return;
+  const match = namespaceOptions.value.find((ns) => ns.full === settings.namespace_full_name);
+  if (match) settings.namespace_id = match.id;
+}
 
 const filteredArtifacts = computed(() => {
   const ns = nodeApplyModel.value?.apply_input.namespace_id ?? null;
@@ -279,14 +296,17 @@ function onModelSelected(key: string) {
   // the user picked "Any namespace" first and then chose a model.
   nodeApplyModel.value.apply_input.model_name = m.name;
   nodeApplyModel.value.apply_input.namespace_id = m.namespace_id ?? null;
+  nodeApplyModel.value.apply_input.namespace_full_name = fullNameForId(m.namespace_id ?? null);
   nodeApplyModel.value.apply_input.model_version = null;
   versionSelection.value = null;
 }
 
 function onNamespaceChange() {
   if (nodeApplyModel.value) {
-    nodeApplyModel.value.apply_input.model_name = "";
-    nodeApplyModel.value.apply_input.model_version = null;
+    const settings = nodeApplyModel.value.apply_input;
+    settings.namespace_full_name = fullNameForId(settings.namespace_id ?? null);
+    settings.model_name = "";
+    settings.model_version = null;
     selectedModelKey.value = "";
     versionSelection.value = null;
   }
@@ -355,6 +375,7 @@ const loadNodeData = async (nodeId: number) => {
         model_name: "",
         model_version: null,
         namespace_id: null,
+        namespace_full_name: null,
         output_column: "prediction",
       };
     } else {
@@ -393,6 +414,7 @@ const loadNodeData = async (nodeId: number) => {
     } else {
       selectedModelKey.value = "";
     }
+    reconcileNamespaceSelection();
     dataLoaded.value = true;
   }
 };

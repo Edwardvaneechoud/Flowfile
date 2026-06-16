@@ -338,6 +338,17 @@ class CatalogService:
         """Look up a namespace's name by ID, returning ``None`` when absent."""
         return self._namespaces.resolve_namespace_name(namespace_id)
 
+    def resolve_namespace_id_by_full_name(self, full_name: str | None) -> int | None:
+        """Resolve a portable ``"catalog.schema"`` reference to an existing namespace id (resolve-only).
+
+        Name-first resolution for catalog-writer / model nodes whose numeric ``namespace_id`` is
+        install-local and goes stale when namespaces are recreated.
+        """
+        if not full_name:
+            return None
+        catalog_name, _, schema_name = full_name.partition(".")
+        return self._namespaces.resolve_namespace_id_by_path(catalog_name, schema_name or None)
+
     def _resolve_viz_enrichment(self, viz: CatalogVisualization, table: CatalogTable | None) -> VizEnrichment:
         """Resolve table + namespace name fields attached to a visualization DTO."""
         return self._visualizations._resolve_viz_enrichment(viz, table)

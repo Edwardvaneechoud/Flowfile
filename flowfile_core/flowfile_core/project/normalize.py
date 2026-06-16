@@ -53,6 +53,30 @@ def deterministic_flow_id(flow_uuid: str) -> int:
     return int(hashlib.sha256(flow_uuid.encode()).hexdigest(), 16) & 0xFFFFFFFF
 
 
+# (node type → settings key) for nodes whose target namespace must be portable across installs.
+_NAMESPACE_NODE_SETTINGS = {
+    "catalog_writer": "catalog_write_settings",
+    "train_model": "train_input",
+    "apply_model": "apply_input",
+}
+
+
+def _strip_node_namespace_ids(data: dict) -> None:
+    """Drop the install-local numeric ``namespace_id`` from catalog-writer / model nodes that carry a
+    portable ``namespace_full_name`` (set by the editor). The name is authoritative and survives
+    recreation; the id goes stale (and may even point at a different namespace) on another machine, so
+    keeping it would only churn the committed file. Nodes with only an id are left untouched — a stale
+    id can't be reliably mapped back to the intended namespace, so re-save in the editor to store the
+    name."""
+    for node in data.get("nodes") or []:
+        settings_key = _NAMESPACE_NODE_SETTINGS.get(node.get("type"))
+        if not settings_key:
+            continue
+        settings = node.get(settings_key)
+        if isinstance(settings, dict) and settings.get("namespace_full_name"):
+            settings["namespace_id"] = None
+
+
 def normalize_flow_data(data: dict, flow_uuid: str, catalog_name: str, namespace: dict | None = None) -> dict:
     """Strip volatile fields from a FlowfileData dict; key it by the stable flow_uuid.
 
@@ -63,12 +87,15 @@ def normalize_flow_data(data: dict, flow_uuid: str, catalog_name: str, namespace
     ``catalog_name`` restores its friendly catalog label without being the filename key.
     ``namespace`` (``{"catalog", "schema"}`` names — portable across installs) is injected at a
     fixed position so the importer can restore the flow's catalog placement; omitted when None.
+    Catalog-writer/model nodes additionally have their install-local ``namespace_id`` dropped when a
+    portable ``namespace_full_name`` is present (the runtime resolves the name).
     """
     data = dict(data)
     data["flowfile_id"] = deterministic_flow_id(flow_uuid)
     settings = data.get("flowfile_settings")
     if isinstance(settings, dict):
         settings["source_registration_id"] = None
+    _strip_node_namespace_ids(data)
     head: dict = {"flow_uuid": flow_uuid, "catalog_name": catalog_name}
     if namespace is not None:
         head["namespace"] = namespace

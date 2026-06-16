@@ -611,6 +611,14 @@ def _write_catalog_delta_remote(
     return meta
 
 
+def _effective_namespace_id(svc: CatalogService, settings) -> int | None:
+    """Resolve a node's target namespace name-first (portable ``namespace_full_name``), falling back to
+    the numeric ``namespace_id`` for flows saved before names were stored. The numeric id is install-local
+    and goes stale when namespaces are recreated, so the name is preferred whenever present."""
+    resolved = svc.resolve_namespace_id_by_full_name(getattr(settings, "namespace_full_name", None))
+    return resolved if resolved is not None else settings.namespace_id
+
+
 def _register_catalog_table(
     existing,
     dest_path: Path,
@@ -640,7 +648,7 @@ def _register_catalog_table(
                     name=settings.table_name,
                     table_path=str(dest_path),
                     owner_id=user_id,
-                    namespace_id=settings.namespace_id,
+                    namespace_id=_effective_namespace_id(svc, settings),
                     description=settings.description,
                     source_registration_id=source_registration_id,
                     storage_format="delta",
@@ -779,7 +787,8 @@ def _handle_virtual_table_write(
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
         svc = CatalogService(repo)
-        existing = repo.get_table_by_name(settings.table_name, settings.namespace_id)
+        ns_id = _effective_namespace_id(svc, settings)
+        existing = repo.get_table_by_name(settings.table_name, ns_id)
         if existing is not None and getattr(existing, "table_type", "physical") != "virtual":
             raise ValueError(
                 f"Cannot write virtual table '{settings.table_name}': a non-virtual "
@@ -802,7 +811,7 @@ def _handle_virtual_table_write(
                 name=settings.table_name,
                 owner_id=node_catalog_writer.user_id or 1,
                 producer_registration_id=reg_id,
-                namespace_id=settings.namespace_id,
+                namespace_id=ns_id,
                 description=settings.description,
                 serialized_lazy_frame=serialized_lf,
                 is_optimized=is_lazy,
@@ -832,7 +841,7 @@ def _handle_physical_table_write(
         svc = CatalogService(repo)
         existing, dest_path, delta_mode = svc.resolve_write_destination(
             table_name=settings.table_name,
-            namespace_id=settings.namespace_id,
+            namespace_id=_effective_namespace_id(svc, settings),
             write_mode=settings.write_mode,
             catalog_dir=catalog_dir,
         )
@@ -2526,10 +2535,14 @@ class FlowGraph:
                     )
 
                 tags = list({"ml", trainer.task_type, settings.model_type, *settings.catalog_tags})
+                with get_db_context() as _ns_db:
+                    effective_namespace_id = _effective_namespace_id(
+                        CatalogService(SQLAlchemyCatalogRepository(_ns_db)), settings
+                    )
                 prepare_request = PrepareUploadRequest(
                     name=settings.model_name,
                     source_registration_id=registration_id,
-                    namespace_id=settings.namespace_id,
+                    namespace_id=effective_namespace_id,
                     serialization_format=trainer.serialization_format,
                     description=settings.catalog_description
                     or f"Trained via Flowfile node {train_settings.node_id} ({settings.model_type})",
@@ -2706,9 +2719,12 @@ class FlowGraph:
                     raise ValueError("Apply Model: 'model_name' is required when source='catalog'.")
                 storage_backend = get_storage_backend()
                 with get_db_context() as db:
+                    effective_namespace_id = _effective_namespace_id(
+                        CatalogService(SQLAlchemyCatalogRepository(db)), settings
+                    )
                     artifact = ArtifactService(db, storage_backend).get_artifact_by_name(
                         name=settings.model_name,
-                        namespace_id=settings.namespace_id,
+                        namespace_id=effective_namespace_id,
                         version=settings.model_version,
                     )
                 if artifact.download_source is None or artifact.download_source.method != "file":

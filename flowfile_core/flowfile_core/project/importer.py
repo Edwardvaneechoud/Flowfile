@@ -16,6 +16,7 @@ from pydantic import SecretStr
 
 from flowfile_core import flow_file_handler
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+from flowfile_core.catalog.delta_utils import table_exists
 from flowfile_core.catalog.exceptions import NamespaceNotEmptyError
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
@@ -249,12 +250,31 @@ def _resolve_table_path(pointer: dict) -> str | None:
     return None
 
 
+def _materialize_empty_delta(path: str, schema: list[dict]) -> None:
+    """Write a 0-row Delta table matching the stored schema, so a recovered table is real and
+    queryable instead of a dangling stub. Reuses the canonical field→polars mapping
+    (MinimalFieldInfo → FlowfileColumn → create_from_schema) and the shared LazyFrame Delta writer."""
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+    from flowfile_core.schemas.input_schema import MinimalFieldInfo
+    from shared.delta_utils import write_delta
+
+    columns = [
+        FlowfileColumn.create_from_minimal_field_info(MinimalFieldInfo(name=c["name"], data_type=c["dtype"]))
+        for c in schema
+    ]
+    empty = FlowDataEngine.create_from_schema(columns)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    write_delta(empty.data_frame, path, mode="overwrite")
+
+
 def _import_tables(root: Path, owner_id: int) -> set[int]:
     """Recreate the owner's physical + SQL-view tables from tables.yaml; return the kept ids.
 
-    Rows are built directly (no data is read or written): a physical table re-points to its data
-    when present on this machine and is otherwise a schema-preserving stub (``file_exists=False``);
-    a SQL view is rebuilt from its stored query + schema without executing it."""
+    A physical table re-points to its data when present on this machine; when the managed data is
+    absent it is rebuilt as a real 0-row Delta table from the stored schema (so it is queryable and
+    repopulates when its flow runs). Existing data is never overwritten. A SQL view is rebuilt from
+    its stored query + schema without executing it."""
     kept: set[int] = set()
     for entry in _read_yaml(manifest.tables_manifest_path(root)).get("tables", []) or []:
         name = entry.get("name")
@@ -279,7 +299,18 @@ def _import_tables(root: Path, owner_id: int) -> set[int]:
                 table.sql_query = entry.get("sql_query")
             else:
                 table.table_type = "physical"
-                table.file_path = _resolve_table_path(entry.get("pointer") or {})
+                pointer = entry.get("pointer") or {}
+                resolved = _resolve_table_path(pointer)
+                # Rebuild a real, empty Delta table from the stored schema when the managed data is
+                # absent on this machine (never overwrite existing data; never write external paths).
+                if resolved and pointer.get("type") == "managed" and schema and not table_exists(resolved):
+                    try:
+                        _materialize_empty_delta(resolved, schema)
+                        table.row_count = 0
+                        table.size_bytes = 0
+                    except Exception:
+                        logger.warning("Could not rebuild empty table %s from schema", name, exc_info=True)
+                table.file_path = resolved
                 table.source_registration_id = _resolve_flow_uuid_to_reg_id(entry.get("source_flow_uuid"))
             if existing is None:
                 repo.create_table(table)
