@@ -1,4 +1,4 @@
-from flowfile_core.schemas.schemas import NodeDefault, NodeTemplate
+from flowfile_core.schemas.schemas import NodeDefault, NodeTag, NodeTemplate
 
 
 def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate], dict[str, NodeDefault]]:
@@ -19,6 +19,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="External Source",
             drawer_intro="Connect to external data sources and APIs",
             laziness="eager",
+            tags=[NodeTag.API, NodeTag.REST, NodeTag.HTTP, NodeTag.EXTERNAL],
         ),
         NodeTemplate(
             name="Manual input",
@@ -32,6 +33,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Manual Input",
             drawer_intro="Create data directly",
             laziness="lazy",
+            tags=[NodeTag.MANUAL, NodeTag.PASTE, NodeTag.INPUT],
         ),
         NodeTemplate(
             name="Read data",
@@ -47,6 +49,15 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
             # then change to "lazy"
             laziness="conditional",
+            tags=[
+                NodeTag.CSV,
+                NodeTag.EXCEL,
+                NodeTag.PARQUET,
+                NodeTag.JSON,
+                NodeTag.FILE,
+                NodeTag.IMPORT,
+                NodeTag.READ,
+            ],
         ),
         NodeTemplate(
             name="Join",
@@ -60,6 +71,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Join Datasets",
             drawer_intro="Merge two datasets based on matching column values",
             laziness="lazy",
+            tags=[NodeTag.JOIN, NodeTag.MERGE, NodeTag.LOOKUP, NodeTag.VLOOKUP, NodeTag.INNER, NodeTag.OUTER],
         ),
         NodeTemplate(
             name="Formula",
@@ -73,6 +85,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Formula Editor",
             drawer_intro="Create or modify columns using custom expressions",
             laziness="lazy",
+            tags=[NodeTag.FORMULA, NodeTag.EXPRESSION, NodeTag.CALCULATE, NodeTag.MATH, NodeTag.CONCAT, NodeTag.SUM],
         ),
         NodeTemplate(
             name="Write data",
@@ -86,6 +99,16 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Write Data",
             drawer_intro="Save your data as CSV, Excel, or Parquet files",
             laziness="eager",
+            tags=[
+                NodeTag.CSV,
+                NodeTag.EXCEL,
+                NodeTag.PARQUET,
+                NodeTag.JSON,
+                NodeTag.FILE,
+                NodeTag.EXPORT,
+                NodeTag.SAVE,
+                NodeTag.WRITE,
+            ],
         ),
         NodeTemplate(
             name="API response",
@@ -99,6 +122,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="API Response",
             drawer_intro="Return this dataset as the body of an HTTP API endpoint",
             laziness="eager",
+            tags=[NodeTag.API, NodeTag.REST, NodeTag.HTTP, NodeTag.RESPONSE],
         ),
         NodeTemplate(
             name="Select data",
@@ -112,6 +136,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Select Columns",
             drawer_intro="Choose, rename, and reorder columns to keep",
             laziness="lazy",
+            tags=[NodeTag.SELECT, NodeTag.COLUMNS, NodeTag.RENAME, NodeTag.REORDER, NodeTag.PROJECTION],
         ),
         NodeTemplate(
             name="Rename columns",
@@ -125,6 +150,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Rename Columns",
             drawer_intro="Bulk-rename columns by prefix, suffix, or a formula",
             laziness="lazy",
+            tags=[NodeTag.RENAME, NodeTag.COLUMNS],
         ),
         NodeTemplate(
             name="Filter data",
@@ -138,6 +164,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Filter Rows",
             drawer_intro="Keep only rows that match your conditions",
             laziness="lazy",
+            tags=[NodeTag.FILTER, NodeTag.WHERE, NodeTag.SUBSET],
         ),
         NodeTemplate(
             name="Group by",
@@ -151,6 +178,18 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Group By",
             drawer_intro="Aggregate data by grouping and calculating statistics",
             laziness="lazy",
+            tags=[
+                NodeTag.GROUP_BY,
+                NodeTag.AGGREGATE,
+                NodeTag.SUM,
+                NodeTag.MEAN,
+                NodeTag.AVERAGE,
+                NodeTag.COUNT,
+                NodeTag.MIN,
+                NodeTag.MAX,
+                NodeTag.MEDIAN,
+                NodeTag.SUMMARIZE,
+            ],
         ),
         NodeTemplate(
             name="Window functions",
@@ -164,6 +203,15 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Window Functions",
             drawer_intro="Rolling, cumulative, rank and tile calculations (optionally per partition)",
             laziness="lazy",
+            tags=[
+                NodeTag.WINDOW,
+                NodeTag.ROLLING,
+                NodeTag.CUMULATIVE,
+                NodeTag.RANK,
+                NodeTag.PARTITION,
+                NodeTag.LAG,
+                NodeTag.LEAD,
+            ],
         ),
         NodeTemplate(
             name="Fuzzy match",
@@ -177,6 +225,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Fuzzy Match",
             drawer_intro="Join datasets based on similar values instead of exact matches",
             laziness="eager",
+            tags=[NodeTag.FUZZY, NodeTag.SIMILARITY, NodeTag.LEVENSHTEIN, NodeTag.JOIN, NodeTag.LOOKUP],
         ),
         NodeTemplate(
             name="Sort data",
@@ -190,6 +239,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Sort Data",
             drawer_intro="Order your data by one or more columns",
             laziness="lazy",
+            tags=[NodeTag.SORT, NodeTag.ORDER, NodeTag.RANK, NodeTag.ASCENDING, NodeTag.DESCENDING],
         ),
         NodeTemplate(
             name="Add record Id",
@@ -203,6 +253,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Add Record ID",
             drawer_intro="Generate unique identifiers for each row",
             laziness="lazy",
+            tags=[NodeTag.RECORD_ID, NodeTag.ROW_NUMBER, NodeTag.INDEX],
         ),
         NodeTemplate(
             name="Take Sample",
@@ -216,6 +267,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Take Sample",
             drawer_intro="Work with a subset of your data",
             laziness="lazy",
+            tags=[NodeTag.SAMPLE, NodeTag.SUBSET],
         ),
         NodeTemplate(
             name="Random Split",
@@ -230,6 +282,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Random Split",
             drawer_intro="Randomly partition rows into named groups (e.g. train/test)",
             laziness="lazy",
+            tags=[NodeTag.SPLIT, NodeTag.TRAIN, NodeTag.TEST, NodeTag.ML, NodeTag.PARTITION],
         ),
         NodeTemplate(
             name="Explore data",
@@ -243,6 +296,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Explore Data",
             drawer_intro="Interactive data exploration and analysis",
             laziness="eager",
+            tags=[NodeTag.EXPLORE, NodeTag.PROFILE, NodeTag.PREVIEW, NodeTag.EDA, NodeTag.STATISTICS],
         ),
         NodeTemplate(
             name="Pivot data",
@@ -256,6 +310,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Pivot Data",
             drawer_intro="Convert data from long format to wide format",
             laziness="eager",
+            tags=[NodeTag.PIVOT, NodeTag.CROSSTAB, NodeTag.RESHAPE],
         ),
         NodeTemplate(
             name="Unpivot data",
@@ -269,6 +324,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Unpivot Data",
             drawer_intro="Transform data from wide format to long format",
             laziness="lazy",
+            tags=[NodeTag.UNPIVOT, NodeTag.MELT, NodeTag.RESHAPE],
         ),
         NodeTemplate(
             name="Union data",
@@ -283,6 +339,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Union Data",
             drawer_intro="Stack multiple datasets by combining rows",
             laziness="lazy",
+            tags=[NodeTag.UNION, NodeTag.CONCAT, NodeTag.APPEND],
         ),
         NodeTemplate(
             name="Drop duplicates",
@@ -296,6 +353,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Drop Duplicates",
             drawer_intro="Remove duplicate rows based on selected columns",
             laziness="lazy",
+            tags=[NodeTag.UNIQUE, NodeTag.DEDUPE, NodeTag.DISTINCT, NodeTag.DROP_DUPLICATES],
         ),
         NodeTemplate(
             name="Graph solver",
@@ -309,6 +367,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Graph Solver",
             drawer_intro="Group related records in graph-structured data",
             laziness="lazy",
+            tags=[NodeTag.GRAPH, NodeTag.NETWORK, NodeTag.CLUSTER, NodeTag.CONNECTED_COMPONENTS],
         ),
         NodeTemplate(
             name="Count records",
@@ -322,6 +381,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Count Records",
             drawer_intro="Calculate the total number of rows",
             laziness="lazy",
+            tags=[NodeTag.RECORD_COUNT, NodeTag.COUNT, NodeTag.ROWS],
         ),
         NodeTemplate(
             name="Cross join",
@@ -335,6 +395,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Cross Join",
             drawer_intro="Create all possible combinations between two datasets",
             laziness="lazy",
+            tags=[NodeTag.CROSS_JOIN, NodeTag.CARTESIAN, NodeTag.JOIN],
         ),
         NodeTemplate(
             name="Text to rows",
@@ -348,6 +409,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Text to Rows",
             drawer_intro="Split text into multiple rows based on a delimiter",
             laziness="lazy",
+            tags=[NodeTag.TEXT_TO_ROWS, NodeTag.SPLIT, NodeTag.EXPLODE],
         ),
         NodeTemplate(
             name="Polars code",
@@ -365,6 +427,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
             # then change to "lazy"
             laziness="conditional",
+            tags=[NodeTag.POLARS, NodeTag.CODE, NodeTag.PYTHON, NodeTag.SCRIPT, NodeTag.CUSTOM, NodeTag.DATAFRAME],
         ),
         NodeTemplate(
             name="SQL Query",
@@ -380,6 +443,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="SQL Query",
             drawer_intro="Write SQL queries against connected data sources",
             laziness="lazy",
+            tags=[NodeTag.SQL, NodeTag.QUERY, NodeTag.DUCKDB],
         ),
         NodeTemplate(
             name="Python Script",
@@ -395,6 +459,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Python Script",
             drawer_intro="Execute Python code on an isolated kernel container",
             laziness="eager",
+            tags=[NodeTag.PYTHON, NodeTag.CODE, NodeTag.SCRIPT, NodeTag.KERNEL, NodeTag.CUSTOM],
         ),
         NodeTemplate(
             name="Read from Database",
@@ -408,6 +473,20 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Database Reader",
             drawer_intro="Load data from database tables or queries",
             laziness="eager",
+            tags=[
+                NodeTag.DATABASE,
+                NodeTag.SQL,
+                NodeTag.POSTGRES,
+                NodeTag.MYSQL,
+                NodeTag.SQL_SERVER,
+                NodeTag.SNOWFLAKE,
+                NodeTag.ORACLE,
+                NodeTag.SQLITE,
+                NodeTag.REDSHIFT,
+                NodeTag.BIGQUERY,
+                NodeTag.QUERY,
+                NodeTag.TABLE,
+            ],
         ),
         NodeTemplate(
             name="Write to Database",
@@ -421,6 +500,16 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Database Writer",
             drawer_intro="Save data to database tables",
             laziness="eager",
+            tags=[
+                NodeTag.DATABASE,
+                NodeTag.SQL,
+                NodeTag.POSTGRES,
+                NodeTag.MYSQL,
+                NodeTag.SNOWFLAKE,
+                NodeTag.REDSHIFT,
+                NodeTag.BIGQUERY,
+                NodeTag.TABLE,
+            ],
         ),
         NodeTemplate(
             name="Read from cloud provider",
@@ -436,6 +525,17 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
             # then change to "lazy"
             laziness="conditional",
+            tags=[
+                NodeTag.S3,
+                NodeTag.AWS,
+                NodeTag.AZURE,
+                NodeTag.ADLS,
+                NodeTag.GCS,
+                NodeTag.BLOB,
+                NodeTag.BUCKET,
+                NodeTag.CLOUD,
+                NodeTag.DELTA,
+            ],
         ),
         NodeTemplate(
             name="Read from Catalog",
@@ -449,6 +549,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Catalog Reader",
             drawer_intro="Read a table from the data catalog",
             laziness="lazy",
+            tags=[NodeTag.CATALOG, NodeTag.DELTA, NodeTag.TABLE, NodeTag.LAKEHOUSE, NodeTag.TIME_TRAVEL],
         ),
         NodeTemplate(
             name="Write to Catalog",
@@ -462,6 +563,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Catalog Writer",
             drawer_intro="Save data as a table in the data catalog",
             laziness="eager",
+            tags=[NodeTag.CATALOG, NodeTag.DELTA, NodeTag.TABLE, NodeTag.LAKEHOUSE],
         ),
         NodeTemplate(
             name="Write to cloud provider",
@@ -475,6 +577,17 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Cloud Storage Writer",
             drawer_intro="Save data to AWS S3 and other cloud storage",
             laziness="eager",
+            tags=[
+                NodeTag.S3,
+                NodeTag.AWS,
+                NodeTag.AZURE,
+                NodeTag.ADLS,
+                NodeTag.GCS,
+                NodeTag.BLOB,
+                NodeTag.BUCKET,
+                NodeTag.CLOUD,
+                NodeTag.DELTA,
+            ],
         ),
         NodeTemplate(
             name="Kafka Source",
@@ -488,6 +601,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Kafka Source",
             drawer_intro="Read data from a Kafka or Redpanda topic",
             laziness="eager",
+            tags=[NodeTag.KAFKA, NodeTag.REDPANDA, NodeTag.STREAMING, NodeTag.TOPIC],
         ),
         NodeTemplate(
             name="Google Analytics",
@@ -501,6 +615,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Google Analytics",
             drawer_intro="Load reports from a Google Analytics 4 property",
             laziness="eager",
+            tags=[NodeTag.GOOGLE_ANALYTICS, NodeTag.GA4, NodeTag.ANALYTICS],
         ),
         NodeTemplate(
             name="REST API",
@@ -514,6 +629,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="REST API",
             drawer_intro="Read JSON data from a REST API with auth and pagination",
             laziness="eager",
+            tags=[NodeTag.REST, NodeTag.API, NodeTag.HTTP, NodeTag.JSON, NodeTag.PAGINATION],
         ),
         NodeTemplate(
             name="Train Model",
@@ -527,6 +643,14 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Train ML Model",
             drawer_intro="Fit a regression or classification model; optionally save it to the catalog",
             laziness="eager",
+            tags=[
+                NodeTag.ML,
+                NodeTag.MACHINE_LEARNING,
+                NodeTag.TRAIN,
+                NodeTag.MODEL,
+                NodeTag.REGRESSION,
+                NodeTag.CLASSIFICATION,
+            ],
         ),
         NodeTemplate(
             name="Apply Model",
@@ -540,6 +664,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Apply ML Model",
             drawer_intro="Score data with an upstream Train Model node, or with a trained model from the catalog",
             laziness="eager",
+            tags=[NodeTag.ML, NodeTag.MACHINE_LEARNING, NodeTag.PREDICT, NodeTag.SCORE, NodeTag.MODEL],
         ),
         NodeTemplate(
             name="Evaluate Model",
@@ -553,6 +678,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Evaluate Model",
             drawer_intro="Compare actual vs predicted columns and compute quality metrics",
             laziness="eager",
+            tags=[NodeTag.ML, NodeTag.MACHINE_LEARNING, NodeTag.EVALUATE, NodeTag.METRICS, NodeTag.MODEL],
         ),
         NodeTemplate(
             name="Wait For",
@@ -566,60 +692,10 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Wait For",
             drawer_intro="Pass the left input through; the right input only enforces ordering",
             laziness="eager",
+            tags=[NodeTag.WAIT, NodeTag.DEPENDENCY],
         ),
     ]
     nodes_list.sort(key=lambda x: x.name)
-
-    # Search keywords ("tags") let the palette surface nodes by concept, format, or tool rather
-    # than only by display name (e.g. "s3" -> cloud reader/writer, "aggregate" -> group by,
-    # "sum" -> group by and formula). Kept here so the templates above stay readable.
-    node_tags: dict[str, list[str]] = {
-        "external_source": ["api", "rest", "http", "external", "connector", "web", "url"],
-        "manual_input": ["manual", "paste", "type", "create data", "test data", "enter", "input"],
-        "read": ["csv", "excel", "xlsx", "parquet", "json", "file", "import", "load", "read"],
-        "join": ["merge", "lookup", "vlookup", "combine", "inner", "left", "right", "outer", "join"],
-        "formula": ["formula", "expression", "calculate", "compute", "sum", "math", "concat", "case", "if", "new column", "derive"],
-        "output": ["csv", "excel", "xlsx", "parquet", "json", "file", "export", "save", "write", "output"],
-        "api_response": ["api", "rest", "http", "response", "endpoint", "output", "webhook"],
-        "select": ["select", "columns", "rename", "reorder", "drop columns", "keep columns", "projection"],
-        "dynamic_rename": ["rename", "columns", "prefix", "suffix", "bulk rename"],
-        "filter": ["filter", "where", "subset", "condition", "remove rows", "keep rows"],
-        "group_by": ["group by", "groupby", "aggregate", "aggregation", "sum", "mean", "average", "count", "min", "max", "median", "std", "summarize", "rollup"],
-        "window_functions": ["window", "rolling", "cumulative", "rank", "tile", "partition", "over", "moving average", "lag", "lead"],
-        "fuzzy_match": ["fuzzy", "fuzzy match", "similarity", "approximate", "levenshtein", "fuzzy join", "fuzzy lookup"],
-        "sort": ["sort", "order", "arrange", "rank", "ascending", "descending"],
-        "record_id": ["record id", "row number", "index", "id", "sequence", "row id", "row_number"],
-        "sample": ["sample", "subset", "head", "random", "limit", "top n"],
-        "random_split": ["split", "train", "test", "train test split", "partition", "ml", "machine learning"],
-        "explore_data": ["explore", "profile", "describe", "inspect", "preview", "eda", "analyze", "statistics"],
-        "pivot": ["pivot", "crosstab", "wide", "reshape", "spread"],
-        "unpivot": ["unpivot", "melt", "long", "reshape", "gather"],
-        "union": ["union", "concat", "concatenate", "append", "stack", "combine rows"],
-        "unique": ["unique", "dedupe", "deduplicate", "distinct", "drop duplicates", "remove duplicates"],
-        "graph_solver": ["graph", "connected components", "network", "cluster", "group related", "components"],
-        "record_count": ["count", "record count", "rows", "total", "size", "number of rows"],
-        "cross_join": ["cross join", "cartesian", "cross", "combinations"],
-        "text_to_rows": ["text to rows", "split", "explode", "delimiter", "tokenize", "separate"],
-        "polars_code": ["polars", "code", "python", "custom", "script", "dataframe", "lazyframe"],
-        "sql_query": ["sql", "query", "select", "where", "duckdb"],
-        "python_script": ["python", "code", "script", "kernel", "custom", "pandas"],
-        "database_reader": ["database", "sql", "db", "postgres", "postgresql", "mysql", "sql server", "snowflake", "oracle", "sqlite", "redshift", "bigquery", "query", "table"],
-        "database_writer": ["database", "sql", "db", "postgres", "postgresql", "mysql", "sql server", "snowflake", "oracle", "redshift", "bigquery", "table", "insert"],
-        "cloud_storage_reader": ["s3", "aws", "azure", "adls", "gcs", "google cloud storage", "blob", "bucket", "minio", "cloud", "object storage", "delta"],
-        "catalog_reader": ["catalog", "delta", "table", "read", "lakehouse", "unity", "time travel"],
-        "catalog_writer": ["catalog", "delta", "table", "write", "save", "lakehouse", "unity"],
-        "cloud_storage_writer": ["s3", "aws", "azure", "adls", "gcs", "google cloud storage", "blob", "bucket", "minio", "cloud", "object storage", "delta"],
-        "kafka_source": ["kafka", "redpanda", "stream", "streaming", "topic", "events", "message queue"],
-        "google_analytics_reader": ["google analytics", "ga", "ga4", "analytics", "web analytics"],
-        "rest_api_reader": ["rest", "api", "http", "json", "endpoint", "web", "pagination"],
-        "train_model": ["ml", "machine learning", "train", "model", "fit", "regression", "classification", "sklearn"],
-        "apply_model": ["ml", "machine learning", "predict", "score", "inference", "apply", "model"],
-        "evaluate_model": ["ml", "machine learning", "evaluate", "metrics", "accuracy", "rmse", "model"],
-        "wait_for": ["wait", "ordering", "dependency", "sequence", "barrier"],
-    }
-    for node in nodes_list:
-        node.tags = node_tags.get(node.item, [])
-
     nodes_with_defaults = {"sample", "sort", "union", "select", "record_count"}
 
     def check_if_has_default_setting(node_item: str):
