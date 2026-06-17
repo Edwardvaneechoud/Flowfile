@@ -274,6 +274,7 @@ class NodeTemplate(BaseModel):
     drawer_title: str = "Node title"
     drawer_intro: str = "Drawer into"
     custom_node: bool | None = False
+    tags: list[str] = Field(default_factory=list)
 
 
 class NodeInformation(BaseModel):

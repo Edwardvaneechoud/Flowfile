@@ -75,6 +75,7 @@ export interface NodeTemplate {
   drawer_title: string;
   drawer_intro: string;
   custom_node: boolean;
+  tags?: string[];
 }
 
 export interface NodeInput extends NodeTemplate {

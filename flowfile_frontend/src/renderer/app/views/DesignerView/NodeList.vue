@@ -95,7 +95,11 @@ const filteredNodes = computed(() => {
   // Loop through each category and filter nodes
   for (const category in groupedNodes.value) {
     const nodesArray = groupedNodes.value[category as CategoryKey];
-    const filteredArray = nodesArray.filter((node) => node.name.toLowerCase().includes(query));
+    const filteredArray = nodesArray.filter(
+      (node) =>
+        node.name.toLowerCase().includes(query) ||
+        (node.tags ?? []).some((tag) => tag.toLowerCase().includes(query)),
+    );
     if (filteredArray.length) {
       filtered[category as CategoryKey] = filteredArray;
     }

@@ -23,6 +23,14 @@ Flowfile is a visual ETL tool and Python library suite that combines drag-and-dr
   <img src=".github/images/group_by_screenshot.png" alt="Flowfile Interface" width="800"/>
 </div>
 
+## What's included
+
+- **27 built-in node types** — inputs, transformations, joins, aggregations, and outputs
+- **Files:** read & write CSV, Excel, Parquet, and JSON
+- **Connect:** databases (any SQLAlchemy dialect — Postgres, MySQL, SQL Server, Snowflake, …), cloud storage (S3 / ADLS / GCS), and REST APIs
+- **Transform:** joins (incl. fuzzy matching), group-by, pivot/unpivot, filter, select, sort, dedupe, union, text-to-rows, graph solver — plus a formula editor with 100+ expression functions and a Polars code node for anything else
+- Everything compiles to Polars and exports to standalone Python
+
 ## ⚡ Technical Design
 
 Flowfile operates as three interconnected services:

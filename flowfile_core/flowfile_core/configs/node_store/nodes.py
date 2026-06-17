@@ -18,6 +18,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             prod_ready=False,
             drawer_title="External Source",
             drawer_intro="Connect to external data sources and APIs",
+            tags=["api", "rest", "http", "external", "connector", "web", "url"],
         ),
         NodeTemplate(
             name="Manual input",
@@ -30,6 +31,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Manual Input",
             drawer_intro="Create data directly",
+            tags=["manual", "paste", "type", "create data", "test data", "enter", "input"],
         ),
         NodeTemplate(
             name="Read data",
@@ -42,6 +44,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Read Data",
             drawer_intro="Load data from CSV, Excel, or Parquet files",
+            tags=["csv", "excel", "xlsx", "parquet", "json", "file", "import", "load", "read"],
         ),
         NodeTemplate(
             name="Join",
@@ -54,6 +57,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="combine",
             drawer_title="Join Datasets",
             drawer_intro="Merge two datasets based on matching column values",
+            tags=["merge", "lookup", "vlookup", "combine", "inner", "left", "right", "outer", "join"],
         ),
         NodeTemplate(
             name="Formula",
@@ -66,6 +70,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Formula Editor",
             drawer_intro="Create or modify columns using custom expressions",
+            tags=["formula", "expression", "calculate", "compute", "sum", "math", "concat", "case", "if", "new column", "derive"],
         ),
         NodeTemplate(
             name="Write data",
@@ -78,6 +83,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="output",
             drawer_title="Write Data",
             drawer_intro="Save your data as CSV, Excel, or Parquet files",
+            tags=["csv", "excel", "xlsx", "parquet", "json", "file", "export", "save", "write", "output"],
         ),
         NodeTemplate(
             name="Select data",
@@ -90,6 +96,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Select Columns",
             drawer_intro="Choose, rename, and reorder columns to keep",
+            tags=["select", "columns", "rename", "reorder", "drop columns", "keep columns", "projection"],
         ),
         NodeTemplate(
             name="Filter data",
@@ -102,6 +109,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Filter Rows",
             drawer_intro="Keep only rows that match your conditions",
+            tags=["filter", "where", "subset", "condition", "remove rows", "keep rows"],
         ),
         NodeTemplate(
             name="Group by",
@@ -114,6 +122,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="aggregate",
             drawer_title="Group By",
             drawer_intro="Aggregate data by grouping and calculating statistics",
+            tags=["group by", "groupby", "aggregate", "aggregation", "sum", "mean", "average", "count", "min", "max", "median", "std", "summarize", "rollup"],
         ),
         NodeTemplate(
             name="Fuzzy match",
@@ -126,6 +135,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="combine",
             drawer_title="Fuzzy Match",
             drawer_intro="Join datasets based on similar values instead of exact matches",
+            tags=["fuzzy", "fuzzy match", "similarity", "approximate", "levenshtein", "fuzzy join", "fuzzy lookup"],
         ),
         NodeTemplate(
             name="Sort data",
@@ -138,6 +148,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Sort Data",
             drawer_intro="Order your data by one or more columns",
+            tags=["sort", "order", "arrange", "rank", "ascending", "descending"],
         ),
         NodeTemplate(
             name="Add record Id",
@@ -150,6 +161,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Add Record ID",
             drawer_intro="Generate unique identifiers for each row",
+            tags=["record id", "row number", "index", "id", "sequence", "row id", "row_number"],
         ),
         NodeTemplate(
             name="Take Sample",
@@ -162,6 +174,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Take Sample",
             drawer_intro="Work with a subset of your data",
+            tags=["sample", "subset", "head", "random", "limit", "top n"],
         ),
         NodeTemplate(
             name="Explore data",
@@ -174,6 +187,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="output",
             drawer_title="Explore Data",
             drawer_intro="Interactive data exploration and analysis",
+            tags=["explore", "profile", "describe", "inspect", "preview", "eda", "analyze", "statistics"],
         ),
         NodeTemplate(
             name="Pivot data",
@@ -186,6 +200,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="aggregate",
             drawer_title="Pivot Data",
             drawer_intro="Convert data from long format to wide format",
+            tags=["pivot", "crosstab", "wide", "reshape", "spread"],
         ),
         NodeTemplate(
             name="Unpivot data",
@@ -198,6 +213,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="aggregate",
             drawer_title="Unpivot Data",
             drawer_intro="Transform data from wide format to long format",
+            tags=["unpivot", "melt", "long", "reshape", "gather"],
         ),
         NodeTemplate(
             name="Union data",
@@ -211,6 +227,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="combine",
             drawer_title="Union Data",
             drawer_intro="Stack multiple datasets by combining rows",
+            tags=["union", "concat", "concatenate", "append", "stack", "combine rows"],
         ),
         NodeTemplate(
             name="Drop duplicates",
@@ -223,6 +240,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Drop Duplicates",
             drawer_intro="Remove duplicate rows based on selected columns",
+            tags=["unique", "dedupe", "deduplicate", "distinct", "drop duplicates", "remove duplicates"],
         ),
         NodeTemplate(
             name="Graph solver",
@@ -235,6 +253,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="combine",
             drawer_title="Graph Solver",
             drawer_intro="Group related records in graph-structured data",
+            tags=["graph", "connected components", "network", "cluster", "group related", "components"],
         ),
         NodeTemplate(
             name="Count records",
@@ -247,6 +266,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="aggregate",
             drawer_title="Count Records",
             drawer_intro="Calculate the total number of rows",
+            tags=["count", "record count", "rows", "total", "size", "number of rows"],
         ),
         NodeTemplate(
             name="Cross join",
@@ -259,6 +279,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="combine",
             drawer_title="Cross Join",
             drawer_intro="Create all possible combinations between two datasets",
+            tags=["cross join", "cartesian", "cross", "combinations"],
         ),
         NodeTemplate(
             name="Text to rows",
@@ -271,6 +292,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Text to Rows",
             drawer_intro="Split text into multiple rows based on a delimiter",
+            tags=["text to rows", "split", "explode", "delimiter", "tokenize", "separate"],
         ),
         NodeTemplate(
             name="Polars code",
@@ -285,6 +307,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             can_be_start=True,
             drawer_title="Polars Code",
             drawer_intro="Write custom Polars DataFrame transformations",
+            tags=["polars", "code", "python", "custom", "script", "dataframe", "lazyframe"],
         ),
         NodeTemplate(
             name="Read from Database",
@@ -297,6 +320,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Database Reader",
             drawer_intro="Load data from database tables or queries",
+            tags=["database", "sql", "db", "postgres", "postgresql", "mysql", "sql server", "snowflake", "oracle", "sqlite", "redshift", "bigquery", "query", "table"],
         ),
         NodeTemplate(
             name="Write to Database",
@@ -309,6 +333,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="output",
             drawer_title="Database Writer",
             drawer_intro="Save data to database tables",
+            tags=["database", "sql", "db", "postgres", "postgresql", "mysql", "sql server", "snowflake", "oracle", "redshift", "bigquery", "table", "insert"],
         ),
         NodeTemplate(
             name="Read from cloud provider",
@@ -321,6 +346,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Cloud Storage Reader",
             drawer_intro="Read data from AWS S3 and other cloud storage",
+            tags=["s3", "aws", "azure", "adls", "gcs", "google cloud storage", "blob", "bucket", "minio", "cloud", "object storage", "delta"],
         ),
         NodeTemplate(
             name="Write to cloud provider",
@@ -333,6 +359,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="output",
             drawer_title="Cloud Storage Writer",
             drawer_intro="Save data to AWS S3 and other cloud storage",
+            tags=["s3", "aws", "azure", "adls", "gcs", "google cloud storage", "blob", "bucket", "minio", "cloud", "object storage", "delta"],
         ),
     ]
     nodes_list.sort(key=lambda x: x.name)
