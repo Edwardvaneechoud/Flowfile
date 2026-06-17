@@ -1,17 +1,13 @@
 // Node-related TypeScript interfaces and types
-// Consolidated from features/designer/baseNode/nodeInterfaces.ts and nodeInput.ts
 
 import type { AuthMethod } from "../views/CloudConnectionView/CloudConnectionTypes";
+import type { DisplayOutput } from "./kernel.types";
 
-// ============================================================================
 // Data Type Definitions
-// ============================================================================
 
-type DataTypeGroup = "String" | "Date" | "Numeric";
+type DataTypeGroup = "Numeric" | "String" | "Date" | "Other" | "Boolean" | "Binary" | "Complex";
 
-// ============================================================================
 // Column and Table Types
-// ============================================================================
 
 export interface FileColumn {
   name: string;
@@ -38,9 +34,7 @@ export interface TableExample {
   has_run_with_current_setup: boolean;
 }
 
-// ============================================================================
 // Node Data Types
-// ============================================================================
 
 export interface NodeData {
   flow_id: string | number;
@@ -73,20 +67,36 @@ export interface NodeResult {
   end_timestamp: number;
   success?: boolean;
   error: string;
-  run_time: number;
+  run_time_ms: number;
   is_running: boolean;
 }
 
-// ============================================================================
 // Node Description Types
-// ============================================================================
+
+export interface NodeDescriptionResponse {
+  description: string;
+  is_auto_generated: boolean;
+}
+
+export interface NodeDescriptionEntry {
+  description: string;
+  is_auto_generated: boolean;
+}
 
 export interface NodeDescriptionDictionaryPerGraph {
-  [node_id: number]: string;
+  [node_id: number]: NodeDescriptionEntry;
 }
 
 export interface NodeDescriptionDictionary {
   [flow_id: number]: NodeDescriptionDictionaryPerGraph;
+}
+
+export interface NodeReferenceDictionaryPerGraph {
+  [node_id: number]: string;
+}
+
+export interface NodeReferenceDictionary {
+  [flow_id: number]: NodeReferenceDictionaryPerGraph;
 }
 
 export interface NodeTitleInfo {
@@ -94,9 +104,7 @@ export interface NodeTitleInfo {
   intro: string;
 }
 
-// ============================================================================
 // Expression Types
-// ============================================================================
 
 export interface ExpressionRef {
   name: string;
@@ -108,9 +116,7 @@ export interface ExpressionsOverview {
   expressions: ExpressionRef[];
 }
 
-// ============================================================================
 // Select Input Types
-// ============================================================================
 
 export interface SelectInput {
   old_name: string;
@@ -142,9 +148,7 @@ export const createSelectInputFromName = (columnName: string, keep = true): Sele
   };
 };
 
-// ============================================================================
 // Input Table Settings
-// ============================================================================
 
 export interface InputCsvTable {
   file_type: "csv";
@@ -207,9 +211,7 @@ export function isInputParquetTable(settings: InputTableSettings): settings is I
   return settings.file_type === "parquet";
 }
 
-// ============================================================================
 // Output Table Settings
-// ============================================================================
 
 export interface OutputCsvTable {
   delimiter: string;
@@ -251,9 +253,7 @@ export interface OutputSettings {
   table_settings: OutputTableSettings;
 }
 
-// ============================================================================
 // Field Types
-// ============================================================================
 
 export interface MinimalFieldInput {
   name: string;
@@ -270,9 +270,7 @@ export interface FormulaInput {
   function: string;
 }
 
-// ============================================================================
 // Filter Types
-// ============================================================================
 
 /**
  * Supported filter comparison operators.
@@ -392,9 +390,7 @@ export interface FilterInput {
   filter_type?: string;
 }
 
-// ============================================================================
 // Aggregation Types
-// ============================================================================
 
 export interface AggColl {
   old_name: string;
@@ -405,6 +401,43 @@ export interface AggColl {
 
 export interface GroupByInput {
   agg_cols: AggColl[];
+}
+
+// Window Function Types
+
+export type WindowFunctionName =
+  | "rolling_sum"
+  | "rolling_mean"
+  | "rolling_min"
+  | "rolling_max"
+  | "rolling_std"
+  | "cum_sum"
+  | "cum_count"
+  | "cum_min"
+  | "cum_max"
+  | "rank"
+  | "tile";
+
+export type RankMethod = "ordinal" | "dense" | "min" | "max" | "average";
+
+export type RollingEdgeBehavior = "require_full" | "partial" | "fill_zero";
+
+export interface WindowFunctionInput {
+  column?: string | null;
+  function: WindowFunctionName;
+  new_column_name: string;
+  window_size?: number | null;
+  min_periods?: number | null;
+  edge_behavior?: RollingEdgeBehavior | null;
+  number_of_groups?: number | null;
+  rank_method?: RankMethod | null;
+  output_type?: string | null;
+}
+
+export interface WindowFunctionsInput {
+  partition_by: string[];
+  order_by: SortByInput[];
+  window_functions: WindowFunctionInput[];
 }
 
 export type AggOption =
@@ -437,14 +470,14 @@ export interface UnpivotInput {
   data_type_selector_mode: DataSelectorMode;
 }
 
+export type UniqueSorttrategy = "first" | "last" | "any" | "none";
+
 export interface UniqueInput {
   columns: string[];
-  strategy: "first" | "last" | "any" | "none";
+  strategy: UniqueSorttrategy;
 }
 
-// ============================================================================
 // Join Types
-// ============================================================================
 
 export interface JoinMap {
   left_col: string;
@@ -472,18 +505,14 @@ export interface FuzzyJoinSettings {
   aggregate_output: boolean;
 }
 
-// ============================================================================
 // Sort Types
-// ============================================================================
 
 export interface SortByInput {
   column: string;
   how: string;
 }
 
-// ============================================================================
 // Text Operations Types
-// ============================================================================
 
 export interface TextToRowsInput {
   column_to_split: string;
@@ -500,9 +529,30 @@ export interface RecordIdInput {
   group_by_columns: string[];
 }
 
-// ============================================================================
+// Dynamic Rename Types
+
+export type RenameMode = "prefix" | "suffix" | "formula" | "first_row";
+export type ColumnSelectionMode = "all" | "list" | "data_type";
+export type ReadableDataTypeGroup =
+  | "Numeric"
+  | "String"
+  | "Date"
+  | "Other"
+  | "Boolean"
+  | "Binary"
+  | "Complex";
+
+export interface DynamicRenameInput {
+  rename_mode: RenameMode;
+  prefix: string;
+  suffix: string;
+  formula: string;
+  selection_mode: ColumnSelectionMode;
+  selected_columns: string[];
+  selected_data_type: ReadableDataTypeGroup | null;
+}
+
 // Graph Solver Types
-// ============================================================================
 
 export interface GraphSolverInput {
   col_from: string;
@@ -510,34 +560,49 @@ export interface GraphSolverInput {
   output_column_name: string;
 }
 
-// ============================================================================
 // Polars Code Types
-// ============================================================================
 
 export interface PolarsCodeInput {
   polars_code: string;
 }
 
-// ============================================================================
+// Python Script Types
+
+export interface CellOutput {
+  stdout: string;
+  stderr: string;
+  display_outputs: DisplayOutput[];
+  error: string | null;
+  execution_time_ms: number;
+  execution_count: number;
+}
+
+export interface NotebookCell {
+  id: string;
+  code: string;
+  output?: CellOutput | null;
+}
+
+export interface PythonScriptInput {
+  code: string;
+  kernel_id: string | null;
+  cells?: NotebookCell[];
+}
+
 // Union Types
-// ============================================================================
 
 export interface UnionInput {
   mode: "selective" | "relaxed";
 }
 
-// ============================================================================
 // Raw Data Types
-// ============================================================================
 
 export interface RawDataFormat {
   columns?: MinimalFieldInput[] | null;
   data: unknown[][];
 }
 
-// ============================================================================
 // Received/File Table Types
-// ============================================================================
 
 export interface ReceivedTable {
   id?: number;
@@ -552,20 +617,28 @@ export interface ReceivedTable {
   table_settings: InputTableSettings;
 }
 
-// ============================================================================
 // Database Types
-// ============================================================================
 
-export interface DatabaseConnection {
-  database_type: "postgresql" | "mysql";
-  username: string;
-  password_ref: string;
+interface BaseConnection {
   host?: string;
   port?: number;
   database?: string;
   url?: string;
 }
 
+export interface RemoteConnection extends BaseConnection {
+  database_type: "postgresql" | "mysql";
+  username: string;
+  password_ref: string; // Strictly required for remote DBs
+}
+
+export interface SqliteConnection extends BaseConnection {
+  database_type: "sqlite";
+  username?: string; // Optional or completely remove if SQLite doesn't need it
+  password_ref?: never; // Ensures password_ref cannot be used with SQLite
+}
+
+export type DatabaseConnection = RemoteConnection | SqliteConnection;
 export type ConnectionModeOption = "inline" | "reference";
 export type IfExistAction = "append" | "replace" | "fail";
 
@@ -588,9 +661,7 @@ export interface DatabaseWriteSettings {
   if_exists: IfExistAction;
 }
 
-// ============================================================================
 // Cloud Storage Types
-// ============================================================================
 
 interface CloudStorageSettings {
   auth_mode: AuthMethod;
@@ -618,11 +689,10 @@ export interface CloudStorageWriteSettings extends CloudStorageSettings {
   parquet_compression: ParquetCompression;
   csv_delimiter: string;
   csv_encoding: CsvEncoding;
+  partition_by?: string[] | null;
 }
 
-// ============================================================================
 // External Source Types
-// ============================================================================
 
 interface ExternalSource {
   orientation: string;
@@ -634,9 +704,24 @@ export interface SampleUsers extends ExternalSource {
   size: number;
 }
 
-// ============================================================================
 // Node Base Types
-// ============================================================================
+
+export interface OutputFieldInfo {
+  name: string;
+  data_type: string;
+  default_value?: string | null;
+}
+
+export interface OutputFieldConfig {
+  enabled: boolean;
+  validation_mode_behavior:
+    | "add_missing"
+    | "add_missing_keep_extra"
+    | "raise_on_missing"
+    | "select_only";
+  fields: OutputFieldInfo[];
+  validate_data_types: boolean;
+}
 
 export interface NodeBase {
   flow_id: string | number;
@@ -646,7 +731,9 @@ export interface NodeBase {
   pos_y: number;
   is_setup?: boolean;
   description?: string;
+  node_reference?: string; // Unique reference identifier for code generation (lowercase, no spaces)
   is_user_defined?: boolean;
+  output_field_config?: OutputFieldConfig | null;
 }
 
 export interface NodeSingleInput extends NodeBase {
@@ -657,9 +744,7 @@ export interface NodeMultiInput extends NodeBase {
   depending_on_ids: number[] | null;
 }
 
-// ============================================================================
 // Specific Node Types
-// ============================================================================
 
 export interface NodeRead extends NodeBase {
   received_file: ReceivedTable;
@@ -667,6 +752,37 @@ export interface NodeRead extends NodeBase {
 
 export interface NodeOutput extends NodeBase {
   output_settings: OutputSettings;
+}
+
+export type CatalogWriteMode =
+  | "overwrite"
+  | "error"
+  | "append"
+  | "upsert"
+  | "update"
+  | "delete"
+  | "virtual";
+
+export interface CatalogWriteSettings {
+  table_name: string;
+  namespace_id: number | null;
+  description: string | null;
+  write_mode: CatalogWriteMode;
+  merge_keys: string[];
+  partition_by: string[];
+}
+
+export interface NodeCatalogWriter extends NodeBase {
+  catalog_write_settings: CatalogWriteSettings;
+}
+
+export interface NodeCatalogReader extends NodeBase {
+  catalog_table_id: number | null;
+  catalog_full_table_name: string | null;
+  catalog_table_name: string | null;
+  catalog_namespace_id: number | null;
+  delta_version: number | null;
+  sql_query: string | null;
 }
 
 export interface NodeInputData extends NodeBase {
@@ -685,10 +801,15 @@ export interface NodeSelect extends NodeSingleInput {
 
 export interface NodeFilter extends NodeSingleInput {
   filter_input: FilterInput;
+  split_mode?: boolean;
 }
 
 export interface NodeGroupBy extends NodeSingleInput {
   groupby_input: GroupByInput;
+}
+
+export interface NodeWindowFunctions extends NodeSingleInput {
+  window_input: WindowFunctionsInput;
 }
 
 export interface NodePivot extends NodeSingleInput {
@@ -722,12 +843,39 @@ export interface NodeRecordId extends NodeSingleInput {
   record_id_input: RecordIdInput;
 }
 
+export interface NodeDynamicRename extends NodeSingleInput {
+  dynamic_rename_input: DynamicRenameInput;
+}
+
 export interface NodeSample extends NodeBase {
   sample_size: number;
 }
 
+export interface RandomSplitGroup {
+  name: string;
+  percentage: number;
+}
+
+export interface NodeRandomSplit extends NodeBase {
+  splits: RandomSplitGroup[];
+  seed: number | null;
+}
+
 export interface NodePolarsCode extends NodeSingleInput {
   polars_code_input: PolarsCodeInput;
+}
+
+export interface SqlQueryInput {
+  sql_code: string;
+}
+
+export interface NodeSqlQuery extends NodeMultiInput {
+  sql_query_input: SqlQueryInput;
+}
+
+export interface NodePythonScript extends NodeMultiInput {
+  python_script_input: PythonScriptInput;
+  output_names?: string[];
 }
 
 export interface NodeUnique extends NodeSingleInput {
@@ -740,6 +888,8 @@ export interface NodeGraphSolver extends NodeSingleInput {
 
 export interface NodeUserDefined extends NodeMultiInput {
   settings: any;
+  kernel_id?: string | null;
+  output_names?: string[];
 }
 
 export interface NodeFormula extends NodeSingleInput {
@@ -771,4 +921,205 @@ export interface NodeCloudStorageReader extends NodeBase {
 
 export interface NodeCloudStorageWriter extends NodeBase {
   cloud_storage_settings: CloudStorageWriteSettings;
+}
+
+export interface KafkaSourceSettings {
+  kafka_connection_id: number | null;
+  kafka_connection_name: string | null;
+  topic_name: string;
+  value_format: "json";
+  sync_name: string;
+  start_offset: "earliest" | "latest";
+  max_messages: number;
+  poll_timeout_seconds: number;
+}
+
+export interface NodeKafkaSource extends NodeBase {
+  kafka_settings: KafkaSourceSettings;
+  fields?: MinimalFieldInput[] | null;
+}
+
+export interface GoogleAnalyticsFilter {
+  field: string;
+  // Dimensions: equals, not_equals, contains, begins_with, ends_with, regex, in_list, not_in_list
+  // Metrics: equals, not_equals, less_than, less_equal, greater_than, greater_equal, between
+  operator: string;
+  value: string;
+  case_sensitive: boolean;
+}
+
+export interface GoogleAnalyticsOrderBy {
+  field: string;
+  descending: boolean;
+}
+
+export interface GoogleAnalyticsSettings {
+  ga_connection_name: string;
+  property_id: string;
+  start_date: string;
+  end_date: string;
+  metrics: string[];
+  dimensions: string[];
+  limit: number | null;
+  filters: GoogleAnalyticsFilter[];
+  order_bys: GoogleAnalyticsOrderBy[];
+}
+
+export interface NodeGoogleAnalyticsReader extends NodeBase {
+  google_analytics_settings: GoogleAnalyticsSettings;
+  fields?: MinimalFieldInput[] | null;
+}
+
+// REST API Reader
+
+export interface RestApiAuthSettings {
+  auth_type: "none" | "api_key" | "bearer" | "basic";
+  api_key_name: string;
+  api_key_location: "header" | "query";
+  basic_username: string;
+  // Reference to a reusable secret in the user's secret store (empty = none).
+  secret_name: string;
+  // Optional inline plaintext for programmatic (read_api) use only.
+  secret?: string | null;
+}
+
+export interface RestApiPaginationSettings {
+  pagination_type: "none" | "offset" | "page" | "cursor";
+  offset_param: string;
+  limit_param: string;
+  page_size: number;
+  page_param: string;
+  start_page: number;
+  cursor_param: string;
+  cursor_location: "body" | "header";
+  cursor_response_path: string;
+  initial_cursor: string;
+  max_pages: number;
+  max_records: number | null;
+  page_delay_seconds: number;
+}
+
+export interface RestApiSettings {
+  url: string;
+  method: "GET" | "POST";
+  headers: Record<string, string>;
+  query_params: Record<string, string>;
+  json_body: unknown | null;
+  auth: RestApiAuthSettings;
+  pagination: RestApiPaginationSettings;
+  record_path: string;
+  timeout_seconds: number;
+  max_retries: number;
+}
+
+export interface NodeRestApiReader extends NodeBase {
+  rest_api_settings: RestApiSettings;
+  fields?: MinimalFieldInput[] | null;
+}
+
+// ML Nodes
+
+export type MLParamType = "boolean" | "number" | "integer" | "select";
+
+export interface MLParamSpec {
+  name: string;
+  type: MLParamType;
+  label: string;
+  default: boolean | number | string;
+  description?: string | null;
+  min?: number | null;
+  max?: number | null;
+  step?: number | null;
+  options?: string[] | null;
+}
+
+export interface MLAlgorithmSpec {
+  model_type: string;
+  label: string;
+  task_type: "regression" | "classification";
+  output_dtype: string;
+  params: MLParamSpec[];
+  description?: string | null;
+}
+
+export interface TrainModelSettings {
+  target_column: string;
+  feature_columns: string[];
+  model_type: string;
+  params: Record<string, unknown>;
+  publish_to_catalog: boolean;
+  model_name: string;
+  namespace_id?: number | null;
+  catalog_description?: string | null;
+  catalog_tags: string[];
+}
+
+export interface NodeTrainModel extends NodeSingleInput {
+  train_input: TrainModelSettings;
+}
+
+export type ApplyModelSource = "upstream" | "catalog";
+
+export interface ApplyModelSettings {
+  source: ApplyModelSource;
+  upstream_node_id: number | null;
+  model_name: string;
+  model_version: number | null;
+  namespace_id?: number | null;
+  output_column: string;
+}
+
+export interface UpstreamTrainModelOption {
+  node_id: number;
+  description: string;
+  target_column: string;
+  feature_columns: string[];
+  model_type: string;
+  publish_to_catalog: boolean;
+  model_name: string;
+}
+
+export interface CatalogNamespaceOut {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  level: number;
+  description?: string | null;
+}
+
+export interface CatalogNamespaceTree extends CatalogNamespaceOut {
+  children?: CatalogNamespaceTree[];
+}
+
+export interface NamespaceOption {
+  id: number;
+  label: string;
+}
+
+export interface NodeApplyModel extends NodeSingleInput {
+  apply_input: ApplyModelSettings;
+}
+
+export type EvaluateModelTaskType = "auto" | "regression" | "classification";
+
+export interface EvaluateModelSettings {
+  actual_column: string;
+  predicted_column: string;
+  task_type: EvaluateModelTaskType;
+  upstream_train_node_id: number | null;
+}
+
+export interface NodeEvaluateModel extends NodeSingleInput {
+  evaluate_input: EvaluateModelSettings;
+}
+
+export interface MLArtifactListItem {
+  id: number;
+  name: string;
+  namespace_id?: number | null;
+  version: number;
+  python_type?: string | null;
+  size_bytes?: number | null;
+  created_at: string;
+  tags: string[];
 }

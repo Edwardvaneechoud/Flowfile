@@ -70,7 +70,6 @@ const loadNodeData = async () => {
     nodeSelect.value = createNodeSelect(nodeStore.flow_id, nodeStore.node_id).value;
     const main_input = result.main_input;
     try {
-      // Try to parse the result.value.setting_input
       if (result?.setting_input && main_input && result?.setting_input.is_setup) {
         nodeSelect.value = result.setting_input;
         keepMissing.value = nodeSelect.value.keep_missing;
@@ -79,7 +78,6 @@ const loadNodeData = async () => {
         throw new Error("Setting input not available");
       }
     } catch (error) {
-      // If there's an error, fall back to this logic
       if (main_input && nodeSelect.value) {
         nodeSelect.value.depending_on_id = main_input.node_id;
         nodeSelect.value.flow_id = nodeStore.flow_id;
@@ -92,18 +90,21 @@ const loadNodeData = async () => {
 };
 
 const pushNodeData = async () => {
-  //await insertSelect(nodeSelect.value)
   const originalData = nodeStore.getCurrentNodeData();
   const newColumnSettings = nodeSelect.value.select_input;
   nodeSelect.value.keep_missing = keepMissing.value;
   if (originalData) {
-    newColumnSettings.forEach((newColumnSetting, index) => {
-      let original_object = originalData.main_input?.table_schema[index];
-      newColumnSetting.is_altered = original_object?.data_type !== newColumnSetting.data_type;
-      newColumnSetting.data_type_change = newColumnSetting.is_altered;
+    newColumnSettings.forEach((newColumnSetting) => {
+      // Find matching column by name, not index (columns may be reordered)
+      const original_object = originalData.main_input?.table_schema.find(
+        (schema) => schema.name === newColumnSetting.old_name,
+      );
+      const dataTypeChanged = original_object?.data_type !== newColumnSetting.data_type;
+      // Preserve is_altered if already set (e.g., from YAML), or set it if data_type differs
+      newColumnSetting.is_altered = newColumnSetting.is_altered || dataTypeChanged;
+      newColumnSetting.data_type_change = dataTypeChanged;
     });
   }
-  //console.log(nodeSelect.value)
   await nodeStore.updateSettings(nodeSelect);
 };
 

@@ -3,7 +3,7 @@
     <div class="setup-card">
       <div class="setup-header">
         <div class="logo-container">
-          <img src="/images/flowfile.svg" alt="Flowfile" class="logo" />
+          <img src="/images/flowfile.png" alt="Flowfile" class="logo" />
         </div>
         <h1 class="setup-title">Initial Setup Required</h1>
         <p class="setup-subtitle">Configure your master encryption key to get started</p>
@@ -59,14 +59,17 @@
                   <i :class="copiedEnv ? 'fa-solid fa-check' : 'fa-solid fa-copy'"></i>
                 </button>
               </div>
-              <p class="hint">Then restart: <code>docker-compose down && docker-compose up</code></p>
+              <p class="hint">
+                Then restart: <code>docker-compose down && docker-compose up</code>
+              </p>
             </div>
           </div>
 
           <div class="warning-box">
             <i class="fa-solid fa-triangle-exclamation"></i>
             <div>
-              <strong>Important:</strong> Back up this key securely. If lost, all stored secrets become unrecoverable.
+              <strong>Important:</strong> Back up this key securely. If lost, all stored secrets
+              become unrecoverable.
             </div>
           </div>
         </div>
@@ -105,7 +108,21 @@ const handleGenerateKey = async () => {
 
 const copyToClipboard = async (text: string, flagRef: typeof copied) => {
   try {
-    await navigator.clipboard.writeText(text);
+    // navigator.clipboard is only available in secure contexts (HTTPS or localhost).
+    // When accessing Docker deployment over plain HTTP from another machine, fall back
+    // to the legacy execCommand approach.
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
     flagRef.value = true;
     setTimeout(() => {
       flagRef.value = false;
@@ -192,7 +209,7 @@ const copyEnvVar = () => {
   display: flex;
   gap: var(--spacing-3);
   padding: var(--spacing-4);
-  background-color: var(--color-info-light);
+  background-color: var(--color-background-secondary);
   border: 1px solid var(--color-info);
   border-radius: var(--border-radius-md);
 }

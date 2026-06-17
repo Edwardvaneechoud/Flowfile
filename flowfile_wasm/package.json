@@ -1,0 +1,88 @@
+{
+  "name": "flowfile-editor",
+  "version": "0.1.0",
+  "description": "Embeddable browser-based data flow designer using Pyodide and Polars",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Edwardvaneechoud/Flowfile"
+  },
+  "type": "module",
+  "main": "./dist/flowfile-editor.js",
+  "module": "./dist/flowfile-editor.js",
+  "types": "./dist/lib/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/flowfile-editor.js",
+      "types": "./dist/lib/index.d.ts"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "build:lib": "BUILD_MODE=lib vue-tsc --noEmit && BUILD_MODE=lib vite build",
+    "build:all": "npm run build && npm run build:lib",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "pinia": "^2.0.0",
+    "vue": "^3.3.0"
+  },
+  "peerDependenciesMeta": {
+    "pinia": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@ag-grid-community/client-side-row-model": "^31.1.1",
+    "@ag-grid-community/core": "^31.1.1",
+    "@ag-grid-community/styles": "^31.1.1",
+    "@ag-grid-community/vue3": "^31.1.1",
+    "@codemirror/autocomplete": "^6.20.0",
+    "@codemirror/commands": "^6.10.1",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/state": "^6.5.3",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@codemirror/view": "^6.39.9",
+    "@fortawesome/fontawesome-free": "^6.7.2",
+    "@kanaries/graphic-walker": "^0.5.0",
+    "@types/js-yaml": "^4.0.9",
+    "@vue-flow/background": "^1.3.0",
+    "@vue-flow/controls": "^1.1.2",
+    "@vue-flow/core": "^1.42.1",
+    "@vue-flow/minimap": "^1.5.2",
+    "codemirror": "^6.0.2",
+    "dompurify": "^3.4.8",
+    "grid-layout-plus": "^1.1.1",
+    "js-yaml": "^4.1.1",
+    "marked": "^15.0.12",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "styled-components": "^6.4.1",
+    "vue-codemirror": "^6.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-vue": "^4.4.1",
+    "@vue/compiler-sfc": "^3.4.27",
+    "@vue/test-utils": "^2.4.6",
+    "fake-indexeddb": "^6.0.0",
+    "happy-dom": "^20.8.4",
+    "pinia": "^2.0.16",
+    "typescript": "~5.6.3",
+    "vite": "^4.5.3",
+    "vitest": "^2.1.8",
+    "vue": "^3.5.13",
+    "vue-router": "^4.4.0",
+    "vue-tsc": "^2.0.19"
+  }
+}

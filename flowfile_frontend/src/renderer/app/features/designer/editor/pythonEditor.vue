@@ -27,6 +27,7 @@ import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { autocompletion, CompletionSource, acceptCompletion } from "@codemirror/autocomplete";
 import { indentMore, indentLess } from "@codemirror/commands";
+import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import { polarsCompletionVals } from "./pythonEditor/polarsCompletions";
 
 const props = defineProps({
@@ -34,10 +35,8 @@ const props = defineProps({
 });
 const emit = defineEmits(["update-editor-string", "validation-error"]);
 
-// Track validation errors
 const validationError = ref<string | null>(null);
 
-// Polars-specific autocompletions
 const polarsCompletions: CompletionSource = (context: any) => {
   let word = context.matchBefore(/\w*/);
   if (word?.from == word?.to && !context.explicit) {
@@ -49,17 +48,13 @@ const polarsCompletions: CompletionSource = (context: any) => {
   };
 };
 
-// Custom keymap for tab handling
-
 const tabKeymap = keymap.of([
   {
     key: "Tab",
     run: (view: EditorView): boolean => {
-      // If there's an active completion, accept it
       if (acceptCompletion(view)) {
         return true;
       }
-      // If no completion is active, perform normal tab indentation
       return indentMore(view);
     },
   },
@@ -83,24 +78,33 @@ const insertTextAtCursor = (text: string) => {
   }
 };
 
-// Define reactive data
+// Replace the whole editor content. `code` is the v-model bound to CodeMirror,
+// so assigning it updates the view and fires the `update-editor-string` emit.
+const setCode = (text: string) => {
+  code.value = text;
+};
+
 const code = ref(props.editorString);
 const view = shallowRef<EditorView | null>(null);
 
-// Extensions configuration
 const extensions: Extension[] = [
   python(),
   oneDark,
+  EditorView.theme({
+    "&": { fontSize: "12px" },
+    ".cm-content": { fontSize: "12px" },
+    ".cm-gutters": { fontSize: "12px" },
+  }),
   EditorState.tabSize.of(4),
   autocompletion({
     override: [polarsCompletions],
-    defaultKeymap: true, // Enable default keymap for arrow navigation
+    defaultKeymap: true,
     closeOnBlur: false,
   }),
-  Prec.highest(tabKeymap), // Tab keymap with highest precedence
+  bodyTooltips(),
+  Prec.highest(tabKeymap),
 ];
 
-// Rest of the component code remains the same...
 const handleReady = (payload: { view: EditorView }) => {
   view.value = payload.view;
 };
@@ -124,7 +128,7 @@ watch(code, (newCode: string) => {
   emit("update-editor-string", newCode);
 });
 
-defineExpose({ insertTextAtCursor });
+defineExpose({ insertTextAtCursor, setCode });
 </script>
 
 <style>
@@ -140,33 +144,6 @@ defineExpose({ insertTextAtCursor });
   background-color: rgba(255, 85, 85, 0.1);
   border-radius: 4px;
 }
-
-/* Polars-specific syntax highlighting - component specific */
-.cm-variable.cm-polars {
-  color: #50fa7b;
-}
-
-.cm-property.cm-polars {
-  color: #8be9fd;
-}
-
-.cm-keyword {
-  color: #ff79c6;
-}
-
-.cm-function {
-  color: #50fa7b;
-}
-
-.cm-string {
-  color: #f1fa8c;
-}
-
-.cm-number {
-  color: #bd93f9;
-}
-
-.cm-comment {
-  color: #6272a4;
-}
+/* Syntax highlighting comes from python() + oneDark (Lezer-generated classes);
+   no hand-rolled global .cm-* rules — they collide with other editors. */
 </style>

@@ -2,7 +2,9 @@ import time
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
+
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup
 
 
 class NodeResult(BaseModel):
@@ -10,11 +12,16 @@ class NodeResult(BaseModel):
 
     node_id: int
     node_name: str | None = None
+    description: str = ""
     start_timestamp: float = Field(default_factory=time.time)
     end_timestamp: float = 0
     success: bool | None = None
     error: str = ""
-    run_time: int = -1
+    run_time_ms: int = Field(
+        default=-1,
+        description="Run time in milliseconds",
+        validation_alias=AliasChoices("run_time_ms", "run_time"),
+    )
     is_running: bool = True
 
 
@@ -25,6 +32,8 @@ class RunInformation(BaseModel):
     start_time: datetime | None = Field(default_factory=datetime.now)
     end_time: datetime | None = None
     success: bool | None = None
+    is_running: bool = False
+    execution_mode: str | None = None
     nodes_completed: int = 0
     number_of_nodes: int = 0
     node_step_result: list[NodeResult]
@@ -49,6 +58,7 @@ class FileColumn(BaseModel):
 
     name: str
     data_type: str
+    data_type_group: ReadableDataTypeGroup = "Other"
     is_unique: bool
     max_value: str
     min_value: str
@@ -67,9 +77,17 @@ class TableExample(BaseModel):
     name: str
     table_schema: list[FileColumn]
     columns: list[str]
-    data: list[dict] | None = {}
+    data: list[dict] | None = None
     has_example_data: bool = False
     has_run_with_current_setup: bool = False
+
+
+class NodeInputNameInfo(BaseModel):
+    """Describes a named input available for a kernel node."""
+
+    name: str
+    source_node_id: int
+    source_node_type: str
 
 
 class NodeData(BaseModel):
@@ -147,3 +165,40 @@ class InstantFuncResult(BaseModel):
 
     success: bool | None = None
     result: str
+
+
+class NodeDescriptionResponse(BaseModel):
+    """Response model for the node description endpoint."""
+
+    description: str = ""
+    is_auto_generated: bool = False
+
+
+class ProjectExportFile(BaseModel):
+    """A single file in a project export (path relative to the project root)."""
+
+    path: str
+    content: str
+
+
+class ProjectExportManifest(BaseModel):
+    """The full file manifest of a flow exported as a Python project."""
+
+    project_name: str
+    files: list[ProjectExportFile]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ProjectSaveRequest(BaseModel):
+    """Request to write a project export to a directory on the server."""
+
+    flow_id: int
+    target_directory: str
+    overwrite: bool = False
+
+
+class ProjectSaveResponse(BaseModel):
+    """Result of writing a project export to disk."""
+
+    saved_to: str
+    file_count: int

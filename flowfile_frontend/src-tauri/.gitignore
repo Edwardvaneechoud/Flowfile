@@ -1,0 +1,12 @@
+# Tauri build outputs
+target/
+gen/schemas/
+
+# Sidecar binaries are produced by `make rename_sidecars` from services_dist/
+binaries/
+
+# Code-signing assets that must not be committed
+*.p12
+*.pem
+*.cer
+*.key

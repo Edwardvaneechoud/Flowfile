@@ -58,6 +58,7 @@
                 <i class="fa-solid fa-database"></i>
                 <span>{{ connection.connectionName }}</span>
                 <span class="badge">{{ connection.databaseType }}</span>
+                <SharedBadge :access="connection.access" />
               </div>
               <div class="connection-details">
                 <span>{{
@@ -68,11 +69,26 @@
               </div>
             </div>
             <div class="connection-actions">
-              <button type="button" class="btn btn-secondary" @click="showEditModal(connection)">
+              <button
+                v-if="isMultiUser && isOwned(connection) && connection.id != null"
+                type="button"
+                class="btn btn-secondary"
+                @click="openShare(connection)"
+              >
+                <i class="fa-solid fa-share-nodes"></i>
+                <span>Share</span>
+              </button>
+              <button
+                v-if="canManage(connection)"
+                type="button"
+                class="btn btn-secondary"
+                @click="showEditModal(connection)"
+              >
                 <i class="fa-solid fa-edit"></i>
                 <span>Modify</span>
               </button>
               <button
+                v-if="canManage(connection)"
                 type="button"
                 class="btn btn-danger"
                 @click="showDeleteModal(connection.connectionName)"
@@ -102,10 +118,20 @@
       <DatabaseConnectionForm
         :initial-connection="activeConnection"
         :is-submitting="isSubmitting"
+        :is-editing="isEditing"
         @submit="handleFormSubmit"
         @cancel="dialogVisible = false"
       />
     </el-dialog>
+
+    <ShareDialog
+      v-if="shareConnection && shareConnection.id != null"
+      v-model="showShareDialog"
+      resource-type="database_connection"
+      :resource-id="shareConnection.id"
+      :resource-name="shareConnection.connectionName"
+      :can-manage-grants="canManageGrants(shareConnection)"
+    />
 
     <el-dialog
       v-model="deleteDialogVisible"
@@ -138,10 +164,19 @@ import { ElDialog, ElButton, ElMessage } from "element-plus";
 import {
   fetchDatabaseConnectionsInterfaces,
   createDatabaseConnectionApi,
+  updateDatabaseConnectionApi,
   deleteDatabaseConnectionApi,
 } from "./api";
-import { FullDatabaseConnectionInterface, FullDatabaseConnection } from "./databaseConnectionTypes";
+import {
+  FullDatabaseConnectionInterface,
+  FullDatabaseConnection,
+  defaultPorts,
+} from "./databaseConnectionTypes";
+import type { DatabaseType } from "./databaseConnectionTypes";
 import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
+import ShareDialog from "../../components/sharing/ShareDialog.vue";
+import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 
 // State
 const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
@@ -154,7 +189,15 @@ const isDeleting = ref(false);
 const connectionToDelete = ref("");
 const activeConnection = ref<FullDatabaseConnection | undefined>(undefined);
 
-// Fetch connections
+const { isMultiUser, isOwned, canManage, canManageGrants } = useResourceSharing();
+const showShareDialog = ref(false);
+const shareConnection = ref<FullDatabaseConnectionInterface | null>(null);
+
+const openShare = (c: FullDatabaseConnectionInterface) => {
+  shareConnection.value = c;
+  showShareDialog.value = true;
+};
+
 const fetchConnections = async () => {
   isLoading.value = true;
   try {
@@ -167,14 +210,12 @@ const fetchConnections = async () => {
   }
 };
 
-// Show add connection modal
 const showAddModal = () => {
   isEditing.value = false;
   activeConnection.value = undefined;
   dialogVisible.value = true;
 };
 
-// Show edit connection modal
 const showEditModal = (connection: FullDatabaseConnectionInterface) => {
   isEditing.value = true;
   activeConnection.value = {
@@ -183,7 +224,7 @@ const showEditModal = (connection: FullDatabaseConnectionInterface) => {
     username: connection.username,
     password: "", // Password is not returned from the API
     host: connection.host || "",
-    port: connection.port || 5432,
+    port: connection.port || defaultPorts[connection.databaseType as DatabaseType],
     database: connection.database || "",
     sslEnabled: connection.sslEnabled,
     url: connection.url || "",
@@ -191,17 +232,19 @@ const showEditModal = (connection: FullDatabaseConnectionInterface) => {
   dialogVisible.value = true;
 };
 
-// Show delete confirmation modal
 const showDeleteModal = (connectionName: string) => {
   connectionToDelete.value = connectionName;
   deleteDialogVisible.value = true;
 };
 
-// Handle form submission
 const handleFormSubmit = async (connection: FullDatabaseConnection) => {
   isSubmitting.value = true;
   try {
-    await createDatabaseConnectionApi(connection);
+    if (isEditing.value) {
+      await updateDatabaseConnectionApi(connection);
+    } else {
+      await createDatabaseConnectionApi(connection);
+    }
     await fetchConnections();
     dialogVisible.value = false;
     ElMessage.success(`Connection ${isEditing.value ? "updated" : "created"} successfully`);
@@ -214,7 +257,6 @@ const handleFormSubmit = async (connection: FullDatabaseConnection) => {
   }
 };
 
-// Handle delete connection
 const handleDeleteConnection = async () => {
   if (!connectionToDelete.value) return;
 
@@ -232,19 +274,16 @@ const handleDeleteConnection = async () => {
   }
 };
 
-// Handle close dialog
 const handleCloseDialog = (done: () => void) => {
   if (isSubmitting.value) return;
   done();
 };
 
-// Handle close delete dialog
 const handleCloseDeleteDialog = (done: () => void) => {
   if (isDeleting.value) return;
   done();
 };
 
-// Load connections on mount
 onMounted(() => {
   fetchConnections();
 });

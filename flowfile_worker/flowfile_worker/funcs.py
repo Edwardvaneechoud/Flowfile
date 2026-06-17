@@ -1,26 +1,159 @@
 import io
 import logging
 import os
-from base64 import encodebytes
 from collections.abc import Callable
 from logging import Logger
 from multiprocessing import Array, Queue, Value
+from pathlib import Path
 
 import polars as pl
+from deltalake import DeltaTable
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
 
+from flowfile_worker import models, mp_context
+from flowfile_worker.catalog_reader import open_catalog_table, open_virtual_result
 from flowfile_worker.external_sources.s3_source.main import write_df_to_cloud
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.main import write_df_to_database
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 from flowfile_worker.flow_logger import get_worker_logger
 from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
+from shared.delta_utils import format_delta_timestamp, get_delta_size_bytes, make_json_safe, validate_catalog_path
+from shared.storage_config import storage
+
+
+def _validate_catalog_path(table_name: str) -> Path:
+    """Validate and resolve *table_name* under the catalog tables directory."""
+    return validate_catalog_path(table_name, storage.catalog_tables_directory)
+
+
+def _validate_virtual_results_path(name: str) -> Path:
+    """Validate and resolve *name* under the catalog_virtual_results directory."""
+    return validate_catalog_path(name, storage.catalog_virtual_results_directory)
+
+
+def _row_count_ipc(p: Path) -> int:
+    return int(pl.scan_ipc(str(p)).select(pl.len()).collect().item())
+
+
+def _get_delta_size_bytes(delta_dir: Path) -> int:
+    """Delegate to ``shared.delta_utils.get_delta_size_bytes``."""
+    return get_delta_size_bytes(delta_dir)
+
 
 # 'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample']
 
 logging.basicConfig(format="%(asctime)s: %(message)s")
 logger = logging.getLogger("Spawner")
 logger.setLevel(logging.INFO)
+
+
+def train_model_task(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,  # unused for train; kept for the spawner contract
+    model_type: str,
+    target_column: str,
+    feature_columns: list[str],
+    params: dict,
+    staging_path: str,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Fit a regression model and write the serialised artifact to *staging_path*.
+
+    Pushes ``{sha256, size_bytes, model_type}`` onto the queue so core can call
+    ``ArtifactService.finalize_upload``. Core never sees the bytes.
+    """
+    import hashlib
+
+    from shared.ml.trainers import get_trainer
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(
+        f"Starting train_model_task: model_type={model_type}, target={target_column}, "
+        f"features={feature_columns}, staging_path={staging_path}"
+    )
+    try:
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        trainer = get_trainer(model_type)
+        model_bytes = trainer.train(
+            lf,
+            target=target_column,
+            features=feature_columns,
+            params=params or {},
+        )
+        os.makedirs(os.path.dirname(staging_path), exist_ok=True)
+        with open(staging_path, "wb") as f:
+            f.write(model_bytes)
+            f.flush()
+            os.fsync(f.fileno())
+        sha256 = hashlib.sha256(model_bytes).hexdigest()
+        size_bytes = len(model_bytes)
+        flowfile_logger.info(f"train_model_task wrote {size_bytes} bytes (sha256={sha256[:12]}...)")
+        queue.put({"sha256": sha256, "size_bytes": size_bytes, "model_type": model_type})
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        flowfile_logger.error(f"Error during train_model_task: {str(e)}")
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def apply_model_task(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,  # IPC path written by the worker, returned to core via Status.file_ref
+    model_path: str,
+    output_column: str,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Score *polars_serializable_object* with the artifact at *model_path*.
+
+    Writes the resulting LazyFrame to *file_path* as IPC and pushes the
+    serialised LazyFrame bytes on the queue (matches ``store``/``fuzzy_join_task``).
+    """
+    import json as _json
+
+    from shared.ml.trainers import get_trainer
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(
+        f"Starting apply_model_task, output_column={output_column}"
+    )
+    try:
+        with open(model_path, "rb") as f:
+            model = _json.loads(f.read())
+        trainer = get_trainer(model["model_type"])
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        scored_lf = trainer.apply(lf, model, output_column)
+        scored_df = collect_lazy_frame(scored_lf)
+        scored_df.write_ipc(file_path)
+        flowfile_logger.info(f"apply_model_task scored {scored_df.height} rows")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        flowfile_logger.error(f"Error during apply_model_task: {str(e)}")
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+        # Intentional early return: file_path was never written, so the
+        # scan_ipc/queue.put below would either crash or push a serialised
+        # plan over a non-existent file. The framework already inspects
+        # progress.value before reading the queue; this keeps that contract.
+        return
+    lf = pl.scan_ipc(file_path)
+    queue.put(lf.serialize())
 
 
 def fuzzy_join_task(
@@ -53,10 +186,12 @@ def fuzzy_join_task(
         with progress.get_lock():
             progress.value = -1
         flowfile_logger.error(f"Error during fuzzy join operation: {str(e)}")
+        return
     lf = pl.scan_ipc(file_path)
     number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f"Number of records after fuzzy match: {number_of_records}")
-    queue.put(encodebytes(lf.serialize()))
+    # Put raw bytes in queue - encoding happens at the transport boundary
+    queue.put(lf.serialize())
 
 
 def process_and_cache(
@@ -73,12 +208,12 @@ def process_and_cache(
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
-        error_msg = str(e).encode()[:1024]  # Limit error message length
+        error_msg = str(e).encode()[:1024]
         flowfile_logger.error(f"Error during process and cache operation: {str(e)}")
         with error_message.get_lock():
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
-            progress.value = -1  # Indicate error
+            progress.value = -1
         return error_msg
 
 
@@ -102,11 +237,11 @@ def store_sample(
             progress.value = 100
     except Exception as e:
         flowfile_logger.error(f"Error during store sample operation: {str(e)}")
-        error_msg = str(e).encode()[:1024]  # Limit error message length
+        error_msg = str(e).encode()[:1024]
         with error_message.get_lock():
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
-            progress.value = -1  # Indicate error
+            progress.value = -1
         return error_msg
 
 
@@ -126,7 +261,8 @@ def store(
     lf = pl.scan_ipc(file_path)
     number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f"Number of records processed: {number_of_records}")
-    queue.put(encodebytes(lf.serialize()))
+    # Put raw bytes in queue - encoding happens at the transport boundary
+    queue.put(lf.serialize())
 
 
 def calculate_schema_logic(
@@ -164,7 +300,7 @@ def calculate_schema_logic(
                 include_header=True, header_name="column_name", column_names=stats_headers
             ).to_dicts()
         }
-        for i, (col_stat, n_unique_values) in enumerate(zip(stats.values(), n_unique_per_cols, strict=False)):
+        for _i, (col_stat, n_unique_values) in enumerate(zip(stats.values(), n_unique_per_cols, strict=False)):
             col_stat["n_unique"] = n_unique_values
             col_stat["examples"] = ", ".join({str(col_stat["min"]), str(col_stat["max"])})
             col_stat["null_count"] = int(float(col_stat["null_count"]))
@@ -202,12 +338,12 @@ def calculate_schema(
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
-        error_msg = str(e).encode()[:256]  # Limit error message length
+        error_msg = str(e).encode()[:256]
         flowfile_logger.error("error", e)
         with error_message.get_lock():
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
-            progress.value = -1  # Indicate error
+            progress.value = -1
 
 
 def calculate_number_of_records(
@@ -232,11 +368,11 @@ def calculate_number_of_records(
             progress.value = 100
     except Exception as e:
         flowfile_logger.error("error", e)
-        error_msg = str(e).encode()[:256]  # Limit error message length
+        error_msg = str(e).encode()[:256]
         with error_message.get_lock():
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
-            progress.value = -1  # Indicate error
+            progress.value = -1
         return b"error"
 
 
@@ -396,6 +532,416 @@ def write_output(
         error_message[: len(str(e))] = str(e).encode()
 
 
+def write_parquet(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    output_path: str,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Collect a serialized LazyFrame and write it to a parquet file.
+
+    This offloads the collect() from core to the worker process, producing
+    a Polars-version-independent parquet file at *output_path*.
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting write_parquet operation to: {output_path}")
+    try:
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        df = collect_lazy_frame(lf)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        df.write_parquet(output_path)
+        # Flush to disk to prevent race conditions when another process reads.
+        # "rb+" — os.fsync needs a writable fd on Windows (EBADF on read-only handles)
+        with open(output_path, "rb+") as f:
+            os.fsync(f.fileno())
+        flowfile_logger.info(f"write_parquet completed: {len(df)} records written to {output_path}")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        flowfile_logger.error(f"Error during write_parquet operation: {str(e)}")
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def write_delta(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    output_path: str,
+    mode: str = "overwrite",
+    partition_by: list[str] | None = None,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Collect a serialized LazyFrame and write it to a Delta table directory.
+
+    This offloads the collect() from core to the worker process, producing
+    a Delta table at *output_path*.  Metadata (schema, row_count, size_bytes)
+    is returned via the queue so the core never needs to read the table.
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting write_delta operation to: {output_path}")
+    try:
+        from shared.delta_utils import write_delta as _write_delta
+
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        df = collect_lazy_frame(lf)
+        wrote = _write_delta(df, output_path, mode=mode, partition_by=partition_by)
+
+        if not wrote:
+            queue.put({"skipped": True})
+            flowfile_logger.info(f"write_delta skipped (no-op) for {output_path}")
+            with progress.get_lock():
+                progress.value = 100
+            return
+
+        size_bytes = _get_delta_size_bytes(Path(output_path))
+        schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
+
+        queue.put(
+            {
+                "table_path": output_path,
+                "schema": schema,
+                "row_count": df.height,
+                "column_count": len(df.columns),
+                "size_bytes": size_bytes,
+            }
+        )
+        flowfile_logger.info(f"write_delta completed: {df.height} records written to {output_path}")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        flowfile_logger.error(f"Error during write_delta operation: {str(e)}")
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def merge_delta(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    output_path: str,
+    merge_mode: str = "upsert",
+    merge_keys: list[str] | None = None,
+    partition_by: list[str] | None = None,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Collect a serialized LazyFrame and merge it into a Delta table.
+
+    Supports three merge modes:
+    - upsert: update matched rows + insert unmatched
+    - update: update only matched rows (no inserts)
+    - delete: remove matched rows from target
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting merge_delta ({merge_mode}) to: {output_path}")
+    try:
+        from shared.delta_utils import merge_into_delta
+
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        df = collect_lazy_frame(lf)
+        wrote = merge_into_delta(
+            df, output_path, merge_mode=merge_mode, merge_keys=merge_keys, partition_by=partition_by
+        )
+
+        if not wrote:
+            queue.put({"skipped": True})
+            flowfile_logger.info(f"merge_delta skipped (no-op) for {output_path}")
+            with progress.get_lock():
+                progress.value = 100
+            return
+
+        result_df = pl.scan_delta(output_path)
+        result_schema = result_df.collect_schema()
+        schema = [{"name": n, "dtype": str(d)} for n, d in result_schema.items()]
+        row_count = result_df.select(pl.len()).collect().item()
+        size_bytes = _get_delta_size_bytes(Path(output_path))
+
+        queue.put(
+            {
+                "table_path": output_path,
+                "schema": schema,
+                "row_count": row_count,
+                "column_count": len(schema),
+                "size_bytes": size_bytes,
+            }
+        )
+        flowfile_logger.info(f"merge_delta ({merge_mode}) completed: {row_count} rows in {output_path}")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        flowfile_logger.error(f"Error during merge_delta operation: {str(e)}")
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def materialize_catalog_table_task(
+    source_file_path: str,
+    dest_path: str,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+):
+    """Subprocess task: reads a source file and materializes it as a Delta table, returning metadata via queue."""
+    try:
+        ext = os.path.splitext(source_file_path)[1].lower()
+        if ext in (".csv", ".txt", ".tsv"):
+            df = pl.scan_csv(source_file_path, infer_schema_length=10000, encoding="utf8-lossy")
+        elif ext == ".parquet":
+            df = pl.read_parquet(source_file_path)
+        elif ext in (".xlsx", ".xls"):
+            df = pl.read_excel(source_file_path)
+        else:
+            raise ValueError(f"Unsupported file type: {ext}")
+
+        if isinstance(df, pl.LazyFrame):
+            df = df.collect()
+
+        os.makedirs(dest_path, exist_ok=True)
+        df.write_delta(dest_path, mode="overwrite")
+
+        size_bytes = _get_delta_size_bytes(Path(dest_path))
+        schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
+
+        queue.put(
+            {
+                "table_path": dest_path,
+                "schema": schema,
+                "row_count": df.height,
+                "column_count": len(df.columns),
+                "size_bytes": size_bytes,
+            }
+        )
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def optimize_catalog_table_task(
+    table_path: str,
+    z_order_columns: list[str] | None,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+):
+    """Subprocess task: compact (and optionally Z-order) a Delta catalog table.
+
+    *table_path* is the absolute, already-validated table directory (the route
+    resolves it in the parent process so this works regardless of the child's
+    storage configuration).
+    """
+    try:
+        from shared.delta_utils import optimize_delta
+
+        metrics = optimize_delta(table_path, z_order_columns=z_order_columns or None)
+        queue.put({"metrics": metrics, "size_bytes": _get_delta_size_bytes(Path(table_path))})
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def vacuum_catalog_table_task(
+    table_path: str,
+    retention_hours: int,
+    dry_run: bool,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+):
+    """Subprocess task: vacuum tombstoned files from a Delta catalog table.
+
+    *table_path* is the absolute, already-validated table directory.
+    """
+    try:
+        from shared.delta_utils import vacuum_delta
+
+        files = vacuum_delta(table_path, retention_hours=retention_hours, dry_run=dry_run)
+        queue.put(
+            {
+                "files_removed": list(files),
+                "file_count": len(files),
+                "size_bytes": _get_delta_size_bytes(Path(table_path)),
+            }
+        )
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def execute_sql_query(
+    query: str,
+    tables: dict[str, str],
+    max_rows: int = 10_000,
+    virtual_refs: dict[str, str] | None = None,
+) -> dict:
+    """Execute a SQL query against catalog tables using pl.SQLContext.
+
+    *tables* is a mapping of logical table name -> directory name.  The
+    directory name is resolved under the catalog tables directory using
+    ``_validate_catalog_path``.  Only tables actually referenced in the
+    query plan are reported in *used_tables*.
+
+    *virtual_refs* is an optional mapping of virtual table name -> bare IPC
+    filename under the catalog_virtual_results directory; the worker scans
+    each via ``pl.scan_ipc``.
+
+    Returns a dict matching the SqlQueryResponse schema.
+    """
+    import re
+    import time
+
+    start = time.perf_counter()
+
+    ctx = pl.SQLContext()
+    registered_names: list[str] = []
+    for name, dir_name in tables.items():
+        ctx.register(name, open_catalog_table(dir_name))
+        registered_names.append(name)
+
+    if virtual_refs:
+        for name, ipc_name in virtual_refs.items():
+            ctx.register(name, open_virtual_result(ipc_name))
+            registered_names.append(name)
+
+    result_lf = ctx.execute(query)
+
+    plan = result_lf.explain()
+    used_tables = [name for name in registered_names if re.search(r"\b" + re.escape(name) + r"\b", plan)]
+
+    schema = result_lf.collect_schema()
+    columns = list(schema.keys())
+    dtypes = [str(d) for d in schema.values()]
+
+    total_df = result_lf.select(pl.len()).collect()
+    total_rows = total_df.item()
+
+    truncated = total_rows > max_rows
+    df = result_lf.head(max_rows).collect()
+
+    rows_data = df.to_dicts()
+    rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
+
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    return {
+        "columns": columns,
+        "dtypes": dtypes,
+        "rows": rows,
+        "total_rows": total_rows,
+        "truncated": truncated,
+        "execution_time_ms": round(elapsed_ms, 1),
+        "used_tables": used_tables,
+    }
+
+
+def read_table_metadata(table_name: str) -> dict:
+    """Read schema, row_count, column_count, size_bytes from a table on disk.
+
+    *table_name* is the bare directory name inside the catalog tables
+    directory (no path separators allowed).
+
+    Called by the worker endpoint so the core process never touches data files.
+    """
+    lf = open_catalog_table(table_name)
+    schema = lf.collect_schema()
+    schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
+    row_count = lf.select(pl.len()).collect().item()
+    size_bytes = _get_delta_size_bytes(_validate_catalog_path(table_name))
+    return {
+        "schema": schema_list,
+        "row_count": row_count,
+        "column_count": len(schema_list),
+        "size_bytes": size_bytes,
+    }
+
+
+def get_delta_history(table_name: str, limit: int | None = None) -> models.DeltaHistoryResponse:
+    """Read version history from a Delta table using the deltalake library.
+
+    *table_name* is the bare directory name inside the catalog tables directory.
+    """
+    validated = _validate_catalog_path(table_name)
+    dt = DeltaTable(str(validated))
+    history = dt.history(limit)
+    current_version = dt.version()
+    entries: list[models.DeltaVersionCommit] = []
+    for h in history:
+        entries.append(
+            models.DeltaVersionCommit(
+                version=h.get("version"),
+                timestamp=format_delta_timestamp(h.get("timestamp")),
+                operation=h.get("operation"),
+                parameters=h.get("operationParameters"),
+            )
+        )
+    return models.DeltaHistoryResponse(current_version=current_version, history=entries)
+
+
+def read_delta_version_preview(table_name: str, version: int, n_rows: int = 100) -> models.DeltaVersionPreviewResponse:
+    """Read a preview of a Delta table at a specific version using deltalake + PyArrow (no Polars).
+
+    *table_name* is the bare directory name inside the catalog tables directory.
+    """
+    validated = _validate_catalog_path(table_name)
+    dt = DeltaTable(str(validated), version=version)
+    dataset = dt.to_pyarrow_dataset()
+    pa_table = dataset.head(n_rows)
+    columns = pa_table.column_names
+    dtypes = [str(field.type) for field in pa_table.schema]
+    rows = pa_table.to_pylist()
+
+    row_list = [[make_json_safe(row.get(c)) for c in columns] for row in rows]
+    try:
+        total_rows = sum(
+            v for v in dt.get_add_actions(flatten=True).to_pydict().get("num_records", []) if v is not None
+        )
+    except Exception:
+        total_rows = len(row_list)
+    if total_rows == 0:
+        total_rows = len(row_list)
+
+    return models.DeltaVersionPreviewResponse(
+        version=version,
+        columns=columns,
+        dtypes=dtypes,
+        rows=row_list,
+        total_rows=total_rows,
+    )
+
+
 def generic_task(
     func: Callable,
     progress: Value,
@@ -407,17 +953,19 @@ def generic_task(
     *args,
     **kwargs,
 ):
-    print(kwargs)
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting generic task")
     try:
-        df = func(*args, **kwargs)
-        if isinstance(df, pl.LazyFrame):
-            collect_lazy_frame(df).write_ipc(file_path)
-        elif isinstance(df, pl.DataFrame):
-            df.write_ipc(file_path)
+        result = func(*args, **kwargs)
+        if result is None:
+            # Function already wrote to file_path (e.g. Kafka spill_path)
+            flowfile_logger.info("Function returned None — file already written")
+        elif isinstance(result, pl.LazyFrame):
+            collect_lazy_frame(result).write_ipc(file_path)
+        elif isinstance(result, pl.DataFrame):
+            result.write_ipc(file_path)
         else:
-            raise Exception("Returned object is not a DataFrame or LazyFrame")
+            raise Exception("Returned object is not a DataFrame, LazyFrame, or None")
         with progress.get_lock():
             progress.value = 100
         flowfile_logger.info("Task completed successfully")
@@ -428,8 +976,63 @@ def generic_task(
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
             progress.value = -1
+        return
 
     lf = pl.scan_ipc(file_path)
     number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f"Number of records processed: {number_of_records}")
-    queue.put(encodebytes(lf.serialize()))
+    # Put raw bytes in queue - encoding happens at the transport boundary
+    queue.put(lf.serialize())
+
+
+# ==================== Virtual flow-table resolution =========================
+
+
+def _resolve_virtual_table_child(plan_bytes: bytes, target_path: str, queue: Queue) -> None:
+    """Subprocess entry point: deserialise the plan, collect, atomic-write IPC."""
+    try:
+        lf = pl.LazyFrame.deserialize(io.BytesIO(plan_bytes))
+        df = lf.collect()
+        target = Path(target_path)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        df.write_ipc(str(tmp))
+        os.replace(str(tmp), str(target))
+        queue.put({"name": target.name, "mtime": target.stat().st_mtime, "row_count": int(df.height)})
+    except Exception as exc:
+        queue.put({"error": str(exc)[:1024]})
+
+
+def resolve_virtual_table(req: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
+    """Materialise a virtual flow table to disk; idempotent on (table_id, source_versions_hash)."""
+    target_dir = storage.catalog_virtual_results_directory
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"fvt-{req.table_id}-{req.source_versions_hash[:16]}.arrow"
+    if target.exists():
+        return models.ResolveVirtualTableResponse(
+            ipc_path=target.name,
+            mtime=target.stat().st_mtime,
+            row_count=_row_count_ipc(target),
+        )
+
+    queue: Queue = mp_context.Queue(maxsize=1)
+    p = mp_context.Process(
+        target=_resolve_virtual_table_child,
+        kwargs={"plan_bytes": req.plan_bytes, "target_path": str(target), "queue": queue},
+    )
+    p.start()
+    p.join()
+    try:
+        if queue.empty():
+            raise RuntimeError(f"resolve_virtual_table child exited without result (exitcode={p.exitcode})")
+        result = queue.get_nowait()
+        if "error" in result:
+            raise RuntimeError(f"resolve_virtual_table child failed: {result['error']}")
+        return models.ResolveVirtualTableResponse(
+            ipc_path=result["name"],
+            mtime=result["mtime"],
+            row_count=result["row_count"],
+        )
+    finally:
+        if p.is_alive():
+            p.terminate()
+            p.join()

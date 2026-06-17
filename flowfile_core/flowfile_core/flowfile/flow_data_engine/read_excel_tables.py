@@ -21,8 +21,7 @@ def raw_data_openpyxl(
     workbook: Workbook = load_workbook(file_path, data_only=True, read_only=True)
     sheet_name = workbook.sheetnames[0] if sheet_name is None else sheet_name
     sheet: Worksheet = workbook[sheet_name]
-    for row in sheet.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col, values_only=True):
-        yield row
+    yield from sheet.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col, values_only=True)
     workbook.close()
     del workbook
     gc.collect()
@@ -42,9 +41,18 @@ def df_from_calamine_xlsx(file_path: str, sheet_name: str, start_row: int = 0, e
         read_options["header_row"] = start_row
     if end_row > 0:
         read_options["n_rows"] = end_row - start_row
-    return pl.read_excel(
-        source=file_path, engine="calamine", sheet_name=sheet_name, read_options=read_options, raise_if_empty=False
+    df = pl.read_excel(
+        source=file_path,
+        engine="calamine",
+        sheet_name=sheet_name,
+        read_options=read_options,
+        raise_if_empty=False,
+        has_header=True,
     )
+    df.columns = ensure_unique(
+        [str(val) for val in next(raw_data_openpyxl(file_path, sheet_name, start_row + 1, end_row))]
+    )
+    return df
 
 
 def df_from_openpyxl(
@@ -128,17 +136,15 @@ def ensure_unique(lst: list[str]) -> list[str]:
 
     for item in lst:
         if item in seen:
-            # Increment the version and append the version number
             seen[item] += 1
             new_item = f"{item}_v{seen[item]}"
-            # Ensure the new item is unique by checking for conflicts
             while new_item in seen:
                 seen[new_item] += 1
                 new_item = f"{item}_v{seen[item]}"
             result.append(new_item)
-            seen[new_item] = 1  # Mark the new unique item as seen
+            seen[new_item] = 1
         else:
             result.append(item)
-            seen[item] = 1  # First occurrence of the item
+            seen[item] = 1
 
     return result

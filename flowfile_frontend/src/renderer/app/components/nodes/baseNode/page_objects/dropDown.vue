@@ -112,7 +112,6 @@ const onFocus = () => {
   showOptions.value = true;
   hasTyped.value = false;
 
-  // Position the dropdown properly on focus
   nextTick(() => {
     positionDropdown();
   });
@@ -129,10 +128,9 @@ const onInput = () => {
   if (props.allowOther) {
     inputTimeout = window.setTimeout(() => {
       doUpdate();
-    }, 300); // Reduced from 500ms to 300ms for more responsive feel
+    }, 300);
   }
 
-  // Position the dropdown when filtering
   nextTick(() => {
     positionDropdown();
   });
@@ -155,7 +153,7 @@ const selectOption = (option: string) => {
   showOptions.value = false;
   hasError.value = false;
   emits("update:modelValue", option);
-  emits("update:value", option); // Add this line to support both events
+  emits("update:value", option);
 };
 
 const doUpdate = () => {
@@ -167,7 +165,7 @@ const doUpdate = () => {
     hasError.value = false;
     selectedValue.value = inputValue.value;
     emits("update:modelValue", inputValue.value);
-    emits("update:value", inputValue.value); // Add this line to support both events
+    emits("update:value", inputValue.value);
   }
 };
 
@@ -175,7 +173,7 @@ const onBlur = () => {
   setTimeout(() => {
     showOptions.value = false;
     doUpdate();
-  }, 150); // Reduced from 200ms to 150ms for more responsive feel
+  }, 150);
 };
 
 const onKeyDown = (event: KeyboardEvent) => {
@@ -217,7 +215,6 @@ const onKeyDown = (event: KeyboardEvent) => {
   }
 };
 
-// Function to scroll active option into view
 const scrollActiveOptionIntoView = () => {
   nextTick(() => {
     const activeElement = document.getElementById(`${uniqueId}-option-${activeIndex.value}`);
@@ -227,7 +224,6 @@ const scrollActiveOptionIntoView = () => {
   });
 };
 
-// Function to position the dropdown
 const positionDropdown = () => {
   const inputEl = dropdownRef.value?.querySelector(".select-box");
   const dropdownEl = dropdownRef.value?.querySelector(".options-container");
@@ -241,13 +237,11 @@ const positionDropdown = () => {
       dropdownEl.style.top = `${inputRect.bottom}px`;
       dropdownEl.style.left = `${inputRect.left}px`;
 
-      // Check if dropdown would go offscreen at the bottom
       const dropdownHeight = dropdownEl.offsetHeight;
       const viewportHeight = window.innerHeight;
       const spaceBelow = viewportHeight - inputRect.bottom;
 
       if (dropdownHeight > spaceBelow) {
-        // Position above the input if there's not enough space below
         dropdownEl.style.top = `${inputRect.top - dropdownHeight}px`;
       }
     }

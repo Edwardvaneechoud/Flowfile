@@ -40,7 +40,6 @@ const startStreamingLogs = async () => {
   connectionStatus.value = "disconnected";
 
   try {
-    // Get the auth token
     const token = await authService.getToken();
     if (!token) {
       console.error("No auth token available for log streaming");
@@ -49,8 +48,7 @@ const startStreamingLogs = async () => {
       return;
     }
 
-    // Create URL with token as query parameter
-    const url = new URL(`${flowfileCorebaseURL}logs/${nodeStore.flow_id}`);
+    const url = new URL(`${flowfileCorebaseURL}logs/${nodeStore.flow_id}`, window.location.origin);
     url.searchParams.append("access_token", token);
 
     const eventSource = new EventSource(url.toString());
@@ -83,7 +81,6 @@ const startStreamingLogs = async () => {
           connectionStatus.value = "error";
           stopStreamingLogs();
 
-          // Check if token is still valid, refresh if needed
           if (!authService.hasValidToken()) {
             await authService.getToken();
           }
@@ -128,7 +125,6 @@ const clearLogs = () => (logs.value = "");
 let tokenRefreshInterval: number | null = null;
 
 const setupTokenRefresh = () => {
-  // Clear existing interval if any
   if (tokenRefreshInterval) {
     clearInterval(tokenRefreshInterval);
   }
@@ -161,10 +157,8 @@ onUnmounted(() => {
   }
 });
 
-// Expose functions to parent component
 defineExpose({ startStreamingLogs, stopStreamingLogs, clearLogs, logs });
 
-// Computed property to split logs into lines and identify errors
 const logLines = ref<string[]>([]);
 watch(logs, (newLogs) => {
   logLines.value = newLogs
@@ -174,7 +168,11 @@ watch(logs, (newLogs) => {
 });
 
 const isErrorLine = (line: string): boolean => {
-  return line.toUpperCase().includes("ERROR");
+  return / - ERROR - /.test(line);
+};
+
+const isWarningLine = (line: string): boolean => {
+  return / - WARNING - /.test(line);
 };
 </script>
 
@@ -220,7 +218,7 @@ const isErrorLine = (line: string): boolean => {
       <div
         v-for="(line, index) in logLines"
         :key="index"
-        :class="{ 'error-line': isErrorLine(line) }"
+        :class="{ 'error-line': isErrorLine(line), 'warning-line': isWarningLine(line) }"
       >
         {{ line }}
       </div>
@@ -246,6 +244,7 @@ const isErrorLine = (line: string): boolean => {
   padding: 8px;
   background-color: var(--color-gray-800);
   border-bottom: 1px solid var(--color-border-primary);
+  opacity: 0.95;
   position: sticky;
   top: 0;
   z-index: 10; /* Ensures it stays above the logs */
@@ -329,5 +328,10 @@ const isErrorLine = (line: string): boolean => {
 .error-line {
   background-color: var(--color-danger-light);
   color: var(--color-danger);
+}
+
+.warning-line {
+  background-color: var(--color-warning-light);
+  color: var(--color-warning-dark);
 }
 </style>

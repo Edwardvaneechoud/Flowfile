@@ -11,6 +11,7 @@
           class="form-input"
           placeholder="my_cloud_storage"
           required
+          :disabled="props.isEditing"
         />
       </div>
 
@@ -19,7 +20,8 @@
         <label for="storage-type" class="form-label">Storage Type</label>
         <select id="storage-type" v-model="connection.storageType" class="form-input" required>
           <option value="s3">AWS S3</option>
-          <!-- <option value="adls">Azure Data Lake Storage</option> -->
+          <option value="adls">Azure Data Lake Storage</option>
+          <option value="gcs">Google Cloud Storage</option>
         </select>
       </div>
 
@@ -70,7 +72,11 @@
               v-model="connection.awsSecretAccessKey"
               :type="showAwsSecret ? 'text' : 'password'"
               class="form-input"
-              placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+              :placeholder="
+                props.isEditing
+                  ? 'Leave blank to keep existing'
+                  : 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+              "
               :required="connection.authMethod === 'access_key'"
             />
             <button
@@ -135,7 +141,7 @@
               v-model="connection.azureAccountKey"
               :type="showAzureKey ? 'text' : 'password'"
               class="form-input"
-              placeholder="Account key"
+              :placeholder="props.isEditing ? 'Leave blank to keep existing' : 'Account key'"
               :required="connection.authMethod === 'access_key'"
             />
             <button
@@ -186,7 +192,7 @@
                 v-model="connection.azureClientSecret"
                 :type="showAzureSecret ? 'text' : 'password'"
                 class="form-input"
-                placeholder="Client secret"
+                :placeholder="props.isEditing ? 'Leave blank to keep existing' : 'Client secret'"
                 :required="connection.authMethod === 'service_principal'"
               />
               <button
@@ -200,6 +206,63 @@
             </div>
           </div>
         </template>
+
+        <!-- Azure SAS Token (for sas_token auth) -->
+        <div v-if="connection.authMethod === 'sas_token'" class="form-field">
+          <label for="azure-sas-token" class="form-label">Azure SAS Token</label>
+          <div class="password-field">
+            <input
+              id="azure-sas-token"
+              v-model="connection.azureSasToken"
+              :type="showAzureSasToken ? 'text' : 'password'"
+              class="form-input"
+              :placeholder="props.isEditing ? 'Leave blank to keep existing' : 'SAS token'"
+              :required="connection.authMethod === 'sas_token'"
+            />
+            <button
+              type="button"
+              class="toggle-visibility"
+              aria-label="Toggle SAS token visibility"
+              @click="showAzureSasToken = !showAzureSasToken"
+            >
+              <i :class="showAzureSasToken ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Google Cloud Storage Fields -->
+      <template v-if="connection.storageType === 'gcs'">
+        <!-- GCS Project ID -->
+        <div class="form-field">
+          <label for="gcs-project-id" class="form-label">Project ID</label>
+          <input
+            id="gcs-project-id"
+            v-model="connection.gcsProjectId"
+            type="text"
+            class="form-input"
+            placeholder="my-gcp-project"
+          />
+        </div>
+
+        <!-- GCS Service Account Key (for service_account auth) -->
+        <div v-if="connection.authMethod === 'service_account'" class="form-field">
+          <label for="gcs-service-account-key" class="form-label">Service Account Key (JSON)</label>
+          <div class="password-field">
+            <textarea
+              id="gcs-service-account-key"
+              v-model="connection.gcsServiceAccountKey"
+              class="form-input"
+              :placeholder="
+                props.isEditing
+                  ? 'Leave blank to keep existing'
+                  : 'Paste your service account JSON key here'
+              "
+              :required="connection.authMethod === 'service_account'"
+              rows="4"
+            />
+          </div>
+        </div>
       </template>
 
       <!-- Common Fields -->
@@ -247,6 +310,7 @@ import type {
 const props = defineProps<{
   initialConnection?: FullCloudStorageConnection;
   isSubmitting?: boolean;
+  isEditing?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -254,7 +318,6 @@ const emit = defineEmits<{
   (e: "cancel"): void;
 }>();
 
-// Authentication methods available for each storage type
 const authMethodsByStorageType = {
   s3: [
     { value: "access_key", label: "Access Key" },
@@ -269,9 +332,13 @@ const authMethodsByStorageType = {
     { value: "sas_token", label: "SAS Token" },
     { value: "auto", label: "Auto" },
   ],
+  gcs: [
+    { value: "service_account", label: "Service Account" },
+    { value: "env_vars", label: "Application Default Credentials" },
+    { value: "auto", label: "Auto" },
+  ],
 };
 
-// Create a default connection object
 const defaultConnection = (): FullCloudStorageConnection => ({
   connectionName: "",
   storageType: "s3",
@@ -280,12 +347,10 @@ const defaultConnection = (): FullCloudStorageConnection => ({
   awsAllowUnsafeHtml: false,
 });
 
-// Initialize connection with props or default values
 const connection = ref<FullCloudStorageConnection>(
   props.initialConnection ? { ...props.initialConnection } : defaultConnection(),
 );
 
-// Watch for changes in initialConnection prop
 watch(
   () => props.initialConnection,
   (newVal) => {
@@ -295,24 +360,21 @@ watch(
   },
 );
 
-// Password visibility toggles
 const showAwsSecret = ref(false);
 const showAzureKey = ref(false);
 const showAzureSecret = ref(false);
+const showAzureSasToken = ref(false);
 
-// Computed property for available auth methods based on storage type
 const availableAuthMethods = computed(() => {
   const cloudStorageType = connection.value.storageType as CloudStorageType;
   return authMethodsByStorageType[cloudStorageType] || [];
 });
 
-// Reset auth method when storage type changes
 watch(
   () => connection.value.storageType,
   (newStorageType) => {
     const methods = authMethodsByStorageType[newStorageType as CloudStorageType];
     if (methods && methods.length > 0) {
-      // If current auth method is not available for new storage type, reset to first option
       const currentMethodAvailable = methods.some((m) => m.value === connection.value.authMethod);
       if (!currentMethodAvailable) {
         connection.value.authMethod = methods[0].value as AuthMethod;
@@ -321,7 +383,6 @@ watch(
   },
 );
 
-// Computed property to determine if the form is valid
 const isValid = computed(() => {
   const baseValid =
     !!connection.value.connectionName &&
@@ -335,7 +396,10 @@ const isValid = computed(() => {
     if (!connection.value.awsRegion) return false;
 
     if (connection.value.authMethod === "access_key") {
-      return !!connection.value.awsAccessKeyId && !!connection.value.awsSecretAccessKey;
+      return (
+        !!connection.value.awsAccessKeyId &&
+        (props.isEditing || !!connection.value.awsSecretAccessKey)
+      );
     } else if (connection.value.authMethod === "iam_role") {
       return !!connection.value.awsRoleArn;
     }
@@ -346,20 +410,28 @@ const isValid = computed(() => {
     if (!connection.value.azureAccountName) return false;
 
     if (connection.value.authMethod === "access_key") {
-      return !!connection.value.azureAccountKey;
+      return props.isEditing || !!connection.value.azureAccountKey;
     } else if (connection.value.authMethod === "service_principal") {
       return (
         !!connection.value.azureTenantId &&
         !!connection.value.azureClientId &&
-        !!connection.value.azureClientSecret
+        (props.isEditing || !!connection.value.azureClientSecret)
       );
+    } else if (connection.value.authMethod === "sas_token") {
+      return props.isEditing || !!connection.value.azureSasToken;
+    }
+  }
+
+  // Google Cloud Storage validation
+  if (connection.value.storageType === "gcs") {
+    if (connection.value.authMethod === "service_account") {
+      return props.isEditing || !!connection.value.gcsServiceAccountKey;
     }
   }
 
   return true;
 });
 
-// Computed property for the submit button text
 const submitButtonText = computed(() => {
   if (props.isSubmitting) {
     return "Saving...";
@@ -367,7 +439,6 @@ const submitButtonText = computed(() => {
   return props.initialConnection ? "Update Connection" : "Create Connection";
 });
 
-// Submit form
 const submitForm = () => {
   if (isValid.value) {
     emit("submit", connection.value);

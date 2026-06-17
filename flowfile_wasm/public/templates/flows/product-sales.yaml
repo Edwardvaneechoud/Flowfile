@@ -1,0 +1,133 @@
+flowfile_version: 1.0.0
+flowfile_id: 1700000000005
+flowfile_name: Product Sales by Category
+flowfile_settings:
+  description: ''
+  execution_mode: Development
+  execution_location: local
+  auto_save: true
+  show_detailed_progress: false
+nodes:
+  - id: 1
+    type: read
+    is_start_node: true
+    description: Read Orders
+    x_position: 120
+    y_position: 160
+    input_ids: []
+    outputs:
+      - 3
+    setting_input:
+      cache_results: false
+      file_name: orders.csv
+      received_file:
+        name: orders.csv
+        path: orders.csv
+        file_type: csv
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          has_headers: true
+          encoding: utf-8
+  - id: 2
+    type: read
+    is_start_node: true
+    description: Read Products
+    x_position: 120
+    y_position: 360
+    input_ids: []
+    outputs:
+      - 3
+    setting_input:
+      cache_results: false
+      file_name: products.csv
+      received_file:
+        name: products.csv
+        path: products.csv
+        file_type: csv
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          has_headers: true
+          encoding: utf-8
+  - id: 3
+    type: join
+    is_start_node: false
+    description: Join orders to products
+    x_position: 400
+    y_position: 260
+    right_input_id: 2
+    input_ids:
+      - 1
+    outputs:
+      - 4
+    setting_input:
+      cache_results: true
+      join_input:
+        join_type: inner
+        how: inner
+        join_mapping:
+          - left_col: product_id
+            right_col: product_id
+        left_suffix: ''
+        right_suffix: _product
+        left_select: []
+        right_select: []
+  - id: 4
+    type: group_by
+    is_start_node: false
+    description: Totals per category
+    x_position: 680
+    y_position: 260
+    input_ids:
+      - 3
+    outputs:
+      - 5
+    setting_input:
+      cache_results: false
+      groupby_input:
+        agg_cols:
+          - old_name: category
+            agg: groupby
+            new_name: category
+          - old_name: order_id
+            agg: count
+            new_name: order_count
+          - old_name: quantity
+            agg: sum
+            new_name: total_quantity
+  - id: 5
+    type: sort
+    is_start_node: false
+    description: Best sellers first
+    x_position: 960
+    y_position: 260
+    input_ids:
+      - 4
+    outputs:
+      - 6
+    setting_input:
+      cache_results: false
+      sort_input:
+        - column: total_quantity
+          how: desc
+  - id: 6
+    type: output
+    is_start_node: false
+    description: Export category totals
+    x_position: 1220
+    y_position: 260
+    input_ids:
+      - 5
+    outputs: []
+    setting_input:
+      cache_results: false
+      output_settings:
+        name: product_sales_by_category.csv
+        directory: .
+        file_type: csv
+        write_mode: overwrite
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          encoding: utf-8

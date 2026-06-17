@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeGroupBy">
-    <generic-node-settings v-model="nodeGroupBy">
+    <generic-node-settings
+      v-model="nodeGroupBy"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <ul v-if="dataLoaded" class="listbox">
           <template
@@ -9,8 +13,12 @@
           >
             <li
               :class="{ 'is-selected': selectedColumns.includes(col_schema.name) }"
+              draggable="true"
               @click="handleItemClick(index, col_schema.name, $event)"
               @contextmenu="openContextMenu(index, col_schema.name, $event)"
+              @dragstart="onDragStart(col_schema.name, $event)"
+              @dragover.prevent
+              @drop="onDrop(index)"
             >
               {{ col_schema.name }} ({{ col_schema.data_type }})
             </li>
@@ -39,7 +47,7 @@
 
       <div class="listbox-subtitle">Settings</div>
 
-      <div v-if="dataLoaded" class="table-wrapper">
+      <div v-if="dataLoaded" class="table-wrapper" @dragover.prevent @drop="onDropInTable">
         <table class="styled-table">
           <thead>
             <tr>
@@ -90,10 +98,25 @@ import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 import { GroupByInput, NodeGroupBy, AggOption, GroupByOption } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodeGroupBy = ref<null | NodeGroupBy>(null);
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeGroupBy,
+  onAfterSave: async () => {
+    await instantValidate();
+  },
+  getValidationFunc: () => {
+    if (nodeGroupBy.value?.groupby_input) {
+      return validateNode;
+    }
+    return undefined;
+  },
+});
 const showContextMenu = ref(false);
 const showContextMenuRemove = ref(false);
 const dataLoaded = ref(false);
@@ -101,12 +124,12 @@ const contextMenuPosition = ref({ x: 0, y: 0 });
 const contextMenuColumn = ref<string | null>(null);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
-const nodeGroupBy = ref<null | NodeGroupBy>(null);
 const nodeData = ref<null | NodeData>(null);
 const aggOptions: (AggOption | GroupByOption)[] = [
   "groupby",
   "sum",
   "max",
+  "mean",
   "median",
   "min",
   "count",
@@ -116,15 +139,51 @@ const aggOptions: (AggOption | GroupByOption)[] = [
   "concat",
 ];
 const firstSelectedIndex = ref<number | null>(null);
+const draggedColumnName = ref<string | null>(null);
 
 const groupByInput = ref<GroupByInput>({
   agg_cols: [],
 });
 
+const onDragStart = (columnName: string, event: DragEvent) => {
+  draggedColumnName.value = columnName;
+  event.dataTransfer?.setData("text/plain", columnName);
+};
+
+const onDrop = (index: number) => {
+  if (draggedColumnName.value) {
+    const colSchema = nodeData.value?.main_input?.table_schema;
+    if (colSchema) {
+      const fromIndex = colSchema.findIndex((col) => col.name === draggedColumnName.value);
+      if (fromIndex !== -1 && fromIndex !== index) {
+        const [movedColumn] = colSchema.splice(fromIndex, 1);
+        colSchema.splice(index, 0, movedColumn);
+      }
+    }
+    draggedColumnName.value = null;
+  }
+};
+
+const onDropInTable = () => {
+  if (!draggedColumnName.value) return;
+  const column = draggedColumnName.value;
+  const alreadyGroupedBy = groupByInput.value.agg_cols.some(
+    (row) => row.old_name === column && row.agg === "groupby",
+  );
+  if (!alreadyGroupedBy) {
+    groupByInput.value.agg_cols.push({
+      old_name: column,
+      agg: "groupby",
+      new_name: column,
+    });
+  }
+  draggedColumnName.value = null;
+};
+
 const openRowContextMenu = (event: MouseEvent, index: number) => {
   event.preventDefault();
   contextMenuPosition.value = { x: event.clientX, y: event.clientY };
-  contextMenuRowIndex.value = index; // Save the index of the row where the context menu was opened
+  contextMenuRowIndex.value = index;
   showContextMenuRemove.value = true;
 };
 
@@ -132,17 +191,17 @@ const removeRow = () => {
   if (contextMenuRowIndex.value !== null) {
     groupByInput.value.agg_cols.splice(contextMenuRowIndex.value, 1);
   }
-  showContextMenuRemove.value = false; // Hide the context menu after removing the row
-  contextMenuRowIndex.value = null; // Reset the saved index
+  showContextMenuRemove.value = false;
+  contextMenuRowIndex.value = null;
 };
 
-const contextMenuRowIndex = ref<number | null>(null); // New ref to keep track of which row is being interacted with
+const contextMenuRowIndex = ref<number | null>(null);
 
 const singleColumnSelected = computed(() => selectedColumns.value.length == 1);
 
 const openContextMenu = (clickedIndex: number, columnName: string, event: MouseEvent) => {
   event.preventDefault();
-  event.stopPropagation(); // Stop click event from propagating
+  event.stopPropagation();
   if (!selectedColumns.value.includes(columnName)) {
     selectedColumns.value = [columnName];
   }
@@ -162,7 +221,7 @@ const setAggregations = (aggType: AggOption | GroupByOption, columns: string[] |
       });
     });
   }
-  showContextMenu.value = false; // Hide the context menu after selection
+  showContextMenu.value = false;
   contextMenuColumn.value = null;
 };
 
@@ -190,6 +249,7 @@ interface SingleColumnAggOption {
 const singleColumnAggOptions: SingleColumnAggOption[] = [
   { value: "count", label: "Count" },
   { value: "max", label: "Max" },
+  { value: "mean", label: "Mean" },
   { value: "median", label: "Median" },
   { value: "min", label: "Min" },
   { value: "sum", label: "Sum" },
@@ -299,21 +359,10 @@ const instantValidate = async () => {
   }
 };
 
-const pushNodeData = async () => {
-  dataLoaded.value = false;
-  if (nodeGroupBy.value?.is_setup) {
-    nodeGroupBy.value.is_setup = true;
-  }
-  nodeStore.updateSettings(nodeGroupBy);
-  await instantValidate();
-  if (nodeGroupBy.value?.groupby_input) {
-    nodeStore.setNodeValidateFunc(nodeGroupBy.value?.node_id, validateNode);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

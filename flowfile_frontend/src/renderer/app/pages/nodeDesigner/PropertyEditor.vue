@@ -136,6 +136,7 @@
               >
                 <option value="static">Static Options</option>
                 <option value="incoming_columns">Incoming Columns</option>
+                <option value="available_artifacts">Available Artifacts</option>
               </select>
             </div>
             <div v-if="component.options_source === 'static'" class="property-row">
@@ -164,6 +165,7 @@
               >
                 <option value="static">Static Options</option>
                 <option value="incoming_columns">Incoming Columns</option>
+                <option value="available_artifacts">Available Artifacts</option>
               </select>
             </div>
             <div v-if="component.options_source === 'static'" class="property-row">
@@ -256,7 +258,9 @@
           <div class="property-group">
             <div class="property-group-title">Column Action Options</div>
             <div class="property-row">
-              <label class="property-label">Actions (comma-separated) <span class="required">*</span></label>
+              <label class="property-label"
+                >Actions (comma-separated) <span class="required">*</span></label
+              >
               <input
                 :value="component.actions_string"
                 type="text"
@@ -264,7 +268,9 @@
                 placeholder="sum, mean, min, max"
                 @input="updateField('actions_string', ($event.target as HTMLInputElement).value)"
               />
-              <span class="field-hint">Actions available in dropdown (e.g., sum, mean, min, max)</span>
+              <span class="field-hint"
+                >Actions available in dropdown (e.g., sum, mean, min, max)</span
+              >
             </div>
             <div class="property-row">
               <label class="property-label">Output Name Template</label>
@@ -273,7 +279,9 @@
                 type="text"
                 class="property-input"
                 placeholder="{column}_{action}"
-                @input="updateField('output_name_template', ($event.target as HTMLInputElement).value)"
+                @input="
+                  updateField('output_name_template', ($event.target as HTMLInputElement).value)
+                "
               />
               <span class="field-hint">Use {column} and {action} placeholders</span>
             </div>
@@ -367,6 +375,11 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~588 LOC. Plan to extract:
+//   - 9 conditional type sections (~lines 40-357) → split into per-type panels under
+//     pages/nodeDesigner/propertyPanels/ (TextInputProperties, NumericInputProperties,
+//     SelectProperties, etc.)
+//   - useComponentTypeDetection composable: getTypeForComponent (~lines 396-417)
 import type { DesignerComponent } from "./types";
 import { toSnakeCase } from "./composables/useCodeGeneration";
 import { getComponentIcon } from "./constants";

@@ -12,7 +12,7 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("Flowfile")
 except PackageNotFoundError:
-    __version__ = "0.5.0"
+    __version__ = "0.12.1"
 
 import logging
 import os
@@ -66,20 +66,30 @@ from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.schemas.schemas import FlowInformation, FlowSettings
 from flowfile_frame import (
+    CatalogReference,
     FuzzyMapping,
+    SchemaReference,
     concat,
     create_cloud_storage_connection,
     create_cloud_storage_connection_if_not_exists,
     create_database_connection,
     create_database_connection_if_not_exists,
+    default_schema,
     del_cloud_storage_connection,
     del_database_connection,
     from_dict,
+    from_raw_data,
     get_all_available_cloud_storage_connections,
     get_all_available_database_connections,
     get_database_connection_by_name,
+    list_catalogs,
+    read_api,
+    read_catalog_table,
     read_csv,
     read_database,
+    read_excel,
+    read_from_cloud_storage,
+    read_kafka,
     read_parquet,
     scan_csv,
     scan_csv_from_cloud_storage,
@@ -87,7 +97,9 @@ from flowfile_frame import (
     scan_json_from_cloud_storage,
     scan_parquet,
     scan_parquet_from_cloud_storage,
+    write_catalog_table,
     write_database,
+    write_to_cloud_storage,
 )
 from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, mean, min, sum, when
 from flowfile_frame.flow_frame import FlowFrame
@@ -116,6 +128,9 @@ from flowfile_frame.selectors import (
 )
 from flowfile_frame.utils import create_flow_graph
 
+LazyFrame = FlowFrame
+DataFrame = FlowFrame
+
 __all__ = [
     # Core FlowFrame classes
     "FlowFrame",
@@ -123,8 +138,18 @@ __all__ = [
     "FullCloudStorageConnection",
     # Main creation functions
     "read_csv",
+    "read_excel",
     "read_parquet",
+    "read_kafka",
+    "read_api",
     "from_dict",
+    "from_raw_data",
+    "read_catalog_table",
+    "write_catalog_table",
+    "CatalogReference",
+    "SchemaReference",
+    "list_catalogs",
+    "default_schema",
     "concat",
     "scan_csv",
     "scan_parquet",
@@ -139,7 +164,9 @@ __all__ = [
     "create_cloud_storage_connection_if_not_exists",
     # Database functions
     "read_database",
+    "read_from_cloud_storage",
     "write_database",
+    "write_to_cloud_storage",
     "create_database_connection",
     "create_database_connection_if_not_exists",
     "del_database_connection",

@@ -1,7 +1,11 @@
 <template>
-  <div v-if="dataLoaded && nodeUnpivot" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeUnpivot">
-      <div class="listbox-wrapper">
+  <div v-if="dataLoaded && nodeUnpivot" class="unpivot-node-root">
+    <generic-node-settings
+      v-model="nodeUnpivot"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
+      <div class="listbox-wrapper unpivot-columns-card">
         <ul class="listbox">
           <li
             v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
@@ -28,58 +32,55 @@
         @select="handleContextMenuSelect"
         @close="closeContextMenu"
       />
-      <div class="listbox-wrapper">
-        <SettingsSection
-          title="Index Keys"
-          :items="unpivotInput.index_columns"
-          droppable="true"
-          @remove-item="removeColumn('index', $event)"
-          @dragover.prevent
-          @drop="onDropInSection('index')"
+
+      <SettingsSection
+        title="Index Keys"
+        :items="unpivotInput.index_columns"
+        droppable="true"
+        @remove-item="removeColumn('index', $event)"
+        @dragover.prevent
+        @drop="onDropInSection('index')"
+      />
+
+      <div class="switch-container">
+        <span>Value selector</span>
+        <el-switch
+          v-model="unpivotInput.data_type_selector_mode"
+          active-value="column"
+          inactive-value="data_type"
+          active-text="Column"
+          inactive-text="Data Type"
+          inline-prompt
+          size="small"
         />
       </div>
-      <div class="listbox-wrapper">
-        <div class="switch-container">
-          <span>Value selector</span>
-          <el-switch
-            v-model="unpivotInput.data_type_selector_mode"
-            active-value="column"
-            inactive-value="data_type"
-            active-text="Column"
-            inactive-text="Data Type"
-            inline-prompt
-          />
-        </div>
 
-        <SettingsSection
-          v-if="unpivotInput.data_type_selector_mode === 'column'"
-          title="Columns to unpivot"
-          title-font-size="14px"
-          :items="unpivotInput.value_columns"
-          droppable="true"
-          @remove-item="removeColumn('value', $event)"
-          @dragover.prevent
-          @drop="onDropInSection('value')"
-        />
-        <div v-else class="listbox-wrapper">
-          <div class="listbox-subtitle">Dynamic data type selector</div>
-          <div class="listbox-wrapper">
-            <el-select
-              v-model="unpivotInput.data_type_selector"
-              placeholder="Select"
-              size="small"
-              style="width: 100%"
-            >
-              <el-option
-                v-for="item in dataTypeSelectorOptions"
-                :key="item"
-                :label="item"
-                :value="item"
-                style="width: 400px"
-              />
-            </el-select>
-          </div>
-        </div>
+      <SettingsSection
+        v-if="unpivotInput.data_type_selector_mode === 'column'"
+        title="Columns to unpivot"
+        title-font-size="14px"
+        :items="unpivotInput.value_columns"
+        droppable="true"
+        @remove-item="removeColumn('value', $event)"
+        @dragover.prevent
+        @drop="onDropInSection('value')"
+      />
+      <div v-else class="data-type-selector">
+        <div class="listbox-subtitle">Dynamic data type selector</div>
+        <el-select
+          v-model="unpivotInput.data_type_selector"
+          placeholder="Select"
+          size="small"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="item in dataTypeSelectorOptions"
+            :key="item"
+            :label="item"
+            :value="item"
+            style="width: 400px"
+          />
+        </el-select>
       </div>
     </generic-node-settings>
   </div>
@@ -89,12 +90,29 @@
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeUnpivot, DataTypeSelector, UnpivotInput } from "../../../baseNode/nodeInput";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodeUnpivot = ref<NodeUnpivot | null>(null);
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeUnpivot,
+  onBeforeSave: () => {
+    if (unpivotInput.value) {
+      if (unpivotInput.value.data_type_selector_mode === "data_type") {
+        unpivotInput.value.value_columns = [];
+      } else {
+        unpivotInput.value.data_type_selector = null;
+      }
+      nodeUnpivot.value!.unpivot_input = unpivotInput.value;
+    }
+    return true;
+  },
+});
 const showContextMenu = ref(false);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
@@ -112,8 +130,6 @@ const unpivotInput = ref<UnpivotInput>({
   data_type_selector: null,
   data_type_selector_mode: "column",
 });
-
-const nodeUnpivot = ref<NodeUnpivot | null>(null);
 
 const getColumnClass = (columnName: string): string => {
   return selectedColumns.value.includes(columnName) ? "is-selected" : "";
@@ -140,10 +156,8 @@ const onDrop = (index: number) => {
 
 const onDropInSection = (section: "index" | "value") => {
   if (draggedColumnName.value) {
-    // Remove column from any existing assignments
     removeColumnIfExists(draggedColumnName.value);
     console.log("section", unpivotInput.value.index_columns);
-    // Assign the dragged column to the appropriate section
     if (
       section === "index" &&
       !unpivotInput.value.index_columns.includes(draggedColumnName.value)
@@ -251,21 +265,10 @@ const closeContextMenu = () => {
   showContextMenu.value = false;
 };
 
-const pushNodeData = async () => {
-  if (unpivotInput.value) {
-    if (unpivotInput.value.data_type_selector_mode === "data_type") {
-      unpivotInput.value.value_columns = [];
-    } else {
-      unpivotInput.value.data_type_selector = null;
-    }
-    nodeUnpivot.value!.unpivot_input = unpivotInput.value;
-    nodeStore.updateSettings(nodeUnpivot);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {
@@ -279,6 +282,17 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.unpivot-node-root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.unpivot-columns-card .listbox {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
 .context-menu {
   position: fixed;
   z-index: 1000;
@@ -301,16 +315,17 @@ onUnmounted(() => {
 }
 
 .context-menu li:hover {
-  background-color: #f0f0f0;
+  background-color: var(--color-background-primary);
 }
 
 .switch-container {
   display: flex;
   align-items: center;
-  margin: 12px;
+  gap: 10px;
+  padding: var(--spacing-2) var(--spacing-3);
 }
 
-.switch-container span {
-  margin-right: 10px;
+.data-type-selector {
+  padding: 0 var(--spacing-2);
 }
 </style>

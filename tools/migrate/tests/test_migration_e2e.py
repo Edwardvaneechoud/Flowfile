@@ -16,8 +16,6 @@ from typing import Literal
 import pytest
 
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-
-# Import actual flowfile system for verification
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -45,9 +43,7 @@ from tools.migrate.legacy_schemas import (
 )
 from tools.migrate.migrate import migrate_flowfile
 
-# =============================================================================
 # HELPERS
-# =============================================================================
 
 def create_graph(flow_id: int = 1, execution_mode: Literal['Development', 'Performance'] = 'Development') -> FlowGraph:
     """Create a new FlowGraph for testing."""
@@ -100,9 +96,7 @@ def handle_run_info(run_info: RunInformation):
         raise ValueError(f'Graph should run successfully:\n{errors}')
 
 
-# =============================================================================
 # FIXTURES
-# =============================================================================
 
 @pytest.fixture
 def temp_dir():
@@ -122,9 +116,7 @@ def sample_data() -> list[dict]:
     ]
 
 
-# =============================================================================
 # BASELINE TEST - Verify flowfile system works without migration
-# =============================================================================
 
 class TestFlowfileBaseline:
     """Verify the flowfile system works before testing migration."""
@@ -189,9 +181,7 @@ class TestFlowfileBaseline:
         handle_run_info(run_info)
 
 
-# =============================================================================
 # YAML ROUND-TRIP TESTS - Save and reload flows (using NEW API)
-# =============================================================================
 
 class TestYamlRoundTrip:
     """Test that flows survive YAML save/load cycle."""
@@ -217,16 +207,13 @@ class TestYamlRoundTrip:
         )
         graph.add_select(node_select)
 
-        # Save as YAML
         path = temp_dir / 'test.yaml'
         graph.save_flow(str(path))
 
-        # Reload and run
         loaded_flow = open_flow(path)
         run_info = loaded_flow.run_graph()
         handle_run_info(run_info)
 
-        # Verify node preserved
         loaded_select = loaded_flow.get_node(2)
         assert loaded_select is not None
         assert loaded_select.setting_input.select_input[0].new_name == 'person_name'
@@ -256,7 +243,6 @@ class TestYamlRoundTrip:
         )
         graph.add_filter(node_filter)
 
-        # Save and reload
         path = temp_dir / 'test.yaml'
         graph.save_flow(str(path))
         loaded_flow = open_flow(path)
@@ -286,7 +272,6 @@ class TestYamlRoundTrip:
         )
         graph.add_group_by(node_groupby)
 
-        # Save and reload
         path = temp_dir / 'test.yaml'
         graph.save_flow(str(path))
         loaded_flow = open_flow(path)
@@ -294,7 +279,6 @@ class TestYamlRoundTrip:
         run_info = loaded_flow.run_graph()
         handle_run_info(run_info)
 
-        # Verify aggregations preserved
         loaded_gb = loaded_flow.get_node(2)
         agg_cols = loaded_gb.setting_input.groupby_input.agg_cols
         assert len(agg_cols) == 3
@@ -304,14 +288,12 @@ class TestYamlRoundTrip:
         """Save and reload a flow with join node (using NEW API with required selects)."""
         graph = create_graph(flow_id=103)
 
-        # Left table
         left_data = [
             {'id': 1, 'name': 'Alice'},
             {'id': 2, 'name': 'Bob'},
         ]
         add_manual_input(graph, left_data, node_id=1)
 
-        # Right table
         right_data = [
             {'id': 1, 'dept': 'Sales'},
             {'id': 2, 'dept': 'Engineering'},
@@ -324,7 +306,6 @@ class TestYamlRoundTrip:
         )
         graph.add_manual_input(input_file)
 
-        # Join node - NEW API requires left_select and right_select
         add_node_promise(graph, 'join', node_id=3)
         left_conn = input_schema.NodeConnection.create_from_simple_input(1, 3)
         right_conn = input_schema.NodeConnection.create_from_simple_input(2, 3, input_type='right')
@@ -345,7 +326,6 @@ class TestYamlRoundTrip:
         )
         graph.add_join(node_join)
 
-        # Save and reload
         path = temp_dir / 'test.yaml'
         graph.save_flow(str(path))
         loaded_flow = open_flow(path)
@@ -373,7 +353,6 @@ class TestYamlRoundTrip:
         )
         graph.add_formula(node_formula)
 
-        # Save and reload
         path = temp_dir / 'test.yaml'
         graph.save_flow(str(path))
         loaded_flow = open_flow(path)
@@ -401,7 +380,6 @@ class TestYamlRoundTrip:
         )
         graph.add_sort(node_sort)
 
-        # Save and reload
         path = temp_dir / 'test.yaml'
         graph.save_flow(str(path))
         loaded_flow = open_flow(path)
@@ -429,7 +407,6 @@ class TestYamlRoundTrip:
         )
         graph.add_unique(node_unique)
 
-        # Save and reload
         path = temp_dir / 'test.yaml'
         graph.save_flow(str(path))
         loaded_flow = open_flow(path)
@@ -457,7 +434,6 @@ class TestYamlRoundTrip:
         )
         graph.add_record_id(node_record_id)
 
-        # Save and reload
         path = temp_dir / 'test.yaml'
         graph.save_flow(str(path))
         loaded_flow = open_flow(path)
@@ -466,9 +442,7 @@ class TestYamlRoundTrip:
         handle_run_info(run_info)
 
 
-# =============================================================================
 # LEGACY MIGRATION TESTS - Test OLD pickle format → migrate → run
-# =============================================================================
 
 class TestLegacyMigration:
     """Test migration of OLD pickle format to new YAML format.
@@ -483,7 +457,6 @@ class TestLegacyMigration:
 
     def test_join_migration_with_none_selects(self, temp_dir):
         """Migrate old pickle with join node where left_select/right_select are None."""
-        # 1. Build legacy flow with OLD JoinInput (left_select=None, right_select=None)
         legacy_join_input = JoinInput(
             join_mapping=[JoinMap(left_col='id', right_col='id')],
             how='inner',
@@ -531,19 +504,16 @@ class TestLegacyMigration:
             node_starts=[1, 2],
         )
 
-        # 2. Pickle it (simulating old .flowfile)
         pickle_path = temp_dir / 'old_join.flowfile'
         with open(pickle_path, 'wb') as f:
             pickle.dump(legacy_flow, f)
 
-        # 3. Migrate to YAML
         yaml_path = temp_dir / 'migrated.yaml'
         migrate_flowfile(pickle_path, yaml_path, 'yaml')
 
-        # 4. Load with current system
         loaded_flow = open_flow(yaml_path)
 
-        # 5. Add manual input data (not stored in pickle, added at runtime)
+        # Manual input data is not stored in the pickle, added at runtime
         left_data = [{'id': 1, 'name': 'Alice'}, {'id': 2, 'name': 'Bob'}]
         right_data = [{'id': 1, 'dept': 'Sales'}, {'id': 2, 'dept': 'Engineering'}]
 
@@ -556,7 +526,6 @@ class TestLegacyMigration:
             raw_data_format=input_schema.RawData.from_pylist(right_data)
         ))
 
-        # 6. Run and verify
         run_info = loaded_flow.run_graph()
         handle_run_info(run_info)
 
@@ -600,16 +569,13 @@ class TestLegacyMigration:
             node_starts=[1],
         )
 
-        # Pickle
         pickle_path = temp_dir / 'old_filter.flowfile'
         with open(pickle_path, 'wb') as f:
             pickle.dump(legacy_flow, f)
 
-        # Migrate
         yaml_path = temp_dir / 'migrated_filter.yaml'
         migrate_flowfile(pickle_path, yaml_path, 'yaml')
 
-        # Load and add data
         loaded_flow = open_flow(yaml_path)
         data = [
             {'name': 'Alice', 'age': 30},
@@ -621,7 +587,6 @@ class TestLegacyMigration:
             raw_data_format=input_schema.RawData.from_pylist(data)
         ))
 
-        # Run and verify
         run_info = loaded_flow.run_graph()
         handle_run_info(run_info)
 
@@ -666,16 +631,13 @@ class TestLegacyMigration:
             node_starts=[1],
         )
 
-        # Pickle
         pickle_path = temp_dir / 'old_groupby.flowfile'
         with open(pickle_path, 'wb') as f:
             pickle.dump(legacy_flow, f)
 
-        # Migrate
         yaml_path = temp_dir / 'migrated_groupby.yaml'
         migrate_flowfile(pickle_path, yaml_path, 'yaml')
 
-        # Load and add data
         loaded_flow = open_flow(yaml_path)
         data = [
             {'city': 'NYC', 'sales': 100},
@@ -687,7 +649,6 @@ class TestLegacyMigration:
             raw_data_format=input_schema.RawData.from_pylist(data)
         ))
 
-        # Run and verify
         run_info = loaded_flow.run_graph()
         handle_run_info(run_info)
 
@@ -730,16 +691,13 @@ class TestLegacyMigration:
             node_starts=[1],
         )
 
-        # Pickle
         pickle_path = temp_dir / 'old_select.flowfile'
         with open(pickle_path, 'wb') as f:
             pickle.dump(legacy_flow, f)
 
-        # Migrate
         yaml_path = temp_dir / 'migrated_select.yaml'
         migrate_flowfile(pickle_path, yaml_path, 'yaml')
 
-        # Load and add data
         loaded_flow = open_flow(yaml_path)
         data = [
             {'name': 'Alice', 'age': 30, 'city': 'NYC'},
@@ -750,7 +708,6 @@ class TestLegacyMigration:
             raw_data_format=input_schema.RawData.from_pylist(data)
         ))
 
-        # Run and verify
         run_info = loaded_flow.run_graph()
         handle_run_info(run_info)
 
@@ -793,16 +750,13 @@ class TestLegacyMigration:
             node_starts=[1],
         )
 
-        # Pickle
         pickle_path = temp_dir / 'old_formula.flowfile'
         with open(pickle_path, 'wb') as f:
             pickle.dump(legacy_flow, f)
 
-        # Migrate
         yaml_path = temp_dir / 'migrated_formula.yaml'
         migrate_flowfile(pickle_path, yaml_path, 'yaml')
 
-        # Load and add data
         loaded_flow = open_flow(yaml_path)
         data = [
             {'name': 'Alice', 'sales': 100},
@@ -813,7 +767,6 @@ class TestLegacyMigration:
             raw_data_format=input_schema.RawData.from_pylist(data)
         ))
 
-        # Run and verify
         run_info = loaded_flow.run_graph()
         handle_run_info(run_info)
 
@@ -856,16 +809,13 @@ class TestLegacyMigration:
             node_starts=[1],
         )
 
-        # Pickle
         pickle_path = temp_dir / 'old_sort.flowfile'
         with open(pickle_path, 'wb') as f:
             pickle.dump(legacy_flow, f)
 
-        # Migrate
         yaml_path = temp_dir / 'migrated_sort.yaml'
         migrate_flowfile(pickle_path, yaml_path, 'yaml')
 
-        # Load and add data
         loaded_flow = open_flow(yaml_path)
         data = [
             {'name': 'Alice', 'age': 30},
@@ -877,14 +827,11 @@ class TestLegacyMigration:
             raw_data_format=input_schema.RawData.from_pylist(data)
         ))
 
-        # Run and verify
         run_info = loaded_flow.run_graph()
         handle_run_info(run_info)
 
 
-# =============================================================================
 # COMPLEX PIPELINE TESTS
-# =============================================================================
 
 class TestComplexPipelines:
     """Test complex multi-node pipelines."""
@@ -902,7 +849,6 @@ class TestComplexPipelines:
         ]
         add_manual_input(graph, data, node_id=1)
 
-        # Filter: only active
         add_node_promise(graph, 'filter', node_id=2)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
         graph.add_filter(input_schema.NodeFilter(
@@ -915,7 +861,6 @@ class TestComplexPipelines:
             )
         ))
 
-        # Formula: double sales
         add_node_promise(graph, 'formula', node_id=3)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
         graph.add_formula(input_schema.NodeFormula(
@@ -928,7 +873,6 @@ class TestComplexPipelines:
             )
         ))
 
-        # GroupBy: sum by region
         add_node_promise(graph, 'group_by', node_id=4)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 4))
         graph.add_group_by(input_schema.NodeGroupBy(
@@ -941,29 +885,23 @@ class TestComplexPipelines:
             ])
         ))
 
-        # Run original
         run_info = graph.run_graph()
         handle_run_info(run_info)
 
-        # Save and reload
         path = temp_dir / 'etl_pipeline.yaml'
         graph.save_flow(str(path))
         loaded_flow = open_flow(path)
 
-        # Run reloaded
         run_info = loaded_flow.run_graph()
         handle_run_info(run_info)
 
-        # Verify all nodes present
         assert loaded_flow.get_node(1) is not None
         assert loaded_flow.get_node(2) is not None
         assert loaded_flow.get_node(3) is not None
         assert loaded_flow.get_node(4) is not None
 
 
-# =============================================================================
 # OUTPUT NODE TESTS
-# =============================================================================
 
 class TestOutputNode:
     """Test output node with different file types."""
@@ -995,12 +933,10 @@ class TestOutputNode:
             )
         ))
 
-        # Save and reload
         path = temp_dir / 'test.yaml'
         graph.save_flow(str(path))
         loaded_flow = open_flow(path)
 
-        # Verify output settings preserved
         output_node = loaded_flow.get_node(2)
         assert output_node.setting_input.output_settings.table_settings.delimiter == ';'
 

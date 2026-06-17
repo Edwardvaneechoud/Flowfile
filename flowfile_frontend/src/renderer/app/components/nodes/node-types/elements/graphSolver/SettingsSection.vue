@@ -15,7 +15,7 @@
 <script lang="ts" setup>
 defineProps({
   title: { type: String, required: true },
-  item: { type: String, required: true }, // Changed to a single item
+  item: { type: String, required: true },
 });
 
 const emit = defineEmits(["removeItem"]);
@@ -33,13 +33,15 @@ const emitRemove = (item: string) => {
 .items-container {
   display: flex;
   gap: 10px; /* Space between items */
+  color: var(--color-text-primary);
 }
 
 .item-box {
   display: flex;
   align-items: center;
   padding: 5px 10px;
-  background-color: #f0f0f0;
+  background-color: var(--color-background-secondary);
+  color: var(--color-text-primary);
   border-radius: 4px;
   font-size: 12px; /* Font size set to 12px */
   position: relative;

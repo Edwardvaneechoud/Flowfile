@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeSort" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeSort">
+    <generic-node-settings
+      v-model="nodeSort"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">Columns</div>
         <ul v-if="dataLoaded" class="listbox">
@@ -89,11 +93,17 @@
 import { ref, computed } from "vue";
 import { NodeSort } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { CodeLoader } from "vue-content-loader";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodeSort = ref<null | NodeSort>(null);
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeSort,
+});
 const showContextMenu = ref(false);
 const showContextMenuRemove = ref(false);
 const dataLoaded = ref(false);
@@ -101,7 +111,6 @@ const contextMenuPosition = ref({ x: 0, y: 0 });
 const contextMenuColumn = ref<string | null>(null);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
-const nodeSort = ref<null | NodeSort>(null);
 const nodeData = ref<null | NodeData>(null);
 const sortOptions = ["Ascending", "Descending"];
 const firstSelectedIndex = ref<number | null>(null);
@@ -109,7 +118,7 @@ const firstSelectedIndex = ref<number | null>(null);
 const openRowContextMenu = (event: MouseEvent, index: number) => {
   event.preventDefault();
   contextMenuPosition.value = { x: event.clientX, y: event.clientY };
-  contextMenuRowIndex.value = index; // Save the index of the row where the context menu was opened
+  contextMenuRowIndex.value = index;
   showContextMenuRemove.value = true;
 };
 
@@ -117,17 +126,17 @@ const removeRow = () => {
   if (contextMenuRowIndex.value !== null) {
     nodeSort.value?.sort_input.splice(contextMenuRowIndex.value, 1);
   }
-  showContextMenuRemove.value = false; // Hide the context menu after removing the row
-  contextMenuRowIndex.value = null; // Reset the saved index
+  showContextMenuRemove.value = false;
+  contextMenuRowIndex.value = null;
 };
 
-const contextMenuRowIndex = ref<number | null>(null); // New ref to keep track of which row is being interacted with
+const contextMenuRowIndex = ref<number | null>(null);
 
 const singleColumnSelected = computed(() => selectedColumns.value.length == 1);
 
 const openContextMenu = (clickedIndex: number, columnName: string, event: MouseEvent) => {
   event.preventDefault();
-  event.stopPropagation(); // Stop click event from propagating
+  event.stopPropagation();
   if (!selectedColumns.value.includes(columnName)) {
     selectedColumns.value = [columnName];
   }
@@ -141,7 +150,7 @@ const setSortSettings = (sortType: string, columns: string[] | null) => {
       nodeSort.value?.sort_input.push({ column: column, how: sortType });
     });
   }
-  showContextMenu.value = false; // Hide the context menu after selection
+  showContextMenu.value = false;
   contextMenuColumn.value = null;
 };
 
@@ -170,22 +179,18 @@ const getRange = (start: number, end: number) => {
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeSort.value = nodeData.value?.setting_input;
-  if (!nodeData.value?.setting_input.is_setup && nodeSort.value) {
-    nodeSort.value.sort_input = [];
+  if (nodeSort.value) {
+    if (!nodeSort.value.is_setup) {
+      nodeSort.value.sort_input = [];
+    }
+    dataLoaded.value = true;
   }
-  dataLoaded.value = true;
-  if (nodeSort.value?.is_setup) {
-    nodeSort.value.is_setup = true;
-  }
-};
-
-const pushNodeData = async () => {
-  nodeStore.updateSettings(nodeSort);
 };
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

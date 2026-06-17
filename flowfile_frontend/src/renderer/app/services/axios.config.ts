@@ -6,7 +6,6 @@ import { flowfileCorebaseURL } from "../../config/constants";
 axios.defaults.baseURL = flowfileCorebaseURL;
 axios.defaults.withCredentials = true;
 
-// Add auth token to all requests
 axios.interceptors.request.use(
   async (config: InternalAxiosRequestConfig): Promise<InternalAxiosRequestConfig> => {
     if (config.headers && config.headers["X-Skip-Auth-Header"]) {
@@ -33,7 +32,6 @@ axios.interceptors.request.use(
   },
 );
 
-// Handle auth errors and refresh token if needed
 axios.interceptors.response.use(
   (response: AxiosResponse) => {
     return response;
@@ -41,7 +39,6 @@ axios.interceptors.response.use(
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
-    // If 401 Unauthorized and not retried yet
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
 

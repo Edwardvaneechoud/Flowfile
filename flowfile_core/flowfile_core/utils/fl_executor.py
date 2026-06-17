@@ -6,7 +6,6 @@ from loky import get_reusable_executor
 from flowfile_core.configs import logger
 
 
-# process_executor: Uses loky for process-based parallelism
 def process_executor(wait_on_completion: bool = False, max_workers: int = 12):
     max_workers = max_workers if not wait_on_completion else 1
 
@@ -16,7 +15,6 @@ def process_executor(wait_on_completion: bool = False, max_workers: int = 12):
             logger.debug(f"Added task {f.__name__} to a process executor")
             logger.debug(f"max_workers: {max_workers}")
 
-            # Create a new executor with the required number of workers
             func_executor = get_reusable_executor(max_workers=max_workers, timeout=2, kill_workers=False, reuse=True)
             r = func_executor.submit(f, *args, **kwargs)
             if wait_on_completion:

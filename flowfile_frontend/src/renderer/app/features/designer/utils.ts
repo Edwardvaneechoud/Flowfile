@@ -1,16 +1,22 @@
-import axios from "axios";
 import { NodeTemplate } from "./types";
 import { flowfileCorebaseURL } from "../../../config/constants";
+import { fetchNodeTemplates } from "../../composables/useNodes";
 
-// List of built-in icons that are bundled with the app
 const BUILTIN_ICONS = new Set([
   "Output2.png",
   "airbyte.png",
   "cloud_storage_reader.png",
   "cloud_storage_writer.png",
   "cross_join.png",
+  "catalog_reader.svg",
+  "catalog_writer.svg",
+  "api_response.svg",
+  "kafka_source.svg",
+  "google_analytics.svg",
+  "rest_api_reader.svg",
   "database_reader.svg",
   "database_writer.svg",
+  "dynamic_rename.svg",
   "explore_data.png",
   "external_source.png",
   "filter.png",
@@ -26,8 +32,11 @@ const BUILTIN_ICONS = new Set([
   "output.png",
   "pivot.png",
   "polars_code.png",
+  "python_code.svg",
+  "sql_query.svg",
   "record_count.png",
   "record_id.png",
+  "random_split.svg",
   "sample.png",
   "select.png",
   "sort.png",
@@ -38,9 +47,13 @@ const BUILTIN_ICONS = new Set([
   "unpivot.png",
   "user-defined-icon.png",
   "view.png",
+  "window_functions.svg",
+  "train_model.svg",
+  "apply_model.svg",
+  "evaluate_model.svg",
+  "wait_for.svg",
 ]);
 
-// Default fallback icon
 const DEFAULT_ICON = "user-defined-icon.png";
 
 /**
@@ -59,12 +72,10 @@ export const getImageUrl = (name: string): string => {
     return new URL(`./assets/icons/${DEFAULT_ICON}`, import.meta.url).href;
   }
 
-  // If it's a built-in icon, use the static asset
   if (isBuiltinIcon(name)) {
     return new URL(`./assets/icons/${name}`, import.meta.url).href;
   }
 
-  // Otherwise, it's a custom icon served from the backend API (use full URL)
   return `${flowfileCorebaseURL}user_defined_components/icon/${name}`;
 };
 
@@ -82,8 +93,4 @@ export const getCustomIconUrl = (name: string): string => {
   return `${flowfileCorebaseURL}user_defined_components/icon/${name}`;
 };
 
-export const fetchNodes = async (): Promise<NodeTemplate[]> => {
-  const response = await axios.get("/node_list");
-  const listNodes = response.data as NodeTemplate[];
-  return listNodes;
-};
+export const fetchNodes = async (): Promise<NodeTemplate[]> => fetchNodeTemplates();

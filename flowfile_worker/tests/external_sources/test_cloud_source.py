@@ -106,7 +106,7 @@ def test_write_df_to_cloud_storage(test_case: S3TestWriteCase,
         write_df_to_cloud(df, cloud_storage_write_settings, logger)
         response = s3_client.head_object(Bucket="worker-test-bucket", Key=test_case.file_name)
         assert response['ResponseMetadata']['HTTPStatusCode'] == 200
-        assert int(response['ContentLength']) > 0  # Ensure the file is not empty
+        assert int(response['ContentLength']) > 0
         logger.info(f"✅ Verification successful: Object '{test_case.write_settings.resource_path}' found in bucket worker-test-bucket.")
     except Exception as e:
         logger.error(f"❌ Verification failed: {str(e)}")

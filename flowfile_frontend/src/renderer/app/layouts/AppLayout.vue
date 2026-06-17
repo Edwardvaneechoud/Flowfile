@@ -17,6 +17,12 @@
       @close="showPasswordModal = false"
       @success="handlePasswordChanged"
     />
+
+    <!-- Interactive Tutorial Overlay -->
+    <TutorialOverlay />
+
+    <!-- Floating Tutorial Start Button -->
+    <TutorialStartButton />
   </div>
 </template>
 
@@ -25,6 +31,8 @@ import { ref, computed, watch } from "vue";
 import Header from "../components/layout/Header/AppHeader.vue";
 import Sidebar from "../components/layout/Sidebar/Sidebar.vue";
 import ChangePasswordModal from "../components/common/ChangePasswordModal/ChangePasswordModal.vue";
+import TutorialOverlay from "../components/tutorial/TutorialOverlay.vue";
+import TutorialStartButton from "../components/tutorial/TutorialStartButton.vue";
 import { useAuthStore } from "../stores/auth-store";
 import authService from "../services/auth.service";
 
@@ -33,12 +41,10 @@ const authStore = useAuthStore();
 const isCollapse = ref(true);
 const showPasswordModal = ref(false);
 
-// Show password change modal if user must change password (not in Electron mode)
 const mustShowPasswordModal = computed(() => {
-  return authStore.mustChangePassword && !authService.isInElectronMode();
+  return authStore.mustChangePassword && !authService.isInDesktopMode();
 });
 
-// Watch for changes and show modal
 watch(
   mustShowPasswordModal,
   (newVal) => {

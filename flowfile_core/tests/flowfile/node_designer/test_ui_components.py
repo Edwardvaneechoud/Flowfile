@@ -3,8 +3,6 @@ from typing import Any, Literal
 import polars as pl
 import pytest
 
-# Note: For these imports to work, your project's source directory
-# (e.g., the directory containing `flowfile_core`) should be in your PYTHONPATH.
 from flowfile_core.flowfile.node_designer.ui_components import (
     ActionOption,
     ColumnActionInput,
@@ -14,9 +12,9 @@ from flowfile_core.types import DataType, TypeGroup, Types
 
 # Helper lists for expected sorted outputs from TypeGroups
 NUMERIC_TYPES_SORTED = sorted([
-    DataType.Int8, DataType.Int16, DataType.Int32, DataType.Int64,
-    DataType.UInt8, DataType.UInt16, DataType.UInt32, DataType.UInt64,
-    DataType.Float32, DataType.Float64, DataType.Decimal
+    DataType.Int8, DataType.Int16, DataType.Int32, DataType.Int64, DataType.Int128,
+    DataType.UInt8, DataType.UInt16, DataType.UInt32, DataType.UInt64, DataType.UInt128,
+    DataType.Float16, DataType.Float32, DataType.Float64, DataType.Decimal
 ], key=lambda x: x.value)
 
 STRING_TYPES_SORTED = sorted([
@@ -95,7 +93,6 @@ def test_model_dump_when_filter_is_all():
     selector = ColumnSelector(data_types="ALL")
     dumped_data = selector.model_dump()
     assert "data_types" not in dumped_data
-    # Ensure other essential fields are still present
     assert dumped_data["component_type"] == "ColumnSelector"
 
 
@@ -103,7 +100,6 @@ def test_model_dump_when_filter_is_date():
     selector = ColumnSelector(data_types=Types.Date)
     dumped_data = selector.model_dump()
     assert "data_types" in dumped_data
-    # Ensure other essential fields are still present
     assert dumped_data["data_types"] == ["Date"]
 
 
@@ -123,9 +119,7 @@ def test_model_dump_when_filter_is_specific():
     assert dumped_data["component_type"] == "ColumnSelector"
 
 
-# =============================================================================
 # ActionOption Tests
-# =============================================================================
 
 
 def test_action_option_creation():
@@ -150,9 +144,7 @@ def test_action_option_indexing():
     assert opt[1] == "Maximum"
 
 
-# =============================================================================
 # ColumnActionInput Tests
-# =============================================================================
 
 
 def test_column_action_input_default_initialization():
@@ -218,7 +210,6 @@ def test_column_action_input_with_options():
     assert comp.output_name_template == "{column}_rolling_{action}"
     assert comp.show_group_by is True
     assert comp.show_order_by is True
-    # data_types_filter should normalize "Numeric" to list of numeric types
     assert comp.data_types_filter != "ALL"
 
 
@@ -293,7 +284,6 @@ def test_column_action_input_model_dump_with_data_types():
     dumped = comp.model_dump()
     assert "data_types" in dumped
     assert isinstance(dumped["data_types"], list)
-    # Should contain numeric type strings
     assert "Int64" in dumped["data_types"] or "Float64" in dumped["data_types"]
 
 

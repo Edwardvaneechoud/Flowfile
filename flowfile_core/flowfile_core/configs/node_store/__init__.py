@@ -9,6 +9,23 @@ from flowfile_core.configs.node_store.user_defined_node_registry import (
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
 from flowfile_core.schemas.schemas import NodeTemplate
 
+__all__ = [
+    "load_single_node_from_file",
+    "get_all_nodes_from_standard_location",
+    "unload_node_by_name",
+    "CustomNodeBase",
+    "NodeTemplate",
+    "register_custom_node",
+    "add_to_custom_node_store",
+    "remove_from_custom_node_store",
+    "check_if_has_default_setting",
+    "CUSTOM_NODE_STORE",
+    "nodes_list",
+    "node_dict",
+    "node_defaults",
+    "nodes_with_defaults",
+]
+
 logger = logging.getLogger(__name__)
 
 nodes_with_defaults = {"sample", "sort", "union", "select", "record_count"}
@@ -42,7 +59,6 @@ def remove_from_custom_node_store(node_key: str, file_stem: str = None) -> bool:
     logger.info(f"Current CUSTOM_NODE_STORE keys: {list(CUSTOM_NODE_STORE.keys())}")
     logger.info(f"Current nodes_list items: {[n.item for n in nodes_list if hasattr(n, 'item')]}")
 
-    # Try to find the key - use exact match first, then fallback to file_stem
     actual_key = None
     if node_key in CUSTOM_NODE_STORE:
         actual_key = node_key
@@ -50,7 +66,6 @@ def remove_from_custom_node_store(node_key: str, file_stem: str = None) -> bool:
         actual_key = file_stem
         logger.info(f"Using file_stem '{file_stem}' as key instead of '{node_key}'")
 
-    # Remove from CUSTOM_NODE_STORE
     if actual_key and actual_key in CUSTOM_NODE_STORE:
         del CUSTOM_NODE_STORE[actual_key]
         logger.info(f"Removed '{actual_key}' from CUSTOM_NODE_STORE")
@@ -58,7 +73,6 @@ def remove_from_custom_node_store(node_key: str, file_stem: str = None) -> bool:
     else:
         logger.warning(f"Key '{node_key}' (or file_stem '{file_stem}') not found in CUSTOM_NODE_STORE")
 
-    # Remove from node_dict - try both keys
     key_to_use = actual_key or node_key
     if key_to_use in node_dict:
         del node_dict[key_to_use]
@@ -67,7 +81,6 @@ def remove_from_custom_node_store(node_key: str, file_stem: str = None) -> bool:
         del node_dict[file_stem]
         logger.info(f"Removed '{file_stem}' from node_dict")
 
-    # Remove from nodes_list - try both keys
     removed_from_list = False
     for i, node in enumerate(nodes_list):
         if node.item == key_to_use or (file_stem and node.item == file_stem):
@@ -79,7 +92,6 @@ def remove_from_custom_node_store(node_key: str, file_stem: str = None) -> bool:
     if not removed_from_list:
         logger.warning(f"Key '{node_key}' not found in nodes_list")
 
-    # Clean up module cache
     unload_node_by_name(node_key)
     if file_stem and file_stem != node_key:
         unload_node_by_name(file_stem)

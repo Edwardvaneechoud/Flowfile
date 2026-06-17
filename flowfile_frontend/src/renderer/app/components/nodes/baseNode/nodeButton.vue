@@ -1,4 +1,3 @@
-<!-- nodeButton.vue - add this right after your button -->
 <template>
   <div class="component-wrapper">
     <div class="status-indicator" :class="nodeResult?.statusIndicator">
@@ -6,7 +5,7 @@
     </div>
 
     <button :class="['node-button', { selected: isSelected }]" @click="onClick">
-      <img :src="getImageUrl(props.imageSrc)" :alt="props.title" width="50" />
+      <img :src="getImageUrl(props.imageSrc)" :alt="props.title" width="40" />
     </button>
   </div>
 </template>
@@ -44,7 +43,6 @@ const nodeResult = computed<ResultOutput | undefined>(() => {
   const nodeResult = nodeStore.getNodeResult(props.nodeId);
   const nodeValidation = nodeStore.getNodeValidation(props.nodeId);
 
-  // Check if node is currently running (has start timestamp but not completed)
   if (nodeResult && nodeResult.is_running) {
     return {
       success: undefined,
@@ -56,7 +54,6 @@ const nodeResult = computed<ResultOutput | undefined>(() => {
 
   if (nodeResult && !nodeResult.is_running) {
     if (nodeValidation) {
-      // Case 1: nodeResult is success, nodeValidation is not success, and validation is after result -> warning
       if (
         nodeResult.success === true &&
         !nodeValidation.isValid &&
@@ -69,7 +66,6 @@ const nodeResult = computed<ResultOutput | undefined>(() => {
           hasRun: true,
         };
       }
-      // Case 2: nodeResult and nodeValidation both success -> success
       if (nodeResult.success === true && nodeValidation.isValid) {
         return {
           success: true,
@@ -102,7 +98,6 @@ const nodeResult = computed<ResultOutput | undefined>(() => {
         };
       }
     }
-    // Handle completed but no validation case
     return {
       success: nodeResult.success ?? false,
       statusIndicator: nodeResult.success ? "success" : "failure",
@@ -111,7 +106,6 @@ const nodeResult = computed<ResultOutput | undefined>(() => {
     };
   }
 
-  // Handle incomplete node cases
   if (nodeValidation) {
     if (!nodeValidation.isValid) {
       return {
@@ -131,7 +125,7 @@ const nodeResult = computed<ResultOutput | undefined>(() => {
     }
   }
 
-  return undefined; // Default case
+  return undefined;
 });
 
 const tooltipContent = computed(() => {

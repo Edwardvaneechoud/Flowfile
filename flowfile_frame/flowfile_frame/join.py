@@ -1,4 +1,3 @@
-# Assume these imports are correct from your original context
 from flowfile_core.schemas import transform_schema
 from flowfile_frame.expr import Column
 
@@ -16,10 +15,10 @@ def _normalize_columns_to_list(columns):
         return []
     elif isinstance(columns, str):
         return [columns]
-    elif isinstance(columns, (list, tuple)):
+    elif isinstance(columns, list | tuple):
         return list(columns)
     else:
-        return [columns]  # Single non-string item
+        return [columns]
 
 
 def _extract_column_name(col_expr):
@@ -37,10 +36,8 @@ def _extract_column_name(col_expr):
         return col_expr, False
 
     if isinstance(col_expr, Column):
-        # If it's a simple unaltered column, use its name
         if not col_expr._select_input.is_altered:
             return col_expr.column_name, False
-        # Otherwise, this requires polars code
         return col_expr, True
 
     return col_expr, True
@@ -67,7 +64,6 @@ def _create_join_mappings(left_columns, right_columns):
 
         needs_polars_code = needs_polars_code or left_needs_code or right_needs_code
 
-        # Only create standard join mappings if both columns are simple strings
         if not left_needs_code and not right_needs_code:
             join_mappings.append(transform_schema.JoinMap(left_col=left_name, right_col=right_name))
 

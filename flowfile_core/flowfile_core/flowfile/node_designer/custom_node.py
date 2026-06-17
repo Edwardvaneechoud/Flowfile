@@ -1,11 +1,12 @@
-# Fixed custom_node.py with proper type hints
-
+import inspect
+import textwrap
 from typing import Any, TypeVar
 
 import polars as pl
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from flowfile_core.flowfile.node_designer.ui_components import (
+    AvailableArtifacts,
     FlowfileInComponent,
     IncomingColumns,
     SecretSelector,
@@ -53,6 +54,11 @@ def _convert_value(value: Any) -> Any:
                 isinstance(component_dict["options"], type) and issubclass(component_dict["options"], IncomingColumns)
             ):
                 component_dict["options"] = {"__type__": "IncomingColumns"}
+            if component_dict["options"] is AvailableArtifacts or (
+                isinstance(component_dict["options"], type)
+                and issubclass(component_dict["options"], AvailableArtifacts)
+            ):
+                component_dict["options"] = {"__type__": "AvailableArtifacts"}
         return component_dict
     elif isinstance(value, BaseModel):
         return to_frontend_schema(value)
@@ -66,7 +72,6 @@ def _convert_value(value: Any) -> Any:
         return value
 
 
-# Type variable for the Section factory
 T = TypeVar("T", bound=Section)
 
 
@@ -142,14 +147,11 @@ class NodeSettings(BaseModel):
         Returns:
             The `NodeSettings` instance with updated component values.
         """
-        # Handle both extra fields and defined fields
         all_sections = {}
 
-        # Get extra fields
         extra_fields = getattr(self, "__pydantic_extra__", {})
         all_sections.update(extra_fields)
 
-        # Get defined fields that are Sections
         for field_name in self.model_fields:
             field_value = getattr(self, field_name, None)
             if isinstance(field_value, Section):
@@ -175,7 +177,6 @@ class NodeSettings(BaseModel):
         Returns:
             The current value of the field, or None if not found.
         """
-        # Check direct model fields
         if field_name in self.model_fields:
             component = getattr(self, field_name, None)
             if component is not None:
@@ -183,7 +184,6 @@ class NodeSettings(BaseModel):
                     return component.value
                 return component
 
-        # Check pydantic extra fields
         extras = getattr(self, "__pydantic_extra__", {}) or {}
         if field_name in extras:
             component = extras[field_name]
@@ -191,7 +191,6 @@ class NodeSettings(BaseModel):
                 return component.value
             return component
 
-        # Check within sections (both in model_fields and extras)
         all_fields = {**{k: getattr(self, k) for k in self.model_fields}, **extras}
         for value in all_fields.values():
             if isinstance(value, Section):
@@ -213,7 +212,6 @@ class NodeSettings(BaseModel):
         """
         components = {}
 
-        # Get from model fields
         for field_name in self.model_fields:
             value = getattr(self, field_name, None)
             if isinstance(value, FlowfileInComponent):
@@ -221,7 +219,6 @@ class NodeSettings(BaseModel):
             elif isinstance(value, Section):
                 components.update(value.get_components())
 
-        # Get from extra fields
         extras = getattr(self, "__pydantic_extra__", {}) or {}
         for field_name, value in extras.items():
             if isinstance(value, FlowfileInComponent):
@@ -336,6 +333,11 @@ class CustomNodeBase(BaseModel):
     number_of_inputs: int = 1
     number_of_outputs: int = 1
 
+    # Kernel execution configuration
+    requires_kernel: bool = False
+    kernel_id: str | None = None
+    output_names: list[str] = Field(default_factory=lambda: ["main"])
+
     # Display properties in the UI
     node_group: str | None = "custom"
     title: str | None = "Custom Node"
@@ -416,6 +418,9 @@ class CustomNodeBase(BaseModel):
             "node_icon": self.node_icon,
             "number_of_inputs": self.number_of_inputs,
             "number_of_outputs": self.number_of_outputs,
+            "requires_kernel": self.requires_kernel,
+            "kernel_id": self.kernel_id,
+            "output_names": self.output_names,
             "node_group": self.node_group,
             "title": self.title,
             "intro": self.intro,
@@ -461,6 +466,138 @@ class CustomNodeBase(BaseModel):
             self.settings_schema.populate_values(values)
         return self
 
+    @property
+    def uses_kernel(self) -> bool:
+        """Whether this node is configured to execute on a kernel."""
+        return self.kernel_id is not None
+
+    def _extract_settings_values(self) -> dict[str, dict[str, Any]]:
+        """Extract current settings values as a nested dict: {section: {component: value}}."""
+        if not self.settings_schema:
+            return {}
+        result: dict[str, dict[str, Any]] = {}
+        all_sections: dict[str, Section] = {}
+        extra = getattr(self.settings_schema, "__pydantic_extra__", {})
+        all_sections.update({k: v for k, v in extra.items() if isinstance(v, Section)})
+        for field_name in self.settings_schema.model_fields:
+            val = getattr(self.settings_schema, field_name, None)
+            if isinstance(val, Section):
+                all_sections[field_name] = val
+        for section_name, section in all_sections.items():
+            section_vals: dict[str, Any] = {}
+            for comp_name, comp in section.get_components().items():
+                section_vals[comp_name] = comp.value
+            result[section_name] = section_vals
+        return result
+
+    def generate_kernel_code(self) -> str:
+        """Generate a self-contained Python script for kernel execution.
+
+        The generated script:
+        - Creates lightweight proxy classes that replicate the
+          ``self.settings_schema.section.component.value`` access pattern
+        - Reads inputs via ``flowfile_ctx.read_input()``
+        - Executes the user's process method body
+        - Publishes each named output via ``flowfile_ctx.publish_output()``
+        """
+        # --- Build settings proxy code ---
+        settings_values = self._extract_settings_values()
+        proxy_lines: list[str] = []
+        proxy_lines.append("class _V:")
+        proxy_lines.append("    def __init__(self, v): self.value = v")
+        proxy_lines.append("")
+        proxy_lines.append("class _Self:")
+
+        if settings_values:
+            proxy_lines.append("    class settings_schema:")
+            for section_name, components in settings_values.items():
+                proxy_lines.append(f"        class {section_name}:")
+                if components:
+                    for comp_name, comp_value in components.items():
+                        proxy_lines.append(f"            {comp_name} = _V({comp_value!r})")
+                else:
+                    proxy_lines.append("            pass")
+        else:
+            proxy_lines.append("    settings_schema = None")
+
+        proxy_code = "\n".join(proxy_lines)
+
+        # --- Extract process method body ---
+        try:
+            source = inspect.getsource(self.process)
+        except (OSError, TypeError) as exc:
+            raise RuntimeError(
+                "Cannot extract process method source. "
+                "Ensure the custom node class is defined in a .py file (not dynamically)."
+            ) from exc
+        source = textwrap.dedent(source)
+        # Strip the 'def process(...):\n' header
+        lines = source.split("\n")
+        body_start = 0
+        for i, line in enumerate(lines):
+            if line.rstrip().endswith(":") and "def process" in line:
+                body_start = i + 1
+                break
+        body_lines = lines[body_start:]
+        body = textwrap.dedent("\n".join(body_lines))
+
+        # Transform 'return <expr>' into 'result = <expr>' so the script
+        # works at module level and the publish code can reference 'result'.
+        transformed_lines = []
+        for line in body.split("\n"):
+            stripped = line.lstrip()
+            if stripped.startswith("return "):
+                indent = line[: len(line) - len(stripped)]
+                expr = stripped[len("return ") :]
+                transformed_lines.append(f"{indent}result = {expr}")
+            elif stripped == "return":
+                # bare return — skip
+                continue
+            else:
+                transformed_lines.append(line)
+        body = "\n".join(transformed_lines)
+
+        # --- Build output publishing code ---
+        output_names = self.output_names or ["main"]
+        if len(output_names) == 1:
+            publish_code = f'flowfile_ctx.publish_output(result, name="{output_names[0]}")'
+        else:
+            # Multi-output: process returns a dict
+            pub_lines = ["if isinstance(result, dict):"]
+            for name in output_names:
+                pub_lines.append(f'    if "{name}" in result:')
+                pub_lines.append(f'        flowfile_ctx.publish_output(result["{name}"], name="{name}")')
+            pub_lines.append("else:")
+            pub_lines.append(f'    flowfile_ctx.publish_output(result, name="{output_names[0]}")')
+            publish_code = "\n".join(pub_lines)
+
+        # --- Assemble full kernel script ---
+        # ``flowfile_ctx`` is injected into globals by the kernel runtime;
+        # binding it locally keeps the script readable and fails loudly if
+        # the runtime is misconfigured (rather than producing a ``NoneType
+        # has no attribute …`` deep inside the user body).
+        script = f"""\
+import polars as pl
+
+flowfile_ctx = globals()["flowfile_ctx"]
+
+# --- Settings proxy (auto-generated) ---
+{proxy_code}
+
+self = _Self()
+
+# --- Read inputs ---
+inputs = flowfile_ctx.read_inputs().get("main", [])
+if not inputs:
+    inputs = [flowfile_ctx.read_input()] if hasattr(flowfile_ctx, "read_input") else []
+
+# --- Process body ---
+{body}
+# --- Publish outputs ---
+{publish_code}
+"""
+        return script
+
     def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
         """
         The main data processing logic for the node.
@@ -488,9 +625,9 @@ class CustomNodeBase(BaseModel):
             input=self.number_of_inputs,
             output=self.number_of_outputs,
             image=self.node_icon,
-            node_group=self.node_group,
-            drawer_title=self.title,
-            drawer_intro=self.intro,
+            node_group=self.node_group or "custom",
+            drawer_title=self.title or "Custom Node",
+            drawer_intro=self.intro or "A custom node for data processing",
             node_type=self.node_type,
             transform_type=self.transform_type,
             custom_node=True,

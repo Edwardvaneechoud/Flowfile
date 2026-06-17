@@ -55,6 +55,8 @@ export const convertConnectionInterfacePytoTs = (
     sslEnabled: pythonConnectionInterface.ssl_enabled,
     url: pythonConnectionInterface.url,
     database: pythonConnectionInterface.database,
+    id: pythonConnectionInterface.id,
+    access: pythonConnectionInterface.access,
   };
 };
 
@@ -87,6 +89,25 @@ export const createDatabaseConnectionApi = async (
     console.error("API Error: Failed to create database connection:", error);
     const errorMsg =
       (error as any).response?.data?.detail || "Failed to create database connection";
+    throw new Error(errorMsg);
+  }
+};
+
+/**
+ * Updates an existing database connection via the API.
+ * @param connectionData - The database connection configuration to update.
+ * @returns A promise that resolves when the connection is updated.
+ */
+export const updateDatabaseConnectionApi = async (
+  connectionData: FullDatabaseConnection,
+): Promise<void> => {
+  try {
+    const pythonFormattedData = toPythonFormat(connectionData);
+    await axios.put(API_BASE_URL, pythonFormattedData);
+  } catch (error) {
+    console.error("API Error: Failed to update database connection:", error);
+    const errorMsg =
+      (error as any).response?.data?.detail || "Failed to update database connection";
     throw new Error(errorMsg);
   }
 };

@@ -1,6 +1,21 @@
 <template>
   <div v-if="dataLoaded && nodeUnique" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeUnique">
+    <generic-node-settings
+      v-model="nodeUnique"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
+      <div class="list-wrapper">
+        <div class="listbox-subtitle">Keep strategy</div>
+        <el-select v-model="uniqueInput.strategy" size="small" style="width: 100%">
+          <el-option
+            v-for="option in strategyOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+      </div>
       <select-dynamic
         :select-inputs="selection"
         :show-keep-option="true"
@@ -23,13 +38,15 @@
 import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 import {
   UniqueInput,
+  UniqueSorttrategy,
   NodeUnique,
   createSelectInputFromName,
   SelectInput,
 } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
@@ -47,60 +64,12 @@ const uniqueInput = ref<UniqueInput>({
   strategy: "any",
 });
 
-const loadSelection = (nodeData: NodeData, columnsToKeep: string[]) => {
-  if (nodeData.main_input?.columns) {
-    // Map over nodeData.main_input.columns and create SelectInput for each column
-    selection.value = nodeData.main_input.columns.map((column) => {
-      // If the column is in columnsToKeep, keep it, otherwise set keep to false
-      const keep = columnsToKeep.includes(column);
-      return createSelectInputFromName(column, keep);
-    });
-  }
-};
-
-const loadData = async (nodeId: number) => {
-  nodeData.value = await nodeStore.getNodeData(nodeId, false);
-  nodeUnique.value = nodeData.value?.setting_input;
-  dataLoaded.value = true;
-
-  if (nodeData.value) {
-    if (nodeUnique.value) {
-      if (nodeUnique.value.unique_input) {
-        uniqueInput.value = nodeUnique.value.unique_input;
-      } else {
-        nodeUnique.value.unique_input = uniqueInput.value;
-      }
-      loadSelection(nodeData.value, uniqueInput.value.columns);
-    }
-  }
-};
-
-const calculateSelects = (updatedInputs: SelectInput[]) => {
-  console.log(updatedInputs);
-  selection.value = updatedInputs;
-  uniqueInput.value.columns = updatedInputs
-    .filter((input) => input.keep)
-    .map((input) => input.old_name);
-};
-
-const setUniqueColumns = () => {
-  uniqueInput.value.columns = selection.value
-    .filter((input) => input.keep)
-    .map((input) => input.old_name);
-};
-
-const loadNodeData = async (nodeId: number) => {
-  loadData(nodeId);
-  dataLoaded.value = true;
-};
-
-const handleClickOutside = (event: MouseEvent) => {
-  if (!contextMenuRef.value?.contains(event.target as Node)) {
-    showContextMenu.value = false;
-    contextMenuColumn.value = null;
-    showContextMenuRemove.value = false;
-  }
-};
+const strategyOptions: { value: UniqueSorttrategy; label: string }[] = [
+  { value: "first", label: "First" },
+  { value: "last", label: "Last" },
+  { value: "any", label: "Any" },
+  { value: "none", label: "None" },
+];
 
 const getMissingColumns = (availableColumns: string[], usedColumns: string[]): string[] => {
   const availableSet = new Set(availableColumns);
@@ -119,6 +88,23 @@ const calculateMissingColumns = (): string[] => {
     return getMissingColumns(nodeData.value.main_input?.columns, uniqueInput.value.columns);
   }
   return [];
+};
+
+const loadData = async (nodeId: number) => {
+  nodeData.value = await nodeStore.getNodeData(nodeId, false);
+  nodeUnique.value = nodeData.value?.setting_input;
+  dataLoaded.value = true;
+
+  if (nodeData.value) {
+    if (nodeUnique.value) {
+      if (nodeUnique.value.unique_input) {
+        uniqueInput.value = nodeUnique.value.unique_input;
+      } else {
+        nodeUnique.value.unique_input = uniqueInput.value;
+      }
+      loadSelection(nodeData.value, uniqueInput.value.columns);
+    }
+  }
 };
 
 const validateNode = async () => {
@@ -163,26 +149,62 @@ const instantValidate = async () => {
   }
 };
 
-const pushNodeData = async () => {
-  dataLoaded.value = false;
-  setUniqueColumns();
-  console.log("doing this");
-  console.log(nodeUnique.value?.is_setup);
-  console.log(nodeUnique.value);
-  if (nodeUnique.value?.is_setup) {
-    nodeUnique.value.is_setup = true;
-  }
+const setUniqueColumns = () => {
+  uniqueInput.value.columns = selection.value
+    .filter((input) => input.keep)
+    .map((input) => input.old_name);
+};
 
-  nodeStore.updateSettings(nodeUnique);
-  await instantValidate();
-  if (nodeUnique.value?.unique_input) {
-    nodeStore.setNodeValidateFunc(nodeUnique.value?.node_id, validateNode);
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeUnique,
+  onBeforeSave: () => {
+    setUniqueColumns();
+    return true;
+  },
+  onAfterSave: async () => {
+    await instantValidate();
+  },
+  getValidationFunc: () => {
+    if (nodeUnique.value?.unique_input) {
+      return validateNode;
+    }
+    return undefined;
+  },
+});
+
+const loadSelection = (nodeData: NodeData, columnsToKeep: string[]) => {
+  if (nodeData.main_input?.columns) {
+    selection.value = nodeData.main_input.columns.map((column) => {
+      const keep = columnsToKeep.includes(column);
+      return createSelectInputFromName(column, keep);
+    });
+  }
+};
+
+const calculateSelects = (updatedInputs: SelectInput[]) => {
+  selection.value = updatedInputs;
+  uniqueInput.value.columns = updatedInputs
+    .filter((input) => input.keep)
+    .map((input) => input.old_name);
+};
+
+const loadNodeData = async (nodeId: number) => {
+  loadData(nodeId);
+  dataLoaded.value = true;
+};
+
+const handleClickOutside = (event: MouseEvent) => {
+  if (!contextMenuRef.value?.contains(event.target as Node)) {
+    showContextMenu.value = false;
+    contextMenuColumn.value = null;
+    showContextMenuRemove.value = false;
   }
 };
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

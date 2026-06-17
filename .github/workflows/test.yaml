@@ -25,8 +25,10 @@ jobs:
       backend_worker: ${{ steps.filter.outputs.backend_worker }}
       backend_frame: ${{ steps.filter.outputs.backend_frame }}
       backend_flowfile: ${{ steps.filter.outputs.backend_flowfile }}
+      kernel: ${{ steps.filter.outputs.kernel }}
       frontend: ${{ steps.filter.outputs.frontend }}
       docs: ${{ steps.filter.outputs.docs }}
+      formula_docs: ${{ steps.filter.outputs.formula_docs }}
       shared: ${{ steps.filter.outputs.shared }}
       any_backend: ${{ steps.filter.outputs.any_backend }}
       test_workflow: ${{ steps.filter.outputs.test_workflow }}
@@ -46,11 +48,21 @@ jobs:
               - 'flowfile_frame/**'
             backend_flowfile:
               - 'flowfile/**'
+            kernel:
+              - 'kernel_runtime/**'
+              - 'flowfile_core/flowfile_core/kernel/**'
+              - 'flowfile_core/tests/flowfile/test_kernel_integration.py'
+              - 'flowfile_core/tests/kernel_fixtures.py'
             frontend:
               - 'flowfile_frontend/**'
             docs:
               - 'docs/**'
               - 'mkdocs.yml'
+            formula_docs:
+              - 'tools/generate_formula_docs.py'
+              - 'docs/users/formulas/functions.md'
+              - 'pyproject.toml'
+              - 'poetry.lock'
             shared:
               - 'shared/**'
               - 'test_utils/**'
@@ -127,10 +139,27 @@ jobs:
       - name: Start Mock Database with Sample Data
         run: poetry run start_postgres
 
+      - name: Start Mock MySQL Database with Sample Data
+        run: poetry run start_mysql
+
       - name: Start Mock S3 bucket with Sample Data
         run: poetry run start_minio
 
+      - name: Start Mock Azure Blob Storage (Azurite)
+        run: poetry run start_azurite
+
+      - name: Start Mock Google Cloud Storage
+        run: poetry run start_gcs
+
       # Run tests conditionally based on what changed
+      - name: Run pytest for shared
+        if: |
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
+        # Kafka tests need a broker; they run in test-kafka-integration.yml
+        run: poetry run pytest shared/tests --ignore=shared/tests/kafka --disable-warnings
+
       - name: Run pytest for flowfile_frame
         if: |
           needs.detect-changes.outputs.backend_frame == 'true' ||
@@ -145,7 +174,9 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_core/tests --disable-warnings
+        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings $COV_ARGS
+        env:
+          COV_ARGS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '--cov --cov-append --cov-report=' || '' }}
 
       - name: Run pytest for flowfile_worker
         if: |
@@ -153,13 +184,56 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_worker/tests --disable-warnings
+        run: poetry run pytest flowfile_worker/tests --disable-warnings $COV_ARGS
+        env:
+          COV_ARGS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '--cov --cov-append --cov-report=' || '' }}
 
       - name: Stop Mock Database
         run: poetry run stop_postgres
 
+      - name: Stop Mock MySQL Database
+        run: poetry run stop_mysql
+
       - name: Stop Mock S3 bucket
         run: poetry run stop_minio
+
+      - name: Stop Mock Azure Blob Storage (Azurite)
+        run: poetry run stop_azurite
+
+      - name: Stop Mock Google Cloud Storage
+        run: poetry run stop_gcs
+
+      - name: Generate coverage report
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          if [ -f .coverage ]; then
+            echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            poetry run coverage report | tee -a $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            poetry run coverage xml
+          else
+            echo "No coverage data found (core and worker tests may have been skipped)"
+          fi
+
+      - name: Upload coverage artifact
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            .coverage
+          if-no-files-found: ignore
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Run pytest for flowfile
         if: |
@@ -215,9 +289,21 @@ jobs:
         shell: pwsh
         run: poetry run start_postgres
 
+      - name: Start Mock MySQL Database with Sample Data
+        shell: pwsh
+        run: poetry run start_mysql
+
       - name: Start Mock S3 bucket with Sample Data
         shell: pwsh
         run: poetry run start_minio
+
+      - name: Start Mock Azure Blob Storage (Azurite)
+        shell: pwsh
+        run: poetry run start_azurite
+
+      - name: Start Mock Google Cloud Storage
+        shell: pwsh
+        run: poetry run start_gcs
 
       - name: Run pytest for flowfile_frame
         if: |
@@ -235,7 +321,7 @@ jobs:
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
-        run: poetry run pytest flowfile_core/tests --disable-warnings
+        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings
 
       - name: Run pytest for flowfile_worker
         if: |
@@ -250,9 +336,21 @@ jobs:
         shell: pwsh
         run: poetry run stop_postgres
 
+      - name: Stop Mock MySQL Database
+        shell: pwsh
+        run: poetry run stop_mysql
+
       - name: Stop Mock S3 bucket
         shell: pwsh
         run: poetry run stop_minio
+
+      - name: Stop Mock Azure Blob Storage (Azurite)
+        shell: pwsh
+        run: poetry run stop_azurite
+
+      - name: Stop Mock Google Cloud Storage
+        shell: pwsh
+        run: poetry run stop_gcs
 
       - name: Run pytest for flowfile
         if: |
@@ -262,6 +360,107 @@ jobs:
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile/tests --disable-warnings
+
+  # Kernel integration tests - runs in parallel on a separate worker
+  kernel-tests:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.kernel == 'true' ||
+      needs.detect-changes.outputs.backend_core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.poetry/bin" >> $GITHUB_PATH
+
+      - name: Install Dependencies
+        run: |
+          poetry install --no-interaction --no-ansi --with dev
+
+      - name: Build kernel Docker image
+        run: |
+          docker build -t flowfile-kernel -f kernel_runtime/Dockerfile kernel_runtime/
+
+      - name: Run kernel_runtime unit tests
+        run: |
+          pip install -e "kernel_runtime/[test]"
+          python -m pytest kernel_runtime/tests -v --disable-warnings
+
+      - name: Run kernel integration tests
+        run: |
+          poetry run pytest flowfile_core/tests -m kernel -v --disable-warnings
+
+  # Type-stub drift check — runs when flowfile_frame source changes.
+  # Regenerates the .pyi stubs and fails if they don't match what's committed.
+  check-stubs:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.backend_frame == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.poetry/bin" >> $GITHUB_PATH
+
+      - name: Install Dependencies
+        run: poetry install --no-interaction --no-ansi --with dev
+
+      - name: Check stub drift
+        run: make check_stubs
+
+  # Formula docs drift check - functions.md is generated from the
+  # polars-expr-transformer docstrings; fail if the committed page is stale
+  # (e.g. after bumping the pin or editing the generator without regenerating).
+  check-formula-docs:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.formula_docs == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.poetry/bin" >> $GITHUB_PATH
+
+      - name: Install Dependencies
+        run: poetry install --no-interaction --no-ansi --with dev
+
+      - name: Check formula docs drift
+        run: make check_formula_docs
 
   # Frontend web build test - runs when frontend changes or test workflow changes
   test-web:
@@ -287,6 +486,9 @@ jobs:
       - name: Install Node Dependencies
         run: npm ci
 
+      - name: Run frontend unit tests (vitest)
+        run: npm run test:unit
+
       - name: Build Web Version
         run: npm run build:web
 
@@ -301,122 +503,6 @@ jobs:
             echo "Port 4173 is not available or did not return 200 OK"
             exit 1
           fi
-
-  # Electron tests macOS - runs when frontend or backend changes or test workflow changes
-  electron-tests-macos:
-    needs: [detect-changes, backend-tests, test-web]
-    if: |
-      always() &&
-      (needs.backend-tests.result == 'success' || needs.backend-tests.result == 'skipped') &&
-      (needs.test-web.result == 'success' || needs.test-web.result == 'skipped') &&
-      (
-        needs.detect-changes.outputs.frontend == 'true' ||
-        needs.detect-changes.outputs.any_backend == 'true' ||
-        needs.detect-changes.outputs.test_workflow == 'true' ||
-        github.event.inputs.run_all_tests == 'true'
-      )
-    runs-on: macos-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: 'flowfile_frontend/package-lock.json'
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Poetry
-        shell: bash
-        run: |
-          curl -sSL https://install.python-poetry.org | python -
-          echo "${HOME}/.local/bin" >> $GITHUB_PATH
-
-      - name: Install Python dependencies
-        run: |
-          poetry install --with dev,build
-
-      - name: Build Python services
-        run: |
-          poetry run build_backends
-
-      - name: Build Electron app for testing
-        working-directory: flowfile_frontend
-        run: |
-          npm install
-          npm run build:test
-
-      - name: Run integration tests
-        working-directory: flowfile_frontend
-        run: |
-          npm run test
-
-  # Electron tests Windows - runs when frontend or backend changes or test workflow changes
-  electron-tests-windows:
-    needs: [detect-changes, backend-tests-windows, test-web]
-    if: |
-      always() &&
-      (needs.backend-tests-windows.result == 'success' || needs.backend-tests-windows.result == 'skipped') &&
-      (needs.test-web.result == 'success' || needs.test-web.result == 'skipped') &&
-      (
-        needs.detect-changes.outputs.frontend == 'true' ||
-        needs.detect-changes.outputs.any_backend == 'true' ||
-        needs.detect-changes.outputs.test_workflow == 'true' ||
-        github.event.inputs.run_all_tests == 'true'
-      )
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: 'flowfile_frontend/package-lock.json'
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Poetry
-        shell: pwsh
-        run: |
-          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
-          echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Install Python dependencies
-        shell: pwsh
-        run: |
-          poetry install --with build
-
-      - name: Build Python services
-        shell: pwsh
-        run: |
-          poetry run build_backends
-
-      - name: Build Electron app for testing
-        shell: pwsh
-        working-directory: flowfile_frontend
-        run: |
-          npm install
-          npm run build:test
-
-      - name: Run integration tests
-        shell: pwsh
-        working-directory: flowfile_frontend
-        run: |
-          npm run test
 
   # Documentation build test - runs when docs change or test workflow changes
   docs-test:
@@ -444,7 +530,7 @@ jobs:
 
   # Summary job - always runs to provide status
   test-summary:
-    needs: [detect-changes, backend-tests, backend-tests-windows, test-web, electron-tests-macos, electron-tests-windows, docs-test]
+    needs: [detect-changes, backend-tests, backend-tests-windows, kernel-tests, check-stubs, check-formula-docs, test-web, docs-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -457,6 +543,7 @@ jobs:
           echo "  - Backend Worker: ${{ needs.detect-changes.outputs.backend_worker }}"
           echo "  - Backend Frame: ${{ needs.detect-changes.outputs.backend_frame }}"
           echo "  - Backend Flowfile: ${{ needs.detect-changes.outputs.backend_flowfile }}"
+          echo "  - Kernel: ${{ needs.detect-changes.outputs.kernel }}"
           echo "  - Frontend: ${{ needs.detect-changes.outputs.frontend }}"
           echo "  - Docs: ${{ needs.detect-changes.outputs.docs }}"
           echo "  - Shared/Dependencies: ${{ needs.detect-changes.outputs.shared }}"
@@ -465,17 +552,19 @@ jobs:
           echo "Job results:"
           echo "  - Backend Tests: ${{ needs.backend-tests.result }}"
           echo "  - Backend Tests (Windows): ${{ needs.backend-tests-windows.result }}"
+          echo "  - Kernel Tests: ${{ needs.kernel-tests.result }}"
+          echo "  - Stub Drift: ${{ needs.check-stubs.result }}"
+          echo "  - Formula Docs Drift: ${{ needs.check-formula-docs.result }}"
           echo "  - Web Tests: ${{ needs.test-web.result }}"
-          echo "  - Electron Tests (macOS): ${{ needs.electron-tests-macos.result }}"
-          echo "  - Electron Tests (Windows): ${{ needs.electron-tests-windows.result }}"
           echo "  - Docs Test: ${{ needs.docs-test.result }}"
 
           # Fail if any non-skipped job failed
           if [[ "${{ needs.backend-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.backend-tests-windows.result }}" == "failure" ]] || \
+             [[ "${{ needs.kernel-tests.result }}" == "failure" ]] || \
+             [[ "${{ needs.check-stubs.result }}" == "failure" ]] || \
+             [[ "${{ needs.check-formula-docs.result }}" == "failure" ]] || \
              [[ "${{ needs.test-web.result }}" == "failure" ]] || \
-             [[ "${{ needs.electron-tests-macos.result }}" == "failure" ]] || \
-             [[ "${{ needs.electron-tests-windows.result }}" == "failure" ]] || \
              [[ "${{ needs.docs-test.result }}" == "failure" ]]; then
             echo ""
             echo "ERROR: One or more tests failed!"

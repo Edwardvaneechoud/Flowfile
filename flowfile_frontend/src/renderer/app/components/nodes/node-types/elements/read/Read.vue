@@ -1,51 +1,75 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
-    <div class="listbox-wrapper">
-      <div class="file-upload-container">
-        <div class="file-upload-wrapper" @click="modalVisibleForOpen = true">
-          <label for="file-upload" class="file-upload-label">
-            <i class="fas fa-table file-icon"></i>
-            <span class="file-label-text">
-              {{ getDisplayFileName }}
-            </span>
-          </label>
+  <div v-if="dataLoaded && nodeRead" class="listbox-wrapper">
+    <generic-node-settings
+      :model-value="nodeRead"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
+      <div class="listbox-wrapper">
+        <div class="file-path-row">
+          <el-input
+            v-model="pathInput"
+            placeholder="Path or ${param_name}/file.csv"
+            clearable
+            class="file-path-input"
+            @change="
+              (val: string) => {
+                handleManualPathChange(val);
+                saveSettings();
+              }
+            "
+          >
+            <template #prefix>
+              <i class="fas fa-table" style="font-size: 14px" />
+            </template>
+          </el-input>
+          <el-button title="Browse files" @click="modalVisibleForOpen = true">
+            <span class="material-icons" style="font-size: 16px; line-height: 1">folder_open</span>
+          </el-button>
         </div>
       </div>
-    </div>
-    <div v-if="receivedTable">
-      <div class="listbox-wrapper">
-        <div class="listbox-subtitle">File Specs</div>
-        <ExcelTableConfig
-          v-if="isInputExcelTable(receivedTable.table_settings)"
-          v-model="receivedTable.table_settings"
-          :path="receivedTable.path"
-        />
-        <CsvTableConfig
-          v-if="isInputCsvTable(receivedTable.table_settings)"
-          v-model="receivedTable.table_settings"
-        />
-        <ParquetTableConfig
-          v-if="isInputParquetTable(receivedTable.table_settings)"
-          v-model="receivedTable.table_settings"
-        />
+      <div v-if="receivedTable">
+        <div class="listbox-wrapper">
+          <div class="listbox-subtitle">File Specs</div>
+          <ExcelTableConfig
+            v-if="isInputExcelTable(receivedTable.table_settings)"
+            v-model="receivedTable.table_settings"
+            :path="receivedTable.path"
+          />
+          <CsvTableConfig
+            v-if="isInputCsvTable(receivedTable.table_settings)"
+            v-model="receivedTable.table_settings"
+          />
+          <ParquetTableConfig
+            v-if="isInputParquetTable(receivedTable.table_settings)"
+            v-model="receivedTable.table_settings"
+          />
+        </div>
       </div>
-    </div>
 
-    <el-dialog v-model="modalVisibleForOpen" title="Select a file to Read" width="70%">
-      <file-browser
-        :allowed-file-types="['csv', 'txt', 'parquet', 'xlsx']"
-        mode="open"
-        :is-visible="modalVisibleForOpen"
-        @file-selected="handleFileChange"
-      />
-    </el-dialog>
+      <el-dialog
+        v-model="modalVisibleForOpen"
+        title="Select a file to Read"
+        width="70%"
+        append-to-body
+        :close-on-click-modal="false"
+      >
+        <file-browser
+          :allowed-file-types="['csv', 'txt', 'parquet', 'xlsx']"
+          mode="open"
+          context="dataFiles"
+          :is-visible="modalVisibleForOpen"
+          @file-selected="handleFileChange"
+        />
+      </el-dialog>
+    </generic-node-settings>
   </div>
   <code-loader v-else />
 </template>
 
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
-import { ref, computed } from "vue";
+import { ref, watch } from "vue";
 import ExcelTableConfig from "./readExcel.vue";
 import CsvTableConfig from "./readCsv.vue";
 import ParquetTableConfig from "./readParquet.vue";
@@ -59,28 +83,85 @@ import {
   InputExcelTable,
   InputParquetTable,
 } from "../../../baseNode/nodeInput";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
 import { FileInfo } from "../../../../common/FileBrowser/types";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
-const selectedFile = ref<FileInfo | null>(null);
 const nodeRead = ref<null | NodeRead>(null);
 const receivedTable = ref<ReceivedTable | null>(null);
 const dataLoaded = ref(false);
 const modalVisibleForOpen = ref(false);
 
-const getDisplayFileName = computed(() => {
-  if (selectedFile.value?.name) {
-    return selectedFile.value.name;
-  }
-  if (receivedTable.value?.name) {
-    return receivedTable.value.name;
-  }
-  return "Choose a file...";
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeRead,
+  onBeforeSave: () => {
+    if (!nodeRead.value || !receivedTable.value) {
+      console.warn("No node read value available");
+      return false;
+    }
+    nodeRead.value.received_file = receivedTable.value;
+    return true;
+  },
 });
 
-// Default table settings factories
+// Use a plain ref so the input is always editable (writable computed resets
+// on every keystroke when receivedTable is null, making the field unusable)
+const pathInput = ref<string>("");
+
+// Keep pathInput in sync when receivedTable changes externally (e.g. file browser)
+watch(
+  () => receivedTable.value?.path,
+  (newPath) => {
+    if (newPath !== undefined && newPath !== pathInput.value) {
+      pathInput.value = newPath;
+    }
+  },
+);
+
+function detectFileType(path: string): "csv" | "excel" | "parquet" | null {
+  // Strip ${...} references so we can read the real extension
+  const cleaned = path.replace(/\$\{[^}]*\}/g, "");
+  const ext = cleaned.split(".").pop()?.toLowerCase();
+  if (ext === "xlsx") return "excel";
+  if (ext === "csv" || ext === "txt") return "csv";
+  if (ext === "parquet") return "parquet";
+  return null;
+}
+
+function createDefaultSettings(
+  fileType: "csv" | "excel" | "parquet",
+): InputCsvTable | InputExcelTable | InputParquetTable {
+  if (fileType === "excel") return createDefaultExcelSettings();
+  if (fileType === "parquet") return createDefaultParquetSettings();
+  return createDefaultCsvSettings();
+}
+
+function handleManualPathChange(path: string) {
+  const detectedType = detectFileType(path);
+  const fileName = path.split(/[/\\]/).pop() || path;
+
+  if (receivedTable.value) {
+    receivedTable.value.path = path;
+    receivedTable.value.name = fileName;
+    // Swap settings when file type changes (e.g. user edits .csv → .parquet)
+    if (detectedType && detectedType !== receivedTable.value.file_type) {
+      receivedTable.value.file_type = detectedType;
+      receivedTable.value.table_settings = createDefaultSettings(detectedType);
+    }
+  } else if (detectedType) {
+    // Bootstrap a new receivedTable from a typed path
+    receivedTable.value = {
+      name: fileName,
+      path,
+      file_type: detectedType,
+      table_settings: createDefaultSettings(detectedType),
+    };
+  }
+}
+
 function createDefaultCsvSettings(): InputCsvTable {
   return {
     file_type: "csv",
@@ -158,7 +239,6 @@ const handleFileChange = (fileInfo: FileInfo) => {
       table_settings: tableSettings,
     };
 
-    selectedFile.value = fileInfo;
     modalVisibleForOpen.value = false;
   } catch (error) {
     console.error("Error handling file change:", error);
@@ -179,6 +259,7 @@ const loadNodeData = async (nodeId: number) => {
 
     if (nodeResult.setting_input?.is_setup && nodeResult.setting_input.received_file) {
       receivedTable.value = nodeResult.setting_input.received_file;
+      pathInput.value = nodeResult.setting_input.received_file.path;
     }
 
     dataLoaded.value = true;
@@ -188,102 +269,23 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  try {
-    dataLoaded.value = false;
-
-    if (!nodeRead.value || !receivedTable.value) {
-      console.warn("No node read value available");
-      dataLoaded.value = true;
-      return;
-    }
-
-    nodeRead.value.is_setup = true;
-    nodeRead.value.received_file = receivedTable.value;
-
-    await nodeStore.updateSettings(nodeRead);
-  } catch (error) {
-    console.error("Error pushing node data:", error);
-  } finally {
-    dataLoaded.value = true;
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 
 <style scoped>
-.context-menu {
-  position: fixed;
-  z-index: 1000;
-  border: 1px solid #ccc;
-  background-color: var(--color-background-primary);
-  padding: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-}
-
-.context-menu button {
-  display: block;
-  background: none;
-  border: none;
-  padding: 4px 8px;
-  text-align: left;
-  width: 100%;
-  cursor: pointer;
-}
-
-.context-menu button:hover {
-  background-color: var(--color-background-secondary);
-}
-
-.file-upload-wrapper {
-  position: relative;
-  width: 100%;
-}
-
-.file-upload-label {
+.file-path-row {
   display: flex;
   align-items: center;
-  background-color: var(--color-background-secondary);
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 10px 15px;
-  color: var(--color-text-primary);
-  font-size: 16px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.3s ease;
-}
-
-.file-upload-label:hover {
-  background-color: var(--color-background-primary);
-}
-
-.file-icon {
-  margin-right: 10px;
-  font-size: 20px;
-}
-
-.file-label-text {
-  flex-grow: 1;
-  margin-left: 10px;
-}
-
-input[type="text"] {
+  gap: 6px;
   width: 100%;
-  padding: 8px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
-  transition: border-color 0.2s ease;
 }
 
-input[type="text"]:focus {
-  border-color: #3498db;
-  outline: none;
+.file-path-input {
+  flex: 1;
+  min-width: 0;
 }
 </style>

@@ -15,8 +15,13 @@
             <span class="material-icons">arrow_upward</span>
             <span>Up</span>
           </button>
-          <button class="nav-button refresh-button" :disabled="loading" @click="loadCurrentDirectory" title="Refresh">
-            <span class="material-icons" :class="{ 'spin': loading }">refresh</span>
+          <button
+            class="nav-button refresh-button"
+            :disabled="loading"
+            title="Refresh"
+            @click="loadCurrentDirectory"
+          >
+            <span class="material-icons" :class="{ spin: loading }">refresh</span>
           </button>
           <div class="current-path">
             {{ currentPath }}
@@ -25,7 +30,12 @@
 
         <div class="controls-row">
           <div class="search-container">
-            <el-input v-model="searchTerm" placeholder="Search files..." class="search-input">
+            <el-input
+              v-model="searchTerm"
+              placeholder="Search files..."
+              size="small"
+              class="search-input"
+            >
               <template #prefix>
                 <span class="material-icons">search</span>
               </template>
@@ -81,7 +91,7 @@
               'is-directory': file.is_directory,
             }"
             @click.stop="handleSingleClick(file)"
-            @dblclick="handleDoubleClick(file)"
+            @dblclick.stop="handleDoubleClick(file)"
           >
             <div class="file-item-content">
               <div class="file-icon-wrapper">
@@ -93,7 +103,7 @@
                 />
                 <img
                   v-else-if="isFlowfile(file)"
-                  src="/images/flowfile.svg"
+                  src="/images/flowfile.png"
                   alt="Flow file"
                   class="file-icon"
                 />
@@ -214,18 +224,16 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~1020 LOC. Plan to extract:
+//   - useFileBrowserSort composable: sort/filter (~lines 555-604)
+//   - FileBrowserToolbar.vue (~lines 13-65), FileBrowserGrid.vue (~84-135)
+//   - FileCreateDialog.vue (~192-222), useFileBrowserNavigation composable (~344-377)
 import { ref, computed, onMounted, onActivated, watch } from "vue";
 import { FileInfo } from "./types";
-import { useFileBrowserStore } from "../../../stores/fileBrowserStore";
+import { useFileBrowserStore, type FileBrowserContext } from "../../../stores/fileBrowserStore";
 
 import { ElMessage, ElMessageBox } from "element-plus";
-import {
-  getCurrentDirectoryContents,
-  getCurrentPath,
-  navigateUp,
-  navigateInto,
-  navigateTo,
-} from "./fileSystemApi";
+import { getDirectoryContents, getDefaultPath, getParentPath, joinPath } from "./fileSystemApi";
 
 import { FLOWFILE_EXTENSIONS, DATA_FILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "./constants";
 
@@ -252,6 +260,8 @@ interface Props {
   showWarningOnOverwrite?: boolean;
   /** External visibility control - when true, triggers auto-refresh */
   isVisible?: boolean;
+  /** Context for state management - each context maintains its own path state */
+  context?: FileBrowserContext;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -262,36 +272,8 @@ const props = withDefaults(defineProps<Props>(), {
   allowDirectorySelection: false,
   showWarningOnOverwrite: true,
   isVisible: true,
+  context: "flows",
 });
-
-const handleInitialFileSelection = async () => {
-  if (!props.initialFilePath) return;
-
-  loading.value = true;
-  error.value = null;
-
-  try {
-    // Get the directory path from the full file path
-    const directoryPath = path.dirname(props.initialFilePath);
-    const fileName = path.basename(props.initialFilePath);
-
-    // Navigate to the directory
-    await navigateTo(directoryPath);
-    await loadCurrentDirectory();
-
-    // Find and select the file
-    const fileToSelect = files.value.find((file) => file.name === fileName);
-    if (fileToSelect) {
-      selectedFile.value = fileToSelect;
-      emit("update:modelValue", fileToSelect);
-    }
-  } catch (err: any) {
-    error.value = err.message || "Failed to navigate to initial file";
-    ElMessage.error("Failed to navigate to initial file location");
-  } finally {
-    loading.value = false;
-  }
-};
 
 // Emits
 const emit = defineEmits<{
@@ -299,7 +281,7 @@ const emit = defineEmits<{
   (e: "update:modelValue", value: FileInfo | null): void;
   (e: "createFile", file_path: string, currentPath: string, fileName: string): void;
   (e: "overwriteFile", file_path: string, currentPath: string, fileName: string): void;
-  (e: "directorySelected", path: string): void; // New emit
+  (e: "directorySelected", path: string): void;
 }>();
 
 // State
@@ -315,6 +297,113 @@ const showCreateDialog = ref(false);
 const newFileName = ref("");
 const fileNameError = ref("");
 const selectedFile = ref<FileInfo | null>(null);
+
+const loadDirectoryContents = async (directoryPath: string) => {
+  loading.value = true;
+  error.value = null;
+  try {
+    const filesResponse = await getDirectoryContents(directoryPath, {
+      include_hidden: showHidden.value,
+    });
+    files.value = filesResponse;
+    currentPath.value = directoryPath;
+    fileBrowserStore.setCurrentPath(props.context, directoryPath);
+  } catch (err: any) {
+    error.value = err.message || "Failed to load directory";
+  } finally {
+    loading.value = false;
+  }
+};
+
+const loadDefaultDirectory = async () => {
+  loading.value = true;
+  error.value = null;
+  try {
+    const defaultPath = await getDefaultPath();
+    await loadDirectoryContents(defaultPath);
+  } catch (err: any) {
+    error.value = err.message || "Failed to load directory";
+    loading.value = false;
+  }
+};
+
+const loadCurrentDirectory = async () => {
+  const storedPath = fileBrowserStore.getCurrentPath(props.context);
+
+  if (storedPath) {
+    await loadDirectoryContents(storedPath);
+    if (error.value) {
+      fileBrowserStore.resetContext(props.context);
+      await loadDefaultDirectory();
+    }
+  } else {
+    await loadDefaultDirectory();
+  }
+};
+
+/**
+ * Navigate to a specific directory path.
+ * On failure, stays at the current directory and shows a warning instead of an error state.
+ */
+const navigateToPath = async (directoryPath: string) => {
+  const previousPath = currentPath.value;
+  const previousFiles = [...files.value];
+  await loadDirectoryContents(directoryPath);
+  if (error.value) {
+    // Navigation failed — revert to previous state so the user stays where they were
+    currentPath.value = previousPath;
+    files.value = previousFiles;
+    fileBrowserStore.setCurrentPath(props.context, previousPath);
+    error.value = null;
+    ElMessage.warning("Cannot navigate to this directory");
+    return;
+  }
+  searchTerm.value = "";
+  selectedFile.value = null;
+};
+
+/**
+ * Navigate up one directory level
+ */
+const navigateUpDirectory = async () => {
+  const parentPath = getParentPath(currentPath.value);
+  if (parentPath && parentPath !== currentPath.value) {
+    await navigateToPath(parentPath);
+  }
+};
+
+/**
+ * Navigate into a subdirectory
+ */
+const navigateIntoDirectory = async (directoryName: string) => {
+  const newPath = joinPath(currentPath.value, directoryName);
+  await navigateToPath(newPath);
+};
+
+const handleInitialFileSelection = async () => {
+  if (!props.initialFilePath) return;
+
+  loading.value = true;
+  error.value = null;
+
+  try {
+    const directoryPath = path.dirname(props.initialFilePath);
+    const fileName = path.basename(props.initialFilePath);
+
+    await loadDirectoryContents(directoryPath);
+
+    const fileToSelect = files.value.find((file) => file.name === fileName);
+    if (fileToSelect) {
+      selectedFile.value = fileToSelect;
+      emit("update:modelValue", fileToSelect);
+    }
+  } catch (err: any) {
+    error.value = err.message || "Failed to navigate to initial file";
+    ElMessage.error("Failed to navigate to initial file location");
+  } finally {
+    loading.value = false;
+  }
+};
 
 const isDataFile = (file: FileInfo): boolean => {
   if (file.is_directory) return false;
@@ -360,7 +449,6 @@ const handleOpenFile = () => {
 };
 
 const handleSingleClick = (file: FileInfo) => {
-  console.log("handleSingleClick", file);
   emit("update:modelValue", file);
   selectedFile.value = file;
 };
@@ -371,51 +459,10 @@ const handleSelectDirectory = () => {
 
 const handleDoubleClick = async (file: FileInfo) => {
   if (file.is_directory) {
-    loading.value = true;
-    error.value = null;
     selectedFile.value = null;
-    try {
-      await navigateInto(file.name);
-      await loadCurrentDirectory();
-      searchTerm.value = "";
-    } catch (err: any) {
-      error.value = err.message || "Failed to open directory";
-    } finally {
-      loading.value = false;
-    }
+    await navigateIntoDirectory(file.name);
   } else {
     emit("fileSelected", file);
-  }
-};
-
-const loadCurrentDirectory = async () => {
-  loading.value = true;
-  error.value = null;
-  try {
-    const [pathResponse, filesResponse] = await Promise.all([
-      getCurrentPath(),
-      getCurrentDirectoryContents({ include_hidden: showHidden.value }),
-    ]);
-    currentPath.value = pathResponse;
-    files.value = filesResponse;
-  } catch (err: any) {
-    error.value = err.message || "Failed to load directory";
-  } finally {
-    loading.value = false;
-  }
-};
-
-const navigateUpDirectory = async () => {
-  loading.value = true;
-  error.value = null;
-  selectedFile.value = null;
-  try {
-    await navigateUp();
-    await loadCurrentDirectory();
-  } catch (err: any) {
-    error.value = err.message || "Failed to navigate up";
-  } finally {
-    loading.value = false;
   }
 };
 
@@ -505,21 +552,16 @@ defineExpose({
   navigateUpDirectory,
   selectedFile: computed(() => selectedFile.value),
 });
-// Add new sorting state
-// const sortBy = ref<"name" | "size" | "last_modified" | "created_date">("name");
-// const sortDirection = ref<"asc" | "desc">("asc");
 
 const calculateSortedFiles = () => {
   return files.value
     .filter((file) => {
-      // For directories, only apply search and hidden filters
       if (file.is_directory) {
         const matchesSearch = file.name.toLowerCase().includes(searchTerm.value.toLowerCase());
         const matchesHidden = showHidden.value || !file.is_hidden;
         return matchesSearch && matchesHidden;
       }
 
-      // For files, apply all filters
       const matchesSearch = file.name.toLowerCase().includes(searchTerm.value.toLowerCase());
       const matchesHidden = showHidden.value || !file.is_hidden;
       const matchesType =
@@ -530,11 +572,9 @@ const calculateSortedFiles = () => {
       return matchesSearch && matchesHidden && matchesType;
     })
     .sort((a, b) => {
-      // Sort logic
       let comparison = 0;
       switch (sortBy.value) {
         case "size": {
-          // Add block scope with curly braces
           const aSize = a.is_directory ? a.size || 0 : a.size;
           const bSize = b.is_directory ? b.size || 0 : b.size;
           comparison = aSize - bSize;
@@ -548,7 +588,6 @@ const calculateSortedFiles = () => {
           break;
         case "name":
         default:
-          // Special handling for name to be case-insensitive
           comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
           break;
       }
@@ -560,7 +599,6 @@ const filteredFiles = computed(() => {
   return calculateSortedFiles();
 });
 
-// Watch for changes in allowedFileTypes
 watch(
   () => props.allowedFileTypes,
   () => {
@@ -577,11 +615,9 @@ watch(
   },
 );
 
-// Watch for visibility changes to auto-refresh
 watch(
   () => props.isVisible,
   async (newVisible, oldVisible) => {
-    // Refresh when becoming visible (transitioning from false to true)
     if (newVisible && !oldVisible) {
       await loadCurrentDirectory();
     }
@@ -593,7 +629,6 @@ onActivated(async () => {
   await loadCurrentDirectory();
 });
 
-// Initialize
 onMounted(async () => {
   if (props.initialFilePath) {
     await handleInitialFileSelection();
@@ -607,11 +642,15 @@ onMounted(async () => {
 .browser-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-  font-size: 18px;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--color-text-primary);
+}
+
+.browser-title .material-icons {
+  font-size: 16px;
 }
 
 .mode-selector {
@@ -622,12 +661,12 @@ onMounted(async () => {
 .browser-content {
   display: flex;
   flex-direction: column;
-  height: calc(100% - 116px); /* Adjust based on header height */
+  height: calc(100% - 72px); /* Header is now ~72px tall (title + compact toolbar) */
   overflow: hidden;
 }
 
 .browser-toolbar {
-  padding: 16px;
+  padding: 8px 12px;
   background-color: var(--color-background-primary);
   border-bottom: 1px solid var(--color-border-primary);
 }
@@ -640,22 +679,26 @@ onMounted(async () => {
 .path-navigation {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
 .nav-button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 16px;
+  padding: 4px 8px;
   border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   background-color: var(--color-background-primary);
   color: var(--color-text-secondary);
-  font-size: 14px;
+  font-size: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
+}
+
+.nav-button .material-icons {
+  font-size: 14px;
 }
 
 .nav-button:hover:not(:disabled) {
@@ -665,23 +708,35 @@ onMounted(async () => {
 
 .current-path {
   flex: 1;
-  padding: 8px 12px;
+  padding: 4px 10px;
   background-color: var(--color-background-secondary);
   border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   font-family: var(--font-family-mono);
+  font-size: 12px;
   color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .search-container {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   flex: 1;
 }
 
 .search-input {
   flex: 1;
+}
+
+.search-input :deep(.el-input__wrapper) {
+  border-radius: 4px;
+}
+
+.search-input :deep(.el-input__inner) {
+  font-size: 12px;
 }
 
 .browser-main {
@@ -895,24 +950,37 @@ onMounted(async () => {
 .sort-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 180px; /* Prevent select from being too narrow */
+  gap: 6px;
+  min-width: 150px;
+}
+
+.sort-select :deep(.el-input__inner) {
+  height: 26px;
+  font-size: 12px;
 }
 
 .sort-direction-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 32px;
+  width: 28px;
+  height: 26px;
   padding: 0;
+}
+
+.sort-direction-button .material-icons {
+  font-size: 14px;
 }
 
 .controls-row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 0;
+}
+
+.show-hidden-toggle :deep(.el-checkbox__label) {
+  font-size: 12px;
 }
 
 .form-hint {

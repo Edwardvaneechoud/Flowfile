@@ -4,17 +4,22 @@ import inspect
 import os
 import re
 from collections.abc import Iterable, Iterator, Mapping
-from typing import Any, Literal, Optional, Union, get_args, get_origin
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin
 
 import polars as pl
 from pl_fuzzy_frame_match import FuzzyMapping
 from polars._typing import CsvEncoding, FrameInitTypes, Orientation, SchemaDefinition, SchemaDict
+
+if TYPE_CHECKING:
+    from flowfile_frame.catalog_reference import SchemaReference
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas import input_schema, transform_schema
+from flowfile_core.schemas.schemas import GroupColor
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
 from flowfile_frame.config import logger
 from flowfile_frame.expr import Column, Expr, col, lit
@@ -47,6 +52,61 @@ def _contains_lambda_pattern(text: str) -> bool:
     return "<lambda> at" in text
 
 
+def _try_translate_flowfile_formulas(
+    flowfile_formulas: list[str],
+    output_column_names: list[str],
+) -> list[Expr] | None:
+    """Translate flowfile-formula strings into native FlowFrame expressions.
+
+    Returns a list of :class:`Expr` (one per formula, aliased to its output
+    column name) when every formula translates successfully, otherwise
+    ``None`` so the caller can fall back to the legacy formula path.
+
+    Uses :func:`polars_expr_transformer.to_flowframe_code` (>= 0.5.4) which
+    emits ``ff.col(...)``/``ff.lit(...)`` style strings. Generated code is
+    eval'd in a restricted namespace (``ff``, ``pl``, ``datetime``) with
+    builtins disabled.
+    """
+    try:
+        from polars_expr_transformer import to_flowframe_code
+    except ImportError:
+        logger.debug("polars_expr_transformer.to_flowframe_code unavailable; using legacy formula path")
+        return None
+
+    import datetime as _datetime
+
+    import flowfile_frame as _ff_module
+
+    eval_namespace = {"ff": _ff_module, "pl": pl, "datetime": _datetime}
+
+    expressions: list[Expr] = []
+    for formula, output_name in zip(flowfile_formulas, output_column_names, strict=False):
+        try:
+            generated = to_flowframe_code(formula)
+        except Exception:
+            logger.debug("to_flowframe_code raised for formula %r; falling back", formula, exc_info=True)
+            return None
+        if not generated:
+            logger.debug("to_flowframe_code returned empty output for formula %r; falling back", formula)
+            return None
+        try:
+            expr = eval(generated, {"__builtins__": {}}, eval_namespace)  # noqa: S307
+        except Exception:
+            logger.debug(
+                "eval failed for generated code %r (formula %r); falling back",
+                generated, formula, exc_info=True,
+            )
+            return None
+        if not isinstance(expr, Expr):
+            logger.debug(
+                "Generated code %r produced non-Expr %r (formula %r); falling back",
+                generated, type(expr), formula,
+            )
+            return None
+        expressions.append(expr.alias(output_name))
+    return expressions
+
+
 def get_method_name_from_code(code: str) -> str | None:
     split_code = code.split("input_df.")
     if len(split_code) > 1:
@@ -60,7 +120,7 @@ def _to_string_val(v) -> str:
         return v
 
 
-def _extract_expr_parts(expr_obj) -> tuple[str, str]:
+def _extract_expr_parts(expr_obj: Expr | Any) -> tuple[str, str]:
     """
     Extract the pure expression string and any raw definitions (including function sources) from an Expr object.
 
@@ -75,18 +135,13 @@ def _extract_expr_parts(expr_obj) -> tuple[str, str]:
         A tuple of (pure_expr_str, raw_definitions_str)
     """
     if not isinstance(expr_obj, Expr):
-        # If it's not an Expr, just return its string representation
         return str(expr_obj), ""
 
-    # Get the basic representation
     pure_expr_str = expr_obj._repr_str
 
-    # Collect all definitions (function sources)
     raw_definitions = []
 
-    # Add function sources if any
     if hasattr(expr_obj, "_function_sources") and expr_obj._function_sources:
-        # Remove duplicates while preserving order
         unique_sources = []
         seen = set()
         for source in expr_obj._function_sources:
@@ -97,7 +152,6 @@ def _extract_expr_parts(expr_obj) -> tuple[str, str]:
         if unique_sources:
             raw_definitions.extend(unique_sources)
 
-    # Join all definitions
     raw_defs_str = "\n\n".join(raw_definitions) if raw_definitions else ""
 
     return pure_expr_str, raw_defs_str
@@ -173,20 +227,16 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with the data loaded as a manual input node
         """
-        # Extract flow-specific parameters
         node_id = node_id or generate_node_id()
         description = "Data imported from Python object"
-        # Create a new flow graph if none is provided
         if flow_graph is None:
             flow_graph = create_flow_graph()
 
         flow_id = flow_graph.flow_id
-        # Convert data to a polars DataFrame/LazyFram
         if isinstance(data, pl.LazyFrame):
             flow_graph.add_dependency_on_polars_lazy_frame(data.lazy(), node_id)
         else:
             try:
-                # Use polars to convert from various types
                 pl_df = pl.DataFrame(
                     data,
                     schema=schema,
@@ -198,14 +248,12 @@ class FlowFrame:
                 )
                 pl_data = pl_df.lazy()
             except Exception as e:
-                raise ValueError(f"Could not dconvert data to a polars DataFrame: {e}")
-            # Create a FlowDataEngine to get data in the right format for manual input
+                raise ValueError(f"Could not dconvert data to a polars DataFrame: {e}") from e
             flow_table = FlowDataEngine(raw_data=pl_data)
             raw_data_format = input_schema.RawData(
                 data=list(flow_table.to_dict().values()),
                 columns=[c.get_minimal_field_info() for c in flow_table.schema],
             )
-            # Create a manual input node
             input_node = input_schema.NodeManualInput(
                 flow_id=flow_id,
                 node_id=node_id,
@@ -215,9 +263,7 @@ class FlowFrame:
                 is_setup=True,
                 description=description,
             )
-            # Add to graph
             flow_graph.add_manual_input(input_node)
-        # Return new fram
         return FlowFrame(
             data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
             flow_graph=flow_graph,
@@ -238,8 +284,9 @@ class FlowFrame:
         flow_graph: FlowGraph | None = None,
         node_id: int | None = None,
         parent_node_id: int | None = None,
+        output_handle: str = "output-0",
         **kwargs,  # Accept and ignore any other kwargs for API compatibility
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Unified constructor for FlowFrame.
 
@@ -247,17 +294,23 @@ class FlowFrame:
           wrapper around an existing node in the graph.
         - Otherwise, it creates a new source node in a new or existing graph
           from the provided data.
+
+        ``output_handle`` identifies which source handle of the wrapped node
+        downstream operations should read from. Defaults to ``"output-0"``; set
+        to ``"output-1"`` for the second output of a multi-output node (e.g.
+        the ``fail`` branch of ``filter_split``).
         """
-        # --- Path 1: Internal Wrapper Creation ---
-        # This path is taken by methods like .join(), .sort(), etc., which provide an existing graph.
         if flow_graph is not None and node_id is not None:
             instance = super().__new__(cls)
             instance.data = data
             instance.flow_graph = flow_graph
             instance.node_id = node_id
             instance.parent_node_id = parent_node_id
+            instance.output_handle = output_handle
             return instance
         elif flow_graph is not None and not isinstance(data, pl.LazyFrame):
+            # create_from_any_type creates a new source node which always emits
+            # output-0; no need to forward output_handle.
             instance = cls.create_from_any_type(
                 data=data,
                 schema=schema,
@@ -291,7 +344,7 @@ class FlowFrame:
                 )
                 pl_data = pl_df.lazy()
             except Exception as e:
-                raise ValueError(f"Could not convert data to a Polars DataFrame: {e}")
+                raise ValueError(f"Could not convert data to a Polars DataFrame: {e}") from e
 
             flow_table = FlowDataEngine(raw_data=pl_data)
             raw_data_format = input_schema.RawData(
@@ -327,16 +380,33 @@ class FlowFrame:
     def __repr__(self):
         return str(self.data)
 
-    def _add_connection(self, from_id, to_id, input_type: input_schema.InputType = "main"):
+    def _add_connection(
+        self,
+        from_id,
+        to_id,
+        input_type: input_schema.InputType = "main",
+        output_handle: str = "output-0",
+    ):
         """Helper method to add a connection between nodes"""
         connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=from_id, to_id=to_id, input_type=input_type
+            from_id=from_id,
+            to_id=to_id,
+            input_type=input_type,
+            output_handle=output_handle,
         )
         add_connection(self.flow_graph, connection)
 
-    def _create_child_frame(self, new_node_id):
+    def _create_child_frame(self, new_node_id, *, precomputed_result=None):
         """Helper method to create a new FlowFrame that's a child of this one"""
-        self._add_connection(self.node_id, new_node_id)
+        self._add_connection(self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0"))
+        # If a precomputed result was provided (e.g. serialization fallback),
+        # inject it into the node AFTER the connection is added (which resets the node).
+        if precomputed_result is not None:
+            from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+            node = self.flow_graph.get_node(new_node_id)
+            if node is not None:
+                node.results.resulting_data = FlowDataEngine(precomputed_result)
         try:
             return FlowFrame(
                 data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
@@ -345,7 +415,7 @@ class FlowFrame:
                 parent_node_id=self.node_id,
             )
         except AttributeError:
-            raise ValueError("Could not execute the function")
+            raise ValueError("Could not execute the function") from None
 
     @staticmethod
     def _generate_sort_polars_code(
@@ -384,7 +454,7 @@ class FlowFrame:
         multithreaded: bool = True,
         maintain_order: bool = False,
         description: str | None = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Sort the dataframe by the given columns.
         """
@@ -405,7 +475,7 @@ class FlowFrame:
         if maintain_order or not multithreaded:
             use_polars_code_path = True
 
-        is_nulls_last_list = isinstance(nulls_last, (list, tuple))
+        is_nulls_last_list = isinstance(nulls_last, list | tuple)
         if is_nulls_last_list and any(val for val in nulls_last if val is not False):
             use_polars_code_path = True
         elif not is_nulls_last_list and nulls_last is not False:
@@ -469,7 +539,7 @@ class FlowFrame:
                 unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))  # Order-preserving unique
                 definitions_section = "\n\n".join(unique_raw_definitions)
                 final_code_for_node = (
-                    definitions_section + "\\#─────SPLIT─────\n\n" + f"output_df = {polars_operation_code}"
+                    definitions_section + "\n#─────SPLIT─────\n\n" + f"output_df = {polars_operation_code}"
                 )
             else:
                 final_code_for_node = polars_operation_code
@@ -484,7 +554,7 @@ class FlowFrame:
                 "maintain_order": maintain_order,
             }
 
-            self._add_polars_code(
+            precomputed = self._add_polars_code(
                 new_node_id,
                 final_code_for_node,
                 description,
@@ -494,6 +564,7 @@ class FlowFrame:
                 kwargs_expr=kwargs_for_fallback,
             )
         else:
+            precomputed = None
             sort_inputs_for_node = []
             for i, col_name_for_native in enumerate(column_names_for_native_node):
                 sort_inputs_for_node.append(
@@ -512,7 +583,7 @@ class FlowFrame:
             )
             self.flow_graph.add_sort(sort_settings)
 
-        return self._create_child_frame(new_node_id)
+        return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
     def _add_polars_code(
         self,
@@ -526,8 +597,10 @@ class FlowFrame:
         group_expr: Expr | list[Expr] | None = None,
         kwargs_expr: dict | None = None,
         group_kwargs: dict | None = None,
-    ):
+    ) -> Any | None:
+        """Returns a precomputed result if serialization fell back, otherwise None."""
         polars_code_for_node: str
+        precomputed = None
         if not convertable_to_code or _contains_lambda_pattern(code):
             effective_method_name = (
                 get_method_name_from_code(code) if method_name is None and "input_df." in code else method_name
@@ -550,7 +623,8 @@ class FlowFrame:
                 target_obj = getattr(self.data, effective_method_name)(*group_expr_list, **group_kwargs)
                 if not pl_expr_list:
                     raise ValueError(
-                        "Aggregation expressions (polars_expr) are required for group_by().agg() in serialization fallback."
+                        "Aggregation expressions (polars_expr) are required for "
+                        "group_by().agg() in serialization fallback."
                     )
                 result_lazyframe_or_expr = target_obj.agg(*pl_expr_list, **current_kwargs_expr)
             elif effective_method_name:
@@ -559,21 +633,25 @@ class FlowFrame:
                 )
             else:
                 raise ValueError(
-                    "Cannot execute Polars operation: method_name is missing and could not be inferred for serialization fallback."
+                    "Cannot execute Polars operation: method_name is missing and "
+                    "could not be inferred for serialization fallback."
                 )
             try:
                 if isinstance(result_lazyframe_or_expr, pl.LazyFrame):
-                    serialized_value_for_code = result_lazyframe_or_expr.serialize(format="json")
+                    import base64
+
+                    serialized_bytes = result_lazyframe_or_expr.serialize()
+                    b64_str = base64.b64encode(serialized_bytes).decode("ascii")
                     polars_code_for_node = "\n".join(
                         [
-                            f"serialized_value = r'''{serialized_value_for_code}'''",
-                            "buffer = BytesIO(serialized_value.encode('utf-8'))",
-                            "output_df = pl.LazyFrame.deserialize(buffer, format='json')",
+                            f"serialized_value = base64.b64decode('{b64_str}')",
+                            "buffer = BytesIO(serialized_value)",
+                            "output_df = pl.LazyFrame.deserialize(buffer)",
                         ]
                     )
                     logger.warning(
                         f"Transformation '{effective_method_name}' uses non-serializable elements. "
-                        "Falling back to serializing the resulting Polars LazyFrame object."
+                        "Falling back to serializing the resulting Polars LazyFrame object. "
                         "This will result in a breaking graph when using the the ui."
                     )
                 else:
@@ -582,14 +660,16 @@ class FlowFrame:
                         f"resulted in a '{type(result_lazyframe_or_expr).__name__}' instead of a Polars LazyFrame. "
                         "This type cannot be persisted as a LazyFrame node via this fallback."
                     )
-                    return FlowFrame(result_lazyframe_or_expr, flow_graph=self.flow_graph, node_id=new_node_id)
+                    polars_code_for_node = "output_df = input_df"
+                    precomputed = result_lazyframe_or_expr
             except Exception as e:
                 logger.warning(
                     f"Critical error: Could not serialize the result of operation '{effective_method_name}' "
-                    f"during fallback for non-convertible code. Error: {e}."
+                    f"during fallback for non-convertible code. Error: {e}. "
                     "When using a lambda function, consider defining the function first"
                 )
-                return FlowFrame(result_lazyframe_or_expr, flow_graph=self.flow_graph, node_id=new_node_id)
+                polars_code_for_node = "output_df = input_df"
+                precomputed = result_lazyframe_or_expr
         else:
             polars_code_for_node = code
         polars_code_settings = input_schema.NodePolarsCode(
@@ -601,6 +681,7 @@ class FlowFrame:
             description=description,
         )
         self.flow_graph.add_polars_code(polars_code_settings)
+        return precomputed
 
     def join(
         self,
@@ -615,7 +696,7 @@ class FlowFrame:
         coalesce: bool = None,
         maintain_order: Literal[None, "left", "right", "left_right", "right_left"] = None,
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Add a join operation to the Logical Plan.
 
@@ -659,29 +740,22 @@ class FlowFrame:
         FlowFrame
             New FlowFrame with join operation applied.
         """
-        # Step 1: Determine if we need to use Polars code
         use_polars_code = self._should_use_polars_code_for_join(maintain_order, coalesce, nulls_equal, validate, suffix)
-        # Step 2: Ensure both FlowFrames are in the same graph
         self._ensure_same_graph(other)
 
-        # Step 3: Generate new node ID
         new_node_id = generate_node_id()
 
-        # Step 4: Parse and validate join columns
         left_columns, right_columns = self._parse_join_columns(on, left_on, right_on, how)
-        # Step 5: Validate column lists have same length (except for cross join)
         if how != "cross" and left_columns is not None and right_columns is not None:
             if len(left_columns) != len(right_columns):
                 raise ValueError(
                     f"Length mismatch: left columns ({len(left_columns)}) != right columns ({len(right_columns)})"
                 )
 
-        # Step 6: Create join mappings if not using Polars code
         join_mappings = None
         if not use_polars_code and how != "cross":
             join_mappings, use_polars_code = _create_join_mappings(left_columns or [], right_columns or [])
 
-        # Step 7: Execute join based on approach
         if use_polars_code or suffix != "_right":
             return self._execute_polars_code_join(
                 other,
@@ -714,7 +788,7 @@ class FlowFrame:
             and suffix == "_right"
         )
 
-    def _ensure_same_graph(self, other: "FlowFrame") -> None:
+    def _ensure_same_graph(self, other: FlowFrame) -> None:
         """Ensure both FlowFrames are in the same graph, combining if necessary."""
         if self.flow_graph.flow_id != other.flow_graph.flow_id:
             combined_graph, node_mappings = combine_flow_graphs_with_mapping(self.flow_graph, other.flow_graph)
@@ -754,7 +828,7 @@ class FlowFrame:
 
     def _execute_polars_code_join(
         self,
-        other: "FlowFrame",
+        other: FlowFrame,
         new_node_id: int,
         on: list[str | Column] | str | Column,
         left_on: list[str | Column] | str | Column,
@@ -768,9 +842,8 @@ class FlowFrame:
         coalesce: bool,
         maintain_order: Literal[None, "left", "right", "left_right", "right_left"],
         description: str,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """Execute join using Polars code approach."""
-        # Build the code arguments
         code_kwargs = self._build_polars_join_kwargs(
             on,
             left_on,
@@ -788,14 +861,11 @@ class FlowFrame:
         kwargs_str = ", ".join(f"{k}={v}" for k, v in code_kwargs.items() if v is not None)
         code = f"input_df_1.join({kwargs_str})"
 
-        # Add the Polars code node
         self._add_polars_code(new_node_id, code, description, depending_on_ids=[self.node_id, other.node_id])
 
-        # Add connections
         self._add_connection(self.node_id, new_node_id, "main")
         other._add_connection(other.node_id, new_node_id, "main")
 
-        # Create and return result frame
         return FlowFrame(
             data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
             flow_graph=self.flow_graph,
@@ -843,18 +913,15 @@ class FlowFrame:
 
     def _execute_native_join(
         self,
-        other: "FlowFrame",
+        other: FlowFrame,
         new_node_id: int,
         join_mappings: list | None,
         how: str,
         description: str,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """Execute join using native FlowFile join nodes."""
-        # Create select inputs for both frames
-
         left_select = transform_schema.SelectInputs.create_from_pl_df(self.data)
         right_select = transform_schema.SelectInputs.create_from_pl_df(other.data)
-        # Create appropriate join input based on join type
         if how == "cross":
             join_input = transform_schema.CrossJoinInput(
                 left_select=transform_schema.JoinInputs(renames=left_select.renames),
@@ -871,21 +938,17 @@ class FlowFrame:
             )
             join_input_manager = transform_schema.JoinInputManager(join_input)
 
-        # Configure join input
         for right_column in join_input_manager.right_select.renames:
             if right_column.join_key:
                 right_column.keep = False
 
-        # Create and add appropriate node
         if how == "cross":
             self._add_cross_join_node(new_node_id, join_input_manager.to_cross_join_input(), description, other)
         else:
             self._add_regular_join_node(new_node_id, join_input_manager.to_join_input(), description, other)
 
-        # Add connections
         self._add_connection(self.node_id, new_node_id, "main")
         other._add_connection(other.node_id, new_node_id, "right")
-        # Create and return result frame
         return FlowFrame(
             data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
             flow_graph=self.flow_graph,
@@ -896,9 +959,9 @@ class FlowFrame:
     def _add_cross_join_node(
         self,
         new_node_id: int,
-        join_input: "transform_schema.CrossJoinInput",
+        join_input: transform_schema.CrossJoinInput,
         description: str,
-        other: "FlowFrame",
+        other: FlowFrame,
     ) -> None:
         """Add a cross join node to the graph."""
         cross_join_settings = input_schema.NodeCrossJoin(
@@ -916,9 +979,9 @@ class FlowFrame:
     def _add_regular_join_node(
         self,
         new_node_id: int,
-        join_input: "transform_schema.JoinInput",
+        join_input: transform_schema.JoinInput,
         description: str,
-        other: "FlowFrame",
+        other: FlowFrame,
     ) -> None:
         """Add a regular join node to the graph."""
         join_settings = input_schema.NodeJoin(
@@ -935,7 +998,7 @@ class FlowFrame:
         )
         self.flow_graph.add_join(join_settings)
 
-    def _add_number_of_records(self, new_node_id: int, description: str = None) -> "FlowFrame":
+    def _add_number_of_records(self, new_node_id: int, description: str = None) -> FlowFrame:
         node_number_of_records = input_schema.NodeRecordCount(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
@@ -948,7 +1011,7 @@ class FlowFrame:
         self.flow_graph.add_record_count(node_number_of_records)
         return self._create_child_frame(new_node_id)
 
-    def rename(self, mapping: Mapping[str, str], *, strict: bool = True, description: str = None) -> "FlowFrame":
+    def rename(self, mapping: Mapping[str, str], *, strict: bool = True, description: str = None) -> FlowFrame:
         """Rename columns based on a mapping or function."""
         return self.select(
             [col(old_name).alias(new_name) for old_name, new_name in mapping.items()],
@@ -958,7 +1021,7 @@ class FlowFrame:
 
     def select(
         self, *columns: str | Expr | Selector, description: str | None = None, _keep_missing: bool = False
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Select columns from the frame.
         """
@@ -1022,6 +1085,7 @@ class FlowFrame:
                 selected_col_names_for_native = [
                     lookup_selection.get(_col) for _col in existing_cols if _col in lookup_selection
                 ]
+            precomputed = None
             select_settings = input_schema.NodeSelect(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -1041,7 +1105,7 @@ class FlowFrame:
                 unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))
                 definitions_section = "\n\n".join(unique_raw_definitions)
                 final_code_for_node = (
-                    definitions_section + "\\#─────SPLIT─────\n\n" + f"output_df = {polars_operation_code}"
+                    definitions_section + "\n#─────SPLIT─────\n\n" + f"output_df = {polars_operation_code}"
                 )
             else:
                 final_code_for_node = polars_operation_code
@@ -1051,7 +1115,7 @@ class FlowFrame:
                 for e in all_input_expr_objects
                 if isinstance(e, Expr) and hasattr(e, "expr") and e.expr is not None
             ]
-            self._add_polars_code(
+            precomputed = self._add_polars_code(
                 new_node_id,
                 final_code_for_node,
                 description,
@@ -1060,7 +1124,7 @@ class FlowFrame:
                 polars_expr=pl_expressions_for_fallback,
             )
 
-        return self._create_child_frame(new_node_id)
+        return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
     def filter(
         self,
@@ -1068,7 +1132,7 @@ class FlowFrame:
         flowfile_formula: str | None = None,
         description: str | None = None,
         **constraints: Any,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Filter rows based on a predicate.
         """
@@ -1083,16 +1147,13 @@ class FlowFrame:
 
             processed_predicates = []
             for pred_item in predicates:
-                if isinstance(pred_item, (tuple, list, Iterator)):
-                    # If it's a sequence, extend the processed_predicates with its elements
+                if isinstance(pred_item, tuple | list | Iterator):
                     processed_predicates.extend(list(pred_item))
                 else:
-                    # Otherwise, just add the item
                     processed_predicates.append(pred_item)
 
-            for pred_input in processed_predicates:  # Loop over the processed_predicates
-                # End of the new/modified section
-                current_expr_obj = None  # Initialize current_expr_obj
+            for pred_input in processed_predicates:
+                current_expr_obj = None
                 if isinstance(pred_input, Expr):
                     current_expr_obj = pred_input
                 elif isinstance(pred_input, str) and pred_input in available_columns:
@@ -1125,7 +1186,7 @@ class FlowFrame:
                 unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))  # Order-preserving unique
                 definitions_section = "\n\n".join(unique_raw_definitions)
                 final_code_for_node = (
-                    definitions_section + "\\#─────SPLIT─────\n\n" + f"output_df = {polars_operation_code}"
+                    definitions_section + "\n#─────SPLIT─────\n\n" + f"output_df = {polars_operation_code}"
                 )
             else:
                 final_code_for_node = polars_operation_code
@@ -1136,7 +1197,7 @@ class FlowFrame:
                 for e in all_input_expr_objects
                 if isinstance(e, Expr) and hasattr(e, "expr") and e.expr is not None
             ]
-            self._add_polars_code(
+            precomputed = self._add_polars_code(
                 new_node_id,
                 final_code_for_node,
                 description,
@@ -1145,6 +1206,7 @@ class FlowFrame:
                 polars_expr=pl_expressions_for_fallback,
             )
         elif flowfile_formula:
+            precomputed = None
             filter_settings = input_schema.NodeFilter(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -1158,8 +1220,452 @@ class FlowFrame:
             self.flow_graph.add_filter(filter_settings)
         else:
             logger.info("Filter called with no arguments; creating a pass-through Polars code node.")
-            self._add_polars_code(new_node_id, "output_df = input_df", description or "No-op filter", method_name=None)
+            precomputed = self._add_polars_code(
+                new_node_id, "output_df = input_df", description or "No-op filter", method_name=None
+            )
 
+        return self._create_child_frame(new_node_id, precomputed_result=precomputed)
+
+    def _build_filter_expression_string(self, predicates: tuple, constraints: dict) -> str:
+        """Collapse predicates and constraints into a single Polars expression
+        string suitable for ``FilterInput.advanced_filter``. Mirrors the
+        assembly logic in ``filter()`` but returns the bare conditions string
+        (without the surrounding ``input_df.filter(...)`` wrapper)."""
+        available_columns = self.columns
+        pure_polars_expr_strings: list[str] = []
+
+        processed_predicates = []
+        for pred_item in predicates:
+            if isinstance(pred_item, tuple | list | Iterator):
+                processed_predicates.extend(list(pred_item))
+            else:
+                processed_predicates.append(pred_item)
+
+        for pred_input in processed_predicates:
+            if isinstance(pred_input, Expr):
+                current_expr_obj = pred_input
+            elif isinstance(pred_input, str) and pred_input in available_columns:
+                current_expr_obj = col(pred_input)
+            else:
+                current_expr_obj = lit(pred_input)
+            pure_expr_str, _ = _extract_expr_parts(current_expr_obj)
+            pure_polars_expr_strings.append(f"({pure_expr_str})")
+
+        for k, v_val in constraints.items():
+            constraint_expr_obj = col(k) == lit(v_val)
+            pure_expr_str, _ = _extract_expr_parts(constraint_expr_obj)
+            pure_polars_expr_strings.append(f"({pure_expr_str})")
+
+        return " & ".join(pure_polars_expr_strings) if pure_polars_expr_strings else "pl.lit(True)"
+
+    def filter_split(
+        self,
+        *predicates: Expr | Any,
+        flowfile_formula: str | None = None,
+        description: str | None = None,
+        **constraints: Any,
+    ) -> tuple[FlowFrame, FlowFrame]:
+        """Split the frame by a predicate into (pass, fail) frames.
+
+        Rows matching the predicate are routed to the first (``pass``) frame
+        and the rest to the second (``fail``) frame. Rows where the predicate
+        evaluates to null are dropped from both (Polars ``filter`` semantics).
+
+        Args mirror :meth:`filter` — accept either positional polars
+        expressions, a ``flowfile_formula`` string, or keyword constraints.
+        Combinations of predicates and constraints are AND-ed together.
+        """
+        if (len(predicates) > 0 or len(constraints) > 0) and flowfile_formula:
+            raise ValueError("You can only use one of the following: predicates, constraints or flowfile_formula")
+
+        if flowfile_formula:
+            advanced_expr = flowfile_formula
+        elif len(predicates) > 0 or len(constraints) > 0:
+            advanced_expr = self._build_filter_expression_string(predicates, constraints)
+        else:
+            raise ValueError("filter_split requires at least one predicate, constraint, or flowfile_formula")
+
+        new_node_id = generate_node_id()
+        filter_settings = input_schema.NodeFilter(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            filter_input=transform_schema.FilterInput(
+                advanced_filter=advanced_expr,
+                filter_type="advanced",
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+            split_mode=True,
+        )
+        self.flow_graph.add_filter(filter_settings)
+        self._add_connection(
+            self.node_id,
+            new_node_id,
+            output_handle=getattr(self, "output_handle", "output-0"),
+        )
+
+        filter_node = self.flow_graph.get_node(new_node_id)
+        pass_engine = filter_node.get_output("output-0")
+        fail_engine = filter_node.get_output("output-1")
+
+        pass_frame = FlowFrame(
+            data=pass_engine.data_frame if pass_engine is not None else None,
+            flow_graph=self.flow_graph,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+            output_handle="output-0",
+        )
+        fail_frame = FlowFrame(
+            data=fail_engine.data_frame if fail_engine is not None else None,
+            flow_graph=self.flow_graph,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+            output_handle="output-1",
+        )
+        return pass_frame, fail_frame
+
+    def random_split(
+        self,
+        splits: Mapping[str, float] | list[input_schema.RandomSplitGroup],
+        seed: int | None = None,
+        description: str | None = None,
+    ) -> tuple[FlowFrame, ...]:
+        """Randomly partition rows into N labeled FlowFrames.
+
+        ``splits`` is either an ordered mapping of split name to percentage
+        (e.g. ``{"train": 80, "test": 20}``) or a list of
+        :class:`flowfile_core.schemas.input_schema.RandomSplitGroup` for the
+        fully-typed form. Percentages must sum to 100; order determines output
+        handles. ``seed`` is the optional shuffle seed.
+
+        Returns a tuple of FlowFrames in the same order as ``splits``.
+        """
+        if isinstance(splits, Mapping):
+            split_groups = [input_schema.RandomSplitGroup(name=n, percentage=p) for n, p in splits.items()]
+        else:
+            split_groups = list(splits)
+        new_node_id = generate_node_id()
+        settings = input_schema.NodeRandomSplit(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            splits=split_groups,
+            seed=seed,
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+        )
+        self.flow_graph.add_random_split(settings)
+        self._add_connection(
+            self.node_id,
+            new_node_id,
+            output_handle=getattr(self, "output_handle", "output-0"),
+        )
+        node = self.flow_graph.get_node(new_node_id)
+        frames: list[FlowFrame] = []
+        for i in range(len(settings.splits)):
+            engine = node.get_output(f"output-{i}") if node is not None else None
+            frames.append(
+                FlowFrame(
+                    data=engine.data_frame if engine is not None else None,
+                    flow_graph=self.flow_graph,
+                    node_id=new_node_id,
+                    parent_node_id=self.node_id,
+                    output_handle=f"output-{i}",
+                )
+            )
+        return tuple(frames)
+
+    def train_model(
+        self,
+        target: str,
+        features: list[str] | None = None,
+        model_type: str = "linear_regression",
+        params: dict | None = None,
+        publish_to_catalog: bool = False,
+        model_name: str = "",
+        namespace_id: int | None = None,
+        catalog_description: str | None = None,
+        catalog_tags: list[str] | None = None,
+        description: str | None = None,
+        *,
+        schema: SchemaReference | None = None,
+    ) -> FlowFrame:
+        """
+        Fit an ML model (regression or classification) and optionally publish it to the catalog.
+
+        Compute runs on the worker. Catalog publishing requires the flow to be
+        registered (so the artifact has a ``source_registration_id``); see
+        :class:`flowfile_core.flowfile.flow_graph.FlowGraph.add_train_model`.
+
+        Parameters
+        ----------
+        model_name:
+            Catalog name for the trained model. Re-running with the same name
+            auto-bumps the version (v2, v3, ...).
+        target:
+            Column to predict.
+        features:
+            Feature columns to fit on. If ``None``, uses every column except *target*.
+        model_type:
+            One of ``"linear_regression"``, ``"ridge_regression"``, ``"lasso_regression"``,
+            ``"logistic_regression"``, ``"knn_classifier"``. See ``GET /ml/algorithms``
+            for the live list and per-algorithm hyperparameter specs.
+        params:
+            Algorithm-specific hyperparameters (e.g. ``{"l2_reg": 0.1}`` for ridge).
+        schema:
+            Target :class:`SchemaReference` for the catalog artifact. Preferred
+            over ``namespace_id``.
+        namespace_id:
+            Legacy. Raw namespace id; mutually exclusive with ``schema``.
+        catalog_description / catalog_tags:
+            Optional metadata stored alongside the artifact.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame whose data is the input pass-through. The model
+            is recorded in the catalog as a side effect.
+        """
+        from flowfile_frame.catalog_reference import _resolve_namespace_id
+
+        if features is None:
+            features = [c for c in self.columns if c != target]
+        if not features:
+            raise ValueError("train_model: no feature columns inferred. Pass `features=[...]` explicitly.")
+        if publish_to_catalog and not model_name:
+            raise ValueError("train_model: 'model_name' is required when 'publish_to_catalog=True'.")
+
+        resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
+
+        new_node_id = generate_node_id()
+        train_settings = input_schema.NodeTrainModel(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            train_input=input_schema.TrainModelSettings(
+                target_column=target,
+                feature_columns=list(features),
+                model_type=model_type,
+                params=params or {},
+                publish_to_catalog=publish_to_catalog,
+                model_name=model_name,
+                namespace_id=resolved_namespace_id,
+                catalog_description=catalog_description,
+                catalog_tags=list(catalog_tags or []),
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description or (f"Train {model_type} '{model_name}'" if model_name else f"Train {model_type}"),
+        )
+        self.flow_graph.add_train_model(train_settings)
+        return self._create_child_frame(new_node_id)
+
+    def wait_for(
+        self,
+        dependency: FlowFrame,
+        *,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Pass this frame through unchanged, but force execution to wait until
+        *dependency* has finished running.
+
+        Useful when a downstream node depends on a side-effect of another node —
+        e.g. Apply Model needs Train Model to have stored its artifact first.
+        The dependency frame's data is discarded; only its completion gates
+        this node.
+
+        Parameters
+        ----------
+        dependency:
+            A :class:`FlowFrame` whose backing node must finish before this
+            node runs. Wired to the *right* input handle of the Wait For node.
+        description:
+            Optional node description for the visual designer.
+        """
+        from flowfile_core.flowfile.flow_graph import add_connection
+        from flowfile_core.schemas import input_schema as _is
+
+        new_node_id = generate_node_id()
+        wait_settings = input_schema.NodeWaitFor(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            depending_on_ids=[self.node_id, dependency.node_id],
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            description=description or "Wait for dependency",
+        )
+        self.flow_graph.add_wait_for(wait_settings)
+        right_conn = _is.NodeConnection.create_from_simple_input(dependency.node_id, new_node_id, input_type="right")
+        add_connection(self.flow_graph, right_conn)
+        return self._create_child_frame(new_node_id)
+
+    def apply_model(
+        self,
+        upstream: FlowFrame | None = None,
+        *,
+        model_name: str = "",
+        output_column: str = "prediction",
+        version: int | None = None,
+        schema: SchemaReference | None = None,
+        namespace_id: int | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Score the data using a trained model.
+
+        Two model sources are supported:
+
+        - Pass an *upstream* :class:`FlowFrame` whose backing node is a
+          ``train_model`` — the trained model is read from the flow's local
+          cache, no catalog round-trip required. This is the natural way to
+          chain Train Model → Apply Model in the same flow.
+        - Or pass *model_name* (and optionally *version* / *schema*) to
+          look the model up from the catalog.
+
+        Parameters
+        ----------
+        upstream:
+            FlowFrame returned by :meth:`train_model`. When provided, the apply
+            node reads from that train node's flow-scoped output.
+        model_name:
+            Catalog name of the trained model. Used only when *upstream* is None.
+        output_column:
+            Name of the new prediction column added to the output.
+        version:
+            Specific catalog version to apply. Defaults to the latest active version.
+        schema:
+            Catalog :class:`SchemaReference` to look the model up in. Preferred
+            over ``namespace_id``.
+        namespace_id:
+            Legacy. Raw namespace id; mutually exclusive with ``schema``.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with all input columns plus *output_column* (Float64).
+        """
+        from flowfile_frame.catalog_reference import _resolve_namespace_id
+
+        if upstream is None and not model_name:
+            raise ValueError("apply_model: pass either *upstream* (FlowFrame from train_model) or *model_name*.")
+        if upstream is not None and model_name:
+            raise ValueError("apply_model: pass either *upstream* or *model_name*, not both.")
+
+        resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
+
+        new_node_id = generate_node_id()
+        if upstream is not None:
+            apply_input = input_schema.ApplyModelSettings(
+                source="upstream",
+                upstream_node_id=upstream.node_id,
+                output_column=output_column,
+            )
+            default_desc = f"Apply (upstream node {upstream.node_id}) -> {output_column}"
+        else:
+            apply_input = input_schema.ApplyModelSettings(
+                source="catalog",
+                model_name=model_name,
+                model_version=version,
+                namespace_id=resolved_namespace_id,
+                output_column=output_column,
+            )
+            default_desc = f"Apply '{model_name}' -> {output_column}"
+
+        apply_settings = input_schema.NodeApplyModel(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            apply_input=apply_input,
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description or default_desc,
+        )
+        self.flow_graph.add_apply_model(apply_settings)
+        return self._create_child_frame(new_node_id)
+
+    def evaluate_model(
+        self,
+        actual_column: str,
+        *,
+        predicted_column: str = "prediction",
+        task_type: Literal["auto", "regression", "classification"] = "auto",
+        upstream: FlowFrame | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Compute model-quality metrics by comparing an actual column with a prediction column.
+
+        Returns a long-form ``(metric, value)`` frame. Reusable on training,
+        test, or hold-out splits — there's no built-in coupling to a specific
+        Train/Apply pair. Pass *upstream* (a FlowFrame returned by
+        :meth:`train_model`) so ``task_type="auto"`` can read the trainer's
+        task type; otherwise pass *task_type* explicitly. When neither is set,
+        regression metrics are computed.
+
+        Parameters
+        ----------
+        actual_column:
+            Column on the input frame holding the true values.
+        predicted_column:
+            Column on the input frame holding the predicted values. Defaults
+            to ``"prediction"``, matching :meth:`apply_model`'s default
+            *output_column*.
+        task_type:
+            Metric set to compute. ``"auto"`` resolves the task type from
+            *upstream*'s trainer when provided; otherwise falls back to
+            ``"regression"``.
+        upstream:
+            Optional :class:`FlowFrame` returned by :meth:`train_model`. When
+            given, ``task_type="auto"`` reads the trainer's task type from
+            this node.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with two columns: ``metric`` (String) and
+            ``value`` (Float64).
+        """
+        if actual_column not in self.columns:
+            raise ValueError(f"evaluate_model: actual_column '{actual_column}' not in input columns {self.columns}.")
+        if predicted_column not in self.columns:
+            raise ValueError(
+                f"evaluate_model: predicted_column '{predicted_column}' not in input columns {self.columns}."
+            )
+        if upstream is not None and upstream.flow_graph is not self.flow_graph:
+            raise ValueError("evaluate_model: 'upstream' must belong to the same flow as this frame.")
+
+        new_node_id = generate_node_id()
+        evaluate_settings = input_schema.NodeEvaluateModel(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            evaluate_input=input_schema.EvaluateModelSettings(
+                actual_column=actual_column,
+                predicted_column=predicted_column,
+                task_type=task_type,
+                upstream_train_node_id=upstream.node_id if upstream is not None else None,
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description or f"Evaluate {predicted_column} vs {actual_column}",
+        )
+        self.flow_graph.add_evaluate_model(evaluate_settings)
         return self._create_child_frame(new_node_id)
 
     def sink_csv(self, file: str, *args, separator: str = ",", encoding: str = "utf-8", description: str = None):
@@ -1184,7 +1690,7 @@ class FlowFrame:
         description: str = None,
         convert_to_absolute_path: bool = True,
         **kwargs: Any,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Write the data to a Parquet file. Creates a standard Output node if only
         'path' and standard options are provided. Falls back to a Polars Code node
@@ -1207,7 +1713,7 @@ class FlowFrame:
         """
         new_node_id = generate_node_id()
 
-        is_path_input = isinstance(path, (str, os.PathLike))
+        is_path_input = isinstance(path, str | os.PathLike)
         if isinstance(path, os.PathLike):
             file_str = str(path)
         elif isinstance(path, str):
@@ -1252,14 +1758,12 @@ class FlowFrame:
                     " File-like objects are not supported with the Polars Code fallback."
                 )
 
-            # Use the potentially converted absolute path string
             path_arg_repr = repr(output_settings.directory)
             kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in kwargs.items())
             args_str = f"path={path_arg_repr}"
             if kwargs_repr:
                 args_str += f", {kwargs_repr}"
 
-            # Use sink_parquet for LazyFrames
             code = f"input_df.sink_parquet({args_str})"
             logger.debug(f"Generated Polars Code: {code}")
             self._add_polars_code(new_node_id, code, description)
@@ -1275,9 +1779,9 @@ class FlowFrame:
         description: str = None,
         convert_to_absolute_path: bool = True,
         **kwargs: Any,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         new_node_id = generate_node_id()
-        is_path_input = isinstance(file, (str, os.PathLike))
+        is_path_input = isinstance(file, str | os.PathLike)
         if isinstance(file, os.PathLike):
             file_str = str(file)
         elif isinstance(file, str):
@@ -1326,7 +1830,7 @@ class FlowFrame:
             all_kwargs_for_code = {
                 "separator": separator,
                 "encoding": encoding,
-                **kwargs,  # Add the extra kwargs
+                **kwargs,
             }
             kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in all_kwargs_for_code.items())
 
@@ -1340,13 +1844,100 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id)
 
+    def write_excel(
+        self,
+        path: str | os.PathLike,
+        *,
+        worksheet: str = "Sheet1",
+        description: str = None,
+        convert_to_absolute_path: bool = True,
+        **kwargs: Any,
+    ) -> FlowFrame:
+        """
+        Write the data to an Excel file.
+
+        Args:
+            path: Path or filename for the Excel file.
+            worksheet: Name of the worksheet, defaults to 'Sheet1'.
+            description: Description of this operation for the ETL graph.
+            convert_to_absolute_path: If the path needs to be set to a fixed location.
+            **kwargs: Additional keyword arguments for polars.DataFrame.write_excel.
+                      If any extra kwargs are provided, a Polars Code node will be created
+                      instead of a standard Output node.
+
+        Returns:
+            Self for method chaining (new FlowFrame pointing to the output node).
+        """
+        new_node_id = generate_node_id()
+        is_path_input = isinstance(path, str | os.PathLike)
+        if isinstance(path, os.PathLike):
+            file_str = str(path)
+        elif isinstance(path, str):
+            file_str = path
+        else:
+            file_str = path
+            is_path_input = False
+        if "~" in file_str:
+            file_str = os.path.expanduser(file_str)
+        file_name = file_str.split(os.sep)[-1] if is_path_input else "output.xlsx"
+
+        use_polars_code = bool(kwargs) or not is_path_input
+        output_settings = input_schema.OutputSettings(
+            file_type="excel",
+            name=file_name,
+            directory=file_str if is_path_input else str(file_str),
+            table_settings=input_schema.OutputExcelTable(sheet_name=worksheet),
+        )
+        if is_path_input:
+            try:
+                output_settings.set_absolute_filepath()
+                if convert_to_absolute_path:
+                    output_settings.directory = output_settings.abs_file_path
+            except Exception as e:
+                logger.warning(f"Could not determine absolute path for {file_str}: {e}")
+
+        if not use_polars_code:
+            node_output = input_schema.NodeOutput(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                output_settings=output_settings,
+                depending_on_id=self.node_id,
+                description=description,
+            )
+            self.flow_graph.add_output(node_output)
+        else:
+            if not is_path_input:
+                raise TypeError(
+                    f"Input 'path' must be a string or Path-like object when using advanced "
+                    f"write_excel options (kwargs={kwargs}), got {type(path)}."
+                    " File-like objects are not supported with the Polars Code fallback."
+                )
+
+            path_arg_repr = repr(output_settings.directory)
+
+            all_kwargs_for_code = {
+                "worksheet": worksheet,
+                **kwargs,
+            }
+            kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in all_kwargs_for_code.items())
+
+            args_str = f"{path_arg_repr}"
+            if kwargs_repr:
+                args_str += f", {kwargs_repr}"
+
+            code = f"input_df.collect().write_excel({args_str})"
+            logger.debug(f"Generated Polars Code: {code}")
+            self._add_polars_code(new_node_id, code, description)
+
+        return self._create_child_frame(new_node_id)
+
     def write_parquet_to_cloud_storage(
         self,
         path: str,
         connection_name: str | None = None,
         compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy",
         description: str | None = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Write the data frame to cloud storage in Parquet format.
 
@@ -1380,7 +1971,7 @@ class FlowFrame:
         delimiter: str = ";",
         encoding: CsvEncoding = "utf8",
         description: str | None = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Write the data frame to cloud storage in CSV format.
 
@@ -1414,8 +2005,9 @@ class FlowFrame:
         path: str,
         connection_name: str | None = None,
         write_mode: Literal["overwrite", "append"] = "overwrite",
+        partition_by: list[str] | None = None,
         description: str | None = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Write the data frame to cloud storage in Delta Lake format.
 
@@ -1425,6 +2017,8 @@ class FlowFrame:
                 that a user can create. If None, uses the default connection. Defaults to None.
             write_mode (Literal["overwrite", "append"], optional): The write mode for the Delta table.
                 "overwrite" replaces existing data, "append" adds to existing data. Defaults to "overwrite".
+            partition_by (Optional[List[str]], optional): Delta partition columns (applied at table
+                creation; writes to an existing table must match its partitioning).
             description (Optional[str], optional): Description of this operation for the ETL graph.
         Returns:
             FlowFrame: A new child data frame representing the written data.
@@ -1436,6 +2030,7 @@ class FlowFrame:
             depends_on_node_id=self.node_id,
             write_mode=write_mode,
             file_format="delta",
+            partition_by=partition_by,
             description=description,
         )
         return self._create_child_frame(new_node_id)
@@ -1445,7 +2040,7 @@ class FlowFrame:
         path: str,
         connection_name: str | None = None,
         description: str | None = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Write the data frame to cloud storage in JSON format.
 
@@ -1467,6 +2062,87 @@ class FlowFrame:
         )
         return self._create_child_frame(new_node_id)
 
+    def write_catalog_table(
+        self,
+        table_name: str,
+        *,
+        schema: SchemaReference | None = None,
+        namespace_id: int | None = None,
+        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite",
+        merge_keys: list[str] | None = None,
+        partition_by: list[str] | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """Write the data frame to the Flowfile catalog.
+
+        Args:
+            table_name: Name of the catalog table to write to.
+            schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
+            namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
+            write_mode: How to handle existing data. ``"virtual"`` registers
+                the result as a virtual catalog table backed by this flow
+                (requires the flow to be registered with the catalog first;
+                see :func:`flowfile_frame.register_flow_with_catalog`).
+            merge_keys: Column names for merge operations (required for upsert/update/delete).
+            partition_by: Delta partition columns (applied at table creation; appends
+                must match the existing partitioning).
+            description: Optional description for this operation.
+
+        Returns:
+            FlowFrame: A new child data frame representing the written data.
+
+        Raises:
+            ValueError: If both ``schema`` and ``namespace_id`` are provided.
+        """
+        from flowfile_frame.catalog import add_write_to_catalog
+
+        new_node_id = add_write_to_catalog(
+            self.flow_graph,
+            depends_on_node_id=self.node_id,
+            table_name=table_name,
+            schema=schema,
+            namespace_id=namespace_id,
+            write_mode=write_mode,
+            merge_keys=merge_keys,
+            partition_by=partition_by,
+            description=description,
+        )
+        return self._create_child_frame(new_node_id)
+
+    def write_database(
+        self,
+        connection_name: str,
+        table_name: str,
+        *,
+        schema_name: str | None = None,
+        if_exists: Literal["append", "replace", "fail"] = "append",
+        description: str | None = None,
+    ) -> FlowFrame:
+        """Write the data frame to a database using a stored connection.
+
+        Args:
+            connection_name: Name of the stored database connection to use.
+            table_name: Name of the table to write to.
+            schema_name: Database schema name (e.g., 'public' for PostgreSQL).
+            if_exists: What to do if the table already exists.
+            description: Optional description for this operation.
+
+        Returns:
+            FlowFrame: A new child data frame representing the written data.
+        """
+        from flowfile_frame.database.frame_helpers import add_write_to_database
+
+        new_node_id = add_write_to_database(
+            self.flow_graph,
+            depends_on_node_id=self.node_id,
+            connection_name=connection_name,
+            table_name=table_name,
+            schema_name=schema_name,
+            if_exists=if_exists,
+            description=description,
+        )
+        return self._create_child_frame(new_node_id)
+
     def group_by(self, *by, description: str = None, maintain_order=False, **named_by) -> GroupByFrame:
         """
         Start a group by operation.
@@ -1480,7 +2156,6 @@ class FlowFrame:
         Returns:
             GroupByFrame object for aggregations
         """
-        # Process positional arguments
         new_node_id = generate_node_id()
         by_cols = []
         for col_expr in by:
@@ -1490,7 +2165,7 @@ class FlowFrame:
                 by_cols.append(col_expr)
             elif isinstance(col_expr, Selector):
                 by_cols.append(col_expr)
-            elif isinstance(col_expr, (list, tuple)):
+            elif isinstance(col_expr, list | tuple):
                 by_cols.extend(col_expr)
 
         for new_name, col_expr in named_by.items():
@@ -1498,7 +2173,6 @@ class FlowFrame:
                 by_cols.append(col(col_expr).alias(new_name))
             elif isinstance(col_expr, Expr):
                 by_cols.append(col_expr.alias(new_name))
-        # Create a GroupByFrame
         return GroupByFrame(
             node_id=new_node_id,
             parent_frame=self,
@@ -1506,6 +2180,43 @@ class FlowFrame:
             maintain_order=maintain_order,
             description=description,
         )
+
+    @contextmanager
+    def group(self, name: str, *, color: GroupColor | None = None) -> Iterator[FlowFrame]:
+        """Group every node created inside this block into a labeled visual container.
+
+        Organizational only: groups affect the canvas overview/layout, never execution
+        or results. This is unrelated to :meth:`group_by` (which performs aggregation).
+
+        Example:
+            >>> with df.group("Clean customer data"):
+            ...     df = df.filter(col("age") > 18).select(["id", "name"])
+        """
+        before = set(self.flow_graph._node_db.keys())
+        try:
+            yield self
+        finally:
+            # Group only nodes that are new in this block AND not already grouped
+            # (so an inner `with df.group(...)` keeps its own membership).
+            new_node_ids = [
+                node_id
+                for node_id, node in self.flow_graph._node_db.items()
+                if node_id not in before and getattr(node.setting_input, "group_id", None) is None
+            ]
+            if new_node_ids:
+                self.flow_graph.create_group(name, new_node_ids, color=color)
+
+    def set_group(self, name: str, *, color: GroupColor | None = None) -> FlowFrame:
+        """Assign this frame's current node to a (new or existing) named visual group.
+
+        Returns ``self`` for chaining. Organizational only; see :meth:`group` for the
+        block form. Unrelated to :meth:`group_by` (aggregation).
+
+        Example:
+            >>> df = df.filter(col("age") > 18).set_group("Clean customer data")
+        """
+        self.flow_graph.assign_node_to_named_group(self.node_id, name, color=color)
+        return self
 
     def to_graph(self):
         """Get the underlying ETL graph."""
@@ -1523,14 +2234,21 @@ class FlowFrame:
             return self.data.collect(*args, **kwargs)
         return self.data
 
-    def _with_flowfile_formula(self, flowfile_formula: str, output_column_name, description: str = None) -> "FlowFrame":
+    def _with_flowfile_formula(
+        self,
+        flowfile_formula: str,
+        output_column_name: str,
+        description: str = None,
+        output_column_datatype: str = "Auto",
+    ) -> FlowFrame:
         new_node_id = generate_node_id()
         function_settings = input_schema.NodeFormula(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
             depending_on_id=self.node_id,
             function=transform_schema.FunctionInput(
-                function=flowfile_formula, field=transform_schema.FieldInput(name=output_column_name, data_type="Auto")
+                function=flowfile_formula,
+                field=transform_schema.FieldInput(name=output_column_name, data_type=output_column_datatype),
             ),
             description=description,
         )
@@ -1552,7 +2270,135 @@ class FlowFrame:
     def limit(self, n: int, description: str = None):
         return self.head(n, description)
 
-    def cache(self) -> "FlowFrame":
+    def solve_graph(
+        self,
+        col_from: str,
+        col_to: str,
+        output_column_name: str = "graph_group",
+        *,
+        description: str | None = None,
+    ) -> FlowFrame:
+        new_node_id = generate_node_id()
+        graph_solver_settings = input_schema.NodeGraphSolver(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            depending_on_id=self.node_id,
+            graph_solver_input=transform_schema.GraphSolverInput(
+                col_from=col_from,
+                col_to=col_to,
+                output_column_name=output_column_name,
+            ),
+            description=description,
+        )
+        self.flow_graph.add_graph_solver(graph_solver_settings)
+        return self._create_child_frame(new_node_id)
+
+    def dynamic_rename(
+        self,
+        mode: Literal["prefix", "suffix", "formula", "first_row"] = "prefix",
+        *,
+        prefix: str = "",
+        suffix: str = "",
+        formula: str = "",
+        columns: list[str] | None = None,
+        data_type: Literal["Numeric", "String", "Date", "Other", "Boolean", "Binary", "Complex"] | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Rename many columns at once via a single rule.
+
+        One node, four modes — useful when you need a uniform transformation
+        across columns (e.g. prefixing every numeric column with ``"num_"``)
+        or want to promote the first row of a CSV to headers.
+
+        Parameters
+        ----------
+        mode:
+            How to compute new column names.
+
+            - ``"prefix"`` — prepend *prefix* to each selected column's name.
+            - ``"suffix"`` — append *suffix* to each selected column's name.
+            - ``"formula"`` — evaluate a Flowfile formula with
+              ``[column_name]`` bound to each column's current name
+              (e.g. ``"uppercase([column_name])"``).
+            - ``"first_row"`` — promote the first row of data to column
+              headers and drop that row from the output.
+        prefix:
+            Required and only valid when ``mode="prefix"``.
+        suffix:
+            Required and only valid when ``mode="suffix"``.
+        formula:
+            Required and only valid when ``mode="formula"``.
+        columns:
+            When given, apply the rule only to these columns. Mutually
+            exclusive with *data_type*.
+        data_type:
+            When given, apply the rule only to columns of this data-type
+            group. Mutually exclusive with *columns*.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with renamed columns. In ``"first_row"`` mode,
+            the first row is dropped from the output regardless of which
+            columns were selected for renaming.
+        """
+        if mode == "prefix":
+            if not prefix:
+                raise ValueError("dynamic_rename: 'prefix' is required when mode='prefix'.")
+            if suffix or formula:
+                raise ValueError("dynamic_rename: only 'prefix' may be set when mode='prefix'.")
+        elif mode == "suffix":
+            if not suffix:
+                raise ValueError("dynamic_rename: 'suffix' is required when mode='suffix'.")
+            if prefix or formula:
+                raise ValueError("dynamic_rename: only 'suffix' may be set when mode='suffix'.")
+        elif mode == "formula":
+            if not formula.strip():
+                raise ValueError("dynamic_rename: 'formula' is required when mode='formula'.")
+            if prefix or suffix:
+                raise ValueError("dynamic_rename: only 'formula' may be set when mode='formula'.")
+        elif mode == "first_row":
+            if prefix or suffix or formula:
+                raise ValueError(
+                    "dynamic_rename: 'prefix', 'suffix' and 'formula' must be empty when mode='first_row'."
+                )
+
+        if columns is not None and data_type is not None:
+            raise ValueError("dynamic_rename: pass at most one of 'columns' or 'data_type'.")
+
+        if columns is not None:
+            selection_mode = "list"
+        elif data_type is not None:
+            selection_mode = "data_type"
+        else:
+            selection_mode = "all"
+
+        new_node_id = generate_node_id()
+        rename_settings = input_schema.NodeDynamicRename(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode=mode,
+                prefix=prefix,
+                suffix=suffix,
+                formula=formula,
+                selection_mode=selection_mode,
+                selected_columns=list(columns or []),
+                selected_data_type=data_type,
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+        )
+        self.flow_graph.add_dynamic_rename(rename_settings)
+        return self._create_child_frame(new_node_id)
+
+    def cache(self) -> FlowFrame:
         setting_input = self.get_node_settings().setting_input
         setting_input.cache_results = True
         self.data.cache()
@@ -1572,7 +2418,7 @@ class FlowFrame:
         sort_columns: bool = False,
         separator: str = "_",
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Pivot a DataFrame from long to wide format.
 
@@ -1603,10 +2449,8 @@ class FlowFrame:
         """
         new_node_id = generate_node_id()
 
-        # Handle input standardization
         on_value = on[0] if isinstance(on, list) and len(on) == 1 else on
 
-        # Create index_columns list
         if index is None:
             index_columns = []
         elif isinstance(index, str):
@@ -1614,24 +2458,20 @@ class FlowFrame:
         else:
             index_columns = list(index)
 
-        # Set values column
         if values is None:
             raise ValueError("Values parameter must be specified for pivot operation")
 
         value_col = values if isinstance(values, str) else values[0]
 
-        # Set valid aggregations
         valid_aggs = ["first", "last", "min", "max", "sum", "mean", "median", "count"]
         if aggregate_function not in valid_aggs:
             raise ValueError(
                 f"Invalid aggregate_function: {aggregate_function}. " f"Must be one of: {', '.join(valid_aggs)}"
             )
 
-        # Check if we can use the native implementation
         can_use_native = isinstance(on_value, str) and isinstance(value_col, str) and aggregate_function in valid_aggs
 
         if can_use_native:
-            # Create pivot input for native implementation
             pivot_input = transform_schema.PivotInput(
                 index_columns=index_columns,
                 pivot_column=on_value,
@@ -1639,7 +2479,6 @@ class FlowFrame:
                 aggregations=[aggregate_function],
             )
 
-            # Create node settings
             pivot_settings = input_schema.NodePivot(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -1651,11 +2490,8 @@ class FlowFrame:
                 description=description or f"Pivot {value_col} by {on_value}",
             )
 
-            # Add to graph using native implementation
             self.flow_graph.add_pivot(pivot_settings)
         else:
-            # Fall back to polars code for complex cases
-            # Generate proper polars code
             on_repr = repr(on)
             index_repr = repr(index)
             values_repr = repr(values)
@@ -1663,7 +2499,7 @@ class FlowFrame:
             code = f"""
     # Perform pivot operation
     result = input_df.pivot(
-        on={on_repr}, 
+        on={on_repr},
         index={index_repr},
         values={values_repr},
         aggregate_function='{aggregate_function}',
@@ -1673,7 +2509,6 @@ class FlowFrame:
     )
     result
     """
-            # Generate description if not provided
             if description is None:
                 on_str = on if isinstance(on, str) else ", ".join(on if isinstance(on, list) else [on])
                 values_str = (
@@ -1681,7 +2516,6 @@ class FlowFrame:
                 )
                 description = f"Pivot {values_str} by {on_str}"
 
-            # Add polars code node
             self._add_polars_code(new_node_id, code, description)
 
         return self._create_child_frame(new_node_id)
@@ -1694,7 +2528,7 @@ class FlowFrame:
         variable_name: str = "variable",
         value_name: str = "value",
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Unpivot a DataFrame from wide to long format.
 
@@ -1719,7 +2553,6 @@ class FlowFrame:
         """
         new_node_id = generate_node_id()
 
-        # Standardize inputs
         if index is None:
             index_columns = []
         elif isinstance(index, str):
@@ -1729,7 +2562,7 @@ class FlowFrame:
         can_use_native = True
         if on is None:
             value_columns = []
-        elif isinstance(on, (str, Selector)):
+        elif isinstance(on, str | Selector):
             if isinstance(on, Selector):
                 can_use_native = False
             value_columns = [on]
@@ -1750,7 +2583,6 @@ class FlowFrame:
                 data_type_selector_mode="column",
             )
 
-            # Create node settings
             unpivot_settings = input_schema.NodeUnpivot(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -1762,45 +2594,38 @@ class FlowFrame:
                 description=description or "Unpivot data from wide to long format",
             )
 
-            # Add to graph using native implementation
             self.flow_graph.add_unpivot(unpivot_settings)
         else:
-            # Fall back to polars code for complex cases
-
-            # Generate proper polars code
             on_repr = repr(on)
             index_repr = repr(index)
 
-            # Using unpivot() method to match polars API
             code = f"""
     # Perform unpivot operation
     output_df = input_df.unpivot(
-        on={on_repr}, 
+        on={on_repr},
         index={index_repr},
         variable_name="{variable_name}",
         value_name="{value_name}"
     )
     output_df
     """
-            # Generate description if not provided
             if description is None:
                 index_str = ", ".join(index_columns) if index_columns else "none"
                 value_str = ", ".join(value_columns) if value_columns else "all non-index columns"
                 description = f"Unpivot data with index: {index_str} and value cols: {value_str}"
 
-            # Add polars code node
             self._add_polars_code(new_node_id, code, description)
 
         return self._create_child_frame(new_node_id)
 
     def concat(
         self,
-        other: "FlowFrame" | list["FlowFrame"],
+        other: FlowFrame | list[FlowFrame],
         how: str = "vertical",
         rechunk: bool = False,
         parallel: bool = True,
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Combine multiple FlowFrames into a single FlowFrame.
 
@@ -1830,33 +2655,53 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with the concatenated data
         """
-        # Convert single FlowFrame to list
         if isinstance(other, FlowFrame):
             others = [other]
         else:
             others = other
-        all_graphs = []
-        all_graph_ids = []
-        for g in [self.flow_graph] + [f.flow_graph for f in others]:
-            if g.flow_id not in all_graph_ids:
-                all_graph_ids.append(g.flow_id)
-                all_graphs.append(g)
-        if len(all_graphs) > 1:
-            combined_graph, node_mappings = combine_flow_graphs_with_mapping(*all_graphs)
-            for f in [self] + other:
-                f.node_id = node_mappings.get((f.flow_graph.flow_id, f.node_id), None)
+
+        # Ensure all frames are in the same graph (combine all at once, not pairwise)
+        all_frames = [self] + others
+        unique_graphs = []
+        seen_flow_ids = set()
+        for f in all_frames:
+            if f.flow_graph.flow_id not in seen_flow_ids:
+                seen_flow_ids.add(f.flow_graph.flow_id)
+                unique_graphs.append(f.flow_graph)
+
+        if len(unique_graphs) > 1:
+            combined_graph, node_mappings = combine_flow_graphs_with_mapping(*unique_graphs)
+            for f in all_frames:
+                new_id = node_mappings.get((f.flow_graph.flow_id, f.node_id))
+                if new_id is None:
+                    raise ValueError(f"Cannot remap node {f.node_id} from flow {f.flow_graph.flow_id}")
+                f.node_id = new_id
+                f.flow_graph = combined_graph
             node_id_data["c"] = node_id_data["c"] + len(combined_graph.nodes)
-        else:
-            combined_graph = self.flow_graph
+
         new_node_id = generate_node_id()
-        use_native = how == "diagonal_relaxed" and parallel and not rechunk
+
+        # Build a stable, deduplicated view of upstream sources. The graph wires
+        # each (source_node, input_slot) pair at most once (add_connection is
+        # idempotent), so when the same FlowFrame appears in `all_frames` more
+        # than once we must reuse the same input variable rather than fan out
+        # to phantom input_df_N slots that will not be bound at execute-time.
+        unique_node_ids: list[int] = []
+        position_by_node_id: dict[int, int] = {}
+        for f in all_frames:
+            if f.node_id not in position_by_node_id:
+                position_by_node_id[f.node_id] = len(unique_node_ids)
+                unique_node_ids.append(f.node_id)
+        has_duplicate_sources = len(unique_node_ids) < len(all_frames)
+
+        # NodeUnion can't express "include this input twice"; fall back to the
+        # polars-code path (which can, positionally) when duplicates are present.
+        use_native = how == "diagonal_relaxed" and parallel and not rechunk and not has_duplicate_sources
         if use_native:
-            # Create union input for the transform schema
             union_input = transform_schema.UnionInput(
                 mode="relaxed"  # This maps to diagonal_relaxed in polars
             )
 
-            # Create node settings
             union_settings = input_schema.NodeUnion(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -1864,23 +2709,27 @@ class FlowFrame:
                 pos_x=200,
                 pos_y=150,
                 is_setup=True,
-                depending_on_ids=[self.node_id] + [frame.node_id for frame in others],
+                depending_on_ids=list(unique_node_ids),
                 description=description or "Concatenate dataframes",
             )
 
-            # Add to graph
             self.flow_graph.add_union(union_settings)
 
-            # Add connections
-            self._add_connection(self.node_id, new_node_id, "main")
-            for other_frame in others:
-                other_frame._add_connection(other_frame.node_id, new_node_id, "main")
+            # Wire each unique upstream source exactly once.
+            seen_sources: set[int] = set()
+            for f in all_frames:
+                if f.node_id in seen_sources:
+                    continue
+                seen_sources.add(f.node_id)
+                f._add_connection(f.node_id, new_node_id, "main")
         else:
-            # Fall back to Polars code for other cases
-            # Create a list of input dataframes for the code
-            input_vars = ["input_df_1"]
-            for i in range(len(others)):
-                input_vars.append(f"input_df_{i+2}")
+            # Match execute_polars_code's binding convention: a single unique
+            # source binds as `input_df` (singular); two or more bind as
+            # `input_df_1`, `input_df_2`, ... in upstream-discovery order.
+            if len(unique_node_ids) == 1:
+                input_vars = ["input_df"] * len(all_frames)
+            else:
+                input_vars = [f"input_df_{position_by_node_id[f.node_id] + 1}" for f in all_frames]
 
             frames_list = f"[{', '.join(input_vars)}]"
             code = f"""
@@ -1892,18 +2741,15 @@ class FlowFrame:
                 parallel={parallel}
             )
             """
-            self.flow_graph = combined_graph
 
-            # Add polars code node with dependencies on all input frames
-            depending_on_ids = [self.node_id] + [frame.node_id for frame in others]
-            self._add_polars_code(new_node_id, code, description, depending_on_ids=depending_on_ids)
-            # Add connections to ensure all frames are available
-            self._add_connection(self.node_id, new_node_id, "main")
-
-            for other_frame in others:
-                other_frame.flow_graph = combined_graph
-                other_frame._add_connection(other_frame.node_id, new_node_id, "main")
-        # Create and return the new frame
+            self._add_polars_code(new_node_id, code, description, depending_on_ids=list(unique_node_ids))
+            # Wire each unique upstream source exactly once.
+            seen_sources: set[int] = set()
+            for f in all_frames:
+                if f.node_id in seen_sources:
+                    continue
+                seen_sources.add(f.node_id)
+                f._add_connection(f.node_id, new_node_id, "main")
         return FlowFrame(
             data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
             flow_graph=self.flow_graph,
@@ -1913,7 +2759,7 @@ class FlowFrame:
 
     def _detect_cum_count_record_id(
         self, expr: Any, new_node_id: int, description: str | None = None
-    ) -> tuple[bool, Optional["FlowFrame"]]:
+    ) -> tuple[bool, FlowFrame | None]:
         """
         Detect if the expression is a cum_count operation and use record_id if possible.
 
@@ -1933,7 +2779,6 @@ class FlowFrame:
             - bool: Whether a cum_count expression was detected and optimized
             - Optional[FlowFrame]: The new FlowFrame if detection was successful, otherwise None
         """
-        # Check if this is a cum_count operation
         if (
             not isinstance(expr, Expr)
             or not expr._repr_str
@@ -1942,7 +2787,6 @@ class FlowFrame:
         ):
             return False, None
 
-        # Extract the output name
         output_name = expr.column_name
 
         if ".over(" not in expr._repr_str:
@@ -1954,7 +2798,6 @@ class FlowFrame:
                 group_by_columns=[],
             )
 
-            # Create node settings
             record_id_settings = input_schema.NodeRecordId(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -1966,13 +2809,10 @@ class FlowFrame:
                 description=description or f"Add cumulative count as '{output_name}'",
             )
 
-            # Add to graph using native implementation
             self.flow_graph.add_record_id(record_id_settings)
             return True, self._create_child_frame(new_node_id)
 
-        # Check for windowed/partitioned cum_count
         elif ".over(" in expr._repr_str:
-            # Try to extract partition columns from different patterns
             partition_columns = []
 
             # Case 1: Simple string column - .over('column')
@@ -1997,7 +2837,6 @@ class FlowFrame:
 
             # If we found partition columns, create a grouped record ID
             if partition_columns:
-                # Use grouped record ID implementation
                 record_id_input = transform_schema.RecordIdInput(
                     output_column_name=output_name,
                     offset=1,
@@ -2005,7 +2844,6 @@ class FlowFrame:
                     group_by_columns=partition_columns,
                 )
 
-                # Create node settings
                 record_id_settings = input_schema.NodeRecordId(
                     flow_id=self.flow_graph.flow_id,
                     node_id=new_node_id,
@@ -2018,11 +2856,9 @@ class FlowFrame:
                     or f"Add grouped cumulative count as '{output_name}' by {', '.join(partition_columns)}",
                 )
 
-                # Add to graph using native implementation
                 self.flow_graph.add_record_id(record_id_settings)
                 return True, self._create_child_frame(new_node_id)
 
-        # Not a cum_count we can optimize
         return False, None
 
     def with_columns(
@@ -2030,9 +2866,10 @@ class FlowFrame:
         *exprs: Expr | Iterable[Expr] | Any,  # Allow Any for implicit lit conversion
         flowfile_formulas: list[str] | None = None,
         output_column_names: list[str] | None = None,
+        output_column_datatypes: list[str] | None = None,
         description: str | None = None,
         **named_exprs: Expr | Any,  # Allow Any for implicit lit conversion
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Add or replace columns in the DataFrame.
         """
@@ -2061,6 +2898,16 @@ class FlowFrame:
             if len(actual_exprs_to_process) == 1 and isinstance(actual_exprs_to_process[0], Expr):
                 pass
 
+            # Try flowfile formula conversion (all-or-nothing)
+            if all(
+                isinstance(e, Expr) and e._ff_repr is not None and e.column_name is not None
+                for e in actual_exprs_to_process
+            ):
+                ff = self
+                for expr_obj in actual_exprs_to_process:
+                    ff = ff._with_flowfile_formula(expr_obj._ff_repr, expr_obj.column_name, description)
+                return ff
+
             for current_expr_obj in actual_exprs_to_process:
                 all_input_expr_objects.append(current_expr_obj)
                 pure_expr_str, raw_defs_str = _extract_expr_parts(current_expr_obj)
@@ -2085,7 +2932,7 @@ class FlowFrame:
                 for e in all_input_expr_objects
                 if isinstance(e, Expr) and hasattr(e, "expr") and e.expr is not None
             ]
-            self._add_polars_code(
+            precomputed = self._add_polars_code(
                 new_node_id,
                 final_code_for_node,
                 description,
@@ -2093,24 +2940,40 @@ class FlowFrame:
                 convertable_to_code=_check_if_convertible_to_code(all_input_expr_objects),
                 polars_expr=pl_expressions_for_fallback,
             )
-            return self._create_child_frame(new_node_id)
+            return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
         elif flowfile_formulas is not None and output_column_names is not None:
             if len(output_column_names) != len(flowfile_formulas):
                 raise ValueError("Length of both the formulas and the output columns names must be identical")
+            if output_column_datatypes is not None and len(output_column_datatypes) != len(flowfile_formulas):
+                raise ValueError("Length of output_column_datatypes must match the number of formulas")
 
+            # When the user did not request explicit output datatypes, try to
+            # upgrade flowfile formulas to native polars/flowframe expressions
+            # for a more efficient node type. Falls back transparently when
+            # the upstream translator can't handle a given formula.
+            if output_column_datatypes is None:
+                translated = _try_translate_flowfile_formulas(flowfile_formulas, output_column_names)
+                if translated is not None:
+                    return self.with_columns(*translated, description=description)
+
+            datatypes = output_column_datatypes or ["Auto"] * len(flowfile_formulas)
             if len(flowfile_formulas) == 1:
-                return self._with_flowfile_formula(flowfile_formulas[0], output_column_names[0], description)
+                return self._with_flowfile_formula(
+                    flowfile_formulas[0], output_column_names[0], description, output_column_datatype=datatypes[0]
+                )
             ff = self
-            for i, (flowfile_formula, output_column_name) in enumerate(
-                zip(flowfile_formulas, output_column_names, strict=False)
+            for i, (flowfile_formula, output_column_name, datatype) in enumerate(
+                zip(flowfile_formulas, output_column_names, datatypes, strict=False)
             ):
-                ff = ff._with_flowfile_formula(flowfile_formula, output_column_name, f"{i}: {description}")
+                ff = ff._with_flowfile_formula(
+                    flowfile_formula, output_column_name, f"{i}: {description}", output_column_datatype=datatype
+                )
             return ff
         else:
             raise ValueError("Either exprs/named_exprs or flowfile_formulas with output_column_names must be provided")
 
-    def with_row_index(self, name: str = "index", offset: int = 0, description: str = None) -> "FlowFrame":
+    def with_row_index(self, name: str = "index", offset: int = 0, description: str = None) -> FlowFrame:
         """
         Add a row index as the first column in the DataFrame.
 
@@ -2130,9 +2993,7 @@ class FlowFrame:
         """
         new_node_id = generate_node_id()
 
-        # Check if we can use the native record_id implementation
         if name == "record_id" or (offset == 1 and name != "index"):
-            # Create RecordIdInput - no grouping needed
             record_id_input = transform_schema.RecordIdInput(
                 output_column_name=name,
                 offset=offset,
@@ -2140,7 +3001,6 @@ class FlowFrame:
                 group_by_columns=[],
             )
 
-            # Create node settings
             record_id_settings = input_schema.NodeRecordId(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -2152,10 +3012,8 @@ class FlowFrame:
                 description=description or f"Add row index column '{name}'",
             )
 
-            # Add to graph
             self.flow_graph.add_record_id(record_id_settings)
         else:
-            # Use the polars code approach for other cases
             code = f"input_df.with_row_index(name='{name}', offset={offset})"
             self._add_polars_code(new_node_id, code, description or f"Add row index column '{name}'")
 
@@ -2166,7 +3024,7 @@ class FlowFrame:
         columns: str | Column | Iterable[str | Column],
         *more_columns: str | Column,
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Explode the dataframe to long format by exploding the given columns.
 
@@ -2190,7 +3048,7 @@ class FlowFrame:
 
         all_columns = []
 
-        if isinstance(columns, (list, tuple)):
+        if isinstance(columns, list | tuple):
             all_columns.extend([col.column_name if isinstance(col, Column) else col for col in columns])
         else:
             all_columns.append(columns.column_name if isinstance(columns, Column) else columns)
@@ -2212,20 +3070,18 @@ class FlowFrame:
         cols_desc = ", ".join(str(s) for s in all_columns)
         desc = description or f"Explode column(s): {cols_desc}"
 
-        # Add polars code node
         self._add_polars_code(new_node_id, code, desc)
 
         return self._create_child_frame(new_node_id)
 
-    def fuzzy_match(
+    def fuzzy_join(
         self,
-        other: "FlowFrame",
+        other: FlowFrame,
         fuzzy_mappings: list[FuzzyMapping],
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         self._ensure_same_graph(other)
 
-        # Step 3: Generate new node ID
         new_node_id = generate_node_id()
         node_fuzzy_match = input_schema.NodeFuzzyMatch(
             flow_id=self.flow_graph.flow_id,
@@ -2253,7 +3109,7 @@ class FlowFrame:
         delimiter: str = None,
         split_by_column: str = None,
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Split text in a column into multiple rows.
 
@@ -2295,7 +3151,6 @@ class FlowFrame:
             split_by_column=split_by_column,
         )
 
-        # Create node settings
         text_to_rows_settings = input_schema.NodeTextToRows(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
@@ -2307,19 +3162,18 @@ class FlowFrame:
             description=description or f"Split text in '{column_name}' to rows",
         )
 
-        # Add to graph
         self.flow_graph.add_text_to_rows(text_to_rows_settings)
 
         return self._create_child_frame(new_node_id)
 
     def unique(
         self,
-        subset: Union[str, "Expr", list[Union[str, "Expr"]]] = None,
+        subset: str | Expr | list[str | Expr] = None,
         *,
         keep: Literal["first", "last", "any", "none"] = "any",
         maintain_order: bool = False,
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Drop duplicate rows from this dataframe.
 
@@ -2348,15 +3202,12 @@ class FlowFrame:
             DataFrame with unique rows.
         """
         new_node_id = generate_node_id()
-
         processed_subset = None
         can_use_native = True
         if subset is not None:
-            # Convert to list if single item
-            if not isinstance(subset, (list, tuple)):
+            if not isinstance(subset, list | tuple):
                 subset = [subset]
 
-            # Extract column names
             processed_subset = []
             for col_expr in subset:
                 if isinstance(col_expr, str):
@@ -2370,14 +3221,13 @@ class FlowFrame:
                     can_use_native = False
                     break
 
-        # Determine if we can use the native implementation
         can_use_native = can_use_native and keep in ["any", "first", "last", "none"] and not maintain_order
 
         if can_use_native:
-            # Use the native NodeUnique implementation
+            if not processed_subset:  # Ensure the subset is selecting all columns
+                processed_subset = self.columns
             unique_input = transform_schema.UniqueInput(columns=processed_subset, strategy=keep)
 
-            # Create node settings
             unique_settings = input_schema.NodeUnique(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -2389,24 +3239,19 @@ class FlowFrame:
                 description=description or f"Get unique rows (strategy: {keep})",
             )
 
-            # Add to graph using native implementation
             self.flow_graph.add_unique(unique_settings)
         else:
-            # Generate polars code for more complex cases
             if subset is None:
                 subset_str = "None"
-            elif isinstance(subset, (list, tuple)):
-                # Format each item in the subset list
+            elif isinstance(subset, list | tuple):
                 items = []
                 for item in subset:
                     if isinstance(item, str):
                         items.append(f'"{item}"')
                     else:
-                        # For expressions, use their string representation
                         items.append(str(item))
                 subset_str = f"[{', '.join(items)}]"
             else:
-                # Single item that's not a string
                 subset_str = str(subset)
 
             code = f"""
@@ -2418,11 +3263,9 @@ class FlowFrame:
             )
             """
 
-            # Create descriptive text based on parameters
             subset_desc = "all columns" if subset is None else f"columns: {subset_str}"
             desc = description or f"Get unique rows using {subset_desc}, keeping {keep}"
 
-            # Add polars code node
             self._add_polars_code(new_node_id, code, desc)
 
         return self._create_child_frame(new_node_id)

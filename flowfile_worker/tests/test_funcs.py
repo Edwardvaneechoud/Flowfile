@@ -9,7 +9,7 @@ from flowfile_worker.external_sources.s3_source.models import (
     CloudStorageWriteSettings,
     WriteSettings,
 )
-from flowfile_worker.funcs import write_to_cloud_storage
+from flowfile_worker.funcs import fuzzy_join_task, generic_task, write_parquet, write_to_cloud_storage
 
 logger = getLogger(__name__)
 
@@ -24,8 +24,31 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     # noinspection PyUnresolvedReferences
+    from utils import cloud_storage_connection_settings, is_docker_available
 
 
+def test_write_parquet(tmp_path):
+    """Direct-call regression test: the post-write fsync must use a writable fd
+    (read-only handles raise EBADF on Windows)."""
+    lf = pl.LazyFrame({"value": [1, 2, 3]})
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    output_path = str(tmp_path / "1" / "2" / "inputs" / "main_0.parquet")
+
+    write_parquet(
+        polars_serializable_object=lf.serialize(),
+        progress=progress,
+        error_message=error_message,
+        queue=Queue(maxsize=1),
+        file_path="",
+        output_path=output_path,
+    )
+
+    assert progress.value == 100, error_message[:].decode(errors="replace")
+    assert pl.read_parquet(output_path)["value"].to_list() == [1, 2, 3]
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_write_to_cloud_storage(cloud_storage_connection_settings):
     write_settings = WriteSettings(
         resource_path="s3://worker-test-bucket/func_test_write.parquet",
@@ -48,3 +71,66 @@ def test_write_to_cloud_storage(cloud_storage_connection_settings):
                                )
     except Exception as e:
         pytest.fail(f"Write to cloud storage failed: {e}")
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_write_to_cloud_storage_partitioned_delta(cloud_storage_connection_settings):
+    from shared.delta_utils import get_delta_partition_columns
+
+    resource_path = "s3://worker-test-bucket/func_test_write_partitioned_delta"
+    write_settings = WriteSettings(
+        resource_path=resource_path,
+        file_format="delta",
+        write_mode="overwrite",
+        partition_by=["grp"],
+    )
+    cloud_write_settings = CloudStorageWriteSettings(
+        connection=cloud_storage_connection_settings,
+        write_settings=write_settings,
+    )
+    lf = pl.LazyFrame({"value": list(range(10)), "grp": ["a", "b"] * 5})
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+
+    write_to_cloud_storage(
+        polars_serializable_object=lf.serialize(),
+        progress=progress,
+        error_message=error_message,
+        queue=Queue(maxsize=1),
+        file_path="",
+        cloud_write_settings=cloud_write_settings,
+    )
+
+    assert progress.value == 100, error_message[:].decode(errors="replace")
+    storage_options = cloud_storage_connection_settings.get_storage_options()
+    assert get_delta_partition_columns(resource_path, storage_options=storage_options) == ["grp"]
+
+
+def test_generic_task_error_returns_early(tmp_path):
+    """A failing func must set progress=-1 and not fall through to scan a missing IPC file."""
+    progress = mp_context.Value('i', 0)
+    error_message = mp_context.Array('c', 1024)
+    queue = Queue(maxsize=1)
+    missing_file = str(tmp_path / "never_written.arrow")
+
+    def boom():
+        raise ValueError("kaboom")
+
+    generic_task(boom, progress, error_message, queue, missing_file, 1, 1)
+    assert progress.value == -1
+    assert "kaboom" in error_message.value.decode().rstrip("\x00")
+    assert queue.empty()
+
+
+def test_fuzzy_join_task_error_returns_early(tmp_path):
+    """A failing fuzzy join must set progress=-1 and not fall through to scan a missing IPC file."""
+    progress = mp_context.Value('i', 0)
+    error_message = mp_context.Array('c', 1024)
+    queue = Queue(maxsize=1)
+    missing_file = str(tmp_path / "never_written.arrow")
+
+    # Undeserializable bytes make the task raise before any IPC file is written.
+    fuzzy_join_task(b"not-arrow", b"not-arrow", [], error_message, missing_file, progress, queue, 1, 1)
+    assert progress.value == -1
+    assert error_message.value.decode().rstrip("\x00") != ""
+    assert queue.empty()

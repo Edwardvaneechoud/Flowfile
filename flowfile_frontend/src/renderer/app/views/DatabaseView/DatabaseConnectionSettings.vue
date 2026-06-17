@@ -12,6 +12,7 @@
           class="form-input"
           placeholder="my_postgres_db"
           required
+          :disabled="props.isEditing"
         />
       </div>
 
@@ -19,10 +20,12 @@
         <label for="database-type" class="form-label">Database Type</label>
         <select id="database-type" v-model="connection.databaseType" class="form-input" required>
           <option value="postgresql">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
+          <option value="sqlite">SQLite</option>
         </select>
       </div>
 
-      <div class="form-field">
+      <div v-if="!isSqlite" class="form-field">
         <label for="host" class="form-label">Host</label>
         <input
           id="host"
@@ -34,29 +37,29 @@
         />
       </div>
 
-      <div class="form-field">
+      <div v-if="!isSqlite" class="form-field">
         <label for="port" class="form-label">Port</label>
         <input
           id="port"
           v-model="connection.port"
           type="number"
           class="form-input"
-          placeholder="5432"
+          :placeholder="String(defaultPorts[connection.databaseType as DatabaseType] || 5432)"
         />
       </div>
 
       <div class="form-field">
-        <label for="database" class="form-label">Database</label>
+        <label for="database" class="form-label">{{ isSqlite ? "File Path" : "Database" }}</label>
         <input
           id="database"
           v-model="connection.database"
           type="text"
           class="form-input"
-          placeholder="Database name"
+          :placeholder="isSqlite ? '/path/to/database.db' : 'Database name'"
         />
       </div>
 
-      <div class="form-field">
+      <div v-if="!isSqlite" class="form-field">
         <label for="username" class="form-label">Username</label>
         <input
           id="username"
@@ -68,7 +71,7 @@
         />
       </div>
 
-      <div class="form-field">
+      <div v-if="!isSqlite" class="form-field">
         <label for="password" class="form-label">Password</label>
         <div class="password-field">
           <input
@@ -76,8 +79,8 @@
             v-model="connection.password"
             :type="showPassword ? 'text' : 'password'"
             class="form-input"
-            placeholder="Password"
-            required
+            :placeholder="props.isEditing ? 'Leave blank to keep existing' : 'Password'"
+            :required="!props.isEditing"
           />
           <button
             type="button"
@@ -90,7 +93,7 @@
         </div>
       </div>
 
-      <div class="form-field">
+      <div v-if="!isSqlite" class="form-field">
         <div class="checkbox-container">
           <input
             id="ssl-enabled"
@@ -115,10 +118,13 @@
 <script lang="ts" setup>
 import { ref, computed, defineProps, defineEmits, watch } from "vue";
 import type { FullDatabaseConnection } from "./databaseConnectionTypes";
+import { defaultPorts, isFileBased } from "./databaseConnectionTypes";
+import type { DatabaseType } from "./databaseConnectionTypes";
 
 const props = defineProps<{
   initialConnection?: FullDatabaseConnection;
   isSubmitting?: boolean;
+  isEditing?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -126,7 +132,6 @@ const emit = defineEmits<{
   (e: "cancel"): void;
 }>();
 
-// Create a default connection object
 const defaultConnection = (): FullDatabaseConnection => ({
   connectionName: "",
   databaseType: "postgresql",
@@ -139,12 +144,10 @@ const defaultConnection = (): FullDatabaseConnection => ({
   url: "",
 });
 
-// Initialize connection with props or default values
 const connection = ref<FullDatabaseConnection>(
   props.initialConnection ? { ...props.initialConnection } : defaultConnection(),
 );
 
-// Watch for changes in initialConnection prop
 watch(
   () => props.initialConnection,
   (newVal) => {
@@ -154,19 +157,40 @@ watch(
   },
 );
 
+watch(
+  () => connection.value.databaseType,
+  (newType, oldType) => {
+    if (newType !== oldType) {
+      const newDefault = defaultPorts[newType as DatabaseType];
+      if (isFileBased(newType as DatabaseType)) {
+        // SQLite has no port
+        connection.value.port = undefined;
+      } else {
+        const oldDefault = defaultPorts[oldType as DatabaseType];
+        if (!connection.value.port || connection.value.port === oldDefault) {
+          connection.value.port = newDefault;
+        }
+      }
+    }
+  },
+);
+
 const showPassword = ref(false);
 
-// Computed property to determine if the form is valid
+const isSqlite = computed(() => isFileBased(connection.value.databaseType as DatabaseType));
+
 const isValid = computed(() => {
+  if (isSqlite.value) {
+    return !!connection.value.connectionName && !!connection.value.database;
+  }
   return (
     !!connection.value.connectionName &&
     !!connection.value.username &&
-    !!connection.value.password &&
+    (props.isEditing || !!connection.value.password) &&
     !!connection.value.host
   );
 });
 
-// Computed property for the submit button text
 const submitButtonText = computed(() => {
   if (props.isSubmitting) {
     return "Saving...";
@@ -174,7 +198,6 @@ const submitButtonText = computed(() => {
   return props.initialConnection ? "Update Connection" : "Create Connection";
 });
 
-// Submit form
 const submitForm = () => {
   if (isValid.value) {
     emit("submit", connection.value);

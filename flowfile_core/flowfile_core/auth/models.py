@@ -1,8 +1,11 @@
 from pydantic import BaseModel, SecretStr
 
+from flowfile_core.schemas.sharing_schema import AccessInfo
+
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: str | None = None
     token_type: str
 
 
@@ -26,6 +29,7 @@ class UserInDB(User):
 
 class UserCreate(BaseModel):
     """Model for creating a new user (admin only)"""
+
     username: str
     password: str
     email: str | None = None
@@ -35,6 +39,7 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     """Model for updating a user (admin only)"""
+
     email: str | None = None
     full_name: str | None = None
     disabled: bool | None = None
@@ -45,6 +50,7 @@ class UserUpdate(BaseModel):
 
 class ChangePassword(BaseModel):
     """Model for user changing their own password"""
+
     current_password: str
     new_password: str
 
@@ -54,8 +60,14 @@ class SecretInput(BaseModel):
     value: SecretStr
 
 
-class Secret(SecretInput):
+class Secret(BaseModel):
+    name: str
+    # None on group-shared rows: non-owners never receive the value field — not
+    # even the SecretStr mask of the ciphertext.
+    value: SecretStr | None = None
     user_id: str
+    id: int | None = None
+    access: AccessInfo | None = None
 
 
 class SecretInDB(BaseModel):

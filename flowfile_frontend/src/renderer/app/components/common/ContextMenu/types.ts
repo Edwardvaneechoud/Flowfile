@@ -1,5 +1,3 @@
-// ContextMenu types
-
 export interface ContextMenuOption {
   label: string;
   action: string;

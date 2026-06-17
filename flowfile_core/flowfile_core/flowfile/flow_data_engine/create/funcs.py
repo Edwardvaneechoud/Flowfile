@@ -6,12 +6,12 @@ from polars._typing import CsvEncoding
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import df_from_calamine_xlsx, df_from_openpyxl
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.schemas import input_schema
+from shared.path_utils import is_url
 
 
 def create_from_json(received_table: input_schema.ReceivedTable):
     f = received_table.abs_file_path
-    gbs_to_load = os.path.getsize(f) / 1024 / 1000 / 1000
-    low_mem = gbs_to_load > 10
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 10
 
     if not isinstance(received_table.table_settings, input_schema.InputJsonTable):
         raise ValueError("Received table settings are not of type InputJsonTable")
@@ -31,7 +31,7 @@ def create_from_json(received_table: input_schema.ReceivedTable):
             )
             data.head(1).collect()
             return data
-        except:
+        except Exception:
             try:
                 data = pl.scan_csv(
                     f,
@@ -43,7 +43,7 @@ def create_from_json(received_table: input_schema.ReceivedTable):
                     ignore_errors=True,
                 )
                 return data
-            except:
+            except Exception:
                 data = pl.scan_csv(
                     f,
                     low_memory=low_mem,
@@ -83,8 +83,7 @@ def create_from_path_csv(received_table: input_schema.ReceivedTable) -> pl.LazyF
     table_settings: input_schema.InputCsvTable = received_table.table_settings
 
     f = received_table.abs_file_path
-    gbs_to_load = os.path.getsize(f) / 1024 / 1000 / 1000
-    low_mem = gbs_to_load > 10
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 10
 
     if table_settings.encoding.upper() in ("UTF-8", "UTF8", "UTF8-LOSSY", "UTF-8-LOSSY"):
         encoding: CsvEncoding = standardize_utf8_encoding(table_settings.encoding)
@@ -101,7 +100,7 @@ def create_from_path_csv(received_table: input_schema.ReceivedTable) -> pl.LazyF
             )
             data.head(1).collect()
             return data
-        except:
+        except Exception:
             try:
                 data = pl.scan_csv(
                     f,
@@ -113,7 +112,7 @@ def create_from_path_csv(received_table: input_schema.ReceivedTable) -> pl.LazyF
                     ignore_errors=True,
                 )
                 return data
-            except:
+            except Exception:
                 data = pl.scan_csv(
                     f,
                     low_memory=False,
@@ -145,14 +144,14 @@ def create_random(number_of_records: int = 1000) -> pl.LazyFrame:
 def create_from_path_parquet(received_table: input_schema.ReceivedTable) -> pl.LazyFrame:
     if not isinstance(received_table.table_settings, input_schema.InputParquetTable):
         raise ValueError("Received table settings are not of type InputParquetTable")
-    low_mem = (os.path.getsize(received_table.abs_file_path) / 1024 / 1000 / 1000) > 2
-    return pl.scan_parquet(source=received_table.abs_file_path, low_memory=low_mem)
+    f = received_table.abs_file_path
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 2
+    return pl.scan_parquet(source=f, low_memory=low_mem)
 
 
 def create_from_path_excel(received_table: input_schema.ReceivedTable):
     if not isinstance(received_table.table_settings, input_schema.InputExcelTable):
         raise ValueError("Received table settings are not of type InputExcelTable")
-
     table_settings: input_schema.InputExcelTable = received_table.table_settings
     if table_settings.type_inference:
         engine = "openpyxl"
@@ -178,12 +177,13 @@ def create_from_path_excel(received_table: input_schema.ReceivedTable):
             df = df.select(cols_to_select)
 
     elif engine == "xlsx2csv":
-        csv_options = {"has_header": table_settings.has_headers, "skip_rows": table_settings.start_row}
+        csv_options = {"skip_rows": table_settings.start_row}
         df = pl.read_excel(
             source=received_table.abs_file_path,
             read_options=csv_options,
             engine="xlsx2csv",
             sheet_name=table_settings.sheet_name,
+            has_header=table_settings.has_headers,
         )
         end_col_index = table_settings.end_column if table_settings.end_column > 0 else len(df.columns)
         cols_to_select = [df.columns[i] for i in range(table_settings.start_column, end_col_index)]

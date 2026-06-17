@@ -1,6 +1,6 @@
 # Docker Deployment Guide
 
-This guide covers deploying Flowfile using Docker Compose for production and development environments.
+Deploy Flowfile using Docker Compose for development and production environments.
 
 ## Prerequisites
 
@@ -9,126 +9,86 @@ This guide covers deploying Flowfile using Docker Compose for production and dev
 
 ## Quick Start
 
-### Option A: Interactive Setup (Recommended for First-Time Users)
+### Option A: Interactive Setup (Recommended)
 
-The easiest way to get started:
-
-1. **Start the services without a master key:**
+1. **Start the services:**
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
 
-2. **Open Flowfile in your browser:** http://localhost:8080
+2. **Open Flowfile:** http://localhost:8080
 
 3. **Follow the Setup Wizard:**
-   - You'll see a setup screen prompting you to generate a master key
    - Click "Generate Master Key"
    - Copy the generated key
-   - Add it to your `.env` file as `FLOWFILE_MASTER_KEY=<your-key>`
-   - Restart the containers: `docker-compose restart`
+   - Add to your `.env` file: `FLOWFILE_MASTER_KEY=<your-key>`
+   - Restart: `docker compose restart`
 
-4. **Log in** with the default credentials (or your configured ones)
+4. **Log in** with default credentials (`admin` / `changeme`)
 
 ### Option B: Pre-configured Setup
 
-For automated deployments or if you prefer to configure everything upfront:
+For automated deployments:
 
 #### Step 1: Generate the Master Key
 
-The master key encrypts all user secrets stored in the database. Generate it once and protect it carefully:
-
 ```bash
-# Using the Makefile (recommended)
-make generate_key
-
-# Or manually with Python
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" > master_key.txt
-chmod 600 master_key.txt
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-**Security Warning:**
-- Never commit `master_key.txt` to version control
-- Back up this file securely - losing it means losing access to all encrypted secrets
-- Use different keys for development and production environments
+Copy the output for the next step.
 
-#### Step 2: Configure Environment Variables
-
-Copy the example environment file and customize it:
+#### Step 2: Configure Environment
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your settings:
+Edit `.env`:
 
 ```bash
-# Master key for encrypting secrets (required)
-# Can also use master_key.txt file as Docker secret instead
 FLOWFILE_MASTER_KEY=<your-generated-key>
-
-# Admin credentials for the default user
 FLOWFILE_ADMIN_USER=admin
 FLOWFILE_ADMIN_PASSWORD=YourSecurePassword123!
-
-# JWT secret for session tokens (min 32 characters)
-# Generate with: openssl rand -hex 32
-JWT_SECRET_KEY=your-secure-jwt-secret-key-at-least-32-chars
+JWT_SECRET_KEY=your-secure-jwt-secret-at-least-32-chars
 ```
 
-#### Step 3: Start the Services
+#### Step 3: Start Services
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-Access Flowfile at: http://localhost:8080
+Access at: http://localhost:8080
 
-## Master Key Configuration Options
+## Security Architecture
 
-You have two ways to provide the master key:
-
-| Method | How to Use | Best For |
-|--------|-----------|----------|
-| **Environment Variable** | Set `FLOWFILE_MASTER_KEY` in `.env` | Simple deployments, Kubernetes |
-| **Docker Secret File** | Create `master_key.txt` in project root | Enhanced security, Docker Swarm |
-
-If both are configured, the environment variable takes precedence.
-
-## Understanding the Security Architecture
-
-Flowfile uses a layered security approach:
-
-| Component | Purpose | Storage |
-|-----------|---------|---------|
-| **Master Key** | Encrypts all user secrets at rest | Docker secret (`/run/secrets/flowfile_master_key`) |
-| **User Secrets** | API keys, passwords, tokens created by users | Encrypted in database using master key |
-| **JWT Secret** | Signs authentication tokens | Environment variable |
+| Component | Purpose | Configuration |
+|-----------|---------|---------------|
+| **Master Key** | Encrypts user secrets at rest | `FLOWFILE_MASTER_KEY` env var |
+| **User Secrets** | API keys, passwords, tokens | Encrypted in database |
+| **JWT Secret** | Signs authentication tokens | `JWT_SECRET_KEY` env var |
 | **User Password** | Authenticates users | Hashed in database |
 
 ### How They Work Together
 
 1. User logs in with username/password
-2. Server issues a JWT token (signed with JWT_SECRET_KEY)
+2. Server issues a JWT token (signed with `JWT_SECRET_KEY`)
 3. User creates secrets (e.g., "my_api_key" = "sk-xxx")
 4. Secret value is encrypted using the master key before storage
 5. At runtime, secrets are decrypted with the master key for use in flows
 
 ## Production Checklist
 
-Before deploying to production:
-
-- [ ] Generate a unique master key (not the one from development)
+- [ ] Generate a unique `FLOWFILE_MASTER_KEY`
 - [ ] Set a strong `FLOWFILE_ADMIN_PASSWORD`
-- [ ] Generate a secure `JWT_SECRET_KEY` with `openssl rand -hex 32`
-- [ ] Ensure `master_key.txt` is not in version control
-- [ ] Back up `master_key.txt` securely (losing it = losing all encrypted secrets)
-- [ ] Consider using Docker secrets or a secrets manager for `.env` values
+- [ ] Generate secure `JWT_SECRET_KEY` with `openssl rand -hex 32`
+- [ ] Never commit `.env` to version control
+- [ ] Back up `.env` securely (losing master key = losing all encrypted secrets)
 - [ ] Set up HTTPS (reverse proxy with nginx/traefik)
-- [ ] Configure firewall rules to restrict access
+- [ ] Configure firewall rules
 
-## Docker Compose Configuration
-
-The `docker-compose.yml` deploys three services:
+## Docker Compose Services
 
 ```yaml
 services:
@@ -138,44 +98,36 @@ services:
 ```
 
 All services share:
-- The master key via Docker secrets
+- The master key via `FLOWFILE_MASTER_KEY` environment variable
 - User data volume (`./flowfile_data`)
 - Internal network for communication
 
 ## Troubleshooting
 
-### "Docker secret 'flowfile_master_key' is not mounted"
+### Setup wizard keeps appearing
 
-The master key file is missing or not properly configured:
+The master key is not configured. Add `FLOWFILE_MASTER_KEY` to your `.env` file and restart.
 
-```bash
-# Check if file exists
-ls -la master_key.txt
+### Invalid master key format
 
-# Generate if missing
-make generate_key
-```
-
-### "Invalid master key format"
-
-The master key must be a valid Fernet key (base64-encoded, 32 bytes). Regenerate it:
+The master key must be a valid Fernet key. Generate a new one:
 
 ```bash
-make force_key
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-**Warning:** Regenerating the key will make existing encrypted secrets unreadable.
+**Warning:** Changing the key makes existing encrypted secrets unreadable.
 
 ### Container fails to start
 
 Check the logs:
 
 ```bash
-docker-compose logs flowfile-core
-docker-compose logs flowfile-worker
+docker compose logs flowfile-core
+docker compose logs flowfile-worker
 ```
 
-## Volumes and Data Persistence
+## Volumes
 
 | Volume | Purpose |
 |--------|---------|
@@ -190,3 +142,74 @@ For high-availability deployments:
 - Deploy multiple worker instances
 - Use Redis for distributed task queue
 - Place services behind a load balancer
+
+## Group-Based Sharing (multi-user mode)
+
+In Docker (multi-user) mode, Flowfile supports sharing resources with **user groups**.
+This feature is dormant in the desktop/Electron app.
+
+### ⚠️ Breaking change: the catalog is now private-by-default
+
+Previously the data catalog (namespaces, tables, flows, runs, visualizations,
+dashboards) was **globally visible** to every authenticated user in Docker mode.
+As of the release that introduces group sharing, the catalog is
+**private-by-default**: each user sees only the resources they own, the ones
+explicitly shared with a group they belong to, and the seeded *public* system
+namespaces (`General`, `default`, `Unnamed Flows`, `Local Flows`) as tree
+containers. Global admins still see everything.
+
+If your team relied on the old "everyone sees every flow/table" behavior, create a
+group, add the relevant members, and share the namespaces/tables/flows you want
+shared. No data is lost in the upgrade — only its *visibility* narrows.
+
+### How it works
+
+- **Groups**: only global admins create groups (`/user-groups`, or the **User
+  Groups** sidebar entry). Each group has member roles (`owner` / `manager` /
+  `member`) so a group owner can manage membership without being a global admin.
+- **Sharing**: owners share a resource with a group at `use` (read/execute) or
+  `manage` (edit + re-share) level via the **Share** action in the UI.
+  - *Secrets* are **use-only** when shared: a group's flows can run with the
+    credential, but members can never view its value. Sharing a secret for use is
+    therefore security-equivalent to giving the group that credential.
+  - *Connections* (database, cloud, Google Analytics, Kafka): a shared connection
+    is usable in flows directly. A `manage`-grantee who changes the connection's
+    target (host/endpoint/protocol) must re-enter the credentials.
+- **Schedules**: a `use`-level member may schedule a shared flow; the run executes
+  as that member, so its secret/connection references resolve against the member's
+  own grants. Make sure the member also has access to everything the flow uses.
+- **Not shared**: AI BYOK keys and uploaded files stay outside the sharing model
+  (the Docker uploads directory is already common to all users).
+
+### How shared secrets decrypt for non-owners
+
+Sharing is **authorization-only**: granting a group access to a secret or
+connection never copies, re-encrypts, or exposes the credential.
+
+Every secret is stored as `$ffsec$1$<owner_id>$<ciphertext>`, encrypted with a
+per-user key derived from the master key (HKDF with the owner's user id as
+context). Because the owner's id is embedded in the stored value, decryption
+never depends on *who is running the flow*: when a group member's flow resolves
+a shared secret, core (and the worker, which derives keys independently) reads
+the owner id out of the value and re-derives the **owner's** key. The member's
+identity only matters for the authorization check — may this user resolve this
+secret by name — which is grant-based: own secrets first, then group-shared ones.
+
+Consequences:
+
+- The plaintext is never returned to non-owners through the API; it only
+  resolves inside flow execution.
+- When a `manage`-grantee rotates a shared connection's credential, the new
+  value is re-encrypted under the **owner's** key, so the stored format never
+  changes hands.
+- Revoking a grant takes effect immediately: the grantee never held key
+  material, so there is nothing to rotate or re-encrypt.
+
+### Operator notes
+
+- `FLOWFILE_INTERNAL_SERVICE_USER_ID` (default `1`) selects which user the kernel
+  internal-service principal maps to when no kernel id is supplied. In hardened
+  deployments point it at a dedicated service account that owns no resources.
+- Migration `020` adds the `user_groups`, `user_group_memberships`, and
+  `resource_grants` tables and an `is_public` flag on namespaces; it runs
+  automatically at core startup.

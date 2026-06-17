@@ -33,7 +33,11 @@ async def docs_redirect():
 @router.get("/health/status", response_model=SetupStatus, tags=["health"])
 async def get_setup_status():
     """Get the current setup status of the application."""
-    mode = os.environ.get("FLOWFILE_MODE", "electron")
+    # Default to "tauri" — `flowfile run ui` (no env) and the Tauri desktop shell
+    # both want desktop-mode auth (auto-auth, no setup wizard). The frontend
+    # accepts "electron" | "tauri" | "desktop" all as desktop mode, so existing
+    # deployments that hard-code FLOWFILE_MODE=electron keep working.
+    mode = os.environ.get("FLOWFILE_MODE", "tauri")
     master_key_ok = is_master_key_configured()
     return SetupStatus(
         setup_required=not master_key_ok,

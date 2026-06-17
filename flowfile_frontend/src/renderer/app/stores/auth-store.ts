@@ -43,7 +43,6 @@ export const useAuthStore = defineStore("auth", {
 
         if (success) {
           this.isAuthenticated = true;
-          // Fetch full user info including is_admin
           const userInfo = await authService.getCurrentUser();
           if (userInfo) {
             this.user = userInfo;
@@ -71,7 +70,6 @@ export const useAuthStore = defineStore("auth", {
         this.isAuthenticated = authenticated;
 
         if (authenticated) {
-          // Try to get user info from the backend
           const userInfo = await authService.getCurrentUser();
           if (userInfo) {
             this.user = userInfo;

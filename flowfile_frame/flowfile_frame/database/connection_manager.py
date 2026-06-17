@@ -63,7 +63,6 @@ def create_database_connection(
     """
     user_id = get_current_user_id()
 
-    # Convert password to SecretStr if it's a plain string
     if isinstance(password, str):
         password = SecretStr(password)
 
@@ -113,9 +112,8 @@ def create_database_connection_if_not_exists(
     Returns:
         FullDatabaseConnection: The existing or newly created connection.
     """
-    user_id = get_current_user_id()
+    get_current_user_id()
 
-    # Check if connection already exists
     existing = get_database_connection_by_name(connection_name)
     if existing:
         return existing
@@ -157,11 +155,7 @@ def get_all_available_database_connections() -> list[FullDatabaseConnectionInter
 
     user_id = get_current_user_id()
     with get_db_context() as db:
-        connections = (
-            db.query(DBConnectionModel)
-            .filter(DBConnectionModel.user_id == user_id)
-            .all()
-        )
+        connections = db.query(DBConnectionModel).filter(DBConnectionModel.user_id == user_id).all()
 
         return [
             FullDatabaseConnectionInterface(
@@ -186,7 +180,6 @@ def del_database_connection(connection_name: str) -> bool:
     Returns:
         True if the connection was deleted, False if it didn't exist.
     """
-    from flowfile_core.database.models import DatabaseConnection as DBConnectionModel
     from flowfile_core.database.models import Secret
 
     user_id = get_current_user_id()

@@ -16,7 +16,6 @@ export function useNodeValidation() {
   ): ValidationError[] {
     const errors: ValidationError[] = [];
 
-    // Validate node metadata
     if (!nodeMetadata.node_name.trim()) {
       errors.push({ field: "node_name", message: "Node name is required" });
     } else if (!/^[a-zA-Z][a-zA-Z0-9_\s]*$/.test(nodeMetadata.node_name)) {
@@ -27,11 +26,10 @@ export function useNodeValidation() {
       });
     }
 
-    if (!nodeMetadata.node_category.trim()) {
-      errors.push({ field: "node_category", message: "Category is required" });
-    }
+  if (!nodeMetadata.node_category.trim()) {
+    errors.push({ field: "node_category", message: "Category is required" });
+  }
 
-    // Check for duplicate section names
     const sectionNames = new Set<string>();
     sections.forEach((section, index) => {
       const name = section.name || toSnakeCase(section.title || "section");
@@ -40,7 +38,6 @@ export function useNodeValidation() {
       }
       sectionNames.add(name);
 
-      // Check for duplicate field names within section
       const fieldNames = new Set<string>();
       section.components.forEach((comp, compIndex) => {
         const fieldName = toSnakeCase(comp.field_name);
@@ -59,7 +56,6 @@ export function useNodeValidation() {
       });
     });
 
-    // Validate Python code syntax (basic check)
     if (!processCode.includes("def process")) {
       errors.push({ field: "process_code", message: "Process method definition is missing" });
     }

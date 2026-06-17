@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -17,6 +18,7 @@ from pydantic import (
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
+from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.schemas.yaml_types import (
     NodeCrossJoinYaml,
     NodeFuzzyMatchYaml,
@@ -25,7 +27,9 @@ from flowfile_core.schemas.yaml_types import (
     NodeSelectYaml,
     OutputSettingsYaml,
 )
+from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
+from shared.path_utils import is_url
 
 SecretRef = Annotated[
     str, StringConstraints(min_length=1, max_length=100), Field(description="An ID referencing an encrypted secret.")
@@ -78,6 +82,28 @@ class MinimalFieldInfo(BaseModel):
 
     name: str
     data_type: str = "String"
+
+
+class OutputFieldInfo(BaseModel):
+    """Field information with optional default value for output field configuration."""
+
+    name: str
+    data_type: DataTypeStr = "String"
+    default_value: str | None = None  # Can be a literal value or expression
+
+
+class OutputFieldConfig(BaseModel):
+    """Configuration for output field validation and transformation behavior."""
+
+    enabled: bool = False
+    validation_mode_behavior: Literal[
+        "add_missing",  # Add missing fields with defaults, remove extra columns
+        "add_missing_keep_extra",  # Add missing fields with defaults, keep all incoming columns
+        "raise_on_missing",  # Raise error if any fields are missing
+        "select_only",  # Select only specified fields, skip missing silently
+    ] = "select_only"
+    fields: list[OutputFieldInfo] = Field(default_factory=list)
+    validate_data_types: bool = False  # Enable data type validation without casting
 
 
 class InputTableBase(BaseModel):
@@ -146,7 +172,6 @@ InputTableSettings = Annotated[
 ]
 
 
-# Now create the main ReceivedTable model
 class ReceivedTable(BaseModel):
     """Model for defining a table received from an external source."""
 
@@ -169,7 +194,6 @@ class ReceivedTable(BaseModel):
         """Creates an instance from a file path string."""
         filename = Path(path).name
 
-        # Create appropriate table_settings based on file_type
         settings_map = {
             "csv": InputCsvTable(),
             "json": InputJsonTable(),
@@ -191,6 +215,9 @@ class ReceivedTable(BaseModel):
 
     def set_absolute_filepath(self):
         """Resolves the path to an absolute file path."""
+        if is_url(self.path):
+            self.abs_file_path = self.path
+            return
         base_path = Path(self.path).expanduser()
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
@@ -270,7 +297,7 @@ class OutputSettings(BaseModel):
             result["fields"] = self.fields
         # Only include table_settings if it has non-default values beyond file_type
         ts_dict = self.table_settings.model_dump(exclude={"file_type"})
-        if any(v for v in ts_dict.values()):  # Has meaningful settings
+        if any(v for v in ts_dict.values()):
             result["table_settings"] = ts_dict
         return result
 
@@ -290,7 +317,6 @@ class OutputSettings(BaseModel):
         """Ensures table_settings matches the file_type."""
         if v is None:
             file_type = info.data.get("file_type", "csv")
-            # Create default based on file_type
             match file_type:
                 case "csv":
                     return OutputCsvTable()
@@ -301,7 +327,6 @@ class OutputSettings(BaseModel):
                 case _:
                     return OutputCsvTable()
 
-        # If it's a dict, add file_type if missing
         if isinstance(v, dict) and "file_type" not in v:
             v["file_type"] = info.data.get("file_type", "csv")
 
@@ -323,6 +348,9 @@ class OutputSettings(BaseModel):
         return self
 
 
+_SAFE_IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
 class NodeBase(BaseModel):
     """Base model for all nodes in a FlowGraph. Contains common metadata."""
 
@@ -332,11 +360,40 @@ class NodeBase(BaseModel):
     cache_results: bool | None = False
     pos_x: float | None = 0
     pos_y: float | None = 0
+    group_id: int | None = None  # Visual group membership (organizational only; no execution impact)
     is_setup: bool | None = True
     description: str | None = ""
+    node_reference: str | None = None  # Unique reference identifier for code generation (lowercase, no spaces)
     user_id: int | None = None
     is_flow_output: bool | None = False
     is_user_defined: bool | None = False  # Indicator if the node is a user defined node
+    output_field_config: OutputFieldConfig | None = None
+
+    @field_validator("node_reference", mode="before")
+    @classmethod
+    def validate_node_reference(cls, v):
+        """Validates that node_reference is a safe identifier (lowercase letters, digits, underscores)."""
+        if v is None or v == "":
+            return None
+        if not isinstance(v, str):
+            raise ValueError("node_reference must be a string")
+        if " " in v:
+            raise ValueError("node_reference cannot contain spaces")
+        if v != v.lower():
+            raise ValueError("node_reference must be lowercase")
+        if not _SAFE_IDENTIFIER_RE.match(v):
+            raise ValueError(
+                "node_reference must start with a letter and contain only lowercase letters, digits, and underscores"
+            )
+        return v
+
+    def get_default_description(self) -> str:
+        """Generates a human-readable description based on the node's configured content.
+
+        Subclasses override this to provide meaningful descriptions.
+        Returns an empty string by default.
+        """
+        return ""
 
 
 class NodeSingleInput(NodeBase):
@@ -358,20 +415,85 @@ class NodeSelect(NodeSingleInput):
     select_input: list[transform_schema.SelectInput] = Field(default_factory=list)
     sorted_by: Literal["none", "asc", "desc"] | None = "none"
 
+    def get_default_description(self) -> str:
+        """Describes column selections, renames, and drops."""
+        if not self.select_input:
+            return ""
+        parts = []
+        renames = [s for s in self.select_input if s.old_name != s.new_name and s.keep]
+        drops = [s for s in self.select_input if not s.keep]
+        type_changes = [s for s in self.select_input if s.data_type_change and s.keep]
+        if renames:
+            rename_strs = [f"{r.old_name} -> {r.new_name}" for r in renames[:3]]
+            parts.append("Rename: " + ", ".join(rename_strs))
+            if len(renames) > 3:
+                parts[-1] += f" (+{len(renames) - 3} more)"
+        if drops:
+            drop_names = [d.old_name for d in drops[:3]]
+            parts.append("Drop: " + ", ".join(drop_names))
+            if len(drops) > 3:
+                parts[-1] += f" (+{len(drops) - 3} more)"
+        if type_changes and not renames and not drops:
+            cast_strs = [f"{t.old_name} to {t.data_type}" for t in type_changes[:3]]
+            parts.append("Cast: " + ", ".join(cast_strs))
+            if len(type_changes) > 3:
+                parts[-1] += f" (+{len(type_changes) - 3} more)"
+        return "; ".join(parts) if parts else ""
+
     def to_yaml_dict(self) -> NodeSelectYaml:
         """Converts the select node settings to a dictionary for YAML serialization."""
-        return {
-            "cache_results": self.cache_results,
+        result: NodeSelectYaml = {
+            "cache_results": bool(self.cache_results),
             "keep_missing": self.keep_missing,
             "select_input": [s.to_yaml_dict() for s in self.select_input],
             "sorted_by": self.sorted_by,
         }
+        if self.output_field_config:
+            result["output_field_config"] = {
+                "enabled": self.output_field_config.enabled,
+                "validation_mode_behavior": self.output_field_config.validation_mode_behavior,
+                "validate_data_types": self.output_field_config.validate_data_types,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "data_type": f.data_type,
+                        "default_value": f.default_value,
+                    }
+                    for f in self.output_field_config.fields
+                ],
+            }
+        return result
 
 
 class NodeFilter(NodeSingleInput):
     """Settings for a node that filters rows based on a condition."""
 
     filter_input: transform_schema.FilterInput
+    # When True the node emits two outputs: "pass" (output-0, matching rows)
+    # and "fail" (output-1, non-matching rows). Default preserves
+    # single-output behaviour for existing flows.
+    split_mode: bool = False
+
+    def get_default_description(self) -> str:
+        """Describes the filter condition."""
+        fi = self.filter_input
+        if fi.mode == "advanced" and fi.advanced_filter:
+            expr = fi.advanced_filter
+            if len(expr) > 80:
+                expr = expr[:77] + "..."
+            return expr
+        if fi.mode == "basic" and fi.basic_filter:
+            bf = fi.basic_filter
+            if not bf.field:
+                return ""
+            op = bf.operator
+            op_str = op.to_symbol() if hasattr(op, "to_symbol") else str(op)
+            if op_str in ("is_null", "is_not_null"):
+                return f"{bf.field} {op_str}"
+            if op_str == "between" and bf.value2:
+                return f"{bf.field} between {bf.value} and {bf.value2}"
+            return f"{bf.field} {op_str} {bf.value}"
+        return ""
 
 
 class NodeSort(NodeSingleInput):
@@ -379,11 +501,27 @@ class NodeSort(NodeSingleInput):
 
     sort_input: list[transform_schema.SortByInput] = Field(default_factory=list)
 
+    def get_default_description(self) -> str:
+        """Describes the sort columns and directions."""
+        if not self.sort_input:
+            return ""
+        parts = [f"{s.column} {s.how or 'asc'}" for s in self.sort_input[:3]]
+        desc = "Sort by " + ", ".join(parts)
+        if len(self.sort_input) > 3:
+            desc += f" (+{len(self.sort_input) - 3} more)"
+        return desc
+
 
 class NodeTextToRows(NodeSingleInput):
     """Settings for a node that splits a text column into multiple rows."""
 
     text_to_rows_input: transform_schema.TextToRowsInput
+
+    def get_default_description(self) -> str:
+        """Describes the text-to-rows split operation."""
+        t = self.text_to_rows_input
+        delim = t.split_fixed_value if t.split_by_fixed_value else t.split_by_column
+        return f"Split {t.column_to_split} by '{delim}'"
 
 
 class NodeSample(NodeSingleInput):
@@ -391,11 +529,70 @@ class NodeSample(NodeSingleInput):
 
     sample_size: int = 1000
 
+    def get_default_description(self) -> str:
+        """Describes the sample size."""
+        return f"Sample {self.sample_size} rows"
+
+
+class RandomSplitGroup(BaseModel):
+    """A single output partition in a random split."""
+
+    name: str
+    percentage: float
+
+
+class NodeRandomSplit(NodeSingleInput):
+    """Settings for a node that randomly partitions rows into N labeled outputs."""
+
+    splits: list[RandomSplitGroup] = Field(
+        default_factory=lambda: [
+            RandomSplitGroup(name="train", percentage=80.0),
+            RandomSplitGroup(name="test", percentage=20.0),
+        ]
+    )
+    seed: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_splits(self) -> "NodeRandomSplit":
+        if not self.splits:
+            raise ValueError("At least one split is required")
+        if len(self.splits) > 10:
+            raise ValueError("At most 10 splits are supported")
+        names = [s.name for s in self.splits]
+        if len(set(names)) != len(names):
+            raise ValueError("Split names must be unique")
+        for s in self.splits:
+            if not s.name or not s.name[0].isalpha() or not all(c.isalnum() or c == "_" for c in s.name):
+                raise ValueError(
+                    f"Invalid split name: {s.name!r} (must start with a letter; alphanumeric/underscore only)"
+                )
+            if s.percentage <= 0:
+                raise ValueError(f"Split {s.name!r} percentage must be > 0")
+        if abs(sum(s.percentage for s in self.splits) - 100.0) > 0.01:
+            raise ValueError("Split percentages must sum to 100")
+        return self
+
+    @property
+    def output_names(self) -> list[str]:
+        return [s.name for s in self.splits]
+
+    def get_default_description(self) -> str:
+        return " / ".join(f"{s.name} {s.percentage:g}%" for s in self.splits)
+
 
 class NodeRecordId(NodeSingleInput):
     """Settings for a node that adds a unique record ID column."""
 
     record_id_input: transform_schema.RecordIdInput
+
+    def get_default_description(self) -> str:
+        """Describes the record ID column being added."""
+        r = self.record_id_input
+        desc = f"Add column '{r.output_column_name}'"
+        if r.group_by and r.group_by_columns:
+            cols = ", ".join(r.group_by_columns[:3])
+            desc += f" per group ({cols})"
+        return desc
 
 
 class NodeJoin(NodeMultiInput):
@@ -408,9 +605,24 @@ class NodeJoin(NodeMultiInput):
     auto_keep_right: bool = True
     auto_keep_left: bool = True
 
+    def get_default_description(self) -> str:
+        """Describes the join type and key columns."""
+        ji = self.join_input
+        how = ji.how
+        if ji.join_mapping:
+            keys = [
+                f"{jm.left_col} = {jm.right_col}" if jm.left_col != jm.right_col else jm.left_col
+                for jm in ji.join_mapping[:3]
+            ]
+            key_str = ", ".join(keys)
+            if len(ji.join_mapping) > 3:
+                key_str += f" (+{len(ji.join_mapping) - 3} more)"
+            return f"{how} join on {key_str}"
+        return f"{how} join"
+
     def to_yaml_dict(self) -> NodeJoinYaml:
         """Converts the join node settings to a dictionary for YAML serialization."""
-        return {
+        result: NodeJoinYaml = {
             "cache_results": self.cache_results,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
@@ -419,6 +631,21 @@ class NodeJoin(NodeMultiInput):
             "auto_keep_right": self.auto_keep_right,
             "auto_keep_left": self.auto_keep_left,
         }
+        if self.output_field_config:
+            result["output_field_config"] = {
+                "enabled": self.output_field_config.enabled,
+                "validation_mode_behavior": self.output_field_config.validation_mode_behavior,
+                "validate_data_types": self.output_field_config.validate_data_types,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "data_type": f.data_type,
+                        "default_value": f.default_value,
+                    }
+                    for f in self.output_field_config.fields
+                ],
+            }
+        return result
 
 
 class NodeCrossJoin(NodeMultiInput):
@@ -431,9 +658,13 @@ class NodeCrossJoin(NodeMultiInput):
     auto_keep_right: bool = True
     auto_keep_left: bool = True
 
+    def get_default_description(self) -> str:
+        """Describes the cross join."""
+        return "Cross join"
+
     def to_yaml_dict(self) -> NodeCrossJoinYaml:
         """Converts the cross join node settings to a dictionary for YAML serialization."""
-        return {
+        result: NodeCrossJoinYaml = {
             "cache_results": self.cache_results,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
@@ -442,6 +673,21 @@ class NodeCrossJoin(NodeMultiInput):
             "auto_keep_right": self.auto_keep_right,
             "auto_keep_left": self.auto_keep_left,
         }
+        if self.output_field_config:
+            result["output_field_config"] = {
+                "enabled": self.output_field_config.enabled,
+                "validation_mode_behavior": self.output_field_config.validation_mode_behavior,
+                "validate_data_types": self.output_field_config.validate_data_types,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "data_type": f.data_type,
+                        "default_value": f.default_value,
+                    }
+                    for f in self.output_field_config.fields
+                ],
+            }
+        return result
 
 
 class NodeFuzzyMatch(NodeJoin):
@@ -449,9 +695,24 @@ class NodeFuzzyMatch(NodeJoin):
 
     join_input: transform_schema.FuzzyMatchInput
 
+    def get_default_description(self) -> str:
+        """Describes the fuzzy match join."""
+        ji = self.join_input
+        how = ji.how
+        if ji.join_mapping:
+            keys = [
+                f"{fm.left_col} ~ {fm.right_col}" if fm.left_col != fm.right_col else fm.left_col
+                for fm in ji.join_mapping[:3]
+            ]
+            key_str = ", ".join(keys)
+            if len(ji.join_mapping) > 3:
+                key_str += f" (+{len(ji.join_mapping) - 3} more)"
+            return f"Fuzzy {how} join on {key_str}"
+        return f"Fuzzy {how} join"
+
     def to_yaml_dict(self) -> NodeFuzzyMatchYaml:
         """Converts the fuzzy match node settings to a dictionary for YAML serialization."""
-        return {
+        result: NodeFuzzyMatchYaml = {
             "cache_results": self.cache_results,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
@@ -460,6 +721,21 @@ class NodeFuzzyMatch(NodeJoin):
             "auto_keep_right": self.auto_keep_right,
             "auto_keep_left": self.auto_keep_left,
         }
+        if self.output_field_config:
+            result["output_field_config"] = {
+                "enabled": self.output_field_config.enabled,
+                "validation_mode_behavior": self.output_field_config.validation_mode_behavior,
+                "validate_data_types": self.output_field_config.validate_data_types,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "data_type": f.data_type,
+                        "default_value": f.default_value,
+                    }
+                    for f in self.output_field_config.fields
+                ],
+            }
+        return result
 
 
 class NodeDatasource(NodeBase):
@@ -471,8 +747,20 @@ class NodeDatasource(NodeBase):
 class RawData(BaseModel):
     """Represents data in a raw, columnar format for manual input."""
 
-    columns: list[MinimalFieldInfo] = None
-    data: list[list]
+    columns: list[MinimalFieldInfo] = Field(
+        ...,
+        description=("Schema in column order. The i-th MinimalFieldInfo describes the values " "in data[i]."),
+    )
+    data: list[list] = Field(
+        ...,
+        description=(
+            "Columnar layout: data[i] is the list of values for columns[i], in column "
+            "order. len(data) must equal len(columns); each inner list has the same "
+            "length (one entry per row). For two rows of {name, age}, emit "
+            '[["Alice", "Bob"], [30, 25]] — NOT [["Alice", 30], ["Bob", 25]]. '
+            "Reading rows back is data[col_idx][row_idx]."
+        ),
+    )
 
     @classmethod
     def from_pylist(cls, pylist: list[dict]):
@@ -485,6 +773,16 @@ class RawData(BaseModel):
         columns = [MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in pylist[0].keys()]
         return cls(columns=columns, data=values)
 
+    @classmethod
+    def from_pydict(cls, pydict: dict[str, list]):
+        """Creates a RawData object from a dictionary of lists."""
+        if len(pydict) == 0:
+            return cls(columns=[], data=[])
+        values = [standardize_col_dtype(column_values) for column_values in pydict.values()]
+        data_types = (pl.DataType.from_python(type(next((v for v in column_values), None))) for column_values in values)
+        columns = [MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in pydict.keys()]
+        return cls(columns=columns, data=values)
+
     def to_pylist(self) -> list[dict]:
         """Converts the RawData object back into a list of Python dictionaries."""
         return [{c.name: self.data[ci][ri] for ci, c in enumerate(self.columns)} for ri in range(len(self.data[0]))]
@@ -493,7 +791,27 @@ class RawData(BaseModel):
 class NodeManualInput(NodeBase):
     """Settings for a node that allows direct data entry in the UI."""
 
-    raw_data_format: RawData | None = None
+    raw_data_format: RawData
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_none_raw_data_format(cls, values):
+        if isinstance(values, dict) and values.get("raw_data_format") is None:
+            return {**values, "raw_data_format": {"columns": [], "data": []}}
+        return values
+
+    def get_default_description(self) -> str:
+        """Describes the manual input columns."""
+        if self.raw_data_format and self.raw_data_format.columns:
+            cols = [c.name for c in self.raw_data_format.columns[:5]]
+            desc = ", ".join(cols)
+            if len(self.raw_data_format.columns) > 5:
+                desc += f" (+{len(self.raw_data_format.columns) - 5} more)"
+            num_rows = (
+                len(self.raw_data_format.data[0]) if self.raw_data_format.data and self.raw_data_format.data[0] else 0
+            )
+            return f"{len(self.raw_data_format.columns)} cols, {num_rows} rows: {desc}"
+        return ""
 
 
 class NodeRead(NodeBase):
@@ -501,17 +819,30 @@ class NodeRead(NodeBase):
 
     received_file: ReceivedTable
 
+    def get_default_description(self) -> str:
+        """Describes the file being read."""
+        rf = self.received_file
+        name = rf.name or Path(rf.path).name
+        return f"{name} ({rf.file_type})"
+
 
 class DatabaseConnection(BaseModel):
     """Defines the connection parameters for a database."""
 
-    database_type: str = "postgresql"
+    database_type: Literal["sqlite", "postgresql", "mysql"] = "postgresql"
     username: str | None = None
     password_ref: SecretRef | None = None
     host: str | None = None
     port: int | None = None
     database: str | None = None
     url: str | None = None
+
+    @field_validator("password_ref", mode="before")
+    @classmethod
+    def empty_string_to_none(cls, v):
+        if v == "":
+            return None
+        return v
 
 
 class FullDatabaseConnection(BaseModel):
@@ -539,6 +870,8 @@ class FullDatabaseConnectionInterface(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    id: int | None = None
+    access: AccessInfo | None = None
 
 
 class DatabaseSettings(BaseModel):
@@ -552,13 +885,23 @@ class DatabaseSettings(BaseModel):
     query: str | None = None
     query_mode: Literal["query", "table", "reference"] = "table"
 
+    @field_validator("table_name", "schema_name", mode="before")
+    @classmethod
+    def validate_sql_identifier(cls, v):
+        if v is not None and v != "":
+            parts = v.split(".")
+            for part in parts:
+                if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
+                    raise ValueError(
+                        f"Invalid SQL identifier: '{v}'. " f"Only letters, numbers, and underscores are allowed."
+                    )
+        return v
+
     @model_validator(mode="after")
     def validate_table_or_query(self):
-        # Validate that either table_name or query is provided
         if (not self.table_name and not self.query) and self.query_mode == "inline":
             raise ValueError("Either 'table_name' or 'query' must be provided")
 
-        # Validate correct connection information based on connection_mode
         if self.connection_mode == "inline" and self.database_connection is None:
             raise ValueError("When 'connection_mode' is 'inline', 'database_connection' must be provided")
 
@@ -578,6 +921,18 @@ class DatabaseWriteSettings(BaseModel):
     schema_name: str | None = None
     if_exists: Literal["append", "replace", "fail"] | None = "append"
 
+    @field_validator("table_name", "schema_name", mode="before")
+    @classmethod
+    def validate_sql_identifier(cls, v):
+        if v is not None and v != "":
+            parts = v.split(".")
+            for part in parts:
+                if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
+                    raise ValueError(
+                        f"Invalid SQL identifier: '{v}'. " f"Only letters, numbers, and underscores are allowed."
+                    )
+        return v
+
 
 class NodeDatabaseReader(NodeBase):
     """Settings for a node that reads from a database."""
@@ -585,11 +940,30 @@ class NodeDatabaseReader(NodeBase):
     database_settings: DatabaseSettings
     fields: list[MinimalFieldInfo] | None = None
 
+    def get_default_description(self) -> str:
+        """Describes the database source."""
+        ds = self.database_settings
+        if ds.query_mode == "table" and ds.table_name:
+            table = f"{ds.schema_name}.{ds.table_name}" if ds.schema_name else ds.table_name
+            return f"Read from {table}"
+        if ds.query_mode == "query" and ds.query:
+            q = ds.query
+            if len(q) > 60:
+                q = q[:57] + "..."
+            return f"Query: {q}"
+        return ""
+
 
 class NodeDatabaseWriter(NodeSingleInput):
     """Settings for a node that writes data to a database."""
 
     database_write_settings: DatabaseWriteSettings
+
+    def get_default_description(self) -> str:
+        """Describes the database write target."""
+        dw = self.database_write_settings
+        table = f"{dw.schema_name}.{dw.table_name}" if dw.schema_name else dw.table_name
+        return f"Write to {table} ({dw.if_exists})"
 
 
 class NodeCloudStorageReader(NodeBase):
@@ -598,11 +972,21 @@ class NodeCloudStorageReader(NodeBase):
     cloud_storage_settings: CloudStorageReadSettings
     fields: list[MinimalFieldInfo] | None = None
 
+    def get_default_description(self) -> str:
+        """Describes the cloud storage source."""
+        cs = self.cloud_storage_settings
+        return f"Read {cs.resource_path} ({cs.file_format})"
+
 
 class NodeCloudStorageWriter(NodeSingleInput):
     """Settings for a node that writes to a cloud storage service."""
 
     cloud_storage_settings: CloudStorageWriteSettings
+
+    def get_default_description(self) -> str:
+        """Describes the cloud storage write target."""
+        cs = self.cloud_storage_settings
+        return f"Write to {cs.resource_path} ({cs.file_format})"
 
 
 class ExternalSource(BaseModel):
@@ -626,17 +1010,248 @@ class NodeExternalSource(NodeBase):
     identifier: str
     source_settings: SampleUsers
 
+    def get_default_description(self) -> str:
+        """Describes the external source."""
+        return self.identifier
+
+
+class GoogleAnalyticsFilter(BaseModel):
+    """A single filter applied to a GA4 dimension or metric.
+
+    ``field`` must match one of the selected dimensions or metrics; the worker
+    auto-routes the filter into either the request's ``dimension_filter`` (for
+    string-typed dimensions) or ``metric_filter`` (for numeric-typed metrics).
+
+    Supported operators — strings (dimensions):
+      - ``equals``, ``not_equals``
+      - ``contains``, ``begins_with``, ``ends_with``
+      - ``regex``  (full regex match)
+      - ``in_list``, ``not_in_list``  (comma-separated ``value``)
+
+    Supported operators — numeric (metrics):
+      - ``equals``, ``not_equals``
+      - ``less_than``, ``less_equal``, ``greater_than``, ``greater_equal``
+      - ``between``  (comma-separated ``"low,high"``)
+
+    Multiple filters on the same kind are AND-combined. String matching is
+    case-insensitive by default (``case_sensitive=False`` below).
+    """
+
+    field: str
+    operator: str
+    value: str = ""
+    case_sensitive: bool = False
+
+
+class GoogleAnalyticsOrderBy(BaseModel):
+    """A single sort entry applied to the GA4 report.
+
+    ``field`` must match one of the selected dimensions or metrics; the worker
+    routes it into a ``DimensionOrderBy`` or ``MetricOrderBy`` accordingly.
+    ``descending=True`` produces a descending sort. Sort entries are applied in
+    list order.
+    """
+
+    field: str
+    descending: bool = False
+
+
+class GoogleAnalyticsSettings(BaseModel):
+    """UI settings for a Google Analytics 4 reader node.
+
+    Credentials are NOT stored inline: ``ga_connection_name`` is a reference to
+    a Google Analytics connection managed under ``/ga_connections`` (whose
+    service-account JSON is encrypted at rest).
+    """
+
+    ga_connection_name: str
+    property_id: str
+    start_date: str = "7daysAgo"
+    end_date: str = "yesterday"
+    metrics: list[str] = Field(default_factory=list)
+    dimensions: list[str] = Field(default_factory=list)
+    # ``None`` means "fetch everything the report returns".
+    limit: int | None = None
+    # Row-level filters. See ``GoogleAnalyticsFilter`` for the operator list.
+    # Multiple filters across the same category (dimension vs metric) are AND-combined.
+    filters: list[GoogleAnalyticsFilter] = Field(default_factory=list)
+    # Sort entries applied in list order. Each ``field`` must be one of the
+    # selected metrics or dimensions; the worker raises a clear ``ValueError``
+    # otherwise.
+    order_bys: list[GoogleAnalyticsOrderBy] = Field(default_factory=list)
+
+
+class NodeGoogleAnalyticsReader(NodeBase):
+    """Settings for a node that reads from a Google Analytics 4 property."""
+
+    google_analytics_settings: GoogleAnalyticsSettings
+    fields: list[MinimalFieldInfo] | None = None
+
+    def get_default_description(self) -> str:
+        """Describes the GA4 query."""
+        s = self.google_analytics_settings
+        pieces = []
+        if s.property_id:
+            pieces.append(f"property {s.property_id}")
+        if s.metrics:
+            metrics_preview = ", ".join(s.metrics[:3])
+            if len(s.metrics) > 3:
+                metrics_preview += f" (+{len(s.metrics) - 3} more)"
+            pieces.append(f"metrics: {metrics_preview}")
+        if s.start_date and s.end_date:
+            pieces.append(f"{s.start_date} .. {s.end_date}")
+        return " | ".join(pieces)
+
+
+class RestApiAuthSettings(BaseModel):
+    """Authentication settings for a REST API reader node.
+
+    The credential (API key / bearer token / basic password, per ``auth_type``)
+    is NOT stored inline. ``secret_name`` references a secret in the user's
+    secret store — created once via the Secrets manager and reusable across
+    nodes — mirroring how the database reader references a stored password. The
+    ``.flowfile`` persists only the reference name, never the credential itself.
+
+    ``secret`` is an optional inline plaintext for programmatic use
+    (``flowfile_frame.read_api``); it is encrypted with the master key and
+    cleared, never persisted.
+    """
+
+    auth_type: Literal["none", "api_key", "bearer", "basic"] = "none"
+    # API key placement
+    api_key_name: str = "X-API-Key"
+    api_key_location: Literal["header", "query"] = "header"
+    # Basic auth username (not secret)
+    basic_username: str = ""
+    # Reference to a stored secret holding the credential value (empty = none).
+    secret_name: str = ""
+    # Optional inline plaintext for programmatic use; encrypted, never persisted.
+    secret: str | None = None
+
+
+class RestApiPaginationSettings(BaseModel):
+    """Pagination strategy and parameters for a REST API reader node."""
+
+    pagination_type: Literal["none", "offset", "page", "cursor"] = "none"
+    # offset / limit
+    offset_param: str = "offset"
+    limit_param: str = "limit"
+    page_size: int = 100
+    # page number
+    page_param: str = "page"
+    start_page: int = 1
+    # cursor / next-page token
+    cursor_param: str = "cursor"
+    cursor_location: Literal["body", "header"] = "body"
+    cursor_response_path: str = ""
+    initial_cursor: str = ""
+    # safety caps
+    max_pages: int = 1000
+    max_records: int | None = None
+    page_delay_seconds: float = 0.0
+
+
+class RestApiSettings(BaseModel):
+    """UI settings for a REST API reader node.
+
+    Secrets are stored inline but encrypted (see ``RestApiAuthSettings``). JSON
+    is the only supported response format; ``record_path`` is a dot-path that
+    locates the record array within the response body (empty = top-level).
+    """
+
+    url: str = ""
+    method: Literal["GET", "POST"] = "GET"
+    headers: dict[str, str] = Field(default_factory=dict)
+    query_params: dict[str, str] = Field(default_factory=dict)
+    json_body: Any | None = None
+    auth: RestApiAuthSettings = Field(default_factory=RestApiAuthSettings)
+    pagination: RestApiPaginationSettings = Field(default_factory=RestApiPaginationSettings)
+    record_path: str = ""
+    timeout_seconds: float = 30.0
+    max_retries: int = 3
+
+
+class NodeRestApiReader(NodeBase):
+    """Settings for a node that reads from a REST API."""
+
+    rest_api_settings: RestApiSettings
+    fields: list[MinimalFieldInfo] | None = None
+
+    def get_default_description(self) -> str:
+        """Describes the REST API request."""
+        s = self.rest_api_settings
+        pieces: list[str] = []
+        if s.url:
+            pieces.append(f"{s.method} {s.url}")
+        if s.pagination and s.pagination.pagination_type != "none":
+            pieces.append(f"paginated: {s.pagination.pagination_type}")
+        return " | ".join(pieces)
+
 
 class NodeFormula(NodeSingleInput):
     """Settings for a node that applies a formula to create/modify a column."""
 
     function: transform_schema.FunctionInput = None
 
+    def get_default_description(self) -> str:
+        """Describes the formula being applied."""
+        if self.function is None:
+            return ""
+        name = self.function.field.name if self.function.field else ""
+        expr = self.function.function or ""
+        if len(expr) > 60:
+            expr = expr[:57] + "..."
+        return f"{name} = {expr}" if name else expr
+
+
+class NodeWindowFunctions(NodeSingleInput):
+    """Settings for a node that adds rolling, cumulative, rank or tile columns."""
+
+    window_input: transform_schema.WindowFunctionsInput = Field(
+        default_factory=transform_schema.WindowFunctionsInput
+    )
+
+    def get_default_description(self) -> str:
+        """Describes the configured window functions."""
+        if self.window_input is None or not self.window_input.window_functions:
+            return ""
+        parts: list[str] = []
+        if self.window_input.partition_by:
+            cols = ", ".join(self.window_input.partition_by[:3])
+            if len(self.window_input.partition_by) > 3:
+                cols += f" (+{len(self.window_input.partition_by) - 3} more)"
+            parts.append(f"By {cols}")
+        ops = self.window_input.window_functions
+        op_strs = [f"{w.function}({w.column or ''})".replace("()", "()") for w in ops[:3]]
+        if len(ops) > 3:
+            op_strs.append(f"+{len(ops) - 3} more")
+        parts.append(", ".join(op_strs))
+        return ": ".join(parts)
+
 
 class NodeGroupBy(NodeSingleInput):
     """Settings for a node that performs a group-by and aggregation operation."""
 
     groupby_input: transform_schema.GroupByInput = None
+
+    def get_default_description(self) -> str:
+        """Describes the group-by columns and aggregations."""
+        if self.groupby_input is None or not self.groupby_input.agg_cols:
+            return ""
+        group_cols = [a.old_name for a in self.groupby_input.agg_cols if a.agg == "groupby"]
+        agg_cols = [a for a in self.groupby_input.agg_cols if a.agg != "groupby"]
+        parts = []
+        if group_cols:
+            cols_str = ", ".join(group_cols[:3])
+            if len(group_cols) > 3:
+                cols_str += f" (+{len(group_cols) - 3} more)"
+            parts.append(f"By {cols_str}")
+        if agg_cols:
+            agg_strs = [f"{a.agg}({a.old_name})" for a in agg_cols[:3]]
+            if len(agg_cols) > 3:
+                agg_strs.append(f"+{len(agg_cols) - 3} more")
+            parts.append(", ".join(agg_strs))
+        return ": ".join(parts) if parts else ""
 
 
 class NodePromise(NodeBase):
@@ -671,11 +1286,35 @@ class NodePivot(NodeSingleInput):
     pivot_input: transform_schema.PivotInput = None
     output_fields: list[MinimalFieldInfo] | None = None
 
+    def get_default_description(self) -> str:
+        """Describes the pivot operation."""
+        if self.pivot_input is None:
+            return ""
+        p = self.pivot_input
+        aggs = ", ".join(p.aggregations[:2]) if p.aggregations else ""
+        if len(p.aggregations) > 2:
+            aggs += f" (+{len(p.aggregations) - 2} more)"
+        return f"Pivot {p.value_col} by {p.pivot_column} ({aggs})"
+
 
 class NodeUnpivot(NodeSingleInput):
     """Settings for a node that unpivots data from a wide to a long format."""
 
     unpivot_input: transform_schema.UnpivotInput = None
+
+    def get_default_description(self) -> str:
+        """Describes the unpivot operation."""
+        if self.unpivot_input is None:
+            return ""
+        u = self.unpivot_input
+        if u.value_columns:
+            cols = ", ".join(u.value_columns[:3])
+            if len(u.value_columns) > 3:
+                cols += f" (+{len(u.value_columns) - 3} more)"
+            return f"Unpivot {cols}"
+        if u.data_type_selector:
+            return f"Unpivot {u.data_type_selector} columns"
+        return "Unpivot"
 
 
 class NodeUnion(NodeMultiInput):
@@ -683,18 +1322,145 @@ class NodeUnion(NodeMultiInput):
 
     union_input: transform_schema.UnionInput = Field(default_factory=transform_schema.UnionInput)
 
+    def get_default_description(self) -> str:
+        """Describes the union mode."""
+        return f"Union ({self.union_input.mode})"
+
 
 class NodeOutput(NodeSingleInput):
     """Settings for a node that writes its input to a file."""
 
     output_settings: OutputSettings
 
+    def get_default_description(self) -> str:
+        """Describes the output file target."""
+        o = self.output_settings
+        return f"{o.name} ({o.file_type})"
+
     def to_yaml_dict(self) -> NodeOutputYaml:
         """Converts the output node settings to a dictionary for YAML serialization."""
-        return {
+        result: NodeOutputYaml = {
             "cache_results": self.cache_results,
             "output_settings": self.output_settings.to_yaml_dict(),
         }
+        if self.output_field_config:
+            result["output_field_config"] = {
+                "enabled": self.output_field_config.enabled,
+                "validation_mode_behavior": self.output_field_config.validation_mode_behavior,
+                "validate_data_types": self.output_field_config.validate_data_types,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "data_type": f.data_type,
+                        "default_value": f.default_value,
+                    }
+                    for f in self.output_field_config.fields
+                ],
+            }
+        return result
+
+
+class NodeApiResponse(NodeSingleInput):
+    """Settings for a node that marks its input as the body of an HTTP API response.
+
+    This node is a sink (one input, no output). When the flow is published as an
+    API endpoint, the data flowing into this node is serialized and returned to the
+    caller. During interactive runs it is a pass-through (its result equals its
+    input), so previews keep working.
+    """
+
+    orientation: Literal["records", "columns"] = "records"
+    max_rows: int | None = None
+
+    def get_default_description(self) -> str:
+        """Describes the API response shape."""
+        limit = f", max {self.max_rows} rows" if self.max_rows else ""
+        return f"API response ({self.orientation}{limit})"
+
+
+class CatalogWriteSettings(BaseModel):
+    """Settings for writing data to the catalog."""
+
+    table_name: str = ""
+    namespace_id: int | None = None
+    description: str | None = None
+    write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite"
+    merge_keys: list[str] = Field(default_factory=list)
+    partition_by: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_merge_keys(self) -> "CatalogWriteSettings":
+        if self.write_mode in ("upsert", "update", "delete") and not self.merge_keys:
+            raise ValueError(f"merge_keys must be non-empty when write_mode is '{self.write_mode}'")
+        if self.partition_by and self.write_mode == "virtual":
+            raise ValueError("partition_by is not allowed for virtual tables")
+        return self
+
+
+class NodeCatalogWriter(NodeSingleInput):
+    """Settings for a node that writes its input to the catalog."""
+
+    catalog_write_settings: CatalogWriteSettings = Field(default_factory=CatalogWriteSettings)
+
+    def get_default_description(self) -> str:
+        s = self.catalog_write_settings
+        return f"Catalog: {s.table_name}" if s.table_name else "Write to Catalog"
+
+
+class NodeCatalogReader(NodeBase):
+    """Settings for a node that reads a table from the catalog.
+
+    Resolution priority at runtime: ``catalog_table_id`` > ``catalog_full_table_name`` >
+    ``(catalog_table_name, catalog_namespace_id)``. The qualified form
+    (``catalog_full_table_name`` = ``"schema.table"``) is the preferred human-facing
+    identifier when an id isn't available.
+    """
+
+    catalog_table_id: int | None = None
+    catalog_full_table_name: str | None = None
+    catalog_table_name: str | None = None
+    catalog_namespace_id: int | None = None
+    delta_version: int | None = None
+    sql_query: str | None = None
+    is_virtual_optimized: bool | None = None
+
+    def get_default_description(self) -> str:
+        if self.sql_query:
+            first_line = self.sql_query.strip().split("\n")[0]
+            if len(first_line) > 80:
+                first_line = first_line[:77] + "..."
+            return f"SQL: {first_line}"
+        display = self.catalog_full_table_name or self.catalog_table_name
+        if display:
+            suffix = f" (v{self.delta_version})" if self.delta_version is not None else ""
+            return f"Catalog: {display}{suffix}"
+        return "Read from Catalog"
+
+
+class KafkaSourceSettings(BaseModel):
+    """Configuration for reading from a Kafka/Redpanda topic."""
+
+    kafka_connection_id: int | None = None
+    kafka_connection_name: str | None = None
+    topic_name: str = ""
+    value_format: Literal["json"] = "json"
+    sync_name: str = ""  # unique key for offset tracking between runs
+    start_offset: Literal["earliest", "latest"] = "latest"
+    max_messages: int = 100_000
+    poll_timeout_seconds: float = 30.0
+
+
+class NodeKafkaSource(NodeBase):
+    """Settings for a node that reads from a Kafka or Redpanda topic."""
+
+    kafka_settings: KafkaSourceSettings = KafkaSourceSettings()
+    fields: list[MinimalFieldInfo] | None = None
+
+    def get_default_description(self) -> str:
+        ks = self.kafka_settings
+        if ks.topic_name:
+            return f"Kafka: {ks.topic_name}"
+        return "Kafka Source"
 
 
 class NodeOutputConnection(BaseModel):
@@ -711,7 +1477,13 @@ class NodeConnection(BaseModel):
     output_connection: NodeOutputConnection
 
     @classmethod
-    def create_from_simple_input(cls, from_id: int, to_id: int, input_type: InputType = "input-0"):
+    def create_from_simple_input(
+        cls,
+        from_id: int,
+        to_id: int,
+        input_type: InputType = "input-0",
+        output_handle: OutputConnectionClass = "output-0",
+    ):
         """Creates a standard connection between two nodes."""
         match input_type:
             case "main":
@@ -723,7 +1495,7 @@ class NodeConnection(BaseModel):
             case _:
                 connection_class: InputConnectionClass = "input-0"
         node_input = NodeInputConnection(node_id=to_id, connection_class=connection_class)
-        node_output = NodeOutputConnection(node_id=from_id, connection_class="output-0")
+        node_output = NodeOutputConnection(node_id=from_id, connection_class=output_handle)
         return cls(input_connection=node_input, output_connection=node_output)
 
 
@@ -744,11 +1516,26 @@ class NodeGraphSolver(NodeSingleInput):
 
     graph_solver_input: transform_schema.GraphSolverInput
 
+    def get_default_description(self) -> str:
+        """Describes the graph solver operation."""
+        g = self.graph_solver_input
+        return f"{g.col_from} -> {g.col_to} as '{g.output_column_name}'"
+
 
 class NodeUnique(NodeSingleInput):
     """Settings for a node that returns the unique rows from the data."""
 
     unique_input: transform_schema.UniqueInput
+
+    def get_default_description(self) -> str:
+        """Describes the uniqueness operation."""
+        u = self.unique_input
+        if u.columns:
+            cols = ", ".join(u.columns[:3])
+            if len(u.columns) > 3:
+                cols += f" (+{len(u.columns) - 3} more)"
+            return f"Unique by {cols} (keep {u.strategy})"
+        return f"Unique rows (keep {u.strategy})"
 
 
 class NodeRecordCount(NodeSingleInput):
@@ -757,13 +1544,249 @@ class NodeRecordCount(NodeSingleInput):
     pass
 
 
+class NodeDynamicRename(NodeSingleInput):
+    """Settings for a node that renames many columns at once via a single rule."""
+
+    dynamic_rename_input: transform_schema.DynamicRenameInput = Field(
+        default_factory=transform_schema.DynamicRenameInput
+    )
+
+    def get_default_description(self) -> str:
+        """Describes the dynamic rename rule."""
+        s = self.dynamic_rename_input
+        if s.rename_mode == "prefix" and s.prefix:
+            rule = f"prefix '{s.prefix}'"
+        elif s.rename_mode == "suffix" and s.suffix:
+            rule = f"suffix '{s.suffix}'"
+        elif s.rename_mode == "formula" and s.formula:
+            rule = f"formula {s.formula}"
+        elif s.rename_mode == "first_row":
+            rule = "promote first row to headers"
+        else:
+            return ""
+        if s.selection_mode == "all":
+            scope = "all columns"
+        elif s.selection_mode == "list":
+            scope = f"{len(s.selected_columns)} column(s)"
+        else:
+            scope = f"{s.selected_data_type or '(none)'} columns"
+        return f"{rule} on {scope}"
+
+
 class NodePolarsCode(NodeMultiInput):
     """Settings for a node that executes arbitrary user-provided Polars code."""
 
     polars_code_input: transform_schema.PolarsCodeInput
+
+    def get_default_description(self) -> str:
+        """Describes the Polars code snippet."""
+        code = self.polars_code_input.polars_code
+        first_line = code.strip().split("\n")[0] if code else ""
+        if len(first_line) > 80:
+            first_line = first_line[:77] + "..."
+        return first_line
+
+
+class NodeSqlQuery(NodeMultiInput):
+    """Settings for a node that executes a SQL query against connected data sources."""
+
+    sql_query_input: transform_schema.SqlQueryInput
+
+    def get_default_description(self) -> str:
+        """Describes the SQL query snippet."""
+        code = self.sql_query_input.sql_code
+        first_line = code.strip().split("\n")[0] if code else ""
+        if len(first_line) > 80:
+            first_line = first_line[:77] + "..."
+        return first_line
+
+
+class NotebookCell(BaseModel):
+    """A single cell in the notebook editor.
+
+    Note: Cell output (stdout, display_outputs, errors) is handled entirely
+    on the frontend and is not persisted. Only id and code are stored.
+    """
+
+    id: str
+    code: str = ""
+
+
+class PythonScriptInput(BaseModel):
+    """Settings for Python code execution on a kernel."""
+
+    code: str = ""
+    kernel_id: str | None = None
+    cells: list[NotebookCell] | None = None
+
+
+def _validate_output_names(v: list[str]) -> list[str]:
+    """Validate that output_names entries are safe identifiers and unique."""
+    for name in v:
+        if not _SAFE_IDENTIFIER_RE.match(name):
+            raise ValueError(
+                f"output name {name!r} must start with a letter and contain only lowercase letters, digits, "
+                "and underscores"
+            )
+    if len(v) != len(set(v)):
+        raise ValueError("output_names must be unique")
+    return v
+
+
+class NodePythonScript(NodeMultiInput):
+    """Node that executes Python code on a kernel container."""
+
+    python_script_input: PythonScriptInput = PythonScriptInput()
+    output_names: list[str] = Field(default_factory=lambda: ["main"])
+
+    @field_validator("output_names")
+    @classmethod
+    def validate_output_names(cls, v: list[str]) -> list[str]:
+        return _validate_output_names(v)
 
 
 class UserDefinedNode(NodeMultiInput):
     """Settings for a node that contains the user defined node information"""
 
     settings: Any
+    kernel_id: str | None = None
+    output_names: list[str] = Field(default_factory=lambda: ["main"])
+
+    @field_validator("output_names")
+    @classmethod
+    def validate_output_names(cls, v: list[str]) -> list[str]:
+        return _validate_output_names(v)
+
+
+class TrainModelSettings(BaseModel):
+    """Settings payload for the Train Model node.
+
+    ``params`` is a flat dict so the form-driven hyperparameter UI doesn't need
+    a discriminated union — the worker validates against the algorithm-specific
+    Pydantic class via ``shared.ml.trainers.get_trainer(model_type).params_class``.
+
+    The trained model is always written to a flow-scoped path keyed off this
+    node's id so downstream Apply Model nodes in the same flow can read it
+    without first publishing to the catalog. Set ``publish_to_catalog=True``
+    to additionally store the artifact in the catalog (with a stable
+    cross-run name + version).
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    target_column: str = ""
+    feature_columns: list[str] = Field(default_factory=list)
+    model_type: str = "linear_regression"
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    # Catalog publishing — opt-in.
+    publish_to_catalog: bool = False
+    model_name: str = ""  # required when publish_to_catalog=True
+    namespace_id: int | None = None
+    catalog_description: str | None = None
+    catalog_tags: list[str] = Field(default_factory=list)
+
+
+class NodeTrainModel(NodeSingleInput):
+    """Train an ML model (regression or classification) and optionally publish it to the catalog."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    train_input: TrainModelSettings = Field(default_factory=TrainModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.train_input
+        if s.model_name and s.target_column:
+            return f"Train {s.model_type} '{s.model_name}' on {s.target_column}"
+        return "Train Model"
+
+
+class ApplyModelSettings(BaseModel):
+    """Settings payload for the Apply Model node.
+
+    Two model sources are supported:
+
+    - ``"upstream"`` (default): pick a Train Model node from somewhere in this
+      flow's upstream chain. The model file is read from the flow's cache
+      directory using the train node's id — works at design time, no catalog
+      round-trip needed.
+    - ``"catalog"``: fall back to the existing catalog lookup by name/version.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    source: Literal["upstream", "catalog"] = "upstream"
+
+    # source="upstream" — id of an upstream Train Model node in the same flow.
+    upstream_node_id: int | None = None
+
+    # source="catalog"
+    model_name: str = ""
+    model_version: int | None = None
+    namespace_id: int | None = None
+
+    output_column: str = "prediction"
+
+
+class NodeApplyModel(NodeSingleInput):
+    """Score data using a previously trained model artifact."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    apply_input: ApplyModelSettings = Field(default_factory=ApplyModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.apply_input
+        if s.model_name:
+            ver = f" v{s.model_version}" if s.model_version is not None else ""
+            return f"Apply '{s.model_name}'{ver} -> {s.output_column}"
+        return "Apply Model"
+
+
+class NodeWaitFor(NodeMultiInput):
+    """Pass-through node that enforces ordering on extra dependency inputs.
+
+    The first input flows through unchanged; the others have to complete before
+    this node runs but their data is discarded. Useful for enforcing "Apply
+    Model must wait for Train Model" without otherwise coupling their data.
+    """
+
+    def get_default_description(self) -> str:
+        n = len(self.depending_on_ids or [])
+        if n <= 1:
+            return "Wait For"
+        return f"Wait For ({n - 1} dep{'s' if n > 2 else ''})"
+
+
+class EvaluateModelSettings(BaseModel):
+    """Settings payload for the Evaluate Model node.
+
+    Decoupled from any specific Train/Apply pair: takes a dataframe that
+    already contains both the actual target column and a prediction column
+    and emits a long-form ``(metric, value)`` frame. Reusable on training,
+    test, or hold-out splits.
+
+    ``task_type="auto"`` resolves the metric set from an upstream Train
+    Model node when one is configured; otherwise defaults to ``regression``.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    actual_column: str = ""
+    predicted_column: str = "prediction"
+    task_type: Literal["auto", "regression", "classification"] = "auto"
+    upstream_train_node_id: int | None = None
+
+
+class NodeEvaluateModel(NodeSingleInput):
+    """Compute model-quality metrics by comparing actual and predicted columns."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    evaluate_input: EvaluateModelSettings = Field(default_factory=EvaluateModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.evaluate_input
+        if s.actual_column and s.predicted_column:
+            return f"Evaluate {s.predicted_column} vs {s.actual_column}"
+        return "Evaluate Model"

@@ -13,7 +13,6 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -56,12 +55,10 @@ def is_docker_available() -> bool:
         logger.info("Skipping Docker on macOS/Windows in CI environment")
         return False
 
-    # If docker executable is not in PATH
     if shutil.which("docker") is None:
         logger.warning("Docker executable not found in PATH")
         return False
 
-    # Try a simple docker command
     try:
         result = subprocess.run(
             ["docker", "info"],
@@ -146,12 +143,10 @@ def setup_postgres_samples(
     Returns:
         True if setup succeeds, False otherwise
     """
-    # Check Docker availability
     if not is_docker_available():
         logger.warning("Docker not available, skipping Postgres sample setup")
         return False
 
-    # Clone the repository if it doesn't exist
     if not os.path.exists(SAMPLES_REPO_DIR):
         logger.info(f"Cloning postgres-docker-samples repository to {SAMPLES_REPO_DIR}")
         try:
@@ -163,13 +158,11 @@ def setup_postgres_samples(
             logger.error(f"Failed to clone repository: {e}")
             return False
 
-    # Change to the repository directory
     original_dir = os.getcwd()
     os.chdir(SAMPLES_REPO_DIR)
     print(os.getcwd())
 
     try:
-        # Create a custom .env file for our test configuration
         logger.info(f"Configuring .env file with schema={schema}")
         with open('.env', 'w') as f:
             f.write(f"""
@@ -186,15 +179,12 @@ POSTGRES_DB={db}
 DOCKER_IMAGE_TAG={image_tag}
             """)
 
-        # Make scripts executable
         subprocess.run(["chmod", "+x", "build.sh"], check=True)
         subprocess.run(["chmod", "+x", "run.sh"], check=True)
 
-        # Build the Docker image - FIXED: Use bash to execute the script
         logger.info(f"Building Docker image {image_tag}")
         subprocess.run(["bash", "build.sh"], check=True)
 
-        # Return to original directory
         os.chdir(original_dir)
         return True
 
@@ -220,19 +210,16 @@ def start_postgres_container(
     Returns:
         Tuple containing the process object (or None) and a success flag
     """
-    # Check Docker availability
     if not is_docker_available():
         logger.warning("Docker not available, skipping PostgreSQL container start")
         return None, False
 
     logger.info("Starting PostgreSQL container with sample data...")
 
-    # Check if container is already running
     if is_container_running(container_name):
         logger.info(f"Container {container_name} is already running")
         return None, True
 
-    # Run the container in the background
     try:
         proc = subprocess.Popen([
             "docker", "run", "--name", container_name,
@@ -249,7 +236,6 @@ def start_postgres_container(
         logger.error(f"Error starting container: {e}")
         return None, False
 
-    # Wait for the database to be ready
     start_time = time.time()
     max_retries = STARTUP_TIMEOUT // STARTUP_CHECK_INTERVAL
 
@@ -259,12 +245,10 @@ def start_postgres_container(
             logger.info(f"PostgreSQL container started successfully in {elapsed:.2f} seconds")
             return None, True
 
-        # Log progress
         elapsed = time.time() - start_time
         logger.info(f"Waiting for PostgreSQL to start... ({elapsed:.1f}s / {STARTUP_TIMEOUT}s)")
         time.sleep(STARTUP_CHECK_INTERVAL)
 
-    # Timeout reached
     logger.error(f"PostgreSQL failed to start within {STARTUP_TIMEOUT} seconds")
     return None, False
 
@@ -280,7 +264,6 @@ def stop_postgres_container(container_name: str = POSTGRES_CONTAINER_NAME, timeo
     Returns:
         True if stop succeeds or container not running, False otherwise
     """
-    # Check Docker availability
     if not is_docker_available():
         logger.warning("Docker not available, skipping PostgreSQL container stop")
         return True
@@ -313,7 +296,6 @@ def print_connection_info(
         port: int = POSTGRES_PORT,
         db: str = POSTGRES_DB,
         user: str = POSTGRES_USER,
-        password: str = POSTGRES_PASSWORD,
         container_name: str = POSTGRES_CONTAINER_NAME
 ) -> None:
     """
@@ -324,7 +306,6 @@ def print_connection_info(
         port: PostgreSQL port
         db: PostgreSQL database name
         user: PostgreSQL username
-        password: PostgreSQL password
         container_name: Docker container name
     """
     if not is_docker_available():
@@ -341,8 +322,8 @@ def print_connection_info(
     print(f"Port:     {port}")
     print(f"Database: {db}")
     print(f"User:     {user}")
-    print(f"Password: {password}")
-    print(f"Connection string: postgresql://{user}:{password}@{host}:{port}/{db}")
+    print("Password: ***")
+    print(f"Connection string: postgresql://{user}:***@{host}:{port}/{db}")
     print("=" * 50)
     print("\nTo stop the container, run:")
     print("poetry run stop_postgres")
@@ -358,19 +339,16 @@ def managed_postgres() -> Generator[dict[str, any], None, None]:
     Yields:
         Dictionary with database connection information or empty dict if Docker isn't available
     """
-    # Check Docker availability
     if not is_docker_available():
         logger.warning("Docker not available, skipping managed_postgres context")
         yield {}
         return
 
-    # Setup
     if not setup_postgres_samples():
         logger.error("Failed to set up postgres samples")
         yield {}
         return
 
-    # Start container
     _, success = start_postgres_container()
     if not success:
         logger.error("Failed to start PostgreSQL container")
@@ -378,7 +356,6 @@ def managed_postgres() -> Generator[dict[str, any], None, None]:
         return
 
     try:
-        # Create connection details
         connection_info = {
             "host": POSTGRES_HOST,
             "port": POSTGRES_PORT,
@@ -390,7 +367,6 @@ def managed_postgres() -> Generator[dict[str, any], None, None]:
 
         yield connection_info
     finally:
-        # Always try to stop the container
         stop_postgres_container()
 
 
@@ -401,7 +377,6 @@ def get_db_engine():
     Returns:
         SQLAlchemy engine object or None if Docker isn't available
     """
-    # Check Docker availability
     if not is_docker_available():
         logger.warning("Docker not available, skipping get_db_engine")
         return None

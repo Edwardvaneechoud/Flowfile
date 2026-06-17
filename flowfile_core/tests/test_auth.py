@@ -1,15 +1,19 @@
 """Tests for authentication functionality in both Docker and Electron modes."""
 
 import os
+from datetime import datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
+from jose import jwt as jose_jwt
 from sqlalchemy.orm import Session
 
 from flowfile_core import main
-from flowfile_core.database.connection import get_db_context
+from flowfile_core.auth.jwt import ALGORITHM, create_refresh_token, get_jwt_secret
+from flowfile_core.auth.password import get_password_hash, verify_password
 from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.init_db import create_docker_admin_user
-from flowfile_core.auth.password import verify_password, get_password_hash
 
 
 @pytest.fixture
@@ -26,7 +30,6 @@ def test_user_credentials():
 def create_test_user(test_user_credentials):
     """Fixture to create a test user in the database."""
     with get_db_context() as db:
-        # Clean up any existing test user
         existing_user = db.query(db_models.User).filter(
             db_models.User.username == test_user_credentials["username"]
         ).first()
@@ -34,7 +37,6 @@ def create_test_user(test_user_credentials):
             db.delete(existing_user)
             db.commit()
 
-        # Create new test user
         hashed_password = get_password_hash(test_user_credentials["password"])
         test_user = db_models.User(
             username=test_user_credentials["username"],
@@ -50,7 +52,6 @@ def create_test_user(test_user_credentials):
 
     yield user_id
 
-    # Cleanup after test
     with get_db_context() as db:
         user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
         if user:
@@ -93,9 +94,7 @@ class TestPasswordUtilities:
         hash1 = get_password_hash(password)
         hash2 = get_password_hash(password)
 
-        # Hashes should be different due to salt
         assert hash1 != hash2
-        # But both should verify correctly
         assert verify_password(password, hash1) is True
         assert verify_password(password, hash2) is True
 
@@ -111,7 +110,6 @@ class TestElectronModeAuth:
     def test_electron_mode_auto_authenticate(self):
         """Test that Electron mode auto-authenticates without credentials."""
         with TestClient(main.app) as client:
-            # Post to /auth/token without any credentials
             response = client.post("/auth/token")
 
             assert response.status_code == 200
@@ -123,7 +121,6 @@ class TestElectronModeAuth:
     def test_electron_mode_ignores_credentials(self):
         """Test that Electron mode ignores provided credentials."""
         with TestClient(main.app) as client:
-            # Even with wrong credentials, should auto-authenticate
             response = client.post(
                 "/auth/token",
                 data={"username": "wronguser", "password": "wrongpass"}
@@ -243,7 +240,6 @@ class TestDockerAdminUserCreation:
         admin_username = "dockeradmin"
         admin_password = "dockerpass123"
 
-        # Clean up first
         self.cleanup_admin_user(admin_username)
 
         try:
@@ -256,7 +252,6 @@ class TestDockerAdminUserCreation:
 
                 assert result is True
 
-                # Verify user was created
                 user = db.query(db_models.User).filter(
                     db_models.User.username == admin_username
                 ).first()
@@ -273,7 +268,6 @@ class TestDockerAdminUserCreation:
         """Test admin user is not created in Electron mode."""
         admin_username = "electronuser"
 
-        # Clean up first
         self.cleanup_admin_user(admin_username)
 
         try:
@@ -286,7 +280,6 @@ class TestDockerAdminUserCreation:
 
                 assert result is False
 
-                # Verify user was not created
                 user = db.query(db_models.User).filter(
                     db_models.User.username == admin_username
                 ).first()
@@ -322,11 +315,9 @@ class TestDockerAdminUserCreation:
         admin_username = "existingadmin"
         original_password = "originalpass"
 
-        # Clean up first
         self.cleanup_admin_user(admin_username)
 
         try:
-            # Create user manually
             with get_db_context() as db:
                 original_hash = get_password_hash(original_password)
                 user = db_models.User(
@@ -338,7 +329,6 @@ class TestDockerAdminUserCreation:
                 db.add(user)
                 db.commit()
 
-            # Try to create admin user with same username
             monkeypatch.setenv("FLOWFILE_MODE", "docker")
             monkeypatch.setenv("FLOWFILE_ADMIN_USER", admin_username)
             monkeypatch.setenv("FLOWFILE_ADMIN_PASSWORD", "newpassword")
@@ -348,7 +338,6 @@ class TestDockerAdminUserCreation:
 
                 assert result is False
 
-                # Verify original user is unchanged
                 user = db.query(db_models.User).filter(
                     db_models.User.username == admin_username
                 ).first()
@@ -356,7 +345,6 @@ class TestDockerAdminUserCreation:
                 assert user is not None
                 assert user.email == f"{admin_username}@original.com"
                 assert user.full_name == "Original User"
-                # Password should still be the original
                 assert verify_password(original_password, user.hashed_password)
                 assert not verify_password("newpassword", user.hashed_password)
         finally:
@@ -367,11 +355,9 @@ class TestDockerAdminUserCreation:
         admin_username = "loginadmin"
         admin_password = "loginpass123"
 
-        # Clean up first
         self.cleanup_admin_user(admin_username)
 
         try:
-            # Create admin user
             monkeypatch.setenv("FLOWFILE_MODE", "docker")
             monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
             monkeypatch.setenv("FLOWFILE_ADMIN_USER", admin_username)
@@ -380,7 +366,6 @@ class TestDockerAdminUserCreation:
             with get_db_context() as db:
                 create_docker_admin_user(db)
 
-            # Try to login
             with TestClient(main.app) as client:
                 response = client.post(
                     "/auth/token",
@@ -396,3 +381,188 @@ class TestDockerAdminUserCreation:
                 assert data["token_type"] == "bearer"
         finally:
             self.cleanup_admin_user(admin_username)
+
+
+class TestRefreshToken:
+    """Test refresh token functionality in Docker mode."""
+
+    @pytest.fixture(autouse=True)
+    def setup_docker_mode(self, monkeypatch):
+        """Set up Docker mode for these tests."""
+        monkeypatch.setenv("FLOWFILE_MODE", "docker")
+        monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
+
+    def _login(self, client, credentials):
+        """Helper to login and return the response data."""
+        response = client.post(
+            "/auth/token",
+            data={"username": credentials["username"], "password": credentials["password"]},
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    def test_login_returns_refresh_token(self, create_test_user, test_user_credentials):
+        """Test that Docker login returns both access and refresh tokens."""
+        with TestClient(main.app) as client:
+            data = self._login(client, test_user_credentials)
+
+            assert "access_token" in data
+            assert "refresh_token" in data
+            assert data["refresh_token"] is not None
+            assert data["token_type"] == "bearer"
+
+    def test_electron_login_has_no_refresh_token(self, monkeypatch):
+        """Test that Electron mode login does not return a refresh token."""
+        monkeypatch.setenv("FLOWFILE_MODE", "electron")
+        with TestClient(main.app) as client:
+            response = client.post("/auth/token")
+            data = response.json()
+
+            assert data["access_token"]
+            assert data.get("refresh_token") is None
+
+    def test_refresh_endpoint_returns_new_tokens(self, create_test_user, test_user_credentials):
+        """Test that POST /auth/refresh returns new access and refresh tokens."""
+        with TestClient(main.app) as client:
+            login_data = self._login(client, test_user_credentials)
+
+            response = client.post(
+                "/auth/refresh",
+                data={"refresh_token": login_data["refresh_token"]},
+            )
+
+            assert response.status_code == 200
+            refresh_data = response.json()
+            assert "access_token" in refresh_data
+            assert "refresh_token" in refresh_data
+            assert len(refresh_data["access_token"]) > 0
+            assert len(refresh_data["refresh_token"]) > 0
+            assert refresh_data["token_type"] == "bearer"
+
+    def test_refreshed_access_token_works(self, create_test_user, test_user_credentials):
+        """Test that the new access token from refresh can authenticate requests."""
+        with TestClient(main.app) as client:
+            login_data = self._login(client, test_user_credentials)
+
+            refresh_response = client.post(
+                "/auth/refresh",
+                data={"refresh_token": login_data["refresh_token"]},
+            )
+            new_access_token = refresh_response.json()["access_token"]
+
+            me_response = client.get(
+                "/auth/users/me",
+                headers={"Authorization": f"Bearer {new_access_token}"},
+            )
+            assert me_response.status_code == 200
+            assert me_response.json()["username"] == test_user_credentials["username"]
+
+    def test_refresh_with_invalid_token(self, create_test_user):
+        """Test that refresh fails with an invalid token."""
+        with TestClient(main.app) as client:
+            response = client.post(
+                "/auth/refresh",
+                data={"refresh_token": "invalid-token"},
+            )
+            assert response.status_code == 401
+
+    def test_refresh_with_expired_token(self, create_test_user, test_user_credentials):
+        """Test that refresh fails with an expired refresh token."""
+        expired_token = jose_jwt.encode(
+            {"sub": test_user_credentials["username"], "type": "refresh", "exp": datetime.utcnow() - timedelta(days=1)},
+            get_jwt_secret(),
+            algorithm=ALGORITHM,
+        )
+        with TestClient(main.app) as client:
+            response = client.post(
+                "/auth/refresh",
+                data={"refresh_token": expired_token},
+            )
+            assert response.status_code == 401
+
+    def test_refresh_with_access_token_rejected(self, create_test_user, test_user_credentials):
+        """Test that an access token cannot be used as a refresh token."""
+        with TestClient(main.app) as client:
+            login_data = self._login(client, test_user_credentials)
+
+            response = client.post(
+                "/auth/refresh",
+                data={"refresh_token": login_data["access_token"]},
+            )
+            assert response.status_code == 401
+
+    def test_refresh_token_cannot_authenticate_requests(self, create_test_user, test_user_credentials):
+        """Test that a refresh token cannot be used as a Bearer token for API requests."""
+        with TestClient(main.app) as client:
+            login_data = self._login(client, test_user_credentials)
+
+            response = client.get(
+                "/auth/users/me",
+                headers={"Authorization": f"Bearer {login_data['refresh_token']}"},
+            )
+            assert response.status_code == 401
+
+    def test_refresh_fails_for_disabled_user(self, test_user_credentials):
+        """Test that refresh fails if the user has been disabled since login."""
+        with get_db_context() as db:
+            hashed_password = get_password_hash(test_user_credentials["password"])
+            user = db_models.User(
+                username=test_user_credentials["username"],
+                email=test_user_credentials["email"],
+                hashed_password=hashed_password,
+                disabled=False,
+            )
+            db.add(user)
+            db.commit()
+            user_id = user.id
+
+        try:
+            refresh_token = create_refresh_token(data={"sub": test_user_credentials["username"]})
+
+            with get_db_context() as db:
+                user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
+                user.disabled = True
+                db.commit()
+
+            with TestClient(main.app) as client:
+                response = client.post(
+                    "/auth/refresh",
+                    data={"refresh_token": refresh_token},
+                )
+                assert response.status_code == 401
+                assert response.json()["detail"] == "User account is disabled"
+        finally:
+            with get_db_context() as db:
+                user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
+                if user:
+                    db.delete(user)
+                    db.commit()
+
+    def test_refresh_fails_for_deleted_user(self, test_user_credentials):
+        """Test that refresh fails if the user has been deleted since login."""
+        with get_db_context() as db:
+            hashed_password = get_password_hash(test_user_credentials["password"])
+            user = db_models.User(
+                username=test_user_credentials["username"],
+                email=test_user_credentials["email"],
+                hashed_password=hashed_password,
+                disabled=False,
+            )
+            db.add(user)
+            db.commit()
+
+        refresh_token = create_refresh_token(data={"sub": test_user_credentials["username"]})
+
+        with get_db_context() as db:
+            user = db.query(db_models.User).filter(db_models.User.username == test_user_credentials["username"]).first()
+            if user:
+                db.delete(user)
+                db.commit()
+
+        with TestClient(main.app) as client:
+            response = client.post(
+                "/auth/refresh",
+                data={"refresh_token": refresh_token},
+            )
+            assert response.status_code == 401
+            assert response.json()["detail"] == "User no longer exists"

@@ -12,8 +12,7 @@ class Selector:
     """Base class for column selectors, inspired by polars.selectors"""
 
     def __init__(self):
-        self._repr_str = self._get_repr_str()  # Use base repr calculation method
-        # No agg_func state stored here anymore
+        self._repr_str = self._get_repr_str()
 
     @property
     def repr_str(self):
@@ -21,7 +20,6 @@ class Selector:
 
     def _get_repr_str(self) -> str:
         """Get representation string for the selector itself."""
-        # Default implementation, specific selectors override this
         return f"pl.selectors.{self.__class__.__name__}()"
 
     def __repr__(self) -> str:
@@ -43,11 +41,9 @@ class Selector:
         return ComplementSelector(self)
 
     # --- Aggregation Methods ---
-    # These methods now return Expr objects, importing Expr locally
 
     def sum(self) -> "Expr":
         """Create an expression to sum columns selected by this selector."""
-        # Expr init will handle creating the 'pl.sum(selector)' repr
         return Expr(expr=None, selector=self, agg_func="sum")
 
     def expr(self):
@@ -93,8 +89,6 @@ class Selector:
         """Create an expression to count unique elements in columns selected by this selector."""
         return Expr(expr=None, selector=self, agg_func="n_unique")
 
-    # Removed alias method - belongs on Expr
-
 
 class CompoundSelector(Selector):
     """Selector representing a compound operation between two selectors"""
@@ -108,7 +102,6 @@ class CompoundSelector(Selector):
     def _get_repr_str(self) -> str:
         op_map = {"union": "|", "intersection": "&", "difference": "-", "symmetric_difference": "^"}
         op_symbol = op_map.get(self.operation, "|")
-        # Use base repr (_repr_str) of operands
         left_repr = f"({self.left._repr_str})" if isinstance(self.left, CompoundSelector) else self.left._repr_str
         right_repr = f"({self.right._repr_str})" if isinstance(self.right, CompoundSelector) else self.right._repr_str
         return f"{left_repr} {op_symbol} {right_repr}"

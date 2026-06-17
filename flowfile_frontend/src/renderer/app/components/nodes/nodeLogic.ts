@@ -8,15 +8,12 @@ import type { NodeData } from "../../types/node.types";
 import type { FlowSettings, LocalFileInfo, RunInformation } from "../../types/flow.types";
 import { AxiosResponse } from "axios";
 
-// Re-export types for backward compatibility
 export type {
   ExecutionMode,
   ExecutionLocation,
   FlowSettings,
   LocalFileInfo,
 } from "../../types/flow.types";
-
-// Legacy function wrappers that delegate to the new API
 
 export const insertNode = async (
   flow_id: number,
@@ -43,8 +40,9 @@ export const insertNode = async (
 export async function createFlow(
   flowPath: string | null = null,
   name: string | null = null,
+  namespaceId: number | null = null,
 ): Promise<number> {
-  return FlowApi.createFlow(flowPath, name);
+  return FlowApi.createFlow(flowPath, name, namespaceId);
 }
 
 export async function getFlowSettings(flow_id: number): Promise<FlowSettings | null> {
@@ -88,7 +86,7 @@ export const getNodeData = async (flow_id: number, node_id: number): Promise<Ref
 };
 
 export const addNodeSettings = async (node_type: string, nodeSettings: any) => {
-  const response = await axios.post("update_settings", nodeSettings, {
+  const response = await axios.post("update_settings/", nodeSettings, {
     params: { node_type: node_type },
   });
   console.log(response);

@@ -22,7 +22,6 @@ MINIO_SECRET_KEY = os.environ.get("TEST_MINIO_SECRET_KEY", "minioadmin")
 MINIO_CONTAINER_NAME = os.environ.get("TEST_MINIO_CONTAINER", "test-minio-s3")
 MINIO_ENDPOINT_URL = f"http://{MINIO_HOST}:{MINIO_PORT}"
 
-# Operating system detection
 IS_MACOS = os.uname().sysname == 'Darwin' if hasattr(os, 'uname') else False
 IS_WINDOWS = os.name == 'nt'
 
@@ -77,16 +76,14 @@ def stop_minio_container() -> bool:
         try:
             subprocess.run(["docker", "volume", "rm", volume_name], check=False, capture_output=True)
         except Exception:
-            pass  # Ignore errors if volume doesn't exist
+            pass
         return True
 
     logger.info(f"Stopping and cleaning up container '{container_name}' and volume '{volume_name}'...")
     try:
-        # Stop and remove the container
         subprocess.run(["docker", "stop", container_name], check=True, capture_output=True)
         subprocess.run(["docker", "rm", container_name], check=True, capture_output=True)
 
-        # Remove the associated volume to clear all data
         subprocess.run(["docker", "volume", "rm", volume_name], check=True, capture_output=True)
 
         logger.info("✅ MinIO container and data volume successfully removed.")
@@ -104,7 +101,6 @@ def create_test_buckets():
     """Create test buckets and populate with sample data"""
     client = get_minio_client()
 
-    # Create test buckets
     buckets = ['test-bucket', 'flowfile-test', 'sample-data', 'worker-test-bucket', 'demo-bucket']
     for bucket in buckets:
         try:
@@ -128,12 +124,10 @@ def is_docker_available() -> bool:
         logger.info("Skipping Docker on macOS/Windows in CI environment")
         return False
 
-    # If docker executable is not in PATH
     if shutil.which("docker") is None:
         logger.warning("Docker executable not found in PATH")
         return False
 
-    # Try a simple docker command
     try:
         result = subprocess.run(
             ["docker", "info"],
@@ -160,7 +154,6 @@ def start_minio_container() -> bool:
         return True
 
     try:
-        # Start MinIO with volume for persistence
         subprocess.run([
             "docker", "run", "-d",
             "--name", MINIO_CONTAINER_NAME,
@@ -172,7 +165,6 @@ def start_minio_container() -> bool:
             "minio/minio", "server", "/data", "--console-address", ":9001"
         ], check=True)
 
-        # Wait for MinIO to be ready
         if wait_for_minio():
             create_test_buckets()
             populate_test_data(endpoint_url=MINIO_ENDPOINT_URL,

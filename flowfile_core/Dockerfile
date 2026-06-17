@@ -27,6 +27,7 @@ COPY pyproject.toml poetry.lock* ./
 
 # Install dependencies AND strip in the same layer (in builder)
 RUN poetry install --only=main --no-root && \
+    pip install --no-cache-dir psycopg2-binary==2.9.9 pymysql==1.1.0 && \
     rm -rf $POETRY_CACHE_DIR && \
     # Strip debug symbols from compiled libraries
     find /usr/local/lib/python3.12/site-packages -name "*.so" -exec strip --strip-debug {} \; 2>/dev/null || true && \
@@ -45,6 +46,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -55,6 +57,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY shared /app/shared
 COPY tools /app/tools
 COPY flowfile_core/flowfile_core /app/flowfile_core
+COPY flowfile_scheduler/flowfile_scheduler /app/flowfile_scheduler
+COPY flowfile/flowfile /app/flowfile
+COPY flowfile_frame/flowfile_frame /app/flowfile_frame
 
 RUN mkdir -p /app/user_data /app/internal_storage /app/flowfile_core/saved_flows
 

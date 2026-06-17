@@ -1,5 +1,3 @@
-// 📄 MultiSelect.vue
-
 <template>
   <div class="component-container">
     <label class="listbox-subtitle">{{ schema.label }}</label>
@@ -23,7 +21,6 @@
 </template>
 
 <script setup lang="ts">
-// No changes are needed in the <script> section
 import { computed, PropType } from "vue";
 import type { MultiSelectComponent } from "../interface";
 
@@ -40,23 +37,24 @@ const props = defineProps({
     type: Array as PropType<string[]>,
     default: () => [],
   },
+  availableArtifacts: {
+    type: Array as PropType<string[]>,
+    default: () => [],
+  },
 });
 
 defineEmits(["update:modelValue"]);
 
 const options = computed(() => {
-  if (
-    props.schema.options &&
-    !Array.isArray(props.schema.options) &&
-    props.schema.options.__type__ === "IncomingColumns"
-  ) {
-    return props.incomingColumns;
-  }
-
   if (Array.isArray(props.schema.options)) {
     return props.schema.options;
   }
-
+  if (props.schema.options?.__type__ === "IncomingColumns") {
+    return props.incomingColumns;
+  }
+  if (props.schema.options?.__type__ === "AvailableArtifacts") {
+    return props.availableArtifacts;
+  }
   return [];
 });
 </script>

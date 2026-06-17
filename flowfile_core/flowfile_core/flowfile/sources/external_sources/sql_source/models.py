@@ -1,8 +1,8 @@
 import base64
-from typing import Literal
+from typing import Annotated, Any, Literal
 
 import polars as pl
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator, PlainSerializer
 
 from flowfile_core.schemas.input_schema import (
     DatabaseConnection,
@@ -12,10 +12,27 @@ from flowfile_core.schemas.input_schema import (
 )
 
 
+# Custom type for bytes that serializes to/from base64 string in JSON
+def _decode_bytes(v: Any) -> bytes:
+    if isinstance(v, bytes):
+        return v
+    if isinstance(v, str):
+        return base64.b64decode(v)
+    raise ValueError(f"Expected bytes or base64 string, got {type(v)}")
+
+
+Base64Bytes = Annotated[
+    bytes,
+    BeforeValidator(_decode_bytes),
+    PlainSerializer(lambda x: base64.b64encode(x).decode("ascii"), return_type=str),
+]
+
+
 class ExtDatabaseConnection(DatabaseConnection):
     """Database connection configuration with password handling."""
 
-    password: str = None
+    password: str | None = None
+    ssl_enabled: bool | None = False
 
 
 class DatabaseExternalWriteSettings(BaseModel):
@@ -26,7 +43,7 @@ class DatabaseExternalWriteSettings(BaseModel):
     if_exists: Literal["append", "replace", "fail"] | None = "append"
     flowfile_flow_id: int = 1
     flowfile_node_id: int | str = -1
-    operation: str
+    operation: Base64Bytes  # Accepts bytes or base64 string, serializes to base64
 
     @classmethod
     def create_from_from_node_database_writer(
@@ -49,7 +66,7 @@ class DatabaseExternalWriteSettings(BaseModel):
             DatabaseExternalReadSettings: an instance of DatabaseExternalReadSettings
         """
         if node_database_writer.database_write_settings.connection_mode == "inline":
-            database_connection = node_database_writer.database_settings.database_connection.model_dump()
+            database_connection = node_database_writer.database_write_settings.database_connection.model_dump()
         else:
             database_connection = {k: v for k, v in database_reference_settings.model_dump().items() if k != "password"}
 
@@ -60,7 +77,7 @@ class DatabaseExternalWriteSettings(BaseModel):
             if_exists=node_database_writer.database_write_settings.if_exists,
             flowfile_flow_id=node_database_writer.flow_id,
             flowfile_node_id=node_database_writer.node_id,
-            operation=base64.b64encode(lf.serialize()).decode(),
+            operation=lf.serialize(),  # Pass raw bytes, Base64Bytes handles encoding
         )
 
 

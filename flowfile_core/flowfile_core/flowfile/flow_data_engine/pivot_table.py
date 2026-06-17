@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 
-import polars as pl
 from polars.expr import Expr
 
 
@@ -12,7 +11,5 @@ class AggFunc:
 
 
 AggFuncs = list[AggFunc]
-
-pl.Expr.sum
 
 agg_funcs = ["sum", "max", "min", "count", "first", "last", "std", "var", "n_unique", "list", "list_agg"]

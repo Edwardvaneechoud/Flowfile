@@ -1,5 +1,5 @@
 import axios from "axios";
-import { NodeData, nodeData } from "./nodeInterfaces"; // Adjust the path to your interfaces file
+import { NodeData, nodeData } from "./nodeInterfaces";
 
 export const getNodeData = async (flow_id: number, node_id: number): Promise<NodeData | null> => {
   try {
@@ -8,11 +8,11 @@ export const getNodeData = async (flow_id: number, node_id: number): Promise<Nod
       headers: { accept: "application/json" },
     });
 
-    nodeData.value = response.data; // Update the reactive reference with the response
+    nodeData.value = response.data;
     return response.data;
   } catch (error) {
     console.error("Error fetching node data:", error);
-    nodeData.value = null; // Handle the error as you see fit
+    nodeData.value = null;
     return null;
   }
 };

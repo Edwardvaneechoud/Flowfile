@@ -40,7 +40,7 @@ class FlowfileLogHandler(logging.Handler):
 def get_worker_logger(flowfile_flow_id: int, flowfile_node_id: int | str) -> logging.Logger:
     logger_name = f"NodeLog: {flowfile_node_id}"
     logger = logging.getLogger(logger_name)
-    logger.propagate = False  # Prevent propagation to parent loggers
+    logger.propagate = False
     logger.setLevel(logging.DEBUG)
 
     # Only add handlers if they don't already exist to avoid duplicates

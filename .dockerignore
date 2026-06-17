@@ -4,6 +4,12 @@ build/
 **/build/
 **/dist/
 
+# Rust / Tauri build artifacts (src-tauri/target can be multiple GB)
+target/
+**/target/
+flowfile_frontend/src-tauri/target/
+flowfile_frontend/src-tauri/gen/
+
 # Node.js
 node_modules/
 **/node_modules/
@@ -89,4 +95,6 @@ services_dist/
 shared_data/
 flowfile.db
 **/flowfile.db
+flowfile_catalog.db
+**/flowfile_catalog.db
 *.flowfile

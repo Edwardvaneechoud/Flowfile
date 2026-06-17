@@ -20,19 +20,16 @@ class Series:
         """
         Initialize a FlowSeries with the same API as pl.Series.
         """
-        # Store the original arguments for proper representation
         self._name = name
         self._values = values
         self._dtype = dtype
 
-        # Handle the different initialization forms
         if isinstance(name, pl.Series):
             self._s = name
-            # Update our attributes to match the series
             self._name = name.name
             self._values = name.to_list()
             self._dtype = name.dtype
-        elif isinstance(name, (list, tuple)) and values is None:
+        elif isinstance(name, list | tuple) and values is None:
             self._s = pl.Series(values=name, dtype=dtype)
             self._name = ""  # Default name is empty string
             self._values = name
@@ -44,23 +41,19 @@ class Series:
         Return a string that looks like the code to create this Series.
         Example: pl.Series("c", [1, 2, 3])
         """
-        # Format name
         if self._name:
             name_str = f'"{self._name}"'
         else:
             name_str = '""'
 
-        # Format values
         if self._values is None:
             values_str = "[]"
         elif len(self._values) <= 10:
             values_str = str(self._values)
         else:
-            # Show first few elements for long lists
             sample = self._values[:3]
             values_str = f"[{', '.join(map(str, sample))}, ...]"
 
-        # Format dtype if provided
         dtype_str = ""
         if self._dtype is not None:
             dtype_str = f", dtype={self._dtype}"

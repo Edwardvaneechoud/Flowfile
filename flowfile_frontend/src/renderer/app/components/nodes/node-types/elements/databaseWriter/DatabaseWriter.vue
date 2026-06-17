@@ -1,7 +1,11 @@
 // DatabaseWriterNode.vue
 <template>
   <div v-if="dataLoaded && nodeData" class="db-container">
-    <generic-node-settings v-model="nodeData">
+    <generic-node-settings
+      v-model="nodeData"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <!-- Connection Mode Selection -->
       <div class="listbox-wrapper">
         <div class="form-group">
@@ -60,24 +64,62 @@
         <div class="form-row">
           <div class="form-group half">
             <label for="schema-name">Schema</label>
-            <input
-              id="schema-name"
-              v-model="nodeData.database_write_settings.schema_name"
-              type="text"
-              class="form-control"
-              placeholder="Enter schema name"
-            />
+            <div class="input-with-fetch">
+              <el-select
+                ref="schemaSelectRef"
+                v-model="nodeData.database_write_settings.schema_name"
+                filterable
+                allow-create
+                clearable
+                default-first-option
+                :placeholder="schemasAreLoading ? 'Loading...' : 'Schema'"
+                class="flex-input"
+                @change="handleSchemaChange"
+                @blur="handleSchemaBlur"
+              >
+                <el-option v-for="s in availableSchemas" :key="s" :label="s" :value="s" />
+              </el-select>
+              <button
+                type="button"
+                class="btn-fetch-icon"
+                :disabled="schemasAreLoading"
+                title="Refresh schemas"
+                @click="handleFetchSchemas()"
+              >
+                <i v-if="schemasAreLoading" class="fa-solid fa-spinner fa-spin"></i>
+                <i v-else class="fa-solid fa-refresh"></i>
+              </button>
+            </div>
           </div>
 
           <div class="form-group half">
             <label for="table-name">Table</label>
-            <input
-              id="table-name"
-              v-model="nodeData.database_write_settings.table_name"
-              type="text"
-              class="form-control"
-              placeholder="Enter table name"
-            />
+            <div class="input-with-fetch">
+              <el-select
+                ref="tableSelectRef"
+                v-model="nodeData.database_write_settings.table_name"
+                filterable
+                allow-create
+                clearable
+                default-first-option
+                :placeholder="tablesAreLoading ? 'Loading...' : 'Table'"
+                class="flex-input"
+                @change="handleTableSelect"
+                @blur="handleTableBlur"
+              >
+                <el-option v-for="t in availableTables" :key="t" :label="t" :value="t" />
+              </el-select>
+              <button
+                type="button"
+                class="btn-fetch-icon"
+                :disabled="tablesAreLoading"
+                title="Refresh tables"
+                @click="handleFetchTables()"
+              >
+                <i v-if="tablesAreLoading" class="fa-solid fa-spinner fa-spin"></i>
+                <i v-else class="fa-solid fa-refresh"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -110,19 +152,24 @@
 </template>
 
 <script lang="ts" setup>
+// TODO(refactor): ~516 LOC, paired with DatabaseReader (~655 LOC).
+//   See DatabaseReader.vue header for the shared extraction plan
+//   (DatabaseConnectionPicker + databaseConnectionFormatters).
 import { CodeLoader } from "vue-content-loader";
-import { ref, onMounted } from "vue";
+import { ref, onMounted, watch } from "vue";
 import {
   NodeDatabaseWriter,
   IfExistAction,
   ConnectionModeOption,
 } from "../../../baseNode/nodeInput";
 import { createNodeDatabaseWriter } from "./utils";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { fetchDatabaseConnectionsInterfaces } from "../../../../../views/DatabaseView/api";
 import { FullDatabaseConnectionInterface } from "../../../../../views/DatabaseView/databaseConnectionTypes";
-import { ElMessage, ElRadio } from "element-plus";
+import { ElMessage, ElOption, ElRadio, ElSelect } from "element-plus";
 import DatabaseConnectionSettings from "../databaseReader/DatabaseConnectionSettings.vue";
+import { fetchDbSchemas, fetchDbTables } from "../databaseReader/api";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 interface Props {
@@ -137,8 +184,28 @@ const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
 const nodeData = ref<null | NodeDatabaseWriter>(null);
 const dataLoaded = ref(false);
 const connectionsAreLoading = ref(false);
+const availableSchemas = ref<string[]>([]);
+const schemasAreLoading = ref(false);
+const availableTables = ref<string[]>([]);
+const tablesAreLoading = ref(false);
+const schemaSelectRef = ref();
+const tableSelectRef = ref();
 
-// Load node data from the store
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeData,
+  onBeforeSave: () => {
+    if (!nodeData.value) {
+      return false;
+    }
+    if (nodeData.value.database_write_settings.connection_mode === "reference") {
+      nodeData.value.database_write_settings.database_connection = undefined;
+    } else {
+      nodeData.value.database_write_settings.database_connection_name = undefined;
+    }
+    return true;
+  },
+});
+
 const loadNodeData = async (nodeId: number) => {
   try {
     const fetchedNodeData = await nodeStore.getNodeData(nodeId, false);
@@ -147,8 +214,8 @@ const loadNodeData = async (nodeId: number) => {
       nodeData.value = hasValidSetup
         ? fetchedNodeData.setting_input
         : createNodeDatabaseWriter(nodeStore.flow_id, nodeId);
+      dataLoaded.value = true;
     }
-    dataLoaded.value = true;
   } catch (error) {
     console.error("Error loading node data:", error);
     dataLoaded.value = false;
@@ -156,34 +223,108 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-// Simple reset fields function (minimal)
 const resetFields = () => {
-  // No fields to reset in this simplified version
+  availableSchemas.value = [];
+  availableTables.value = [];
 };
 
-// Save node data to the store
-const pushNodeData = async () => {
-  if (!nodeData.value) {
-    return;
-  }
+const handleSchemaChange = () => {
+  availableTables.value = [];
+};
 
-  // Clean up settings based on connection_mode before saving
-  if (nodeData.value.database_write_settings.connection_mode === "reference") {
-    nodeData.value.database_write_settings.database_connection = undefined;
-  } else {
-    nodeData.value.database_write_settings.database_connection_name = undefined;
+// Commit typed text on blur so custom values aren't discarded by el-select
+const handleSchemaBlur = () => {
+  if (!nodeData.value) return;
+  const inputEl = schemaSelectRef.value?.$el?.querySelector("input");
+  if (inputEl?.value) {
+    nodeData.value.database_write_settings.schema_name = inputEl.value;
   }
+};
 
-  nodeData.value.is_setup = true;
+const handleTableBlur = () => {
+  if (!nodeData.value) return;
+  const inputEl = tableSelectRef.value?.$el?.querySelector("input");
+  if (inputEl?.value) {
+    nodeData.value.database_write_settings.table_name = inputEl.value;
+  }
+};
+
+const handleFetchSchemas = async (silent = false) => {
+  if (!nodeData.value?.database_write_settings) return;
+  schemasAreLoading.value = true;
   try {
-    await nodeStore.updateSettings(nodeData);
-  } catch (error) {
-    console.error("Error saving node data:", error);
-    ElMessage.error("Failed to save node settings");
+    availableSchemas.value = await fetchDbSchemas(nodeData.value.database_write_settings);
+  } catch (error: any) {
+    if (!silent) {
+      const detail = error.response?.data?.detail || "Failed to fetch schemas";
+      ElMessage.error(detail);
+    }
+  } finally {
+    schemasAreLoading.value = false;
   }
 };
 
-// Fetch available database connections
+const handleFetchTables = async (silent = false) => {
+  if (!nodeData.value?.database_write_settings) return;
+  tablesAreLoading.value = true;
+  try {
+    availableTables.value = await fetchDbTables(nodeData.value.database_write_settings);
+  } catch (error: any) {
+    if (!silent) {
+      const detail = error.response?.data?.detail || "Failed to fetch tables";
+      ElMessage.error(detail);
+    }
+  } finally {
+    tablesAreLoading.value = false;
+  }
+};
+
+const handleTableSelect = (value: string) => {
+  if (!nodeData.value) return;
+  // When no schema was selected, tables come as "schema.table" — split them
+  if (value && value.includes(".") && !nodeData.value.database_write_settings.schema_name) {
+    const dotIndex = value.indexOf(".");
+    nodeData.value.database_write_settings.schema_name = value.substring(0, dotIndex);
+    nodeData.value.database_write_settings.table_name = value.substring(dotIndex + 1);
+  }
+};
+
+// Auto-fetch schemas/tables when connection details change.
+// Reference mode: fetch immediately on selection.
+// Inline mode: debounce so we don't fire on every keystroke, and only when the
+// connection looks complete (all required fields filled).
+const isInlineConnectionComplete = () => {
+  const conn = nodeData.value?.database_write_settings?.database_connection;
+  if (!conn) return false;
+  if (conn.database_type === "sqlite") return !!conn.database;
+  return !!(conn.host && conn.port && conn.database && conn.username && conn.password_ref);
+};
+
+let inlineDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+watch(
+  () => nodeData.value?.database_write_settings?.database_connection_name,
+  (name) => {
+    if (name) {
+      handleFetchSchemas(true);
+      handleFetchTables(true);
+    }
+  },
+);
+
+watch(
+  () => nodeData.value?.database_write_settings?.database_connection,
+  () => {
+    if (inlineDebounceTimer) clearTimeout(inlineDebounceTimer);
+    if (!isInlineConnectionComplete()) return;
+    inlineDebounceTimer = setTimeout(() => {
+      handleFetchSchemas(true);
+      handleFetchTables(true);
+    }, 1500);
+  },
+  { deep: true },
+);
+
 const fetchConnections = async () => {
   connectionsAreLoading.value = true;
   try {
@@ -204,6 +345,7 @@ onMounted(async () => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 
@@ -283,6 +425,55 @@ select.form-control {
   to {
     transform: rotate(360deg);
   }
+}
+
+.input-with-fetch {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.input-with-fetch .form-control,
+.input-with-fetch .flex-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.input-with-fetch :deep(.el-input__wrapper) {
+  box-sizing: border-box;
+}
+
+.btn-fetch-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background-color 0.2s;
+  font-size: 0.8rem;
+  padding: 0;
+}
+
+.btn-fetch-icon:hover {
+  color: var(--color-info);
+  border-color: var(--color-info);
+  background-color: var(--color-gray-50);
+}
+
+.btn-fetch-icon:disabled {
+  color: var(--color-text-muted);
+  border-color: var(--color-border-light);
+  background-color: var(--color-background-primary);
+  cursor: not-allowed;
 }
 
 .option-description {

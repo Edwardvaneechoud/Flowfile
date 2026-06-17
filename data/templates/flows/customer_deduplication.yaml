@@ -1,0 +1,93 @@
+flowfile_version: 0.8.2
+flowfile_id: 2
+flowfile_name: Customer Deduplication
+flowfile_settings:
+  description: null
+  execution_mode: Development
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [2]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/customers.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 2
+  type: unique
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 250
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [3]
+  setting_input:
+    cache_results: false
+    unique_input:
+      columns: [email]
+      strategy: first
+- id: 3
+  type: select
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 500
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: [4]
+  setting_input:
+    cache_results: false
+    keep_missing: false
+    select_input:
+    - old_name: customer_id
+      new_name: id
+    - old_name: name
+      new_name: customer_name
+    - old_name: email
+    - old_name: city
+    - old_name: segment
+    sorted_by: none
+- id: 4
+  type: explore_data
+  is_start_node: false
+  description: 'Explore the output!'
+  node_reference: null
+  x_position: 750
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: []
+  setting_input:
+    cache_results: false
+    graphic_walker_input: null
+_template_meta:
+  template_id: customer_deduplication
+  name: Customer Deduplication
+  description: Remove duplicate customer records by email and clean up column names.
+  category: Beginner
+  tags: [unique, select]
+  node_count: 4
+  icon: people
+_required_csv_files: [customers.csv]

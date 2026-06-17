@@ -8,6 +8,7 @@ on:
       - 'docs/**'
       - 'mkdocs.yml'
       - 'flowfile_frame/**/*.py'  # API docs may reference this
+      - 'tools/generate_formula_docs.py'  # generates docs/users/formulas/functions.md
       - '.github/workflows/documentation.yml'
   pull_request:
     branches:
@@ -37,6 +38,9 @@ jobs:
         run: |
           pip install poetry
           poetry install --with dev --no-interaction --no-ansi
+
+      - name: Check formula docs are in sync
+        run: make check_formula_docs
 
       - name: Build documentation
         run: |

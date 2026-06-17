@@ -1,0 +1,94 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Flowfile",
+  "version": "0.12.1",
+  "identifier": "com.flowfile.app",
+  "build": {
+    "frontendDist": "../build/renderer",
+    "devUrl": "http://localhost:8080",
+    "beforeDevCommand": "npm run dev:web",
+    "beforeBuildCommand": "npm run build:renderer-only"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "loading",
+        "title": "Flowfile",
+        "url": "loading.html",
+        "width": 700,
+        "height": 400,
+        "center": true,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "visible": true,
+        "skipTaskbar": true,
+        "alwaysOnTop": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' https://apis.google.com; connect-src 'self' http://127.0.0.1:* http://localhost:* https://accounts.google.com https://apis.google.com ipc: http://ipc.localhost; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://apis.google.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; worker-src 'self' blob:; frame-src 'self' https://accounts.google.com",
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    },
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": ["app", "dmg", "nsis", "deb"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "binaries/**/*"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Visual ETL designer powered by Polars",
+    "longDescription": "Flowfile is a visual ETL platform with a Python backend and a programmatic Polars-like API.",
+    "publisher": "Edwardvaneechoud",
+    "homepage": "https://github.com/Edwardvaneechoud/Flowfile",
+    "license": "MIT",
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "11.0",
+      "entitlements": "entitlements.mac.plist",
+      "exceptionDomain": "",
+      "hardenedRuntime": true
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper" },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "displayLanguageSelector": false,
+        "languages": ["English"],
+        "installMode": "perMachine"
+      },
+      "wix": null
+    },
+    "linux": {
+      "deb": {
+        "section": "utils",
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Edwardvaneechoud/Flowfile/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENDODExNEY5NUU3QzJFOTAKUldTUUxueGUrUlNCektOdjJVYXhjeEtSRFVrNmNmUkNQdFhZbTlWaHJ4Z0Iya0ZtQkJleGZzTWIK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

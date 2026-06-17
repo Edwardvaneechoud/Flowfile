@@ -1,4 +1,3 @@
-// secretManager/composables/useSecrets.ts
 import { ref, computed } from "vue";
 import type { Ref } from "vue";
 import { fetchSecretsApi, addSecretApi, getSecretValueApi, deleteSecretApi } from "./secretApi";
@@ -11,7 +10,6 @@ export function useSecretManager() {
   const visibleSecrets = ref<string[]>([]);
   const copyMessage = ref("");
 
-  // Filtered and sorted secrets
   const filteredSecrets = computed(() => {
     const sortedSecrets = [...secrets.value].sort((a, b) => a.name.localeCompare(b.name));
     if (!searchTerm.value) {
@@ -21,39 +19,37 @@ export function useSecretManager() {
     return sortedSecrets.filter((secret) => secret.name.toLowerCase().includes(term));
   });
 
-  // Load secrets from API
   const loadSecrets = async () => {
     isLoading.value = true;
-    visibleSecrets.value = []; // Reset visibility on reload
+    visibleSecrets.value = [];
     try {
       secrets.value = await fetchSecretsApi();
     } catch (error) {
       console.error("Failed to load secrets:", error);
-      secrets.value = []; // Clear secrets on error
-      throw error; // Allow caller to handle notification
+      secrets.value = [];
+      throw error;
     } finally {
       isLoading.value = false;
     }
   };
 
-  // Add a new secret
   const addSecret = async (secretInput: SecretInput) => {
-    // Basic validation: Check if secret name already exists (case-sensitive)
-    if (secrets.value.some((s) => s.name === secretInput.name)) {
+    // Only own secrets block creation — a same-named group-shared secret is
+    // shadowed by your own (the backend resolves own-first), so don't reject it.
+    if (secrets.value.some((s) => s.name === secretInput.name && s.access?.is_owner !== false)) {
       throw new Error(`Secret with name "${secretInput.name}" already exists.`);
     }
 
     try {
-      await addSecretApi({ ...secretInput }); // Pass a copy
-      await loadSecrets(); // Reload the list after adding
-      return secretInput.name; // Return name for success feedback
+      await addSecretApi({ ...secretInput });
+      await loadSecrets();
+      return secretInput.name;
     } catch (error) {
       console.error("Failed to add secret:", error);
-      throw error; // Allow caller to handle notification
+      throw error;
     }
   };
 
-  // Toggle secret visibility icon
   const toggleSecretVisibility = (secretName: string) => {
     const index = visibleSecrets.value.indexOf(secretName);
     if (index === -1) {
@@ -63,15 +59,13 @@ export function useSecretManager() {
     }
   };
 
-  // Copy secret value to clipboard
   const copySecretToClipboard = async (secretName: string) => {
-    copyMessage.value = ""; // Clear previous message
+    copyMessage.value = "";
     try {
       const secretValue = await getSecretValueApi(secretName);
       await navigator.clipboard.writeText(secretValue);
       copyMessage.value = `Value for '${secretName}' copied!`;
 
-      // Auto-clear message after delay
       setTimeout(() => {
         copyMessage.value = "";
       }, 2500);
@@ -81,24 +75,22 @@ export function useSecretManager() {
       console.error("Failed to copy secret:", error);
       copyMessage.value = `Failed to copy ${secretName}.`;
 
-      // Auto-clear error message after delay
       setTimeout(() => {
         copyMessage.value = "";
       }, 3000);
 
-      throw error; // Allow caller to handle notification
+      throw error;
     }
   };
 
-  // Delete a secret
   const deleteSecret = async (secretName: string) => {
     try {
       await deleteSecretApi(secretName);
-      await loadSecrets(); // Refresh the list
-      return secretName; // Return name for success feedback
+      await loadSecrets();
+      return secretName;
     } catch (error) {
       console.error("Failed to delete secret:", error);
-      throw error; // Allow caller to handle notification
+      throw error;
     }
   };
 

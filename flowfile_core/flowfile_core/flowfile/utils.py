@@ -22,7 +22,6 @@ def create_directory_if_not_exists(directory: str):
 
 
 def snake_case_to_camel_case(text: str) -> str:
-    # Split the text by underscores, capitalize each piece, and join them together
     transformed_text = "".join(word.capitalize() for word in text.split("_"))
     return transformed_text
 
@@ -82,7 +81,6 @@ def cleanup(start_location: str = "temp_storage"):
 
     output = get_all_files_and_folders(start_location)
 
-    # get level of dept of folder and sort based on that
     actions = [(_path.count(os.sep), _path) for _path in output]
     actions = [action for action in actions if action[0] > 0]
     files_to_delete = {action[0]: [] for action in actions}
@@ -123,22 +121,17 @@ def create_unique_id() -> int:
     Returns:
         int: unique id within 32 bits (4 bytes)
     """
-    # Get various entropy sources
     time_ms = int(time.time() * 1000)
     pid = os.getpid()
     random_bytes = random.getrandbits(32)
     mac_addr = uuid.getnode()  # MAC address as integer
     hostname = socket.gethostname()
 
-    # Combine all sources into a string
     seed = f"{time_ms}-{pid}-{random_bytes}-{mac_addr}-{hostname}-{uuid.uuid4()}"
-
-    # Create a hash of all entropy sources
 
     hash_obj = hashlib.sha256(seed.encode())
     hash_int = int(hash_obj.hexdigest(), 16)
 
-    # Ensure the result fits within 32 bits (4 bytes)
     unique_id = hash_int & 0xFFFFFFFF
 
     return unique_id

@@ -75,7 +75,6 @@ def cross_join(node_data: "NodeData") -> NodeData:
 @setting_generator_method
 def filter(node_data: "NodeData") -> NodeData:
     if node_data.main_input:
-        # Default to basic mode with an empty basic filter
         basic_filter = transform_schema.BasicFilter(
             field="",
             operator=transform_schema.FilterOperator.EQUALS,
@@ -89,14 +88,13 @@ def filter(node_data: "NodeData") -> NodeData:
 
 
 @setting_updator_method
-def join(node_data: NodeData):
+def join(node_data: NodeData):  # noqa: F811
     if node_data.right_input and node_data.main_input:
         setting_input: input_schema.NodeJoin = node_data.setting_input
         left_columns = set(node_data.main_input.columns)
         right_columns = set(node_data.right_input.columns)
         left_select = setting_input.join_input.left_select
         right_select = setting_input.join_input.right_select
-        # Update is_available based on whether column exists in input
         for ls in left_select.renames:
             ls.is_available = ls.old_name in left_columns
         for rs in right_select.renames:
@@ -120,14 +118,13 @@ def join(node_data: NodeData):
 
 
 @setting_updator_method
-def cross_join(node_data: NodeData):
+def cross_join(node_data: NodeData):  # noqa: F811
     if node_data.right_input and node_data.main_input:
         setting_input: input_schema.NodeCrossJoin = node_data.setting_input
         left_columns = set(node_data.main_input.columns)
         right_columns = set(node_data.right_input.columns)
         left_select = setting_input.cross_join_input.left_select
         right_select = setting_input.cross_join_input.right_select
-        # Update is_available based on whether column exists in input
         for ls in left_select.renames:
             ls.is_available = ls.old_name in left_columns
         for rs in right_select.renames:
@@ -170,7 +167,6 @@ def fuzzy_match(node_data: NodeData):
         right_select = setting_input.join_input.right_select
         for fuzzy_map in setting_input.join_input.join_mapping:
             fuzzy_map.valid = check_if_fuzzy_match_is_valid(left_columns, right_columns, fuzzy_map)
-        # Update is_available based on whether column exists in input
         for ls in left_select.renames:
             ls.is_available = ls.old_name in left_columns
         for rs in right_select.renames:

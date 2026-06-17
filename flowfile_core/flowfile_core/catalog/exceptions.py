@@ -1,0 +1,261 @@
+"""Domain-specific exceptions for the Flow Catalog system.
+
+These exceptions represent business-rule violations and are raised by the
+service layer.  Route handlers catch them and translate to appropriate
+HTTP responses.
+"""
+
+
+class CatalogError(Exception):
+    """Base exception for all catalog domain errors."""
+
+
+class NamespaceNotFoundError(CatalogError):
+    """Raised when a namespace lookup fails."""
+
+    def __init__(self, namespace_id: int | None = None, name: str | None = None):
+        self.namespace_id = namespace_id
+        self.name = name
+        detail = "Namespace not found"
+        if namespace_id is not None:
+            detail = f"Namespace with id={namespace_id} not found"
+        elif name is not None:
+            detail = f"Namespace '{name}' not found"
+        super().__init__(detail)
+
+
+class NamespaceExistsError(CatalogError):
+    """Raised when attempting to create a duplicate namespace."""
+
+    def __init__(self, name: str, parent_id: int | None = None):
+        self.name = name
+        self.parent_id = parent_id
+        super().__init__(
+            f"Namespace '{name}' already exists"
+            + (f" under parent_id={parent_id}" if parent_id is not None else " at root level")
+        )
+
+
+class NestingLimitError(CatalogError):
+    """Raised when attempting to nest namespaces deeper than catalog -> schema."""
+
+    def __init__(self, parent_id: int, parent_level: int):
+        self.parent_id = parent_id
+        self.parent_level = parent_level
+        super().__init__("Cannot nest deeper than catalog -> schema")
+
+
+class NamespaceNotEmptyError(CatalogError):
+    """Raised when trying to delete a namespace that still has children, flows, or tables."""
+
+    def __init__(self, namespace_id: int, children: int = 0, flows: int = 0, tables: int = 0):
+        self.namespace_id = namespace_id
+        self.children = children
+        self.flows = flows
+        self.tables = tables
+        parts = []
+        if children:
+            parts.append(f"{children} child namespace(s)")
+        if flows:
+            parts.append(f"{flows} flow(s)")
+        if tables:
+            parts.append(f"{tables} table(s)")
+        detail = ", ".join(parts) if parts else "children or flows"
+        super().__init__(f"Cannot delete namespace: still contains {detail}")
+
+
+class FlowNotFoundError(CatalogError):
+    """Raised when a flow registration lookup fails."""
+
+    def __init__(self, registration_id: int | None = None, name: str | None = None):
+        self.registration_id = registration_id
+        self.name = name
+        detail = "Flow not found"
+        if registration_id is not None:
+            detail = f"Flow with id={registration_id} not found"
+        elif name is not None:
+            detail = f"Flow '{name}' not found"
+        super().__init__(detail)
+
+
+class FlowExistsError(CatalogError):
+    """Raised when attempting to create a duplicate flow registration."""
+
+    def __init__(self, name: str, namespace_id: int | None = None):
+        self.name = name
+        self.namespace_id = namespace_id
+        super().__init__(f"Flow '{name}' already exists in namespace_id={namespace_id}")
+
+
+class RunNotFoundError(CatalogError):
+    """Raised when a flow run lookup fails."""
+
+    def __init__(self, run_id: int):
+        self.run_id = run_id
+        super().__init__(f"Run with id={run_id} not found")
+
+
+class NotAuthorizedError(CatalogError):
+    """Raised when a user attempts an action they are not permitted to perform."""
+
+    def __init__(self, user_id: int, action: str = "perform this action"):
+        self.user_id = user_id
+        self.action = action
+        super().__init__(f"User {user_id} is not authorized to {action}")
+
+
+class FavoriteNotFoundError(CatalogError):
+    """Raised when a favorite record is not found."""
+
+    def __init__(self, user_id: int, registration_id: int):
+        self.user_id = user_id
+        self.registration_id = registration_id
+        super().__init__(f"Favorite not found for user={user_id}, flow={registration_id}")
+
+
+class FollowNotFoundError(CatalogError):
+    """Raised when a follow record is not found."""
+
+    def __init__(self, user_id: int, registration_id: int):
+        self.user_id = user_id
+        self.registration_id = registration_id
+        super().__init__(f"Follow not found for user={user_id}, flow={registration_id}")
+
+
+class FlowHasArtifactsError(CatalogError):
+    """Raised when trying to delete a flow that still has active artifacts."""
+
+    def __init__(self, registration_id: int, artifact_count: int):
+        self.registration_id = registration_id
+        self.artifact_count = artifact_count
+        super().__init__(
+            f"Cannot delete flow {registration_id}: " f"{artifact_count} active artifact(s) still reference it"
+        )
+
+
+class NoSnapshotError(CatalogError):
+    """Raised when a run has no flow snapshot available."""
+
+    def __init__(self, run_id: int):
+        self.run_id = run_id
+        super().__init__(f"No flow snapshot available for run id={run_id}")
+
+
+class TableNotFoundError(CatalogError):
+    """Raised when a catalog table lookup fails."""
+
+    def __init__(self, table_id: int | None = None, name: str | None = None):
+        self.table_id = table_id
+        self.name = name
+        detail = "Catalog table not found"
+        if table_id is not None:
+            detail = f"Catalog table with id={table_id} not found"
+        elif name is not None:
+            detail = f"Catalog table '{name}' not found"
+        super().__init__(detail)
+
+
+class TableExistsError(CatalogError):
+    """Raised when attempting to create a duplicate catalog table."""
+
+    def __init__(self, name: str, namespace_id: int | None = None):
+        self.name = name
+        self.namespace_id = namespace_id
+        super().__init__(f"Catalog table '{name}' already exists in namespace_id={namespace_id}")
+
+
+class AmbiguousTableError(CatalogError):
+    """Raised (in strict mode) when a bare table name matches multiple catalog rows
+    across namespaces and the caller has not supplied a disambiguating namespace.
+
+    Carries the list of candidate ``(table_id, namespace_id, namespace_name, table_name)``
+    tuples so callers can render them in an error response."""
+
+    def __init__(self, name: str, candidates: list[dict]):
+        self.name = name
+        self.candidates = candidates
+        rendered = ", ".join(f"{c.get('namespace_name') or '<root>'}.{c['name']} (id={c['id']})" for c in candidates)
+        super().__init__(f"Table name '{name}' is ambiguous; candidates: {rendered}")
+
+
+class TableFavoriteNotFoundError(CatalogError):
+    """Raised when a table favorite record is not found."""
+
+    def __init__(self, user_id: int, table_id: int):
+        self.user_id = user_id
+        self.table_id = table_id
+        super().__init__(f"Table favorite not found for user={user_id}, table={table_id}")
+
+
+class ScheduleNotFoundError(CatalogError):
+    """Raised when a schedule lookup fails."""
+
+    def __init__(self, schedule_id: int):
+        self.schedule_id = schedule_id
+        super().__init__(f"Schedule with id={schedule_id} not found")
+
+
+class FlowAlreadyRunningError(CatalogError):
+    """Raised when trying to trigger a flow that already has an active run."""
+
+    def __init__(self, registration_id: int):
+        self.registration_id = registration_id
+        super().__init__(f"Flow {registration_id} already has an active run")
+
+
+class ScheduleConflictError(CatalogError):
+    """Raised when a schedule conflicts with an existing one."""
+
+    def __init__(self, registration_id: int, schedule_type: str):
+        self.registration_id = registration_id
+        self.schedule_type = schedule_type
+        super().__init__(f"A '{schedule_type}' schedule already exists for flow {registration_id}")
+
+
+class VisualizationNotFoundError(CatalogError):
+    """Raised when a saved catalog visualization lookup fails."""
+
+    def __init__(self, viz_id: int | None = None, table_id: int | None = None, name: str | None = None):
+        self.viz_id = viz_id
+        self.table_id = table_id
+        self.name = name
+        if viz_id is not None and table_id is not None:
+            detail = f"Visualization id={viz_id} not found on table id={table_id}"
+        elif viz_id is not None:
+            detail = f"Visualization id={viz_id} not found"
+        elif name is not None:
+            detail = f"Visualization '{name}' not found"
+        else:
+            detail = "Visualization not found"
+        super().__init__(detail)
+
+
+class VisualizationExistsError(CatalogError):
+    """Raised when a duplicate visualization name is created on the same table."""
+
+    def __init__(self, name: str, table_id: int):
+        self.name = name
+        self.table_id = table_id
+        super().__init__(f"Visualization '{name}' already exists on table id={table_id}")
+
+
+class VisualizationComputeError(CatalogError):
+    """Raised when the worker fails to compute a visualization."""
+
+    def __init__(self, message: str):
+        super().__init__(f"Worker compute failed: {message}")
+
+
+class DashboardNotFoundError(CatalogError):
+    """Raised when a saved dashboard lookup fails."""
+
+    def __init__(self, dashboard_id: int | None = None, name: str | None = None):
+        self.dashboard_id = dashboard_id
+        self.name = name
+        if dashboard_id is not None:
+            detail = f"Dashboard id={dashboard_id} not found"
+        elif name is not None:
+            detail = f"Dashboard '{name}' not found"
+        else:
+            detail = "Dashboard not found"
+        super().__init__(detail)

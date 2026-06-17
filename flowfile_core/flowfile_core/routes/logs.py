@@ -45,17 +45,17 @@ async def add_log(flow_id: int, log_message: str):
 @router.post("/raw_logs", tags=["flow_logging"])
 async def add_raw_log(raw_log_input: schemas.RawLogInput):
     """Adds a log message to the log file for a given flow_id."""
-    logger.info("Adding raw logs")
     flow = flow_file_handler.get_flow(raw_log_input.flowfile_flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
-    flow.flow_logger.get_log_filepath()
     flow_logger = flow.flow_logger
-    flow_logger.get_log_filepath()
+    node_id = raw_log_input.node_id if raw_log_input.node_id is not None else -1
     if raw_log_input.log_type == "INFO":
-        flow_logger.info(raw_log_input.log_message, extra=raw_log_input.extra)
+        flow_logger.info(raw_log_input.log_message, extra=raw_log_input.extra, node_id=node_id)
+    elif raw_log_input.log_type == "WARNING":
+        flow_logger.warning(raw_log_input.log_message, extra=raw_log_input.extra, node_id=node_id)
     elif raw_log_input.log_type == "ERROR":
-        flow_logger.error(raw_log_input.log_message, extra=raw_log_input.extra)
+        flow_logger.error(raw_log_input.log_message, extra=raw_log_input.extra, node_id=node_id)
     return {"message": "Log added successfully"}
 
 
@@ -68,10 +68,8 @@ async def stream_log_file(
     last_active = time.monotonic()
     try:
         async with aiofiles.open(log_file_path) as file:
-            # Ensure we start at the beginning
             await file.seek(0)
             while is_running_callable():
-                # Immediately check if shutdown has been triggered
                 if ServerRun.exit:
                     yield await format_sse_message("Server is shutting down. Closing connection.")
                     break
@@ -80,16 +78,14 @@ async def stream_log_file(
                 if line:
                     formatted_message = await format_sse_message(line.strip())
                     yield formatted_message
-                    last_active = time.monotonic()  # Reset idle timer on activity
+                    last_active = time.monotonic()
                 else:
-                    # Check for idle timeout
                     if time.monotonic() - last_active > idle_timeout:
                         yield await format_sse_message("Connection timed out due to inactivity.")
                         break
                     # Allow the event loop to process other tasks (like signals)
                     await asyncio.sleep(0.1)
 
-            # Optionally, read any final lines
             while True:
                 if ServerRun.exit:
                     break
@@ -103,11 +99,11 @@ async def stream_log_file(
     except FileNotFoundError:
         error_msg = await format_sse_message(f"Log file not found: {log_file_path}")
         yield error_msg
-        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file_path}")
+        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file_path}") from None
     except Exception as e:
         error_msg = await format_sse_message(f"Error reading log file: {str(e)}")
         yield error_msg
-        raise HTTPException(status_code=500, detail=f"Error reading log file: {e}")
+        raise HTTPException(status_code=500, detail=f"Error reading log file: {e}") from e
 
 
 @router.get("/logs/{flow_id}", tags=["flow_logging"])

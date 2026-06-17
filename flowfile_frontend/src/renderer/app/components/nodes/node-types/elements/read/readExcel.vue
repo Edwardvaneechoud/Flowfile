@@ -123,7 +123,6 @@ const toggleOptionalSettings = () => {
   showOptionalSettings.value = !showOptionalSettings.value;
 };
 
-// FIX 1: Handle undefined sheet_name
 const showWarning = computed(() => {
   if (!sheetNamesLoaded.value || !localExcelTable.value.sheet_name) {
     return false;

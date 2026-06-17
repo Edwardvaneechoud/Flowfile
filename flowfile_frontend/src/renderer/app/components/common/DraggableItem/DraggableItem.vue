@@ -16,7 +16,7 @@
       zIndex: itemState.zIndex,
     }"
   >
-    <div class="header" @mousedown="startMove">
+    <div class="header" @mousedown="startMove" @dblclick="handleHeaderDblClick">
       <button
         v-if="allowMinimizing"
         class="minimal-button"
@@ -94,26 +94,35 @@
       class="draggable-line right-vertical"
       @mousedown.stop="startResizeRight"
       @mouseenter="resizeOnEnter($event, 'right')"
+      @dblclick.stop="handleResizeBarDblClick"
     ></div>
     <div
       class="draggable-line bottom-horizontal"
       @mousedown.stop="startResizeBottom"
       @mouseenter="resizeOnEnter($event, 'bottom')"
+      @dblclick.stop="handleResizeBarDblClick"
     ></div>
     <div
       class="draggable-line top-horizontal"
       @mousedown.stop="startResizeTop"
       @mouseenter="resizeOnEnter($event, 'top')"
+      @dblclick.stop="handleResizeBarDblClick"
     ></div>
     <div
       class="draggable-line left-vertical"
       @mousedown.stop="startResizeLeft"
       @mouseenter="resizeOnEnter($event, 'left')"
+      @dblclick.stop="handleResizeBarDblClick"
     ></div>
   </div>
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~1027 LOC, god component. Plan to extract:
+//   - useDraggableResize composable: per-edge resize handlers (~lines 365-457)
+//   - useDraggablePosition composable: move/sticky helpers (~lines 475-545)
+//   - DraggableItemHeader.vue: header controls (~lines 19-87)
+//   - useGroupSync composable: group dimension sync (~lines 285-316)
 import {
   ref,
   onMounted,
@@ -201,10 +210,6 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
-  preventOverlap: {
-    type: Boolean,
-    default: false,
-  },
 });
 
 const itemStore = useItemStore();
@@ -212,7 +217,7 @@ const itemState = ref(
   itemStore.items[props.id] || {
     width: props.initialWidth || 400,
     height: props.initialHeight || 300,
-    left: props.initialLeft || 100, // Used corrected prop
+    left: props.initialLeft || 100,
     top: props.initialTop || 100,
     group: props.group,
     syncDimensions: props.syncDimensions,
@@ -238,9 +243,12 @@ const initialGroupStates = ref<
   Record<string, { top: number; left: number; width: number; height: number }>
 >({});
 
-// Track previous window dimensions for proportional repositioning
-const prevWindowWidth = ref(window.innerWidth);
-const prevWindowHeight = ref(window.innerHeight);
+// Track previous window dimensions for proportional repositioning. Initialized
+// in onMounted from the live window — referencing window at module-eval time
+// would freeze in stale values when the module is imported before the window
+// reaches its final size (HMR, code-splitting, etc.).
+const prevWindowWidth = ref(0);
+const prevWindowHeight = ref(0);
 
 const resizeDelay = ref<ReturnType<typeof setTimeout> | null>(null);
 const resizeOnEnter = (e: MouseEvent, position: "top" | "bottom" | "left" | "right") => {
@@ -342,6 +350,28 @@ const toggleFullScreen = () => {
   loadPositionAndSize();
 };
 
+const handleResizeBarDblClick = (e: MouseEvent) => {
+  // Silent no-op when fullscreen is disabled (e.g. the left palette).
+  if (!props.allowFullScreen) return;
+  // Don't toggle while a resize gesture is mid-flight.
+  if (isResizing.value) return;
+  e.preventDefault();
+  toggleFullScreen();
+};
+
+const handleHeaderDblClick = (e: MouseEvent) => {
+  // Same gesture as the resize bars, but mounted on the title bar — easier to
+  // hit than the 5px-wide edge handles. Ignore dblclicks that land on the
+  // header buttons so rapidly clicking minimize/move buttons doesn't also
+  // toggle fullscreen.
+  if (!props.allowFullScreen) return;
+  if (isDragging.value || isResizing.value) return;
+  const target = e.target as HTMLElement | null;
+  if (target?.closest("button")) return;
+  e.preventDefault();
+  toggleFullScreen();
+};
+
 const captureGroupInitialStates = () => {
   if (itemState.value.group && itemState.value.syncDimensions) {
     initialGroupStates.value = {};
@@ -363,6 +393,7 @@ const captureGroupInitialStates = () => {
 };
 
 const startResizeRight = (e: MouseEvent) => {
+  registerClick();
   e.preventDefault();
   handleReziging(e);
   resizeDirection.value = "right";
@@ -385,6 +416,7 @@ const onResizeWidth = (e: MouseEvent) => {
 };
 
 const startResizeBottom = (e: MouseEvent) => {
+  registerClick();
   e.preventDefault();
   handleReziging(e);
   resizeDirection.value = "bottom";
@@ -407,6 +439,7 @@ const onResizeHeight = (e: MouseEvent) => {
 };
 
 const startResizeTop = (e: MouseEvent) => {
+  registerClick();
   e.preventDefault();
   handleReziging(e);
   resizeDirection.value = "top";
@@ -432,6 +465,7 @@ const onResizeTop = (e: MouseEvent) => {
 };
 
 const startResizeLeft = (e: MouseEvent) => {
+  registerClick();
   e.preventDefault();
   handleReziging(e);
   resizeDirection.value = "left";
@@ -469,8 +503,19 @@ const stopResize = () => {
     document.removeEventListener("mousemove", onResizeHeight);
     document.removeEventListener("mousemove", onResizeTop);
     document.removeEventListener("mousemove", onResizeLeft);
+    itemStore.flushItemState(props.id);
   }
 };
+
+// Pixel threshold a mousedown must travel before we treat the gesture as a
+// drag. Without this, a header dblclick (two mousedowns + tiny cursor
+// jitter) would fire onMove with deltas of 1–2 px, drift the panel, and
+// then snapshot the drifted position into prev{Top,Left} on
+// `setFullScreen(true)` — so dblclick → fullscreen → dblclick restored
+// the panel slightly lower each cycle. Matches the standard OS drag
+// threshold so deliberate drags still feel responsive.
+const DRAG_THRESHOLD_PX = 4;
+let dragActivated = false;
 
 const startMove = (e: MouseEvent) => {
   registerClick();
@@ -483,22 +528,29 @@ const startMove = (e: MouseEvent) => {
     return;
 
   isDragging.value = true;
+  dragActivated = false;
   startX.value = e.clientX;
   startY.value = e.clientY;
   startLeft.value = itemState.value.left;
   startTop.value = itemState.value.top;
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", stopMove);
-  itemState.value.stickynessPosition = "free";
+  // stickynessPosition is flipped to "free" only once the threshold trips
+  // (inside onMove) — a dblclick gesture must not silently un-stick a
+  // sticky-positioned panel.
 };
 
 const onMove = (e: MouseEvent) => {
-  if (isDragging.value) {
-    const deltaX = e.clientX - startX.value;
-    const deltaY = e.clientY - startY.value;
-    itemState.value.left = startLeft.value + deltaX;
-    itemState.value.top = startTop.value + deltaY;
+  if (!isDragging.value) return;
+  const deltaX = e.clientX - startX.value;
+  const deltaY = e.clientY - startY.value;
+  if (!dragActivated) {
+    if (Math.abs(deltaX) < DRAG_THRESHOLD_PX && Math.abs(deltaY) < DRAG_THRESHOLD_PX) return;
+    dragActivated = true;
+    itemState.value.stickynessPosition = "free";
   }
+  itemState.value.left = startLeft.value + deltaX;
+  itemState.value.top = startTop.value + deltaY;
 };
 
 const stopMove = () => {
@@ -507,128 +559,122 @@ const stopMove = () => {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", stopMove);
 
-    savePositionAndSize();
-
-    if (props.preventOverlap) {
-      itemStore.preventOverlap(props.id);
-      loadPositionAndSize();
+    // No-op if the gesture stayed under the drag threshold — nothing
+    // changed, so there's nothing to persist (and persisting a drifted
+    // mid-dblclick position is exactly the bug this guards against).
+    if (dragActivated) {
+      savePositionAndSize();
+      // Make the final position durable immediately — debounced writes would
+      // be lost if the user closes the tab within 250 ms of releasing the drag.
+      itemStore.flushItemState(props.id);
     }
+    dragActivated = false;
   }
+};
+
+// Returns the element panels are actually positioned against (the overlay's
+// offsetParent — the canvas <main>). Sticky/move math is relative to this
+// element's INSIDE, so `(left=0, top=0)` is its top-left corner. Falls back
+// to the Vue parent root only if the overlay isn't mounted yet.
+const getStickyContainer = (): { width: number; height: number } => {
+  const overlayEl = document.getElementById(props.id);
+  const offsetParent = overlayEl?.offsetParent as HTMLElement | null;
+  const ref = offsetParent ?? (instance?.parent?.vnode.el as HTMLElement | null);
+  if (ref) {
+    return { width: ref.clientWidth, height: ref.clientHeight };
+  }
+  return { width: window.innerWidth, height: window.innerHeight };
 };
 
 const moveToRight = () => {
-  const parentElement = instance?.parent?.vnode.el as HTMLElement | null;
-  if (parentElement) {
-    const parentRight = parentElement.offsetLeft + parentElement.offsetWidth;
-    itemState.value.left = parentRight - itemState.value.width;
-    itemState.value.top = parentElement.offsetTop;
-    itemState.value.stickynessPosition = "right";
-    if (itemState.value.fullHeight) {
-      itemState.value.height = parentElement.offsetHeight;
-    }
-    savePositionAndSize();
+  const c = getStickyContainer();
+  itemState.value.left = c.width - itemState.value.width;
+  itemState.value.top = 0;
+  itemState.value.stickynessPosition = "right";
+  if (itemState.value.fullHeight) {
+    itemState.value.height = c.height;
   }
+  savePositionAndSize();
 };
 
 const moveToBottom = () => {
-  const parentElement = instance?.parent?.vnode.el as HTMLElement | null;
-  if (parentElement) {
-    const parentBottom = parentElement.offsetTop + parentElement.offsetHeight;
-    itemState.value.left = parentElement.offsetLeft + props.initialLeft;
-    itemState.value.top = parentBottom - (itemState.value.height + props.initialTop);
-    itemState.value.stickynessPosition = "bottom";
-    if (itemState.value.fullWidth) {
-      itemState.value.width = parentElement.offsetWidth - props.initialLeft;
-    }
-    savePositionAndSize();
+  const c = getStickyContainer();
+  itemState.value.left = props.initialLeft || 0;
+  itemState.value.top = c.height - (itemState.value.height + (props.initialTop || 0));
+  itemState.value.stickynessPosition = "bottom";
+  if (itemState.value.fullWidth) {
+    itemState.value.width = c.width - (props.initialLeft || 0);
   }
+  savePositionAndSize();
 };
 
 const moveToLeft = () => {
-  const parentElement = instance?.parent?.vnode.el as HTMLElement | null;
-  if (parentElement) {
-    itemState.value.left = parentElement.offsetLeft;
-    itemState.value.top = parentElement.offsetTop;
-    itemState.value.stickynessPosition = "left";
-    if (itemState.value.fullHeight) {
-      itemState.value.height = parentElement.offsetHeight;
-    }
-    savePositionAndSize();
+  const c = getStickyContainer();
+  itemState.value.left = 0;
+  itemState.value.top = 0;
+  itemState.value.stickynessPosition = "left";
+  if (itemState.value.fullHeight) {
+    itemState.value.height = c.height;
   }
+  savePositionAndSize();
 };
 
 const moveToTop = () => {
-  const parentElement = instance?.parent?.vnode.el as HTMLElement | null;
-  if (parentElement) {
-    itemState.value.left = parentElement.offsetLeft;
-    itemState.value.top = parentElement.offsetTop;
-    itemState.value.stickynessPosition = "top";
-    if (itemState.value.fullWidth) {
-      itemState.value.width = parentElement.offsetWidth;
-    }
-    savePositionAndSize();
+  const c = getStickyContainer();
+  itemState.value.left = 0;
+  itemState.value.top = 0;
+  itemState.value.stickynessPosition = "top";
+  if (itemState.value.fullWidth) {
+    itemState.value.width = c.width;
   }
+  savePositionAndSize();
 };
 
 const applyStickyPosition = () => {
-  const parentElement = instance?.parent?.vnode.el as HTMLElement | null;
-  if (!parentElement) {
-    console.warn(`No parent element found for ${props.id}`);
-    return;
-  }
-
+  const c = getStickyContainer();
   const newWindowWidth = window.innerWidth;
   const newWindowHeight = window.innerHeight;
 
   switch (itemState.value.stickynessPosition) {
     case "top":
-      itemState.value.left = parentElement.offsetLeft;
-      itemState.value.top = parentElement.offsetTop;
+      itemState.value.left = props.initialLeft || 0;
+      itemState.value.top = 0;
       if (itemState.value.fullWidth) {
-        itemState.value.width = parentElement.offsetWidth;
+        itemState.value.width = c.width - (props.initialLeft || 0);
       }
       break;
 
     case "bottom":
-      itemState.value.left = parentElement.offsetLeft + (props.initialLeft || 0);
-      itemState.value.top =
-        parentElement.offsetTop +
-        parentElement.offsetHeight -
-        itemState.value.height -
-        (props.initialTop || 0);
+      itemState.value.left = props.initialLeft || 0;
+      itemState.value.top = c.height - itemState.value.height - (props.initialTop || 0);
       if (itemState.value.fullWidth) {
-        itemState.value.width = parentElement.offsetWidth - (props.initialLeft || 0);
+        itemState.value.width = c.width - (props.initialLeft || 0);
       }
       break;
 
     case "left":
-      itemState.value.left = parentElement.offsetLeft;
-      itemState.value.top = parentElement.offsetTop + (props.initialTop || 0);
+      itemState.value.left = 0;
+      itemState.value.top = props.initialTop || 0;
       if (itemState.value.fullHeight) {
-        itemState.value.height = parentElement.offsetHeight - (props.initialTop || 0);
+        itemState.value.height = c.height - (props.initialTop || 0);
       }
       break;
 
     case "right":
-      itemState.value.left =
-        parentElement.offsetLeft + parentElement.offsetWidth - itemState.value.width;
-      itemState.value.top = parentElement.offsetTop + (props.initialTop || 0);
+      itemState.value.left = c.width - itemState.value.width;
+      itemState.value.top = props.initialTop || 0;
       if (itemState.value.fullHeight) {
-        itemState.value.height = parentElement.offsetHeight - (props.initialTop || 0);
+        itemState.value.height = c.height - (props.initialTop || 0);
       }
       break;
 
     case "free":
     default: {
-      // For free-positioned items, ensure they stay within viewport bounds
-      // and maintain relative positioning when window resizes
       if (prevWindowWidth.value > 0 && prevWindowHeight.value > 0) {
-        // Calculate if item was positioned relative to right edge (more than 50% from left)
         const wasRightAligned = itemState.value.left > prevWindowWidth.value / 2;
         const wasBottomAligned = itemState.value.top > prevWindowHeight.value / 2;
 
         if (wasRightAligned) {
-          // Maintain distance from right edge
           const distanceFromRight =
             prevWindowWidth.value - itemState.value.left - itemState.value.width;
           itemState.value.left = Math.max(
@@ -638,7 +684,6 @@ const applyStickyPosition = () => {
         }
 
         if (wasBottomAligned) {
-          // Maintain distance from bottom edge
           const distanceFromBottom =
             prevWindowHeight.value - itemState.value.top - itemState.value.height;
           itemState.value.top = Math.max(
@@ -648,7 +693,6 @@ const applyStickyPosition = () => {
         }
       }
 
-      // Clamp to ensure item stays visible
       const minVisible = 100; // Minimum visible pixels
       itemState.value.left = Math.max(
         0,
@@ -659,7 +703,6 @@ const applyStickyPosition = () => {
         Math.min(itemState.value.top, newWindowHeight - minVisible),
       );
 
-      // Clamp width/height if they exceed viewport
       if (itemState.value.width > newWindowWidth) {
         itemState.value.width = newWindowWidth - 20;
       }
@@ -670,11 +713,9 @@ const applyStickyPosition = () => {
     }
   }
 
-  // Update tracked window dimensions
   prevWindowWidth.value = newWindowWidth;
   prevWindowHeight.value = newWindowHeight;
 
-  // Save the new position
   savePositionAndSize();
 };
 
@@ -710,7 +751,6 @@ const observeParentResize = () => {
   }
 };
 
-// Handle window resize events directly
 const handleWindowResize = () => {
   handleResize();
 };
@@ -754,8 +794,27 @@ nextTick().then(() => {
   observeParentResize();
 });
 
+// Instance-scoped reset handler. Replaces a previous global registry on
+// `(window as any)[resetHandler_${id}]` that leaked references when the
+// component unmounted without running its cleanup.
+let layoutResetHandler: (() => void) | null = null;
+
+const clampStateToViewport = (state: ItemLayout) => {
+  const minVisible = 100;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  state.width = Math.max(150, Math.min(state.width, w));
+  state.height = Math.max(100, Math.min(state.height, Math.max(150, h - 50)));
+  state.left = Math.max(0, Math.min(state.left, Math.max(0, w - minVisible)));
+  state.top = Math.max(0, Math.min(state.top, Math.max(0, h - minVisible)));
+};
+
 onMounted(() => {
-  // Calculate initial values based on props
+  // Capture window dimensions now (not at module-eval time) so proportional
+  // repositioning math in handleWindowResize stays accurate.
+  prevWindowWidth.value = window.innerWidth;
+  prevWindowHeight.value = window.innerHeight;
+
   const initialWidth = calculateWidth();
   const initialHeight = calculateHeight();
   const initialLeft = props.initialLeft || 100;
@@ -774,11 +833,9 @@ onMounted(() => {
     syncDimensions: props.syncDimensions,
   });
 
-  // Check if there's a saved state
-  const hasSavedState = localStorage.getItem(`overlayPositionAndSize_${props.id}`) !== null;
+  const hasSavedState = itemStore.hasSavedState(props.id);
 
   if (!hasSavedState) {
-    // No saved state, use initial values
     itemStore.setItemState(props.id, {
       width: initialWidth,
       height: initialHeight,
@@ -792,17 +849,18 @@ onMounted(() => {
     });
     itemState.value = itemStore.items[props.id];
 
-    // Apply sticky position after DOM is ready
     if (props.initialPosition !== "free") {
       nextTick(() => {
         applyStickyPosition();
       });
     }
   } else {
-    // Load saved state
     loadPositionAndSize();
+    // Saved width/height/left/top from a different viewport size can place
+    // the panel partially or fully off-screen. Clamp before first paint.
+    clampStateToViewport(itemState.value);
+    itemStore.setItemState(props.id, { ...itemState.value });
 
-    // If the saved state has a sticky position, re-apply it
     if (itemState.value.stickynessPosition && itemState.value.stickynessPosition !== "free") {
       nextTick(() => {
         applyStickyPosition();
@@ -810,9 +868,7 @@ onMounted(() => {
     }
   }
 
-  // Listen for layout reset events
-  const handleLayoutReset = () => {
-    // Get the updated state from the store
+  layoutResetHandler = () => {
     itemState.value = { ...itemStore.items[props.id] };
 
     // Ensure stickynessPosition is restored from initial state (props.initialPosition)
@@ -827,24 +883,19 @@ onMounted(() => {
     }
   };
 
-  window.addEventListener("layout-reset", handleLayoutReset);
+  window.addEventListener("layout-reset", layoutResetHandler);
   window.addEventListener("resize", handleWindowResize);
   document.addEventListener("mouseup", stopResize);
-
-  // Store the event handler for cleanup
-  (window as any)[`resetHandler_${props.id}`] = handleLayoutReset;
 });
 
 defineExpose({
   setFullScreen,
 });
 
-// Update the onBeforeUnmount to clean up the event listener
 onBeforeUnmount(() => {
-  const handler = (window as any)[`resetHandler_${props.id}`];
-  if (handler) {
-    window.removeEventListener("layout-reset", handler);
-    delete (window as any)[`resetHandler_${props.id}`];
+  if (layoutResetHandler) {
+    window.removeEventListener("layout-reset", layoutResetHandler);
+    layoutResetHandler = null;
   }
   window.removeEventListener("resize", handleWindowResize);
   parentResizeObserver.disconnect();
@@ -980,10 +1031,10 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 .content {
-  flex-grow: 1;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 10px;
-  max-height: calc(100% - 50px);
   box-sizing: border-box;
 }
 .draggable-line {

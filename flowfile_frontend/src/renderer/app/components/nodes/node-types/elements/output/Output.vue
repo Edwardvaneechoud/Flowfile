@@ -37,7 +37,6 @@
           class="m-2"
           placeholder="Select"
           size="small"
-          :disabled="hasFileExtension"
           @change="handleFileTypeChange"
         >
           <el-option
@@ -83,11 +82,14 @@
       v-model="showFileSelectionModal"
       title="Select directory or file to write to"
       width="70%"
+      append-to-body
+      :close-on-click-modal="false"
     >
       <file-browser
         :allowed-file-types="['csv', 'xlsx', 'parquet']"
         :allow-directory-selection="true"
         mode="create"
+        context="dataFiles"
         :is-visible="showFileSelectionModal"
         @directory-selected="handleDirectorySelected"
         @overwrite-file="handleFileSelected"
@@ -97,7 +99,7 @@
   </div>
 </template>
 <script lang="ts" setup>
-import { ref, computed } from "vue";
+import { ref } from "vue";
 import {
   NodeOutput,
   isOutputCsvTable,
@@ -110,7 +112,8 @@ import {
   createParquetTableSettings,
   createExcelTableSettings,
 } from "./defaultValues";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import axios, { AxiosError } from "axios";
 import CsvTableConfig from "./outputCsv.vue";
 import ExcelTableConfig from "./outputExcel.vue";
@@ -128,13 +131,13 @@ interface LocalFileInfo {
 const nodeStore = useNodeStore();
 const nodeOutput = ref<NodeOutput | null>(null);
 const dataLoaded = ref(false);
+
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeRef: nodeOutput,
+});
 const showFileSelectionModal = ref(false);
 const selectedDirectoryExists = ref<boolean | null>(null);
 const localFileInfos = ref<LocalFileInfo[]>([]);
-
-const hasFileExtension = computed(() => {
-  return nodeOutput.value?.output_settings.name?.includes(".") ?? false;
-});
 
 function getWriteOptions(fileType: string): string[] {
   return fileType === "csv" ? ["overwrite", "new file", "append"] : ["overwrite", "new file"];
@@ -176,7 +179,6 @@ function detectFileType(fileName: string) {
     nodeOutput.value.output_settings.file_type = fileTypeMap[verifiedExtension];
     nodeOutput.value.output_settings.write_mode = "overwrite";
 
-    // Update table_settings to match the new file type
     updateTableSettings(fileTypeMap[verifiedExtension]);
   }
 }
@@ -212,7 +214,9 @@ function handleFileTypeChange() {
     parquet: ".parquet",
   };
 
-  const baseName = nodeOutput.value.output_settings.name.split(".")[0];
+  const currentName = nodeOutput.value.output_settings.name;
+  const lastDot = currentName.lastIndexOf(".");
+  const baseName = lastDot > 0 ? currentName.slice(0, lastDot) : currentName;
   nodeOutput.value.output_settings.name =
     baseName + (fileExtMap[nodeOutput.value.output_settings.file_type] || "");
 
@@ -220,7 +224,6 @@ function handleFileTypeChange() {
     nodeOutput.value.output_settings.write_mode = "overwrite";
   }
 
-  // Update table_settings when file type changes
   updateTableSettings(nodeOutput.value.output_settings.file_type);
 }
 
@@ -259,7 +262,6 @@ async function loadNodeData(nodeId: number) {
   if (nodeResult?.setting_input && nodeResult.setting_input.is_setup) {
     nodeOutput.value = nodeResult.setting_input;
   } else {
-    // Provide a default configuration that matches NodeBase interface
     nodeOutput.value = {
       output_settings: createDefaultOutputSettings(),
       flow_id: nodeStore.flow_id,
@@ -274,16 +276,10 @@ async function loadNodeData(nodeId: number) {
   dataLoaded.value = true;
 }
 
-async function pushNodeData() {
-  if (nodeOutput.value?.output_settings) {
-    await nodeStore.updateSettings(nodeOutput);
-    dataLoaded.value = false;
-  }
-}
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 
@@ -312,9 +308,9 @@ defineExpose({
   background-color: var(--color-button-secondary);
   border: 1px solid transparent;
   border-radius: 4px;
-  padding: 10px 20px;
+  padding: 5px 12px;
   color: var(--color-text-inverse);
-  font-size: 16px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.3s ease;
 }

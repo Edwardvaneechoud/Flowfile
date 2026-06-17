@@ -63,6 +63,53 @@ df2 = ff.scan_csv("data.csv")  # Alias for read_csv
 
 Flowfile extends Polars with specialized cloud storage readers that integrate with secure connection management.
 
+### Unified Cloud Storage Reader
+
+`read_from_cloud_storage()` is a single entry point for reading any supported format from cloud storage. It dispatches to the appropriate format-specific reader internally.
+
+```python
+import flowfile as ff
+
+# Read Parquet (default format)
+df = ff.read_from_cloud_storage(
+    "s3://bucket/data.parquet",
+    connection_name="my-conn",
+)
+
+# Read CSV
+df = ff.read_from_cloud_storage(
+    "s3://bucket/data.csv",
+    file_format="csv",
+    connection_name="my-conn",
+    delimiter=",",
+    has_header=True,
+)
+
+# Read Delta with time travel
+df = ff.read_from_cloud_storage(
+    "s3://warehouse/my_table",
+    file_format="delta",
+    connection_name="my-conn",
+    delta_version=5,
+)
+```
+
+**Parameters:**
+
+- `source`: Cloud storage path (e.g., `s3://bucket/path/file.parquet`)
+- `file_format`: `"csv"`, `"parquet"`, `"json"`, or `"delta"` (default: `"parquet"`)
+- `connection_name`: Name of the stored cloud storage connection
+- `scan_mode`: `"single_file"` or `"directory"`. Auto-detected from path if `None`
+- `delimiter`: CSV field separator (default: `;`). Only used for CSV
+- `has_header`: Whether CSV has headers (default: `True`). Only used for CSV
+- `encoding`: CSV encoding (default: `utf8`). Only used for CSV
+- `delta_version`: Delta table version for time-travel queries. Only used for Delta
+
+!!! tip "Recommended Approach"
+    `read_from_cloud_storage()` is the recommended way to read from cloud storage. The format-specific `scan_*` functions below still work and are useful when you want a more concise call for a known format.
+
+### Format-Specific Cloud Readers
+
 ### Cloud CSV Reading
 
 ```python
@@ -125,6 +172,101 @@ df = ff.scan_delta(
 )
 ```
 
+## Catalog Reading
+
+Read tables from the Flowfile catalog. The catalog provides a managed layer for discovering and versioning datasets stored as Delta tables. Both physical and [virtual tables](../../visual-editor/catalog/virtual-tables.md) are supported.
+
+### Read a Table by Name
+
+```python
+import flowfile as ff
+
+# Read a catalog table (physical or virtual)
+df = ff.read_catalog_table("my_table")
+
+# Scope to a specific schema using a typed reference
+schema = ff.CatalogReference("sales").schema("raw")
+df = ff.read_catalog_table("my_table", schema=schema)
+
+# Or call read_table directly on the schema handle
+df = schema.read_table("my_table")
+
+# Time travel to a specific Delta version (physical tables only)
+df = ff.read_catalog_table("my_table", delta_version=5)
+```
+
+**Parameters:**
+
+- `table_name`: Name of the catalog table to read (required)
+- `schema`: A [`SchemaReference`](catalog-references.md) identifying the catalog/schema to read from. Preferred over `namespace_id`.
+- `delta_version`: Optional Delta version for time-travel queries (physical tables only)
+
+Returns a `FlowFrame`. Use `.collect()` to materialize, `.data` to access the underlying `LazyFrame`, or `open_graph_in_editor()` to visualize in the UI.
+
+!!! info "Looking up tables by name"
+    See [Catalog References](catalog-references.md) for the `CatalogReference` / `SchemaReference` API. The legacy `namespace_id=<int>` keyword is still accepted but discouraged — passing both `schema=` and `namespace_id=` raises `ValueError`.
+
+!!! info "Virtual table resolution"
+    When reading a virtual table, the data is resolved on demand. Optimized virtual tables deserialize a stored execution plan instantly. Non-optimized virtual tables execute the producer flow to produce results. See [Virtual Flow Tables](../../visual-editor/catalog/virtual-tables.md) for details.
+
+### Query with SQL
+
+Use `read_catalog_sql()` to execute SQL queries against all catalog tables — both physical and virtual. Tables are registered by name in a Polars SQL context.
+
+```python
+import flowfile as ff
+
+# Query a single table
+df = ff.read_catalog_sql("SELECT * FROM customers WHERE region = 'Europe'")
+
+# Join across catalog tables
+df = ff.read_catalog_sql("""
+    SELECT o.order_id, c.name, o.total
+    FROM orders o
+    JOIN customers c ON o.customer_id = c.id
+    WHERE o.total > 1000
+""")
+
+# Aggregate virtual and physical tables together
+df = ff.read_catalog_sql("""
+    SELECT category, SUM(amount) as total
+    FROM sales_summary
+    GROUP BY category
+""")
+```
+
+**Parameters:**
+
+- `sql_query`: SQL query string to execute (required)
+
+Returns a `FlowFrame` backed by a catalog SQL reader node. The SQL dialect is Polars SQL, which supports standard `SELECT`, `WHERE`, `JOIN`, `GROUP BY`, `ORDER BY`, `HAVING`, `UNION`, subqueries, and window functions.
+
+## Kafka Reading
+
+Read messages from a Kafka topic using a stored Flowfile connection.
+
+```python
+import flowfile as ff
+
+df = ff.read_kafka(
+    "my-kafka-connection",
+    topic_name="events",
+    start_offset="earliest",
+    max_messages=10_000,
+)
+```
+
+**Parameters:**
+
+- `connection_name`: Name of the stored Kafka connection (required)
+- `topic_name`: Kafka topic to consume from (required)
+- `max_messages`: Maximum number of messages to consume (default: `100_000`)
+- `start_offset`: Where to start consuming: `"earliest"` or `"latest"` (default: `"latest"`)
+- `poll_timeout_seconds`: How long to poll for messages in seconds (default: `30.0`)
+- `value_format`: Message value format (default: `"json"`)
+
+Returns a `FlowFrame`.
+
 ## Database Reading
 
 Read data from SQL databases using stored connections.
@@ -170,6 +312,9 @@ df = ff.read_database(
 - `table_name`: Table to read from
 - `schema_name`: Database schema (e.g., "public")
 - `query`: Custom SQL query (takes precedence over `table_name`)
+
+!!! note "Return Type"
+    `read_database()` returns a `FlowFrame` (not a raw Polars `LazyFrame`). The result supports `.collect()` to materialize data, `.data` to access the underlying `LazyFrame`, and `open_graph_in_editor()` to visualize the pipeline in the UI.
 
 ## Connection Management
 

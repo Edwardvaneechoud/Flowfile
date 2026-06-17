@@ -1,26 +1,23 @@
 // Canvas-related TypeScript interfaces and types
-// Consolidated from features/designer/components/Canvas/types.ts
 
 import type { NodeBase } from "./node.types";
 import type { NodeTemplate } from "./flow.types";
 
-// ============================================================================
 // Node Copy Types
-// ============================================================================
 
 export interface NodeCopyValue {
-  nodeIdToCopyFrom: number
-  type: string // CamelCase
-  label: string // readable
-  description: string
-  numberOfInputs: number
-  numberOfOutputs: number
-  multi?: boolean
-  typeSnakeCase: string
-  flowIdToCopyFrom: number
-  nodeTemplate?: NodeTemplate
-  relativeX?: number
-  relativeY?: number
+  nodeIdToCopyFrom: number;
+  type: string; // CamelCase
+  label: string; // readable
+  description: string;
+  numberOfInputs: number;
+  numberOfOutputs: number;
+  multi?: boolean;
+  typeSnakeCase: string;
+  flowIdToCopyFrom: number;
+  nodeTemplate?: NodeTemplate;
+  relativeX?: number;
+  relativeY?: number;
 }
 
 export interface NodeCopyInput extends NodeCopyValue {
@@ -29,26 +26,22 @@ export interface NodeCopyInput extends NodeCopyValue {
   flowId: number;
 }
 
-// ============================================================================
 // Multi-Node Copy Types (for copying multiple nodes with connections)
-// ============================================================================
 
 export interface EdgeCopyValue {
-  sourceNodeId: number
-  targetNodeId: number
-  sourceHandle: string
-  targetHandle: string
+  sourceNodeId: number;
+  targetNodeId: number;
+  sourceHandle: string;
+  targetHandle: string;
 }
 
 export interface MultiNodeCopyValue {
-  nodes: NodeCopyValue[]
-  edges: EdgeCopyValue[]
-  flowIdToCopyFrom: number
+  nodes: NodeCopyValue[];
+  edges: EdgeCopyValue[];
+  flowIdToCopyFrom: number;
 }
 
-// ============================================================================
 // Cursor and Context Menu Types
-// ============================================================================
 
 export interface CursorPosition {
   x: number;
@@ -57,23 +50,19 @@ export interface CursorPosition {
 
 export interface ContextMenuAction {
   actionId: string;
-  targetType: "node" | "edge" | "pane";
+  targetType: "node" | "edge" | "pane" | "selection";
   targetId: string;
   position: CursorPosition;
 }
 
-// ============================================================================
 // Node Promise Types
-// ============================================================================
 
 export interface NodePromise extends NodeBase {
   is_setup?: boolean;
   node_type: string;
 }
 
-// ============================================================================
 // Backend Interface Types
-// ============================================================================
 
 export interface AxiosResponse {
   data: any;

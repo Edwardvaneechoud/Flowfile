@@ -1,0 +1,1209 @@
+<template>
+  <div v-if="dataLoaded && nodePythonScript" class="listbox-wrapper">
+    <generic-node-settings
+      :model-value="nodePythonScript"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
+      <div class="python-script-settings">
+        <el-collapse v-model="collapseActiveNames" class="ps-collapse">
+          <!-- Kernel Selection -->
+          <el-collapse-item name="kernel">
+            <template #title>
+              <div class="ps-collapse__title">
+                <span class="ps-collapse__label">Kernel</span>
+                <span
+                  class="ps-collapse__summary"
+                  :class="`ps-collapse__summary--${kernelSummaryLevel}`"
+                >
+                  {{ kernelSummary }}
+                </span>
+              </div>
+            </template>
+            <div class="kernel-row">
+              <el-select
+                v-model="selectedKernelId"
+                placeholder="Select a kernel..."
+                class="kernel-select"
+                size="small"
+                :loading="kernelsLoading"
+                @change="handleKernelChange"
+              >
+                <el-option
+                  v-for="kernel in kernels"
+                  :key="kernel.id"
+                  :value="kernel.id"
+                  :label="`${kernel.name} (${kernel.state})`"
+                >
+                  <span class="kernel-option">
+                    <span
+                      class="kernel-state-dot"
+                      :class="`kernel-state-dot--${kernel.state}`"
+                    ></span>
+                    <span>{{ kernel.name }}</span>
+                    <span class="kernel-state-label">({{ kernel.state }})</span>
+                  </span>
+                </el-option>
+              </el-select>
+              <router-link :to="{ name: 'kernelManager' }" class="manage-kernels-link">
+                Manage Kernels
+              </router-link>
+            </div>
+
+            <!-- Memory usage -->
+            <div
+              v-if="memoryDisplay"
+              class="kernel-memory"
+              :class="`kernel-memory--${memoryLevel}`"
+            >
+              <i class="fa-solid fa-memory"></i>
+              <span class="kernel-memory__text">{{ memoryDisplay }}</span>
+              <span class="kernel-memory__percent">({{ memoryInfo!.usage_percent }}%)</span>
+            </div>
+
+            <!-- Kernel warnings -->
+            <div v-if="!selectedKernelId" class="kernel-warning">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              No kernel selected. A kernel is required to run Python code.
+            </div>
+            <div
+              v-else-if="selectedKernelState && selectedKernelState !== 'idle'"
+              class="kernel-warning"
+            >
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              Kernel is {{ selectedKernelState }}.
+              <template v-if="selectedKernelState === 'stopped'"
+                >Start it from the Kernel Manager to execute code.</template
+              >
+              <template v-else-if="selectedKernelState === 'error'"
+                >Check the Kernel Manager for details.</template
+              >
+              <template v-else-if="selectedKernelState === 'starting'"
+                >Please wait for it to become idle.</template
+              >
+              <template v-else-if="selectedKernelState === 'executing'"
+                >Please wait for the current execution to finish.</template
+              >
+            </div>
+          </el-collapse-item>
+
+          <!-- Output Names -->
+          <el-collapse-item name="outputs">
+            <template #title>
+              <div class="ps-collapse__title">
+                <span class="ps-collapse__label">Outputs</span>
+                <span class="ps-collapse__summary">{{ outputsSummary }}</span>
+              </div>
+            </template>
+            <div class="output-names-editor">
+              <div v-for="(name, index) in outputNames" :key="index" class="output-name-row">
+                <el-input
+                  v-model="outputNames[index]"
+                  size="small"
+                  placeholder="output name"
+                  @blur="handleOutputNamesChange"
+                />
+                <button
+                  v-if="outputNames.length > 1"
+                  class="icon-button icon-button--danger"
+                  title="Remove output"
+                  @click="removeOutputName(index)"
+                >
+                  <i class="fa-solid fa-minus"></i>
+                </button>
+              </div>
+              <button class="add-output-button" @click="addOutputName">
+                <i class="fa-solid fa-plus"></i> Add Output
+              </button>
+            </div>
+          </el-collapse-item>
+
+          <!-- Artifacts Panel -->
+          <el-collapse-item name="artifacts">
+            <template #title>
+              <div class="ps-collapse__title">
+                <span class="ps-collapse__label">Artifacts</span>
+                <span class="ps-collapse__summary">{{ artifactsSummary }}</span>
+              </div>
+            </template>
+            <div class="artifacts-panel">
+              <div v-if="artifactsLoading" class="artifacts-loading">
+                <i class="fas fa-spinner fa-spin"></i> Loading artifacts...
+              </div>
+              <template v-else>
+                <div class="artifact-group">
+                  <span class="artifact-group-label">Available:</span>
+                  <template v-if="availableArtifacts.length > 0">
+                    <span
+                      v-for="artifact in availableArtifacts"
+                      :key="artifact.name"
+                      class="artifact-tag"
+                    >
+                      {{ artifact.name }}
+                      <span v-if="artifact.type_name" class="artifact-type"
+                        >({{ artifact.type_name }})</span
+                      >
+                    </span>
+                  </template>
+                  <span v-else class="artifacts-empty">None</span>
+                </div>
+                <div class="artifact-group">
+                  <span class="artifact-group-label">Published:</span>
+                  <template v-if="publishedArtifacts.length > 0">
+                    <span
+                      v-for="artifact in publishedArtifacts"
+                      :key="artifact.name"
+                      class="artifact-tag artifact-tag--published"
+                    >
+                      {{ artifact.name }}
+                      <span v-if="artifact.type_name" class="artifact-type"
+                        >({{ artifact.type_name }})</span
+                      >
+                    </span>
+                  </template>
+                  <span v-else class="artifacts-empty"
+                    >Run the flow to see published artifacts</span
+                  >
+                </div>
+              </template>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+
+        <!-- Available Inputs (always visible — useful while coding) -->
+        <div v-if="inputNames.length > 0" class="setting-block">
+          <label class="setting-label">Available Inputs</label>
+          <div class="input-names-display">
+            <el-dropdown
+              v-for="inp in inputNames"
+              :key="inp.name"
+              trigger="contextmenu"
+              placement="bottom-start"
+            >
+              <button
+                type="button"
+                class="input-name-tag"
+                :title="`Click to copy read_input for ${inp.name} · right-click for options`"
+                @click="copyReadInput(inp.name)"
+              >
+                {{ inp.name }}
+                <span class="input-name-type">({{ inp.source_node_type }})</span>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="copyReadInput(inp.name)">
+                    <i class="fa-solid fa-copy input-menu-icon" /> Copy to use
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <span class="input-names-hint">
+              Click an input to copy its flowfile_ctx.read_input("…") snippet
+            </span>
+          </div>
+        </div>
+
+        <!-- Code Editor — replaced with notebook -->
+        <div class="setting-block">
+          <div class="code-header">
+            <label class="setting-label">Code</label>
+            <div class="code-header-actions">
+              <AiGenerateCodeButton
+                v-if="aiGenerateEnabled && nodePythonScript"
+                :flow-id="Number(nodePythonScript.flow_id)"
+                :node-id="nodePythonScript.node_id"
+                node-type="python_script"
+                @code-generated="applyGeneratedCode"
+              />
+              <button class="icon-button" title="Expand Editor" @click="showExpandedEditor = true">
+                <i class="fa-solid fa-expand"></i>
+              </button>
+              <button class="icon-button" title="API Reference" @click="showHelp = true">
+                <i class="fa-solid fa-circle-question"></i>
+              </button>
+            </div>
+          </div>
+          <NotebookEditor
+            v-if="showEditor && cells.length > 0"
+            :cells="cells"
+            :kernel-id="selectedKernelId"
+            :flow-id="nodePythonScript!.flow_id as number"
+            :node-id="nodePythonScript!.node_id"
+            :depending-on-ids="nodePythonScript!.depending_on_ids ?? []"
+            :input-names="inputNamesList"
+            :upstream-columns="upstreamColumns"
+            @update:cells="handleCellsUpdate"
+          />
+        </div>
+      </div>
+    </generic-node-settings>
+
+    <!-- Help Modal -->
+    <FlowfileApiHelp v-if="showHelp" @close="showHelp = false" />
+
+    <!-- Expanded Editor Dialog -->
+    <!-- append-to-body: rendered in place, the fixed overlay sits inside the panel's
+         overflow:auto chain, which WKWebView (Tauri) clips it to. high-z-index-dialog
+         lifts the teleported overlay above the draggable panels (_modals.css :has() rule). -->
+    <el-dialog
+      v-model="showExpandedEditor"
+      title="Python Script"
+      fullscreen
+      append-to-body
+      :close-on-click-modal="false"
+      class="expanded-editor-dialog high-z-index-dialog"
+    >
+      <template #header>
+        <div class="expanded-dialog-header">
+          <span class="expanded-dialog-title">Python Script</span>
+          <div class="expanded-dialog-actions">
+            <span v-if="selectedKernelId" class="kernel-indicator">
+              <span
+                class="kernel-state-dot"
+                :class="`kernel-state-dot--${selectedKernelState}`"
+              ></span>
+              {{ kernels.find((k) => k.id === selectedKernelId)?.name }}
+              <span
+                v-if="memoryDisplay"
+                class="kernel-indicator__memory"
+                :class="`kernel-memory--${memoryLevel}`"
+              >
+                {{ memoryDisplay }}
+              </span>
+            </span>
+            <button class="icon-button" title="API Reference" @click="showHelp = true">
+              <i class="fa-solid fa-circle-question"></i>
+            </button>
+          </div>
+        </div>
+      </template>
+      <div class="expanded-editor-content">
+        <NotebookEditor
+          v-if="showExpandedEditor && cells.length > 0"
+          :cells="cells"
+          :kernel-id="selectedKernelId"
+          :flow-id="nodePythonScript!.flow_id as number"
+          :node-id="nodePythonScript!.node_id"
+          :depending-on-ids="nodePythonScript!.depending_on_ids ?? []"
+          :input-names="inputNamesList"
+          :upstream-columns="upstreamColumns"
+          @update:cells="handleCellsUpdate"
+        />
+      </div>
+    </el-dialog>
+  </div>
+
+  <CodeLoader v-else />
+</template>
+
+<script lang="ts" setup>
+// TODO(refactor): ~995 LOC. Cohesive but long; defer unless touched.
+//   - Kernel control logic (~lines 570-700) is the obvious extraction target → useKernelControl composable
+import { ref, computed, watch, onUnmounted } from "vue";
+import { CodeLoader } from "vue-content-loader";
+import { ElMessage } from "element-plus";
+
+import { Position } from "@vue-flow/core";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useEditorStore } from "../../../../../stores/editor-store";
+import { useFlowStore } from "../../../../../stores/flow-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
+import type { NodePythonScript, NotebookCell } from "../../../../../types/node.types";
+import type { InputNameInfo } from "../../../../../types/flow.types";
+import type { NodeData } from "../../../baseNode/nodeInterfaces";
+import type { KernelInfo, KernelMemoryInfo } from "../../../../../types/kernel.types";
+import { KernelApi } from "../../../../../api/kernel.api";
+import { FlowApi } from "../../../../../api/flow.api";
+import { outputHandle } from "../../../../../utils/outputHandle";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import AiGenerateCodeButton from "../../../../../features/designer/editor/AiGenerateCodeButton.vue";
+import { AI_GENERATE_CODE_ENABLED as aiGenerateEnabled } from "../../../../../stores/ai-code-generator-store";
+import FlowfileApiHelp from "./FlowfileApiHelp.vue";
+import NotebookEditor from "./NotebookEditor.vue";
+import { createPythonScriptNode, DEFAULT_PYTHON_SCRIPT_CODE } from "./utils";
+import { useCollapsedSections } from "./useCollapsedSections";
+import { useUpstreamColumns } from "./useUpstreamColumns";
+
+// ─── State ──────────────────────────────────────────────────────────────────
+
+const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
+const flowStore = useFlowStore();
+const dataLoaded = ref(false);
+const showEditor = ref(false);
+const showHelp = ref(false);
+const showExpandedEditor = ref(false);
+
+const nodePythonScript = ref<NodePythonScript | null>(null);
+const nodeData = ref<NodeData | null>(null);
+const cells = ref<NotebookCell[]>([]);
+
+// Named inputs/outputs state
+const inputNames = ref<InputNameInfo[]>([]);
+const outputNames = ref<string[]>(["main"]);
+
+// Kernel state
+const kernels = ref<KernelInfo[]>([]);
+const kernelsLoading = ref(false);
+const selectedKernelId = ref<string | null>(null);
+let kernelPollTimer: ReturnType<typeof setInterval> | null = null;
+
+// Memory stats
+const memoryInfo = ref<KernelMemoryInfo | null>(null);
+let memoryPollTimer: ReturnType<typeof setInterval> | null = null;
+
+// Artifact state
+interface ArtifactInfo {
+  name: string;
+  type_name: string;
+  node_id?: number;
+}
+
+const availableArtifacts = ref<ArtifactInfo[]>([]);
+const publishedArtifacts = ref<ArtifactInfo[]>([]);
+const artifactsLoading = ref(false);
+
+// ─── Collapsible-section state ──────────────────────────────────────────────
+
+const { activeNames: collapseActiveNames } = useCollapsedSections();
+
+// ─── Upstream columns (powers pl.col("…") autocomplete) ─────────────────────
+
+const flowIdRef = computed<number | null>(() => {
+  const fid = nodePythonScript.value?.flow_id;
+  return fid != null ? Number(fid) : null;
+});
+const { columns: upstreamColumns, reload: reloadUpstreamColumns } = useUpstreamColumns(
+  flowIdRef,
+  inputNames,
+);
+const inputNamesList = computed(() => inputNames.value.map((i) => i.name));
+
+// ─── Kernel helpers ─────────────────────────────────────────────────────────
+
+const selectedKernelState = computed(() => {
+  if (!selectedKernelId.value) return null;
+  const kernel = kernels.value.find((k) => k.id === selectedKernelId.value);
+  return kernel?.state ?? null;
+});
+
+const formatBytes = (bytes: number): string => {
+  const gb = bytes / (1024 * 1024 * 1024);
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+};
+
+const memoryDisplay = computed(() => {
+  if (!memoryInfo.value || memoryInfo.value.limit_bytes === 0) return null;
+  const used = formatBytes(memoryInfo.value.used_bytes);
+  const limit = formatBytes(memoryInfo.value.limit_bytes);
+  return `${used} / ${limit}`;
+});
+
+const memoryLevel = computed((): "normal" | "warning" | "critical" => {
+  if (!memoryInfo.value) return "normal";
+  if (memoryInfo.value.usage_percent >= 95) return "critical";
+  if (memoryInfo.value.usage_percent >= 80) return "warning";
+  return "normal";
+});
+
+// ─── Section summaries (shown in collapse headers) ──────────────────────────
+
+const kernelSummary = computed(() => {
+  if (!selectedKernelId.value) return "No kernel selected";
+  const kernel = kernels.value.find((k) => k.id === selectedKernelId.value);
+  const name = kernel?.name ?? "Unknown";
+  const state = selectedKernelState.value ?? "?";
+  const mem = memoryDisplay.value ? ` · ${memoryDisplay.value}` : "";
+  return `${name} (${state})${mem}`;
+});
+
+const kernelSummaryLevel = computed<"normal" | "warning" | "critical">(() => {
+  if (!selectedKernelId.value) return "warning";
+  const state = selectedKernelState.value;
+  if (state && state !== "idle" && state !== "executing") return "warning";
+  return memoryLevel.value;
+});
+
+const outputsSummary = computed(() => {
+  const joined = outputNames.value.filter(Boolean).join(", ");
+  if (!joined) return "—";
+  return joined.length > 40 ? joined.slice(0, 40) + "…" : joined;
+});
+
+const artifactsSummary = computed(() => {
+  if (artifactsLoading.value) return "Loading…";
+  const a = availableArtifacts.value.length;
+  const p = publishedArtifacts.value.length;
+  return `${a} available · ${p} published`;
+});
+
+const loadMemoryStats = async () => {
+  const kernelId = selectedKernelId.value;
+  if (!kernelId) {
+    memoryInfo.value = null;
+    return;
+  }
+  const kernel = kernels.value.find((k) => k.id === kernelId);
+  if (!kernel || (kernel.state !== "idle" && kernel.state !== "executing")) {
+    memoryInfo.value = null;
+    return;
+  }
+  memoryInfo.value = await KernelApi.getMemoryStats(kernelId);
+};
+
+const startMemoryPolling = () => {
+  stopMemoryPolling();
+  loadMemoryStats();
+  memoryPollTimer = setInterval(loadMemoryStats, 3000);
+};
+
+const stopMemoryPolling = () => {
+  if (memoryPollTimer !== null) {
+    clearInterval(memoryPollTimer);
+    memoryPollTimer = null;
+  }
+};
+
+const loadKernels = async () => {
+  kernelsLoading.value = true;
+  try {
+    kernels.value = await KernelApi.getAll();
+  } catch (error) {
+    console.error("Failed to load kernels:", error);
+  } finally {
+    kernelsLoading.value = false;
+  }
+};
+
+const startKernelPolling = () => {
+  stopKernelPolling();
+  kernelPollTimer = setInterval(async () => {
+    try {
+      kernels.value = await KernelApi.getAll();
+    } catch {
+      // Silently ignore poll errors
+    }
+  }, 5000);
+};
+
+const stopKernelPolling = () => {
+  if (kernelPollTimer !== null) {
+    clearInterval(kernelPollTimer);
+    kernelPollTimer = null;
+  }
+};
+
+const handleKernelChange = (kernelId: string | null) => {
+  if (nodePythonScript.value) {
+    nodePythonScript.value.python_script_input.kernel_id = kernelId ?? null;
+  }
+  loadArtifacts();
+  if (kernelId) {
+    startMemoryPolling();
+  } else {
+    stopMemoryPolling();
+    memoryInfo.value = null;
+  }
+};
+
+// ─── Artifact helpers ───────────────────────────────────────────────────────
+
+const loadArtifacts = async () => {
+  const kernelId = selectedKernelId.value;
+  if (!kernelId) {
+    availableArtifacts.value = [];
+    publishedArtifacts.value = [];
+    return;
+  }
+
+  const kernel = kernels.value.find((k) => k.id === kernelId);
+  if (!kernel || (kernel.state !== "idle" && kernel.state !== "executing")) {
+    availableArtifacts.value = [];
+    publishedArtifacts.value = [];
+    return;
+  }
+
+  artifactsLoading.value = true;
+  try {
+    const flowId = nodePythonScript.value?.flow_id;
+    const currentNodeId = nodePythonScript.value?.node_id;
+
+    const [response, upstreamIds] = await Promise.all([
+      KernelApi.getArtifacts(kernelId),
+      flowId != null && currentNodeId != null
+        ? FlowApi.getNodeUpstreamIds(Number(flowId), currentNodeId)
+        : Promise.resolve([] as number[]),
+    ]);
+
+    // The kernel /artifacts endpoint returns a dict of artifact name -> metadata
+    // Each entry has: type_name, module, node_id, created_at, size_bytes
+    const allArtifacts: ArtifactInfo[] = Object.entries(response).map(
+      ([name, meta]: [string, any]) => ({
+        name,
+        type_name: meta?.type_name ?? "",
+        node_id: meta?.node_id,
+      }),
+    );
+
+    // Use the DAG-aware upstream set to filter available artifacts.
+    // Only artifacts published by actual upstream nodes are reachable.
+    const upstreamSet = new Set(upstreamIds);
+    if (currentNodeId != null) {
+      availableArtifacts.value = allArtifacts.filter(
+        (a) => a.node_id != null && upstreamSet.has(a.node_id),
+      );
+      publishedArtifacts.value = allArtifacts.filter((a) => a.node_id === currentNodeId);
+    } else {
+      availableArtifacts.value = [];
+      publishedArtifacts.value = [];
+    }
+  } catch {
+    availableArtifacts.value = [];
+    publishedArtifacts.value = [];
+  } finally {
+    artifactsLoading.value = false;
+  }
+};
+
+// ─── Named inputs / outputs ─────────────────────────────────────────────────
+
+const loadInputNames = async () => {
+  const flowId = nodePythonScript.value?.flow_id;
+  const nodeId = nodePythonScript.value?.node_id;
+  if (flowId == null || nodeId == null) return;
+
+  try {
+    inputNames.value = await FlowApi.getNodeInputNames(Number(flowId), nodeId);
+  } catch {
+    inputNames.value = [];
+  }
+};
+
+const copyReadInput = async (name: string) => {
+  const snippet = `flowfile_ctx.read_input("${name}")`;
+  try {
+    await navigator.clipboard.writeText(snippet);
+    ElMessage.success({ message: `Copied ${snippet}`, duration: 2000 });
+  } catch {
+    ElMessage.error("Couldn't copy to clipboard");
+  }
+};
+
+const addOutputName = () => {
+  outputNames.value.push(`output_${outputNames.value.length}`);
+  handleOutputNamesChange();
+};
+
+const removeOutputName = (index: number) => {
+  outputNames.value.splice(index, 1);
+  handleOutputNamesChange();
+};
+
+const handleOutputNamesChange = () => {
+  if (nodePythonScript.value) {
+    nodePythonScript.value.output_names = [...outputNames.value];
+  }
+  updateNodeOutputHandles();
+};
+
+const updateNodeOutputHandles = () => {
+  const vfInstance = flowStore.vueFlowInstance;
+  if (!vfInstance) return;
+
+  const nodeId = String(nodePythonScript.value?.node_id);
+  const vfNode = vfInstance.findNode(nodeId);
+  if (vfNode) {
+    vfNode.data.outputs = outputNames.value.map((name: string, i: number) => ({
+      id: outputHandle(i),
+      position: Position.Right,
+      label: outputNames.value.length > 1 ? name : undefined,
+    }));
+  }
+};
+
+// ─── Flow run display outputs ────────────────────────────────────────────────
+
+const loadFlowRunDisplayOutputs = async () => {
+  const kernelId = selectedKernelId.value;
+  const flowId = nodePythonScript.value?.flow_id;
+  const nodeId = nodePythonScript.value?.node_id;
+  if (!kernelId || flowId == null || nodeId == null) return;
+
+  try {
+    const outputs = await KernelApi.getDisplayOutputs(kernelId, Number(flowId), nodeId);
+    if (outputs.length > 0 && cells.value.length > 0) {
+      const lastCell = cells.value[cells.value.length - 1];
+      cells.value = cells.value.map((c) =>
+        c.id === lastCell.id
+          ? {
+              ...c,
+              output: {
+                stdout: "",
+                stderr: "",
+                display_outputs: outputs,
+                error: null,
+                execution_time_ms: 0,
+                execution_count: 0,
+              },
+            }
+          : c,
+      );
+    }
+  } catch {
+    // Silently ignore — display outputs are best-effort
+  }
+};
+
+watch(
+  () => editorStore.isRunning,
+  (running, wasRunning) => {
+    if (wasRunning && !running && dataLoaded.value) {
+      loadFlowRunDisplayOutputs();
+      loadArtifacts();
+      // Upstream schemas may have been populated by this run — refresh column completions
+      reloadUpstreamColumns();
+    }
+  },
+);
+
+// ─── Cell sync ──────────────────────────────────────────────────────────────
+
+const handleCellsUpdate = (updatedCells: NotebookCell[]) => {
+  cells.value = updatedCells;
+  syncCellsToNode();
+};
+
+const applyGeneratedCode = (code: string) => {
+  // Append the generated code as a new cell rather than overwriting existing
+  // work, then sync the combined code back to the node.
+  cells.value = [...cells.value, { id: crypto.randomUUID(), code, output: null }];
+  syncCellsToNode();
+};
+
+const syncCellsToNode = () => {
+  if (!nodePythonScript.value) return;
+
+  // Persist cells WITHOUT output (outputs are runtime-only, contain base64 images)
+  nodePythonScript.value.python_script_input.cells = cells.value.map((c) => ({
+    id: c.id,
+    code: c.code,
+  }));
+
+  // Derive combined code for flow execution
+  // flow_graph.py reads python_script_input.code — this must always be populated
+  nodePythonScript.value.python_script_input.code = cells.value
+    .map((c) => c.code)
+    .filter(Boolean)
+    .join("\n\n");
+};
+
+// ─── Node settings composable ───────────────────────────────────────────────
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodePythonScript,
+  onBeforeSave: () => {
+    syncCellsToNode();
+    const combinedCode = nodePythonScript.value?.python_script_input.code;
+    if (!combinedCode?.trim()) {
+      return false;
+    }
+    return true;
+  },
+});
+
+// ─── Lifecycle ──────────────────────────────────────────────────────────────
+
+const loadNodeData = async (nodeId: number) => {
+  try {
+    nodeData.value = await nodeStore.getNodeData(nodeId, false);
+    if (nodeData.value) {
+      const hasValidSetup = Boolean(
+        nodeData.value?.setting_input?.is_setup &&
+        nodeData.value?.setting_input?.python_script_input,
+      );
+
+      nodePythonScript.value = hasValidSetup
+        ? nodeData.value.setting_input
+        : createPythonScriptNode(nodeStore.flow_id, nodeStore.node_id);
+
+      const input = nodePythonScript.value!.python_script_input;
+      if (input.cells && input.cells.length > 0) {
+        // Load from saved cells (output is runtime-only, not persisted)
+        cells.value = input.cells.map((c) => ({
+          id: c.id,
+          code: c.code,
+          output: null,
+        }));
+      } else {
+        // Backward compat: create single cell from existing code
+        cells.value = [
+          {
+            id: crypto.randomUUID(),
+            code: input.code || DEFAULT_PYTHON_SCRIPT_CODE,
+            output: null,
+          },
+        ];
+      }
+
+      selectedKernelId.value = nodePythonScript.value!.python_script_input.kernel_id;
+
+      const savedOutputNames = nodePythonScript.value!.output_names;
+      outputNames.value =
+        savedOutputNames && savedOutputNames.length > 0 ? [...savedOutputNames] : ["main"];
+
+      showEditor.value = true;
+      dataLoaded.value = true;
+
+      await loadKernels();
+      startKernelPolling();
+      loadArtifacts();
+      loadFlowRunDisplayOutputs();
+      loadInputNames();
+      if (selectedKernelId.value) {
+        startMemoryPolling();
+      }
+    }
+  } catch (error) {
+    console.error("Failed to load node data:", error);
+    showEditor.value = false;
+    dataLoaded.value = false;
+  }
+};
+
+onUnmounted(() => {
+  stopKernelPolling();
+  stopMemoryPolling();
+});
+
+defineExpose({ loadNodeData, pushNodeData, saveSettings });
+</script>
+
+<style scoped>
+.python-script-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.code-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.icon-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--el-text-color-secondary);
+  padding: 0.2rem;
+  line-height: 1;
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+
+.icon-button:hover {
+  color: var(--el-color-primary);
+  background: var(--el-fill-color-light);
+}
+
+/* ─── Setting blocks ─────────────────────────────────────────────────────── */
+
+.setting-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.setting-label {
+  font-weight: 500;
+  font-size: 0.8rem;
+  color: var(--el-text-color-primary);
+}
+
+/* ─── Kernel selection ───────────────────────────────────────────────────── */
+
+.kernel-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.kernel-select {
+  flex: 1;
+}
+
+.manage-kernels-link {
+  font-size: 0.8rem;
+  color: var(--el-color-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.manage-kernels-link:hover {
+  text-decoration: underline;
+}
+
+.kernel-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.kernel-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.kernel-state-dot--idle {
+  background-color: #67c23a;
+}
+
+.kernel-state-dot--executing {
+  background-color: #e6a23c;
+}
+
+.kernel-state-dot--starting {
+  background-color: #409eff;
+}
+
+.kernel-state-dot--stopped {
+  background-color: #909399;
+}
+
+.kernel-state-dot--error {
+  background-color: #f56c6c;
+}
+
+.kernel-state-label {
+  font-size: 0.8rem;
+  color: var(--el-text-color-secondary);
+}
+
+/* ─── Memory usage ────────────────────────────────────────────────────── */
+
+.kernel-memory {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  font-family: var(--el-font-family, monospace);
+}
+
+.kernel-memory--normal {
+  color: var(--el-color-success-dark-2, #529b2e);
+  background-color: var(--el-color-success-light-9, #f0f9eb);
+}
+
+.kernel-memory--warning {
+  color: var(--el-color-warning-dark-2, #b88230);
+  background-color: var(--el-color-warning-light-9, #fdf6ec);
+}
+
+.kernel-memory--critical {
+  color: var(--el-color-danger-dark-2, #c45656);
+  background-color: var(--el-color-danger-light-9, #fef0f0);
+}
+
+.kernel-memory__text {
+  font-weight: 500;
+}
+
+.kernel-memory__percent {
+  opacity: 0.7;
+}
+
+.kernel-indicator__memory {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-family: var(--el-font-family, monospace);
+}
+
+.kernel-warning {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--el-color-warning-dark-2, #b88230);
+  background-color: var(--el-color-warning-light-9, #fdf6ec);
+  border: 1px solid var(--el-color-warning-light-5, #f3d19e);
+  border-radius: 4px;
+}
+
+.kernel-warning i {
+  flex-shrink: 0;
+}
+
+/* ─── Collapsible sections ───────────────────────────────────────────────── */
+
+.ps-collapse {
+  --el-collapse-header-bg-color: transparent;
+  --el-collapse-content-bg-color: transparent;
+  --el-collapse-header-height: auto;
+  border: none;
+}
+
+.ps-collapse :deep(.el-collapse-item__header) {
+  background-color: transparent;
+  border: none;
+  padding: 0.25rem 0;
+  height: auto;
+  line-height: 1.4;
+  font-size: 0.8rem;
+}
+
+.ps-collapse :deep(.el-collapse-item__wrap) {
+  background-color: transparent;
+  border: none;
+}
+
+.ps-collapse :deep(.el-collapse-item__content) {
+  background-color: transparent;
+  padding: 0.35rem 0 0.65rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.ps-collapse :deep(.el-collapse-item) {
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.ps-collapse :deep(.el-collapse-item:last-child) {
+  border-bottom: none;
+}
+
+.ps-collapse__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.ps-collapse__label {
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  flex-shrink: 0;
+}
+
+.ps-collapse__summary {
+  font-size: 0.75rem;
+  color: var(--el-text-color-secondary);
+  font-family: var(--el-font-family, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ps-collapse__summary--warning {
+  color: var(--el-color-warning-dark-2, #b88230);
+}
+
+.ps-collapse__summary--critical {
+  color: var(--el-color-danger-dark-2, #c45656);
+}
+
+/* ─── Artifacts panel ────────────────────────────────────────────────────── */
+
+.artifacts-panel {
+  background: transparent;
+  border-top: 1px solid var(--el-border-color-lighter);
+  border-radius: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.artifacts-loading {
+  color: var(--el-text-color-secondary);
+}
+
+.artifact-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.artifact-group:last-child {
+  margin-bottom: 0;
+}
+
+.artifact-group-label {
+  font-weight: 500;
+  color: var(--el-text-color-regular);
+  margin-right: 0.25rem;
+}
+
+.artifact-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border-radius: 3px;
+  font-size: 0.8rem;
+}
+
+.artifact-tag--published {
+  background-color: var(--color-background-tertiary);
+  color: var(--color-success);
+}
+
+.artifact-type {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+.artifacts-empty {
+  color: var(--el-text-color-placeholder);
+  font-style: italic;
+}
+
+/* ─── Named inputs display ───────────────────────────────────────────────── */
+
+.input-names-display {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0;
+}
+
+.input-name-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.15rem 0.5rem;
+  background-color: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 3px;
+  font-size: 0.8rem;
+  font-family: var(--el-font-family, monospace);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.input-name-tag:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+.input-menu-icon {
+  margin-right: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.input-name-type {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.input-names-hint {
+  display: block;
+  width: 100%;
+  font-size: 0.7rem;
+  color: var(--el-text-color-placeholder);
+  margin-top: 0.2rem;
+}
+
+/* ─── Output names editor ────────────────────────────────────────────────── */
+
+.output-names-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.output-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.output-name-row .el-input {
+  flex: 1;
+}
+
+.icon-button--danger:hover {
+  color: var(--el-color-danger);
+}
+
+.add-output-button {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--el-color-primary);
+  background: none;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.add-output-button:hover {
+  border-color: var(--el-color-primary);
+  background-color: var(--el-color-primary-light-9);
+}
+
+/* ─── Expanded Editor Dialog ─────────────────────────────────────────────── */
+
+.expanded-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding-right: 2rem;
+}
+
+.expanded-dialog-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.expanded-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.kernel-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--el-text-color-secondary);
+  padding: 0.25rem 0.75rem;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+}
+
+.expanded-editor-content {
+  height: calc(100vh - 80px);
+  overflow-y: auto;
+  padding: 0 1rem;
+}
+</style>

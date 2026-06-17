@@ -1,11 +1,20 @@
 <template>
-  <NodeTitle :title="nodeStore.drawerProps.title" :intro="nodeStore.drawerProps.intro" />
-  <component
-    :is="nodeStore.activeDrawerComponent"
-    v-bind="nodeStore.drawerProps"
-    ref="drawerComponentInstance"
-    :node-id="nodeStore.node_id"
-  />
+  <div class="node-settings-drawer">
+    <NodeTitle :title="nodeStore.drawerProps.title" :intro="nodeStore.drawerProps.intro" />
+    <div class="node-settings-body">
+      <component
+        :is="nodeStore.activeDrawerComponent"
+        v-bind="nodeStore.drawerProps"
+        ref="drawerComponentInstance"
+        :node-id="nodeStore.node_id"
+      />
+    </div>
+    <div v-if="nodeStore.node_id !== -1" class="node-settings-footer">
+      <el-button type="primary" size="small" :loading="isApplying" @click="applySettings">
+        {{ justApplied ? "Applied ✓" : "Apply" }}
+      </el-button>
+    </div>
+  </div>
 </template>
 <script setup lang="ts">
 import { ref, watch, nextTick } from "vue";
@@ -15,12 +24,34 @@ import NodeTitle from "../../components/nodes/baseNode/nodeTitle.vue";
 
 interface DrawerComponentInstance {
   loadNodeData: (nodeId: number) => void;
-  pushNodeData: () => void;
+  pushNodeData: () => void | Promise<void>;
 }
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const drawerComponentInstance = ref<DrawerComponentInstance | null>(null);
+
+// Universal Apply: every drawer-entry node component exposes pushNodeData (the
+// same save that runs on drawer-close), so this works for all node types,
+// including the ones that don't use genericNodeSettings. Saves without closing.
+const isApplying = ref(false);
+const justApplied = ref(false);
+let appliedTimer: ReturnType<typeof setTimeout> | null = null;
+
+const applySettings = async () => {
+  if (!drawerComponentInstance.value?.pushNodeData) return;
+  isApplying.value = true;
+  try {
+    await drawerComponentInstance.value.pushNodeData();
+    justApplied.value = true;
+    if (appliedTimer) clearTimeout(appliedTimer);
+    appliedTimer = setTimeout(() => {
+      justApplied.value = false;
+    }, 1500);
+  } finally {
+    isApplying.value = false;
+  }
+};
 
 // Track last executed values to prevent double execution
 const lastExecutedState = ref({
@@ -28,22 +59,16 @@ const lastExecutedState = ref({
   componentInstance: null as DrawerComponentInstance | null,
 });
 
-// Single function to handle cleanup
 const executeCleanup = async () => {
-  // Check if we actually need to execute cleanup
   if (lastExecutedState.value.componentInstance) {
-    console.log(`executing cleanup for node ${lastExecutedState.value.nodeId}`);
     await nodeStore.executeDrawCloseFunction();
   }
 };
 
-// Single function to handle setup
 const setupNewNode = () => {
   if (drawerComponentInstance.value?.loadNodeData && nodeStore.node_id !== -1) {
     drawerComponentInstance.value.loadNodeData(nodeStore.node_id);
     nodeStore.setCloseFunction(drawerComponentInstance.value.pushNodeData);
-
-    // Update tracked state
     lastExecutedState.value = {
       nodeId: nodeStore.node_id,
       componentInstance: drawerComponentInstance.value,
@@ -51,34 +76,61 @@ const setupNewNode = () => {
   }
 };
 
-// Combined watcher for both drawerComponentInstance and node_id
 watch(
   [() => drawerComponentInstance.value, () => nodeStore.node_id],
   async ([newInstance, newNodeId], [, oldNodeId]) => {
-    // Only execute cleanup when node ID changes (not on initial mount or instance changes)
     const nodeIdChanged = newNodeId !== oldNodeId;
-    // Execute cleanup only when node ID changes and we have a previous valid state
+    if (nodeIdChanged) {
+      justApplied.value = false;
+    }
     if (nodeIdChanged && oldNodeId !== -1 && lastExecutedState.value.componentInstance) {
       await executeCleanup();
-      // Reset the tracked state after cleanup
       lastExecutedState.value = {
         nodeId: -1,
         componentInstance: null,
       };
     }
 
-    // Handle node deselection
     if (newNodeId === -1) {
       editorStore.isDrawerOpen = false;
       return;
     }
 
-    // Setup new node if we have a valid instance
     if (newInstance) {
-      await nextTick(); // Ensure component is fully mounted
+      await nextTick();
       setupNewNode();
     }
   },
   { immediate: true },
 );
 </script>
+
+<style scoped>
+.node-settings-drawer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Body holds the active node component. It scrolls internally so tall forms
+   stay contained instead of overflowing onto the Apply footer; the title above
+   and the footer below stay pinned. A node whose root opts in with
+   `height: 100%` still fills the body; shorter forms render at the top. */
+.node-settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Sticky footer holding the universal Apply button, present for every node. */
+.node-settings-footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  background-color: var(--el-bg-color);
+}
+</style>

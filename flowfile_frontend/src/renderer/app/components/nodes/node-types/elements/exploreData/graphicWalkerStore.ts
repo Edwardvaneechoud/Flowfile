@@ -1,7 +1,7 @@
 import { reactive } from "vue";
 
 interface VizStore {
-  exportViewSpec: () => any; // Adapt this to your actual return type
+  exportViewSpec: () => any;
   exportAsRaw: () => string;
   importRaw: () => void;
   setVisName: () => void;
@@ -23,7 +23,6 @@ interface RawField {
 
 interface CommonStore {
   datasets?: Dataset[];
-  // Add other properties as needed
 }
 
 interface IGlobalStore {
@@ -32,13 +31,11 @@ interface IGlobalStore {
   current: {
     commonStore: CommonStore;
     vizStore: VizStore;
-    // Add other properties as necessary
   };
   updateNodeId: (newNodeId: number) => void;
   nodeIdChanged: () => boolean;
 }
 
-// Create a single instance of the global store
 const globalStoreInstance = reactive<IGlobalStore>({
   currentNodeId: 0,
   previousNodeId: 0,

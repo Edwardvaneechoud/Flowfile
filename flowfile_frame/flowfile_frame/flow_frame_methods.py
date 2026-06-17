@@ -144,15 +144,15 @@ def read_csv(
         flow_graph = create_flow_graph()
     flow_id = flow_graph.flow_id
     current_source_path_for_native = None
-    if isinstance(source, (str, os.PathLike)):
+    if isinstance(source, str | os.PathLike):
         current_source_path_for_native = str(source)
         if "~" in current_source_path_for_native:
             current_source_path_for_native = os.path.expanduser(current_source_path_for_native)
-    elif isinstance(source, list) and all(isinstance(s, (str, os.PathLike)) for s in source):
+    elif isinstance(source, list) and all(isinstance(s, str | os.PathLike) for s in source):
         current_source_path_for_native = str(source[0]) if source else None
         if current_source_path_for_native and "~" in current_source_path_for_native:
             current_source_path_for_native = os.path.expanduser(current_source_path_for_native)
-    elif isinstance(source, (io.BytesIO, io.StringIO)):
+    elif isinstance(source, io.BytesIO | io.StringIO):
         logger.warning("Read from bytes io from csv not supported, converting data to raw data")
         return from_dict(pl.read_csv(source), flow_graph=flow_graph, description=description)
     actual_infer_schema_length: int | None
@@ -259,14 +259,13 @@ def read_csv(
             **other_options,
         )
         polars_code_node_description = description or "Read CSV with Polars scan_csv"
-        if isinstance(source, (str, os.PathLike)):
+        if isinstance(source, str | os.PathLike):
             polars_code_node_description = description or f"Read CSV with Polars scan_csv from {Path(source).name}"
-        elif isinstance(source, list) and source and isinstance(source[0], (str, os.PathLike)):
+        elif isinstance(source, list) and source and isinstance(source[0], str | os.PathLike):
             polars_code_node_description = (
                 description or f"Read CSV with Polars scan_csv from {Path(source[0]).name} (and possibly others)"
             )
 
-        # Assuming input_schema.NodePolarsCode, transform_schema.PolarsCodeInput are defined
         polars_code_settings = input_schema.NodePolarsCode(
             flow_id=flow_id,
             node_id=node_id,
@@ -316,7 +315,7 @@ def _build_polars_code_args(
     **other_options: Any,
 ) -> str:
     source_repr: str
-    if isinstance(source, (str, Path)):
+    if isinstance(source, str | Path):
         source_repr = repr(str(source))
     elif isinstance(source, list):
         source_repr = repr([str(p) for p in source])
@@ -362,7 +361,7 @@ def _build_polars_code_args(
     all_vars = locals()
     kwargs_list = []
 
-    for param_name_key, (default_value, format_func) in param_mapping.items():
+    for param_name_key, (_default_value, format_func) in param_mapping.items():
         value = all_vars.get(param_name_key)
         formatted_value = format_func(value)
         kwargs_list.append(f"{param_name_key}={formatted_value}")
@@ -398,7 +397,7 @@ def read_parquet(
         A FlowFrame with the Parquet data
     """
     if "~" in source:
-        file_path = os.path.expanduser(source)
+        os.path.expanduser(source)
     node_id = generate_node_id()
 
     if flow_graph is None:
@@ -408,6 +407,64 @@ def read_parquet(
 
     received_table = input_schema.ReceivedTable(
         file_type="parquet", path=source, name=Path(source).name, table_settings=input_schema.InputParquetTable()
+    )
+    if convert_to_absolute_path:
+        received_table.path = received_table.abs_file_path
+
+    read_node = input_schema.NodeRead(
+        flow_id=flow_id,
+        node_id=node_id,
+        received_file=received_table,
+        pos_x=100,
+        pos_y=100,
+        is_setup=True,
+        description=description,
+    )
+
+    flow_graph.add_read(read_node)
+
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
+    )
+
+
+def read_excel(
+    source,
+    *,
+    sheet_name: str | None = None,
+    has_header: bool = True,
+    flow_graph: FlowGraph = None,
+    description: str = None,
+    convert_to_absolute_path: bool = True,
+) -> FlowFrame:
+    """
+    Read an Excel file into a FlowFrame.
+
+    Args:
+        source: Path to Excel file
+        sheet_name: Name of the sheet to read (reads first sheet if None)
+        has_header: Whether the first row contains column headers
+        flow_graph: if you want to add it to an existing graph
+        description: if you want to add a readable name in the frontend (advised)
+        convert_to_absolute_path: If the path needs to be set to a fixed location
+
+    Returns:
+        A FlowFrame with the Excel data
+    """
+    if "~" in source:
+        os.path.expanduser(source)
+    node_id = generate_node_id()
+
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
+
+    flow_id = flow_graph.flow_id
+
+    received_table = input_schema.ReceivedTable(
+        file_type="excel",
+        path=source,
+        name=Path(source).name,
+        table_settings=input_schema.InputExcelTable(sheet_name=sheet_name, has_headers=has_header),
     )
     if convert_to_absolute_path:
         received_table.path = received_table.abs_file_path
@@ -440,7 +497,6 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
     Returns:
         A FlowFrame with the data
     """
-    # Create new node ID
     node_id = generate_node_id()
 
     if not flow_graph:
@@ -457,10 +513,42 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
         description=description,
     )
 
-    # Add to graph
     flow_graph.add_manual_input(input_node)
 
-    # Return new frame
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
+    )
+
+
+def from_raw_data(
+    raw_data: input_schema.RawData, *, flow_graph: FlowGraph = None, description: str = None
+) -> FlowFrame:
+    """Create a FlowFrame from a RawData object.
+
+    Args:
+        raw_data: RawData object with columns and data
+        flow_graph: if you want to add it to an existing graph
+        description: if you want to add a readable name in the frontend (advised)
+    Returns:
+        A FlowFrame with the data
+    """
+    node_id = generate_node_id()
+
+    if not flow_graph:
+        flow_graph = create_flow_graph()
+
+    input_node = input_schema.NodeManualInput(
+        flow_id=flow_graph.flow_id,
+        node_id=node_id,
+        raw_data_format=raw_data,
+        pos_x=100,
+        pos_y=100,
+        is_setup=True,
+        description=description,
+    )
+
+    flow_graph.add_manual_input(input_node)
+
     return FlowFrame(
         data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
     )
@@ -498,7 +586,6 @@ def concat(
         raise ValueError("No frames provided to concat_frames")
     if len(frames) == 1:
         return frames[0]
-    # Use first frame's concat method with remaining frames
     first_frame = frames[0]
     remaining_frames = frames[1:]
 
@@ -617,6 +704,7 @@ def scan_parquet_from_cloud_storage(
     connection_name: str | None = None,
     scan_mode: Literal["single_file", "directory", None] = None,
     description: str | None = None,
+    output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
 
@@ -638,6 +726,7 @@ def scan_parquet_from_cloud_storage(
         ),
         user_id=get_current_user_id(),
         description=description,
+        output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(
@@ -654,6 +743,7 @@ def scan_csv_from_cloud_storage(
     delimiter: str = ";",
     has_header: bool | None = True,
     encoding: CsvEncoding | None = "utf8",
+    output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
 
@@ -679,6 +769,7 @@ def scan_csv_from_cloud_storage(
             file_format="csv",
         ),
         user_id=get_current_user_id(),
+        output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(
@@ -687,7 +778,12 @@ def scan_csv_from_cloud_storage(
 
 
 def scan_delta(
-    source: str, *, flow_graph: FlowGraph | None = None, connection_name: str | None = None, version: int = None
+    source: str,
+    *,
+    flow_graph: FlowGraph | None = None,
+    connection_name: str | None = None,
+    version: int = None,
+    output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
     if flow_graph is None:
@@ -700,6 +796,7 @@ def scan_delta(
             resource_path=source, connection_name=connection_name, file_format="delta", delta_version=version
         ),
         user_id=get_current_user_id(),
+        output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(
@@ -713,6 +810,7 @@ def scan_json_from_cloud_storage(
     flow_graph: FlowGraph | None = None,
     connection_name: str | None = None,
     scan_mode: Literal["single_file", "directory", None] = None,
+    output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
 
@@ -732,6 +830,7 @@ def scan_json_from_cloud_storage(
             resource_path=source, scan_mode=scan_mode, connection_name=connection_name, file_format="json"
         ),
         user_id=get_current_user_id(),
+        output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(

@@ -1,18 +1,20 @@
 // Secrets management related TypeScript interfaces and types
-// Consolidated from pages/secretManager/secretTypes.ts
 
-// ============================================================================
+import type { AccessInfo } from "./sharing.types";
+
 // Secret Types
-// ============================================================================
 
 /**
  * Interface representing a secret fetched from the backend.
- * Note: The 'value' might be encrypted or masked depending on the API.
+ * Note: The 'value' might be encrypted or masked depending on the API, and is
+ * absent (undefined) on group-shared rows the current user does not own.
  */
 export interface Secret {
   name: string;
-  value: string;
+  value?: string;
   user_id?: string;
+  id?: number;
+  access?: AccessInfo | null;
 }
 
 /**

@@ -345,6 +345,11 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~713 LOC. Plan to extract:
+//   - UserAddForm.vue (~lines 28-125), UsersTable.vue (~lines 155-232)
+//   - EditUserModal.vue (~lines 244-314), DeleteConfirmModal.vue (~lines 317-343)
+//   - usePasswordValidation composable (~lines 376-387)
+//   - useUserApi composable: CRUD calls (~lines 445-550)
 import { ref, computed, onMounted } from "vue";
 import { useAuthStore } from "../../stores/auth-store";
 import userService, {
@@ -410,7 +415,6 @@ const filteredUsers = computed(() => {
   );
 });
 
-// Load users
 const loadUsers = async () => {
   isLoading.value = true;
   try {
@@ -423,7 +427,6 @@ const loadUsers = async () => {
   }
 };
 
-// Status message state
 const statusMessage = ref<{ type: "success" | "error"; text: string } | null>(null);
 
 const showStatus = (type: "success" | "error", text: string) => {
@@ -441,7 +444,6 @@ const getErrorMessage = (error: unknown): string => {
   );
 };
 
-// Create user
 const handleAddUser = async () => {
   if (!newUser.value.username || !newUser.value.password) return;
 
@@ -459,7 +461,6 @@ const handleAddUser = async () => {
   }
 };
 
-// Edit modal
 const openEditModal = (user: User) => {
   editUser.value = user;
   editFormData.value = {
@@ -512,7 +513,6 @@ const handleUpdateUser = async () => {
   }
 };
 
-// Delete modal
 const openDeleteModal = (user: User) => {
   userToDelete.value = user;
   showDeleteModal.value = true;
@@ -539,7 +539,6 @@ const handleDeleteUser = async () => {
   }
 };
 
-// Force password change
 const handleForcePasswordChange = async (user: User) => {
   try {
     await userService.updateUser(user.id, { must_change_password: true });
@@ -550,7 +549,6 @@ const handleForcePasswordChange = async (user: User) => {
   }
 };
 
-// Load users on mount
 onMounted(() => {
   loadUsers();
 });

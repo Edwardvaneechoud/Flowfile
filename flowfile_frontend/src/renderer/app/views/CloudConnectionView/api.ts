@@ -34,6 +34,11 @@ const toPythonFormat = (
     azure_tenant_id: connection.azureTenantId,
     azure_client_id: connection.azureClientId,
     azure_client_secret: connection.azureClientSecret,
+    azure_sas_token: connection.azureSasToken,
+
+    // Google Cloud Storage
+    gcs_service_account_key: connection.gcsServiceAccountKey,
+    gcs_project_id: connection.gcsProjectId,
 
     // Common
     endpoint_url: connection.endpointUrl,
@@ -78,6 +83,9 @@ export const convertConnectionInterfacePytoTs = (
     azureTenantId: pythonConnectionInterface.azure_tenant_id,
     azureClientId: pythonConnectionInterface.azure_client_id,
 
+    // Google Cloud Storage
+    gcsProjectId: pythonConnectionInterface.gcs_project_id,
+
     // Common
     endpointUrl: pythonConnectionInterface.endpoint_url,
     verifySsl: pythonConnectionInterface.verify_ssl,
@@ -103,6 +111,9 @@ export const convertConnectionInterfaceTstoPy = (
     azure_tenant_id: cloudConnectionInterface.azureTenantId,
     azure_client_id: cloudConnectionInterface.azureClientId,
 
+    // Google Cloud Storage
+    gcs_project_id: cloudConnectionInterface.gcsProjectId,
+
     // Common
     endpoint_url: cloudConnectionInterface.endpointUrl,
     verify_ssl: cloudConnectionInterface.verifySsl,
@@ -124,6 +135,25 @@ export const createCloudStorageConnectionApi = async (
     console.error("API Error: Failed to create cloud storage connection:", error);
     const errorMsg =
       (error as any).response?.data?.detail || "Failed to create cloud storage connection";
+    throw new Error(errorMsg);
+  }
+};
+
+/**
+ * Updates an existing cloud storage connection via the API.
+ * @param connectionData - The cloud storage connection configuration to update.
+ * @returns A promise that resolves when the connection is updated.
+ */
+export const updateCloudStorageConnectionApi = async (
+  connectionData: FullCloudStorageConnection,
+): Promise<void> => {
+  try {
+    const pythonFormattedData = toPythonFormat(connectionData);
+    await axios.put(API_BASE_URL + "/cloud_connection", pythonFormattedData);
+  } catch (error) {
+    console.error("API Error: Failed to update cloud storage connection:", error);
+    const errorMsg =
+      (error as any).response?.data?.detail || "Failed to update cloud storage connection";
     throw new Error(errorMsg);
   }
 };

@@ -1,27 +1,34 @@
 <template>
-  <div class="nodes-wrapper">
+  <div class="nodes-wrapper" data-tutorial="node-list">
     <!-- Search Input -->
     <input v-model="searchQuery" type="text" placeholder="Search nodes..." class="search-input" />
 
-    <div v-for="(categoryInfo, category) in categories" :key="category" class="category-container">
+    <div
+      v-for="(categoryInfo, category) in categories"
+      v-show="!searchQuery || filteredNodes[category]"
+      :key="category"
+      class="category-container"
+      :data-tutorial-category="category"
+    >
       <!-- Category Header -->
       <button class="category-header" @click="toggleCategory(category as CategoryKey)">
         <span class="category-title">{{ categoryInfo.name }}</span>
         <el-icon class="category-icon">
-          <ArrowDown v-if="openCategories[category as CategoryKey]" />
+          <ArrowDown v-if="isCategoryOpen(category as CategoryKey)" />
           <ArrowRight v-else />
         </el-icon>
       </button>
 
       <!-- Category Content -->
       <div
-        v-if="openCategories[category as CategoryKey] && filteredNodes[category]"
+        v-if="isCategoryOpen(category as CategoryKey) && filteredNodes[category]"
         class="category-content"
       >
         <div
           v-for="node in filteredNodes[category]"
           :key="node.item"
           class="node-item"
+          :data-tutorial-node="node.item"
           draggable="true"
           @dragstart="$emit('dragstart', $event, node)"
         >
@@ -42,7 +49,7 @@ import { NodeTemplate } from "../../types";
 
 const { nodes } = useNodes();
 
-type CategoryKey = "input" | "transform" | "combine" | "aggregate" | "output" | "custom";
+type CategoryKey = "input" | "transform" | "combine" | "aggregate" | "ml" | "output" | "custom";
 
 interface CategoryInfo {
   name: string;
@@ -58,6 +65,7 @@ const categories: Categories = {
   transform: { name: "Transformations", isOpen: true },
   combine: { name: "Combine Operations", isOpen: true },
   aggregate: { name: "Aggregations", isOpen: true },
+  ml: { name: "Machine Learning", isOpen: true },
   output: { name: "Output Operations", isOpen: true },
   custom: { name: "User Defined Operations", isOpen: true },
 };
@@ -82,17 +90,13 @@ const groupedNodes = computed(() => {
   );
 });
 
-// Reactive search query
 const searchQuery = ref("");
 
-// Compute filtered nodes based on the search query
 const filteredNodes = computed(() => {
-  // If no search query, return all grouped nodes
   if (!searchQuery.value) return groupedNodes.value;
 
   const query = searchQuery.value.toLowerCase();
   const filtered = {} as Record<CategoryKey, NodeTemplate[]>;
-  // Loop through each category and filter nodes
   for (const category in groupedNodes.value) {
     const nodesArray = groupedNodes.value[category as CategoryKey];
     const filteredArray = nodesArray.filter(
@@ -107,7 +111,13 @@ const filteredNodes = computed(() => {
   return filtered;
 });
 
+const isCategoryOpen = (category: CategoryKey) => {
+  if (searchQuery.value) return !!filteredNodes.value[category];
+  return openCategories.value[category];
+};
+
 const toggleCategory = (category: CategoryKey) => {
+  if (searchQuery.value) return;
   openCategories.value[category] = !openCategories.value[category];
 };
 

@@ -19,7 +19,7 @@ export interface TextInputComponent extends BaseComponent {
 
 export interface MultiSelectComponent extends BaseComponent {
   component_type: "MultiSelect";
-  options: { __type__: "IncomingColumns" } | string[];
+  options: { __type__: "IncomingColumns" } | { __type__: "AvailableArtifacts" } | string[];
 }
 
 export interface ToggleSwitchComponent extends BaseComponent {
@@ -42,7 +42,7 @@ export interface SliderInputComponent extends BaseComponent {
 
 export interface SingleSelectComponent extends BaseComponent {
   component_type: "SingleSelect";
-  options: { __type__: "IncomingColumns" } | string[];
+  options: { __type__: "IncomingColumns" } | { __type__: "AvailableArtifacts" } | string[];
 }
 
 export interface ColumnSelectorComponent extends BaseComponent {
@@ -60,20 +60,17 @@ export interface SecretSelectorComponent extends BaseComponent {
   name_prefix?: string;
 }
 
-// Generic column action row structure
 export interface ColumnActionRow {
   column: string;
   action: string;
   output_name: string;
 }
 
-// Action option structure from backend
 export interface ActionOption {
   value: string;
   label: string;
 }
 
-// Generic column action input value structure
 export interface ColumnActionValue {
   rows: ColumnActionRow[];
   group_by_columns: string[];
@@ -96,7 +93,7 @@ export interface SectionComponent {
   title?: string;
   description?: string;
   hidden?: boolean;
-  components: Record<string, UIComponent>; // Sections contain other UI components
+  components: Record<string, UIComponent>;
 }
 
 export interface SettingsSchema {
@@ -117,7 +114,6 @@ export type UIComponent =
 export type NodeTypeLiteral = "process" | "input" | "output";
 export type TransformTypeLiteral = "wide" | "long" | "explode";
 
-// The final, top-level schema for a custom node
 export interface CustomNodeSchema {
   node_name: string;
   node_category: string;
@@ -125,6 +121,9 @@ export interface CustomNodeSchema {
   settings_schema: SettingsSchema;
   number_of_inputs: number;
   number_of_outputs: number;
+  requires_kernel?: boolean;
+  kernel_id?: string | null;
+  output_names?: string[];
   node_group?: string;
   title?: string;
   intro?: string;

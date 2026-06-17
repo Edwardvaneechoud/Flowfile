@@ -121,7 +121,7 @@ defineExpose({ getInstantFuncResults });
 .content {
   flex: 1;
   padding: 14px 20px;
-  color: rgb(0, 0, 0);
+  color: var(--color-text-primary);
   font-size: 14px;
   font-weight: 400;
   line-height: 1.5;
@@ -132,7 +132,7 @@ defineExpose({ getInstantFuncResults });
 
 .result-content.error .content {
   background-color: var(--color-background-primary);
-  color: var(--color-text-error);
+  color: var(--color-danger);
 }
 
 .result-content.loading .label {

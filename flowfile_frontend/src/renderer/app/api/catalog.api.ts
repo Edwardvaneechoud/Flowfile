@@ -1,0 +1,585 @@
+// Catalog API Service - Handles all catalog-related HTTP requests
+import axios from "../services/axios.config";
+import type {
+  ActiveFlowRun,
+  CatalogNamespace,
+  CatalogStats,
+  CatalogTable,
+  CatalogTableCreate,
+  CatalogTablePreview,
+  CatalogTableUpdate,
+  ColumnStatsResponse,
+  CatalogVisualization,
+  Dashboard,
+  DashboardCreatePayload,
+  DashboardUpdatePayload,
+  DeltaTableHistory,
+  FlowRegistration,
+  FlowRegistrationCreate,
+  FlowRegistrationUpdate,
+  FlowRun,
+  FlowRunDetail,
+  FlowSchedule,
+  FlowScheduleCreate,
+  FlowScheduleUpdate,
+  CronValidationRequest,
+  CronValidationResult,
+  GlobalArtifact,
+  NamespaceCreate,
+  NamespaceTree,
+  NamespaceUpdate,
+  OptimizeTableRequest,
+  OptimizeTableResponse,
+  PaginatedFlowRuns,
+  QueryVirtualTableCreate,
+  SchedulerStatus,
+  SqlQueryResult,
+  VacuumTableRequest,
+  VacuumTableResponse,
+  VirtualFlowTableCreate,
+  VirtualFlowTableUpdate,
+  VisualizationComputeResponse,
+  VisualizationCreatePayload,
+  VisualizationFieldsResponse,
+  VisualizationUpdatePayload,
+  VizSourceDescriptor,
+} from "../types";
+
+export class CatalogApi {
+  // ====== Namespaces ======
+
+  static async getNamespaces(parentId?: number | null): Promise<CatalogNamespace[]> {
+    const params: Record<string, any> = {};
+    if (parentId !== undefined && parentId !== null) params.parent_id = parentId;
+    const response = await axios.get<CatalogNamespace[]>("/catalog/namespaces", { params });
+    return response.data;
+  }
+
+  static async getNamespaceTree(): Promise<NamespaceTree[]> {
+    const response = await axios.get<NamespaceTree[]>("/catalog/namespaces/tree");
+    return response.data;
+  }
+
+  static async createNamespace(body: NamespaceCreate): Promise<CatalogNamespace> {
+    const response = await axios.post<CatalogNamespace>("/catalog/namespaces", body);
+    return response.data;
+  }
+
+  static async updateNamespace(id: number, body: NamespaceUpdate): Promise<CatalogNamespace> {
+    const response = await axios.put<CatalogNamespace>(`/catalog/namespaces/${id}`, body);
+    return response.data;
+  }
+
+  static async deleteNamespace(id: number): Promise<void> {
+    await axios.delete(`/catalog/namespaces/${id}`);
+  }
+
+  // ====== Flow Registrations ======
+
+  static async getFlows(namespaceId?: number | null): Promise<FlowRegistration[]> {
+    const params: Record<string, any> = {};
+    if (namespaceId !== undefined && namespaceId !== null) params.namespace_id = namespaceId;
+    const response = await axios.get<FlowRegistration[]>("/catalog/flows", { params });
+    return response.data;
+  }
+
+  static async getFlow(id: number): Promise<FlowRegistration> {
+    const response = await axios.get<FlowRegistration>(`/catalog/flows/${id}`);
+    return response.data;
+  }
+
+  static async registerFlow(body: FlowRegistrationCreate): Promise<FlowRegistration> {
+    const response = await axios.post<FlowRegistration>("/catalog/flows", body);
+    return response.data;
+  }
+
+  static async updateFlow(id: number, body: FlowRegistrationUpdate): Promise<FlowRegistration> {
+    const response = await axios.put<FlowRegistration>(`/catalog/flows/${id}`, body);
+    return response.data;
+  }
+
+  static async deleteFlow(id: number, deleteFile = false): Promise<void> {
+    await axios.delete(`/catalog/flows/${id}`, { params: { delete_file: deleteFile } });
+  }
+
+  static async runFlow(flowId: number): Promise<FlowRun> {
+    const response = await axios.post<FlowRun>(`/catalog/flows/${flowId}/run`);
+    return response.data;
+  }
+
+  // ====== Favorites ======
+
+  static async getFavorites(): Promise<FlowRegistration[]> {
+    const response = await axios.get<FlowRegistration[]>("/catalog/favorites");
+    return response.data;
+  }
+
+  static async addFavorite(flowId: number): Promise<void> {
+    await axios.post(`/catalog/flows/${flowId}/favorite`);
+  }
+
+  static async removeFavorite(flowId: number): Promise<void> {
+    await axios.delete(`/catalog/flows/${flowId}/favorite`);
+  }
+
+  // ====== Follows ======
+
+  static async getFollowing(): Promise<FlowRegistration[]> {
+    const response = await axios.get<FlowRegistration[]>("/catalog/following");
+    return response.data;
+  }
+
+  static async addFollow(flowId: number): Promise<void> {
+    await axios.post(`/catalog/flows/${flowId}/follow`);
+  }
+
+  static async removeFollow(flowId: number): Promise<void> {
+    await axios.delete(`/catalog/flows/${flowId}/follow`);
+  }
+
+  // ====== Runs ======
+
+  static async getRuns(
+    registrationId?: number | null,
+    limit = 50,
+    offset = 0,
+    scheduleId?: number | null,
+    runType?: string | null,
+    search?: string | null,
+  ): Promise<PaginatedFlowRuns> {
+    const params: Record<string, any> = { limit, offset };
+    if (registrationId !== undefined && registrationId !== null)
+      params.registration_id = registrationId;
+    if (scheduleId !== undefined && scheduleId !== null) params.schedule_id = scheduleId;
+    if (runType) params.run_type = runType;
+    if (search) params.search = search;
+    const response = await axios.get<PaginatedFlowRuns>("/catalog/runs", { params });
+    return response.data;
+  }
+
+  static async getRunDetail(runId: number): Promise<FlowRunDetail> {
+    const response = await axios.get<FlowRunDetail>(`/catalog/runs/${runId}`);
+    return response.data;
+  }
+
+  // ====== Default Namespace ======
+
+  static async getDefaultNamespaceId(): Promise<number | null> {
+    const response = await axios.get<number | null>("/catalog/default-namespace-id");
+    return response.data;
+  }
+
+  // ====== Open Snapshot ======
+
+  static async getRunLog(runId: number): Promise<string> {
+    const response = await axios.get<{ log: string }>(`/catalog/runs/${runId}/log`);
+    return response.data.log;
+  }
+
+  static async openRunSnapshot(runId: number): Promise<number> {
+    const response = await axios.post<{ flow_id: number }>(`/catalog/runs/${runId}/open`);
+    return response.data.flow_id;
+  }
+
+  // ====== Artifacts ======
+
+  /** List active artifacts produced by a specific registered flow. */
+  static async getFlowArtifacts(registrationId: number): Promise<GlobalArtifact[]> {
+    const response = await axios.get<GlobalArtifact[]>(
+      `/catalog/flows/${registrationId}/artifacts`,
+    );
+    return response.data;
+  }
+
+  // ====== Table Favorites ======
+
+  static async getTableFavorites(): Promise<CatalogTable[]> {
+    const response = await axios.get<CatalogTable[]>("/catalog/table-favorites");
+    return response.data;
+  }
+
+  static async addTableFavorite(tableId: number): Promise<void> {
+    await axios.post(`/catalog/tables/${tableId}/favorite`);
+  }
+
+  static async removeTableFavorite(tableId: number): Promise<void> {
+    await axios.delete(`/catalog/tables/${tableId}/favorite`);
+  }
+
+  // ====== Catalog Tables ======
+
+  static async getTables(namespaceId?: number | null): Promise<CatalogTable[]> {
+    const params: Record<string, any> = {};
+    if (namespaceId !== undefined && namespaceId !== null) params.namespace_id = namespaceId;
+    const response = await axios.get<CatalogTable[]>("/catalog/tables", { params });
+    return response.data;
+  }
+
+  /** Resolve a catalog table by name (+ optional namespace). Returns null when
+   *  no such table exists (404), so callers can use it as an existence check.
+   *  Other failures (network, 5xx) are rethrown so they aren't mistaken for
+   *  "table does not exist". */
+  static async resolveTableByName(
+    name: string,
+    namespaceId?: number | null,
+  ): Promise<CatalogTable | null> {
+    try {
+      const params: Record<string, any> = { q: name };
+      if (namespaceId !== undefined && namespaceId !== null) params.namespace_id = namespaceId;
+      const response = await axios.get<{ table: CatalogTable }>("/catalog/tables/resolve", {
+        params,
+      });
+      return response.data.table;
+    } catch (e: any) {
+      if (e?.response?.status === 404) return null;
+      throw e;
+    }
+  }
+
+  static async getTable(tableId: number): Promise<CatalogTable> {
+    const response = await axios.get<CatalogTable>(`/catalog/tables/${tableId}`);
+    return response.data;
+  }
+
+  static async registerTable(body: CatalogTableCreate): Promise<CatalogTable> {
+    const response = await axios.post<CatalogTable>("/catalog/tables", body);
+    return response.data;
+  }
+
+  static async updateTable(id: number, body: CatalogTableUpdate): Promise<CatalogTable> {
+    const response = await axios.put<CatalogTable>(`/catalog/tables/${id}`, body);
+    return response.data;
+  }
+
+  static async deleteTable(id: number, deleteFile = false): Promise<void> {
+    await axios.delete(`/catalog/tables/${id}`, { params: { delete_file: deleteFile } });
+  }
+
+  // Delete all versions of a model (global artifact) by name within its namespace.
+  static async deleteArtifact(name: string, namespaceId: number | null): Promise<void> {
+    const params = namespaceId !== null ? { namespace_id: namespaceId } : {};
+    await axios.delete(`/artifacts/by-name/${encodeURIComponent(name)}`, { params });
+  }
+
+  static async getTablePreview(
+    tableId: number,
+    limit = 100,
+    version?: number | null,
+  ): Promise<CatalogTablePreview> {
+    const url = `/catalog/tables/${tableId}/preview`;
+    const params: Record<string, any> = { limit };
+    if (version !== undefined && version !== null) params.version = version;
+    const response = await axios.get<CatalogTablePreview>(url, { params });
+    return response.data;
+  }
+
+  static async getTableHistory(tableId: number): Promise<DeltaTableHistory> {
+    const response = await axios.get<DeltaTableHistory>(`/catalog/tables/${tableId}/history`);
+    return response.data;
+  }
+
+  static async optimizeTable(
+    tableId: number,
+    zOrderColumns?: string[] | null,
+  ): Promise<OptimizeTableResponse> {
+    const body: OptimizeTableRequest = { z_order_columns: zOrderColumns ?? null };
+    const response = await axios.post<OptimizeTableResponse>(
+      `/catalog/tables/${tableId}/optimize`,
+      body,
+    );
+    return response.data;
+  }
+
+  static async vacuumTable(
+    tableId: number,
+    retentionHours: number,
+    dryRun: boolean,
+  ): Promise<VacuumTableResponse> {
+    const body: VacuumTableRequest = { retention_hours: retentionHours, dry_run: dryRun };
+    const response = await axios.post<VacuumTableResponse>(
+      `/catalog/tables/${tableId}/vacuum`,
+      body,
+    );
+    return response.data;
+  }
+
+  /** Distinct values + min/max for a single column on a catalog table.
+   * Used by the dashboard filter UI to pre-populate categorical
+   * dropdowns and pre-fill numeric / date range inputs. */
+  static async getTableColumnStats(
+    tableId: number,
+    columnName: string,
+    limit = 100,
+  ): Promise<ColumnStatsResponse> {
+    const response = await axios.get<ColumnStatsResponse>(
+      `/catalog/tables/${tableId}/columns/${encodeURIComponent(columnName)}/stats`,
+      { params: { limit } },
+    );
+    return response.data;
+  }
+
+  // ====== Virtual Flow Tables ======
+
+  static async createVirtualTable(body: VirtualFlowTableCreate): Promise<CatalogTable> {
+    const response = await axios.post<CatalogTable>("/catalog/virtual-tables", body);
+    return response.data;
+  }
+
+  static async updateVirtualTable(id: number, body: VirtualFlowTableUpdate): Promise<CatalogTable> {
+    const response = await axios.put<CatalogTable>(`/catalog/virtual-tables/${id}`, body);
+    return response.data;
+  }
+
+  static async resolveVirtualTable(tableId: number, limit = 100): Promise<CatalogTablePreview> {
+    const response = await axios.post<CatalogTablePreview>(
+      `/catalog/virtual-tables/${tableId}/resolve`,
+      null,
+      { params: { limit } },
+    );
+    return response.data;
+  }
+
+  // ====== Query-based Virtual Tables ======
+
+  static async createQueryVirtualTable(body: QueryVirtualTableCreate): Promise<CatalogTable> {
+    const response = await axios.post<CatalogTable>("/catalog/query-virtual-tables", body);
+    return response.data;
+  }
+
+  // ====== Schedules ======
+
+  static async getSchedule(scheduleId: number): Promise<FlowSchedule> {
+    const response = await axios.get<FlowSchedule>(`/catalog/schedules/${scheduleId}`);
+    return response.data;
+  }
+
+  static async getSchedules(registrationId?: number | null): Promise<FlowSchedule[]> {
+    const params: Record<string, any> = {};
+    if (registrationId !== undefined && registrationId !== null)
+      params.registration_id = registrationId;
+    const response = await axios.get<FlowSchedule[]>("/catalog/schedules", { params });
+    return response.data;
+  }
+
+  static async createSchedule(body: FlowScheduleCreate): Promise<FlowSchedule> {
+    const response = await axios.post<FlowSchedule>("/catalog/schedules", body);
+    return response.data;
+  }
+
+  /** Validate a cron expression against the backend's croniter rules (single
+   * source of truth for the builder's Custom-mode submit gate). */
+  static async validateCron(body: CronValidationRequest): Promise<CronValidationResult> {
+    const response = await axios.post<CronValidationResult>(
+      "/catalog/schedules/validate-cron",
+      body,
+    );
+    return response.data;
+  }
+
+  static async updateSchedule(id: number, body: FlowScheduleUpdate): Promise<FlowSchedule> {
+    const response = await axios.put<FlowSchedule>(`/catalog/schedules/${id}`, body);
+    return response.data;
+  }
+
+  static async deleteSchedule(id: number): Promise<void> {
+    await axios.delete(`/catalog/schedules/${id}`);
+  }
+
+  static async triggerScheduleNow(scheduleId: number): Promise<FlowRun> {
+    const response = await axios.post<FlowRun>(`/catalog/schedules/${scheduleId}/run-now`);
+    return response.data;
+  }
+
+  // ====== Active Runs ======
+
+  static async getActiveRuns(): Promise<ActiveFlowRun[]> {
+    const response = await axios.get<ActiveFlowRun[]>("/catalog/active-runs");
+    return response.data;
+  }
+
+  static async cancelRun(runId: number): Promise<void> {
+    await axios.post(`/catalog/runs/${runId}/cancel`);
+  }
+
+  // ====== Scheduler ======
+
+  static async getSchedulerStatus(): Promise<SchedulerStatus> {
+    const response = await axios.get<SchedulerStatus>("/catalog/scheduler/status");
+    return response.data;
+  }
+
+  static async startScheduler(): Promise<void> {
+    await axios.post("/catalog/scheduler/start");
+  }
+
+  static async stopScheduler(): Promise<void> {
+    await axios.post("/catalog/scheduler/stop");
+  }
+
+  // ====== Stats ======
+
+  static async getStats(): Promise<CatalogStats> {
+    const response = await axios.get<CatalogStats>("/catalog/stats");
+    return response.data;
+  }
+
+  // ====== SQL Query ======
+
+  static async executeSqlQuery(query: string, maxRows = 10_000): Promise<SqlQueryResult> {
+    const response = await axios.post<SqlQueryResult>("/catalog/sql/execute", {
+      query,
+      max_rows: maxRows,
+    });
+    return response.data;
+  }
+
+  static async saveQueryAsFlow(
+    query: string,
+    name: string,
+    namespaceId?: number,
+    description?: string,
+    usedTables?: string[],
+  ): Promise<{ flow_id: number }> {
+    const response = await axios.post<{ flow_id: number }>("/catalog/sql/save-as-flow", {
+      query,
+      name,
+      namespace_id: namespaceId,
+      description,
+      used_tables: usedTables ?? [],
+    });
+    return response.data;
+  }
+
+  // ====== Visualizations ======
+
+  /** List every saved visualization in the catalog. */
+  static async listVisualizationLibrary(): Promise<CatalogVisualization[]> {
+    const response = await axios.get<CatalogVisualization[]>("/catalog/visualizations");
+    return response.data;
+  }
+
+  /** Filtered listing — viz that reference a specific catalog table. */
+  static async listVisualizationsForTable(tableId: number): Promise<CatalogVisualization[]> {
+    const response = await axios.get<CatalogVisualization[]>(
+      `/catalog/tables/${tableId}/visualizations`,
+    );
+    return response.data;
+  }
+
+  static async getVisualization(vizId: number): Promise<CatalogVisualization> {
+    const response = await axios.get<CatalogVisualization>(`/catalog/visualizations/${vizId}`);
+    return response.data;
+  }
+
+  static async createVisualization(
+    payload: VisualizationCreatePayload,
+  ): Promise<CatalogVisualization> {
+    const response = await axios.post<CatalogVisualization>("/catalog/visualizations", payload);
+    return response.data;
+  }
+
+  static async updateVisualization(
+    vizId: number,
+    payload: VisualizationUpdatePayload,
+  ): Promise<CatalogVisualization> {
+    const response = await axios.put<CatalogVisualization>(
+      `/catalog/visualizations/${vizId}`,
+      payload,
+    );
+    return response.data;
+  }
+
+  static async deleteVisualization(vizId: number): Promise<void> {
+    await axios.delete(`/catalog/visualizations/${vizId}`);
+  }
+
+  /** Compute rows for a saved viz.
+   *
+   * Pass ``payload`` (a GraphicWalker IDataQueryPayload) to push a chart
+   * aggregation down to the worker via polars-gw. Omit it for a raw row
+   * fetch (used as a fallback / for preview cards).
+   */
+  static async computeSavedVisualization(
+    vizId: number,
+    options: { maxRows?: number; payload?: Record<string, any> } = {},
+  ): Promise<VisualizationComputeResponse> {
+    const body: Record<string, unknown> = {};
+    if (options.maxRows !== undefined) body.max_rows = options.maxRows;
+    if (options.payload !== undefined) body.payload = options.payload;
+    const response = await axios.post<VisualizationComputeResponse>(
+      `/catalog/visualizations/${vizId}/compute`,
+      body,
+    );
+    return response.data;
+  }
+
+  /** Get the field schema for a saved viz's source (worker-cached). */
+  static async getSavedVisualizationFields(vizId: number): Promise<VisualizationFieldsResponse> {
+    const response = await axios.post<VisualizationFieldsResponse>(
+      `/catalog/visualizations/${vizId}/fields`,
+    );
+    return response.data;
+  }
+
+  /** Compute a chart from a transient source (used by the live GW editor). */
+  static async computeAdHocVisualization(
+    source: VizSourceDescriptor,
+    payload: Record<string, any>,
+    maxRows?: number,
+  ): Promise<VisualizationComputeResponse> {
+    const response = await axios.post<VisualizationComputeResponse>(
+      "/catalog/visualizations/compute",
+      { source, payload, max_rows: maxRows ?? 100_000 },
+    );
+    return response.data;
+  }
+
+  /** Return the GraphicWalker IMutField list for a viz source (cached on worker). */
+  static async getVisualizationFields(
+    source: VizSourceDescriptor,
+  ): Promise<VisualizationFieldsResponse> {
+    const response = await axios.post<VisualizationFieldsResponse>(
+      "/catalog/visualizations/fields",
+      { source },
+    );
+    return response.data;
+  }
+
+  // ====== Dashboards ======
+
+  static async listDashboards(): Promise<Dashboard[]> {
+    const response = await axios.get<Dashboard[]>("/catalog/dashboards");
+    return response.data;
+  }
+
+  static async getDashboard(id: number): Promise<Dashboard> {
+    const response = await axios.get<Dashboard>(`/catalog/dashboards/${id}`);
+    return response.data;
+  }
+
+  static async createDashboard(payload: DashboardCreatePayload): Promise<Dashboard> {
+    const response = await axios.post<Dashboard>("/catalog/dashboards", payload);
+    return response.data;
+  }
+
+  static async updateDashboard(id: number, payload: DashboardUpdatePayload): Promise<Dashboard> {
+    const response = await axios.put<Dashboard>(`/catalog/dashboards/${id}`, payload);
+    return response.data;
+  }
+
+  static async deleteDashboard(id: number): Promise<void> {
+    await axios.delete(`/catalog/dashboards/${id}`);
+  }
+
+  // ====== Demo catalog ======
+
+  static async seedDemoCatalog(): Promise<Record<string, unknown>> {
+    const response = await axios.post<Record<string, unknown>>("/catalog/seed-demo");
+    return response.data;
+  }
+
+  static async removeDemoCatalog(): Promise<Record<string, unknown>> {
+    const response = await axios.post<Record<string, unknown>>("/catalog/remove-demo");
+    return response.data;
+  }
+}

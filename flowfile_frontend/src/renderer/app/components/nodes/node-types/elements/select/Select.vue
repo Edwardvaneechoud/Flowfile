@@ -1,6 +1,10 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeSelect">
+  <div v-if="dataLoaded" class="select-node-root">
+    <generic-node-settings
+      v-model="nodeSelect"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <select-dynamic
         v-model:sortedBy="nodeSelect.sorted_by"
         :select-inputs="nodeSelect.select_input"
@@ -27,7 +31,8 @@ import {
 } from "../../../baseNode/selectComponents/nodeSelectLogic";
 import { NodeSelect } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { SelectInput } from "../../../baseNode/nodeInput";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -36,6 +41,32 @@ const keepMissing = ref(false);
 const nodeStore = useNodeStore();
 const nodeSelect = ref<NodeSelect>(createNodeSelect().value);
 const dataLoaded = ref(false);
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeSelect,
+  onBeforeSave: () => {
+    nodeSelect.value.select_input.sort((a, b) => a.position - b.position);
+    const originalData = nodeStore.getCurrentNodeData();
+    const newColumnSettings = nodeSelect.value.select_input;
+    nodeSelect.value.keep_missing = keepMissing.value;
+    if (originalData) {
+      newColumnSettings.forEach((newColumnSetting, index) => {
+        let original_index = originalData.main_input?.table_schema.findIndex(
+          (column) => column.name === newColumnSetting.old_name,
+        );
+        let original_object =
+          index !== -1 ? originalData.main_input?.table_schema[index] : undefined;
+        if (original_object) {
+          newColumnSetting.is_altered = original_object?.data_type !== newColumnSetting.data_type;
+          newColumnSetting.data_type_change = newColumnSetting.is_altered;
+          newColumnSetting.position = index;
+          newColumnSetting.original_position = original_index || index;
+        }
+      });
+    }
+    return true;
+  },
+});
 
 const loadNodeData = async (nodeId: number) => {
   const result = await nodeStore.getNodeData(nodeId, false);
@@ -63,27 +94,6 @@ const loadNodeData = async (nodeId: number) => {
   dataLoaded.value = true;
 };
 
-const pushNodeData = async () => {
-  nodeSelect.value.select_input.sort((a, b) => a.position - b.position);
-  const originalData = nodeStore.getCurrentNodeData();
-  const newColumnSettings = nodeSelect.value.select_input;
-  nodeSelect.value.keep_missing = keepMissing.value;
-  if (originalData) {
-    newColumnSettings.forEach((newColumnSetting, index) => {
-      let original_index = originalData.main_input?.table_schema.findIndex(
-        (column) => column.name === newColumnSetting.old_name,
-      );
-      let original_object = index !== -1 ? originalData.main_input?.table_schema[index] : undefined;
-      if (original_object) {
-        newColumnSetting.is_altered = original_object?.data_type !== newColumnSetting.data_type;
-        newColumnSetting.data_type_change = newColumnSetting.is_altered;
-        newColumnSetting.position = index;
-        newColumnSetting.original_position = original_index || index;
-      }
-    });
-  }
-  await nodeStore.updateSettings(nodeSelect);
-};
 const updateSelectInputsHandler = (updatedInputs: SelectInput[]) => {
   nodeSelect.value.select_input = updatedInputs;
 };
@@ -91,5 +101,41 @@ const updateSelectInputsHandler = (updatedInputs: SelectInput[]) => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
+
+<style scoped>
+.select-node-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Make the select-dynamic chain fill the tab pane so the table can flex
+   to the available height instead of using its default 700px cap, which
+   leaves an awkward dead zone at the bottom of the panel. We deliberately
+   leave the listbox card's padding / box-shadow / border-radius alone so
+   the inner table keeps its existing visual style. */
+.select-node-root :deep(.select-dynamic-root),
+.select-node-root :deep(.select-dynamic-content) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.select-node-root :deep(.select-dynamic-listbox) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.select-node-root :deep(.select-dynamic-listbox .table-wrapper) {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+</style>

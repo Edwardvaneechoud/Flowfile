@@ -1,14 +1,22 @@
-// Node API Service - Handles all node-related HTTP requests
 import axios from "../services/axios.config";
-import type { NodeData, TableExample } from "../types";
+import type { NodeData, TableExample, NodeDescriptionResponse } from "../types";
 
 export class NodeApi {
   /**
-   * Get node data for a specific node
+   * Get node data for a specific node.
+   *
+   * `includeOutput` controls whether the backend computes the node's own output
+   * preview (`main_output`). The settings panel only needs the input schemas, so
+   * it defaults to false to avoid the potentially expensive output-schema
+   * prediction (e.g. a pivot must materialize data to list its output columns).
    */
-  static async getNodeData(flowId: number, nodeId: number): Promise<NodeData> {
+  static async getNodeData(
+    flowId: number,
+    nodeId: number,
+    includeOutput = false,
+  ): Promise<NodeData> {
     const response = await axios.get<NodeData>("/node", {
-      params: { flow_id: flowId, node_id: nodeId },
+      params: { flow_id: flowId, node_id: nodeId, include_output: includeOutput },
       headers: { accept: "application/json" },
     });
     return response.data;
@@ -17,9 +25,15 @@ export class NodeApi {
   /**
    * Get table example/preview data for a node
    */
-  static async getTableExample(flowId: number, nodeId: number): Promise<TableExample> {
+  static async getTableExample(
+    flowId: number,
+    nodeId: number,
+    outputHandle?: string,
+  ): Promise<TableExample> {
+    const params: Record<string, string | number> = { flow_id: flowId, node_id: nodeId };
+    if (outputHandle) params.output_handle = outputHandle;
     const response = await axios.get<TableExample>("/node/data", {
-      params: { flow_id: flowId, node_id: nodeId },
+      params,
       headers: { accept: "application/json" },
     });
     return response.data;
@@ -39,8 +53,11 @@ export class NodeApi {
   /**
    * Get node description
    */
-  static async getNodeDescription(flowId: number, nodeId: number): Promise<string> {
-    const response = await axios.get<string>("/node/description", {
+  static async getNodeDescription(
+    flowId: number,
+    nodeId: number,
+  ): Promise<NodeDescriptionResponse> {
+    const response = await axios.get<NodeDescriptionResponse>("/node/description", {
       params: { node_id: nodeId, flow_id: flowId },
     });
     return response.data;
@@ -62,6 +79,48 @@ export class NodeApi {
   }
 
   /**
+   * Get node reference
+   */
+  static async getNodeReference(flowId: number, nodeId: number): Promise<string> {
+    const response = await axios.get<string>("/node/reference", {
+      params: { node_id: nodeId, flow_id: flowId },
+    });
+    return response.data;
+  }
+
+  /**
+   * Set/update node reference
+   */
+  static async setNodeReference(
+    flowId: number,
+    nodeId: number,
+    reference: string,
+  ): Promise<boolean> {
+    const response = await axios.post("/node/reference/", JSON.stringify(reference), {
+      params: { flow_id: flowId, node_id: nodeId },
+      headers: { "Content-Type": "application/json" },
+    });
+    return response.data;
+  }
+
+  /**
+   * Validate node reference (check lowercase, no spaces, uniqueness)
+   */
+  static async validateNodeReference(
+    flowId: number,
+    nodeId: number,
+    reference: string,
+  ): Promise<{ valid: boolean; error: string | null }> {
+    const response = await axios.get<{ valid: boolean; error: string | null }>(
+      "/node/validate_reference",
+      {
+        params: { flow_id: flowId, node_id: nodeId, reference },
+      },
+    );
+    return response.data;
+  }
+
+  /**
    * Update node settings directly
    */
   static async updateSettingsDirectly(nodeType: string, inputData: any): Promise<any> {
@@ -76,7 +135,7 @@ export class NodeApi {
    */
   static async updateUserDefinedSettings(nodeType: string, inputData: any): Promise<any> {
     const response = await axios.post(
-      "/user_defined_components/update_user_defined_node/",
+      "/user_defined_components/update_user_defined_node",
       inputData,
       {
         params: { node_type: nodeType },

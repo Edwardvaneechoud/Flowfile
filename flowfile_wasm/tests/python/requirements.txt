@@ -1,0 +1,14 @@
+# Pinned to the EXACT versions bundled by Pyodide v0.27.7 — the runtime that runs
+# in the browser (see src/stores/pyodide-store.ts). Pinning here makes this suite
+# exercise the same Polars semantics users actually get, not whatever the monorepo
+# happens to resolve. When bumping the Pyodide version in pyodide-store.ts, refresh
+# these from: https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide-lock.json
+polars==1.18.0
+pydantic==2.10.5
+pytest>=8,<9
+# Excel engines, micropip-installed in the browser with the SAME pins
+# (see ensurePyPackages calls in src/stores/flow-store.ts).
+openpyxl==3.1.5
+XlsxWriter==3.2.0
+# Formula node expr engine (micropip-installed in browser); 0.5.6 makes polars-ds optional for Pyodide.
+polars-expr-transformer==0.5.6

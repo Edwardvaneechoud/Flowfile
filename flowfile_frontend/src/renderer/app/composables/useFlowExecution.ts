@@ -1,8 +1,7 @@
-// composables/useFlowExecution.ts
-// Core flow execution composable for managing flow runs and polling
-import { ref, onUnmounted, Ref } from "vue";
+import { ref, onUnmounted, Ref, markRaw, type Component } from "vue";
 import axios from "axios";
 import { ElNotification } from "element-plus";
+import { Promotion, DataLine } from "@element-plus/icons-vue";
 import { useNodeStore } from "../stores/column-store";
 import { useEditorStore } from "../stores/editor-store";
 import { useResultsStore } from "../stores/results-store";
@@ -60,7 +59,6 @@ class FlowExecutionState {
   }
 
   clearAll() {
-    // Clear all intervals
     this.pollingIntervals.forEach((interval) => clearInterval(interval));
     this.pollingIntervals.clear();
     this.activeExecutions.clear();
@@ -90,7 +88,12 @@ const updateRunStatus = async (
 };
 
 export function useFlowExecution(
-  flowId: Ref<number> | number,
+  // Accept a getter (`() => number`) or a Ref so the composable always reads
+  // the *current* flow_id. Passing a raw number freezes the value at setup
+  // time — fine only for components whose flow id is fixed for their entire
+  // lifetime. After Save As re-keys to a new id, callers that captured the
+  // old number keep polling stale endpoints.
+  flowId: Ref<number> | number | (() => number),
   pollingConfig: PollingConfig = {
     interval: 2000,
     enabled: true,
@@ -108,12 +111,11 @@ export function useFlowExecution(
   const localPollingInterval = ref<number | null>(null);
   const isExecuting = ref(false);
 
-  // Get the actual flow ID value
   const getFlowId = () => {
+    if (typeof flowId === "function") return flowId();
     return typeof flowId === "number" ? flowId : flowId.value;
   };
 
-  // Generate a unique key for this flow's polling
   const getPollingKey = (suffix = "") => {
     const customKey = options.pollingKey || `flow_${getFlowId()}`;
     return suffix ? `${customKey}_${suffix}` : customKey;
@@ -138,12 +140,12 @@ export function useFlowExecution(
     }
   };
 
-  // Notification helper
   const showNotification = (
     title: string,
     message: string,
     type?: "success" | "error",
     dangerouslyUseHTMLString?: boolean,
+    icon?: Component,
   ) => {
     ElNotification({
       title,
@@ -151,6 +153,7 @@ export function useFlowExecution(
       type,
       position: "top-left",
       dangerouslyUseHTMLString,
+      ...(icon ? { icon: markRaw(icon) } : {}),
     });
   };
 
@@ -159,14 +162,12 @@ export function useFlowExecution(
     const key = getPollingKey(pollingKeySuffix);
 
     if (options.persistPolling) {
-      // Use global state for persistent polling
       const existingInterval = state.getPollingInterval(key);
       if (existingInterval === null && pollingConfig.enabled) {
         const interval = setInterval(checkFn, pollingConfig.interval || 2000) as unknown as number;
         state.setPollingInterval(key, interval);
       }
     } else {
-      // Use local polling that will be cleaned up on unmount
       if (localPollingInterval.value === null && pollingConfig.enabled) {
         localPollingInterval.value = setInterval(
           checkFn,
@@ -188,7 +189,6 @@ export function useFlowExecution(
     }
   };
 
-  // Check if any polling is active for this flow
   const isPollingActive = (pollingKeySuffix = ""): boolean => {
     if (options.persistPolling) {
       const key = getPollingKey(pollingKeySuffix);
@@ -197,7 +197,6 @@ export function useFlowExecution(
     return localPollingInterval.value !== null;
   };
 
-  // Create notification config based on run information
   const createNotificationConfig = (runInfo: RunInformation): NotificationConfig => ({
     title: runInfo.success ? "Success" : "Error",
     message: runInfo.success
@@ -206,7 +205,6 @@ export function useFlowExecution(
     type: runInfo.success ? "success" : "error",
   });
 
-  // Check run status
   const checkRunStatus = async (customSuccessMessage?: string, pollingKeySuffix = "") => {
     try {
       const response = await updateRunStatus(getFlowId(), nodeStore);
@@ -218,7 +216,6 @@ export function useFlowExecution(
         isExecuting.value = false;
         state.setExecutionState(getPollingKey(pollingKeySuffix), false);
 
-        // Update log viewer visibility after successful run
         editorStore.setShowFlowResult(true);
         editorStore.updateLogViewerVisibility(true);
 
@@ -251,14 +248,12 @@ export function useFlowExecution(
     }
   };
 
-  // HTML escape helper
   const escapeHtml = (text: string): string => {
     const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
   };
 
-  // Run entire flow
   const runFlow = async () => {
     const flowSettings: FlowSettings | null = await FlowApi.getFlowSettings(getFlowId());
     if (!flowSettings) {
@@ -283,7 +278,7 @@ export function useFlowExecution(
       </div>
     `;
 
-    showNotification("🚀 Flow Started", notificationMessage, undefined, true);
+    showNotification("Flow Started", notificationMessage, undefined, true, Promotion);
 
     try {
       await axios.post("/flow/run/", null, {
@@ -292,21 +287,34 @@ export function useFlowExecution(
       });
       nodeStore.showLogViewer();
       startPolling(() => checkRunStatus());
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error starting run:", error);
       unFreezeFlow();
       editorStore.isRunning = false;
       isExecuting.value = false;
       state.setExecutionState(getPollingKey(), false);
-      showNotification("Error", "Failed to start the flow", "error");
+      // 404 means the in-memory flow_id doesn't match the backend — typically
+      // a stale id after Save As or a backend restart. Tell the user
+      // specifically so they reopen instead of retrying blindly.
+      if (error?.response?.status === 404) {
+        const detail =
+          error?.response?.data?.detail ??
+          "The flow id this tab is using no longer exists on the server.";
+        showNotification("Flow id is stale", `${detail} Reopen the flow and try again.`, "error");
+      } else {
+        const detail = error?.response?.data?.detail ?? error?.message;
+        showNotification(
+          "Error",
+          detail ? `Failed to start the flow: ${detail}` : "Failed to start the flow",
+          "error",
+        );
+      }
     }
   };
 
-  // Trigger fetch for a specific node
   const triggerNodeFetch = async (nodeId: number) => {
     const pollingKeySuffix = `node_${nodeId}`;
 
-    // Check if already fetching this node
     if (isPollingActive(pollingKeySuffix)) {
       console.log(`Node ${nodeId} fetch already in progress`);
       return;
@@ -319,10 +327,11 @@ export function useFlowExecution(
     state.setExecutionState(getPollingKey(pollingKeySuffix), true);
 
     showNotification(
-      "📊 Fetching Node Data",
+      "Fetching Node Data",
       `Starting data fetch for node ${nodeId}...`,
       undefined,
       false,
+      DataLine,
     );
 
     try {
@@ -352,7 +361,6 @@ export function useFlowExecution(
     }
   };
 
-  // Cancel flow execution
   const cancelFlow = async () => {
     try {
       await axios.post("/flow/cancel/", null, {
@@ -364,11 +372,8 @@ export function useFlowExecution(
       editorStore.isRunning = false;
       isExecuting.value = false;
 
-      // Stop all polling for this flow
       stopPolling();
-      // Also stop any node-specific polling if using persistent polling
       if (options.persistPolling) {
-        // Clear any node-specific polling
         for (let i = 0; i < 100; i++) {
           // Assuming max 100 nodes
           state.clearPollingInterval(getPollingKey(`node_${i}`));
@@ -380,7 +385,6 @@ export function useFlowExecution(
     }
   };
 
-  // Cleanup on unmount - only clean up local polling
   onUnmounted(() => {
     if (!options.persistPolling && localPollingInterval.value !== null) {
       clearInterval(localPollingInterval.value);

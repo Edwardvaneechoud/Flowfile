@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodePivot" class="listbox-wrapper">
-    <generic-node-settings v-model="nodePivot">
+    <generic-node-settings
+      v-model="nodePivot"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <ul class="listbox">
           <li
@@ -82,13 +86,19 @@
 import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { PivotInput, NodePivot, AggOption } from "../../../baseNode/nodeInput";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
 import PivotValidation from "./PivotValidation.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodePivot = ref<NodePivot | null>(null);
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodePivot,
+});
 const showContextMenu = ref(false);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
@@ -117,8 +127,6 @@ const pivotInput = ref<PivotInput>({
   aggregations: [],
 });
 
-const nodePivot = ref<NodePivot | null>(null);
-
 const singleColumnSelected = computed(() => selectedColumns.value.length === 1);
 
 const getColumnClass = (columnName: string): string => {
@@ -146,10 +154,8 @@ const onDrop = (index: number) => {
 
 const onDropInSection = (section: "index" | "pivot" | "value") => {
   if (draggedColumnName.value) {
-    // Remove column from any existing assignments
     removeColumnIfExists(draggedColumnName.value);
 
-    // Assign the dragged column to the appropriate section
     if (section === "index" && !pivotInput.value.index_columns.includes(draggedColumnName.value)) {
       pivotInput.value.index_columns.push(draggedColumnName.value);
     } else if (section === "pivot") {
@@ -255,15 +261,10 @@ const closeContextMenu = () => {
   showContextMenu.value = false;
 };
 
-const pushNodeData = async () => {
-  if (pivotInput.value) {
-    nodeStore.updateSettings(nodePivot);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {
@@ -275,30 +276,3 @@ onUnmounted(() => {
   window.removeEventListener("click", handleClickOutside);
 });
 </script>
-
-<style scoped>
-.context-menu {
-  position: fixed;
-  z-index: 1000;
-  border: 1px solid #ccc;
-  background-color: var(--color-background-primary);
-  padding: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-}
-
-.context-menu ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.context-menu li {
-  padding: 8px 16px;
-  cursor: pointer;
-}
-
-.context-menu li:hover {
-  background-color: #f0f0f0;
-}
-</style>

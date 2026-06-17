@@ -1,14 +1,12 @@
 import os
-from base64 import encodebytes
 from collections.abc import Callable, Iterable
 from typing import Any
 
 import polars as pl
-import requests
 
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import AVAILABLE_RAM, WORKER_URL
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher, Status
+from flowfile_core.configs.settings import AVAILABLE_RAM
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.utils.utils import standardize_col_dtype
 
 
@@ -58,14 +56,14 @@ def write_polars_frame(
         write_method = getattr(_df, "write_" + data_type)
         write_method(path)
         return True
-    except:
+    except Exception:
         return False
 
 
 def collect(df: pl.LazyFrame, streamable: bool = True):
     try:
         return df.collect(engine="streaming" if streamable else "auto")
-    except:
+    except Exception:
         return df.collect(engine="auto")
 
 
@@ -103,42 +101,12 @@ def execute_write_method(
         logger.info("Writing as csv file")
         if write_mode == "append":
             with open(path, "ab") as f:
-                write_method(path=f, separator=delimiter, quote_style="always")
+                write_method(f, separator=delimiter, quote_style="always")
         else:
-            write_method(path=path, separator=delimiter, quote_style="always")
+            write_method(path, separator=delimiter, quote_style="always")
     elif data_type == "parquet":
         logger.info("Writing as parquet file")
         write_method(path)
-
-
-def write_output(
-    _df: pl.LazyFrame,
-    data_type: str,
-    path: str,
-    write_mode: str,
-    sheet_name: str = None,
-    delimiter: str = None,
-    flow_id: int = -1,
-    node_id: int | str = -1,
-) -> Status:
-    serializable_df = _df.serialize()
-    r = requests.post(
-        f"{WORKER_URL}/write_results/",
-        json={
-            "operation": encodebytes(serializable_df).decode(),
-            "data_type": data_type,
-            "path": path,
-            "write_mode": write_mode,
-            "sheet_name": sheet_name,
-            "delimiter": delimiter,
-            "flowfile_node_id": node_id,
-            "flowfile_flow_id": flow_id,
-        },
-    )
-    if r.ok:
-        return Status(**r.json())
-    else:
-        raise Exception(f"Could not cache the data, {r.text}")
 
 
 def local_write_output(
@@ -199,10 +167,10 @@ def find_first_positions(lst: list[str]) -> dict[str, int]:
     return first_positions
 
 
-def match_order(l: list[str], ref: list[str]) -> list[str]:
+def match_order(lst: list[str], ref: list[str]) -> list[str]:
     ref_order = find_first_positions(ref)
     order = []
-    for v in l:
+    for v in lst:
         org_order = ref_order.get(v, float("inf"))
         order.append(org_order)
-    return [v for _, v in sorted(zip(order, l, strict=False))]
+    return [v for _, v in sorted(zip(order, lst, strict=False))]

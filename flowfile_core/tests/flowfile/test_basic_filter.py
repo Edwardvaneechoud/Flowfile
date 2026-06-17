@@ -25,9 +25,7 @@ from flowfile_core.schemas.output_model import RunInformation
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput, FilterOperator
 
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 def create_graph(flow_id: int = 1, execution_mode: Literal['Development', 'Performance'] = 'Development') -> FlowGraph:
@@ -77,9 +75,7 @@ def handle_run_info(run_info: RunInformation):
         raise ValueError(f'Graph should run successfully:\n{errors}')
 
 
-# =============================================================================
 # FilterOperator Enum Tests
-# =============================================================================
 
 
 class TestFilterOperator:
@@ -151,9 +147,7 @@ class TestFilterOperator:
         assert FilterOperator.BETWEEN.to_symbol() == "between"
 
 
-# =============================================================================
 # BasicFilter Model Tests
-# =============================================================================
 
 
 class TestBasicFilter:
@@ -269,9 +263,7 @@ class TestBasicFilter:
         assert bf.value2 is None
 
 
-# =============================================================================
 # FilterInput Model Tests
-# =============================================================================
 
 
 class TestFilterInput:
@@ -367,9 +359,7 @@ class TestFilterInput:
         assert fi.advanced_filter == "[name] = 'John'"
 
 
-# =============================================================================
 # Filter Integration Tests with FlowGraph
-# =============================================================================
 
 
 class TestBasicFilterIntegration:
@@ -538,7 +528,6 @@ class TestBasicFilterIntegration:
         handle_run_info(run_info)
 
         result = graph.get_node(2).get_resulting_data().collect().to_dicts()
-        # Should match "Alice" and "Charlie"
         assert len(result) == 2
         assert all("li" in row["name"] for row in result)
 
@@ -601,7 +590,6 @@ class TestBasicFilterIntegration:
         handle_run_info(run_info)
 
         result = graph.get_node(2).get_resulting_data().collect().to_dicts()
-        # Should match "Alice", "Charlie", "Eve"
         assert len(result) == 3
         assert all(row["name"].endswith("e") for row in result)
 
@@ -708,17 +696,16 @@ class TestBasicFilterIntegration:
         connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
         add_connection(graph, connection)
 
-        # Use old-style field names
         filter_settings = input_schema.NodeFilter(
             flow_id=graph.flow_id,
             node_id=2,
             depending_on_id=1,
             filter_input=FilterInput(
-                filter_type="basic",  # Legacy field
+                filter_type="basic",
                 basic_filter=BasicFilter(
                     field="age",
-                    filter_type=">",  # Legacy field
-                    filter_value="30"  # Legacy field
+                    filter_type=">",
+                    filter_value="30"
                 )
             )
         )
@@ -732,9 +719,7 @@ class TestBasicFilterIntegration:
         assert all(row["age"] > 30 for row in result)
 
 
-# =============================================================================
 # Filter with Null Data Tests
-# =============================================================================
 
 
 class TestBasicFilterNullHandling:
@@ -752,7 +737,6 @@ class TestBasicFilterNullHandling:
             operator=FilterOperator.IS_NULL,
             value=""
         )
-        # The expression should use is_empty function
         assert bf.get_operator() == FilterOperator.IS_NULL
 
     def test_filter_is_not_null_expression_generation(self):
@@ -762,7 +746,6 @@ class TestBasicFilterNullHandling:
             operator=FilterOperator.IS_NOT_NULL,
             value=""
         )
-        # The expression should use is_not_empty function
         assert bf.get_operator() == FilterOperator.IS_NOT_NULL
 
     @pytest.mark.skip(reason="Manual input converts None to string; test requires actual null values from file sources")
@@ -786,9 +769,7 @@ class TestBasicFilterNullHandling:
         pass
 
 
-# =============================================================================
 # YAML Roundtrip Tests
-# =============================================================================
 
 
 class TestBasicFilterYamlRoundtrip:
@@ -801,7 +782,6 @@ class TestBasicFilterYamlRoundtrip:
 
     def test_basic_filter_yaml_roundtrip(self, temp_dir):
         """Test saving and loading a basic filter via YAML."""
-        # Create flow with basic filter
         graph = create_graph(flow_id=1)
         add_manual_input(graph, [
             {"name": "Alice", "age": 25},
@@ -827,19 +807,15 @@ class TestBasicFilterYamlRoundtrip:
         )
         graph.add_filter(filter_settings)
 
-        # Save to YAML
         yaml_path = temp_dir / "test_filter.yaml"
         graph.save_flow(str(yaml_path))
 
-        # Load from YAML
         loaded_graph = open_flow(yaml_path)
 
-        # Verify filter settings were preserved
         loaded_filter = loaded_graph.get_node(2)
         assert loaded_filter is not None
         assert loaded_filter.setting_input.filter_input.mode == "basic"
 
-        # Run and verify results
         run_info = loaded_graph.run_graph()
         handle_run_info(run_info)
 
@@ -876,12 +852,10 @@ class TestBasicFilterYamlRoundtrip:
         )
         graph.add_filter(filter_settings)
 
-        # Save and reload
         yaml_path = temp_dir / "test_between.yaml"
         graph.save_flow(str(yaml_path))
         loaded_graph = open_flow(yaml_path)
 
-        # Run and verify
         run_info = loaded_graph.run_graph()
         handle_run_info(run_info)
 
@@ -890,9 +864,7 @@ class TestBasicFilterYamlRoundtrip:
         assert result[0]["product"] == "B"
 
 
-# =============================================================================
 # Code Generator Tests
-# =============================================================================
 
 
 class TestBasicFilterCodeGenerator:
@@ -927,10 +899,8 @@ class TestBasicFilterCodeGenerator:
         )
         graph.add_filter(filter_settings)
 
-        # Generate code
         code = export_flow_to_polars(graph)
 
-        # Verify code contains proper filter expression
         assert 'pl.col("name")' in code
         assert '"Alice"' in code
 
@@ -963,10 +933,8 @@ class TestBasicFilterCodeGenerator:
         )
         graph.add_filter(filter_settings)
 
-        # Generate code
         code = export_flow_to_polars(graph)
 
-        # Verify code contains proper filter expression
         assert 'pl.col("age")' in code
         assert '>' in code
 
@@ -999,10 +967,8 @@ class TestBasicFilterCodeGenerator:
         )
         graph.add_filter(filter_settings)
 
-        # Generate code
         code = export_flow_to_polars(graph)
 
-        # Verify code contains proper filter expression
         assert 'pl.col("city")' in code
         assert 'str.contains' in code
 
@@ -1036,10 +1002,8 @@ class TestBasicFilterCodeGenerator:
         )
         graph.add_filter(filter_settings)
 
-        # Generate code
         code = export_flow_to_polars(graph)
 
-        # Verify code contains proper filter expression
         assert 'pl.col("city")' in code
         assert 'is_in' in code
 
@@ -1072,10 +1036,8 @@ class TestBasicFilterCodeGenerator:
         )
         graph.add_filter(filter_settings)
 
-        # Generate code
         code = export_flow_to_polars(graph)
 
-        # Verify code contains proper filter expression
         assert 'pl.col("age")' in code
         assert 'is_null' in code
 
@@ -1110,10 +1072,8 @@ class TestBasicFilterCodeGenerator:
         )
         graph.add_filter(filter_settings)
 
-        # Generate code
         code = export_flow_to_polars(graph)
 
-        # Verify code contains proper filter expression
         assert 'pl.col("age")' in code
         assert '>=' in code
         assert '<=' in code

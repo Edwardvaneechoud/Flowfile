@@ -49,13 +49,15 @@
       </div>
     </div>
     <div ref="nodeEl" class="custom-node" @contextmenu.prevent="showContextMenu">
-      <!-- Use GenericNode if nodeTemplate exists, otherwise use the component directly -->
       <generic-node
         v-if="data.nodeTemplate"
         :node-id="data.id"
         :node-data="{ ...data.nodeTemplate, id: data.id, label: data.label }"
       />
       <component :is="data.component" v-else-if="data.component" :node-id="data.id" />
+
+      <!-- Artifact badges (published/consumed indicators) -->
+      <ArtifactBadge :node-id="data.id" />
 
       <!-- Handles are always rendered -->
       <div
@@ -64,6 +66,9 @@
         class="handle-input"
         :style="getHandleStyle(index, data.inputs.length)"
       >
+        <span v-if="input.label && data.inputs.length > 1" class="handle-label handle-label--input">
+          {{ input.label }}
+        </span>
         <Handle :id="input.id" type="target" :position="input.position" />
       </div>
       <div
@@ -73,11 +78,55 @@
         :style="getHandleStyle(index, data.outputs.length)"
       >
         <Handle :id="output.id" type="source" :position="output.position" />
+        <span
+          v-if="output.label && data.outputs.length > 1"
+          class="handle-label handle-label--output"
+          :title="output.title"
+        >
+          {{ output.label }}
+        </span>
       </div>
 
       <!-- Teleport Context Menu to body -->
       <Teleport v-if="showMenu" to="body">
         <div ref="menuEl" class="context-menu" :style="contextMenuStyle">
+          <div class="context-menu-item" @click="openSettings">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="3"></circle>
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+              ></path>
+            </svg>
+            <span>Edit</span>
+          </div>
+          <div class="context-menu-item" @click="viewData">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="3" y1="9" x2="21" y2="9"></line>
+              <line x1="3" y1="15" x2="21" y2="15"></line>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+            </svg>
+            <span>View Data</span>
+          </div>
+          <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="runNode">
             <svg
               width="14"
@@ -91,7 +140,7 @@
             >
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
             </svg>
-            <span>{{ isRunning ? 'Running...' : 'Run Now' }}</span>
+            <span>{{ isRunning ? "Running..." : "Run Now" }}</span>
           </div>
           <div class="context-menu-item" @click="toggleCache">
             <svg
@@ -109,7 +158,7 @@
               <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
               <path d="M16 21h5v-5"></path>
             </svg>
-            <span>{{ isCached ? 'Disable Cache' : 'Enable Cache' }}</span>
+            <span>{{ isCached ? "Disable Cache" : "Enable Cache" }}</span>
           </div>
           <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="copyNode">
@@ -152,25 +201,35 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~709 LOC. Plan to extract:
+//   - NodeContextMenu.vue (~lines 92-161, with positioning at ~263-283)
+//   - NodeDescriptionEditor.vue (~lines 11-48)
+//   - NodeHandles.vue: handle rendering loops (~lines 64-89)
 import { Handle } from "@vue-flow/core";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
+import { useEditorStore } from "../../stores/editor-store";
 import { VueFlowStore } from "@vue-flow/core";
 import { NodeCopyValue } from "../../views/DesignerView/types";
 import { toSnakeCase } from "../../views/DesignerView/utils";
+import { snapshotClipboard } from "../../utils/clipboardUtils";
 import { useFlowExecution } from "../../composables/useFlowExecution";
 import GenericNode from "./GenericNode.vue";
-import type { NodeTemplate } from "../../types";
+import ArtifactBadge from "./ArtifactBadge.vue";
+import type { NodeTemplate, NodeHandle } from "../../types";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
+const editorStore = useEditorStore();
 const nodeEl = ref<HTMLElement | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
 
-// Use the flow execution composable with persistent polling
+// Use the flow execution composable with persistent polling.
+// Getter form (not a snapshot number) so Save As doesn't leave the node
+// polling against the old flow id.
 const { triggerNodeFetch, isPollingActive } = useFlowExecution(
-  flowStore.flowId,
+  () => flowStore.flowId,
   { interval: 2000, enabled: true },
   {
     persistPolling: true,
@@ -189,21 +248,15 @@ const isRunning = ref<boolean>(false);
 
 const CHAR_LIMIT = 100;
 
-// Define the data structure
 interface NodeData {
   id: number;
   label: string;
-  component?: any; // Made optional since we might use nodeTemplate instead
-  inputs: Array<{
-    id: string;
-    position: any;
-  }>;
-  outputs: Array<{
-    id: string;
-    position: any;
-  }>;
-  nodeTemplate?: NodeTemplate; // Optional NodeTemplate data
-  nodeItem?: string; // Optional node item name for backward compatibility
+  component?: ReturnType<(typeof import("vue"))["defineComponent"]>;
+  nodeReference?: string;
+  inputs: NodeHandle[];
+  outputs: NodeHandle[];
+  nodeTemplate?: NodeTemplate;
+  nodeItem?: string;
 }
 
 const props = defineProps({
@@ -231,7 +284,6 @@ const showContextMenu = async (event: MouseEvent) => {
   contextMenuY.value = event.clientY;
   showMenu.value = true;
 
-  // Load the current cache state
   try {
     const nodeData = await nodeStore.getNodeData(props.data.id, true);
     if (nodeData && nodeData.setting_input) {
@@ -283,6 +335,16 @@ const closeContextMenu = () => {
   window.removeEventListener("click", handleClickOutsideMenu);
 };
 
+const openSettings = () => {
+  editorStore.requestNodeSettings(props.data.id);
+  closeContextMenu();
+};
+
+const viewData = () => {
+  editorStore.requestNodeData(props.data.id);
+  closeContextMenu();
+};
+
 const copyNode = () => {
   const nodeCopyValue: NodeCopyValue = {
     nodeIdToCopyFrom: props.data.id,
@@ -299,6 +361,7 @@ const copyNode = () => {
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
   localStorage.removeItem("copiedMultiNodes");
+  snapshotClipboard();
   closeContextMenu();
 };
 
@@ -515,9 +578,9 @@ onMounted(async () => {
       const nodeId = props.data.id;
       return nodeStore.nodeDescriptions[flowId]?.[nodeId];
     },
-    (newDescription) => {
-      if (newDescription !== undefined) {
-        description.value = newDescription;
+    (newEntry) => {
+      if (newEntry !== undefined) {
+        description.value = newEntry.description;
       }
     },
   );
@@ -621,6 +684,25 @@ onMounted(async () => {
 .handle-output {
   position: absolute;
   right: -8px;
+}
+
+.handle-label {
+  position: absolute;
+  font-size: 0.55rem;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  pointer-events: none;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.8;
+}
+
+.handle-label--input {
+  left: 14px;
+}
+
+.handle-label--output {
+  right: 14px;
 }
 
 .context-menu {

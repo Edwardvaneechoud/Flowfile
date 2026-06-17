@@ -1,0 +1,98 @@
+flowfile_version: 0.8.2
+flowfile_id: 6
+flowfile_name: Survey Results Pivot
+flowfile_settings:
+  description: null
+  execution_mode: Development
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [2]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/survey_responses.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 2
+  type: group_by
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 250
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [3]
+  setting_input:
+    cache_results: false
+    groupby_input:
+      agg_cols:
+      - old_name: respondent_id
+        agg: groupby
+        new_name: respondent_id
+      - old_name: question
+        agg: groupby
+        new_name: question
+      - old_name: rating
+        agg: mean
+        new_name: avg_rating
+- id: 3
+  type: pivot
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 500
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: [4]
+  setting_input:
+    cache_results: false
+    pivot_input:
+      index_columns: [respondent_id]
+      pivot_column: question
+      value_col: avg_rating
+      aggregations: [mean]
+    output_fields: null
+- id: 4
+  type: explore_data
+  is_start_node: false
+  description: 'Explore the output!'
+  node_reference: null
+  x_position: 750
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: []
+  setting_input:
+    cache_results: false
+    graphic_walker_input: null
+_template_meta:
+  template_id: survey_results_pivot
+  name: Survey Results Pivot
+  description: Aggregate survey ratings by question and pivot into a wide-format comparison
+    table.
+  category: Intermediate
+  tags: [group_by, pivot]
+  node_count: 4
+  icon: pivot_table_chart
+_required_csv_files: [survey_responses.csv]

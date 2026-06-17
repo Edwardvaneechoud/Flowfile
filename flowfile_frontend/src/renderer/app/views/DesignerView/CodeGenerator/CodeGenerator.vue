@@ -2,7 +2,27 @@
   <div class="code-container">
     <div class="code-header">
       <h4>Generated code</h4>
-      <div class="header-actions">
+      <div class="mode-toggle">
+        <button
+          :class="['toggle-button', { active: codeMode === 'flowframe' }]"
+          @click="setMode('flowframe')"
+        >
+          FlowFrame
+        </button>
+        <button
+          :class="['toggle-button', { active: codeMode === 'polars' }]"
+          @click="setMode('polars')"
+        >
+          Polars
+        </button>
+        <button
+          :class="['toggle-button', { active: codeMode === 'project' }]"
+          @click="setMode('project')"
+        >
+          Project
+        </button>
+      </div>
+      <div v-if="codeMode !== 'project'" class="header-actions">
         <button class="refresh-button" :disabled="loading" @click="refreshCode">
           <svg
             v-if="!loading"
@@ -37,7 +57,8 @@
         </button>
       </div>
     </div>
-    <codemirror v-model="code" :extensions="extensions" :disabled="true" />
+    <ProjectExport v-if="codeMode === 'project'" />
+    <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
   </div>
 </template>
 
@@ -48,10 +69,14 @@ import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
+import ProjectExport from "./ProjectExport.vue";
 import { useNodeStore } from "../../../stores/column-store";
+
+type CodeMode = "flowframe" | "polars" | "project";
 
 const code = ref("");
 const loading = ref(false);
+const codeMode = ref<CodeMode>("flowframe");
 const nodeStore = useNodeStore();
 const lastLoadedFlowId = ref<number | null>(null);
 
@@ -65,21 +90,42 @@ const extensions = [
   }),
 ];
 
+const endpointMap: Partial<Record<CodeMode, string>> = {
+  flowframe: "/editor/code_to_flowframe",
+  polars: "/editor/code_to_polars",
+};
+
 const fetchCode = async () => {
+  // Project mode fetches its own manifest in ProjectExport.vue.
+  if (codeMode.value === "project") return;
   loading.value = true;
   try {
-    const response = await axios.get(`/editor/code_to_polars?flow_id=${nodeStore.flow_id}`);
+    const endpoint = endpointMap[codeMode.value];
+    const response = await axios.get(`${endpoint}?flow_id=${nodeStore.flow_id}`);
     code.value = response.data;
     lastLoadedFlowId.value = nodeStore.flow_id;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Failed to fetch code:", error);
-    code.value = "# Failed to generate code. Please check your flow configuration.";
+    const detail = error?.response?.data?.detail;
+    if (detail) {
+      code.value = `# ${detail}`;
+    } else {
+      code.value = "# Failed to generate code. Please check your flow configuration.";
+    }
   } finally {
     loading.value = false;
   }
 };
 
-// Watch for when the component becomes visible
+const setMode = (mode: CodeMode) => {
+  if (codeMode.value !== mode) {
+    codeMode.value = mode;
+    if (nodeStore.flow_id > 0) {
+      fetchCode();
+    }
+  }
+};
+
 watch(
   () => nodeStore.showCodeGenerator,
   (isShowing) => {
@@ -89,7 +135,6 @@ watch(
   },
 );
 
-// Also watch for flow changes while the component is visible
 watch(
   () => nodeStore.flow_id,
   (newFlowId) => {
@@ -99,7 +144,6 @@ watch(
   },
 );
 
-// Initial load if component is mounted while visible
 onMounted(() => {
   if (nodeStore.showCodeGenerator && nodeStore.flow_id > 0) {
     fetchCode();
@@ -141,6 +185,34 @@ const exportCode = () => {
 
 .code-header h4 {
   margin: 0;
+}
+
+.mode-toggle {
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  overflow: hidden;
+}
+
+.toggle-button {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary, #999);
+  cursor: pointer;
+  font-size: var(--font-size-sm, 13px);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.toggle-button.active {
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+.toggle-button:not(.active):hover {
+  background: var(--color-background-tertiary);
 }
 
 .header-actions {

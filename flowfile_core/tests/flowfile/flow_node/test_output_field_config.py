@@ -1,0 +1,970 @@
+"""
+Tests for the OutputFieldConfig feature.
+
+Run with:
+    pytest flowfile_core/tests/flowfile/flow_node/test_output_field_config.py -v
+
+Tests cover:
+- Helper functions (_parse_default_value, _select_columns_in_order, etc.)
+- OutputFieldConfig model creation
+- Validation mode behaviors (select_only, add_missing, raise_on_missing)
+- Data type validation
+- Integration with flow nodes
+- Error handling for missing/extra columns
+"""
+import polars as pl
+import pytest
+
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_node.output_field_config_applier import (
+    _apply_add_missing,
+    _apply_raise_on_missing,
+    _parse_default_value,
+    _select_columns_in_order,
+    _validate_data_types,
+    apply_output_field_config,
+)
+from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+
+# Test Fixtures
+
+
+def create_graph(flow_id: int = 1) -> FlowGraph:
+    """Create a new FlowGraph for testing."""
+    handler = FlowfileHandler()
+    handler.register_flow(
+        schemas.FlowSettings(
+            flow_id=flow_id, name="test_flow", path=".", execution_mode="Development", execution_location="local"
+        )
+    )
+    return handler.get_flow(flow_id)
+
+
+def add_manual_input(graph: FlowGraph, data: dict, node_id: int = 1):
+    """Add a manual input node with data."""
+    node_promise = input_schema.NodePromise(
+        flow_id=graph.flow_id, node_id=node_id, node_type="manual_input"
+    )
+    graph.add_node_promise(node_promise)
+
+    input_file = input_schema.NodeManualInput(
+        flow_id=graph.flow_id,
+        node_id=node_id,
+        is_setup=True,
+        raw_data_format=input_schema.RawData.from_pydict(data),
+        cache_results=False,
+    )
+    graph.add_manual_input(input_file)
+    return graph
+
+
+# Unit Tests: Helper Functions
+
+
+class TestParseDefaultValue:
+    """Tests for _parse_default_value function."""
+
+    def test_none_default(self):
+        """Test parsing None default value."""
+        field = input_schema.OutputFieldInfo(name="test", data_type="String", default_value=None)
+        expr = _parse_default_value(field)
+
+        df = pl.DataFrame({"dummy": [1, 2]})
+        result = df.with_columns(expr.alias("test"))
+        assert result["test"].to_list() == [None, None]
+
+    def test_literal_string(self):
+        """Test parsing literal string default value."""
+        field = input_schema.OutputFieldInfo(name="test", data_type="String", default_value="hello")
+        expr = _parse_default_value(field)
+
+        df = pl.DataFrame({"dummy": [1, 2]})
+        result = df.with_columns(expr.alias("test"))
+        assert result["test"].to_list() == ["hello", "hello"]
+
+    def test_literal_number(self):
+        """Test parsing literal number default value."""
+        field = input_schema.OutputFieldInfo(name="test", data_type="Int64", default_value="42")
+        expr = _parse_default_value(field)
+
+        df = pl.DataFrame({"dummy": [1, 2]})
+        result = df.with_columns(expr.alias("test"))
+        assert result["test"].to_list() == [42, 42]
+
+
+class TestSelectColumnsInOrder:
+    """Tests for _select_columns_in_order function."""
+
+    def test_reorder_columns(self):
+        """Test selecting columns in specified order."""
+        df = pl.DataFrame({"c": [7, 8], "a": [1, 2], "b": [4, 5]})
+        fields = [
+            input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+            input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+            input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value=None),
+        ]
+
+        result = _select_columns_in_order(df, fields)
+        assert result.columns == ["b", "a", "c"]
+
+
+class TestApplyRaiseOnMissing:
+    """Tests for _apply_raise_on_missing function."""
+
+    def test_success_all_columns_present(self):
+        """Test success when all required columns are present."""
+        engine = FlowDataEngine(pl.DataFrame({"a": [1, 2], "b": [3, 4], "c": [5, 6]}))
+        fields = [
+            input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+            input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+        ]
+        result = _apply_raise_on_missing(engine, fields)
+        assert result.columns == ["b", "a"]
+
+    def test_error_when_columns_missing(self):
+        """Test raises ValueError when required columns are missing."""
+        df = FlowDataEngine(pl.DataFrame({"a": [1, 2]}))
+        fields = [
+            input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+            input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+        ]
+        with pytest.raises(ValueError, match="Missing required columns"):
+            _apply_raise_on_missing(df, fields)
+
+
+class TestApplyAddMissing:
+    """Tests for _apply_add_missing function."""
+
+    def test_add_columns_with_defaults(self):
+        """Test adding missing columns with default values."""
+        df = FlowDataEngine({"a": [1, 2]})
+        fields = [
+            input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+            input_schema.OutputFieldInfo(name="b", data_type="String", default_value="default"),
+            input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value="99"),
+        ]
+        result = _apply_add_missing(df, fields)
+        assert result.columns == ["a", "b", "c"]
+        assert result.to_dict()["b"] == ["default", "default"]
+        assert result.to_dict()["c"] == [99, 99]
+
+    def test_add_columns_with_null_defaults(self):
+        """Test adding missing columns with null defaults when no default specified."""
+        df = FlowDataEngine(pl.LazyFrame({"a": [1, 2]}))
+        fields = [
+            input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+            input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+        ]
+
+        result = _apply_add_missing(df, fields)
+        assert result.columns == ["a", "b"]
+        assert result.to_dict()["b"] == [None, None]
+
+
+class TestValidateDataTypes:
+    """Tests for _validate_data_types function."""
+
+    def test_validation_passes_when_types_match(self):
+        """Test validation passes when data types match expected types."""
+        df = FlowDataEngine({"a": [1, 2], "b": ["x", "y"]})
+        fields = [
+            input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+            input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+        ]
+
+        _validate_data_types(df, fields)
+
+    def test_validation_fails_on_type_mismatch(self):
+        """Test validation raises ValueError when types don't match."""
+        df = FlowDataEngine({"a": ["not", "int"], "b": [1, 2]})
+        fields = [
+            input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+            input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+        ]
+
+        with pytest.raises(ValueError, match="Data type validation failed"):
+            _validate_data_types(df, fields)
+
+    def test_skip_missing_columns(self):
+        """Test validation skips columns not present in dataframe."""
+        df = FlowDataEngine({"a": [1, 2]})
+        fields = [
+            input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+            input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),  # Not in df
+        ]
+        _validate_data_types(df, fields)
+
+
+# Integration Tests: Validation Mode Behaviors
+
+
+class TestSelectOnlyMode:
+    """Tests for select_only validation mode."""
+
+    def test_basic_column_selection(self):
+        """Test select_only mode keeps only specified columns in order."""
+        df = pl.LazyFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="select_only",
+            fields=[
+                input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=True,
+        )
+        engine = FlowDataEngine(raw_data=df)
+        result_engine = apply_output_field_config(engine, config)
+        assert result_engine.data_frame.columns == ["c", "a"]
+        result_engine.assert_equal(FlowDataEngine(
+            input_schema.RawData(columns=[input_schema.MinimalFieldInfo(name='c', data_type='Int64'),
+                                          input_schema.MinimalFieldInfo(name='a', data_type='Int64')],
+                                 data=[[7, 8, 9], [1, 2, 3]])))
+
+
+    def test_missing_column_silently_skipped(self):
+        """Test select_only mode silently skips missing columns."""
+        df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="select_only",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value=None),  # Missing
+            ],
+            validate_data_types=False,
+        )
+
+        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.data_frame.columns == ["a"]
+
+
+class TestAddMissingMode:
+    """Tests for add_missing validation mode."""
+
+    def test_add_missing_with_defaults(self):
+        """Test add_missing mode adds columns with default values."""
+        df = pl.DataFrame({"a": [1, 2, 3]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="String", default_value="default"),
+                input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value="0"),
+            ],
+            validate_data_types=False,
+        )
+        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.data_frame.columns == ["a", "b", "c"]
+        assert result_engine.to_dict()["a"] == [1, 2, 3]
+        assert result_engine.to_dict()["b"] == ["default", "default", "default"]
+        assert result_engine.to_dict()["c"] == [0, 0, 0]
+
+    def test_add_missing_with_null_defaults(self):
+        """Test add_missing mode adds null columns when default_value is null."""
+        df = pl.DataFrame({"a": [1, 2, 3]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.data_frame.columns == ["a", "b"]
+        assert result_engine.to_dict()["b"] == [None, None, None]
+
+    def test_add_missing_with_null_defaults_and_type_validation(self):
+        """Test add_missing mode adds null columns when default_value is null."""
+        engine = FlowDataEngine({"a": [1, 2, 3]})
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+            ],
+            validate_data_types=True,
+        )
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.data_frame.columns == ["a", "b"]
+        assert result_engine.to_dict()["b"] == [None, None, None]
+
+    def test_add_missing_removes_extra_columns(self):
+        """Test add_missing mode removes columns not in config."""
+        df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="d", data_type="Int64", default_value="99"),
+            ],
+            validate_data_types=False,
+        )
+
+        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.columns == ["a", "d"]
+        assert result_engine.to_dict()["d"] == [99, 99, 99]
+
+
+class TestRaiseOnMissingMode:
+    """Tests for raise_on_missing validation mode."""
+
+    def test_success_when_all_columns_present(self):
+        """Test raise_on_missing mode succeeds when all columns present."""
+        engine = FlowDataEngine({"a": [1, 2, 3], "b": [4, 5, 6]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="raise_on_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.data_frame.columns == ["a", "b"]
+
+    def test_error_when_column_missing(self):
+        """Test raise_on_missing mode raises error when column missing."""
+        engine = FlowDataEngine({"a": [1, 2, 3]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="raise_on_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        with pytest.raises(ValueError, match="Missing required columns"):
+            apply_output_field_config(engine, config)
+
+
+class TestAddMissingKeepExtraMode:
+    """Tests for add_missing_keep_extra validation mode."""
+
+    def test_adds_missing_columns_keeps_all_existing(self):
+        """Test add_missing_keep_extra mode adds missing columns and keeps all existing."""
+        df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="d", data_type="String", default_value="new"),
+            ],
+            validate_data_types=False,
+        )
+
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.columns == ["a", "d", "b", "c"]
+        assert result_engine.to_dict()["d"] == ["new", "new", "new"]
+        assert result_engine.to_dict()["a"] == [1, 2, 3]
+        assert result_engine.to_dict()["b"] == [4, 5, 6]
+        assert result_engine.to_dict()["c"] == [7, 8, 9]
+
+    def test_keeps_extra_columns_in_original_order(self):
+        """Test that extra columns maintain their relative order."""
+        df = pl.DataFrame({"z": [1], "y": [2], "x": [3], "w": [4]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="y", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.columns == ["y", "z", "x", "w"]
+
+    def test_all_columns_missing_adds_all(self):
+        """Test when all configured columns are missing, they're all added."""
+        df = pl.DataFrame({"existing": [1, 2, 3]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="new1", data_type="Int64", default_value="10"),
+                input_schema.OutputFieldInfo(name="new2", data_type="String", default_value="hello"),
+            ],
+            validate_data_types=False,
+        )
+
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.columns == ["new1", "new2", "existing"]
+        assert result_engine.to_dict()["new1"] == [10, 10, 10]
+        assert result_engine.to_dict()["new2"] == ["hello", "hello", "hello"]
+        assert result_engine.to_dict()["existing"] == [1, 2, 3]
+
+    def test_no_missing_columns_just_reorders(self):
+        """Test when no columns are missing, just reorders configured first."""
+        df = pl.DataFrame({"c": [1], "b": [2], "a": [3]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.columns == ["a", "b", "c"]
+
+    def test_with_null_default_values(self):
+        """Test add_missing_keep_extra with null defaults."""
+        df = pl.DataFrame({"a": [1, 2]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.columns == ["a", "b"]
+        assert result_engine.to_dict()["b"] == [None, None]
+
+
+class TestDataTypeValidation:
+    """Tests for data type validation feature."""
+
+    def test_validation_passes_when_types_match(self):
+        """Test data type validation passes when types match."""
+        engine = FlowDataEngine({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="select_only",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+            ],
+            validate_data_types=True,
+        )
+
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.data_frame.columns == ["a", "b"]
+
+    def test_validation_raises_error_on_mismatch(self):
+        """Test data type validation raises error when types don't match."""
+        engine = FlowDataEngine({"a": ["not", "an", "int"], "b": [1, 2, 3]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="select_only",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+            ],
+            validate_data_types=True,
+        )
+
+        with pytest.raises(ValueError, match="Data type validation failed"):
+            apply_output_field_config(engine, config)
+
+    def test_validation_skipped_when_disabled(self):
+        """Test that validation is skipped when validate_data_types is False."""
+        engine = FlowDataEngine({"a": ["not", "an", "int"]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="select_only",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        result_engine = apply_output_field_config(engine, config)
+        assert result_engine.data_frame.columns == ["a"]
+
+
+class TestFlowIntegration:
+    """Tests for output_field_config integration with flow nodes."""
+
+    def test_polars_code_node_integration(self):
+        """Test output_field_config integration with PolarsCode node."""
+        graph = create_graph()
+        data = {"x": [1, 2, 3], "y": [4, 5, 6], "z": [7, 8, 9]}
+        add_manual_input(graph, data, node_id=1)
+
+        polars_code_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="polars_code"
+        )
+        graph.add_node_promise(polars_code_promise)
+
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="select_only",
+            fields=[
+                input_schema.OutputFieldInfo(name="y", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="x", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        polars_code = input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="output_df = input_df"),
+            cache_results=False,
+            output_field_config=output_config,
+        )
+        graph.add_polars_code(polars_code)
+
+        run_info = graph.run_graph()
+
+        output = graph.get_node(2).get_resulting_data()
+        expected = FlowDataEngine({'y': [4, 5, 6], 'x': [1, 2, 3]})
+        assert expected.columns == ["y", "x"]
+        output.assert_equal(expected)
+
+    def test_add_missing_mode_in_flow(self):
+        """Test output_field_config add_missing mode in flow."""
+        graph = create_graph()
+
+        data = {"a": [1, 2, 3]}
+        add_manual_input(graph, data, node_id=1)
+        polars_code_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="polars_code"
+        )
+        graph.add_node_promise(polars_code_promise)
+
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="String", default_value="new"),
+                input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value="100"),
+            ],
+            validate_data_types=False,
+        )
+
+        polars_code = input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="input_df"),
+            cache_results=False,
+            output_field_config=output_config,
+        )
+        graph.add_polars_code(polars_code)
+
+        run_info = graph.run_graph()
+
+        output = graph.get_node(2).get_resulting_data()
+        expected = FlowDataEngine({
+            'a': [1, 2, 3],
+            'b': ['new', 'new', 'new'],
+            'c': [100, 100, 100]
+        })
+        assert output.columns == ["a", "b", "c"]
+        output.assert_equal(expected)
+
+    def test_add_missing_keep_extra_mode_in_flow(self):
+        """Test output_field_config add_missing_keep_extra mode in flow."""
+        graph = create_graph()
+
+        data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
+        add_manual_input(graph, data, node_id=1)
+
+        polars_code_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="polars_code"
+        )
+        graph.add_node_promise(polars_code_promise)
+
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="new_col", data_type="String", default_value="added"),
+            ],
+            validate_data_types=False,
+        )
+
+        polars_code = input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="input_df"),
+            cache_results=False,
+            output_field_config=output_config,
+        )
+        graph.add_polars_code(polars_code)
+
+        run_info = graph.run_graph()
+
+        output = graph.get_node(2).get_resulting_data()
+
+        assert output.columns == ["a", "new_col", "b", "c"]
+        assert output.to_dict()["a"] == [1, 2, 3]
+        assert output.to_dict()["new_col"] == ["added", "added", "added"]
+        assert output.to_dict()["b"] == [4, 5, 6]
+        assert output.to_dict()["c"] == [7, 8, 9]
+
+
+# Lazy Schema Prediction Tests
+
+
+class TestLazySchemaEvaluation:
+    """Tests for lazy schema prediction with output_field_config.
+
+    These tests verify that get_predicted_schema and _predicted_data_getter
+    correctly account for output_field_config when predicting schemas.
+    """
+
+    def test_select_node_predicted_schema_uses_output_field_config(self):
+        """Test that select node's predicted schema uses output_field_config, not select output."""
+        graph = create_graph()
+
+        data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
+        add_manual_input(graph, data, node_id=1)
+
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="x", data_type="Int64", default_value="0"),
+                input_schema.OutputFieldInfo(name="y", data_type="String", default_value="default"),
+                input_schema.OutputFieldInfo(name="z", data_type="Int64", default_value="99"),
+            ],
+            validate_data_types=False,
+        )
+
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=False,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+                transform_schema.SelectInput(old_name="b", new_name="b", keep=True),
+            ],
+            output_field_config=output_config,
+        )
+        graph.add_select(select_settings)
+
+        select_node = graph.get_node(2)
+        predicted_schema = select_node.get_predicted_schema()
+
+        predicted_column_names = [col.name for col in predicted_schema]
+        assert predicted_column_names == ["x", "y", "z"], (
+            f"Expected predicted schema to be ['x', 'y', 'z'] from output_field_config, "
+            f"but got {predicted_column_names}"
+        )
+
+    def test_select_node_predicted_schema_select_only_mode(self):
+        """Test predicted schema with select_only mode filters columns correctly."""
+        graph = create_graph()
+
+        data = {"a": [1, 2], "b": [3, 4], "c": [5, 6], "d": [7, 8]}
+        add_manual_input(graph, data, node_id=1)
+
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="select_only",
+            fields=[
+                input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="d", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=True,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+                transform_schema.SelectInput(old_name="b", new_name="b", keep=True),
+                transform_schema.SelectInput(old_name="c", new_name="c", keep=True),
+                transform_schema.SelectInput(old_name="d", new_name="d", keep=True),
+            ],
+            output_field_config=output_config,
+        )
+        graph.add_select(select_settings)
+
+        select_node = graph.get_node(2)
+        predicted_schema = select_node.get_predicted_schema()
+
+        predicted_column_names = [col.name for col in predicted_schema]
+        assert predicted_column_names == ["b", "d"], (
+            f"Expected predicted schema ['b', 'd'] from output_field_config select_only, "
+            f"but got {predicted_column_names}"
+        )
+
+    def test_downstream_node_receives_correct_predicted_schema(self):
+        """Test that downstream nodes receive the correct predicted schema from output_field_config."""
+        graph = create_graph()
+
+        data = {"a": [1, 2, 3], "b": [4, 5, 6]}
+        add_manual_input(graph, data, node_id=1)
+
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+        connection1 = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection1)
+
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="x", data_type="Int64", default_value="0"),
+                input_schema.OutputFieldInfo(name="y", data_type="Int64", default_value="0"),
+            ],
+            validate_data_types=False,
+        )
+
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=True,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+            ],
+            output_field_config=output_config,
+        )
+        graph.add_select(select_settings)
+
+        polars_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=3, node_type="polars_code"
+        )
+        graph.add_node_promise(polars_promise)
+        connection2 = input_schema.NodeConnection.create_from_simple_input(2, 3)
+        add_connection(graph, connection2)
+
+        polars_code = input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=3,
+            is_setup=True,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="output_df = input_df"),
+            cache_results=False,
+        )
+        graph.add_polars_code(polars_code)
+
+        downstream_node = graph.get_node(3)
+        predicted_schema = downstream_node.get_predicted_schema()
+
+        predicted_column_names = [col.name for col in predicted_schema]
+        assert predicted_column_names == ["x", "y"], (
+            f"Expected downstream node to see ['x', 'y'] from upstream output_field_config, "
+            f"but got {predicted_column_names}"
+        )
+
+    def test_predicted_data_getter_applies_output_field_config(self):
+        """Test that _predicted_data_getter applies output_field_config to the result."""
+        graph = create_graph()
+
+        data = {"a": [1, 2], "b": [3, 4], "c": [5, 6]}
+        add_manual_input(graph, data, node_id=1)
+
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="new_col", data_type="String", default_value="added"),
+            ],
+            validate_data_types=False,
+        )
+
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=False,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+            ],
+            output_field_config=output_config,
+        )
+        graph.add_select(select_settings)
+
+        select_node = graph.get_node(2)
+        predicted_data = select_node.get_predicted_resulting_data()
+
+        assert predicted_data.columns == ["a", "new_col"], (
+            f"Expected predicted data columns ['a', 'new_col'], but got {predicted_data.columns}"
+        )
+
+    def test_predicted_schema_without_output_field_config_uses_select_output(self):
+        """Test that without output_field_config, predicted schema is the select output."""
+        graph = create_graph()
+
+        data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
+        add_manual_input(graph, data, node_id=1)
+
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=False,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+                transform_schema.SelectInput(old_name="c", new_name="c", keep=True),
+            ],
+            # No output_field_config
+        )
+        graph.add_select(select_settings)
+
+        select_node = graph.get_node(2)
+        predicted_schema = select_node.get_predicted_schema()
+
+        predicted_column_names = [col.name for col in predicted_schema]
+        assert predicted_column_names == ["a", "c"], (
+            f"Expected predicted schema ['a', 'c'] from select, but got {predicted_column_names}"
+        )
+
+    def test_disabled_output_field_config_uses_select_output(self):
+        """Test that disabled output_field_config doesn't affect predicted schema."""
+        graph = create_graph()
+
+        data = {"a": [1, 2], "b": [3, 4]}
+        add_manual_input(graph, data, node_id=1)
+
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        # output_field_config is present but DISABLED
+        output_config = input_schema.OutputFieldConfig(
+            enabled=False,  # DISABLED
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="x", data_type="Int64", default_value="0"),
+                input_schema.OutputFieldInfo(name="y", data_type="Int64", default_value="0"),
+            ],
+            validate_data_types=False,
+        )
+
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=False,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+            ],
+            output_field_config=output_config,
+        )
+        graph.add_select(select_settings)
+
+        select_node = graph.get_node(2)
+        predicted_schema = select_node.get_predicted_schema()
+
+        predicted_column_names = [col.name for col in predicted_schema]
+        assert predicted_column_names == ["a"], (
+            f"Expected predicted schema ['a'] (output_field_config disabled), but got {predicted_column_names}"
+        )
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

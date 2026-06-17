@@ -1,36 +1,18 @@
 <template>
   <div v-if="dataLoaded && nodeCloudStorageReader" class="cloud-storage-container">
-    <generic-node-settings v-model="nodeCloudStorageReader">
+    <generic-node-settings
+      v-model="nodeCloudStorageReader"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <!-- Connection Selection -->
       <div class="listbox-wrapper">
-        <div class="form-group">
-          <label for="connection-select">Cloud Storage Connection</label>
-          <div v-if="connectionsAreLoading" class="loading-state">
-            <div class="loading-spinner"></div>
-            <p>Loading connections...</p>
-          </div>
-          <div v-else>
-            <select
-              id="connection-select"
-              v-model="selectedConnection"
-              class="form-control minimal-select"
-              @change="resetFields"
-            >
-              <option :value="null">No connection (use local credentials)</option>
-              <option v-for="conn in connectionInterfaces" :key="conn.connectionName" :value="conn">
-                {{ conn.connectionName }} ({{ getStorageTypeLabel(conn.storageType) }} -
-                {{ getAuthMethodLabel(conn.authMethod) }})
-              </option>
-            </select>
-            <div
-              v-if="!nodeCloudStorageReader.cloud_storage_settings.connection_name"
-              class="helper-text"
-            >
-              <i class="fa-solid fa-info-circle"></i>
-              Will use local AWS CLI credentials or environment variables
-            </div>
-          </div>
-        </div>
+        <CloudConnectionPicker
+          v-model="selectedConnection"
+          :connections="connectionInterfaces"
+          :loading="connectionsAreLoading"
+          @change="resetFields"
+        />
       </div>
       <!-- File Path and Scan Settings -->
       <div class="listbox-wrapper">
@@ -170,11 +152,13 @@ import { CodeLoader } from "vue-content-loader";
 import { ref } from "vue";
 import { NodeCloudStorageReader } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageReader } from "./utils";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { fetchCloudStorageConnectionsInterfaces } from "../../../../../views/CloudConnectionView/api";
 import { FullCloudStorageConnectionInterface } from "../../../../../views/CloudConnectionView/CloudConnectionTypes";
 import { ElMessage } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { CloudConnectionPicker } from "../../../../common";
 
 interface Props {
   nodeId: number;
@@ -184,52 +168,20 @@ defineProps<Props>();
 const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
 const nodeCloudStorageReader = ref<NodeCloudStorageReader | null>(null);
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeCloudStorageReader,
+});
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
 const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null);
 
-const getStorageTypeLabel = (storageType: string) => {
-  switch (storageType) {
-    case "s3":
-      return "AWS S3";
-    case "adls":
-      return "Azure ADLS";
-    case "gcs":
-      return "Google Cloud Storage";
-    default:
-      return storageType.toUpperCase();
-  }
-};
-
-const getAuthMethodLabel = (authMethod: string) => {
-  switch (authMethod) {
-    case "access_key":
-      return "Access Key";
-    case "iam_role":
-      return "IAM Role";
-    case "service_principal":
-      return "Service Principal";
-    case "managed_identity":
-      return "Managed Identity";
-    case "sas_token":
-      return "SAS Token";
-    case "aws-cli":
-      return "AWS CLI";
-    case "auto":
-      return "Auto";
-    default:
-      return authMethod;
-  }
-};
-
 const handleFileFormatChange = () => {
   resetFields();
-  // Set default values for format-specific options
   if (nodeCloudStorageReader.value) {
     const format = nodeCloudStorageReader.value.cloud_storage_settings.file_format;
 
     if (format === "csv") {
-      // Set CSV defaults
       if (nodeCloudStorageReader.value.cloud_storage_settings.csv_has_header === undefined) {
         nodeCloudStorageReader.value.cloud_storage_settings.csv_has_header = true;
       }
@@ -240,14 +192,12 @@ const handleFileFormatChange = () => {
         nodeCloudStorageReader.value.cloud_storage_settings.csv_encoding = "utf8";
       }
     } else {
-      // Clear CSV-specific settings
       nodeCloudStorageReader.value.cloud_storage_settings.csv_has_header = undefined;
       nodeCloudStorageReader.value.cloud_storage_settings.csv_delimiter = undefined;
       nodeCloudStorageReader.value.cloud_storage_settings.csv_encoding = undefined;
     }
 
     if (format !== "delta") {
-      // Clear Delta-specific settings
       nodeCloudStorageReader.value.cloud_storage_settings.delta_version = undefined;
     }
   }
@@ -271,7 +221,7 @@ const resetFields = () => {
 const setConnectionOnConnectionName = async (connectionName: string | null) => {
   selectedConnection.value =
     connectionInterfaces.value.find(
-      (connectionInterface) => connectionInterface.connectionName === connectionName, // Use '===' for strict equality
+      (connectionInterface) => connectionInterface.connectionName === connectionName,
     ) || null;
 };
 
@@ -301,16 +251,6 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (!nodeCloudStorageReader.value || !nodeCloudStorageReader.value.cloud_storage_settings) {
-    console.log("Returning without pushing");
-    return;
-  }
-  nodeCloudStorageReader.value.is_setup = true;
-  nodeStore.updateSettings(nodeCloudStorageReader);
-  dataLoaded.value = false;
-};
-
 const fetchConnections = async () => {
   connectionsAreLoading.value = true;
   try {
@@ -326,6 +266,7 @@ const fetchConnections = async () => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

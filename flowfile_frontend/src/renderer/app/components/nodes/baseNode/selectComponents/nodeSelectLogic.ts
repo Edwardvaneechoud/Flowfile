@@ -33,17 +33,14 @@ export const updateNodeSelect = (
   // Create a map for fast lookups instead of using find() in a loop
   const existingInputMap = new Map<string, SelectInput>();
 
-  // Pre-populate the map with existing select inputs
   nodeSelectRef.value.select_input.forEach((input) => {
     existingInputMap.set(input.old_name, input);
   });
 
-  // Process all schema items
   nodeTable.table_schema.forEach((schema, index) => {
     const existingInput = existingInputMap.get(schema.name);
 
     if (existingInput) {
-      // Update existing input if not altered
       if (!existingInput.is_altered) {
         existingInput.data_type = schema.data_type;
       }
@@ -51,7 +48,6 @@ export const updateNodeSelect = (
         existingInput.original_position = index;
       }
     } else {
-      // Add new input and update the map
       const newInput = createSelectInput(schema.name, schema.data_type, index, index);
       nodeSelectRef.value?.select_input.push(newInput);
       existingInputMap.set(schema.name, newInput);

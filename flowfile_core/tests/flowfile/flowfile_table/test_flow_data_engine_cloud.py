@@ -109,7 +109,6 @@ def aws_access_key_connection():
     return minio_connection
 
 
-# Bundle test cases with CloudStorageReadSettings
 S3_READ_TEST_CASES = [
     S3TestReadCase(
         id="single_parquet_file",
@@ -257,19 +256,15 @@ def test_read_from_s3_with_aws_keys(test_case: S3TestReadCase, aws_access_key_co
     """Test reading various file formats and configurations from S3."""
     if test_case.read_settings.file_format == "delta":
         aws_access_key_connection.aws_allow_unsafe_html = True
-    # Create settings with the bundled read_settings
     settings = CloudStorageReadSettingsInternal(
         connection=aws_access_key_connection,
         read_settings=test_case.read_settings
     )
-    # Log test details
     logger.info(f"Testing scenario: {test_case.id}")
     logger.info(f"Resource path: {test_case.read_settings.resource_path}")
     logger.info(f"File format: {test_case.read_settings.file_format}")
-    # Create FlowDataEngine
 
     flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
-    # Basic assertions
     assert flow_data_engine is not None
     assert flow_data_engine.lazy is True
     assert flow_data_engine.schema is not None
@@ -308,6 +303,47 @@ def test_write_to_s3_with_aws_keys(
                 .make_unique(UniqueInput(columns=["ref_col"]))).to_raw_data().data[0]
     for now_value in added_values:
         assert now_value in now_vals, "Data did not update"
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_write_partitioned_delta_to_s3(
+        source_flow_data_engine: FlowDataEngine,
+        aws_access_key_connection: FullCloudStorageConnection,
+):
+    """Partitioned delta cloud write: partition columns must land on the table."""
+    from shared.delta_utils import get_delta_partition_columns
+
+    aws_access_key_connection.aws_allow_unsafe_html = True
+    resource_path = "s3://flowfile-test/write_test_delta_partitioned"
+    write_settings = CloudStorageWriteSettings(
+        resource_path=resource_path,
+        file_format="delta",
+        write_mode="overwrite",
+        partition_by=["is_active"],
+        auth_mode="access_key",
+    )
+    source_flow_data_engine.to_cloud_storage_obj(
+        CloudStorageWriteSettingsInternal(
+            connection=aws_access_key_connection,
+            write_settings=write_settings,
+        )
+    )
+
+    storage_options = {
+        "aws_access_key_id": "minioadmin",
+        "aws_secret_access_key": "minioadmin",
+        "aws_region": "us-east-1",
+        "endpoint_url": "http://localhost:9000",
+        "aws_allow_http": "true",
+    }
+    assert get_delta_partition_columns(resource_path, storage_options=storage_options) == ["is_active"]
+
+    read_settings = CloudStorageReadSettingsInternal(
+        connection=aws_access_key_connection,
+        read_settings=CloudStorageReadSettings.model_validate(write_settings.model_dump()),
+    )
+    read_back = FlowDataEngine.from_cloud_storage_obj(read_settings)
+    assert read_back.get_number_of_records(force_calculate=True) == 5
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
@@ -357,7 +393,6 @@ def test_read_from_s3_with_env_vars(test_case: S3TestReadCase, s3_env_vars):
     """
     Tests reading various file formats from S3 using environment variables for authentication.
     """
-    # Create a connection object that relies on environment variables
     connection = FullCloudStorageConnection(
         connection_name="minio-test-env-vars",
         storage_type="s3",
@@ -382,15 +417,12 @@ def test_read_from_s3_with_env_vars(test_case: S3TestReadCase, s3_env_vars):
     assert flow_data_engine.lazy is True
     assert flow_data_engine.schema is not None
     assert len(flow_data_engine.columns) > 0, "Should have at least one column"
-    # Note: You may want to adjust this assertion to be more specific if possible
     assert flow_data_engine.get_number_of_records(force_calculate=True) != 6_666_666
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_read_parquet_single():
     """Test reading a Parquet file from S3 using AWS CLI credentials."""
-    # Create settings using AWS CLI authentication
-    # No access keys needed - will use ~/.aws/credentials
     settings = CloudStorageReadSettingsInternal(
         connection=FullCloudStorageConnection(
             connection_name="minio-test",

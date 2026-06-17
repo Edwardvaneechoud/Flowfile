@@ -26,7 +26,7 @@ def get_instant_func_results(node_step: FlowNode, func_string: str) -> InstantFu
             df = get_first_row(node_input.results.example_data_path)
         else:
             df = node_input.get_predicted_resulting_data().data_frame.collect()
-    except:
+    except Exception:
         return InstantFuncResult(result="Could not get data from previous step", success=None)
     try:
         real_time_result = get_realtime_func_results(df=df, func_string=func_string)

@@ -1,4 +1,5 @@
 import gc
+from base64 import b64encode
 from multiprocessing import Process
 from multiprocessing.queues import Queue
 from time import sleep
@@ -6,7 +7,6 @@ from time import sleep
 from flowfile_worker import funcs, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.process_manager import ProcessManager
 
-# Initialize ProcessManager
 process_manager = ProcessManager()
 
 flowfile_node_id_type = int | str
@@ -39,7 +39,6 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
             with status_dict_lock:
                 status_dict[task_id].progress = current_progress
 
-                # Check if the task has been cancelled via status_dict
                 if status_dict[task_id].status == "Cancelled":
                     p.terminate()
                     break
@@ -56,13 +55,17 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         with status_dict_lock:
             status = status_dict[task_id]
             if status.status != "Cancelled":
-                # Read progress value with lock to ensure consistency
                 with progress.get_lock():
                     final_progress = progress.value
                 if final_progress == 100:
                     status.status = "Completed"
                     if not q.empty():
-                        status.results = q.get()
+                        result = q.get()
+                        # b64-encode bytes for JSON-safe storage in status_dict (REST responses)
+                        if isinstance(result, bytes):
+                            status.results = b64encode(result).decode("ascii")
+                        else:
+                            status.results = result
                 elif final_progress != -1:
                     status_dict[task_id].status = "Unknown Error"
 
@@ -70,7 +73,7 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         if p.is_alive():
             p.terminate()
         p.join()
-        process_manager.remove_process(task_id)  # Remove from process manager
+        process_manager.remove_process(task_id)
         del p, progress, error_message
         gc.collect()
 
@@ -158,10 +161,89 @@ def start_generic_process(
     p: Process = mp_context.Process(target=process_task, kwargs=kwargs)
     p.start()
 
-    process_manager.add_process(task_id, p)  # Add process to process manager
+    process_manager.add_process(task_id, p)
     handle_task(
         task_id=task_id, p=p, progress=kwargs["progress"], error_message=kwargs["error_message"], q=kwargs["queue"]
     )
+
+
+def start_train_model_process(
+    polars_serializable_object: bytes,
+    task_id: str,
+    file_ref: str,
+    model_type: str,
+    target_column: str,
+    feature_columns: list[str],
+    params: dict,
+    staging_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: flowfile_node_id_type,
+) -> None:
+    """Spawn the training subprocess.
+
+    Mirrors :func:`start_fuzzy_process`. The trained-model bytes are written to
+    *staging_path*; ``handle_task`` will surface ``{sha256, size_bytes, model_type}``
+    via the queue so core can finalise the artifact upload.
+    """
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    q = mp_context.Queue(maxsize=1)
+
+    kwargs = {
+        "polars_serializable_object": polars_serializable_object,
+        "progress": progress,
+        "error_message": error_message,
+        "queue": q,
+        "file_path": file_ref,
+        "model_type": model_type,
+        "target_column": target_column,
+        "feature_columns": feature_columns,
+        "params": params or {},
+        "staging_path": staging_path,
+        "flowfile_flow_id": flowfile_flow_id,
+        "flowfile_node_id": flowfile_node_id,
+    }
+
+    p: Process = mp_context.Process(target=funcs.train_model_task, kwargs=kwargs)
+    p.start()
+    process_manager.add_process(task_id, p)
+    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
+
+
+def start_apply_model_process(
+    polars_serializable_object: bytes,
+    task_id: str,
+    file_ref: str,
+    model_path: str,
+    output_column: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: flowfile_node_id_type,
+) -> None:
+    """Spawn the apply-model subprocess.
+
+    Writes the scored data to *file_ref* (IPC). ``handle_task`` will surface the
+    serialised LazyFrame via the queue so core can deserialise it.
+    """
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    q = mp_context.Queue(maxsize=1)
+
+    kwargs = {
+        "polars_serializable_object": polars_serializable_object,
+        "progress": progress,
+        "error_message": error_message,
+        "queue": q,
+        "file_path": file_ref,
+        "model_path": model_path,
+        "output_column": output_column,
+        "flowfile_flow_id": flowfile_flow_id,
+        "flowfile_node_id": flowfile_node_id,
+    }
+
+    p: Process = mp_context.Process(target=funcs.apply_model_task, kwargs=kwargs)
+    p.start()
+    process_manager.add_process(task_id, p)
+    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
 
 
 def start_fuzzy_process(
@@ -218,5 +300,5 @@ def start_fuzzy_process(
     p: Process = mp_context.Process(target=funcs.fuzzy_join_task, args=args)
     p.start()
 
-    process_manager.add_process(task_id, p)  # Add process to process manager
+    process_manager.add_process(task_id, p)
     handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)

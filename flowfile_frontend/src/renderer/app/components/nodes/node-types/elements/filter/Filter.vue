@@ -1,14 +1,31 @@
 <template>
   <div v-if="isLoaded && nodeFilter">
-    <generic-node-settings v-model="nodeFilter">
+    <generic-node-settings
+      v-model="nodeFilter"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <div style="border-radius: 20px">
           <el-switch
             v-model="isAdvancedFilter"
             class="mb-2"
+            size="small"
             active-text="Advanced filter options"
             inactive-text="Basic filter"
           />
+        </div>
+        <div class="split-mode-row">
+          <el-switch
+            v-model="splitModeEnabled"
+            size="small"
+            active-text="Split into pass/fail outputs"
+            inactive-text="Single output"
+          />
+          <div class="split-mode-hint">
+            Emit matching rows on handle P (pass) and non-matching rows on handle F (fail). Rows
+            with a null predicate are dropped from both.
+          </div>
         </div>
         <div v-if="isAdvancedFilter">
           Advanced filter
@@ -75,14 +92,18 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed } from "vue";
+import { ref, computed, nextTick, watch } from "vue";
+import { Position } from "@vue-flow/core";
 import { CodeLoader } from "vue-content-loader";
 
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useFlowStore } from "../../../../../stores/flow-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import mainEditorRef from "../../../../../features/designer/editor/fullEditor.vue";
 import { NodeFilter } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
+import { outputHandle } from "../../../../../utils/outputHandle";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import {
   FilterOperator,
@@ -95,9 +116,48 @@ import {
 const editorString = ref<string>("");
 const isLoaded = ref<boolean>(false);
 const isAdvancedFilter = ref<boolean>(false);
+const splitModeEnabled = ref<boolean>(false);
 const nodeStore = useNodeStore();
+const flowStore = useFlowStore();
 const nodeFilter = ref<NodeFilter | null>(null);
 const nodeData = ref<NodeData | null>(null);
+
+const updateNodeOutputHandles = () => {
+  const vfInstance = flowStore.vueFlowInstance;
+  if (!vfInstance || !nodeFilter.value) return;
+  const vfNode = vfInstance.findNode(String(nodeFilter.value.node_id));
+  if (!vfNode) return;
+  if (splitModeEnabled.value) {
+    vfNode.data.outputs = [
+      { id: outputHandle(0), position: Position.Right, label: "P", title: "pass" },
+      { id: outputHandle(1), position: Position.Right, label: "F", title: "fail" },
+    ];
+  } else {
+    vfNode.data.outputs = [{ id: outputHandle(0), position: Position.Right }];
+  }
+};
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeFilter,
+  onBeforeSave: () => {
+    if (nodeFilter.value) {
+      if (isAdvancedFilter.value) {
+        updateAdvancedFilter();
+        nodeFilter.value.filter_input.mode = "advanced";
+        nodeFilter.value.filter_input.filter_type = "advanced";
+      } else {
+        nodeFilter.value.filter_input.mode = "basic";
+        nodeFilter.value.filter_input.filter_type = "basic";
+      }
+      nodeFilter.value.split_mode = splitModeEnabled.value;
+    }
+    return true;
+  },
+});
+
+watch(splitModeEnabled, () => {
+  updateNodeOutputHandles();
+});
 
 interface EditorChildType {
   showHideOptions: () => void;
@@ -226,6 +286,7 @@ const loadNodeData = async (nodeId: number) => {
 
     const mode = nodeFilter.value?.filter_input.mode || nodeFilter.value?.filter_input.filter_type;
     isAdvancedFilter.value = mode === "advanced";
+    splitModeEnabled.value = Boolean(nodeFilter.value?.split_mode);
 
     // Migrate legacy basic_filter fields
     if (nodeFilter.value?.filter_input.basic_filter) {
@@ -242,6 +303,8 @@ const loadNodeData = async (nodeId: number) => {
     }
   }
   isLoaded.value = true;
+  await nextTick();
+  updateNodeOutputHandles();
 };
 
 const updateAdvancedFilter = () => {
@@ -250,21 +313,7 @@ const updateAdvancedFilter = () => {
   }
 };
 
-const pushNodeData = async () => {
-  if (nodeFilter.value) {
-    if (isAdvancedFilter.value) {
-      updateAdvancedFilter();
-      nodeFilter.value.filter_input.mode = "advanced";
-      nodeFilter.value.filter_input.filter_type = "advanced";
-    } else {
-      nodeFilter.value.filter_input.mode = "basic";
-      nodeFilter.value.filter_input.filter_type = "basic";
-    }
-    nodeStore.updateSettings(nodeFilter);
-  }
-};
-
-defineExpose({ loadNodeData, pushNodeData });
+defineExpose({ loadNodeData, pushNodeData, saveSettings });
 </script>
 
 <style lang="scss" scoped>
@@ -325,5 +374,17 @@ defineExpose({ loadNodeData, pushNodeData });
 
 .x-flip {
   transform: scaleX(-100%);
+}
+
+.split-mode-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--el-border-color-lighter, #e4e7ed);
+}
+
+.split-mode-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #64748b;
 }
 </style>

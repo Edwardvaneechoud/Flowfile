@@ -6,11 +6,19 @@ from typing import Literal
 import polars as pl
 from pydantic import BaseModel, SecretStr, field_validator
 
+from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 
 CloudStorageType = Literal["s3", "adls", "gcs"]
 AuthMethod = Literal[
-    "access_key", "iam_role", "service_principal", "managed_identity", "sas_token", "aws-cli", "env_vars"
+    "access_key",
+    "iam_role",
+    "service_principal",
+    "managed_identity",
+    "sas_token",
+    "aws-cli",
+    "env_vars",
+    "service_account",
 ]
 
 
@@ -58,6 +66,11 @@ class FullCloudStorageConnectionWorkerInterface(AuthSettingsInput):
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
     azure_client_secret: str | None = None
+    azure_sas_token: str | None = None
+
+    # Google Cloud Storage
+    gcs_service_account_key: str | None = None
+    gcs_project_id: str | None = None
 
     # Common
     endpoint_url: str | None = None
@@ -81,6 +94,11 @@ class FullCloudStorageConnection(AuthSettingsInput):
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
     azure_client_secret: SecretStr | None = None
+    azure_sas_token: SecretStr | None = None
+
+    # Google Cloud Storage
+    gcs_service_account_key: SecretStr | None = None
+    gcs_project_id: str | None = None
 
     # Common
     endpoint_url: str | None = None
@@ -111,6 +129,9 @@ class FullCloudStorageConnection(AuthSettingsInput):
             azure_account_key=encrypt_for_worker(self.azure_account_key, user_id),
             azure_client_id=self.azure_client_id,
             azure_client_secret=encrypt_for_worker(self.azure_client_secret, user_id),
+            azure_sas_token=encrypt_for_worker(self.azure_sas_token, user_id),
+            gcs_service_account_key=encrypt_for_worker(self.gcs_service_account_key, user_id),
+            gcs_project_id=self.gcs_project_id,
             endpoint_url=self.endpoint_url,
             verify_ssl=self.verify_ssl,
         )
@@ -127,8 +148,11 @@ class FullCloudStorageConnectionInterface(AuthSettingsInput):
     azure_account_name: str | None = None
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
+    gcs_project_id: str | None = None
     endpoint_url: str | None = None
     verify_ssl: bool = True
+    id: int | None = None
+    access: AccessInfo | None = None
 
 
 class CloudStorageSettings(BaseModel):
@@ -175,6 +199,9 @@ class WriteSettingsWorkerInterface(BaseModel):
     csv_delimiter: str = ","
     csv_encoding: str = "utf8"
 
+    # Delta only: partition columns, applied at table creation
+    partition_by: list[str] | None = None
+
 
 class CloudStorageWriteSettings(CloudStorageSettings, WriteSettingsWorkerInterface):
     """Settings for writing to cloud storage"""
@@ -192,6 +219,7 @@ class CloudStorageWriteSettings(CloudStorageSettings, WriteSettingsWorkerInterfa
             parquet_compression=self.parquet_compression,
             csv_delimiter=self.csv_delimiter,
             csv_encoding=self.csv_encoding,
+            partition_by=self.partition_by,
         )
 
 

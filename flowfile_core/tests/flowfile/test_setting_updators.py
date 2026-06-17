@@ -49,26 +49,22 @@ class TestCrossJoinSettingGenerator:
 
     def test_cross_join_generator_creates_settings(self, basic_flow: FlowGraph):
         """Test that cross join generator creates initial settings from inputs."""
-        # Create left input with columns: id, name
         create_manual_input_node(basic_flow, 1, [
             {'id': 1, 'name': 'Alice'},
             {'id': 2, 'name': 'Bob'},
         ])
 
-        # Create right input with columns: code, value
         create_manual_input_node(basic_flow, 2, [
             {'code': 'A', 'value': 100},
             {'code': 'B', 'value': 200},
         ])
 
-        # Create cross join node
         basic_flow.add_node_promise(input_schema.NodePromise(
             flow_id=1, node_id=3, node_type='cross_join'
         ))
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
-        # Get the node and verify settings were generated
         node = basic_flow.get_node(3)
         node_data = node.get_node_data(basic_flow.flow_id)
         assert node_data.setting_input is not None
@@ -83,11 +79,9 @@ class TestCrossJoinSettingGenerator:
 
     def test_cross_join_generator_renames_overlapping_columns(self, basic_flow: FlowGraph):
         """Test that overlapping columns are automatically renamed."""
-        # Create left and right inputs with same column name
         create_manual_input_node(basic_flow, 1, [{'col': 1}])
         create_manual_input_node(basic_flow, 2, [{'col': 2}])
 
-        # Create cross join node
         basic_flow.add_node_promise(input_schema.NodePromise(
             flow_id=1, node_id=3, node_type='cross_join'
         ))
@@ -112,7 +106,6 @@ class TestCrossJoinSettingUpdator:
 
     def test_cross_join_updator_marks_missing_columns_unavailable(self, basic_flow: FlowGraph):
         """Test that columns no longer in input are marked as unavailable (not removed)."""
-        # Initial setup with multiple columns
         create_manual_input_node(basic_flow, 1, [{'id': 1, 'name': 'Alice', 'extra': 'X'}])
         create_manual_input_node(basic_flow, 2, [{'code': 'A', 'value': 100}])
 
@@ -122,11 +115,9 @@ class TestCrossJoinSettingUpdator:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
-        # Get initial node data
         node = basic_flow.get_node(3)
         initial_data = node.get_node_data(basic_flow.flow_id)
 
-        # Verify initial left columns include 'extra'
         left_cols = {r.old_name: r for r in initial_data.setting_input.cross_join_input.left_select.renames}
         assert 'extra' in left_cols
         assert left_cols['extra'].is_available is True
@@ -138,10 +129,8 @@ class TestCrossJoinSettingUpdator:
             raw_data_format=input_schema.RawData.from_pylist([{'id': 1, 'name': 'Alice'}])
         ))
 
-        # Get updated node data - this should trigger the updator
         updated_data = node.get_node_data(basic_flow.flow_id)
 
-        # Verify 'extra' column is still there but marked as unavailable
         left_cols_after = {r.old_name: r for r in updated_data.setting_input.cross_join_input.left_select.renames}
         assert 'extra' in left_cols_after
         assert left_cols_after['extra'].is_available is False
@@ -152,7 +141,6 @@ class TestCrossJoinSettingUpdator:
 
     def test_cross_join_updator_adds_new_columns(self, basic_flow: FlowGraph):
         """Test that new columns in input are added to settings."""
-        # Initial setup
         create_manual_input_node(basic_flow, 1, [{'id': 1}])
         create_manual_input_node(basic_flow, 2, [{'code': 'A'}])
 
@@ -162,7 +150,6 @@ class TestCrossJoinSettingUpdator:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
-        # Get initial data
         node = basic_flow.get_node(3)
         node.get_node_data(basic_flow.flow_id)
 
@@ -173,7 +160,6 @@ class TestCrossJoinSettingUpdator:
             raw_data_format=input_schema.RawData.from_pylist([{'id': 1, 'new_col': 'value'}])
         ))
 
-        # Get updated node data
         updated_data = node.get_node_data(basic_flow.flow_id)
 
         left_cols = [r.old_name for r in updated_data.setting_input.cross_join_input.left_select.renames]
@@ -182,7 +168,6 @@ class TestCrossJoinSettingUpdator:
 
     def test_cross_join_updator_no_duplicates_with_overlapping_columns(self, basic_flow: FlowGraph):
         """Test that no duplicate columns appear when both inputs have same column name."""
-        # Create inputs with same column name
         create_manual_input_node(basic_flow, 1, [{'Column 1': 'left_val'}])
         create_manual_input_node(basic_flow, 2, [{'Column 1': 'right_val'}])
 
@@ -192,19 +177,15 @@ class TestCrossJoinSettingUpdator:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
-        # Get node data multiple times to trigger updator
         node = basic_flow.get_node(3)
         node_data = node.get_node_data(basic_flow.flow_id)
 
-        # Verify no duplicates in left select
         left_old_names = [r.old_name for r in node_data.setting_input.cross_join_input.left_select.renames]
         assert len(left_old_names) == len(set(left_old_names)), f"Duplicate columns in left_select: {left_old_names}"
 
-        # Verify no duplicates in right select
         right_old_names = [r.old_name for r in node_data.setting_input.cross_join_input.right_select.renames]
         assert len(right_old_names) == len(set(right_old_names)), f"Duplicate columns in right_select: {right_old_names}"
 
-        # Verify exactly one Column 1 on each side
         assert left_old_names.count('Column 1') == 1
         assert right_old_names.count('Column 1') == 1
 
@@ -221,7 +202,6 @@ class TestCrossJoinSettingUpdator:
 
         node = basic_flow.get_node(3)
 
-        # Call get_node_data multiple times
         for _ in range(5):
             node_data = node.get_node_data(basic_flow.flow_id)
 
@@ -237,7 +217,6 @@ class TestJoinSettingUpdator:
 
     def test_join_updator_marks_missing_left_columns_unavailable(self, basic_flow: FlowGraph):
         """Test that columns removed from left input are marked as unavailable."""
-        # Initial setup
         create_manual_input_node(basic_flow, 1, [{'id': 1, 'name': 'Alice', 'extra': 'X'}])
         create_manual_input_node(basic_flow, 2, [{'id': 1, 'value': 100}])
 
@@ -311,7 +290,6 @@ class TestJoinSettingUpdator:
 
         node = basic_flow.get_node(3)
 
-        # Call multiple times to ensure updator doesn't create duplicates
         for _ in range(3):
             node_data = node.get_node_data(basic_flow.flow_id)
 
@@ -375,7 +353,6 @@ class TestSettingUpdatorWithIsAvailableFalse:
         from flowfile_core.flowfile.setting_generator.settings import cross_join as cross_join_updator
         from flowfile_core.schemas.output_model import NodeData, TableExample
 
-        # Create a NodeData with existing settings where is_available=False
         existing_cross_join = transform_schema.CrossJoinInput(
             left_select=transform_schema.JoinInputs(renames=[
                 transform_schema.SelectInput(old_name='Column 1', new_name='Column 1', is_available=False),
@@ -398,17 +375,14 @@ class TestSettingUpdatorWithIsAvailableFalse:
             right_input=TableExample(node_id=2, number_of_records=1, number_of_columns=1, name='right', table_schema=[], columns=['Column 1']),
         )
 
-        # Run the updator
         cross_join_updator(node_data)
 
-        # Verify no duplicates
         left_cols = [r.old_name for r in node_data.setting_input.cross_join_input.left_select.renames]
         right_cols = [r.old_name for r in node_data.setting_input.cross_join_input.right_select.renames]
 
         assert len(left_cols) == 1, f"Expected 1 left column, got {len(left_cols)}: {left_cols}"
         assert len(right_cols) == 1, f"Expected 1 right column, got {len(right_cols)}: {right_cols}"
 
-        # Verify is_available is now True
         assert node_data.setting_input.cross_join_input.left_select.renames[0].is_available is True
         assert node_data.setting_input.cross_join_input.right_select.renames[0].is_available is True
 
@@ -442,17 +416,14 @@ class TestSettingUpdatorWithIsAvailableFalse:
             right_input=TableExample(node_id=2, number_of_records=1, number_of_columns=2, name='right', table_schema=[], columns=['id', 'value']),
         )
 
-        # Run the updator
         join_updator(node_data)
 
-        # Verify no duplicates
         left_cols = [r.old_name for r in node_data.setting_input.join_input.left_select.renames]
         right_cols = [r.old_name for r in node_data.setting_input.join_input.right_select.renames]
 
         assert len(left_cols) == 2, f"Expected 2 left columns, got {len(left_cols)}: {left_cols}"
         assert len(right_cols) == 2, f"Expected 2 right columns, got {len(right_cols)}: {right_cols}"
 
-        # All should now be available
         for r in node_data.setting_input.join_input.left_select.renames:
             assert r.is_available is True
         for r in node_data.setting_input.join_input.right_select.renames:
@@ -641,14 +612,12 @@ class TestCrossJoinExecution:
         # Cross join of 2 rows x 2 rows = 4 rows
         assert result.count() == 4
 
-        # Verify columns don't have duplicates in the result
         assert len(result.columns) == len(set(result.columns))
 
     def test_cross_join_executes_after_input_change(self, basic_flow: FlowGraph):
         """Test that cross join executes correctly after input columns change."""
         create_manual_input_node(basic_flow, 1, [{'a': 1}])
         create_manual_input_node(basic_flow, 2, [{'b': 2}])
-
         basic_flow.add_node_promise(input_schema.NodePromise(
             flow_id=1, node_id=3, node_type='cross_join'
         ))
@@ -680,7 +649,6 @@ class TestCrossJoinExecution:
             raw_data_format=input_schema.RawData.from_pylist([{'a': 1, 'c': 3}])
         ))
 
-        # Trigger updator to add new column to settings
         node.get_node_data(basic_flow.flow_id)
 
         node.reset()

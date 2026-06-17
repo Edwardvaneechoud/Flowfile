@@ -11,7 +11,6 @@ import sys
 
 from . import fixtures
 
-# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -31,7 +30,6 @@ def start_postgres():
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    # Check if Docker is available first
     if not fixtures.is_docker_available():
         logger.warning("Docker is not available. Cannot start PostgreSQL container.")
         print("\n" + "=" * 50)
@@ -58,11 +56,10 @@ def start_postgres():
 
     args = parser.parse_args()
 
-    # Setup and start
     if fixtures.setup_postgres_samples(args.schema, args.port, args.user, args.password, args.db, args.image_tag):
         if fixtures.start_postgres_container(args.container_name, args.port, args.image_tag)[1]:
             fixtures.print_connection_info(
-                "localhost", args.port, args.db, args.user, args.password, args.container_name
+                "localhost", args.port, args.db, args.user, args.container_name
             )
             return 0
     return 1
@@ -78,7 +75,6 @@ def stop_postgres():
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    # Check if Docker is available first
     if not fixtures.is_docker_available():
         logger.warning("Docker is not available. No PostgreSQL container to stop.")
         return 0  # Return success to allow pipeline to continue
@@ -100,7 +96,6 @@ def stop_postgres():
 
 
 if __name__ == "__main__":
-    # Allow direct script execution for testing
     if len(sys.argv) > 1 and sys.argv[1] == "start":
         sys.exit(start_postgres())
     elif len(sys.argv) > 1 and sys.argv[1] == "stop":

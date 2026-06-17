@@ -1,6 +1,7 @@
-mysql
-mysql/*
+/mysql
+/mysql/*
 .idea
+.build-logs
 files/*
 .env
 /.env
@@ -43,26 +44,62 @@ shared_data/
 saved_flows/
 /flowfile_frontend/playwright-report/index.html
 /flowfile.db
+/flowfile_catalog.db
 /flowfile_frontend/flowfile.db
+/flowfile_frontend/flowfile_catalog.db
 /flowfile_worker.spec
 /flowfile_frontend/test-results/.last-run.json
 /test_utils/postgres/postgres-docker-samples/
 **/test_flowfile.db
+**/test_flowfile_catalog.db
 /flowfile/flowfile/web/static/
 flowfile.db
+flowfile_catalog.db
 local_data
 /custom_nodes/
 /flowfile_core/tests/support_files/flows/new_flow.flowfile
 /flowfile_frame/tests/output_csv.csv
+/output_csv.csv
 /flowfile_core/tests/support_files/flows/sample_flow_path.flowfile
 /flowfile_core/tests/support_files/flows/second_flow.flowfile
 /flowfile_core/tests/support_files/flows/tmp/
 
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
 # Docker
 flowfile_data/
+
+# Egg info
+*.egg-info/
 
 # Secrets and keys - NEVER commit these
 master_key.txt
 *.key
 *.pem
 !requirements*.txt
+test-embed
+/expr_transformer/
+/.opencode/
+
+# Local remote-image compose setup
+/docker-remote/
+
+# Local review artefacts
+/diff.txt
+
+# Local editor / one-off backup files (e.g. *.local-backup-YYYYMMDD-HHMMSS)
+*.local-backup-*
+
+# Stray runtime artefacts
+error-linux
+.claude/scheduled_tasks.lock
+
+# Repo-root local Claude state only — leave subtree configs
+# (e.g. plugin/agent dirs nested under packages) tracked.
+/.claude/
+
+# Signing checklist holds real cert/notarization secrets — never commit
+flowfile_frontend/src-tauri/SIGNING_CHECKLIST.md

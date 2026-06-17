@@ -1,0 +1,9 @@
+# Auto-generated stub for flowfile_frame.kafka — do not edit.
+# Run `make stubs` to regenerate from the Python source.
+from __future__ import annotations
+
+from flowfile_frame.flow_frame import FlowFrame
+
+def get_current_user_id() -> int: ...
+def add_kafka_source(flow_graph, *, connection_name: str, topic_name: str, max_messages: int=100000, start_offset: str='latest', poll_timeout_seconds: float=30.0, value_format: str='json') -> int: ...
+def read_kafka(connection_name: str, *, topic_name: str, max_messages: int=100000, start_offset: str='latest', poll_timeout_seconds: float=30.0, value_format: str='json', flow_graph=None) -> FlowFrame: ...

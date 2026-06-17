@@ -23,6 +23,19 @@ class SelectInputYaml(TypedDict, total=False):
     data_type: str
 
 
+class OutputFieldInfoYaml(TypedDict, total=False):
+    name: str
+    data_type: str
+    default_value: str
+
+
+class OutputFieldConfigYaml(TypedDict, total=False):
+    enabled: bool
+    validation_mode_behavior: str  # "add_missing", "raise_on_missing", or "select_only"
+    fields: list[OutputFieldInfoYaml]
+    validate_data_types: bool  # Enable data type validation
+
+
 class JoinInputsYaml(TypedDict):
     select: list[SelectInputYaml]
 
@@ -75,14 +88,15 @@ class OutputSettingsYaml(TypedDict, total=False):
     table_settings: dict
 
 
-class NodeSelectYaml(TypedDict):
+class NodeSelectYaml(TypedDict, total=False):
     cache_results: bool
     keep_missing: bool
     select_input: list[SelectInputYaml]
     sorted_by: str
+    output_field_config: OutputFieldConfigYaml
 
 
-class NodeJoinYaml(TypedDict):
+class NodeJoinYaml(TypedDict, total=False):
     cache_results: bool
     auto_generate_selection: bool
     verify_integrity: bool
@@ -90,9 +104,10 @@ class NodeJoinYaml(TypedDict):
     auto_keep_all: bool
     auto_keep_right: bool
     auto_keep_left: bool
+    output_field_config: OutputFieldConfigYaml
 
 
-class NodeCrossJoinYaml(TypedDict):
+class NodeCrossJoinYaml(TypedDict, total=False):
     cache_results: bool
     auto_generate_selection: bool
     verify_integrity: bool
@@ -100,9 +115,10 @@ class NodeCrossJoinYaml(TypedDict):
     auto_keep_all: bool
     auto_keep_right: bool
     auto_keep_left: bool
+    output_field_config: OutputFieldConfigYaml
 
 
-class NodeFuzzyMatchYaml(TypedDict):
+class NodeFuzzyMatchYaml(TypedDict, total=False):
     cache_results: bool
     auto_generate_selection: bool
     verify_integrity: bool
@@ -110,8 +126,10 @@ class NodeFuzzyMatchYaml(TypedDict):
     auto_keep_all: bool
     auto_keep_right: bool
     auto_keep_left: bool
+    output_field_config: OutputFieldConfigYaml
 
 
-class NodeOutputYaml(TypedDict):
+class NodeOutputYaml(TypedDict, total=False):
     cache_results: bool
     output_settings: OutputSettingsYaml
+    output_field_config: OutputFieldConfigYaml

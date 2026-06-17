@@ -7,15 +7,12 @@ This package provides all the necessary components for developers to build their
 custom nodes, define their UI, and implement their data processing logic.
 """
 
-# Import the core base class for creating a new node
-# Import the main `Types` object for filtering in ColumnSelector
 from flowfile_core.types import Types
 
 from .custom_node import CustomNodeBase, NodeSettings
-
-# Import all UI components so they can be used directly
 from .ui_components import (
     ActionOption,
+    AvailableArtifacts,
     AvailableSecrets,
     ColumnActionInput,
     ColumnSelector,
@@ -30,7 +27,6 @@ from .ui_components import (
     ToggleSwitch,
 )
 
-# Define the public API of this package
 __all__ = [
     # Core Node Class
     "CustomNodeBase",
@@ -47,6 +43,7 @@ __all__ = [
     "ColumnActionInput",
     "ActionOption",
     "IncomingColumns",
+    "AvailableArtifacts",
     "AvailableSecrets",
     "SecretSelector",
     "Types",

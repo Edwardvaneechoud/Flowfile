@@ -260,7 +260,8 @@ Understanding this design helps you build efficient, maintainable data pipelines
 ## Related Documentation
 
 - **[FlowFrame Operations](../reference/flowframe-operations.md)** - Available transformations and methods
-- **[Expressions](expressions.md)** - Column operations and formula syntax
+- **[Expressions](expressions.md)** - Polars-style column operations
+- **[Formulas in Python](formulas.md)** - Methods that accept Flowfile formula strings
 - **[Joins](../reference/joins.md)** - Combining datasets
 - **[Aggregations](../reference/aggregations.md)** - Group by and summarization
 - **[Visual UI Integration](../reference/visual-ui.md)** - Working with the visual editor

@@ -76,18 +76,16 @@ def ensure_unique(lst: list[str]) -> list[str]:
 
     for item in lst:
         if item in seen:
-            # Increment the version and append the version number
             seen[item] += 1
             new_item = f"{item}_v{seen[item]}"
-            # Ensure the new item is unique by checking for conflicts
             while new_item in seen:
                 seen[new_item] += 1
                 new_item = f"{item}_v{seen[item]}"
             result.append(new_item)
-            seen[new_item] = 1  # Mark the new unique item as seen
+            seen[new_item] = 1
         else:
             result.append(item)
-            seen[item] = 1  # First occurrence of the item
+            seen[item] = 1
 
     return result
 
@@ -98,6 +96,21 @@ def df_from_calamine_xlsx(file_path: str, sheet_name: str, start_row: int = 0, e
         read_options["header_row"] = start_row
     if end_row > 0:
         read_options["n_rows"] = end_row - start_row
-    return pl.read_excel(
+    df = pl.read_excel(
+        source=file_path, engine="calamine", sheet_name=sheet_name, read_options=read_options, raise_if_empty=False
+    )
+    df.columns = ensure_unique(
+        [str(val) for val in next(raw_data_openpyxl(file_path, sheet_name, start_row + 1, end_row))]
+    )
+    return df
+
+
+def test_read_polars():
+    import polars as pl
+    file_path = ("/Users/edwardvanechoud/personal_dev/Flowfile/flowfile_core/"
+                 "tests/support_files/data/excel_file_issue_356.xlsx")
+    sheet_name = "Sheet1"
+    read_options = {'header_row': 1}
+    pl.read_excel(
         source=file_path, engine="calamine", sheet_name=sheet_name, read_options=read_options, raise_if_empty=False
     )

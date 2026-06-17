@@ -1,8 +1,8 @@
 // Cloud storage connection types and interfaces for S3, ADLS, and other cloud providers
 
-export type CloudStorageType = "s3" | "adls";
+export type CloudStorageType = "s3" | "adls" | "gcs";
 
-export const cloudStorageTypes: CloudStorageType[] = ["adls", "s3"];
+export const cloudStorageTypes: CloudStorageType[] = ["adls", "gcs", "s3"];
 
 export type AuthMethod =
   | "access_key"
@@ -11,6 +11,8 @@ export type AuthMethod =
   | "managed_identity"
   | "sas_token"
   | "aws-cli"
+  | "service_account"
+  | "env_vars"
   | "auto";
 
 export interface PythonAuthSettingsInput {
@@ -39,6 +41,11 @@ export interface PythonFullCloudStorageConnection extends PythonAuthSettingsInpu
   azure_tenant_id?: string;
   azure_client_id?: string;
   azure_client_secret?: string;
+  azure_sas_token?: string;
+
+  // Google Cloud Storage
+  gcs_service_account_key?: string;
+  gcs_project_id?: string;
 
   // Common
   endpoint_url?: string;
@@ -59,6 +66,11 @@ export interface FullCloudStorageConnection extends AuthSettingsInput {
   azureTenantId?: string;
   azureClientId?: string;
   azureClientSecret?: string;
+  azureSasToken?: string;
+
+  // Google Cloud Storage
+  gcsServiceAccountKey?: string;
+  gcsProjectId?: string;
 
   // Common
   endpointUrl?: string;
@@ -74,6 +86,7 @@ export interface PythonFullCloudStorageConnectionInterface extends PythonAuthSet
   azure_account_name?: string;
   azure_tenant_id?: string;
   azure_client_id?: string;
+  gcs_project_id?: string;
   endpoint_url?: string;
   verify_ssl: boolean;
 }
@@ -87,6 +100,7 @@ export interface FullCloudStorageConnectionInterface extends AuthSettingsInput {
   azureAccountName?: string;
   azureTenantId?: string;
   azureClientId?: string;
+  gcsProjectId?: string;
   endpointUrl?: string;
   verifySsl: boolean;
 }

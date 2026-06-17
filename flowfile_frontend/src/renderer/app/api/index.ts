@@ -5,18 +5,18 @@ export { NodeApi } from "./node.api";
 export { FileApi } from "./file.api";
 export { SecretsApi } from "./secrets.api";
 export { ExpressionsApi } from "./expressions.api";
+export { CatalogApi } from "./catalog.api";
+export { TemplatesApi } from "./templates.api";
 
-// Re-export legacy function exports for backward compatibility
 export {
-  getCurrentDirectoryContents,
   getDirectoryContents,
-  navigateUp,
-  navigateInto,
-  navigateTo,
-  getCurrentPath,
+  getDefaultPath,
+  getCatalogFlowsDirectory,
   createDirectory,
-  getFileTree,
   getLocalFiles,
+  getParentPath,
+  joinPath,
+  isRootPath,
 } from "./file.api";
 
 export { fetchSecretsApi, addSecretApi, getSecretValueApi, deleteSecretApi } from "./secrets.api";

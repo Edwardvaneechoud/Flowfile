@@ -1,6 +1,7 @@
 # Comprehensive mapping from SQLAlchemy types to Polars types
-from typing import TYPE_CHECKING, Any, Union, cast
-from urllib.parse import quote_plus
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, cast
 
 import polars as pl
 from polars import DataType as PolarsType
@@ -64,69 +65,73 @@ from sqlalchemy.sql.sqltypes import (
 )
 from sqlalchemy.sql.type_api import ExternalType, TypeDecorator, TypeEngine, UserDefinedType, Variant
 
+from shared.sql_utils import SQLALCHEMY_DRIVER_MAP as _shared_SQLALCHEMY_DRIVER_MAP
+from shared.sql_utils import construct_sql_uri as _shared_construct_sql_uri
+from shared.sql_utils import get_sqlalchemy_uri as _shared_get_sqlalchemy_uri
+
 if TYPE_CHECKING:
-    SqlType = Union[
-        type[_Binary],
-        type[ARRAY],
-        type[BIGINT],
-        type[BigInteger],
-        type[BINARY],
-        type[BLOB],
-        type[BOOLEAN],
-        type[Boolean],
-        type[CHAR],
-        type[CLOB],
-        type[Concatenable],
-        type[DATE],
-        type[Date],
-        type[DATETIME],
-        type[DateTime],
-        type[DECIMAL],
-        type[DOUBLE],
-        type[Double],
-        type[DOUBLE_PRECISION],
-        type[Enum],
-        type[FLOAT],
-        type[Float],
-        type[Indexable],
-        type[INT],
-        type[INTEGER],
-        type[Integer],
-        type[Interval],
-        type[JSON],
-        type[LargeBinary],
-        type[MatchType],
-        type[NCHAR],
-        type[NULLTYPE],
-        type[NullType],
-        type[NUMERIC],
-        type[Numeric],
-        type[NVARCHAR],
-        type[PickleType],
-        type[REAL],
-        type[SchemaType],
-        type[SMALLINT],
-        type[SmallInteger],
-        type[String],
-        type[STRINGTYPE],
-        type[TEXT],
-        type[Text],
-        type[TIME],
-        type[Time],
-        type[TIMESTAMP],
-        type[TupleType],
-        type[Unicode],
-        type[UnicodeText],
-        type[UUID],
-        type[Uuid],
-        type[VARBINARY],
-        type[VARCHAR],
-        type[TypeDecorator],
-        type[TypeEngine],
-        type[UserDefinedType],
-        type[Variant],
-        type[ExternalType],
-    ]
+    SqlType = (
+        type[_Binary]
+        | type[ARRAY]
+        | type[BIGINT]
+        | type[BigInteger]
+        | type[BINARY]
+        | type[BLOB]
+        | type[BOOLEAN]
+        | type[Boolean]
+        | type[CHAR]
+        | type[CLOB]
+        | type[Concatenable]
+        | type[DATE]
+        | type[Date]
+        | type[DATETIME]
+        | type[DateTime]
+        | type[DECIMAL]
+        | type[DOUBLE]
+        | type[Double]
+        | type[DOUBLE_PRECISION]
+        | type[Enum]
+        | type[FLOAT]
+        | type[Float]
+        | type[Indexable]
+        | type[INT]
+        | type[INTEGER]
+        | type[Integer]
+        | type[Interval]
+        | type[JSON]
+        | type[LargeBinary]
+        | type[MatchType]
+        | type[NCHAR]
+        | type[NULLTYPE]
+        | type[NullType]
+        | type[NUMERIC]
+        | type[Numeric]
+        | type[NVARCHAR]
+        | type[PickleType]
+        | type[REAL]
+        | type[SchemaType]
+        | type[SMALLINT]
+        | type[SmallInteger]
+        | type[String]
+        | type[STRINGTYPE]
+        | type[TEXT]
+        | type[Text]
+        | type[TIME]
+        | type[Time]
+        | type[TIMESTAMP]
+        | type[TupleType]
+        | type[Unicode]
+        | type[UnicodeText]
+        | type[UUID]
+        | type[Uuid]
+        | type[VARBINARY]
+        | type[VARCHAR]
+        | type[TypeDecorator]
+        | type[TypeEngine]
+        | type[UserDefinedType]
+        | type[Variant]
+        | type[ExternalType]
+    )
 else:
     SqlType = Any
 
@@ -232,7 +237,6 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "tinyint unsigned": pl.UInt8,
     "mediumint unsigned": pl.UInt32,
     "year": pl.Int16,
-
     # --- Floats & Decimals ---
     "numeric": pl.Decimal,
     "decimal": pl.Decimal,
@@ -247,12 +251,10 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "double precision": pl.Float64,
     "binary_float": pl.Float32,  # Oracle
     "binary_double": pl.Float64,  # Oracle
-
     # --- Booleans ---
     "boolean": pl.Boolean,
     "bool": pl.Boolean,
     "bit": pl.Boolean,  # Note: PostgreSQL 'bit' is varying, but MSSQL/MySQL 'bit' is boolean. Defaulting to Bool.
-
     # --- Strings / Text ---
     "varchar": pl.Utf8,
     "varchar2": pl.Utf8,  # Oracle
@@ -279,7 +281,6 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "xmltype": pl.Utf8,
     "json": pl.Utf8,
     "jsonb": pl.Utf8,
-
     # --- Network / Specialized Strings (Postgres) ---
     "uuid": pl.Utf8,
     "cidr": pl.Utf8,
@@ -292,7 +293,6 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "geography": pl.Utf8,
     "hierarchyid": pl.Utf8,
     "bit varying": pl.Utf8,
-
     # --- Dates & Times ---
     "date": pl.Date,
     "datetime": pl.Datetime,
@@ -306,12 +306,10 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "time": pl.Time,
     "time without time zone": pl.Time,
     "time with time zone": pl.Time,
-
     # --- Durations / Intervals ---
     "interval": pl.Duration,
     "interval year to month": pl.Duration,  # Oracle
     "interval day to second": pl.Duration,  # Oracle
-
     # --- Binary ---
     "bytea": pl.Binary,  # Postgres
     "binary": pl.Binary,
@@ -324,7 +322,6 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "long raw": pl.Binary,  # Oracle
     "bfile": pl.Binary,  # Oracle
     "image": pl.Binary,  # MSSQL
-
     # --- Other ---
     "null": None,
     "sql_variant": pl.Object,
@@ -351,13 +348,11 @@ def get_polars_type(sqlalchemy_type: SqlType | str):
         The corresponding Polars data type, or None if no mapping exists
     """
     if isinstance(sqlalchemy_type, type):
-        # For SQLAlchemy type classes
         return sqlalchemy_to_polars.get(cast(SqlType, sqlalchemy_type), pl.Utf8)
     elif isinstance(sqlalchemy_type, str):
         # For string type names (lowercase for case-insensitive matching)
         return sql_type_name_to_polars.get(sqlalchemy_type.lower(), pl.Utf8)
     else:
-        # For SQLAlchemy type instances
         instance_type = type(sqlalchemy_type)
         return sqlalchemy_to_polars.get(cast(SqlType, instance_type), pl.Utf8)
 
@@ -370,10 +365,14 @@ def construct_sql_uri(
     password: SecretStr | None = None,
     database: str | None = None,
     url: str | None = None,
+    ssl_enabled: bool = False,
+    connect_timeout: int | None = None,
     **kwargs,
 ) -> str:
     """
     Constructs a SQL URI string from the provided parameters.
+
+    Thin wrapper around shared.sql_utils.construct_sql_uri that unwraps SecretStr passwords.
 
     Args:
         database_type: Database type (postgresql, mysql, sqlite, etc.)
@@ -383,6 +382,8 @@ def construct_sql_uri(
         password: Database password as SecretStr
         database: Database name
         url: Complete database URL (overrides other parameters if provided)
+        ssl_enabled: Adds sslmode=require for postgres-family databases
+        connect_timeout: Connection timeout in seconds (postgres-family only)
         **kwargs: Additional connection parameters
 
     Returns:
@@ -391,43 +392,21 @@ def construct_sql_uri(
     Raises:
         ValueError: If insufficient information is provided
     """
-    # If URL is explicitly provided, return it directly
-    if url:
-        return url
+    password_str = password.get_secret_value() if password else None
+    return _shared_construct_sql_uri(
+        database_type=database_type,
+        host=host,
+        port=port,
+        username=username,
+        password=password_str,
+        database=database,
+        url=url,
+        ssl_enabled=ssl_enabled,
+        connect_timeout=connect_timeout,
+        **kwargs,
+    )
 
-    # For SQLite, we handle differently since it uses a file path
-    if database_type.lower() == "sqlite":
-        # For SQLite, database is the path to the file
-        path = database or "./database.db"
-        return f"sqlite:///{path}"
 
-    # Validate that minimum required fields are present for other databases
-    if not host:
-        raise ValueError("Host is required to create a URI")
-
-    # Create credential part if username is provided
-    credentials = ""
-    if username:
-        credentials = username
-        if password:
-            # Get raw password from SecretStr and encode it
-            password_value = password.get_secret_value()
-            encoded_password = quote_plus(password_value)
-            credentials += f":{encoded_password}"
-        credentials += "@"
-
-    # Add port if specified
-    port_section = f":{port}" if port else ""
-
-    # Create base URI
-    if database:
-        base_uri = f"{database_type}://{credentials}{host}{port_section}/{database}"
-    else:
-        base_uri = f"{database_type}://{credentials}{host}{port_section}"
-
-    # Add any additional connection parameters
-    if kwargs:
-        params = "&".join(f"{key}={quote_plus(str(value))}" for key, value in kwargs.items())
-        base_uri += f"?{params}"
-
-    return base_uri
+# Re-export shared SQL utilities so existing imports from this module continue to work
+SQLALCHEMY_DRIVER_MAP = _shared_SQLALCHEMY_DRIVER_MAP
+get_sqlalchemy_uri = _shared_get_sqlalchemy_uri

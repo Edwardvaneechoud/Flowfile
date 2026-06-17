@@ -13,6 +13,7 @@ import {
   acceptCompletion,
 } from "@codemirror/autocomplete";
 import { indentMore, indentLess } from "@codemirror/commands";
+import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import type { DesignerSection } from "../types";
 import { toSnakeCase } from "./useCodeGeneration";
 
@@ -254,7 +255,6 @@ const secretStrMethods = [
 ];
 
 export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
-  // Helper to find SecretStr typed variables in the code
   function findSecretStrVariables(doc: string): string[] {
     const variables: string[] = [];
     // Match patterns like: var_name: SecretStr = ... or var_name: SecretStr=...
@@ -266,13 +266,11 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
     return variables;
   }
 
-  // Dynamic autocompletion based on schema
   function schemaCompletions(context: CompletionContext): CompletionResult | null {
     const beforeCursor = context.state.doc.sliceString(0, context.pos);
     const fullDoc = context.state.doc.toString();
     const sections = getSections();
 
-    // Check for SecretStr variable method completion (e.g., my_secret.)
     const secretStrVars = findSecretStrVariables(fullDoc);
     for (const varName of secretStrVars) {
       const varMethodMatch = beforeCursor.match(new RegExp(`\\b${varName}\\.(\\w*)$`));
@@ -286,7 +284,6 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       }
     }
 
-    // Check for SecretStr method completion (after .secret_value.)
     const secretStrMethodMatch = beforeCursor.match(/\.secret_value\.(\w*)$/);
     if (secretStrMethodMatch) {
       const typed = secretStrMethodMatch[1];
@@ -297,7 +294,6 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       };
     }
 
-    // Check for ".value" or ".secret_value" completion after a component field
     for (const section of sections) {
       const sectionName = section.name || toSnakeCase(section.title || "section");
       for (const comp of section.components) {
@@ -338,7 +334,6 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       }
     }
 
-    // Check for component field completion
     for (const section of sections) {
       const sectionName = section.name || toSnakeCase(section.title || "section");
       const sectionMatch = beforeCursor.match(
@@ -365,7 +360,6 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       }
     }
 
-    // Check for section completion
     const settingsMatch = beforeCursor.match(/self\.settings_schema\.(\w*)$/);
     if (settingsMatch) {
       const typed = settingsMatch[1];
@@ -387,7 +381,6 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       };
     }
 
-    // Check for "self."
     const selfDotMatch = beforeCursor.match(/self\.(\w*)$/);
     if (selfDotMatch) {
       const typed = selfDotMatch[1];
@@ -398,7 +391,6 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       };
     }
 
-    // Check for LazyFrame method completion after a dot
     const lfMethodMatch = beforeCursor.match(/(\w+)\.(\w*)$/);
     if (lfMethodMatch) {
       const typed = lfMethodMatch[2];
@@ -409,7 +401,6 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       };
     }
 
-    // Common Polars completions
     const wordMatch = context.matchBefore(/\w+/);
     if (!wordMatch && !context.explicit) return null;
 
@@ -420,7 +411,6 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
     };
   }
 
-  // Tab keymap for accepting completions and indentation
   const tabKeymap = keymap.of([
     {
       key: "Tab",
@@ -439,7 +429,6 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
     },
   ]);
 
-  // CodeMirror extensions for editing
   // Note: Prec.highest ensures completion keybindings take priority over other keymaps
   const extensions: Extension[] = [
     python(),
@@ -447,13 +436,13 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
     EditorState.tabSize.of(4),
     autocompletion({
       override: [schemaCompletions],
-      defaultKeymap: true, // Enable default keymap for arrow navigation
+      defaultKeymap: true,
       closeOnBlur: false,
     }),
-    Prec.highest(tabKeymap), // Tab keymap with highest precedence
+    bodyTooltips(),
+    Prec.highest(tabKeymap),
   ];
 
-  // Read-only CodeMirror extensions for code preview
   const readOnlyExtensions: Extension[] = [
     python(),
     oneDark,

@@ -25,14 +25,31 @@ services:
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-flowfile-dev-secret-change-in-production}
+      # Internal token for kernel → Core authentication (shared with kernel containers)
+      - FLOWFILE_INTERNAL_TOKEN=${FLOWFILE_INTERNAL_TOKEN:-flowfile-dev-internal-token-change-in-production}
       # Master key for encrypting secrets - if not set, setup screen will prompt to configure
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
+      - FLOWFILE_SCHEDULER_ENABLED=true
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
+      # Kernel image overrides — empty string means "use the registry default"
+      # (the manager treats unset and empty the same). Set on the host (or in
+      # an .env file) to point core at a locally-built or alternative image,
+      # e.g. FLOWFILE_KERNEL_IMAGE=flowfile-kernel-base:local for CI / dev.
+      - FLOWFILE_KERNEL_IMAGE=${FLOWFILE_KERNEL_IMAGE:-}
+      - FLOWFILE_KERNEL_IMAGE_BASE=${FLOWFILE_KERNEL_IMAGE_BASE:-}
+      - FLOWFILE_KERNEL_IMAGE_ML=${FLOWFILE_KERNEL_IMAGE_ML:-}
+      - FLOWFILE_KERNEL_IMAGE_LITE=${FLOWFILE_KERNEL_IMAGE_LITE:-}
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
+      # SECURITY: The Docker socket gives this container the ability to
+      # create and manage other containers on the host (used for kernel
+      # management).  In production, consider using a Docker socket proxy
+      # (e.g. tecnativa/docker-socket-proxy) to restrict API access to
+      # only the endpoints needed (containers, volumes).
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./flowfile_data:/app/user_data
       - flowfile-internal-storage:/app/internal_storage
       - ./saved_flows:/app/flowfile_core/saved_flows
@@ -61,9 +78,58 @@ services:
     networks:
       - flowfile-network
 
+  # Build-only service: produces the flowfile-kernel-base image used by kernel
+  # containers.  Not started by `docker compose up` — build with:
+  #   docker compose --profile kernel build flowfile-kernel
+  # Set FLOWFILE_KERNEL_IMAGE on flowfile-core to point at this local tag,
+  # e.g. FLOWFILE_KERNEL_IMAGE=flowfile-kernel-base:local. Otherwise core
+  # defaults to pulling edwardvaneechoud/flowfile-kernel-base:<version>.
+  flowfile-kernel:
+    build:
+      context: kernel_runtime
+      dockerfile: Dockerfile
+    image: flowfile-kernel-base:local
+    entrypoint: ["true"]
+    restart: "no"
+    profiles:
+      - kernel
+
+  # ML flavour: same Dockerfile with EXTRAS=ml. Build with:
+  #   docker compose --profile kernel build flowfile-kernel-ml
+  flowfile-kernel-ml:
+    build:
+      context: kernel_runtime
+      dockerfile: Dockerfile
+      args:
+        EXTRAS: ml
+    image: flowfile-kernel-ml:local
+    entrypoint: ["true"]
+    restart: "no"
+    profiles:
+      - kernel
+
+  # Lite flavour: same baked packages as base, but only the kernel-critical
+  # pins (polars, pyarrow, numpy, fastapi, uvicorn, httpx, cloudpickle, joblib)
+  # are kept in /opt/constraints.txt. Everything else floats so user-installed
+  # packages with their own dep trees (e.g. flowfile) can resolve freely.
+  # Build with:  docker compose --profile kernel build flowfile-kernel-lite
+  flowfile-kernel-lite:
+    build:
+      context: kernel_runtime
+      dockerfile: Dockerfile
+      args:
+        SLIM_CONSTRAINTS: "true"
+    image: flowfile-kernel-lite:local
+    entrypoint: ["true"]
+    restart: "no"
+    profiles:
+      - kernel
+
 networks:
   flowfile-network:
     driver: bridge
+    # Fixed name so kernel containers (created via Docker API) can join it
+    name: flowfile-network
 
 volumes:
   flowfile-internal-storage:

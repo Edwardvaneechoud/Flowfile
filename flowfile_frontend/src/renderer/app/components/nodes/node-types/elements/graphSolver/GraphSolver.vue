@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeGraphSolver" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeGraphSolver">
+    <generic-node-settings
+      v-model="nodeGraphSolver"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <ul class="listbox">
           <li
@@ -63,12 +67,18 @@
 import { ref, onMounted, onUnmounted, computed, nextTick, defineProps } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { GraphSolverInput, NodeGraphSolver } from "../../../baseNode/nodeInput";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodeGraphSolver = ref<NodeGraphSolver | null>(null);
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeGraphSolver,
+});
 const showContextMenu = ref(false);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
@@ -83,8 +93,6 @@ const graphSolverInput = ref<GraphSolverInput>({
   col_to: "",
   output_column_name: "group_column",
 });
-
-const nodeGraphSolver = ref<NodeGraphSolver | null>(null);
 
 defineProps({ nodeId: { type: Number, required: true } });
 
@@ -115,10 +123,8 @@ const onDrop = (index: number) => {
 
 const onDropInSection = (section: "from" | "to") => {
   if (draggedColumnName.value) {
-    // Remove column from any existing assignments
     removeColumnIfExists(draggedColumnName.value);
 
-    // Assign the dragged column to the appropriate section
     if (section === "from" && graphSolverInput.value.col_from !== draggedColumnName.value) {
       graphSolverInput.value.col_from = draggedColumnName.value;
     } else if (section === "to") {
@@ -212,15 +218,10 @@ const closeContextMenu = () => {
   showContextMenu.value = false;
 };
 
-const pushNodeData = async () => {
-  if (nodeGraphSolver.value) {
-    nodeStore.updateSettings(nodeGraphSolver);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

@@ -1,11 +1,28 @@
-from base64 import decodebytes
-from typing import Any, Literal
+from base64 import b64decode, b64encode
+from typing import Annotated, Any, Literal
 
 from pl_fuzzy_frame_match import FuzzyMapping
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
 
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
+from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
+
+
+# Custom type for bytes that serializes to/from base64 string in JSON
+def _decode_bytes(v: Any) -> bytes:
+    if isinstance(v, bytes):
+        return v
+    if isinstance(v, str):
+        return b64decode(v)
+    raise ValueError(f"Expected bytes or base64 string, got {type(v)}")
+
+
+Base64Bytes = Annotated[
+    bytes,
+    BeforeValidator(_decode_bytes),
+    PlainSerializer(lambda x: b64encode(x).decode("ascii"), return_type=str),
+]
 
 OperationType = Literal[
     "store",
@@ -16,17 +33,21 @@ OperationType = Literal[
     "store_sample",
     "write_to_database",
     "write_to_cloud_storage",
+    "write_parquet",
+    "write_delta",
+    "merge_delta",
 ]
 ResultType = Literal["polars", "other"]
 
 
 class PolarsOperation(BaseModel):
-    operation: bytes
+    operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
     flowfile_flow_id: int | None = 1
     flowfile_node_id: int | str | None = -1
 
     def polars_serializable_object(self):
-        return decodebytes(self.operation)
+        # Operation is raw bytes (auto-decoded from base64 if received as JSON)
+        return self.operation
 
 
 class PolarsScript(PolarsOperation):
@@ -40,7 +61,7 @@ class PolarsScriptSample(PolarsScript):
 
 
 class PolarsScriptWrite(BaseModel):
-    operation: bytes
+    operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
     data_type: str
     path: str
     write_mode: str
@@ -50,14 +71,16 @@ class PolarsScriptWrite(BaseModel):
     flowfile_node_id: int | str | None = -1
 
     def polars_serializable_object(self):
-        return decodebytes(self.operation)
+        # Operation is raw bytes (auto-decoded from base64 if received as JSON)
+        return self.operation
 
 
 class DatabaseScriptWrite(DatabaseWriteSettings):
-    operation: bytes
+    operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
 
     def polars_serializable_object(self):
-        return decodebytes(self.operation)
+        # Operation is raw bytes (auto-decoded from base64 if received as JSON)
+        return self.operation
 
     def get_database_write_settings(self) -> DatabaseWriteSettings:
         """
@@ -75,10 +98,11 @@ class DatabaseScriptWrite(DatabaseWriteSettings):
 
 
 class CloudStorageScriptWrite(CloudStorageWriteSettings):
-    operation: bytes
+    operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
 
     def polars_serializable_object(self):
-        return decodebytes(self.operation)
+        # Operation is raw bytes (auto-decoded from base64 if received as JSON)
+        return self.operation
 
     def get_cloud_storage_write_settings(self) -> CloudStorageWriteSettings:
         """
@@ -104,12 +128,48 @@ class FuzzyJoinInput(BaseModel):
     flowfile_node_id: int | str | None = -1
 
 
+class TrainModelInput(BaseModel):
+    """Input for the /train_ml_model endpoint.
+
+    Core sends a serialised LazyFrame plus the training spec. The worker writes
+    the resulting model JSON to *staging_path* and reports back ``{sha256, size_bytes}``
+    via the ``Status.results`` field. Core then calls ``ArtifactService.finalize_upload``.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    task_id: str | None = None
+    cache_dir: str | None = None
+    df_operation: PolarsOperation
+    model_type: str
+    target_column: str
+    feature_columns: list[str]
+    params: dict[str, Any] = Field(default_factory=dict)
+    staging_path: str  # absolute path under <staging_root> where the worker writes the model bytes
+    flowfile_flow_id: int | None = 1
+    flowfile_node_id: int | str | None = -1
+
+
+class ApplyModelInput(BaseModel):
+    """Input for the /apply_ml_model endpoint."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    task_id: str | None = None
+    cache_dir: str | None = None
+    df_operation: PolarsOperation
+    model_path: str  # absolute path of the trained-model artifact on the shared volume
+    output_column: str = "prediction"
+    flowfile_flow_id: int | None = 1
+    flowfile_node_id: int | str | None = -1
+
+
 class Status(BaseModel):
     background_task_id: str
     status: Literal["Processing", "Completed", "Error", "Unknown Error", "Starting"]  # Type alias for status
     file_ref: str
     progress: int | None = 0
-    error_message: str | None = None  # Add error_message field
+    error_message: str | None = None
     results: Any | None = None
     result_type: ResultType | None = "polars"
 
@@ -120,5 +180,173 @@ class Status(BaseModel):
 class RawLogInput(BaseModel):
     flowfile_flow_id: int
     log_message: str
-    log_type: Literal["INFO", "ERROR"]
+    log_type: Literal["INFO", "WARNING", "ERROR"]
+    node_id: int | None = None
     extra: dict | None = None
+
+
+class ColumnSchema(BaseModel):
+    name: str
+    dtype: str
+
+
+class CatalogMaterializeRequest(BaseModel):
+    source_file_path: str
+    table_name: str | None = None
+
+
+class CatalogMaterializeResponse(BaseModel):
+    table_path: str
+    column_schema: list[ColumnSchema]
+    row_count: int
+    column_count: int
+    size_bytes: int
+
+
+class CatalogOptimizeRequest(BaseModel):
+    table_path: str  # Bare table directory name (no path separators)
+    z_order_columns: list[str] | None = None
+
+
+class CatalogOptimizeResponse(BaseModel):
+    metrics: dict = {}
+    size_bytes: int | None = None
+
+
+class CatalogVacuumRequest(BaseModel):
+    table_path: str  # Bare table directory name (no path separators)
+    retention_hours: int = 168
+    dry_run: bool = True
+
+
+class CatalogVacuumResponse(BaseModel):
+    files_removed: list[str] = []
+    file_count: int = 0
+    size_bytes: int | None = None
+
+
+class TableMetadataRequest(BaseModel):
+    table_path: str  # Bare table directory name (no path separators)
+
+
+class TableMetadataResponse(BaseModel):
+    column_schema: list[ColumnSchema]
+    row_count: int
+    column_count: int
+    size_bytes: int
+
+
+class DeltaHistoryRequest(BaseModel):
+    table_path: str  # Bare table directory name (no path separators)
+    limit: int | None = None
+
+
+class DeltaHistoryResponse(BaseModel):
+    current_version: int
+    history: list[DeltaVersionCommit]
+
+
+class DeltaVersionPreviewRequest(BaseModel):
+    table_path: str  # Bare table directory name (no path separators)
+    version: int
+    n_rows: int = 100
+
+
+class DeltaVersionPreviewResponse(BaseModel):
+    version: int
+    columns: list[str]
+    dtypes: list[str]
+    rows: list[list]
+    total_rows: int
+
+
+class SqlQueryRequest(BaseModel):
+    query: str
+    tables: dict[str, str]  # mapping of logical table name -> directory name
+    max_rows: int = 10_000
+    virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename under catalog_virtual_results
+
+
+class SqlQueryResponse(BaseModel):
+    columns: list[str] = Field(default_factory=list)
+    dtypes: list[str] = Field(default_factory=list)
+    rows: list[list] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    execution_time_ms: float = 0.0
+    used_tables: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class ResolveVirtualTableRequest(BaseModel):
+    """Ask the worker to materialise a flow-virtual table from a serialised plan."""
+
+    table_id: int
+    plan_bytes: Base64Bytes
+    source_versions_hash: str
+
+
+class ResolveVirtualTableResponse(BaseModel):
+    ipc_path: str
+    mtime: float
+    row_count: int
+
+
+class VizWorkerSource(BaseModel):
+    """Source descriptor for a viz session.
+
+    The ``session_key`` is the cache key in ``VizSessionRegistry``; core builds
+    it deterministically (table_id+updated_at, sql hash, etc.) so successive
+    requests against the same source skip the load step.
+    """
+
+    kind: Literal["physical", "sql", "ipc_path"]
+    session_key: str
+    table_path: str | None = None  # bare directory name for kind="physical"
+    sql_query: str | None = None
+    tables: dict[str, str] | None = None  # logical name -> directory name (kind="sql")
+    virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename (kind="sql")
+    ipc_path: str | None = None  # bare filename under catalog_virtual_results_directory
+    mtime: float | None = None  # cache file mtime; used in session-key contract
+
+
+class VisualizeQueryRequest(BaseModel):
+    source: VizWorkerSource
+    payload: dict
+    max_rows: int = 100_000
+
+
+class VisualizeQueryResponse(BaseModel):
+    rows: list[dict] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    elapsed_ms: float = 0.0
+    cache_hit: bool = False
+    error: str | None = None
+
+
+class VisualizeFieldsRequest(BaseModel):
+    source: VizWorkerSource
+
+
+class VisualizeFieldsResponse(BaseModel):
+    fields: list[dict] = Field(default_factory=list)
+    cache_hit: bool = False
+    error: str | None = None
+
+
+class VisualizeColumnStatsRequest(BaseModel):
+    source: VizWorkerSource
+    column: str
+    limit: int = 100
+
+
+class VisualizeColumnStatsResponse(BaseModel):
+    dtype: str = ""
+    values: list = Field(default_factory=list)
+    truncated: bool = False
+    distinct_count: int | None = None
+    min: object | None = None
+    max: object | None = None
+    cache_hit: bool = False
+    error: str | None = None

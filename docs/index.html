@@ -115,7 +115,7 @@
 
         .hero-logo {
             width: 80px;
-            height: 80px;
+            height: auto;
             margin-bottom: 1.5rem;
             filter: drop-shadow(0 10px 30px rgba(0,0,0,0.2));
             animation: pulse 3s ease-in-out infinite;
@@ -508,11 +508,6 @@
 
         /* Tablet styles */
         @media (min-width: 640px) {
-            .hero-logo {
-                width: 100px;
-                height: 100px;
-            }
-
             .hero-title {
                 font-size: 2.5rem;
             }
@@ -563,8 +558,6 @@
             }
 
             .hero-logo {
-                width: 120px;
-                height: 120px;
                 margin-bottom: 2rem;
             }
 
@@ -588,6 +581,11 @@
             .features-grid {
                 grid-template-columns: repeat(3, 1fr);
                 gap: 2rem;
+            }
+
+            /* When there are 7 cards, the 7th lands alone on row 3 — push it to the middle column. */
+            .features-grid > :nth-child(7):last-child {
+                grid-column: 2;
             }
 
             .feature-card {
@@ -733,8 +731,8 @@
             <img src="assets/images/logo.png" alt="Flowfile Logo" class="hero-logo fade-in">
             <h1 class="hero-title fade-in">Flowfile</h1>
             <p class="hero-subtitle fade-in">
-                A visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes.
-                Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.
+                An open-source data platform with a visual pipeline builder, AI assistant, data catalog, Delta Lake storage,
+                scheduling, Kafka ingestion, sandboxed Python execution, and a Polars-compatible API — all in a single pip install.
             </p>
             <div class="hero-buttons fade-in">
                 <a href="quickstart.html" class="hero-button hero-button-primary">
@@ -761,70 +759,78 @@
 
     <!-- Interface Preview -->
     <div class="interface-preview">
-        <img src="assets/images/generic_screenshot.png" alt="Flowfile Interface" loading="lazy">
+        <img src="assets/images/ai/ai-overview.gif" alt="Flowfile AI Assistant in action" loading="lazy">
     </div>
 
     <!-- Features Section -->
     <section class="features-section">
         <h2 class="section-title">Why Flowfile?</h2>
-        <p class="section-subtitle">Build powerful data pipelines without writing code, powered by the speed of Polars</p>
+        <p class="section-subtitle">A complete data platform — visual pipeline builder, catalog, scheduling, and more — powered by Polars</p>
 
         <div class="features-grid">
+            <a href="ai/index.html" class="feature-card fade-in feature-link">
+                <div class="feature-icon">✨</div>
+                <h3 class="feature-title">AI Assistant</h3>
+                <p class="feature-description">
+                    Build pipelines from natural-language prompts, ask questions about a flow you didn't write,
+                    and turn failed runs into one-paragraph diagnoses. Bring your own provider — Anthropic, OpenAI,
+                    Google, Groq, OpenRouter, or a local Ollama.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
             <a href="users/visual-editor/building-flows.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">🎨</div>
-                <h3 class="feature-title">Visual Pipeline Design</h3>
+                <h3 class="feature-title">Visual Pipeline Builder</h3>
                 <p class="feature-description">
-                    Drag and drop nodes to create complex data transformations.
+                    30+ nodes for joins, filters, aggregations, fuzzy matching, pivots, and more.
                     See your data flow in real-time with instant previews at each step.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
 
-            <a href="for-developers/architecture.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">⚡</div>
-                <h3 class="feature-title">Blazing Fast Performance</h3>
+            <a href="users/visual-editor/catalog.html" class="feature-card fade-in feature-link">
+                <div class="feature-icon">📚</div>
+                <h3 class="feature-title">Data Catalog & Delta Lake</h3>
                 <p class="feature-description">
-                    Built on Polars for lightning-fast data processing.
-                    Handle millions of rows with ease using optimized columnar operations.
+                    Every table stored as Delta Lake with version history, time travel, and merge/upsert support. Track lineage, runs, and artifacts in one place.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
+            <a href="users/visual-editor/schedules.html" class="feature-card fade-in feature-link">
+                <div class="feature-icon">⏰</div>
+                <h3 class="feature-title">Scheduling & Triggers</h3>
+                <p class="feature-description">
+                    Run flows on intervals or trigger them when catalog tables update.
+                    Built into the catalog — not a separate orchestration tool.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
+            <a href="users/visual-editor/connections.html" class="feature-card fade-in feature-link">
+                <div class="feature-icon">📡</div>
+                <h3 class="feature-title">Kafka & Cloud Storage</h3>
+                <p class="feature-description">
+                    Ingest from Kafka/Redpanda as a canvas node. Read and write to S3, Azure Data Lake, and GCS. Connect to PostgreSQL, MySQL, and more.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
+            <a href="users/visual-editor/kernels.html" class="feature-card fade-in feature-link">
+                <div class="feature-icon">🐍</div>
+                <h3 class="feature-title">Sandboxed Python</h3>
+                <p class="feature-description">
+                    Run arbitrary Python code in isolated Docker containers. Use any library — matplotlib, scikit-learn, or your own — output flows back into the pipeline.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
 
             <a href="users/visual-editor/tutorials/code-generator.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">🔄</div>
-                <h3 class="feature-title">Flow to Code</h3>
+                <h3 class="feature-title">Code Generation & Python API</h3>
                 <p class="feature-description">
-                    Export your visual flows as Python/Polars code.
-                    Deploy workflows anywhere without Flowfile dependencies.
-                </p>
-                <span class="feature-arrow">→</span>
-            </a>
-
-            <a href="users/visual-editor/tutorials/database-connectivity.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">🔌</div>
-                <h3 class="feature-title">Database Integration</h3>
-                <p class="feature-description">
-                    Connect to PostgreSQL, MySQL, and more.
-                    Read, transform, and write data seamlessly between databases and files.
-                </p>
-                <span class="feature-arrow">→</span>
-            </a>
-
-            <a href="users/python-api/tutorials/flowfile_frame_api.html" class="feature-card fade-in feature-link">
-                <div class="feature-icon">🐍</div>
-                <h3 class="feature-title">Code to Flow</h3>
-                <p class="feature-description">
-                    Use the FlowFrame API to build pipelines programmatically.
-                    Visualize your code as a flow graph instantly.
-                </p>
-                <span class="feature-arrow">→</span>
-            </a>
-
-            <a href="users/python-api/" class="feature-card fade-in feature-link">
-                <div class="feature-icon">👩‍💻</div>
-                <h3 class="feature-title">Python API</h3>
-                <p class="feature-description">
-                    Full Python API with Polars compatibility. Build pipelines programmatically and seamlessly switch between code and visual editing.
+                    Export visual flows as Python/Polars scripts. Or build pipelines programmatically with a Polars-compatible API and visualize them on the canvas.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>

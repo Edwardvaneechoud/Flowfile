@@ -1,4 +1,6 @@
 import ast
+import base64
+import re
 import textwrap
 import time
 from collections.abc import Callable
@@ -31,24 +33,19 @@ def remove_comments_and_docstrings(source: str) -> str:
         while i < len(line):
             char = line[i]
 
-            # Handle string boundaries
             if char in ('"', "'"):
-                # Check for escaped quotes
                 if i > 0 and line[i - 1] == "\\":
                     result.append(char)
                     i += 1
                     continue
 
                 if not in_string:
-                    # Check if it's the start of a string
                     in_string = True
                     string_char = char
                 elif string_char == char:
-                    # Check if it's the end of a string
                     in_string = False
                     string_char = None
 
-            # Only process comment characters outside strings
             elif char == "#" and not in_string:
                 break
 
@@ -57,11 +54,9 @@ def remove_comments_and_docstrings(source: str) -> str:
 
         return "".join(result).rstrip()
 
-    # First pass: handle comments
     lines = [remove_comments_from_line(line) for line in source.splitlines()]
     source = "\n".join(line for line in lines if line.strip())
 
-    # Second pass: handle docstrings using AST
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -69,7 +64,6 @@ def remove_comments_and_docstrings(source: str) -> str:
 
     class DocstringRemover(ast.NodeTransformer):
         def visit_Module(self, node):
-            # Remove module-level docstrings
             while (
                 node.body
                 and isinstance(node.body[0], ast.Expr)
@@ -80,7 +74,6 @@ def remove_comments_and_docstrings(source: str) -> str:
             return self.generic_visit(node)
 
         def visit_FunctionDef(self, node):
-            # Remove function docstrings
             if (
                 node.body
                 and isinstance(node.body[0], ast.Expr)
@@ -91,7 +84,6 @@ def remove_comments_and_docstrings(source: str) -> str:
             return self.generic_visit(node)
 
         def visit_ClassDef(self, node):
-            # Remove class docstrings
             if (
                 node.body
                 and isinstance(node.body[0], ast.Expr)
@@ -102,7 +94,6 @@ def remove_comments_and_docstrings(source: str) -> str:
             return self.generic_visit(node)
 
         def visit_AsyncFunctionDef(self, node):
-            # Remove async function docstrings
             if (
                 node.body
                 and isinstance(node.body[0], ast.Expr)
@@ -113,8 +104,7 @@ def remove_comments_and_docstrings(source: str) -> str:
             return self.generic_visit(node)
 
         def visit_Expr(self, node):
-            # Remove standalone string literals
-            if isinstance(node.value, (ast.Str, ast.Constant)) and isinstance(getattr(node.value, "value", None), str):
+            if isinstance(node.value, ast.Str | ast.Constant) and isinstance(getattr(node.value, "value", None), str):
                 return None
             return self.generic_visit(node)
 
@@ -122,7 +112,6 @@ def remove_comments_and_docstrings(source: str) -> str:
         tree = DocstringRemover().visit(tree)
         ast.fix_missing_locations(tree)
         result = ast.unparse(tree)
-        # Remove empty lines
         return "\n".join(line for line in result.splitlines() if line.strip())
     except Exception:
         return source
@@ -138,8 +127,10 @@ class PolarsCodeParser:
         import datetime
 
         self.safe_globals = {
+            "__builtins__": {},
             # Polars functionality
             "pl": pl,
+            "cs": pl.selectors,
             "col": pl.col,
             "lit": pl.lit,
             "expr": pl.expr,
@@ -153,6 +144,8 @@ class PolarsCodeParser:
             "UInt16": pl.UInt16,
             "UInt32": pl.UInt32,
             "UInt64": pl.UInt64,
+            "UInt128": pl.UInt128,
+            "Float16": pl.Float16,
             "Float32": pl.Float32,
             "Float64": pl.Float64,
             "Boolean": pl.Boolean,
@@ -190,6 +183,7 @@ class PolarsCodeParser:
             "None": None,
             "time": time,
             "BytesIO": BytesIO,
+            "base64": base64,
             "datetime": datetime,
         }
 
@@ -198,26 +192,49 @@ class PolarsCodeParser:
         """
         Validate code for security concerns before execution.
         """
+        # Blocked function names that can be used to escape the sandbox
+        _blocked_functions = {
+            "exec",
+            "eval",
+            "compile",
+            "__import__",
+            "globals",
+            "locals",
+            "getattr",
+            "setattr",
+            "delattr",
+            "vars",
+            "dir",
+            "open",
+            "breakpoint",
+            "input",
+            "memoryview",
+            "super",
+            "classmethod",
+            "staticmethod",
+            "property",
+        }
         try:
             tree = ast.parse(code)
             for node in ast.walk(tree):
-                # Block imports
-                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.Import | ast.ImportFrom):
                     raise ValueError("Import statements are not allowed")
 
-                # Block exec/eval
                 if isinstance(node, ast.Call):
                     if isinstance(node.func, ast.Name):
-                        if node.func.id in {"exec", "eval", "compile", "__import__"}:
+                        if node.func.id in _blocked_functions:
                             raise ValueError(f"Function '{node.func.id}' is not allowed")
 
-                # Block access to system attributes
                 if isinstance(node, ast.Attribute):
                     if node.attr.startswith("__"):
                         raise ValueError(f"Access to '{node.attr}' is not allowed")
 
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    if re.search(r"__\w+__", node.value):
+                        raise ValueError("Strings containing dunder patterns are not allowed")
+
         except SyntaxError as e:
-            raise ValueError(f"Invalid Python syntax: {str(e)}")
+            raise ValueError(f"Invalid Python syntax: {str(e)}") from e
 
     def _wrap_in_function(self, code: str, num_inputs: int = 1) -> str:
         """
@@ -233,7 +250,6 @@ class PolarsCodeParser:
         # Dedent the code first to handle various indentation styles
         code = textwrap.dedent(code).strip()
 
-        # Create appropriate function signature based on number of inputs
         if num_inputs == 0:
             function_def = "def _transform():\n"
         elif num_inputs == 1:
@@ -242,16 +258,12 @@ class PolarsCodeParser:
             params = ", ".join([f"input_df_{i+1}" for i in range(num_inputs)])
             function_def = f"def _transform({params}):\n"
 
-        # Handle single line expressions
         if "\n" not in code:
-            # For expressions that should return directly
             if any(code.startswith(prefix) for prefix in ["pl.", "col(", "input_df", "expr("]):
                 return function_def + f"    return {code}"
-            # For assignments
             else:
                 return function_def + f"    {code}\n    return output_df"
 
-        # For multi-line code
         indented_code = "\n".join(f"    {line}" for line in code.split("\n"))
         return function_def + indented_code + "\n    return output_df"
 
@@ -266,15 +278,12 @@ class PolarsCodeParser:
         Returns:
             Callable: A function that takes the specified number of DataFrames
         """
-        # Validate and clean the code
         code = remove_comments_and_docstrings(code)
         code = textwrap.dedent(code).strip()
         self._validate_code(code)
 
-        # Wrap the code in a function
         wrapped_code = self._wrap_in_function(code, num_inputs)
         try:
-            # Create namespace for execution
             local_namespace: dict[str, Any] = {}
 
             exec(wrapped_code, self.safe_globals, local_namespace)
@@ -282,7 +291,7 @@ class PolarsCodeParser:
             transform_func = local_namespace["_transform"]
             return transform_func
         except Exception as e:
-            raise ValueError(f"Error executing code: {str(e)}")
+            raise ValueError(f"Error executing code: {str(e)}") from e
 
     def validate_code(self, code: str):
         """

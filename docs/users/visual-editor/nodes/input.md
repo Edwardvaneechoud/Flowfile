@@ -1,6 +1,9 @@
 # Input Nodes
 
-Input nodes are the starting point for any data flow. Flowfile currently supports reading from **local files**, **cloud storage (S3)**, and **manual input**.
+Input nodes are the starting point for any data flow. Flowfile supports reading from **local files**, **databases**, **cloud storage**, **catalog tables**, and **manual input**.
+
+!!! info "Not all input nodes are in Flowfile Lite"
+    The browser-only [Flowfile Lite](../../deployment/lite.md) build reads **local files (CSV/Excel/Parquet)**, **remote URLs**, **Manual Input**, and **Read from Catalog** — but it has no backend, so **Cloud Storage Reader** and **Database Reader** are not available.
 
 ## Node Details
 
@@ -96,6 +99,86 @@ The **Cloud Storage Reader** node allows you to read data directly from AWS S3.
 ### ![Manual Input](../../../assets/images/nodes/manual_input.png){ width="50" height="50" } Manual Input
 
 The **Manual Input** node allows you to create data directly within Flowfile or paste data from your clipboard.
+
+---
+
+### ![Database Reader](../../../assets/images/nodes/database_reader.png){ width="50" height="50" } Database Reader
+
+The **Database Reader** node loads data from database tables or custom SQL queries. It supports PostgreSQL and MySQL.
+
+#### **Connection Modes:**
+
+| Mode | Description |
+|------|-------------|
+| **Reference** | Use a saved connection from the [Connection Manager](../connections.md) (recommended) |
+| **Inline** | Enter connection credentials directly in the node settings |
+
+#### **Query Settings:**
+
+| Parameter | Description |
+|-----------|-------------|
+| **Schema** | Database schema to query (e.g., `public`) |
+| **Table** | Table name to read from |
+| **Custom SQL** | Optional: write a custom SQL query instead of reading a full table |
+
+#### **Usage:**
+
+1. Add a **Database Reader** node to your flow
+2. Select **Reference** mode and choose a saved connection (or use **Inline** for quick tests)
+3. Select the schema and table, or write a custom SQL query
+4. Click **Validate Settings** to verify the connection
+5. Run the flow to load data
+
+![Database Reader settings](../../../assets/images/guides/nodes/database-reader-settings.png)
+
+*Database Reader node configured with a reference connection*
+
+For a step-by-step tutorial, see [Connect to PostgreSQL](../tutorials/database-connectivity.md).
+
+---
+
+### Catalog Reader
+
+The **Catalog Reader** node reads a table registered in the [Catalog](../catalog/index.md). It supports both **physical** tables (Delta/Parquet files) and **[virtual tables](../catalog/virtual-tables.md)** (resolved on demand).
+
+#### **Settings:**
+
+| Parameter | Description |
+|-----------|-------------|
+| **Catalog / Schema** | Select the namespace containing the table |
+| **Table** | Select from tables registered in the chosen namespace |
+
+The table dropdown shows both physical and virtual tables. Virtual tables are marked with a **bolt icon** to distinguish them from physical tables.
+
+Once a table is selected, the node displays metadata:
+- **Rows** — total row count
+- **Columns** — total column count
+- **Schema** — column names and data types
+
+#### **Usage:**
+
+1. Add a **Catalog Reader** node to your flow
+2. Select the catalog/schema namespace
+3. Select the table from the dropdown
+4. Review the schema preview
+5. Run the flow to load the table data
+
+![Catalog Reader settings](../../../assets/images/guides/nodes/catalog-reader-settings.png)
+
+*Catalog Reader showing table selection and schema preview*
+
+#### **Reading Virtual Tables**
+
+When you select a virtual table, the Catalog Reader resolves it at run time:
+
+- **Optimized virtual tables** — the stored execution plan is deserialized instantly, with full Polars query optimization (predicate and projection pushdown)
+- **Standard virtual tables** — the producer flow is executed end-to-end to produce the result
+
+From your flow's perspective, a virtual table behaves identically to a physical one — the resolution happens transparently. For details on optimization and when to use virtual tables, see [Virtual Flow Tables](../catalog/virtual-tables.md).
+
+#### **SQL Mode**
+
+The Catalog Reader also supports a **SQL mode** where you can write SQL queries against all catalog tables (both physical and virtual). Tables are registered by name in a Polars SQL context, so you can join and query across the entire catalog. See [SQL Editor](../catalog/sql-editor.md) for more details.
 
 ---
 [← Node overview](index.md) | [Next: Transform data →](transform.md)

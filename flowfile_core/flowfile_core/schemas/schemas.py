@@ -1,4 +1,4 @@
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_serializer, field_validator
 
@@ -12,23 +12,29 @@ ExecutionLocationsLiteral = Literal["local", "remote"]
 # Type literals for classifying nodes.
 NodeTypeLiteral = Literal["input", "output", "process"]
 TransformTypeLiteral = Literal["narrow", "wide", "other"]
+LazinessLiteral = Literal["lazy", "eager", "conditional"]
 _custom_node_store_cache = None
 
 NODE_TYPE_TO_SETTINGS_CLASS = {
     "manual_input": input_schema.NodeManualInput,
     "filter": input_schema.NodeFilter,
     "formula": input_schema.NodeFormula,
+    "dynamic_rename": input_schema.NodeDynamicRename,
     "select": input_schema.NodeSelect,
     "sort": input_schema.NodeSort,
     "record_id": input_schema.NodeRecordId,
     "sample": input_schema.NodeSample,
+    "random_split": input_schema.NodeRandomSplit,
     "unique": input_schema.NodeUnique,
     "group_by": input_schema.NodeGroupBy,
+    "window_functions": input_schema.NodeWindowFunctions,
     "pivot": input_schema.NodePivot,
     "unpivot": input_schema.NodeUnpivot,
     "text_to_rows": input_schema.NodeTextToRows,
     "graph_solver": input_schema.NodeGraphSolver,
+    "python_script": input_schema.NodePythonScript,
     "polars_code": input_schema.NodePolarsCode,
+    "sql_query": input_schema.NodeSqlQuery,
     "join": input_schema.NodeJoin,
     "cross_join": input_schema.NodeCrossJoin,
     "fuzzy_match": input_schema.NodeFuzzyMatch,
@@ -36,14 +42,24 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "explore_data": input_schema.NodeExploreData,
     "union": input_schema.NodeUnion,
     "output": input_schema.NodeOutput,
+    "api_response": input_schema.NodeApiResponse,
     "read": input_schema.NodeRead,
     "database_reader": input_schema.NodeDatabaseReader,
     "database_writer": input_schema.NodeDatabaseWriter,
     "cloud_storage_reader": input_schema.NodeCloudStorageReader,
     "cloud_storage_writer": input_schema.NodeCloudStorageWriter,
+    "catalog_reader": input_schema.NodeCatalogReader,
+    "catalog_writer": input_schema.NodeCatalogWriter,
+    "kafka_source": input_schema.NodeKafkaSource,
+    "google_analytics_reader": input_schema.NodeGoogleAnalyticsReader,
+    "rest_api_reader": input_schema.NodeRestApiReader,
     "external_source": input_schema.NodeExternalSource,
     "promise": input_schema.NodePromise,
     "user_defined": input_schema.UserDefinedNode,
+    "train_model": input_schema.NodeTrainModel,
+    "apply_model": input_schema.NodeApplyModel,
+    "evaluate_model": input_schema.NodeEvaluateModel,
+    "wait_for": input_schema.NodeWaitFor,
 }
 
 
@@ -94,6 +110,14 @@ def get_prio_execution_location(
         return local_execution_location
 
 
+class FlowParameter(BaseModel):
+    """A single flow-level parameter that can be referenced via ${name} syntax."""
+
+    name: str
+    default_value: str = ""
+    description: str = ""
+
+
 class FlowGraphConfig(BaseModel):
     """
     Configuration model for a flow graph's basic properties.
@@ -106,6 +130,9 @@ class FlowGraphConfig(BaseModel):
         path (str): The file path associated with the flow.
         execution_mode (ExecutionModeLiteral): The mode of execution ('Development' or 'Performance').
         execution_location (ExecutionLocationsLiteral): The location for execution ('local', 'remote').
+        max_parallel_workers (int): Maximum number of threads used for parallel node execution within a
+            stage. Set to 1 to disable parallelism. Defaults to 4.
+        parameters (list[FlowParameter]): Flow-level parameters referenceable via ${name} syntax.
     """
 
     flow_id: int = Field(default_factory=create_unique_id, description="Unique identifier for the flow.")
@@ -113,8 +140,21 @@ class FlowGraphConfig(BaseModel):
     save_location: str | None = None
     name: str = ""
     path: str = ""
+    source_registration_id: int | None = Field(
+        default=None,
+        description="Catalog registration ID when running a registered flow.",
+    )
     execution_mode: ExecutionModeLiteral = "Performance"
     execution_location: ExecutionLocationsLiteral = Field(default_factory=get_global_execution_location)
+    max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")
+    parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
+
+    @field_validator("execution_mode", mode="before")
+    @classmethod
+    def validate_execution_mode(cls, v: str) -> ExecutionModeLiteral:
+        if v not in ("Development", "Performance"):
+            return "Performance"
+        return v
 
     @field_validator("execution_location", mode="before")
     def validate_and_set_execution_location(cls, v: ExecutionLocationsLiteral | None) -> ExecutionLocationsLiteral:
@@ -141,15 +181,19 @@ class FlowSettings(FlowGraphConfig):
         auto_save (bool): Flag to enable or disable automatic saving.
         modified_on (Optional[float]): Timestamp of the last modification.
         show_detailed_progress (bool): Flag to show detailed progress during execution.
+        show_edge_labels (bool): Flag to show or hide named edge labels on connections.
         is_running (bool): Indicates if the flow is currently running.
         is_canceled (bool): Indicates if the flow execution has been canceled.
+        track_history (bool): Flag to enable or disable undo/redo history tracking.
     """
 
     auto_save: bool = False
     modified_on: float | None = None
     show_detailed_progress: bool = True
+    show_edge_labels: bool = False
     is_running: bool = False
     is_canceled: bool = False
+    track_history: bool = True
 
     @classmethod
     def from_flow_settings_input(cls, flow_graph_config: FlowGraphConfig):
@@ -162,6 +206,13 @@ class FlowSettings(FlowGraphConfig):
         return cls.model_validate(flow_graph_config.model_dump())
 
 
+class FlowSettingsResponse(FlowSettings):
+    """FlowSettings plus runtime-only fields for API responses. Not persisted."""
+
+    has_unsaved_changes: bool = False
+    display_name: str | None = None
+
+
 class RawLogInput(BaseModel):
     """
     Schema for a raw log message.
@@ -169,13 +220,15 @@ class RawLogInput(BaseModel):
     Attributes:
         flowfile_flow_id (int): The ID of the flow that generated the log.
         log_message (str): The content of the log message.
-        log_type (Literal["INFO", "ERROR"]): The type of log.
+        log_type (Literal["INFO", "WARNING", "ERROR"]): The type of log.
+        node_id (int | None): Optional node ID to attribute the log to.
         extra (Optional[dict]): Extra context data for the log.
     """
 
     flowfile_flow_id: int
     log_message: str
-    log_type: Literal["INFO", "ERROR"]
+    log_type: Literal["INFO", "WARNING", "ERROR"]
+    node_id: int | None = None
     extra: dict | None = None
 
 
@@ -190,6 +243,16 @@ class FlowfileSettings(BaseModel):
     execution_location: ExecutionLocationsLiteral = "local"
     auto_save: bool = False
     show_detailed_progress: bool = True
+    max_parallel_workers: int = Field(default=4, ge=1)
+    source_registration_id: int | None = None
+    parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
+
+    @field_validator("execution_mode", mode="before")
+    @classmethod
+    def validate_execution_mode(cls, v: str) -> ExecutionModeLiteral:
+        if v not in ("Development", "Performance"):
+            return "Performance"
+        return v
 
 
 class FlowfileNode(BaseModel):
@@ -199,12 +262,18 @@ class FlowfileNode(BaseModel):
     type: str
     is_start_node: bool = False
     description: str | None = ""
+    node_reference: str | None = None  # Unique reference identifier for code generation
     x_position: int | None = 0
     y_position: int | None = 0
+    group_id: int | None = None  # Visual group this node belongs to (organizational only)
     left_input_id: int | None = None
     right_input_id: int | None = None
     input_ids: list[int] | None = Field(default_factory=list)
     outputs: list[int] | None = Field(default_factory=list)
+    # Parallel to ``outputs``: the source-side output handle for each connection
+    # (e.g. ["output-0", "output-1"]). Older flowfiles omit this — loaders treat
+    # missing entries as "output-0".
+    output_handles: list[str] | None = None
     setting_input: Any | None = None
 
     _setting_input_exclude: ClassVar[set] = {
@@ -212,8 +281,10 @@ class FlowfileNode(BaseModel):
         "node_id",
         "pos_x",
         "pos_y",
+        "group_id",
         "is_setup",
         "description",
+        "node_reference",
         "user_id",
         "is_flow_output",
         "is_user_defined",
@@ -227,11 +298,49 @@ class FlowfileNode(BaseModel):
             return None
         if isinstance(value, input_schema.NodePromise):
             return None
-        if hasattr(value, "to_yaml_dict"):
-            return value.to_yaml_dict()
+        if isinstance(value, dict):
+            return value
         if hasattr(value, "to_yaml_dict"):
             return value.to_yaml_dict()
         return value.model_dump(exclude=self._setting_input_exclude)
+
+
+# Allowed group tints. Single source of truth — mirrored by the frontend `GroupColor` union.
+GroupColor = Literal["slate", "blue", "green", "amber", "rose", "violet", "cyan"]
+
+
+class GroupBounds(NamedTuple):
+    """Axis-aligned bounds of a group box, in absolute canvas coordinates."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class _GroupFields(BaseModel):
+    """Shared fields for the runtime and serialization group models (one definition, zero drift).
+
+    Groups are purely visual containers; they have no effect on execution or the DAG.
+    """
+
+    id: int
+    name: str = "Group"
+    color: GroupColor | None = None  # None -> frontend default tint
+    x_position: float = 0.0
+    y_position: float = 0.0
+    width: float = 400.0
+    height: float = 250.0
+    collapsed: bool = False  # whether the box is collapsed to a compact bar
+    parent_group_id: int | None = None  # reserved for future nesting; unused in v1
+
+
+class GroupInformation(_GroupFields):
+    """Runtime representation of a visual node group (stored in FlowGraph._groups)."""
+
+
+class FlowfileGroup(_GroupFields):
+    """Serialized representation of a visual node group (YAML/JSON)."""
 
 
 class FlowfileData(BaseModel):
@@ -242,6 +351,7 @@ class FlowfileData(BaseModel):
     flowfile_name: str
     flowfile_settings: FlowfileSettings
     nodes: list[FlowfileNode]
+    groups: list[FlowfileGroup] = Field(default_factory=list)
 
 
 class NodeTemplate(BaseModel):
@@ -274,6 +384,8 @@ class NodeTemplate(BaseModel):
     drawer_title: str = "Node title"
     drawer_intro: str = "Drawer into"
     custom_node: bool | None = False
+    laziness: LazinessLiteral = "eager"
+    output_names: list[str] | None = None
     tags: list[str] = Field(default_factory=list)
 
 
@@ -287,12 +399,15 @@ class NodeInformation(BaseModel):
     is_setup: bool | None = None
     is_start_node: bool = False
     description: str | None = ""
+    node_reference: str | None = None  # Unique reference identifier for code generation
     x_position: int | None = 0
     y_position: int | None = 0
+    group_id: int | None = None
     left_input_id: int | None = None
     right_input_id: int | None = None
     input_ids: list[int] | None = Field(default_factory=list)
     outputs: list[int] | None = Field(default_factory=list)
+    output_handles: list[str] | None = None
     setting_input: Any | None = None
 
     @property
@@ -342,6 +457,7 @@ class FlowInformation(BaseModel):
     data: dict[int, NodeInformation] = {}
     node_starts: list[int]
     node_connections: list[tuple[int, int]] = []
+    groups: list[GroupInformation] = Field(default_factory=list)
 
     @field_validator("flow_name", mode="before")
     def ensure_string(cls, v):
@@ -375,11 +491,16 @@ class NodeInput(NodeTemplate):
         id (int): The unique ID of the node instance.
         pos_x (float): The x-coordinate on the canvas.
         pos_y (float): The y-coordinate on the canvas.
+        output_names (list[str] | None): Named outputs for multi-output nodes.
+        node_reference (str | None): Reference name used for code generation and input naming.
     """
 
     id: int
     pos_x: float
     pos_y: float
+    group_id: int | None = None
+    output_names: list[str] | None = None
+    node_reference: str | None = None
 
 
 class NodeEdge(BaseModel):
@@ -414,6 +535,71 @@ class VueFlowInput(BaseModel):
 
     node_edges: list[NodeEdge]
     node_inputs: list[NodeInput]
+    groups: list[FlowfileGroup] = Field(default_factory=list)
+
+
+# ============================================================================
+# Node-group editor request bodies (organizational only; no execution impact)
+# ============================================================================
+
+
+class CreateGroupRequest(BaseModel):
+    """Body for POST /editor/create_group/. Bounds are optional; computed from members if omitted."""
+
+    node_ids: list[int]
+    name: str = "Group"
+    color: GroupColor | None = None
+    x_position: float | None = None
+    y_position: float | None = None
+    width: float | None = None
+    height: float | None = None
+    parent_group_id: int | None = None  # nest the new group under this group
+    child_group_ids: list[int] = Field(default_factory=list)  # existing groups to nest inside the new one
+
+
+class UpdateGroupRequest(BaseModel):
+    """Body for POST /editor/update_group/. All fields optional -> partial update."""
+
+    name: str | None = None
+    color: GroupColor | None = None
+    x_position: float | None = None
+    y_position: float | None = None
+    width: float | None = None
+    height: float | None = None
+    collapsed: bool | None = None
+
+
+class GroupMembershipRequest(BaseModel):
+    """Body for adding/removing nodes from a group."""
+
+    node_ids: list[int]
+
+
+class NodePositionUpdate(BaseModel):
+    """A single node's new absolute canvas position."""
+
+    node_id: int
+    pos_x: float
+    pos_y: float
+
+
+class GroupBoundsUpdate(BaseModel):
+    """A single group's new absolute bounds."""
+
+    group_id: int
+    x_position: float
+    y_position: float
+    width: float
+    height: float
+
+
+class UpdateLayoutRequest(BaseModel):
+    """Batch persistence of dragged node positions and/or group bounds (one drag-end -> one call)."""
+
+    node_positions: list[NodePositionUpdate] = Field(default_factory=list)
+    group_bounds: list[GroupBoundsUpdate] = Field(default_factory=list)
+    # False -> apply without a new undo entry (folds into a preceding op's snapshot).
+    record_history: bool = True
 
 
 class NodeDefault(BaseModel):

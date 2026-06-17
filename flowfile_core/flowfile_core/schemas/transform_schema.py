@@ -71,7 +71,7 @@ class FilterOperator(str, Enum):
         try:
             return cls(symbol)
         except ValueError:
-            raise ValueError(f"Unknown filter operator symbol: {symbol}")
+            raise ValueError(f"Unknown filter operator symbol: {symbol}") from None
 
     def to_symbol(self) -> str:
         """Convert FilterOperator to UI-friendly symbol."""
@@ -121,6 +121,23 @@ def string_concat(*column: str):
 
 SideLit = Literal["left", "right"]
 JoinStrategy = Literal["inner", "left", "right", "full", "semi", "anti", "cross", "outer"]
+"""Polars join-strategy enum — broad superset retained for backward
+compat with code-generator / flow-data-engine plumbing that still
+threads ``"cross"`` through ``DataFrame.join(how="cross")`` directly.
+The ``join`` node itself uses :data:`JoinKeyStrategy` (below) which
+excludes ``"cross"`` so cross/Cartesian joins route through the
+dedicated ``cross_join`` node type — making the choice unambiguous
+for the AI agent and preventing the ``join + how="cross"`` shape
+that bypasses the dedicated cross_join node.
+"""
+
+JoinKeyStrategy = Literal["inner", "left", "right", "full", "semi", "anti", "outer"]
+"""Key-based join strategies — every option requires ``join_mapping``
+to specify the equality keys. Used by :class:`JoinInput.how` so the
+LLM (and the Pydantic validator) cannot pick ``"cross"`` on a
+``join`` node — Cartesian joins are the dedicated ``cross_join``
+node type's job.
+"""
 FuzzyTypeLiteral = Literal["levenshtein", "jaro", "jaro_winkler", "hamming", "damerau_levenshtein", "indel"]
 
 
@@ -184,7 +201,9 @@ class SelectInput(BaseModel):
             result["new_name"] = self.new_name
         if not self.keep:
             result["keep"] = self.keep
-        if self.data_type_change and self.data_type:
+        # Always include data_type if it's set, not just when data_type_change is True
+        # This ensures undo/redo snapshots preserve the data_type field
+        if self.data_type:
             result["data_type"] = self.data_type
         return result
 
@@ -193,21 +212,41 @@ class SelectInput(BaseModel):
         """Load from slim YAML format."""
         old_name = data["old_name"]
         new_name = data.get("new_name", old_name)
+        data_type = data.get("data_type")
+        # is_altered should be True if either name was changed OR data_type was explicitly set
+        # This ensures updateNodeSelect in the frontend won't overwrite user-specified data_type
+        is_altered = (old_name != new_name) or (data_type is not None)
         return cls(
             old_name=old_name,
             new_name=new_name,
             keep=data.get("keep", True),
-            data_type=data.get("data_type"),
-            data_type_change=data.get("data_type") is not None,
-            is_altered=old_name != new_name,
+            data_type=data_type,
+            data_type_change=data_type is not None,
+            is_altered=is_altered,
         )
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_data_type_change(cls, data):
+        """Infer data_type_change when loading from YAML.
+
+        When data_type is present but data_type_change is not explicitly set,
+        infer that the user explicitly set the data_type (e.g., when loading from YAML).
+        This ensures is_altered will be set correctly in the after validator.
+        """
+        if isinstance(data, dict):
+            if data.get("data_type") is not None and "data_type_change" not in data:
+                data["data_type_change"] = True
+        return data
 
     @model_validator(mode="after")
     def set_default_new_name(self):
-        """If new_name is None, default it to old_name."""
+        """If new_name is None, default it to old_name. Also set is_altered if needed."""
         if self.new_name is None:
             self.new_name = self.old_name
         if self.old_name != self.new_name:
+            self.is_altered = True
+        if self.data_type_change:
             self.is_altered = True
         return self
 
@@ -444,7 +483,7 @@ class SelectInputs(BaseModel):
     @classmethod
     def create_from_pl_df(cls, df: pl.DataFrame | pl.LazyFrame) -> "SelectInputs":
         """Creates a SelectInputs object from a Polars DataFrame's columns."""
-        return cls(renames=[SelectInput(old_name=c) for c in df.columns])
+        return cls(renames=[SelectInput(old_name=c) for c in df.collect_schema().names()])
 
     def remove_select_input(self, old_key: str) -> None:
         """Removes a SelectInput from the list based on its original name."""
@@ -494,15 +533,12 @@ class CrossJoinInput(BaseModel):
     def parse_inputs(cls, data: Any) -> Any:
         """Parse flexible input formats before validation."""
         if isinstance(data, dict):
-            # Parse join_mapping
             if "join_mapping" in data:
                 data["join_mapping"] = cls._parse_join_mapping(data["join_mapping"])
 
-            # Parse left_select
             if "left_select" in data:
                 data["left_select"] = cls._parse_select(data["left_select"])
 
-            # Parse right_select
             if "right_select" in data:
                 data["right_select"] = cls._parse_select(data["right_select"])
 
@@ -511,7 +547,6 @@ class CrossJoinInput(BaseModel):
     @staticmethod
     def _parse_join_mapping(join_mapping: Any) -> list[JoinMap]:
         """Parse various join_mapping formats."""
-        # Already a list of JoinMaps
         if isinstance(join_mapping, list):
             result = []
             for jm in join_mapping:
@@ -519,7 +554,7 @@ class CrossJoinInput(BaseModel):
                     result.append(jm)
                 elif isinstance(jm, dict):
                     result.append(JoinMap(**jm))
-                elif isinstance(jm, (tuple, list)) and len(jm) == 2:
+                elif isinstance(jm, tuple | list) and len(jm) == 2:
                     result.append(JoinMap(left_col=jm[0], right_col=jm[1]))
                 elif isinstance(jm, str):
                     result.append(JoinMap(left_col=jm, right_col=jm))
@@ -527,7 +562,6 @@ class CrossJoinInput(BaseModel):
                     raise ValueError(f"Invalid join mapping item: {jm}")
             return result
 
-        # Single JoinMap
         if isinstance(join_mapping, JoinMap):
             return [join_mapping]
 
@@ -544,11 +578,9 @@ class CrossJoinInput(BaseModel):
     @staticmethod
     def _parse_select(select: Any) -> JoinInputs:
         """Parse various select input formats."""
-        # Already JoinInputs
         if isinstance(select, JoinInputs):
             return select
 
-        # List of SelectInput objects
         if isinstance(select, list):
             if all(isinstance(s, SelectInput) for s in select):
                 return JoinInputs(renames=select)
@@ -600,22 +632,19 @@ class JoinInput(BaseModel):
     join_mapping: list[JoinMap]
     left_select: JoinInputs
     right_select: JoinInputs
-    how: JoinStrategy = "inner"
+    how: JoinKeyStrategy = "inner"
 
     @model_validator(mode="before")
     @classmethod
     def parse_inputs(cls, data: Any) -> Any:
         """Parse flexible input formats before validation."""
         if isinstance(data, dict):
-            # Parse join_mapping
             if "join_mapping" in data:
                 data["join_mapping"] = cls._parse_join_mapping(data["join_mapping"])
 
-            # Parse left_select
             if "left_select" in data:
                 data["left_select"] = cls._parse_select(data["left_select"])
 
-            # Parse right_select
             if "right_select" in data:
                 data["right_select"] = cls._parse_select(data["right_select"])
 
@@ -624,7 +653,6 @@ class JoinInput(BaseModel):
     @staticmethod
     def _parse_join_mapping(join_mapping: Any) -> list[JoinMap]:
         """Parse various join_mapping formats."""
-        # Already a list of JoinMaps
         if isinstance(join_mapping, list):
             result = []
             for jm in join_mapping:
@@ -632,7 +660,7 @@ class JoinInput(BaseModel):
                     result.append(jm)
                 elif isinstance(jm, dict):
                     result.append(JoinMap(**jm))
-                elif isinstance(jm, (tuple, list)) and len(jm) == 2:
+                elif isinstance(jm, tuple | list) and len(jm) == 2:
                     result.append(JoinMap(left_col=jm[0], right_col=jm[1]))
                 elif isinstance(jm, str):
                     result.append(JoinMap(left_col=jm, right_col=jm))
@@ -640,7 +668,6 @@ class JoinInput(BaseModel):
                     raise ValueError(f"Invalid join mapping item: {jm}")
             return result
 
-        # Single JoinMap
         if isinstance(join_mapping, JoinMap):
             return [join_mapping]
 
@@ -657,11 +684,9 @@ class JoinInput(BaseModel):
     @staticmethod
     def _parse_select(select: Any) -> JoinInputs:
         """Parse various select input formats."""
-        # Already JoinInputs
         if isinstance(select, JoinInputs):
             return select
 
-        # List of SelectInput objects
         if isinstance(select, list):
             if all(isinstance(s, SelectInput) for s in select):
                 return JoinInputs(renames=select)
@@ -684,7 +709,7 @@ class JoinInput(BaseModel):
         join_mapping: list[JoinMap] | JoinMap | tuple[str, str] | str | list[tuple] | list[str] = None,
         left_select: JoinInputs | list[SelectInput] | list[str] = None,
         right_select: JoinInputs | list[SelectInput] | list[str] = None,
-        how: JoinStrategy = "inner",
+        how: JoinKeyStrategy = "inner",
         **data,
     ):
         """Custom init for backward compatibility with positional arguments."""
@@ -759,11 +784,9 @@ class FuzzyMatchInput(BaseModel):
     @staticmethod
     def _parse_select(select: Any) -> JoinInputs:
         """Parse various select input formats."""
-        # Already JoinInputs
         if isinstance(select, JoinInputs):
             return select
 
-        # List of SelectInput objects
         if isinstance(select, list):
             if all(isinstance(s, SelectInput) for s in select):
                 return JoinInputs(renames=select)
@@ -786,11 +809,9 @@ class FuzzyMatchInput(BaseModel):
     def parse_inputs(cls, data: Any) -> Any:
         """Parse flexible input formats before validation."""
         if isinstance(data, dict):
-            # Parse left_select
             if "left_select" in data:
                 data["left_select"] = cls._parse_select(data["left_select"])
 
-            # Parse right_select
             if "right_select" in data:
                 data["right_select"] = cls._parse_select(data["right_select"])
 
@@ -844,18 +865,15 @@ class AggColl(BaseModel):
     @model_validator(mode="after")
     def set_defaults(self):
         """Set default new_name and output_type based on agg function."""
-        # Set new_name
         if self.new_name is None:
             if self.agg != "groupby":
                 self.new_name = self.old_name + "_" + self.agg
             else:
                 self.new_name = self.old_name
 
-        # Set output_type
         if self.output_type is None:
             self.output_type = get_func_type_mapping(self.agg)
 
-        # Ensure old_name is a string
         self.old_name = str(self.old_name)
 
         return self
@@ -947,6 +965,117 @@ class RecordIdInput(BaseModel):
     group_by_columns: list[str] | None = Field(default_factory=list)
 
 
+WindowFunctionName = Literal[
+    "rolling_sum",
+    "rolling_mean",
+    "rolling_min",
+    "rolling_max",
+    "rolling_std",
+    "cum_sum",
+    "cum_count",
+    "cum_min",
+    "cum_max",
+    "rank",
+    "tile",
+]
+
+RankMethod = Literal["ordinal", "dense", "min", "max", "average"]
+
+RollingEdgeBehavior = Literal["require_full", "partial", "fill_zero"]
+
+_ROLLING_FUNCTIONS = {"rolling_sum", "rolling_mean", "rolling_min", "rolling_max", "rolling_std"}
+_CUMULATIVE_FUNCTIONS = {"cum_sum", "cum_count", "cum_min", "cum_max"}
+
+
+def _is_rolling(func: str) -> bool:
+    return func in _ROLLING_FUNCTIONS
+
+
+def _is_cumulative(func: str) -> bool:
+    return func in _CUMULATIVE_FUNCTIONS
+
+
+def get_window_output_type(func: str, input_type: str | None = None) -> str | None:
+    """Infers the output data type of window functions."""
+    if func in {"rolling_mean", "rolling_std"}:
+        return "Float64"
+    if func in {"rolling_sum", "rolling_min", "rolling_max", "cum_sum", "cum_min", "cum_max"}:
+        return input_type
+    if func in {"cum_count", "tile"}:
+        return "Int64"
+    if func == "rank":
+        return "UInt32"
+    return input_type
+
+
+class WindowFunctionInput(BaseModel):
+    """A single window-function operation producing one new column.
+
+    `column` is the source column for rolling, cumulative and rank functions.
+    For `tile`, `column` is ignored (ordering comes from the outer
+    ``WindowFunctionsInput.order_by``).
+    """
+
+    column: str | None = None
+    function: WindowFunctionName
+    new_column_name: str
+    window_size: int | None = None
+    min_periods: int | None = None
+    edge_behavior: RollingEdgeBehavior | None = "require_full"
+    number_of_groups: int | None = None
+    rank_method: RankMethod | None = "ordinal"
+    output_type: str | None = None
+
+    @model_validator(mode="after")
+    def _validate(self) -> "WindowFunctionInput":
+        if _is_rolling(self.function):
+            if self.window_size is None or self.window_size < 1:
+                raise ValueError(f"{self.function!r} requires a positive window_size")
+            if self.column is None:
+                raise ValueError(f"{self.function!r} requires a source column")
+        elif _is_cumulative(self.function) or self.function == "rank":
+            if self.column is None:
+                raise ValueError(f"{self.function!r} requires a source column")
+        elif self.function == "tile":
+            if self.number_of_groups is None or self.number_of_groups < 1:
+                raise ValueError("'tile' requires a positive number_of_groups")
+        if self.output_type is None:
+            self.output_type = get_window_output_type(self.function)
+        return self
+
+
+class WindowFunctionsInput(BaseModel):
+    """Defines the settings for a window-functions node.
+
+    Attributes
+    ----------
+    partition_by : list[str]
+        Optional list of columns to partition by (equivalent to ``.over(...)``).
+    order_by : list[SortByInput]
+        Ordering within each partition. Required for rolling and tile
+        functions; optional (but usually wanted) for cumulative functions.
+    window_functions : list[WindowFunctionInput]
+        Ordered list of per-column window operations to apply. Each produces
+        one new column; all are applied in a single ``with_columns`` call.
+    """
+
+    partition_by: list[str] = Field(default_factory=list)
+    order_by: list[SortByInput] = Field(default_factory=list)
+    window_functions: list[WindowFunctionInput] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate(self) -> "WindowFunctionsInput":
+        needs_order = any(_is_rolling(w.function) or w.function == "tile" for w in self.window_functions)
+        if needs_order and not self.order_by:
+            raise ValueError("Rolling and tile functions require at least one order_by column")
+        seen: set[str] = set()
+        for w in self.window_functions:
+            if w.new_column_name in seen:
+                raise ValueError(f"Duplicate new_column_name: {w.new_column_name!r}")
+            seen.add(w.new_column_name)
+        return self
+
+
 class TextToRowsInput(BaseModel):
     """Defines settings for splitting a text column into multiple rows based on a delimiter."""
 
@@ -1002,10 +1131,55 @@ class GraphSolverInput(BaseModel):
     output_column_name: str | None = "graph_group"
 
 
+RenameMode = Literal["prefix", "suffix", "formula", "first_row"]
+ColumnSelectionMode = Literal["all", "list", "data_type"]
+ReadableDataTypeGroup = Literal["Numeric", "String", "Date", "Other", "Boolean", "Binary", "Complex"]
+
+
+class DynamicRenameInput(BaseModel):
+    """Defines settings for a dynamic rename operation.
+
+    Applies a single rule (prefix / suffix / formula / first_row) to a set of selected
+    columns, rather than requiring the user to rename columns one-by-one.
+
+    In formula mode, the flowfile formula syntax is evaluated with `[column_name]`
+    bound to each target column's current name; for example `uppercase([column_name])`
+    or `"v2_" + [column_name]`.
+
+    In first_row mode, the first row of the incoming table is promoted to column
+    headers and then dropped from the data. Non-string values are coerced to `str`;
+    null or empty values raise an error. Selection filters still apply — only selected
+    columns are renamed, but the first row is always dropped.
+    """
+
+    rename_mode: RenameMode = "prefix"
+    prefix: str = ""
+    suffix: str = ""
+    formula: str = ""
+
+    selection_mode: ColumnSelectionMode = "all"
+    selected_columns: list[str] = Field(default_factory=list)
+    selected_data_type: ReadableDataTypeGroup | None = None
+
+
 class PolarsCodeInput(BaseModel):
     """A simple container for a string of user-provided Polars code to be executed."""
 
     polars_code: str
+
+
+class SqlQueryInput(BaseModel):
+    """A container for a SQL query to execute against connected data sources.
+
+    Note: ``sql_code`` is *not* validated at schema-construction time. Construction
+    is a passive shape-check; the unsafe-SQL gate lives at the executor seam in
+    ``execute_sql_query`` (and is also enforced by the underlying
+    ``validate_sql_query`` utility callers can use directly). Validating here too
+    would block legitimate non-AI callers from drafting/testing SQL before
+    execution.
+    """
+
+    sql_code: str
 
 
 class SelectInputsManager:
@@ -1284,10 +1458,9 @@ class JoinInputManager(JoinSelectManagerMixin):
         join_mapping: list[JoinMap] | tuple[str, str] | str,
         left_select: list[SelectInput] | list[str],
         right_select: list[SelectInput] | list[str],
-        how: JoinStrategy = "inner",
+        how: JoinKeyStrategy = "inner",
     ) -> "JoinInputManager":
         """Factory method to create JoinInput from various input formats."""
-        # Use JoinInput's own create method for parsing
         join_input = JoinInput(join_mapping=join_mapping, left_select=left_select, right_select=right_select, how=how)
 
         manager = cls(join_input)
@@ -1522,7 +1695,7 @@ class FuzzyMatchInputManager(JoinInputManager):
         fuzz_mapping: list[FuzzyMapping] | tuple[str, str] | str | FuzzyMapping | list[dict],
     ) -> list[FuzzyMapping]:
         """Parses various input formats into a list of FuzzyMapping objects."""
-        if isinstance(fuzz_mapping, (tuple, list)):
+        if isinstance(fuzz_mapping, tuple | list):
             if len(fuzz_mapping) == 0:
                 raise ValueError("Fuzzy mapping cannot be empty")
 

@@ -33,13 +33,14 @@ class RealTimeResult:
             try:
                 self.result_df.select(pl.col(self.result_df.columns[0]).cast(pl.Boolean))
                 return True
-            except:
+            except Exception:
                 return False
 
 
 def get_realtime_func_results(df: pl.DataFrame | pl.LazyFrame, func_string: str, sample: int = 1) -> RealTimeResult:
     """
-    This function is used to get the first result of a function applied to a dataframe. This is useful for debugging the users write
+    This function is used to get the first result of a function applied to a dataframe.
+    This is useful for debugging the users write
     example:
     df = pl.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6], 'c': [1, 2, 3], 'names': ['ham', 'spam', 'eggs']})
     print(get_first_result_of_function('year(today())', df))

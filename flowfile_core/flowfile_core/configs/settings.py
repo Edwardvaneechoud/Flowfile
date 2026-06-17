@@ -21,6 +21,21 @@ SINGLE_FILE_MODE: MutableBool = MutableBool(os.environ.get("FLOWFILE_SINGLE_FILE
 # Offload to worker flag, this determines if the worker should handle processing tasks.
 OFFLOAD_TO_WORKER: MutableBool = MutableBool(os.environ.get("FLOWFILE_OFFLOAD_TO_WORKER", "1") == "1")
 
+# Master switch gating the entire `/ai/*` router; mutable so the admin endpoint can flip it live.
+FEATURE_FLAG_AI: MutableBool = MutableBool(
+    os.environ.get("FEATURE_FLAG_AI", "1").strip().lower() in ("true", "1", "yes", "on")
+)
+
+# When True, every LLM call appends a JSONL line to `{FLOWFILE_STORAGE_DIR}/ai_prompts/{YYYY-MM-DD}.jsonl` for debugging.
+FLOWFILE_AI_LOG_PROMPTS: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_AI_LOG_PROMPTS", "0").strip().lower() in ("true", "1", "yes", "on")
+)
+
+# Optional PII scrub for user / tool messages in the prompt log; system prompts and assistant responses stay verbatim.
+FLOWFILE_AI_LOG_PROMPTS_SCRUB: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_AI_LOG_PROMPTS_SCRUB", "0").strip().lower() in ("true", "1", "yes", "on")
+)
+
 
 def parse_args():
     """Parse command line arguments"""
@@ -39,7 +54,6 @@ def parse_args():
 
 def get_temp_dir() -> str:
     """Get the appropriate temp directory path based on environment"""
-    # Check for Docker environment variable first
     docker_temp = os.getenv("TEMP_DIR")
     if docker_temp:
         return docker_temp
@@ -54,13 +68,11 @@ def get_default_worker_url(worker_port=None):
     Args:
         worker_port: Optional port override (used when passed as command line arg)
     """
-    # Check for Docker environment first
     worker_host = os.getenv("WORKER_HOST", None)
 
     if worker_port is None:
         worker_port = os.getenv("FLOWFILE_WORKER_PORT", DEFAULT_WORKER_PORT)
 
-    # Convert to int if it's a string
     worker_port = int(worker_port) if isinstance(worker_port, str) else worker_port
 
     if worker_host:
@@ -94,17 +106,21 @@ TEMP_DIR = storage.temp_directory
 # Possible values: "electron" (desktop app), "package" (Python package), "docker" (container)
 FLOWFILE_MODE = os.getenv("FLOWFILE_MODE", "electron")
 
+
 def is_docker_mode() -> bool:
     """Check if running in Docker container mode"""
     return FLOWFILE_MODE == "docker"
+
 
 def is_electron_mode() -> bool:
     """Check if running in Electron desktop app mode"""
     return FLOWFILE_MODE == "electron"
 
+
 def is_package_mode() -> bool:
     """Check if running as Python package"""
     return FLOWFILE_MODE == "package"
+
 
 # Legacy compatibility - will be removed in future versions
 IS_RUNNING_IN_DOCKER = is_docker_mode()
@@ -112,3 +128,10 @@ IS_RUNNING_IN_DOCKER = is_docker_mode()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
+    "GOOGLE_OAUTH_REDIRECT_URI",
+    f"http://localhost:{SERVER_PORT}/ga_connections/oauth/callback",
+)

@@ -4,6 +4,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from shared.path_utils import is_url
+
 
 class MinimalFieldInfo(BaseModel):
     name: str
@@ -70,13 +72,11 @@ class InputExcelTable(InputTableBase):
         return self
 
 
-# Create the discriminated union (similar to OutputTableSettings)
 InputTableSettings = Annotated[
     InputCsvTable | InputJsonTable | InputParquetTable | InputExcelTable, Field(discriminator="file_type")
 ]
 
 
-# Now create the main ReceivedTable model
 class ReceivedTable(BaseModel):
     """Model for defining a table received from an external source."""
 
@@ -99,7 +99,6 @@ class ReceivedTable(BaseModel):
         """Creates an instance from a file path string."""
         filename = Path(path).name
 
-        # Create appropriate table_settings based on file_type
         settings_map = {
             "csv": InputCsvTable(),
             "json": InputJsonTable(),
@@ -121,6 +120,9 @@ class ReceivedTable(BaseModel):
 
     def set_absolute_filepath(self):
         """Resolves the path to an absolute file path."""
+        if is_url(self.path):
+            self.abs_file_path = self.path
+            return
         base_path = Path(self.path).expanduser()
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
@@ -134,7 +136,6 @@ class ReceivedTable(BaseModel):
         """Ensures table_settings matches the file_type."""
         if v is None:
             file_type = info.data.get("file_type", "csv")
-            # Create default based on file_type
             settings_map = {
                 "csv": InputCsvTable(),
                 "json": InputJsonTable(),
@@ -143,7 +144,6 @@ class ReceivedTable(BaseModel):
             }
             return settings_map.get(file_type, InputCsvTable())
 
-        # If it's a dict, add file_type if missing
         if isinstance(v, dict) and "file_type" not in v:
             v["file_type"] = info.data.get("file_type", "csv")
 

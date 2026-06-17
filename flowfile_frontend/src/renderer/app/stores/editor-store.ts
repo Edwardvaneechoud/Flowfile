@@ -26,10 +26,30 @@ export const useEditorStore = defineStore("editor", {
     // Code generator state
     showCodeGenerator: false,
 
+    // Edge label state
+    showEdgeLabels: false,
+
     // Run state
     isRunning: false,
     showFlowResult: false,
     tableVisible: false,
+
+    // AI assistant drawer. Independent panel pattern — coexists
+    // with node settings; intentionally NOT routed through activeDrawerComponent.
+    isAiOpen: false,
+
+    // Incremented whenever a graph-mutating action completes. Consumers (e.g.
+    // the flow tab strip) watch this to refresh dirty state.
+    graphVersion: 0,
+
+    // Incremented to request opening the Flow Settings modal from anywhere
+    // (e.g. the Performance-mode notice). HeaderButtons watches this counter.
+    flowSettingsOpenRequest: 0,
+
+    // Request signals to open a node's panels from outside Canvas (the per-node
+    // right-click menu in NodeWrapper). Canvas watches the `token`.
+    nodeSettingsOpenRequest: { nodeId: -1 as number, token: 0 },
+    nodeDataOpenRequest: { nodeId: -1 as number, token: 0 },
   }),
 
   getters: {
@@ -39,9 +59,7 @@ export const useEditorStore = defineStore("editor", {
   },
 
   actions: {
-    // ========== Drawer Management ==========
     async executeDrawCloseFunction() {
-      console.log("Executing draw close function");
       if (this.drawCloseFunction) {
         this.drawCloseFunction();
       }
@@ -49,6 +67,10 @@ export const useEditorStore = defineStore("editor", {
 
     setCloseFunction(f: () => void): void {
       this.drawCloseFunction = f;
+    },
+
+    clearCloseFunction(): void {
+      this.drawCloseFunction = null;
     },
 
     openDrawer(
@@ -154,6 +176,52 @@ export const useEditorStore = defineStore("editor", {
 
     setIsRunning(running: boolean) {
       this.isRunning = running;
+    },
+
+    // ========== Graph version (dirty tracking) ==========
+    bumpGraphVersion() {
+      this.graphVersion += 1;
+    },
+
+    // Signal HeaderButtons to open the Flow Settings modal.
+    requestOpenFlowSettings() {
+      this.flowSettingsOpenRequest += 1;
+    },
+
+    // Ask Canvas to open + front a node's Settings / Data panels. Reassign the
+    // whole object so the token watch fires reliably.
+    requestNodeSettings(nodeId: number) {
+      this.nodeSettingsOpenRequest = { nodeId, token: this.nodeSettingsOpenRequest.token + 1 };
+    },
+
+    requestNodeData(nodeId: number) {
+      this.nodeDataOpenRequest = { nodeId, token: this.nodeDataOpenRequest.token + 1 };
+    },
+
+    // ========== AI Assistant Drawer ==========
+    openAiDrawer() {
+      this.isAiOpen = true;
+    },
+
+    closeAiDrawer() {
+      this.isAiOpen = false;
+    },
+
+    toggleAiDrawer() {
+      this.isAiOpen = !this.isAiOpen;
+    },
+
+    // ========== Bulk panel control ==========
+    // Closes every floating overlay (right-side and bottom). The left palette
+    // (`dataActions`) is owned by the canvas component and stays visible.
+    hideAllPanels() {
+      this.showFlowResult = false;
+      this.showCodeGenerator = false;
+      this.activeDrawerComponent = null;
+      this.isDrawerOpen = false;
+      this.isShowingLogViewer = false;
+      this.tableVisible = false;
+      this.isAiOpen = false;
     },
   },
 });

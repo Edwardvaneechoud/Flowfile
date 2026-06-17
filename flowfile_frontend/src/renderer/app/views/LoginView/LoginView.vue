@@ -3,7 +3,7 @@
     <div class="login-card">
       <div class="login-header">
         <div class="logo-container">
-          <img src="/images/flowfile.svg" alt="Flowfile" class="logo" />
+          <img src="/images/flowfile.png" alt="Flowfile" class="logo" />
         </div>
         <h1 class="login-title">Welcome to Flowfile</h1>
         <p class="login-subtitle">Sign in to continue</p>
@@ -100,7 +100,8 @@ const handleLogin = async () => {
     const success = await authStore.login(username.value, password.value);
 
     if (success) {
-      router.push({ name: "designer" });
+      // Route through the "main" entry guard so login resumes open flows.
+      router.push({ name: "main" });
     } else {
       error.value = authStore.authError || "Invalid username or password";
     }

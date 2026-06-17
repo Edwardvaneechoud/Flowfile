@@ -1,7 +1,11 @@
 // DatabaseReaderNode.vue
 <template>
   <div v-if="dataLoaded && nodeDatabaseReader" class="db-container">
-    <generic-node-settings v-model="nodeDatabaseReader">
+    <generic-node-settings
+      v-model="nodeDatabaseReader"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <div class="form-group">
           <label>Connection Mode</label>
@@ -73,26 +77,62 @@
           <div class="form-row">
             <div class="form-group half">
               <label for="schema-name">Schema</label>
-              <input
-                id="schema-name"
-                v-model="nodeDatabaseReader.database_settings.schema_name"
-                type="text"
-                class="form-control"
-                placeholder="Enter schema name"
-                @input="resetFields"
-              />
+              <div class="input-with-fetch">
+                <el-select
+                  ref="schemaSelectRef"
+                  v-model="nodeDatabaseReader.database_settings.schema_name"
+                  filterable
+                  allow-create
+                  clearable
+                  default-first-option
+                  :placeholder="schemasAreLoading ? 'Loading...' : 'Schema'"
+                  class="flex-input"
+                  @change="handleSchemaChange"
+                  @blur="handleSchemaBlur"
+                >
+                  <el-option v-for="s in availableSchemas" :key="s" :label="s" :value="s" />
+                </el-select>
+                <button
+                  type="button"
+                  class="btn-fetch-icon"
+                  :disabled="schemasAreLoading"
+                  title="Refresh schemas"
+                  @click="handleFetchSchemas()"
+                >
+                  <i v-if="schemasAreLoading" class="fa-solid fa-spinner fa-spin"></i>
+                  <i v-else class="fa-solid fa-refresh"></i>
+                </button>
+              </div>
             </div>
 
             <div class="form-group half">
               <label for="table-name">Table</label>
-              <input
-                id="table-name"
-                v-model="nodeDatabaseReader.database_settings.table_name"
-                type="text"
-                class="form-control"
-                placeholder="Enter table name"
-                @input="resetFields"
-              />
+              <div class="input-with-fetch">
+                <el-select
+                  ref="tableSelectRef"
+                  v-model="nodeDatabaseReader.database_settings.table_name"
+                  filterable
+                  allow-create
+                  clearable
+                  default-first-option
+                  :placeholder="tablesAreLoading ? 'Loading...' : 'Table'"
+                  class="flex-input"
+                  @change="handleTableSelect"
+                  @blur="handleTableBlur"
+                >
+                  <el-option v-for="t in availableTables" :key="t" :label="t" :value="t" />
+                </el-select>
+                <button
+                  type="button"
+                  class="btn-fetch-icon"
+                  :disabled="tablesAreLoading"
+                  title="Refresh tables"
+                  @click="handleFetchTables()"
+                >
+                  <i v-if="tablesAreLoading" class="fa-solid fa-spinner fa-spin"></i>
+                  <i v-else class="fa-solid fa-refresh"></i>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -133,17 +173,28 @@
 </template>
 
 <script lang="ts" setup>
+// TODO(refactor): ~655 LOC, paired with DatabaseWriter (~516 LOC). Plan:
+//   - Apply same pattern as cloudStorageReader/Writer: extract DatabaseConnectionPicker.vue
+//     and a databaseConnectionFormatters.ts util
+//   - Schema/table fetch logic (~lines 321-348) → useDatabaseSchema composable
+//   - Inline connection mode toggle + watcher (~lines 199-241, 375-398) is duplicated in Writer
 import { CodeLoader } from "vue-content-loader";
-import { ref, onMounted } from "vue";
-import { NodeDatabaseReader, ConnectionModeOption } from "../../../baseNode/nodeInput";
+import { ref, onMounted, watch } from "vue";
+import {
+  NodeDatabaseReader,
+  ConnectionModeOption,
+  DatabaseConnection,
+} from "../../../baseNode/nodeInput";
 import { createNodeDatabaseReader } from "./utils";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { fetchDatabaseConnectionsInterfaces } from "../../../../../views/DatabaseView/api";
 import { FullDatabaseConnectionInterface } from "../../../../../views/DatabaseView/databaseConnectionTypes";
-import { ElMessage, ElRadio } from "element-plus";
+import { ElMessage, ElOption, ElRadio, ElSelect } from "element-plus";
 import DatabaseConnectionSettings from "./DatabaseConnectionSettings.vue";
 import SqlQueryComponent from "./SQLQueryComponent.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { fetchDbSchemas, fetchDbTables } from "./api";
 import axios from "axios";
 
 interface Props {
@@ -156,10 +207,41 @@ defineProps<Props>();
 const nodeStore = useNodeStore();
 const nodeDatabaseReader = ref<null | NodeDatabaseReader>(null);
 const dataLoaded = ref(false);
+
+const defaultDatabaseConnection: DatabaseConnection = {
+  database_type: "postgresql",
+  username: "",
+  password_ref: "",
+  host: "localhost",
+  port: 5432,
+  database: "",
+  url: undefined,
+};
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeDatabaseReader,
+  onBeforeSave: () => {
+    if (!nodeDatabaseReader.value || !nodeDatabaseReader.value.database_settings) {
+      return false;
+    }
+    if (nodeDatabaseReader.value.database_settings.connection_mode === "reference") {
+      nodeDatabaseReader.value.database_settings.database_connection = undefined;
+    } else {
+      nodeDatabaseReader.value.database_settings.database_connection_name = undefined;
+    }
+    return true;
+  },
+});
 const validationError = ref<string | null>(null);
 const validationSuccess = ref<string | null>(null);
 const isValidating = ref(false);
 const connectionsAreLoading = ref(false);
+const availableSchemas = ref<string[]>([]);
+const schemasAreLoading = ref(false);
+const availableTables = ref<string[]>([]);
+const tablesAreLoading = ref(false);
+const schemaSelectRef = ref();
+const tableSelectRef = ref();
 
 const handleQueryModeChange = (event: Event) => {
   const target = event.target as HTMLSelectElement;
@@ -188,8 +270,8 @@ const loadNodeData = async (nodeId: number) => {
       nodeDatabaseReader.value = hasValidSetup
         ? nodeData.setting_input
         : createNodeDatabaseReader(nodeStore.flow_id, nodeId);
+      dataLoaded.value = true;
     }
-    dataLoaded.value = true;
   } catch (error) {
     console.error("Error loading node data:", error);
     dataLoaded.value = false;
@@ -203,7 +285,6 @@ const validateQuery = () => {
     return;
   }
 
-  // Now we'll use the API endpoint instead of just showing an alert
   validateDatabaseSettings();
 };
 
@@ -211,7 +292,112 @@ const resetFields = () => {
   if (nodeDatabaseReader.value) {
     nodeDatabaseReader.value.fields = [];
   }
+  availableSchemas.value = [];
+  availableTables.value = [];
 };
+
+const handleSchemaChange = () => {
+  availableTables.value = [];
+  if (nodeDatabaseReader.value) {
+    nodeDatabaseReader.value.fields = [];
+  }
+};
+
+// Commit typed text on blur so custom values aren't discarded by el-select
+const handleSchemaBlur = () => {
+  if (!nodeDatabaseReader.value) return;
+  const inputEl = schemaSelectRef.value?.$el?.querySelector("input");
+  if (inputEl?.value) {
+    nodeDatabaseReader.value.database_settings.schema_name = inputEl.value;
+  }
+};
+
+const handleTableBlur = () => {
+  if (!nodeDatabaseReader.value) return;
+  const inputEl = tableSelectRef.value?.$el?.querySelector("input");
+  if (inputEl?.value) {
+    nodeDatabaseReader.value.database_settings.table_name = inputEl.value;
+  }
+};
+
+const handleFetchSchemas = async (silent = false) => {
+  if (!nodeDatabaseReader.value?.database_settings) return;
+  schemasAreLoading.value = true;
+  try {
+    availableSchemas.value = await fetchDbSchemas(nodeDatabaseReader.value.database_settings);
+  } catch (error: any) {
+    if (!silent) {
+      const detail = error.response?.data?.detail || "Failed to fetch schemas";
+      ElMessage.error(detail);
+    }
+  } finally {
+    schemasAreLoading.value = false;
+  }
+};
+
+const handleFetchTables = async (silent = false) => {
+  if (!nodeDatabaseReader.value?.database_settings) return;
+  tablesAreLoading.value = true;
+  try {
+    availableTables.value = await fetchDbTables(nodeDatabaseReader.value.database_settings);
+  } catch (error: any) {
+    if (!silent) {
+      const detail = error.response?.data?.detail || "Failed to fetch tables";
+      ElMessage.error(detail);
+    }
+  } finally {
+    tablesAreLoading.value = false;
+  }
+};
+
+const handleTableSelect = (value: string) => {
+  if (!nodeDatabaseReader.value) return;
+  // When no schema was selected, tables come as "schema.table" — split them
+  if (value && value.includes(".") && !nodeDatabaseReader.value.database_settings.schema_name) {
+    const dotIndex = value.indexOf(".");
+    nodeDatabaseReader.value.database_settings.schema_name = value.substring(0, dotIndex);
+    nodeDatabaseReader.value.database_settings.table_name = value.substring(dotIndex + 1);
+  }
+  if (nodeDatabaseReader.value) {
+    nodeDatabaseReader.value.fields = [];
+  }
+};
+
+// Auto-fetch schemas/tables when connection details change.
+// Reference mode: fetch immediately on selection.
+// Inline mode: debounce so we don't fire on every keystroke, and only when the
+// connection looks complete (all required fields filled).
+const isInlineConnectionComplete = () => {
+  const conn = nodeDatabaseReader.value?.database_settings?.database_connection;
+  if (!conn) return false;
+  if (conn.database_type === "sqlite") return !!conn.database;
+  return !!(conn.host && conn.port && conn.database && conn.username && conn.password_ref);
+};
+
+let inlineDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+watch(
+  () => nodeDatabaseReader.value?.database_settings?.database_connection_name,
+  (name) => {
+    if (name) {
+      handleFetchSchemas(true);
+      handleFetchTables(true);
+    }
+  },
+);
+
+watch(
+  () => nodeDatabaseReader.value?.database_settings?.database_connection,
+  () => {
+    if (inlineDebounceTimer) clearTimeout(inlineDebounceTimer);
+    if (!isInlineConnectionComplete()) return;
+    inlineDebounceTimer = setTimeout(() => {
+      handleFetchSchemas(true);
+      handleFetchTables(true);
+    }, 1500);
+  },
+  { deep: true },
+);
 
 const validateDatabaseSettings = async () => {
   if (!nodeDatabaseReader.value?.database_settings) {
@@ -226,7 +412,6 @@ const validateDatabaseSettings = async () => {
   resetFields();
 
   try {
-    // Clean up settings based on connection_mode before sending
     const settings = { ...nodeDatabaseReader.value.database_settings };
     if (settings.connection_mode === "reference") {
       settings.database_connection = undefined;
@@ -236,10 +421,8 @@ const validateDatabaseSettings = async () => {
 
     const response = await axios.post("/validate_db_settings", settings);
 
-    // If we get here, validation was successful
     validationSuccess.value = response.data.message || "Settings are valid";
   } catch (error: any) {
-    // Handle validation errors
     if (error.response && error.response.data && error.response.data.detail) {
       validationError.value = error.response.data.detail;
     } else {
@@ -249,21 +432,6 @@ const validateDatabaseSettings = async () => {
   } finally {
     isValidating.value = false;
   }
-};
-
-const pushNodeData = async () => {
-  if (!nodeDatabaseReader.value || !nodeDatabaseReader.value.database_settings) {
-    return;
-  }
-  // Clean up settings based on connection_mode before saving
-  if (nodeDatabaseReader.value.database_settings.connection_mode === "reference") {
-    nodeDatabaseReader.value.database_settings.database_connection = undefined;
-  } else {
-    nodeDatabaseReader.value.database_settings.database_connection_name = undefined;
-  }
-  nodeDatabaseReader.value.is_setup = true;
-  nodeStore.updateSettings(nodeDatabaseReader);
-  dataLoaded.value = false;
 };
 
 const fetchConnections = async () => {
@@ -285,6 +453,7 @@ onMounted(async () => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 
@@ -415,6 +584,55 @@ select.form-control {
 .success-message {
   color: var(--color-success);
   font-size: 0.875rem;
+}
+
+.input-with-fetch {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.input-with-fetch .form-control,
+.input-with-fetch .flex-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.input-with-fetch :deep(.el-input__wrapper) {
+  box-sizing: border-box;
+}
+
+.btn-fetch-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background-color 0.2s;
+  font-size: 0.8rem;
+  padding: 0;
+}
+
+.btn-fetch-icon:hover {
+  color: var(--color-info);
+  border-color: var(--color-info);
+  background-color: var(--color-gray-50);
+}
+
+.btn-fetch-icon:disabled {
+  color: var(--color-text-muted);
+  border-color: var(--color-border-light);
+  background-color: var(--color-background-primary);
+  cursor: not-allowed;
 }
 
 @media (max-width: 640px) {

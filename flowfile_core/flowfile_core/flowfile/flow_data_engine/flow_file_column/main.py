@@ -75,7 +75,6 @@ class FlowfileColumn:
         if self.size is not None:
             lines.append(f"  Non-Nulls: {self.size}")
 
-        # Calculate and display nulls if possible
         if self.size is not None and self.number_of_empty_values is not None:
             total_entries = self.size + self.number_of_empty_values
             if total_entries > 0:
@@ -104,7 +103,6 @@ class FlowfileColumn:
         # --- Conditional Examples Section ---
         if self.example_values:
             example_str = str(self.example_values)
-            # Truncate long example strings for cleaner display
             if len(example_str) > 70:
                 example_str = example_str[:67] + "..."
             lines.append(f"  Examples: {example_str}")
@@ -176,6 +174,7 @@ class FlowfileColumn:
             name=self.name,
             size=self.size,
             data_type=str(self.data_type),
+            data_type_group=self.data_type_group,
             has_values=self.has_values,
             is_unique=self.is_unique,
             max_value=str(self.max_value),
@@ -196,9 +195,12 @@ class FlowfileColumn:
             "integer",
             "boolean",
             "double",
+            "Int8",
             "Int16",
             "Int32",
             "Int64",
+            "Int128",
+            "Float16",
             "Float32",
             "Float64",
             "Decimal",
@@ -208,6 +210,11 @@ class FlowfileColumn:
             "Uint16",
             "Uint32",
             "Uint64",
+            "UInt8",
+            "UInt16",
+            "UInt32",
+            "UInt64",
+            "UInt128",
         ):
             return "numeric"
         elif self.data_type in ("datetime", "date", "Date", "Datetime", "Time"):
@@ -225,9 +232,12 @@ class FlowfileColumn:
             "integer",
             "boolean",
             "double",
+            "Int8",
             "Int16",
             "Int32",
             "Int64",
+            "Int128",
+            "Float16",
             "Float32",
             "Float64",
             "Decimal",
@@ -237,6 +247,11 @@ class FlowfileColumn:
             "Uint16",
             "Uint32",
             "Uint64",
+            "UInt8",
+            "UInt16",
+            "UInt32",
+            "UInt64",
+            "UInt128",
         ):
             return "Numeric"
         elif self.data_type in ("datetime", "date", "Date", "Datetime", "Time"):
@@ -268,6 +283,6 @@ def assert_if_flowfile_schema(obj: Iterable) -> bool:
     """
     Assert that the object is a valid iterable of FlowfileColumn objects.
     """
-    if isinstance(obj, (list, set, tuple)):
+    if isinstance(obj, list | set | tuple):
         return all(isinstance(item, FlowfileColumn) for item in obj)
     return False

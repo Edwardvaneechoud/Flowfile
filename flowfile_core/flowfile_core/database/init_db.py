@@ -1,60 +1,36 @@
-# Generate a random secure password and hash it
+import logging
 import os
 import secrets
 import string
-import logging
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-from flowfile_core.database import models as db_models
-from flowfile_core.database.connection import engine, SessionLocal
-from flowfile_core.auth.password import get_password_hash
+from importlib.metadata import PackageNotFoundError, version
 
 from passlib.context import CryptContext
+from sqlalchemy.orm import Session
+
+from flowfile_core.auth.password import get_password_hash
+from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import SessionLocal
+from flowfile_core.database.migration import run_startup_migration
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Ensure a basic logging config exists so warnings emitted at import time
+# (before main.py's lifespan configures logging) are visible in container logs.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 logger = logging.getLogger(__name__)
 
-
-def run_migrations():
-    """Run database migrations to update schema for existing databases."""
-    with engine.connect() as conn:
-        # Check if users table exists
-        result = conn.execute(text(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
-        ))
-        if not result.fetchone():
-            logger.info("Users table does not exist, will be created with new schema")
-            return
-
-        # Check existing columns
-        result = conn.execute(text("PRAGMA table_info(users)"))
-        columns = [row[1] for row in result.fetchall()]
-
-        # Add is_admin column if missing
-        if 'is_admin' not in columns:
-            logger.info("Adding is_admin column to users table")
-            conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
-            conn.commit()
-            logger.info("Migration complete: is_admin column added")
-
-        # Add must_change_password column if missing
-        if 'must_change_password' not in columns:
-            logger.info("Adding must_change_password column to users table")
-            conn.execute(text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"))
-            conn.commit()
-            logger.info("Migration complete: must_change_password column added")
-
-
-# Run migrations BEFORE create_all to update existing tables
-run_migrations()
-# Then create any new tables (this will include is_admin for new databases)
-db_models.Base.metadata.create_all(bind=engine)
+# Run Alembic-based migrations (replaces the old manual run_migrations + create_all).
+# Skipped when FLOWFILE_SKIP_STARTUP_MIGRATION is set so the alembic CLI can import
+# our metadata without recursively re-entering migration machinery.
+if not os.environ.get("FLOWFILE_SKIP_STARTUP_MIGRATION"):
+    run_startup_migration()
 
 
 def create_default_local_user(db: Session):
     local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
     if not local_user:
-        random_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
+        random_password = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
         hashed_password = pwd_context.hash(random_password)
 
         local_user = db_models.User(
@@ -62,7 +38,7 @@ def create_default_local_user(db: Session):
             email="local@flowfile.app",
             full_name="Local User",
             hashed_password=hashed_password,
-            must_change_password=False  # Local user doesn't need to change password
+            must_change_password=False,
         )
         db.add(local_user)
         db.commit()
@@ -76,15 +52,12 @@ def create_docker_admin_user(db: Session):
     Only runs when FLOWFILE_MODE=docker.
     Reads FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD from environment.
     """
-    # Only run in Docker mode
     if os.environ.get("FLOWFILE_MODE") != "docker":
         return False
 
-    # Read environment variables
     admin_username = os.environ.get("FLOWFILE_ADMIN_USER")
     admin_password = os.environ.get("FLOWFILE_ADMIN_PASSWORD")
 
-    # Skip if either is not set
     if not admin_username or not admin_password:
         logger.warning(
             "Docker mode detected but FLOWFILE_ADMIN_USER or FLOWFILE_ADMIN_PASSWORD "
@@ -92,13 +65,9 @@ def create_docker_admin_user(db: Session):
         )
         return False
 
-    # Check if user already exists
-    existing_user = db.query(db_models.User).filter(
-        db_models.User.username == admin_username
-    ).first()
+    existing_user = db.query(db_models.User).filter(db_models.User.username == admin_username).first()
 
     if existing_user:
-        # Ensure existing admin user has is_admin=True
         if not existing_user.is_admin:
             existing_user.is_admin = True
             db.commit()
@@ -107,7 +76,6 @@ def create_docker_admin_user(db: Session):
             logger.info(f"Admin user '{admin_username}' already exists with admin privileges.")
         return False
 
-    # Create user with hashed password and admin privileges
     hashed_password = get_password_hash(admin_password)
     admin_user = db_models.User(
         username=admin_username,
@@ -115,7 +83,7 @@ def create_docker_admin_user(db: Session):
         full_name="Admin User",
         hashed_password=hashed_password,
         is_admin=True,
-        must_change_password=True  # Force password change on first login
+        must_change_password=True,
     )
     db.add(admin_user)
     db.commit()
@@ -123,11 +91,94 @@ def create_docker_admin_user(db: Session):
     return True
 
 
+def create_default_catalog_namespace(db: Session):
+    """Create the default 'General' catalog with a 'default' schema if they don't exist."""
+    local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
+    if not local_user:
+        return
+
+    # Seeded namespaces are public containers: visible to every user in multi-user
+    # mode even though the catalog is otherwise private-by-default (auth/sharing.py).
+    general = db.query(db_models.CatalogNamespace).filter_by(name="General", parent_id=None).first()
+    if not general:
+        general = db_models.CatalogNamespace(
+            name="General",
+            parent_id=None,
+            level=0,
+            description="Default catalog",
+            owner_id=local_user.id,
+            is_public=True,
+        )
+        db.add(general)
+        db.commit()
+        db.refresh(general)
+
+    default_schema = db.query(db_models.CatalogNamespace).filter_by(name="default", parent_id=general.id).first()
+    if not default_schema:
+        default_schema = db_models.CatalogNamespace(
+            name="default",
+            parent_id=general.id,
+            level=1,
+            description="Default schema for user flows",
+            owner_id=local_user.id,
+            is_public=True,
+        )
+        db.add(default_schema)
+        db.commit()
+
+    # Dedicated schema for quick-created / unnamed flows so they don't clutter 'default'
+    unnamed_schema = db.query(db_models.CatalogNamespace).filter_by(name="Unnamed Flows", parent_id=general.id).first()
+    if not unnamed_schema:
+        unnamed_schema = db_models.CatalogNamespace(
+            name="Unnamed Flows",
+            parent_id=general.id,
+            level=1,
+            description="Quick-created flows that have not yet been named",
+            owner_id=local_user.id,
+            is_public=True,
+        )
+        db.add(unnamed_schema)
+        db.commit()
+
+    # Dedicated schema for flows saved to arbitrary disk locations, distinct from
+    # catalog-managed flows so users can tell disk-backed and catalog flows apart.
+    local_schema = db.query(db_models.CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
+    if not local_schema:
+        local_schema = db_models.CatalogNamespace(
+            name="Local Flows",
+            parent_id=general.id,
+            level=1,
+            description="Flows saved to disk at user-chosen paths",
+            owner_id=local_user.id,
+            is_public=True,
+        )
+        db.add(local_schema)
+        db.commit()
+
+
+def update_db_info(db: Session):
+    """Upsert the application version into the db_info table."""
+    try:
+        app_version = version("Flowfile")
+    except PackageNotFoundError:
+        app_version = "unknown"
+
+    row = db.query(db_models.DbInfo).filter(db_models.DbInfo.id == 1).first()
+    if row:
+        row.app_version = app_version
+    else:
+        db.add(db_models.DbInfo(id=1, app_version=app_version))
+    db.commit()
+    logger.info("Database info updated: app_version=%s", app_version)
+
+
 def init_db():
     db = SessionLocal()
     try:
         create_default_local_user(db)
         create_docker_admin_user(db)
+        create_default_catalog_namespace(db)
+        update_db_info(db)
     finally:
         db.close()
 
@@ -135,4 +186,3 @@ def init_db():
 if __name__ == "__main__":
     init_db()
     print("Local user created successfully")
-

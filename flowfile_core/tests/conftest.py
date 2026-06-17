@@ -1,4 +1,3 @@
-# conftest.py
 import logging
 import os
 import platform
@@ -26,8 +25,10 @@ os.environ['TESTING'] = 'True'
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import socket
 
+from test_utils.mysql import fixtures as mysql_fixtures
 from test_utils.postgres import fixtures as pg_fixtures
 from tests.flowfile_core_test_utils import is_docker_available
+from tests.kernel_fixtures import managed_kernel
 
 
 def is_port_in_use(port, host='localhost'):
@@ -40,7 +41,6 @@ def is_port_in_use(port, host='localhost'):
             return False
 
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -61,7 +61,6 @@ SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # secon
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     """Setup the test database and clean up after tests"""
-    # Just use your existing init_db function to create tables and set up the database
     from flowfile_core.database.connection import engine, get_database_url
     from flowfile_core.database.init_db import init_db
     from flowfile_core.database.models import Base
@@ -70,14 +69,11 @@ def setup_test_db():
 
     yield
 
-    # Cleanup after all tests
     if os.environ.get("TESTING") == "True" and "sqlite" in get_database_url():
         logger.info(f"Trying to cleanup: {get_database_url()}")
         try:
-            # Drop all tables
             Base.metadata.drop_all(bind=engine)
 
-            # If using file-based SQLite, remove the file
             db_path = get_database_url().replace("sqlite:///", "")
             if db_path != ":memory:" and os.path.exists(db_path):
                 os.remove(db_path)
@@ -104,7 +100,6 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
     """
     logger.info("Starting flowfile_worker process...")
 
-    # Determine the appropriate command based on platform
     if platform.system() == "Windows":
         # Use shell=True on Windows
         proc = subprocess.Popen(
@@ -129,23 +124,19 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
             preexec_fn=os.setsid if hasattr(os, 'setsid') else None
         )
 
-    # Check if process started successfully
     retcode = proc.poll()
     if retcode is not None:
         logger.error(f"Process failed to start with return code {retcode}")
         return proc, False
 
-    # Wait for service to be available
     start_time = time.time()
     max_retries = STARTUP_TIMEOUT // STARTUP_CHECK_INTERVAL
 
     for i in range(max_retries):
-        # Check if process is still running
         if proc.poll() is not None:
             logger.error(f"Process terminated unexpectedly with code {proc.poll()}")
             return proc, False
 
-        # Try to connect to the service
         try:
             response = requests.get(WORKER_URL, timeout=5)
             if response.ok:
@@ -155,12 +146,10 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
         except requests.exceptions.RequestException:
             pass
 
-        # Log progress
         elapsed = time.time() - start_time
         logger.info(f"Waiting for flowfile_worker to start... ({elapsed:.1f}s / {STARTUP_TIMEOUT}s)")
         time.sleep(STARTUP_CHECK_INTERVAL)
 
-    # Timeout reached
     logger.error(f"flowfile_worker failed to start within {STARTUP_TIMEOUT} seconds")
     return proc, False
 
@@ -178,7 +167,6 @@ def stop_worker(proc: subprocess.Popen) -> None:
         logger.info("Process is already terminated")
         return
 
-    # Try graceful termination first
     try:
         if platform.system() == "Windows":
             # On Windows, send Ctrl+C
@@ -187,7 +175,6 @@ def stop_worker(proc: subprocess.Popen) -> None:
             # On Unix, terminate the entire process group
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM) if hasattr(os, 'killpg') else proc.terminate()
 
-        # Wait for process to terminate
         try:
             proc.wait(timeout=SHUTDOWN_TIMEOUT)
             logger.info("Process terminated gracefully")
@@ -263,3 +250,129 @@ def postgres_db():
         if not db_info:
             pytest.fail("PostgreSQL container could not be started")
         yield db_info
+
+
+@pytest.fixture(scope="session", autouse=True)
+def mysql_db():
+    """
+    Pytest fixture that ensures MySQL container is running for the test session.
+    Automatically starts and stops a MySQL container with sample data.
+    """
+    if is_port_in_use(3307) or mysql_fixtures.can_connect_to_db():
+        print("MySQL is already running on port 3307, skipping container creation")
+        yield
+        return
+
+    elif not is_docker_available():
+        print("Docker is not available, skipping MySQL container creation")
+        yield
+        return
+
+    with mysql_fixtures.managed_mysql() as db_info:
+        if not db_info:
+            print("MySQL container could not be started, MySQL tests will be skipped")
+            yield
+            return
+        yield db_info
+
+
+@pytest.fixture(scope="session")
+def kernel_manager():
+    """
+    Pytest fixture that builds the flowfile-kernel Docker image, creates a
+    KernelManager, starts a test kernel, and tears everything down afterwards.
+
+    Yields a (KernelManager, kernel_id) tuple.
+
+    Note: This fixture does NOT start the Core API. For tests that need
+    global artifacts (publish_global, get_global, etc.), use the
+    `kernel_manager_with_core` fixture instead.
+    """
+    # In CI, we want to fail loudly to see what's wrong
+    in_ci = os.environ.get("CI") == "true" or os.environ.get("TEST_MODE") == "1"
+
+    if not is_docker_available():
+        if in_ci:
+            pytest.fail("Docker is not available in CI - this is unexpected")
+        pytest.skip("Docker is not available, skipping kernel tests")
+
+    try:
+        with managed_kernel() as ctx:
+            yield ctx
+    except Exception as exc:
+        if in_ci:
+            # In CI, fail loudly so we can see the actual error
+            pytest.fail(f"Kernel container could not be started in CI: {exc}")
+        pytest.skip(f"Kernel container could not be started: {exc}")
+
+
+@pytest.fixture(scope="session")
+def kernel_manager_with_core():
+    """
+    Pytest fixture for tests that need kernel + Core API integration.
+
+    This fixture:
+    - Starts the Core API server (for global artifacts endpoints)
+    - Sets up authentication tokens for kernel ↔ Core communication
+    - Builds and starts a kernel container
+    - Tears everything down afterwards
+
+    Use this fixture for tests that call:
+    - flowfile_ctx.publish_global()
+    - flowfile_ctx.get_global()
+    - flowfile_ctx.list_global_artifacts()
+    - flowfile_ctx.delete_global_artifact()
+
+    Yields a (KernelManager, kernel_id) tuple.
+    """
+    # In CI, we want to fail loudly to see what's wrong
+    in_ci = os.environ.get("CI") == "true" or os.environ.get("TEST_MODE") == "1"
+
+    if not is_docker_available():
+        if in_ci:
+            pytest.fail("Docker is not available in CI - this is unexpected")
+        pytest.skip("Docker is not available, skipping kernel tests")
+
+    try:
+        with managed_kernel(start_core=True) as ctx:
+            yield ctx
+    except Exception as exc:
+        if in_ci:
+            # In CI, fail loudly so we can see the actual error
+            pytest.fail(f"Kernel + Core could not be started in CI: {exc}")
+        pytest.skip(f"Kernel + Core could not be started: {exc}")
+
+
+@pytest.fixture(params=["local", "remote"])
+def execution_location(request):
+    """Parametrize a test across local and remote execution modes.
+
+    Tests receive this fixture as a parameter, and pytest runs them once per
+    param. The `remote` variant is skipped automatically when no worker is
+    running, so this is safe for contributors without a worker.
+    """
+    if request.param == "remote" and not is_worker_running():
+        pytest.skip("Worker not running")
+    return request.param
+
+
+@pytest.fixture
+def cleanup_global_artifacts():
+    """Clean up global artifacts before and after each test.
+
+    Use this fixture explicitly in tests that need artifact cleanup.
+    """
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import GlobalArtifact
+
+    def _cleanup():
+        try:
+            with get_db_context() as db:
+                db.query(GlobalArtifact).delete()
+                db.commit()
+        except Exception:
+            pass  # Table may not exist yet
+
+    _cleanup()
+    yield
+    _cleanup()

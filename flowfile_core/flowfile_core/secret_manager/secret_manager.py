@@ -8,6 +8,7 @@ from pydantic import SecretStr
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from flowfile_core.auth import sharing
 from flowfile_core.auth.models import SecretInput
 from flowfile_core.auth.secrets import get_master_key
 from flowfile_core.database import models as db_models
@@ -36,7 +37,6 @@ def derive_user_key(user_id: int) -> bytes:
     """
     master_key = get_master_key().encode()
 
-    # Use HKDF to derive a user-specific key
     hkdf = HKDF(
         algorithm=hashes.SHA256(),
         length=32,  # Fernet requires 32 bytes
@@ -44,7 +44,6 @@ def derive_user_key(user_id: int) -> bytes:
         info=f"user-{user_id}".encode(),  # User-specific context
     )
 
-    # Derive raw key material and encode for Fernet
     derived_key = hkdf.derive(master_key)
     return base64.urlsafe_b64encode(derived_key)
 
@@ -100,10 +99,9 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
     Returns:
         SecretStr: The decrypted value wrapped in SecretStr
     """
-    # Check for new versioned format with embedded user_id
     if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
         # Parse: $ffsec$1${user_id}${fernet_token}
-        remainder = encrypted_value[len(SECRET_FORMAT_PREFIX):]
+        remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]
         parts = remainder.split("$", 1)
         if len(parts) != 2:
             raise ValueError("Invalid encrypted secret format")
@@ -128,21 +126,35 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
 def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
     with get_db_context() as db:
         user_id = current_user_id
+        # (user_id, name) is not unique at the DB level; order by id so resolution
+        # is deterministic. An own secret always shadows a granted one.
         db_secret = (
             db.query(db_models.Secret)
             .filter(and_(db_models.Secret.user_id == user_id, db_models.Secret.name == secret_name))
+            .order_by(db_models.Secret.id.asc())
             .first()
         )
         if db_secret:
             return db_secret.encrypted_value
-        else:
-            return None
+        # Group-shared fallback (lowest id wins on name collisions). The ciphertext
+        # stays keyed to its owner via the embedded user id, so both core and the
+        # worker decrypt it without re-encryption.
+        granted_ids = sharing.granted_resource_ids(db, user_id, "secret")
+        if granted_ids:
+            shared_secret = (
+                db.query(db_models.Secret)
+                .filter(db_models.Secret.name == secret_name, db_models.Secret.id.in_(granted_ids))
+                .order_by(db_models.Secret.id.asc())
+                .first()
+            )
+            if shared_secret:
+                return shared_secret.encrypted_value
+        return None
 
 
 def store_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.Secret:
     encrypted_value = encrypt_secret(secret.value.get_secret_value(), user_id)
 
-    # Store in database
     db_secret = db_models.Secret(
         name=secret.name,
         encrypted_value=encrypted_value,
@@ -165,5 +177,6 @@ def delete_secret(db: Session, secret_name: str, user_id: int) -> None:
     if not db_secret:
         raise HTTPException(status_code=404, detail="Secret not found")
 
+    sharing.delete_grants_for_resource(db, "secret", db_secret.id)
     db.delete(db_secret)
     db.commit()

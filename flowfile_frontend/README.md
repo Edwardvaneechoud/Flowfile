@@ -1,6 +1,6 @@
 # Flowfile Designer
 
-Flowfile Designer is a modern, electron-based desktop application for visual data transformation and ETL workflows. Built with Vue 3, TypeScript, and Element Plus, it provides an intuitive interface for building data pipelines using a drag-and-drop approach.
+Flowfile Designer is a modern desktop application for visual data transformation and ETL workflows, built on Tauri 2 (Rust shell) with a Vue 3 + TypeScript + Element Plus renderer. It provides an intuitive interface for building data pipelines using a drag-and-drop approach.
 
 ## 🚀 Features
 
@@ -16,7 +16,7 @@ Flowfile Designer is a modern, electron-based desktop application for visual dat
 ## 🛠️ Technology Stack
 
 - Vue 3 + TypeScript
-- Electron
+- Tauri 2 (Rust shell, native WebView)
 - Vue Flow for flow-chart design
 - Element Plus UI components
 - CodeMirror for code editing
@@ -42,16 +42,17 @@ npm run lint
 ## 🔨 Building
 
 ```bash
-# Build for all platforms
+# Build for the host platform (requires staged sidecars; see repo root Makefile)
 npm run build
 
-# Build for specific platforms
-npm run build:win    # Windows
-npm run build:mac    # macOS
-npm run build:linux  # Linux
-
-# Build web version
+# Build web-only (no Rust/Tauri needed)
 npm run build:web
+
+# Or, from the repo root for the full pipeline:
+#   make all                # python + sidecars + tauri
+#   make build_tauri_mac    # platform-specific
+#   make build_tauri_win
+#   make build_tauri_linux
 ```
 
 ## 🧪 Preview Web Version

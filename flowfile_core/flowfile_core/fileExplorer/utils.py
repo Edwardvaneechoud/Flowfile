@@ -30,7 +30,7 @@ def get_file(file_path, mimetype):
             end_byte = int(groups[1])
 
     chunk, start, length, file_size = get_chunk(start_byte, end_byte, file_path)
-    resp = Response(chunk, 206, mimetype=f"video/{mimetype}", content_type=mimetype, direct_passthrough=True)
+    resp = Response(chunk, 206, mimetype=f"video/{mimetype}", content_type=mimetype, direct_passthrough=True)  # noqa: F821
     print(length)
     resp.headers.add("Content-Range", f"bytes {start}-{start + length - 1}/{file_size}")
     return resp

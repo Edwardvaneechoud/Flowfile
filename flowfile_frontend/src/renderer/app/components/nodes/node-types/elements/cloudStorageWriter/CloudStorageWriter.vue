@@ -1,35 +1,17 @@
 <template>
   <div v-if="dataLoaded && nodeCloudStorageWriter" class="cloud-storage-container">
-    <generic-node-settings v-model="nodeCloudStorageWriter">
+    <generic-node-settings
+      v-model="nodeCloudStorageWriter"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
-        <div class="form-group">
-          <label for="connection-select">Cloud Storage Connection</label>
-          <div v-if="connectionsAreLoading" class="loading-state">
-            <div class="loading-spinner"></div>
-            <p>Loading connections...</p>
-          </div>
-          <div v-else>
-            <select
-              id="connection-select"
-              v-model="selectedConnection"
-              class="form-control"
-              @change="updateConnection"
-            >
-              <option :value="null">No connection (use local credentials)</option>
-              <option v-for="conn in connectionInterfaces" :key="conn.connectionName" :value="conn">
-                {{ conn.connectionName }} ({{ getStorageTypeLabel(conn.storageType) }} -
-                {{ getAuthMethodLabel(conn.authMethod) }})
-              </option>
-            </select>
-            <div
-              v-if="!nodeCloudStorageWriter.cloud_storage_settings.connection_name"
-              class="helper-text"
-            >
-              <i class="fa-solid fa-info-circle"></i>
-              Will use local AWS CLI credentials or environment variables
-            </div>
-          </div>
-        </div>
+        <CloudConnectionPicker
+          v-model="selectedConnection"
+          :connections="connectionInterfaces"
+          :loading="connectionsAreLoading"
+          @change="updateConnection"
+        />
       </div>
 
       <div class="listbox-wrapper">
@@ -130,6 +112,30 @@
         </div>
 
         <div
+          v-if="nodeCloudStorageWriter.cloud_storage_settings.file_format === 'delta'"
+          class="format-options"
+        >
+          <h5 class="subsection-title">Delta Options</h5>
+          <div class="form-group">
+            <label for="partition-by">Partition by (optional)</label>
+            <el-select
+              id="partition-by"
+              v-model="nodeCloudStorageWriter.cloud_storage_settings.partition_by"
+              multiple
+              filterable
+              size="small"
+              placeholder="Select partition columns"
+            >
+              <el-option v-for="col in availableColumns" :key="col" :label="col" :value="col" />
+            </el-select>
+            <p class="field-hint">
+              Set at table creation; writes to an existing table must match its partitioning. Use
+              low-cardinality columns.
+            </p>
+          </div>
+        </div>
+
+        <div
           v-if="nodeCloudStorageWriter.cloud_storage_settings.write_mode === 'overwrite'"
           class="info-box info-warn"
         >
@@ -163,12 +169,14 @@
 import { CodeLoader } from "vue-content-loader";
 import { ref } from "vue";
 import { NodeCloudStorageWriter } from "../../../baseNode/nodeInput";
-import { createNodeCloudStorageWriter } from "./utils"; // Import the new utility function
-import { useNodeStore } from "../../../../../stores/column-store";
+import { createNodeCloudStorageWriter } from "./utils";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { fetchCloudStorageConnectionsInterfaces } from "../../../../../views/CloudConnectionView/api";
 import { FullCloudStorageConnectionInterface } from "../../../../../views/CloudConnectionView/CloudConnectionTypes";
 import { ElMessage } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { CloudConnectionPicker } from "../../../../common";
 
 interface Props {
   nodeId: number;
@@ -177,57 +185,26 @@ interface Props {
 defineProps<Props>();
 const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
-const nodeCloudStorageWriter = ref<NodeCloudStorageWriter | null>(null); // Use the writer type
+const nodeCloudStorageWriter = ref<NodeCloudStorageWriter | null>(null);
+const availableColumns = ref<string[]>([]);
+
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeCloudStorageWriter,
+});
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
 const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null);
-
-// --- Reusable Helper Functions (from reader) ---
-const getStorageTypeLabel = (storageType: string) => {
-  switch (storageType) {
-    case "s3":
-      return "AWS S3";
-    case "adls":
-      return "Azure ADLS";
-    case "gcs":
-      return "Google Cloud Storage";
-    default:
-      return storageType.toUpperCase();
-  }
-};
-
-const getAuthMethodLabel = (authMethod: string) => {
-  switch (authMethod) {
-    case "access_key":
-      return "Access Key";
-    case "iam_role":
-      return "IAM Role";
-    case "service_principal":
-      return "Service Principal";
-    case "managed_identity":
-      return "Managed Identity";
-    case "sas_token":
-      return "SAS Token";
-    case "aws-cli":
-      return "AWS CLI";
-    case "auto":
-      return "Auto";
-    default:
-      return authMethod;
-  }
-};
 
 const handleFileFormatChange = () => {
   if (nodeCloudStorageWriter.value) {
     const settings = nodeCloudStorageWriter.value.cloud_storage_settings;
     const format = settings.file_format;
 
-    // If the newly selected format is NOT delta, force write_mode to 'overwrite'
     if (format !== "delta") {
       settings.write_mode = "overwrite";
+      settings.partition_by = [];
     }
 
-    // Set defaults for newly selected formats
     if (format === "parquet" && !settings.parquet_compression) {
       settings.parquet_compression = "snappy";
     } else if (format === "csv" && !settings.csv_delimiter) {
@@ -276,6 +253,12 @@ const loadNodeData = async (nodeId: number) => {
         ? nodeData.setting_input
         : createNodeCloudStorageWriter(nodeStore.flow_id, nodeId);
 
+      availableColumns.value = nodeData.main_input?.columns ?? [];
+      // Ensure partition_by exists for nodes saved before partitioning support
+      if (!nodeCloudStorageWriter.value!.cloud_storage_settings.partition_by) {
+        nodeCloudStorageWriter.value!.cloud_storage_settings.partition_by = [];
+      }
+
       if (nodeCloudStorageWriter.value?.cloud_storage_settings.connection_name) {
         await setConnectionOnConnectionName(
           nodeCloudStorageWriter.value.cloud_storage_settings.connection_name,
@@ -290,16 +273,6 @@ const loadNodeData = async (nodeId: number) => {
     ElMessage.error("Failed to load node settings.");
     dataLoaded.value = false;
   }
-};
-
-const pushNodeData = async () => {
-  if (!nodeCloudStorageWriter.value || !nodeCloudStorageWriter.value.cloud_storage_settings) {
-    return;
-  }
-  console.log(nodeCloudStorageWriter);
-  nodeCloudStorageWriter.value.is_setup = true;
-  nodeStore.updateSettings(nodeCloudStorageWriter);
-  dataLoaded.value = false;
 };
 
 const fetchConnections = async () => {
@@ -317,6 +290,7 @@ const fetchConnections = async () => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 
@@ -340,6 +314,12 @@ defineExpose({
   font-size: 0.875rem;
   font-weight: 600;
   color: #718096;
+}
+
+.field-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary, #718096);
 }
 
 .format-options {

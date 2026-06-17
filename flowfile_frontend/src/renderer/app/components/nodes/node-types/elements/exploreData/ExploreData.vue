@@ -1,13 +1,13 @@
 <script lang="ts" setup>
 import { ref, computed } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import type { IRow, IMutField, IChart } from "@kanaries/graphic-walker/dist/interfaces";
+import type { IRow, IMutField, IChart } from "@kanaries/graphic-walker/interfaces";
 import VueGraphicWalker from "./vueGraphicWalker/VueGraphicWalker.vue";
 import type { NodeGraphicWalker } from "./vueGraphicWalker/interfaces";
 import { fetchGraphicWalkerData } from "./vueGraphicWalker/utils";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { useItemStore } from "../../../../common/DraggableItem/stateStore";
-import { useThemeStore } from "../../../../../stores/theme-store";
+import { useGraphicWalkerAppearance } from "../../../../../composables/useGraphicWalkerAppearance";
 
 const isLoading = ref(false);
 const nodeData = ref<NodeGraphicWalker | null>(null);
@@ -18,15 +18,9 @@ const errorMessage = ref<string | null>(null);
 const nodeStore = useNodeStore();
 const globalNodeId = ref(-1);
 const windowStore = useItemStore();
-const themeStore = useThemeStore();
 const vueGraphicWalkerRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
-// Map theme store values to graphic-walker appearance values
-const graphicWalkerAppearance = computed(() => {
-  const theme = themeStore.mode;
-  if (theme === "system") return "media";
-  return theme; // 'light' or 'dark'
-});
+const graphicWalkerAppearance = useGraphicWalkerAppearance();
 
 const canDisplayVisualization = computed(() => !isLoading.value && !errorMessage.value);
 
@@ -52,7 +46,6 @@ const loadNodeData = async (nodeId: number) => {
     chartList.value = inputData.specList || [];
   } catch (error: any) {
     console.error("Error loading GraphicWalker data:", error);
-    // Set user-friendly error message
     if (error.response && error.response.status === 422) {
       errorMessage.value = "The analysis flow has not been run yet.";
     } else if (error instanceof Error) {
@@ -94,7 +87,6 @@ const getCurrentSpec = async (): Promise<IChart[] | null> => {
   }
 };
 
-// --- Save Spec Back to Store ---
 const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
   if (!nodeData.value) {
     console.error("Cannot save: Original node data context is missing.");
@@ -122,7 +114,7 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
 };
 
 const pushNodeData = async () => {
-  errorMessage.value = null; // Clear previous errors
+  errorMessage.value = null;
   windowStore.setFullScreen("nodeSettings", false);
   const currentSpec = await getCurrentSpec();
 
@@ -131,7 +123,6 @@ const pushNodeData = async () => {
     return;
   }
 
-  // Decide whether to save empty specs or not
   if (currentSpec.length === 0) {
     console.log("No chart configurations exported, skipping save.");
     return;
@@ -144,10 +135,9 @@ const pushNodeData = async () => {
   }
 };
 
-// --- Expose Methods ---
 defineExpose({
   loadNodeData,
-  pushNodeData, // Expose the main save action
+  pushNodeData,
 });
 </script>
 
