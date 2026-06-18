@@ -150,28 +150,36 @@ def _complete_run_if_needed(
 
 def _run_project_command(action: str | None, arg: str | None) -> None:
     """Headless project init/open/save — the proof that build-from-scratch works without the UI."""
+    from fastapi import HTTPException
+
     from flowfile_core.auth.utils import get_local_user_id
+    from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
     from flowfile_core.project import project_sync
+
+    def _validated_folder(usage: str) -> str:
+        if not arg:
+            print(usage, file=sys.stderr)
+            sys.exit(1)
+        try:
+            return validate_path_under_cwd(arg)
+        except HTTPException as e:
+            print(f"Invalid project path: {e.detail}", file=sys.stderr)
+            sys.exit(1)
 
     owner_id = get_local_user_id()
     if action == "init":
-        if not arg:
-            print("Usage: flowfile project init <folder>", file=sys.stderr)
-            sys.exit(1)
-        project = project_sync.init_project(arg, Path(arg).name, owner_id)
+        folder = _validated_folder("Usage: flowfile project init <folder>")
+        project = project_sync.init_project(folder, Path(folder).name, owner_id)
         print(f"Initialized project '{project.name}' at {project.root}")
     elif action == "open":
-        if not arg:
-            print("Usage: flowfile project open <folder>", file=sys.stderr)
-            sys.exit(1)
-        project, result = project_sync.open_project(arg, owner_id)
+        folder = _validated_folder("Usage: flowfile project open <folder>")
+        project, result = project_sync.open_project(folder, owner_id)
         d = result.to_dict()
         print(f"Opened project '{project.name}' at {project.root}")
         print(f"Imported: {d['imported']}")
-        if d["placeholder_secrets"]:
-            print("Secrets needing values (set FLOWFILE_SECRET_<NAME> or update them in the app):")
-            for name in d["placeholder_secrets"]:
-                print(f"  - {name}")
+        n = len(d["placeholder_secrets"])
+        if n:
+            print(f"{n} secret(s) need values (set FLOWFILE_SECRET_<NAME> or update them in the app).")
     elif action == "save":
         if not arg:
             print('Usage: flowfile project save "<message>"', file=sys.stderr)

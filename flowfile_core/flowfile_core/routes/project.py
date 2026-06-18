@@ -14,6 +14,7 @@ from pydantic import BaseModel, SecretStr
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
 from flowfile_core.project import git_ops, project_sync
 from flowfile_core.project.models import ActiveProject
 from flowfile_core.secret_manager.secret_manager import SecretInput, upsert_secret
@@ -60,15 +61,17 @@ def _payload(project: ActiveProject) -> dict:
 
 @router.post("/init")
 def init_project(req: InitProjectRequest, current_user=Depends(get_current_active_user)) -> dict:
-    name = req.name or Path(req.folder_path).expanduser().name
-    project = project_sync.init_project(req.folder_path, name, current_user.id, req.track_data_artifacts)
+    folder_path = validate_path_under_cwd(req.folder_path)
+    name = req.name or Path(folder_path).name
+    project = project_sync.init_project(folder_path, name, current_user.id, req.track_data_artifacts)
     return {"project": _payload(project)}
 
 
 @router.post("/open")
 def open_project(req: OpenProjectRequest, current_user=Depends(get_current_active_user)) -> dict:
+    folder_path = validate_path_under_cwd(req.folder_path)
     try:
-        project, result = project_sync.open_project(req.folder_path, current_user.id)
+        project, result = project_sync.open_project(folder_path, current_user.id)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e)) from e
     return {"project": _payload(project), **result.to_dict()}
