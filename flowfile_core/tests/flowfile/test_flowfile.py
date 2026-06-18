@@ -1286,6 +1286,38 @@ def test_add_database_writer_sqlite(sqlite_db, execution_location):
     assert 'name' in written_df.columns, 'Written table should have a name column'
 
 
+def test_database_writer_sqlite_local_runs_without_worker(sqlite_db, monkeypatch):
+    """Local execution must write in-process and never offload to the worker (scheduled/CLI path)."""
+    import flowfile_core.flowfile.flow_graph as flow_graph_module
+
+    def _no_worker(*args, **kwargs):
+        raise AssertionError("local database write must not call the worker")
+
+    monkeypatch.setattr(flow_graph_module, "ExternalDatabaseWriter", _no_worker)
+
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
+    add_node_promise_on_type(graph, 'database_writer', 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    conn_str = f"sqlite:///{sqlite_db}"
+    database_connection = input_schema.DatabaseConnection(database_type='sqlite', password_ref="", database=conn_str)
+    database_write_settings = input_schema.DatabaseWriteSettings(
+        database_connection=database_connection,
+        table_name='local_write_table',
+        connection_mode='inline',
+        if_exists='replace',
+    )
+    graph.add_database_writer(input_schema.NodeDatabaseWriter(
+        database_write_settings=database_write_settings, node_id=2, flow_id=1, user_id=1))
+
+    run_info = graph.run_graph()
+    assert run_info.success, 'Local database write should succeed without a worker'
+    import polars as pl
+    written_df = pl.read_database_uri("SELECT * FROM local_write_table", conn_str)
+    assert len(written_df) == 3, f'Expected 3 rows written, got {len(written_df)}'
+
+
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_add_database_reader_from_stored_database(execution_location):
