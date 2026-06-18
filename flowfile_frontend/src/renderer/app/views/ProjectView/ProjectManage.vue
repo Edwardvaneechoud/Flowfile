@@ -1,13 +1,17 @@
 <template>
   <div class="project-manage">
     <div class="manage-header mb-3">
-      <div>
-        <h2 class="page-title">
-          <i class="fa-solid fa-folder"></i>
-          {{ store.activeProject?.name }}
-        </h2>
-        <p class="page-description folder-path">{{ store.activeProject?.folder_path }}</p>
+      <div class="manage-header__main">
+        <div class="manage-icon"><i class="fa-solid fa-folder"></i></div>
+        <div class="manage-header__text">
+          <h2 class="page-title">{{ store.activeProject?.name }}</h2>
+          <p class="page-description folder-path">{{ store.activeProject?.folder_path }}</p>
+        </div>
       </div>
+      <el-button class="settings-btn" @click="settingsVisible = true">
+        <i class="fa-solid fa-gear"></i>
+        <span>Settings</span>
+      </el-button>
     </div>
 
     <!-- Files changed outside Flowfile -->
@@ -86,6 +90,8 @@
         </el-button>
       </div>
     </div>
+
+    <ProjectSettingsDialog v-model="settingsVisible" />
   </div>
 </template>
 
@@ -96,6 +102,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import SaveVersionForm from "../../components/project/SaveVersionForm.vue";
 import ChangeList from "./ChangeList.vue";
 import ProjectVersionHistory from "./ProjectVersionHistory.vue";
+import ProjectSettingsDialog from "./ProjectSettingsDialog.vue";
 import { useProjectStore } from "../../stores/project-store";
 import type { ProjectVersionChange } from "../../types";
 
@@ -103,6 +110,7 @@ const store = useProjectStore();
 const router = useRouter();
 const reloading = ref(false);
 const closing = ref(false);
+const settingsVisible = ref(false);
 const unsavedChanges = ref<ProjectVersionChange[]>([]);
 
 const statusLabel = computed(
@@ -180,12 +188,45 @@ const handleClose = async () => {
 <style scoped>
 .project-manage {
   max-width: 820px;
+  margin: 0 auto;
 }
 
-.manage-header .page-title {
+.manage-header {
   display: flex;
   align-items: center;
-  gap: var(--spacing-2, 8px);
+  justify-content: space-between;
+  gap: var(--spacing-4, 16px);
+}
+
+.manage-header__main {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-4, 16px);
+  min-width: 0;
+}
+
+.manage-header__text {
+  min-width: 0;
+}
+
+.manage-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background-color: var(--color-accent-subtle, #eff6ff);
+  color: var(--color-accent, #2563eb);
+  font-size: var(--font-size-xl, 20px);
+}
+
+.settings-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .folder-path {

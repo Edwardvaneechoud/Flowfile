@@ -51,6 +51,19 @@ export class ProjectApi {
     return res.data;
   }
 
+  /** Update project settings. Returns the persisted track-data-artifacts value. */
+  static async updateSettings(trackDataArtifacts: boolean): Promise<boolean> {
+    try {
+      const res = await axios.put<{ track_data_artifacts: boolean }>("/project/settings", {
+        track_data_artifacts: trackDataArtifacts,
+      });
+      return res.data.track_data_artifacts;
+    } catch (error: any) {
+      if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
+      throw new Error(detail(error, "Failed to update project settings"));
+    }
+  }
+
   /** Save a version (commit). sha is null when nothing changed. */
   static async saveVersion(message: string): Promise<SaveVersionResult> {
     try {

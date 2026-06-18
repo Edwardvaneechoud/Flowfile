@@ -4,6 +4,7 @@ export interface ProjectInfo {
   id: number;
   name: string;
   folder_path: string;
+  track_data_artifacts: boolean; // version catalog tables, dashboards and ML models alongside flows
 }
 
 export interface ImportedCounts {

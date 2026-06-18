@@ -281,6 +281,21 @@ class ProjectSyncService:
             repository.set_head_sha(db, proj.id, git_ops.head_sha(proj.root))
         return sha
 
+    def _sync_track_setting_from_manifest(self, proj: ActiveProject) -> None:
+        """Adopt the on-disk manifest's track-data-artifacts value after a files→DB rebuild.
+
+        Restore/reload just reset the working tree (incl. ``project.yaml``) to an authoritative state,
+        so the DB row and the cached project must match it — otherwise the Settings UI and the
+        projection hooks (which read the cached flag) go stale. Mutates ``proj`` in place, mirroring
+        :meth:`update_settings`.
+        """
+        m = read_manifest(proj.root)
+        if m is None:
+            return
+        with get_db_context() as db:
+            repository.set_track_data_artifacts(db, proj.id, m.track_data_artifacts)
+        proj.track_data_artifacts = m.track_data_artifacts
+
     def restore_version(self, user_id: int, sha: str, label: str | None = None) -> SetupResult:
         """Reset files to ``sha``, rebuild + prune the DB to match, and record it as a new version.
 
@@ -293,6 +308,7 @@ class ProjectSyncService:
             raise RuntimeError("No active project")
         git_ops.restore(proj.root, sha)
         result = import_project(proj.root, proj.owner_id, prune=True)
+        self._sync_track_setting_from_manifest(proj)
         message = f"Restore: {label}" if label else f"Restore version {sha[:8]}"
         git_ops.commit_all(proj.root, message)
         with get_db_context() as db:
@@ -304,7 +320,9 @@ class ProjectSyncService:
         proj = self.get_active_project(user_id)
         if proj is None:
             raise RuntimeError("No active project")
-        return import_project(proj.root, proj.owner_id, prune=True)
+        result = import_project(proj.root, proj.owner_id, prune=True)
+        self._sync_track_setting_from_manifest(proj)
+        return result
 
     def changes_for_version(self, user_id: int, sha: str) -> list[dict]:
         """Friendly summary of what restoring ``sha`` would change vs the latest saved version."""

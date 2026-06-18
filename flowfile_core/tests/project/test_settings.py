@@ -15,7 +15,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogTable, FlowRegistration, GlobalArtifact
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.project import project_sync, repository
+from flowfile_core.project import git_ops, project_sync, repository
 from flowfile_core.project.manifest import read_manifest
 from flowfile_core.schemas import input_schema, schemas
 from shared.storage_config import storage
@@ -191,6 +191,43 @@ def test_reload_with_tracking_off_leaves_db_tables_and_models(tmp_path):
             assert db.query(CatalogTable).filter_by(id=table_id).first() is not None
             a = db.query(GlobalArtifact).filter_by(id=artifact_id).first()
             assert a is not None and a.status == "active"
+    finally:
+        _cleanup(table, model, flow_uuid)
+
+
+def test_restore_to_tracked_version_readopts_setting(tmp_path):
+    """Restoring to a version where tracking was ON brings the setting back everywhere. The restored
+    manifest is authoritative, so the DB mirror AND the cached project follow it — not just the files.
+    Regression: restore used to rebuild the files but leave the DB/cache flag stale (Settings UI then
+    showed Off while project.yaml said On)."""
+    project_sync.close_project(OWNER)
+    table, model = f"rs_tbl_{uuid4().hex[:6]}", f"rs_mdl_{uuid4().hex[:6]}"
+    flow_uuid = _make_flow(tmp_path, f"rs_flow_{uuid4().hex[:6]}")
+    _make_table(table)
+    _make_artifact(model, _reg_id(flow_uuid))
+    root = tmp_path / "project"
+    try:
+        # v1: tracking ON — tables.yaml/models.yaml are committed.
+        project_sync.init_project(str(root), "Restore Test", OWNER)
+        tracked_sha = git_ops.head_sha(root)
+        assert (root / "tables.yaml").exists() and (root / "models.yaml").exists()
+
+        # v2: turn tracking OFF and commit it.
+        project_sync.update_settings(OWNER, False)
+        project_sync.save_version(OWNER, "Turn off tracking")
+        assert _db_flag(root) is False
+        assert project_sync.get_active_project(OWNER).track_data_artifacts is False
+        assert not (root / "tables.yaml").exists()
+
+        # Restore back to the tracked version.
+        project_sync.restore_version(OWNER, tracked_sha)
+
+        # The setting follows the restored version — manifest, DB mirror, AND in-memory cache.
+        assert read_manifest(root).track_data_artifacts is True
+        assert _db_flag(root) is True
+        assert project_sync.get_active_project(OWNER).track_data_artifacts is True
+        # The data-artifact manifests are back, too.
+        assert (root / "tables.yaml").exists() and (root / "models.yaml").exists()
     finally:
         _cleanup(table, model, flow_uuid)
 

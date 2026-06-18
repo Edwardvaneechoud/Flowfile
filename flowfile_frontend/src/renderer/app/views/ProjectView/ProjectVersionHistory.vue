@@ -19,34 +19,54 @@
       <div v-else-if="!store.versions.length" class="history-empty">
         No versions yet. Use “Save a version” above to create your first snapshot.
       </div>
-      <ul v-else class="history-list">
-        <li v-for="(v, i) in store.versions" :key="v.sha" class="history-item">
-          <div class="history-row">
-            <div class="history-dot" :class="{ latest: i === 0 }"></div>
-            <div class="history-body">
-              <p class="history-message">{{ v.message }}</p>
-              <p class="history-meta">
-                {{ timeAgo(v.committed_at) }}
-                <span v-if="i === 0" class="history-current">· current</span>
-              </p>
+      <div v-else class="history-scroll">
+        <ul class="history-list">
+          <li v-for="(v, i) in pagedVersions" :key="v.sha" class="history-item">
+            <div class="history-row">
+              <div class="history-dot" :class="{ latest: pageStart + i === 0 }"></div>
+              <div class="history-body">
+                <p class="history-message">{{ v.message }}</p>
+                <p class="history-meta">
+                  {{ timeAgo(v.committed_at) }}
+                  <span v-if="pageStart + i === 0" class="history-current">· current</span>
+                </p>
+              </div>
+              <button type="button" class="history-details-btn" @click="toggle(v.sha)">
+                <i
+                  class="fa-solid"
+                  :class="expanded[v.sha] ? 'fa-chevron-up' : 'fa-chevron-down'"
+                ></i>
+                Details
+              </button>
+              <el-button v-if="pageStart + i !== 0" size="small" text @click="openRestore(v)">
+                Restore
+              </el-button>
             </div>
-            <button type="button" class="history-details-btn" @click="toggle(v.sha)">
-              <i
-                class="fa-solid"
-                :class="expanded[v.sha] ? 'fa-chevron-up' : 'fa-chevron-down'"
-              ></i>
-              Details
-            </button>
-            <el-button v-if="i !== 0" size="small" text @click="openRestore(v)">Restore</el-button>
-          </div>
 
-          <div v-if="expanded[v.sha]" class="history-detail">
-            <div v-if="loadingDetails[v.sha]" class="history-detail__empty">Loading changes…</div>
-            <ChangeList v-else-if="(details[v.sha] || []).length" :changes="details[v.sha]" />
-            <p v-else class="history-detail__empty">No file changes in this version.</p>
-          </div>
-        </li>
-      </ul>
+            <div v-if="expanded[v.sha]" class="history-detail">
+              <div v-if="loadingDetails[v.sha]" class="history-detail__empty">Loading changes…</div>
+              <ChangeList v-else-if="(details[v.sha] || []).length" :changes="details[v.sha]" />
+              <p v-else class="history-detail__empty">No file changes in this version.</p>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div v-if="totalPages > 1" class="card-footer history-pager">
+      <span class="history-pager__info">
+        Page {{ page }} of {{ totalPages }} · {{ store.versions.length }} versions
+      </span>
+      <div class="history-pager__controls">
+        <button type="button" class="pager-btn" :disabled="page <= 1" @click="page--">
+          <i class="fa-solid fa-chevron-left"></i>
+          Newer
+        </button>
+        <button type="button" class="pager-btn" :disabled="page >= totalPages" @click="page++">
+          Older
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+      </div>
     </div>
 
     <RestoreDialog v-model="dialogVisible" :version="selectedVersion" />
@@ -54,11 +74,13 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import ChangeList from "./ChangeList.vue";
 import RestoreDialog from "./RestoreDialog.vue";
 import { useProjectStore } from "../../stores/project-store";
 import type { ProjectVersion, ProjectVersionChange } from "../../types";
+
+const PAGE_SIZE = 8;
 
 const store = useProjectStore();
 const dialogVisible = ref(false);
@@ -67,6 +89,18 @@ const selectedVersion = ref<ProjectVersion | null>(null);
 const expanded = reactive<Record<string, boolean>>({});
 const loadingDetails = reactive<Record<string, boolean>>({});
 const details = reactive<Record<string, ProjectVersionChange[]>>({});
+
+const page = ref(1);
+const totalPages = computed(() => Math.max(1, Math.ceil(store.versions.length / PAGE_SIZE)));
+const pageStart = computed(() => (page.value - 1) * PAGE_SIZE);
+const pagedVersions = computed(() =>
+  store.versions.slice(pageStart.value, pageStart.value + PAGE_SIZE),
+);
+
+// History can shrink (restore) or grow (save) under us — keep the page in range.
+watch(totalPages, (max) => {
+  if (page.value > max) page.value = max;
+});
 
 const refresh = () => store.loadVersions();
 
@@ -145,6 +179,13 @@ const timeAgo = (iso: string): string => {
   padding: var(--spacing-3, 12px) 0;
   font-size: var(--font-size-sm, 14px);
   color: var(--color-text-tertiary, #94a3b8);
+}
+
+.history-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  margin-right: calc(-1 * var(--spacing-2, 8px));
+  padding-right: var(--spacing-2, 8px);
 }
 
 .history-list {
@@ -227,5 +268,42 @@ const timeAgo = (iso: string): string => {
   margin: 0;
   font-size: 12px;
   color: var(--color-text-tertiary, #94a3b8);
+}
+
+.history-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-3, 12px);
+}
+
+.history-pager__info {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #94a3b8);
+}
+
+.history-pager__controls {
+  display: flex;
+  gap: var(--spacing-2, 8px);
+}
+
+.pager-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary, #475569);
+  font-size: var(--font-size-sm, 14px);
+  cursor: pointer;
+}
+
+.pager-btn:hover:not(:disabled) {
+  color: var(--color-accent, #2563eb);
+}
+
+.pager-btn:disabled {
+  color: var(--color-border-secondary, #cbd5e1);
+  cursor: default;
 }
 </style>

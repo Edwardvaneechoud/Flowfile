@@ -119,6 +119,14 @@ export const useProjectStore = defineStore("project", {
       }
     },
 
+    /** Toggle whether data artifacts (tables/dashboards/models) are versioned. */
+    async updateSettings(trackDataArtifacts: boolean): Promise<void> {
+      const value = await ProjectApi.updateSettings(trackDataArtifacts);
+      if (this.activeProject) this.activeProject.track_data_artifacts = value;
+      // Re-projection may have added/removed artifact files on disk — reconcile status.
+      await this.refreshActive();
+    },
+
     /** Decoupled signal from a local save (flow/connection/secret/schedule). */
     onSourceChanged(): void {
       if (this.activeProject) this.hasUnsavedChanges = true;

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     getActive: vi.fn(),
     saveVersion: vi.fn(),
     getVersions: vi.fn(),
+    updateSettings: vi.fn(),
   };
 });
 
@@ -24,12 +25,13 @@ vi.mock("../api/project.api", () => ({
     getActive: mocks.getActive,
     saveVersion: mocks.saveVersion,
     getVersions: mocks.getVersions,
+    updateSettings: mocks.updateSettings,
   },
 }));
 
 import { useProjectStore } from "./project-store";
 
-const PROJECT = { id: 1, name: "Demo", folder_path: "/p" };
+const PROJECT = { id: 1, name: "Demo", folder_path: "/p", track_data_artifacts: true };
 
 beforeEach(() => {
   setActivePinia(createPinia());
@@ -97,6 +99,24 @@ describe("saveVersion", () => {
     expect(store.dirty).toBe(false);
     expect(store.hasUnsavedChanges).toBe(false);
     expect(mocks.getVersions).toHaveBeenCalled();
+  });
+});
+
+describe("updateSettings", () => {
+  it("persists the toggle and reconciles status from disk", async () => {
+    mocks.updateSettings.mockResolvedValue(false);
+    mocks.getActive.mockResolvedValue({
+      project: { ...PROJECT, track_data_artifacts: false },
+      has_external_changes: false,
+      dirty: true, // re-projection dropped artifact files → working tree dirty
+    });
+    const store = useProjectStore();
+    store.activeProject = { ...PROJECT };
+
+    await store.updateSettings(false);
+    expect(mocks.updateSettings).toHaveBeenCalledWith(false);
+    expect(store.activeProject?.track_data_artifacts).toBe(false);
+    expect(store.status).toBe("unsaved");
   });
 });
 
