@@ -205,9 +205,19 @@ pub(crate) fn spawn_service(
     let name = kind.name();
     log::info!("spawning sidecar {} from {}", name, path.display());
 
+    // Run the sidecar from the user's home directory rather than inheriting the
+    // shell's cwd (which is the app bundle / a read-only location like `/` when
+    // packaged). The Python backend resolves a relative output `directory`
+    // (e.g. the legacy `"."` default) against the process cwd, so without this a
+    // write to `output.csv` lands at `/output.csv` and fails with
+    // "Read-only file system". Home matches the HOME/FLOWFILE_STORAGE_DIR base
+    // exported in env.rs and the file browser's default location.
+    let work_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+
     let mut cmd = TokioCommand::new(&path);
     cmd.args(kind.args(core_port, worker_port))
         .envs(env)
+        .current_dir(work_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(false);
