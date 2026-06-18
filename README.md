@@ -49,7 +49,7 @@ Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a
 
 ## What's in Flowfile
 
-**A visual canvas** with 40+ node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, and more. Read from local files, databases (PostgreSQL, MySQL, SQL Server, Oracle), cloud storage (S3, ADLS, GCS), or Kafka. Write the result wherever you want. Search the palette by what you want to do — `s3`, `aggregate`, or `vlookup` all jump to the right node.
+**A visual canvas** with 40+ node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, and more. Read from local files, databases (PostgreSQL, MySQL, SQL Server, Oracle), cloud storage (S3, ADLS, GCS), or Kafka. Write the result wherever you want. Beyond the nodes, the formula editor brings 100+ transformation functions, and a Polars code node gives you full Polars support — all running in-process, no external engine.
 
 <div align="center">
   <img src=".github/images/flowfile_demo_1.gif" alt="Flowfile demo — joins, fuzzy matching, transformations" width="800"/>
