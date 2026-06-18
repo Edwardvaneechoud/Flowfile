@@ -343,10 +343,6 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         data = self.data_getter()
         yield from data
 
-    def get_df(self):
-        df = self.get_pl_df()
-        return df.to_pandas()
-
     def get_sample(self, n: int = 10000) -> Generator[dict[str, Any], None, None]:
         if self.query_mode == "table":
             query = f"{self.query} LIMIT {n}"
