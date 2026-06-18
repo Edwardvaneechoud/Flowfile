@@ -381,7 +381,6 @@ export const useFlowStore = defineStore('flow', () => {
     }
 
     edges.value.push(...derivedEdges)
-    console.log('[deriveEdgesFromNodes] Created edges:', derivedEdges.map(e => `${e.source}->${e.target}`))
   }
 
   // Save state to session storage using FlowfileData format (flowfile_core compatible)
@@ -1323,7 +1322,7 @@ gc.collect()
    * the settings watcher (which would loop schema propagation forever).
    * Returns true if settings were modified.
    */
-  function syncNodeSettingsWithSchema(node: FlowNode, inputSchema: ColumnSchema[], rightInputSchema?: ColumnSchema[] | null): boolean {
+  function syncNodeSettingsWithSchema(node: FlowNode, inputSchema: ColumnSchema[]): boolean {
     const settings = node.settings as any
     let modified = false
 
@@ -1387,23 +1386,6 @@ gc.collect()
       if (JSON.stringify(settings.groupby_input ?? null) !== JSON.stringify(newGroupbyInput)) {
         settings.groupby_input = newGroupbyInput
         modified = true
-      }
-    }
-
-    if (node.type === 'join' && rightInputSchema) {
-      // Store available columns for join configuration UI
-      // The join settings UI can use getLeftInputSchema and getRightInputSchema
-      // but we can also store column availability here if needed
-    }
-
-    if (node.type === 'filter') {
-      const filterInput = settings.filter_input
-      if (filterInput?.basic_filter?.field) {
-        const fieldExists = inputSchema.some(c => c.name === filterInput.basic_filter.field)
-        if (!fieldExists && filterInput.basic_filter.field !== '') {
-          // Field no longer exists - we could clear it or mark it
-          // For now, just leave it as is so user can see and fix
-        }
       }
     }
 
@@ -1513,11 +1495,8 @@ result
 
       const primaryInputId = node.leftInputId || node.inputIds[0]
       const inputSchema = primaryInputId ? (nodeResults.value.get(primaryInputId)?.schema || null) : null
-      const rightInputSchema = (node.type === 'join' && node.rightInputId)
-        ? (nodeResults.value.get(node.rightInputId)?.schema || null)
-        : null
       if (inputSchema && inputSchema.length > 0) {
-        syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
+        syncNodeSettingsWithSchema(node, inputSchema)
       }
 
       const info = res[String(nodeId)]
@@ -1597,14 +1576,14 @@ result
         inputHasData = !!(inputResult?.success || inputResult?.data)
       }
 
-      // For join nodes, also get right input schema
+      // For join nodes, also get right input schema (used by inferOutputSchema below)
       if ((node.type === 'join' || node.type === 'cross_join') && node.rightInputId) {
         const rightResult = nodeResults.value.get(node.rightInputId)
         rightInputSchema = rightResult?.schema || null
       }
 
       if (inputSchema && inputSchema.length > 0) {
-        syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
+        syncNodeSettingsWithSchema(node, inputSchema)
       }
 
       // For polars_code/formula nodes, try lazy execution if input data is available
@@ -2906,7 +2885,6 @@ result
    * - Uses version '1.0.0' for cross-system compatibility
    */
   function exportToFlowfile(name: string = 'Untitled Flow'): FlowfileData {
-    console.log('[exportToFlowfile] Current edges:', edges.value.map(e => `${e.source}->${e.target}`))
     const flowfileNodes: FlowfileNode[] = []
 
     nodes.value.forEach((node, id) => {

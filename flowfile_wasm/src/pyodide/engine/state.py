@@ -115,9 +115,3 @@ def clear_all():
     _schema_schemas.clear()
     _output_binaries.clear()
     gc.collect()
-
-
-def run_gc():
-    """Force garbage collection. Call after heavy operations."""
-    gc.collect()
-    return {"freed": True}
