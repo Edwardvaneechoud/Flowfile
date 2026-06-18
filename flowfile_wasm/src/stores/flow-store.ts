@@ -110,6 +110,27 @@ function toPythonJson(value: unknown): string {
   return JSON.stringify(JSON.stringify(value))
 }
 
+function defaultDynamicRenameInput() {
+  return {
+    rename_mode: 'prefix',
+    prefix: '',
+    suffix: '',
+    formula: '',
+    selection_mode: 'all',
+    selected_columns: [],
+    selected_data_type: null,
+  }
+}
+
+// A legacy `rename` node (an arbitrary 1:1 old->new map) can't be expressed as a
+// single dynamic-rename rule, so migrate by type only with default settings.
+function migrateLegacyRenameSettings(settings: any): any {
+  if (!settings) return settings
+  if (!settings.dynamic_rename_input) settings.dynamic_rename_input = defaultDynamicRenameInput()
+  delete settings.rename_input
+  return settings
+}
+
 export const useFlowStore = defineStore('flow', () => {
   const pyodideStore = usePyodideStore()
 
@@ -118,6 +139,11 @@ export const useFlowStore = defineStore('flow', () => {
   const edges = ref<FlowEdge[]>([])
   const nodeResults = ref<Map<number, NodeResult>>(new Map())
   const selectedNodeId = ref<number | null>(null)
+  // Panel visibility is independent of selection: the Settings panel and the
+  // Table preview each have their own flag so a single click no longer forces
+  // both open (mirrors the main flowfile_frontend). Session-only — not persisted.
+  const showSettings = ref(false)
+  const showTablePreview = ref(false)
   const isExecuting = ref(false)
   const executionError = ref<string | null>(null)
   const nodeIdCounter = ref(0)
@@ -191,6 +217,7 @@ export const useFlowStore = defineStore('flow', () => {
             let nodeType = flowfileNode.type
             if (nodeType === 'read_csv') nodeType = 'read'
             if (nodeType === 'preview') nodeType = 'explore_data'
+            if (nodeType === 'rename') nodeType = 'dynamic_rename'
 
             // Migrate old settings field names
             let settings = flowfileNode.setting_input as NodeSettings
@@ -198,6 +225,7 @@ export const useFlowStore = defineStore('flow', () => {
               (settings as any).received_file = (settings as any).received_table
               delete (settings as any).received_table
             }
+            if (nodeType === 'dynamic_rename') settings = migrateLegacyRenameSettings(settings)
 
             // Get description and node_reference from FlowfileNode level (this is where flowfile_core stores them)
             const nodeDescription = flowfileNode.description || ''
@@ -1136,7 +1164,9 @@ result
 
     selectedNodeId.value = id
 
-    if (id !== null) {
+    // Only materialize a preview when the Table panel is actually open — a plain
+    // settings-click should stay cheap and not run hidden compute.
+    if (id !== null && showTablePreview.value) {
       const result = nodeResults.value.get(id)
       if (result?.success && !hasPreviewCached(id)) {
         // Use more rows for explore_data nodes (Preview Settings)
@@ -2236,14 +2266,23 @@ result
           break
         }
 
-        case 'rename': {
+        case 'dynamic_rename': {
           const inputId = node.inputIds[0]
           if (!inputId) {
             return failNode(nodeId, 'No input connected')
           }
+          // Formula mode needs the lazily-installed expression package.
+          const renameMode = (node.settings as any)?.dynamic_rename_input?.rename_mode
+          if (renameMode === 'formula') {
+            try {
+              await pyodideStore.ensurePyPackages(['polars-expr-transformer==0.5.6'])
+            } catch (err) {
+              return failNode(nodeId, err instanceof Error ? err.message : String(err))
+            }
+          }
           result = await runPythonWithResult(`
 import json
-result = execute_rename(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
+result = execute_dynamic_rename(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -2569,7 +2608,7 @@ result
 
       await propagateSchemas()
 
-      if (selectedNodeId.value !== null) {
+      if (selectedNodeId.value !== null && showTablePreview.value) {
         const result = nodeResults.value.get(selectedNodeId.value)
         if (result?.success) {
           const node = nodes.value.get(selectedNodeId.value)
@@ -2763,10 +2802,10 @@ result
           }
         } as any
 
-      case 'rename':
+      case 'dynamic_rename':
         return {
           ...base,
-          rename_input: []
+          dynamic_rename_input: defaultDynamicRenameInput()
         } as any
 
       case 'unique':
@@ -2946,6 +2985,8 @@ result
       previewCache.value.clear()
       dirtyNodes.value.clear()
       selectedNodeId.value = null
+      showSettings.value = false
+      showTablePreview.value = false
       currentFlowName.value = (data as any)?.flowfile_name || 'Untitled Flow'
       // Raw FlowfileData (file/template/snapshot) carries no library identity;
       // callers that restore a saved flow set currentFlowId afterwards.
@@ -2970,6 +3011,7 @@ result
         let nodeType = flowfileNode.type
         if (nodeType === 'read_csv') nodeType = 'read'
         if (nodeType === 'preview') nodeType = 'explore_data'
+        if (nodeType === 'rename') nodeType = 'dynamic_rename'
 
         // Migrate old settings field names
         let settings = flowfileNode.setting_input as NodeSettings
@@ -2977,6 +3019,7 @@ result
           (settings as any).received_file = (settings as any).received_table
           delete (settings as any).received_table
         }
+        if (nodeType === 'dynamic_rename') settings = migrateLegacyRenameSettings(settings)
 
         // Get description and node_reference from FlowfileNode level (this is where flowfile_core stores them)
         const nodeDescription = flowfileNode.description || ''
@@ -3318,6 +3361,8 @@ result
     previewCache.value.clear()
     dirtyNodes.value.clear()
     selectedNodeId.value = null
+    showSettings.value = false
+    showTablePreview.value = false
     nodeIdCounter.value = 0
     currentFlowName.value = 'Untitled Flow'
     currentFlowId.value = null
@@ -3395,6 +3440,8 @@ result
     edges,
     nodeResults,
     selectedNodeId,
+    showSettings,
+    showTablePreview,
     isExecuting,
     executionError,
     currentFlowName,

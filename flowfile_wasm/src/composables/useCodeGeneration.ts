@@ -16,7 +16,8 @@ import type {
   NodeCrossJoinSettings,
   NodeUnionSettings,
   NodeRecordIdSettings,
-  NodeRenameSettings,
+  NodeDynamicRenameSettings,
+  DynamicRenameInput,
   NodePivotSettings,
   NodeUnpivotSettings,
   NodeSampleSettings,
@@ -226,8 +227,8 @@ class FlowToPolarsConverter {
       case 'record_id':
         this.handleRecordId(node.settings as NodeRecordIdSettings, varName, inputVars)
         break
-      case 'rename':
-        this.handleRename(node.settings as NodeRenameSettings, varName, inputVars)
+      case 'dynamic_rename':
+        this.handleDynamicRename(node.settings as NodeDynamicRenameSettings, varName, inputVars)
         break
       case 'pivot':
         this.handlePivot(node.settings as NodePivotSettings, varName, inputVars)
@@ -630,16 +631,67 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleRename(settings: NodeRenameSettings, varName: string, inputVars: { main?: string }): void {
+  // Python expression (over `df`) for the columns a dynamic-rename rule targets.
+  private renameTargetsExpr(dr: DynamicRenameInput, df: string): string {
+    if (dr.selection_mode === 'list') {
+      return `[c for c in ${toPythonValue(dr.selected_columns || [])} if c in ${df}.columns]`
+    }
+    if (dr.selection_mode === 'data_type') {
+      // Mirror readable_data_type_group on the base dtype name (matches the engine).
+      const NUMERIC = '{"fixed_decimal","decimal","float","integer","boolean","double","Int8","Int16","Int32","Int64","Int128","Float16","Float32","Float64","Decimal","Binary","Boolean","Uint8","Uint16","Uint32","Uint64","UInt8","UInt16","UInt32","UInt64","UInt128"}'
+      const STRING = '{"Utf8","VARCHAR","CHAR","NVARCHAR","String"}'
+      const DATE = '{"datetime","date","Date","Datetime","Time"}'
+      const base = 'str(dt).split("(")[0]'
+      let pred: string
+      switch (dr.selected_data_type) {
+        case 'String': pred = `${base} in ${STRING}`; break
+        case 'Numeric': pred = `${base} in ${NUMERIC}`; break
+        case 'Date': pred = `${base} in ${DATE}`; break
+        case 'Other': pred = `${base} not in ${STRING} | ${NUMERIC} | ${DATE}`; break
+        default: pred = 'False'  // Boolean/Binary/Complex never occur as a group
+      }
+      return `[c for c, dt in ${df}.schema.items() if ${pred}]`
+    }
+    return `${df}.columns`
+  }
+
+  private handleDynamicRename(settings: NodeDynamicRenameSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
-    const entries = (settings.rename_input || []).filter(r => r.old_name && r.new_name && r.old_name !== r.new_name)
-    if (entries.length === 0) {
+    const dr = settings.dynamic_rename_input
+    if (!dr) {
       this.addCode(`${varName} = ${inputDf}`)
       this.addCode('')
       return
     }
-    const mapping = entries.map(r => `${JSON.stringify(r.old_name)}: ${JSON.stringify(r.new_name)}`).join(', ')
-    this.addCode(`${varName} = ${inputDf}.rename({${mapping}})`)
+    const targets = this.renameTargetsExpr(dr, inputDf)
+
+    if (dr.rename_mode === 'prefix' || dr.rename_mode === 'suffix') {
+      const newName =
+        dr.rename_mode === 'prefix' ? `${toPythonValue(dr.prefix || '')} + c` : `c + ${toPythonValue(dr.suffix || '')}`
+      this.addCode(`${varName} = ${inputDf}.rename({c: ${newName} for c in ${targets}})`)
+      this.addCode('')
+      return
+    }
+
+    if (dr.rename_mode === 'formula') {
+      this.imports.add('from polars_expr_transformer import simple_function_to_expr')
+      this.addCode(`_targets = ${targets}`)
+      this.addCode(`_expr = simple_function_to_expr(${toPythonValue(dr.formula || '')})`)
+      this.addCode(`_new = pl.DataFrame({"column_name": _targets}).select(_expr.alias("n"))["n"].to_list()`)
+      this.addCode(`${varName} = ${inputDf}.rename({o: str(n) for o, n in zip(_targets, _new) if o != str(n)})`)
+      this.addCode('')
+      return
+    }
+
+    if (dr.rename_mode === 'first_row') {
+      this.addCode(`_targets = ${targets}`)
+      this.addCode(`_first = dict(zip(${inputDf}.columns, ${inputDf}.row(0)))`)
+      this.addCode(`${varName} = ${inputDf}.rename({o: str(_first[o]) for o in _targets if o != str(_first[o])}).slice(1)`)
+      this.addCode('')
+      return
+    }
+
+    this.addCode(`${varName} = ${inputDf}`)
     this.addCode('')
   }
 

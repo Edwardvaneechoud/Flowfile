@@ -4,6 +4,8 @@ Covers namespace CRUD, flow registration, favorites, follows,
 run history, stats, and the default namespace seeding.
 """
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -25,6 +27,8 @@ from flowfile_core.database.models import (
     User,
 )
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
+from flowfile_core.routes.routes import flow_file_handler
+from shared.storage_config import storage
 
 # Helpers
 
@@ -1833,3 +1837,128 @@ class TestCatalogTableStorageDeletion:
         import shutil
 
         shutil.rmtree(managed_dir, ignore_errors=True)
+
+
+class TestSaveFlowToCatalog:
+    """``/save_flow_to_catalog`` Save-As semantics: a new name copies (leaves the
+    original intact), and a name freed by a deleted file can be reclaimed."""
+
+    def _make_namespace(self) -> int:
+        cat = client.post("/catalog/namespaces", json={"name": "SaveCat"}).json()
+        schema = client.post("/catalog/namespaces", json={"name": "SaveSchema", "parent_id": cat["id"]}).json()
+        return schema["id"]
+
+    def _user_id(self) -> int:
+        with get_db_context() as db:
+            return db.query(User).first().id
+
+    def _new_inmemory_flow(self, name: str) -> int:
+        """Create a quick-create scratch flow in the in-memory handler."""
+        return flow_file_handler.add_flow(name=name, user_id=self._user_id())
+
+    def _path_of(self, flow_id: int) -> Path:
+        return Path(flow_file_handler.get_flow(flow_id).flow_settings.path)
+
+    @staticmethod
+    def _cleanup(flow_ids: tuple[int, ...], paths: tuple[Path, ...]) -> None:
+        for p in paths:
+            p.unlink(missing_ok=True)
+        for fid in flow_ids:
+            try:
+                flow_file_handler.delete_flow(fid)
+            except Exception:
+                pass
+
+    def test_save_as_new_name_keeps_original(self):
+        ns_id = self._make_namespace()
+        fid = self._new_inmemory_flow("sa_alpha")
+        scratch = self._path_of(fid)
+        assert str(scratch).startswith(str(storage.unnamed_flows_directory))
+
+        # First catalog save (scratch -> managed): throwaway scratch file is cleaned up.
+        r1 = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": fid, "flow_name": "sa_alpha", "namespace_id": ns_id},
+        )
+        assert r1.status_code == 200, r1.text
+        fid2 = r1.json()
+        alpha_path = self._path_of(fid2)
+        assert alpha_path.exists()
+        assert not scratch.exists(), "scratch temp flow should be cleaned up on first catalog save"
+
+        # Save-As under a NEW name: the original managed flow must survive (copy, not move).
+        r2 = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": fid2, "flow_name": "sa_beta", "namespace_id": ns_id},
+        )
+        assert r2.status_code == 200, r2.text
+        fid3 = r2.json()
+        beta_path = self._path_of(fid3)
+
+        assert alpha_path.exists(), "Save-As under a new name must not delete the original file"
+        assert beta_path.exists()
+
+        flows = client.get("/catalog/flows", params={"namespace_id": ns_id}).json()
+        by_name = {f["name"]: f for f in flows}
+        assert {"sa_alpha", "sa_beta"} <= set(by_name)
+        # Save-As is a copy: the new name is a brand-new registration row pointing
+        # at its own file — never a repoint of the original's row onto the new path.
+        assert by_name["sa_alpha"]["id"] != by_name["sa_beta"]["id"], (
+            "Save-As must create a new catalog registration, not reuse the original's id"
+        )
+        assert by_name["sa_alpha"]["flow_path"] == str(alpha_path)
+        assert by_name["sa_beta"]["flow_path"] == str(beta_path)
+
+        self._cleanup((fid2, fid3), (alpha_path, beta_path))
+
+    def test_save_as_over_ghost_reclaims_name(self):
+        ns_id = self._make_namespace()
+        ghost_path = str(storage.flows_directory / "999999999_ghost.yaml")
+        assert not Path(ghost_path).exists()
+        client.post(
+            "/catalog/flows",
+            json={"name": "ghost", "flow_path": ghost_path, "namespace_id": ns_id},
+        )
+
+        fid = self._new_inmemory_flow("sa_scratch_ghost")
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": fid, "flow_name": "ghost", "namespace_id": ns_id},
+        )
+        assert resp.status_code == 200, resp.text  # ghost reclaimed instead of a dead-end 409
+        new_fid = resp.json()
+        new_path = self._path_of(new_fid)
+        assert new_path.exists()
+
+        flows = client.get("/catalog/flows", params={"namespace_id": ns_id}).json()
+        ghosts = [f for f in flows if f["name"] == "ghost"]
+        assert len(ghosts) == 1, "the dead ghost row should be replaced, not duplicated"
+        # The id may be reused (SQLite recycles rowids); what matters is the
+        # surviving row points at the new, existing file — not the dead path.
+        assert ghosts[0]["flow_path"] == str(new_path)
+        assert ghosts[0]["flow_path"] != ghost_path
+        assert ghosts[0]["file_exists"] is True
+
+        self._cleanup((new_fid,), (new_path,))
+
+    def test_name_collision_with_live_file_still_409(self):
+        ns_id = self._make_namespace()
+        fid_a = self._new_inmemory_flow("sa_dup_a")
+        ra = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": fid_a, "flow_name": "sa_dup", "namespace_id": ns_id},
+        )
+        assert ra.status_code == 200, ra.text
+        fid_a2 = ra.json()
+        dup_path = self._path_of(fid_a2)
+        assert dup_path.exists()
+
+        # A different flow cannot silently take a name whose file is alive.
+        fid_b = self._new_inmemory_flow("sa_dup_b")
+        rb = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": fid_b, "flow_name": "sa_dup", "namespace_id": ns_id},
+        )
+        assert rb.status_code == 409
+
+        self._cleanup((fid_a2, fid_b), (dup_path,))

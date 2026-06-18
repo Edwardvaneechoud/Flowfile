@@ -101,7 +101,18 @@ from shared.storage_config import storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
-_MANAGED_FLOW_STEM_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+def _slugify_managed_flow_stem(name: str) -> str:
+    """Derive a filesystem-safe filename stem from a free-form flow display name.
+
+    Managed catalog flow files must match ``[A-Za-z0-9_-]+`` (enforced by
+    ``resolve_managed_flow_path``), but the name a user types is a free-form label
+    that may contain spaces, dots, or other punctuation. Collapse every run of
+    disallowed characters into a single underscore and trim leading/trailing
+    separators, so ``"market analytics"`` becomes ``"market_analytics"``. Returns
+    ``""`` when nothing usable remains, leaving the caller to reject the name.
+    """
+    return re.sub(r"[^A-Za-z0-9_\-]+", "_", name).strip("_-")
 
 
 def get_node_model(setting_name_ref: str):
@@ -1577,16 +1588,27 @@ def save_flow_to_catalog(
     two flows with the same user-chosen name in different namespaces cannot overwrite
     each other. Returns the (possibly new) flow id so the frontend can switch to it.
     """
-    stem = flow_name.strip()
-    if not stem:
+    display_name = flow_name.strip()
+    if not display_name:
         raise HTTPException(422, "flow_name must not be empty")
-    # Reject path separators and parent-traversal before any sanitization so
-    # callers can't launder ``../evil`` through ``Path(...).name``.
-    if "/" in stem or "\\" in stem or ".." in stem:
+    # The display name is a free-form label — spaces and ordinary punctuation are
+    # fine — but reject path separators / parent-traversal outright: a name is
+    # never a path, so these signal a malformed or hostile request, not a label.
+    if "/" in display_name or "\\" in display_name or ".." in display_name:
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
-    stem = stem.rsplit(".yaml", 1)[0].rsplit(".yml", 1)[0].rsplit(".json", 1)[0]
-    if not _MANAGED_FLOW_STEM_RE.fullmatch(stem):
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+    # Strip a flow extension the user may have typed so it doesn't double up with
+    # the ``.yaml`` we append below; the name is otherwise preserved for registration.
+    display_name = display_name.rsplit(".yaml", 1)[0].rsplit(".yml", 1)[0].rsplit(".json", 1)[0].strip()
+    if not display_name:
+        raise HTTPException(422, "flow_name must not be empty")
+
+    # The on-disk filename is a filesystem-safe slug of the display name. The
+    # ``{flow_id}_`` prefix already guarantees cross-flow uniqueness, so two
+    # distinct names that slugify alike never collide on disk, and
+    # ``resolve_managed_flow_path`` re-validates the slug as a final safety net.
+    stem = _slugify_managed_flow_stem(display_name)
+    if not stem:
+        raise HTTPException(status_code=422, detail="flow_name must contain at least one letter or number")
 
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
@@ -1605,15 +1627,28 @@ def save_flow_to_catalog(
 
     # Pre-save name-collision check: reject BEFORE writing any YAML so a failed save doesn't leave orphaned files
     # on disk.
-    existing_by_name = find_registration_by_name(stem, namespace_id)
+    existing_by_name = find_registration_by_name(display_name, namespace_id)
     if existing_by_name is not None and existing_by_name.id != source_registration_id:
-        raise HTTPException(
+        name_conflict = HTTPException(
             status_code=409,
             detail=(
-                f"A flow named '{stem}' already exists in this namespace. "
+                f"A flow named '{display_name}' already exists in this namespace. "
                 "Select it in the catalog picker to overwrite, or choose a different name."
             ),
         )
+        if os.path.exists(existing_by_name.flow_path):
+            raise name_conflict
+        # Ghost registration: its backing file was deleted (e.g. by an older
+        # Save-As). Reclaim the name by removing the dead row instead of blocking
+        # the user with a 409 they can't act on. Best-effort — fall back to the
+        # conflict if it can't be cleanly removed (e.g. it still has artifacts).
+        try:
+            with get_db_context() as db:
+                CatalogService(SQLAlchemyCatalogRepository(db)).delete_flow(
+                    registration_id=existing_by_name.id, delete_file=False
+                )
+        except Exception as err:
+            raise name_conflict from err
 
     existing_reg = find_registration_by_path(flow_path)
     if existing_reg is not None and existing_reg.id != source_registration_id:
@@ -1629,11 +1664,12 @@ def save_flow_to_catalog(
 
     user_id = current_user.id if current_user else None
 
-    # Always register under the user-typed ``stem`` rather than the filename
-    # (``{flow_id}_{stem}``) so the catalog picker shows exactly what the user
-    # typed — and so the name-collision check below compares apples to apples.
+    # Always register under the user-typed ``display_name`` rather than the
+    # filename slug (``{flow_id}_{stem}``) so the catalog picker shows exactly
+    # what the user typed — and so the name-collision check above compares apples
+    # to apples.
     def _register(fp: str, _n: str, uid: int | None) -> None:
-        register_flow_in_namespace(fp, stem, uid, namespace_id)
+        register_flow_in_namespace(fp, display_name, uid, namespace_id)
 
     if is_new_path:
         try:
@@ -1649,15 +1685,21 @@ def save_flow_to_catalog(
         except FlowNameNamespaceCollision as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
 
-        # If we renamed within the managed flows directory, unlink the old file.
+        # Save-As under a new name is a copy: the original flow file and its
+        # catalog registration stay intact. Only clean up throwaway scratch
+        # files (quick-create / python-editor temp flows) that were never meant
+        # to persist — never a real, registered catalog flow.
         if normalized_current and normalized_current != flow_path:
-            managed_root = str(Path(storage.flows_directory).resolve()) + os.sep
-            if normalized_current.startswith(managed_root):
+            scratch_roots = (
+                str(Path(storage.unnamed_flows_directory).resolve()) + os.sep,
+                str(Path(storage.python_editor_flows_directory).resolve()) + os.sep,
+            )
+            if normalized_current.startswith(scratch_roots):
                 try:
                     os.unlink(normalized_current)
                 except OSError:
                     logger.info(
-                        f"Could not unlink old managed flow file {normalized_current}",
+                        f"Could not unlink old scratch flow file {normalized_current}",
                         exc_info=True,
                     )
         sync_api_compatibility(flow_file_handler.get_flow(new_flow_id))
@@ -1666,7 +1708,7 @@ def save_flow_to_catalog(
     resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
     try:
-        register_flow_in_namespace(flow_path, stem, user_id, namespace_id)
+        register_flow_in_namespace(flow_path, display_name, user_id, namespace_id)
     except FlowPathNamespaceCollision as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
     except FlowNameNamespaceCollision as err:

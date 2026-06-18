@@ -67,6 +67,7 @@ const getReactProps = () => {
     appearance: props.appearance || "light",
     themeKey: props.themeKey,
     storeRef: internalStoreRef.value,
+    hideProfiling: true,
     ...(chartSpecArray.length > 0 && { chart: chartSpecArray }),
   };
 

@@ -129,7 +129,7 @@ const iconMap: Record<string, string> = {
   sort: 'sort.png',
   polars_code: 'polars_code.png',
   unique: 'unique.png',
-  rename: 'dynamic_rename.svg',
+  dynamic_rename: 'dynamic_rename.svg',
   record_id: 'record_id.png',
   head: 'sample.png',
   explore_data: 'explore_data.png',
@@ -258,7 +258,10 @@ function saveDescription() {
 }
 
 function onClick() {
+  // Single click opens the Settings panel only (the Table stays in whatever
+  // open/closed state it was). Matches the Canvas-level node-click handler.
   flowStore.selectNode(props.data.id)
+  flowStore.showSettings = true
 }
 
 function showContextMenu(event: MouseEvent) {

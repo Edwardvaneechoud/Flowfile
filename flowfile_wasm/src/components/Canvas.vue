@@ -95,14 +95,18 @@
         v-model:nodes="vueNodes"
         v-model:edges="vueEdges"
         :node-types="nodeTypes"
+        :edge-types="edgeTypes"
         :default-viewport="{ zoom: 0.5 }"
         :connection-mode="ConnectionMode.Strict"
         class="custom-node-flow"
         fit-view-on-init
         @connect="onConnect"
         @node-click="onNodeClick"
+        @node-double-click="onNodeDoubleClick"
         @pane-click="onPaneClick"
         @pane-context-menu="onPaneContextMenu"
+        @edge-mouse-enter="onEdgeMouseEnter"
+        @edge-mouse-leave="onEdgeMouseLeave"
         @edges-change="onEdgesChange"
         @nodes-change="onNodesChange"
       >
@@ -124,14 +128,14 @@
 
     <!-- Node Settings Panel -->
     <DraggablePanel
-      v-if="selectedNode"
+      v-if="selectedNode && showSettings"
       :title="getNodeDescription(selectedNode.type).title"
       panel-id="node-settings-panel"
       initial-position="right"
       :initial-width="450"
       :initial-top="toolbarHeight"
       :default-z-index="120"
-      :on-close="() => flowStore.selectNode(null)"
+      :on-close="closeSettings"
     >
       <NodeTitle
         :title="getNodeDescription(selectedNode.type).title"
@@ -167,7 +171,7 @@
 
     <!-- Data Preview Panel (hidden for explore_data nodes which have their own preview) -->
     <DraggablePanel
-      v-if="selectedNodeId !== null && selectedNode?.type !== 'explore_data'"
+      v-if="selectedNodeId !== null && showTablePreview && selectedNode?.type !== 'explore_data'"
       title="Table Preview"
       panel-id="data-preview-panel"
       initial-position="bottom"
@@ -176,6 +180,7 @@
       :default-z-index="110"
       group="bottomPanels"
       :sync-dimensions="true"
+      :on-close="closeTable"
     >
       <div class="data-preview">
         <!-- Loading state -->
@@ -264,9 +269,11 @@
           </div>
         </div>
 
-        <!-- Empty state with fetch-to-run button -->
+        <!-- Empty placeholder: opening the Table never runs the flow, so an
+             un-executed node shows this instead of auto-running. Data appears
+             only when the user explicitly runs it (this button, or Run flow). -->
         <div v-else class="no-data">
-          <p class="no-data-text">This node hasn't produced data yet. Fetch it to preview the output.</p>
+          <p class="no-data-text">This node hasn't run yet. Click Run (or Fetch data) to compute and preview its output.</p>
           <button
             class="fetch-data-button"
             :disabled="isFetching || isExecuting || !pyodideReady"
@@ -337,7 +344,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent, watch } from 'vue'
+import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent, provide, watch } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
@@ -360,6 +367,7 @@ ModuleRegistry.registerModules([ClientSideRowModelModule])
 
 import DraggablePanel from './common/DraggablePanel.vue'
 import FlowNode from './nodes/FlowNode.vue'
+import DeletableEdge from './DeletableEdge.vue'
 import NodeTitle from './nodes/NodeTitle.vue'
 import ReadFileSettings from './nodes/ReadFileSettings.vue'
 import ManualInputSettings from './nodes/ManualInputSettings.vue'
@@ -386,7 +394,7 @@ const FormulaSettings = defineAsyncComponent(() => import('./nodes/FormulaSettin
 import CrossJoinSettings from './nodes/CrossJoinSettings.vue'
 import UnionSettings from './nodes/UnionSettings.vue'
 import RecordIdSettings from './nodes/RecordIdSettings.vue'
-import RenameSettings from './nodes/RenameSettings.vue'
+import DynamicRenameSettings from './nodes/DynamicRenameSettings.vue'
 import NodeSettingsWrapper from './nodes/NodeSettingsWrapper.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
@@ -423,7 +431,7 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
 const flowStore = useFlowStore()
 const zIndexStore = usePanelZIndexStore()
 const uiStore = useDesignerUiStore()
-const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
+const { nodes: flowNodes, edges: flowEdges, selectedNodeId, showSettings, showTablePreview, nodeResults, isExecuting } = storeToRefs(flowStore)
 const { isReady: pyodideReady } = storeToRefs(usePyodideStore())
 
 const { hasSeenDemo } = useDemo()
@@ -457,6 +465,10 @@ const selectedOutputHandle = ref('output-0')
 
 const nodeTypes: Record<string, any> = {
   'flow-node': markRaw(FlowNode)
+}
+
+const edgeTypes: Record<string, any> = {
+  default: markRaw(DeletableEdge)
 }
 
 // Get icon URL - uses explicit imports for library build compatibility
@@ -499,7 +511,7 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'sort', name: 'Sort', icon: 'sort.png', inputs: 1, outputs: 1 },
       { type: 'polars_code', name: 'Polars Code', icon: 'polars_code.png', inputs: 1, outputs: 1 },
       { type: 'unique', name: 'Unique', icon: 'unique.png', inputs: 1, outputs: 1 },
-      { type: 'rename', name: 'Rename', icon: 'dynamic_rename.svg', inputs: 1, outputs: 1 },
+      { type: 'dynamic_rename', name: 'Rename', icon: 'dynamic_rename.svg', inputs: 1, outputs: 1 },
       { type: 'record_id', name: 'Record ID', icon: 'record_id.png', inputs: 1, outputs: 1 },
       { type: 'head', name: 'Take Sample', icon: 'sample.png', inputs: 1, outputs: 1 }
     ]
@@ -632,6 +644,7 @@ function onDrop(event: DragEvent) {
 
   const nodeId = flowStore.addNode(draggedNodeDef.type, position.x, position.y)
   flowStore.selectNode(nodeId)
+  showSettings.value = true
 
   pendingNodeAdjustment.value = nodeId
   draggedNodeDef = null
@@ -652,11 +665,32 @@ function onConnect(connection: Connection) {
 }
 
 function onNodeClick(event: { node: Node }) {
+  // Single click: open Settings only — never auto-opens the Table (mirrors the
+  // main flowfile_frontend). The Table flag is left untouched, so if the user
+  // already opened it, it stays open and retargets to this node.
   flowStore.selectNode(parseInt(event.node.id))
+  showSettings.value = true
+}
+
+// Double click a node: open BOTH the Settings panel and the Table preview.
+// Opening never executes — an already-run node shows its rows via selectNode's
+// gated preview fetch; an un-run node shows the placeholder. Running the node is
+// an explicit action (the Table's "Fetch data" button, or Run).
+function onNodeDoubleClick(event: { node: Node }) {
+  const nodeId = parseInt(event.node.id)
+  showTablePreview.value = true
+  flowStore.selectNode(nodeId)
+  showSettings.value = true
+  nextTick(() => {
+    zIndexStore.bringToFront('node-settings-panel')
+    zIndexStore.bringToFront('data-preview-panel')
+  })
 }
 
 function onPaneClick() {
   flowStore.selectNode(null)
+  showSettings.value = false
+  showTablePreview.value = false
   closePaneMenu()
 }
 
@@ -711,6 +745,7 @@ function pasteHere() {
   if (newId !== null) {
     pendingNodeAdjustment.value = newId
     flowStore.selectNode(newId)
+    showSettings.value = true
   }
   closePaneMenu()
 }
@@ -722,6 +757,39 @@ function onEdgesChange(changes: EdgeChange[]) {
     }
   })
 }
+
+// Reveal a delete button on the hovered edge; the leave-delay lets the cursor
+// reach the button. Provided to DeletableEdge.vue.
+const hoveredEdgeId = ref<string | null>(null)
+let edgeLeaveTimer: ReturnType<typeof setTimeout> | null = null
+
+function cancelEdgeLeave() {
+  if (edgeLeaveTimer !== null) {
+    clearTimeout(edgeLeaveTimer)
+    edgeLeaveTimer = null
+  }
+}
+
+function scheduleEdgeLeave(id: string) {
+  cancelEdgeLeave()
+  edgeLeaveTimer = setTimeout(() => {
+    if (hoveredEdgeId.value === id) hoveredEdgeId.value = null
+    edgeLeaveTimer = null
+  }, 150)
+}
+
+function onEdgeMouseEnter({ edge }: { edge: Edge }) {
+  cancelEdgeLeave()
+  hoveredEdgeId.value = edge.id
+}
+
+function onEdgeMouseLeave({ edge }: { edge: Edge }) {
+  scheduleEdgeLeave(edge.id)
+}
+
+provide('hoveredEdgeId', hoveredEdgeId)
+provide('cancelEdgeLeave', cancelEdgeLeave)
+provide('scheduleEdgeLeave', scheduleEdgeLeave)
 
 function onNodesChange(changes: NodeChange[]) {
   changes.forEach(change => {
@@ -750,6 +818,13 @@ function onNodesChange(changes: NodeChange[]) {
 }
 
 function handleDeleteNode(nodeId: number) {
+  // Deleting the selected node leaves no panel target — close both panels and
+  // deselect so the Table doesn't linger pointing at a removed node.
+  if (nodeId === selectedNodeId.value) {
+    showSettings.value = false
+    showTablePreview.value = false
+    flowStore.selectNode(null)
+  }
   removeNodes(String(nodeId))
   flowStore.removeNode(nodeId)
 }
@@ -758,21 +833,33 @@ async function handleRunNode(nodeId: number) {
   await flowStore.executeNodeWithUpstream(nodeId)
 }
 
-// Edit: select the node (opens the settings panel) and surface it.
+// Edit (context menu): open the Settings panel only, and surface it.
 function handleEditNode(nodeId: number) {
   flowStore.selectNode(nodeId)
+  showSettings.value = true
   nextTick(() => zIndexStore.bringToFront('node-settings-panel'))
 }
 
-// View data: select the node, fetch its preview if needed, surface the preview.
-async function handleViewData(nodeId: number) {
+// View data (context menu): open the Table preview only (not Settings). Opening
+// never executes — an already-run node shows its rows via selectNode's gated
+// preview fetch; an un-run node shows the placeholder with a "Fetch data" button.
+function handleViewData(nodeId: number) {
+  showTablePreview.value = true
   flowStore.selectNode(nodeId)
-  const result = nodeResults.value.get(nodeId)
-  const node = flowNodes.value.get(nodeId)
-  if (node?.type !== 'explore_data' && !(result?.success && result?.data)) {
-    await handleFetchData()
-  }
   nextTick(() => zIndexStore.bringToFront('data-preview-panel'))
+}
+
+// Each panel closes independently. Closing one keeps the other (and the node
+// selection) intact; closing the last open panel also clears the selection so
+// the node stops being highlighted.
+function closeSettings() {
+  showSettings.value = false
+  if (!showTablePreview.value) flowStore.selectNode(null)
+}
+
+function closeTable() {
+  showTablePreview.value = false
+  if (!showSettings.value) flowStore.selectNode(null)
 }
 
 function handleCopyNode(nodeId: number) {
@@ -866,7 +953,7 @@ function getSettingsComponent(type: string) {
     polars_code: PolarsCodeSettings,
     formula: FormulaSettings,
     unique: UniqueSettings,
-    rename: RenameSettings,
+    dynamic_rename: DynamicRenameSettings,
     record_id: RecordIdSettings,
     head: HeadSettings,
     explore_data: ExploreData,
@@ -1119,6 +1206,7 @@ function handleKeyDown(event: KeyboardEvent) {
     if (newId !== null) {
       pendingNodeAdjustment.value = newId
       flowStore.selectNode(newId)
+      showSettings.value = true
     }
   }
 }
@@ -1158,6 +1246,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('click', handlePaneMenuClickOutside)
+  cancelEdgeLeave()
   uiStore.clearActions()
   if (flowStore.offOutput) {
     flowStore.offOutput(handleOutputCallback)

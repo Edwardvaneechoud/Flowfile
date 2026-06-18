@@ -9,7 +9,8 @@ import {
   isSourceNode,
   getDownstreamNodeIds,
   inferSchemaFromCsv,
-  inferSchemaFromRawData
+  inferSchemaFromRawData,
+  resolveDynamicRenameMap
 } from '../../src/stores/schema-inference'
 import type {
   ColumnSchema,
@@ -17,7 +18,9 @@ import type {
   NodeGroupBySettings,
   NodeJoinSettings,
   NodeUnpivotSettings,
-  NodePivotSettings
+  NodePivotSettings,
+  NodeDynamicRenameSettings,
+  DynamicRenameInput
 } from '../../src/types'
 
 describe('Schema Inference', () => {
@@ -591,6 +594,86 @@ true,true`
     it('should return null when fields is null/undefined', () => {
       expect(inferSchemaFromRawData(null as any)).toBeNull()
       expect(inferSchemaFromRawData(undefined as any)).toBeNull()
+    })
+  })
+})
+
+describe('Dynamic Rename', () => {
+  const schema: ColumnSchema[] = [
+    { name: 'id', data_type: 'Int64' },
+    { name: 'name', data_type: 'String' },
+    { name: 'amount', data_type: 'Float64' },
+    { name: 'when', data_type: "Datetime(time_unit='us', time_zone=None)" }
+  ]
+
+  const dr = (over: Partial<DynamicRenameInput>): DynamicRenameInput => ({
+    rename_mode: 'prefix',
+    prefix: '',
+    suffix: '',
+    formula: '',
+    selection_mode: 'all',
+    selected_columns: [],
+    selected_data_type: null,
+    ...over
+  })
+
+  describe('resolveDynamicRenameMap', () => {
+    it('prefixes all columns', () => {
+      const { map } = resolveDynamicRenameMap(schema, dr({ rename_mode: 'prefix', prefix: 'p_' }))
+      expect(map.get('id')).toBe('p_id')
+      expect(map.get('name')).toBe('p_name')
+      expect(map.size).toBe(4)
+    })
+
+    it('list mode drops unknown column names', () => {
+      const { map } = resolveDynamicRenameMap(
+        schema,
+        dr({ rename_mode: 'suffix', suffix: '_x', selection_mode: 'list', selected_columns: ['name', 'gone'] })
+      )
+      expect([...map.keys()]).toEqual(['name'])
+      expect(map.get('name')).toBe('name_x')
+    })
+
+    it('data_type mode targets only the matching group', () => {
+      const { map } = resolveDynamicRenameMap(
+        schema,
+        dr({ rename_mode: 'prefix', prefix: 'n_', selection_mode: 'data_type', selected_data_type: 'Numeric' })
+      )
+      expect([...map.keys()].sort()).toEqual(['amount', 'id'])
+    })
+
+    it('detects a collision with an untouched column', () => {
+      // Renaming only 'a' with prefix 'pre_' collides with the existing 'pre_a'.
+      const { duplicates } = resolveDynamicRenameMap(
+        [{ name: 'a', data_type: 'Int64' }, { name: 'pre_a', data_type: 'Int64' }],
+        dr({ rename_mode: 'prefix', prefix: 'pre_', selection_mode: 'list', selected_columns: ['a'] })
+      )
+      expect(duplicates).toContain('pre_a')
+    })
+
+    it('returns an empty map for formula and first_row (engine resolves them)', () => {
+      expect(resolveDynamicRenameMap(schema, dr({ rename_mode: 'formula', formula: 'x' })).map.size).toBe(0)
+      expect(resolveDynamicRenameMap(schema, dr({ rename_mode: 'first_row' })).map.size).toBe(0)
+    })
+  })
+
+  describe('inferDynamicRenameSchema (via inferOutputSchema)', () => {
+    const node = (input: DynamicRenameInput): NodeDynamicRenameSettings =>
+      ({ dynamic_rename_input: input } as NodeDynamicRenameSettings)
+
+    it('renames names but keeps data types for prefix mode', () => {
+      const out = inferOutputSchema('dynamic_rename', schema, node(dr({ rename_mode: 'prefix', prefix: 'p_' })))
+      expect(out).toEqual([
+        { name: 'p_id', data_type: 'Int64' },
+        { name: 'p_name', data_type: 'String' },
+        { name: 'p_amount', data_type: 'Float64' },
+        { name: 'p_when', data_type: "Datetime(time_unit='us', time_zone=None)" }
+      ])
+    })
+
+    it('returns null for formula and first_row (defer to lazy execution)', () => {
+      expect(inferOutputSchema('dynamic_rename', schema, node(dr({ rename_mode: 'formula', formula: 'x' })))).toBeNull()
+      expect(inferOutputSchema('dynamic_rename', schema, node(dr({ rename_mode: 'first_row' })))).toBeNull()
     })
   })
 })
