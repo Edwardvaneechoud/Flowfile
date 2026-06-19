@@ -557,9 +557,9 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'read_from_catalog', name: 'Read from Catalog', icon: 'catalog_reader.svg', inputs: 0, outputs: 1, keywords: ['catalog', 'table', 'dataset', 'saved'] },
       { type: 'database_reader', name: 'Read from Database', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['sql', 'postgres', 'postgresql', 'mysql', 'snowflake', 'oracle', 'redshift', 'bigquery', 'query', 'table', 'db'], docsAnchor: 'database-reader' },
       { type: 'cloud_storage_reader', name: 'Read from Cloud', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['s3', 'aws', 'azure', 'adls', 'gcs', 'blob', 'bucket', 'cloud', 'object storage'], docsAnchor: 'cloud-storage-reader' },
-      { type: 'rest_api_reader', name: 'REST API', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['rest', 'api', 'http', 'json', 'endpoint', 'pagination', 'auth'] },
-      { type: 'kafka_source', name: 'Kafka Source', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['kafka', 'redpanda', 'stream', 'streaming', 'topic', 'events'] },
-      { type: 'google_analytics_reader', name: 'Google Analytics', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['google analytics', 'ga', 'ga4', 'analytics', 'web analytics'] }
+      { type: 'rest_api_reader', name: 'REST API', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['rest', 'api', 'http', 'json', 'endpoint', 'pagination', 'auth'], docsAnchor: 'rest-api-reader' },
+      { type: 'kafka_source', name: 'Kafka Source', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['kafka', 'redpanda', 'stream', 'streaming', 'topic', 'events'], docsAnchor: 'kafka-source' },
+      { type: 'google_analytics_reader', name: 'Google Analytics', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['google analytics', 'ga', 'ga4', 'analytics', 'web analytics'], docsAnchor: 'google-analytics-reader' }
     ]
   },
   {
@@ -576,8 +576,8 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'dynamic_rename', name: 'Rename', icon: 'dynamic_rename.svg', inputs: 1, outputs: 1, keywords: ['rename', 'columns', 'prefix', 'suffix'] },
       { type: 'record_id', name: 'Record ID', icon: 'record_id.png', inputs: 1, outputs: 1, keywords: ['row number', 'index', 'id', 'sequence'] },
       { type: 'head', name: 'Take Sample', icon: 'sample.png', inputs: 1, outputs: 1, keywords: ['sample', 'limit', 'top', 'head', 'subset'] },
-      { type: 'window_functions', name: 'Window Functions', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['window', 'rolling', 'cumulative', 'rank', 'partition', 'lag', 'lead', 'over'] },
-      { type: 'sql_query', name: 'SQL Query', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['sql', 'query', 'select', 'where', 'duckdb'] },
+      { type: 'window_functions', name: 'Window Functions', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['window', 'rolling', 'cumulative', 'rank', 'partition', 'lag', 'lead', 'over'], docsAnchor: 'window-functions' },
+      { type: 'sql_query', name: 'SQL Query', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['sql', 'query', 'select', 'where', 'duckdb'], docsAnchor: 'sql-query' },
       { type: 'python_script', name: 'Python Script', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['python', 'code', 'script', 'kernel', 'pandas'], docsAnchor: 'python-script' }
     ]
   },
