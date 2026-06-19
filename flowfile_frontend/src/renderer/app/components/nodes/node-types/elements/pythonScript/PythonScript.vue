@@ -215,6 +215,25 @@
                 node-type="python_script"
                 @code-generated="applyGeneratedCode"
               />
+              <el-dropdown
+                trigger="click"
+                @command="loadFromNotebook"
+                @visible-change="onNotebookDropdown"
+              >
+                <button class="icon-button" title="Load from catalog notebook">
+                  <i class="fa-solid fa-book"></i>
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-if="!savedNotebooks.length" disabled>
+                      No saved notebooks
+                    </el-dropdown-item>
+                    <el-dropdown-item v-for="nb in savedNotebooks" :key="nb.id" :command="nb.id">
+                      {{ nb.name }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
               <button class="icon-button" title="Expand Editor" @click="showExpandedEditor = true">
                 <i class="fa-solid fa-expand"></i>
               </button>
@@ -301,7 +320,7 @@
 //   - Kernel control logic (~lines 570-700) is the obvious extraction target → useKernelControl composable
 import { ref, computed, watch, onUnmounted } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 
 import { Position } from "@vue-flow/core";
 import { useNodeStore } from "../../../../../stores/node-store";
@@ -313,6 +332,7 @@ import type { InputNameInfo } from "../../../../../types/flow.types";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import type { KernelInfo, KernelMemoryInfo } from "../../../../../types/kernel.types";
 import { KernelApi } from "../../../../../api/kernel.api";
+import { NotebookApi, type NotebookSummary } from "../../../../../api/notebook.api";
 import { FlowApi } from "../../../../../api/flow.api";
 import { outputHandle } from "../../../../../utils/outputHandle";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -678,6 +698,59 @@ const applyGeneratedCode = (code: string) => {
   // work, then sync the combined code back to the node.
   cells.value = [...cells.value, { id: crypto.randomUUID(), code, output: null }];
   syncCellsToNode();
+};
+
+// ─── Load from a saved catalog notebook ─────────────────────────────────────
+// The code⇄visual bridge: pull a saved notebook's cells into this node. Python
+// cells map 1:1; Markdown cells become commented Python so narrative isn't lost.
+
+const savedNotebooks = ref<NotebookSummary[]>([]);
+
+const onNotebookDropdown = async (visible: boolean) => {
+  if (!visible) return;
+  try {
+    savedNotebooks.value = await NotebookApi.list();
+  } catch {
+    savedNotebooks.value = [];
+  }
+};
+
+const commentMarkdown = (src: string): string =>
+  src
+    .split("\n")
+    .map((line) => (line ? `# ${line}` : "#"))
+    .join("\n");
+
+const loadFromNotebook = async (notebookId: number) => {
+  let mapped: NotebookCell[];
+  try {
+    const nb = await NotebookApi.get(notebookId);
+    mapped = nb.cells.map((c) => ({
+      id: crypto.randomUUID(),
+      code: c.type === "markdown" ? commentMarkdown(c.source) : c.source,
+      output: null,
+    }));
+    if (!mapped.length) {
+      ElMessage.warning("That notebook has no cells");
+      return;
+    }
+    if (cells.value.some((c) => c.code.trim())) {
+      await ElMessageBox.confirm(
+        "Replace the current cells with this notebook's cells?",
+        "Load from notebook",
+        { confirmButtonText: "Replace", cancelButtonText: "Cancel", type: "warning" },
+      );
+    }
+  } catch (e: any) {
+    // ElMessageBox.confirm rejects on cancel — swallow that; surface real errors.
+    if (e !== "cancel" && e !== "close") {
+      ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Failed to load notebook");
+    }
+    return;
+  }
+  cells.value = mapped;
+  syncCellsToNode();
+  ElMessage.success("Loaded notebook cells");
 };
 
 const syncCellsToNode = () => {

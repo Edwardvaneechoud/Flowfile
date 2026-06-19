@@ -17,6 +17,7 @@ from flowfile_core.database.models import (
     ApiConsumerEndpoint,
     CatalogDashboard,
     CatalogNamespace,
+    CatalogNotebook,
     CatalogTable,
     CatalogTableReadLink,
     CatalogVisualization,
@@ -288,6 +289,20 @@ class CatalogRepository(Protocol):
     def update_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard: ...
 
     def delete_dashboard(self, dashboard_id: int) -> None: ...
+
+    # -- Notebooks -----------------------------------------------------------
+
+    def list_notebooks(self) -> list[CatalogNotebook]: ...
+
+    def get_notebook(self, notebook_id: int) -> CatalogNotebook | None: ...
+
+    def get_notebook_by_name(self, namespace_id: int | None, name: str) -> CatalogNotebook | None: ...
+
+    def create_notebook(self, notebook: CatalogNotebook) -> CatalogNotebook: ...
+
+    def update_notebook(self, notebook: CatalogNotebook) -> CatalogNotebook: ...
+
+    def delete_notebook(self, notebook_id: int) -> None: ...
 
     def list_table_trigger_schedules(self) -> list[FlowSchedule]: ...
 
@@ -1137,4 +1152,33 @@ class SQLAlchemyCatalogRepository:
         if dashboard is not None:
             sharing.delete_grants_for_resource(self._db, "dashboard", dashboard_id)
             self._db.delete(dashboard)
+            self._db.commit()
+
+    # -- Notebooks -----------------------------------------------------------
+
+    def list_notebooks(self) -> list[CatalogNotebook]:
+        return self._db.query(CatalogNotebook).order_by(CatalogNotebook.updated_at.desc()).all()
+
+    def get_notebook(self, notebook_id: int) -> CatalogNotebook | None:
+        return self._db.get(CatalogNotebook, notebook_id)
+
+    def get_notebook_by_name(self, namespace_id: int | None, name: str) -> CatalogNotebook | None:
+        return self._db.query(CatalogNotebook).filter_by(namespace_id=namespace_id, name=name).first()
+
+    def create_notebook(self, notebook: CatalogNotebook) -> CatalogNotebook:
+        self._db.add(notebook)
+        self._db.commit()
+        self._db.refresh(notebook)
+        return notebook
+
+    def update_notebook(self, notebook: CatalogNotebook) -> CatalogNotebook:
+        self._db.commit()
+        self._db.refresh(notebook)
+        return notebook
+
+    def delete_notebook(self, notebook_id: int) -> None:
+        notebook = self._db.get(CatalogNotebook, notebook_id)
+        if notebook is not None:
+            sharing.delete_grants_for_resource(self._db, "catalog_notebook", notebook_id)
+            self._db.delete(notebook)
             self._db.commit()

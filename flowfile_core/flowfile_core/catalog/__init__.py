@@ -24,6 +24,8 @@ from .exceptions import (
     NestingLimitError,
     NoSnapshotError,
     NotAuthorizedError,
+    NotebookExistsError,
+    NotebookNotFoundError,
     RunNotFoundError,
     ScheduleConflictError,
     ScheduleNotFoundError,
@@ -65,4 +67,6 @@ __all__ = [
     "VisualizationExistsError",
     "VisualizationComputeError",
     "DashboardNotFoundError",
+    "NotebookNotFoundError",
+    "NotebookExistsError",
 ]

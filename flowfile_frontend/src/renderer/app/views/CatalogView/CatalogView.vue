@@ -243,6 +243,8 @@
           v-else-if="catalogStore.activeTab === 'sql'"
           :initial-query="sqlInitialQuery"
         />
+        <!-- Notebook (mixed Python / SQL / Markdown exploration console) -->
+        <NotebookPanel v-else-if="catalogStore.activeTab === 'notebook'" />
         <!-- Visuals (charts + dashboards) -->
         <VisualsPanel
           v-else-if="catalogStore.activeTab === 'visuals'"
@@ -519,6 +521,7 @@ import CreateScheduleModal from "./CreateScheduleModal.vue";
 import CreateSyncModal from "./CreateSyncModal.vue";
 import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
+import NotebookPanel from "./NotebookPanel.vue";
 import VisualsPanel from "./VisualsPanel.vue";
 import ApisPanel from "./ApisPanel.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";

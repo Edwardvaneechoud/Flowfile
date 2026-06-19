@@ -246,6 +246,30 @@ class VisualizationComputeError(CatalogError):
         super().__init__(f"Worker compute failed: {message}")
 
 
+class NotebookNotFoundError(CatalogError):
+    """Raised when a saved catalog notebook lookup fails."""
+
+    def __init__(self, notebook_id: int | None = None, name: str | None = None):
+        self.notebook_id = notebook_id
+        self.name = name
+        if notebook_id is not None:
+            detail = f"Notebook id={notebook_id} not found"
+        elif name is not None:
+            detail = f"Notebook '{name}' not found"
+        else:
+            detail = "Notebook not found"
+        super().__init__(detail)
+
+
+class NotebookExistsError(CatalogError):
+    """Raised when a duplicate notebook name is created in the same namespace."""
+
+    def __init__(self, name: str, namespace_id: int | None = None):
+        self.name = name
+        self.namespace_id = namespace_id
+        super().__init__(f"Notebook '{name}' already exists in namespace_id={namespace_id}")
+
+
 class DashboardNotFoundError(CatalogError):
     """Raised when a saved dashboard lookup fails."""
 

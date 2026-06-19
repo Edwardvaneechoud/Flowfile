@@ -36,6 +36,8 @@ from flowfile_core.catalog import (
     NestingLimitError,
     NoSnapshotError,
     NotAuthorizedError,
+    NotebookExistsError,
+    NotebookNotFoundError,
     RunNotFoundError,
     ScheduleNotFoundError,
     SQLAlchemyCatalogRepository,
@@ -84,6 +86,10 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceOut,
     NamespaceTree,
     NamespaceUpdate,
+    NotebookCreate,
+    NotebookOut,
+    NotebookSummaryOut,
+    NotebookUpdate,
     OptimizeTableRequest,
     OptimizeTableResponse,
     PaginatedFlowRuns,
@@ -161,6 +167,8 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     VisualizationExistsError: (409, None),
     VisualizationComputeError: (502, None),
     DashboardNotFoundError: (404, None),
+    NotebookNotFoundError: (404, None),
+    NotebookExistsError: (409, None),
     ValueError: (422, None),
 }
 
@@ -912,6 +920,68 @@ def list_visualizations_for_table(
 ):
     """Filtered listing — viz that reference this table."""
     return service.list_visualizations_for_table(table_id, user_id=current_user.id)
+
+
+# Catalog Notebooks
+#
+# The catalog's exploration console: saved, mixed-cell (Python/SQL/Markdown)
+# notebooks. These routes persist the notebook DOCUMENT only — cell execution
+# reuses the existing SQL (``/catalog/sql/execute``) and kernel
+# (``/kernels/{id}/execute_cell``) surfaces. JWT-only (no internal-token caller
+# needs notebooks), mirroring the visualization/flow CRUD routes.
+
+
+@router.get("/notebooks", response_model=list[NotebookSummaryOut])
+@handle_catalog_exceptions()
+def list_notebooks(
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """List saved notebooks (lightweight — cells omitted)."""
+    return service.list_notebooks(user_id=current_user.id)
+
+
+@router.post("/notebooks", response_model=NotebookOut, status_code=201)
+@handle_catalog_exceptions()
+def create_notebook(
+    body: NotebookCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Create a saved notebook with an ordered list of mixed cells."""
+    return service.create_notebook(body, user_id=current_user.id)
+
+
+@router.get("/notebooks/{notebook_id}", response_model=NotebookOut)
+@handle_catalog_exceptions()
+def get_notebook(
+    notebook_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.get_notebook(notebook_id, user_id=current_user.id)
+
+
+@router.put("/notebooks/{notebook_id}", response_model=NotebookOut)
+@handle_catalog_exceptions()
+def update_notebook(
+    notebook_id: int,
+    body: NotebookUpdate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Full-document save of a notebook's cells / metadata."""
+    return service.update_notebook(notebook_id, body, user_id=current_user.id)
+
+
+@router.delete("/notebooks/{notebook_id}", status_code=204)
+@handle_catalog_exceptions()
+def delete_notebook(
+    notebook_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    service.delete_notebook(notebook_id, user_id=current_user.id)
 
 
 # Catalog Dashboards

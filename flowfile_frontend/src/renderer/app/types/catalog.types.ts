@@ -396,6 +396,7 @@ export type CatalogTab =
   | "runs"
   | "schedules"
   | "sql"
+  | "notebook"
   | "visuals"
   | "apis";
 
