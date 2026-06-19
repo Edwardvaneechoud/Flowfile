@@ -40,7 +40,7 @@
           @change="handleFileTypeChange"
         >
           <el-option
-            v-for="type in ['csv', 'excel', 'parquet']"
+            v-for="type in ['csv', 'excel', 'parquet', 'ipc', 'ndjson', 'avro']"
             :key="type"
             :label="type"
             :value="type"
@@ -76,6 +76,18 @@
         v-if="isOutputParquetTable(nodeOutput.output_settings.table_settings)"
         v-model="nodeOutput.output_settings.table_settings"
       />
+      <IpcTableConfig
+        v-if="isOutputIpcTable(nodeOutput.output_settings.table_settings)"
+        v-model="nodeOutput.output_settings.table_settings"
+      />
+      <NdjsonTableConfig
+        v-if="isOutputNdjsonTable(nodeOutput.output_settings.table_settings)"
+        v-model="nodeOutput.output_settings.table_settings"
+      />
+      <AvroTableConfig
+        v-if="isOutputAvroTable(nodeOutput.output_settings.table_settings)"
+        v-model="nodeOutput.output_settings.table_settings"
+      />
     </div>
 
     <el-dialog
@@ -86,7 +98,17 @@
       :close-on-click-modal="false"
     >
       <file-browser
-        :allowed-file-types="['csv', 'xlsx', 'parquet']"
+        :allowed-file-types="[
+          'csv',
+          'xlsx',
+          'parquet',
+          'ipc',
+          'arrow',
+          'feather',
+          'ndjson',
+          'jsonl',
+          'avro',
+        ]"
         :allow-directory-selection="true"
         mode="create"
         context="output"
@@ -105,12 +127,18 @@ import {
   isOutputCsvTable,
   isOutputParquetTable,
   isOutputExcelTable,
+  isOutputIpcTable,
+  isOutputNdjsonTable,
+  isOutputAvroTable,
 } from "../../../baseNode/nodeInput";
 import {
   createDefaultOutputSettings,
   createCsvTableSettings,
   createParquetTableSettings,
   createExcelTableSettings,
+  createIpcTableSettings,
+  createNdjsonTableSettings,
+  createAvroTableSettings,
 } from "./defaultValues";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useFileBrowserStore } from "../../../../../stores/fileBrowserStore";
@@ -120,6 +148,9 @@ import axios, { AxiosError } from "axios";
 import CsvTableConfig from "./outputCsv.vue";
 import ExcelTableConfig from "./outputExcel.vue";
 import ParquetTableConfig from "./outputParquet.vue";
+import IpcTableConfig from "./outputIpc.vue";
+import NdjsonTableConfig from "./outputNdjson.vue";
+import AvroTableConfig from "./outputAvro.vue";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
 import { WarningFilled } from "@element-plus/icons-vue";
 
@@ -174,30 +205,37 @@ async function fetchFiles() {
   }
 }
 
+type OutputFileType = "csv" | "excel" | "parquet" | "ipc" | "ndjson" | "avro";
+
 function detectFileType(fileName: string) {
   if (!fileName) return;
 
   const extension = fileName.split(".").pop()?.toLowerCase();
-  if (!extension || !["csv", "xlsx", "xls", "parquet"].includes(extension)) {
-    return;
-  }
-  const verifiedExtension = extension as "csv" | "xlsx" | "xls" | "parquet";
-  const fileTypeMap: Record<"csv" | "xlsx" | "xls" | "parquet", "csv" | "excel" | "parquet"> = {
+  const fileTypeMap: Record<string, OutputFileType> = {
     csv: "csv",
     xlsx: "excel",
     xls: "excel",
     parquet: "parquet",
+    ipc: "ipc",
+    arrow: "ipc",
+    feather: "ipc",
+    ndjson: "ndjson",
+    jsonl: "ndjson",
+    avro: "avro",
   };
+  if (!extension || !fileTypeMap[extension]) {
+    return;
+  }
 
-  if (nodeOutput.value && fileTypeMap[verifiedExtension]) {
-    nodeOutput.value.output_settings.file_type = fileTypeMap[verifiedExtension];
+  if (nodeOutput.value) {
+    nodeOutput.value.output_settings.file_type = fileTypeMap[extension];
     nodeOutput.value.output_settings.write_mode = "overwrite";
 
-    updateTableSettings(fileTypeMap[verifiedExtension]);
+    updateTableSettings(fileTypeMap[extension]);
   }
 }
 
-function updateTableSettings(fileType: "csv" | "excel" | "parquet") {
+function updateTableSettings(fileType: OutputFileType) {
   if (!nodeOutput.value) return;
 
   switch (fileType) {
@@ -209,6 +247,15 @@ function updateTableSettings(fileType: "csv" | "excel" | "parquet") {
       break;
     case "excel":
       nodeOutput.value.output_settings.table_settings = createExcelTableSettings();
+      break;
+    case "ipc":
+      nodeOutput.value.output_settings.table_settings = createIpcTableSettings();
+      break;
+    case "ndjson":
+      nodeOutput.value.output_settings.table_settings = createNdjsonTableSettings();
+      break;
+    case "avro":
+      nodeOutput.value.output_settings.table_settings = createAvroTableSettings();
       break;
   }
 }
@@ -226,6 +273,9 @@ function handleFileTypeChange() {
     csv: ".csv",
     excel: ".xlsx",
     parquet: ".parquet",
+    ipc: ".arrow",
+    ndjson: ".ndjson",
+    avro: ".avro",
   };
 
   const currentName = nodeOutput.value.output_settings.name;

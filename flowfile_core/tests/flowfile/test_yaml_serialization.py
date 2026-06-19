@@ -576,6 +576,90 @@ class TestOutputSettingsSerialization:
             input_schema.OutputParquetTable
         )
 
+    @pytest.mark.parametrize("file_type,ext,table_settings_cls", [
+        ("ipc", "arrow", input_schema.OutputIpcTable),
+        ("ndjson", "ndjson", input_schema.OutputNdjsonTable),
+        ("avro", "avro", input_schema.OutputAvroTable),
+    ])
+    def test_output_settings_roundtrip_new_formats(self, temp_dir: Path, file_type, ext, table_settings_cls):
+        """IPC/NDJSON/Avro outputs have no settings beyond file_type, so they omit
+        table_settings in YAML and reconstruct to the right settings class."""
+        flow = create_graph(flow_id=504)
+        add_manual_input(flow, data=[{'x': 1}], node_id=1)
+
+        add_node_promise(flow, 'output', node_id=2)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(flow, connection)
+
+        output_settings = input_schema.NodeOutput(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            output_settings=input_schema.OutputSettings(
+                name=f'output.{ext}',
+                directory='/tmp',
+                file_type=file_type,
+                write_mode='overwrite',
+                table_settings=table_settings_cls()
+            )
+        )
+        flow.add_output(output_settings)
+
+        yaml_path = temp_dir / "output_test.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path) as f:
+            data = yaml.safe_load(f)
+        output_node = next(n for n in data['nodes'] if n['type'] == 'output')
+        assert 'table_settings' not in output_node['setting_input']['output_settings'], \
+            f"table_settings should be omitted for {file_type} (no meaningful settings)"
+
+        loaded_flow = open_flow(yaml_path)
+        loaded_output = loaded_flow.get_node(2)
+        assert loaded_output.setting_input.output_settings.file_type == file_type
+        assert isinstance(loaded_output.setting_input.output_settings.table_settings, table_settings_cls)
+
+    @pytest.mark.parametrize("file_type,ext,table_settings_cls,compression", [
+        ("parquet", "parquet", input_schema.OutputParquetTable, "snappy"),
+        ("ipc", "arrow", input_schema.OutputIpcTable, "zstd"),
+        ("ndjson", "ndjson", input_schema.OutputNdjsonTable, "gzip"),
+        ("avro", "avro", input_schema.OutputAvroTable, "deflate"),
+    ])
+    def test_output_settings_compression_roundtrip(self, temp_dir: Path, file_type, ext, table_settings_cls, compression):
+        """A non-default compression must be serialized and survive YAML save/load."""
+        flow = create_graph(flow_id=505)
+        add_manual_input(flow, data=[{'x': 1}], node_id=1)
+
+        add_node_promise(flow, 'output', node_id=2)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(flow, connection)
+
+        output_settings = input_schema.NodeOutput(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            output_settings=input_schema.OutputSettings(
+                name=f'output.{ext}',
+                directory='/tmp',
+                file_type=file_type,
+                write_mode='overwrite',
+                table_settings=table_settings_cls(compression=compression)
+            )
+        )
+        flow.add_output(output_settings)
+
+        yaml_path = temp_dir / "output_test.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path) as f:
+            data = yaml.safe_load(f)
+        ts = next(n for n in data['nodes'] if n['type'] == 'output')['setting_input']['output_settings']['table_settings']
+        assert ts['compression'] == compression, "non-default compression must be persisted"
+
+        loaded_flow = open_flow(yaml_path)
+        loaded_ts = loaded_flow.get_node(2).setting_input.output_settings.table_settings
+        assert loaded_ts.compression == compression
+
 
 # CROSS JOIN SERIALIZATION TESTS
 

@@ -3407,6 +3407,7 @@ class FlowGraph:
                 write_mode=output_fs.write_mode,
                 sheet_name=output_fs.sheet_name,
                 delimiter=output_fs.delimiter,
+                compression=output_fs.compression,
                 flow_id=self.flow_id,
                 node_id=output_file.node_id,
                 wait_on_completion=False,
@@ -4416,7 +4417,7 @@ class FlowGraph:
             input_file.received_file.set_absolute_filepath()
             if self.execution_location == "local":
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
-            elif input_file.received_file.file_type == "parquet":
+            elif input_file.received_file.file_type in ("parquet", "ipc", "ndjson"):
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             elif (
                 input_file.received_file.file_type == "csv"
@@ -4447,7 +4448,7 @@ class FlowGraph:
                     def schema_callback():
                         return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
 
-                elif input_file.received_file.file_type in ("csv", "json", "parquet"):
+                elif input_file.received_file.file_type in ("csv", "json", "parquet", "ipc", "ndjson"):
 
                     def schema_callback():
                         input_data = FlowDataEngine.create_from_path(input_file.received_file)

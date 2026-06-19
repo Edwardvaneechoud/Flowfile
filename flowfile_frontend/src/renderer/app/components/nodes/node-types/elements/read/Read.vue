@@ -44,6 +44,18 @@
             v-if="isInputParquetTable(receivedTable.table_settings)"
             v-model="receivedTable.table_settings"
           />
+          <IpcTableConfig
+            v-if="isInputIpcTable(receivedTable.table_settings)"
+            v-model="receivedTable.table_settings"
+          />
+          <NdjsonTableConfig
+            v-if="isInputNdjsonTable(receivedTable.table_settings)"
+            v-model="receivedTable.table_settings"
+          />
+          <AvroTableConfig
+            v-if="isInputAvroTable(receivedTable.table_settings)"
+            v-model="receivedTable.table_settings"
+          />
         </div>
       </div>
 
@@ -55,7 +67,18 @@
         :close-on-click-modal="false"
       >
         <file-browser
-          :allowed-file-types="['csv', 'txt', 'parquet', 'xlsx']"
+          :allowed-file-types="[
+            'csv',
+            'txt',
+            'parquet',
+            'xlsx',
+            'ipc',
+            'arrow',
+            'feather',
+            'ndjson',
+            'jsonl',
+            'avro',
+          ]"
           mode="open"
           context="dataFiles"
           :is-visible="modalVisibleForOpen"
@@ -73,15 +96,24 @@ import { ref, watch } from "vue";
 import ExcelTableConfig from "./readExcel.vue";
 import CsvTableConfig from "./readCsv.vue";
 import ParquetTableConfig from "./readParquet.vue";
+import IpcTableConfig from "./readIpc.vue";
+import NdjsonTableConfig from "./readNdjson.vue";
+import AvroTableConfig from "./readAvro.vue";
 import {
   ReceivedTable,
   NodeRead,
   isInputCsvTable,
   isInputExcelTable,
   isInputParquetTable,
+  isInputIpcTable,
+  isInputNdjsonTable,
+  isInputAvroTable,
   InputCsvTable,
   InputExcelTable,
   InputParquetTable,
+  InputIpcTable,
+  InputNdjsonTable,
+  InputAvroTable,
 } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
@@ -121,21 +153,34 @@ watch(
   },
 );
 
-function detectFileType(path: string): "csv" | "excel" | "parquet" | null {
+type ReadFileType = "csv" | "excel" | "parquet" | "ipc" | "ndjson" | "avro";
+type ReadTableSettings =
+  | InputCsvTable
+  | InputExcelTable
+  | InputParquetTable
+  | InputIpcTable
+  | InputNdjsonTable
+  | InputAvroTable;
+
+function detectFileType(path: string): ReadFileType | null {
   // Strip ${...} references so we can read the real extension
   const cleaned = path.replace(/\$\{[^}]*\}/g, "");
   const ext = cleaned.split(".").pop()?.toLowerCase();
   if (ext === "xlsx") return "excel";
   if (ext === "csv" || ext === "txt") return "csv";
   if (ext === "parquet") return "parquet";
+  if (ext === "ipc" || ext === "arrow" || ext === "feather") return "ipc";
+  if (ext === "ndjson" || ext === "jsonl") return "ndjson";
+  if (ext === "avro") return "avro";
   return null;
 }
 
-function createDefaultSettings(
-  fileType: "csv" | "excel" | "parquet",
-): InputCsvTable | InputExcelTable | InputParquetTable {
+function createDefaultSettings(fileType: ReadFileType): ReadTableSettings {
   if (fileType === "excel") return createDefaultExcelSettings();
   if (fileType === "parquet") return createDefaultParquetSettings();
+  if (fileType === "ipc") return { file_type: "ipc" };
+  if (fileType === "ndjson") return { file_type: "ndjson" };
+  if (fileType === "avro") return { file_type: "avro" };
   return createDefaultCsvSettings();
 }
 
@@ -210,8 +255,8 @@ const handleFileChange = (fileInfo: FileInfo) => {
       return;
     }
 
-    let fileType: "csv" | "excel" | "parquet";
-    let tableSettings: InputCsvTable | InputExcelTable | InputParquetTable;
+    let fileType: ReadFileType;
+    let tableSettings: ReadTableSettings;
 
     switch (ext) {
       case "xlsx":
@@ -226,6 +271,21 @@ const handleFileChange = (fileInfo: FileInfo) => {
       case "parquet":
         fileType = "parquet";
         tableSettings = createDefaultParquetSettings();
+        break;
+      case "ipc":
+      case "arrow":
+      case "feather":
+        fileType = "ipc";
+        tableSettings = { file_type: "ipc" };
+        break;
+      case "ndjson":
+      case "jsonl":
+        fileType = "ndjson";
+        tableSettings = { file_type: "ndjson" };
+        break;
+      case "avro":
+        fileType = "avro";
+        tableSettings = { file_type: "avro" };
         break;
       default:
         console.warn("Unsupported file type:", ext);
