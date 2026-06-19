@@ -1,3 +1,5 @@
+import types
+
 import polars as pl
 import pytest
 
@@ -7,6 +9,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     ExternalDatabaseWriter,
     trigger_database_read_collector,
 )
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
     DatabaseExternalWriteSettings,
     ExtDatabaseConnection,

@@ -89,7 +89,7 @@
         :allowed-file-types="['csv', 'xlsx', 'parquet']"
         :allow-directory-selection="true"
         mode="create"
-        context="dataFiles"
+        context="output"
         :is-visible="showFileSelectionModal"
         @directory-selected="handleDirectorySelected"
         @overwrite-file="handleFileSelected"
@@ -113,7 +113,9 @@ import {
   createExcelTableSettings,
 } from "./defaultValues";
 import { useNodeStore } from "../../../../../stores/node-store";
+import { useFileBrowserStore } from "../../../../../stores/fileBrowserStore";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
+import { getDefaultPath } from "@/api/file.api";
 import axios, { AxiosError } from "axios";
 import CsvTableConfig from "./outputCsv.vue";
 import ExcelTableConfig from "./outputExcel.vue";
@@ -129,11 +131,23 @@ interface LocalFileInfo {
 }
 
 const nodeStore = useNodeStore();
+const fileBrowserStore = useFileBrowserStore();
 const nodeOutput = ref<NodeOutput | null>(null);
 const dataLoaded = ref(false);
 
+/**
+ * Remember the chosen output directory so the next new output node defaults to
+ * it (persisted to localStorage via the "output" file-browser context).
+ */
+function rememberOutputDirectory(directory: string | undefined) {
+  if (directory) fileBrowserStore.setCurrentPath("output", directory);
+}
+
 const { saveSettings, pushNodeData } = useNodeSettings({
   nodeRef: nodeOutput,
+  onBeforeSave: () => {
+    rememberOutputDirectory(nodeOutput.value?.output_settings.directory);
+  },
 });
 const showFileSelectionModal = ref(false);
 const selectedDirectoryExists = ref<boolean | null>(null);
@@ -231,6 +245,7 @@ function handleDirectorySelected(directoryPath: string) {
   if (!nodeOutput.value) return;
 
   nodeOutput.value.output_settings.directory = directoryPath;
+  rememberOutputDirectory(directoryPath);
   showFileSelectionModal.value = false;
   fetchFiles();
 }
@@ -240,6 +255,7 @@ function handleFileSelected(filePath: string, currentPath: string, fileName: str
 
   nodeOutput.value.output_settings.name = fileName;
   nodeOutput.value.output_settings.directory = currentPath;
+  rememberOutputDirectory(currentPath);
   showFileSelectionModal.value = false;
   detectFileType(fileName);
 }
@@ -257,6 +273,54 @@ const querySearch = (queryString: string, cb: (suggestions: LocalFileInfo[]) => 
   cb(results);
 };
 
+/**
+ * A directory is "resolved" only if it's an absolute path the user can actually
+ * see the target of. A relative value like "." is not — the backend resolves it
+ * against its own working directory, so the UI can't tell where the file lands.
+ */
+function isResolvedDirectory(directory: string | undefined): boolean {
+  if (!directory || directory === ".") return false;
+  // Absolute: POSIX (/...), Windows drive (C:\ or C:/), or UNC (\\...).
+  return /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(directory);
+}
+
+/**
+ * Pick a concrete output directory: the last directory the user wrote to
+ * (remembered in the "output" file-browser context), else the user's home
+ * location from the backend. Falls back to "." only if the backend is
+ * unreachable.
+ */
+async function resolveDefaultOutputDirectory(): Promise<string> {
+  const remembered = fileBrowserStore.getLastUsedPath("output");
+  if (isResolvedDirectory(remembered)) return remembered;
+  try {
+    return (await getDefaultPath()) || ".";
+  } catch {
+    return ".";
+  }
+}
+
+/**
+ * On open, make sure the directory field shows a real, writable location rather
+ * than an unresolved "." — otherwise the user can't tell where the file will be
+ * written. Resolves to the last-used output dir (else home) and remembers it.
+ * For an already-configured node we persist the conversion immediately so the
+ * saved flow stops carrying "." for good.
+ */
+async function ensureResolvedDirectory() {
+  const settings = nodeOutput.value?.output_settings;
+  if (!settings || isResolvedDirectory(settings.directory)) return;
+
+  const resolved = await resolveDefaultOutputDirectory();
+  if (!isResolvedDirectory(resolved)) return; // backend unreachable — leave as-is
+
+  const wasConfigured = nodeOutput.value?.is_setup === true;
+  settings.directory = resolved;
+  rememberOutputDirectory(resolved);
+
+  if (wasConfigured) await saveSettings();
+}
+
 async function loadNodeData(nodeId: number) {
   const nodeResult = await nodeStore.getNodeData(nodeId, false);
   if (nodeResult?.setting_input && nodeResult.setting_input.is_setup) {
@@ -273,6 +337,7 @@ async function loadNodeData(nodeId: number) {
       description: "",
     };
   }
+  await ensureResolvedDirectory();
   dataLoaded.value = true;
 }
 
