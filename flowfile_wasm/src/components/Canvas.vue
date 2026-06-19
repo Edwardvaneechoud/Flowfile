@@ -58,7 +58,7 @@
               <span class="node-name">{{ node.name }}</span>
               <a
                 v-if="node.available === false"
-                :href="category.docsUrl"
+                :href="nodeDocsUrl(category, node)"
                 target="_blank"
                 rel="noopener noreferrer"
                 draggable="false"
@@ -520,6 +520,8 @@ interface NodeDefinition {
   available?: boolean
   // Extra search terms so the palette filter matches by concept, not just by name.
   keywords?: string[]
+  // Heading slug appended to the category docsUrl for the locked-node "Learn more" link.
+  docsAnchor?: string
 }
 
 interface NodeCategory {
@@ -537,14 +539,14 @@ const nodeCategories = ref<NodeCategory[]>([
   {
     name: 'Input Sources',
     isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/input/',
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/input',
     nodes: [
       { type: 'read', name: 'Read File', icon: 'input_data.png', inputs: 0, outputs: 1, keywords: ['csv', 'excel', 'parquet', 'json', 'file', 'import', 'load'] },
       { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1, keywords: ['paste', 'type', 'create', 'test data'] },
       { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1, keywords: ['url', 'http', 'fetch', 'remote', 'web', 'api'] },
       { type: 'read_from_catalog', name: 'Read from Catalog', icon: 'catalog_reader.svg', inputs: 0, outputs: 1, keywords: ['catalog', 'table', 'dataset', 'saved'] },
-      { type: 'database_reader', name: 'Read from Database', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['sql', 'postgres', 'postgresql', 'mysql', 'snowflake', 'oracle', 'redshift', 'bigquery', 'query', 'table', 'db'] },
-      { type: 'cloud_storage_reader', name: 'Read from Cloud', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['s3', 'aws', 'azure', 'adls', 'gcs', 'blob', 'bucket', 'cloud', 'object storage'] },
+      { type: 'database_reader', name: 'Read from Database', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['sql', 'postgres', 'postgresql', 'mysql', 'snowflake', 'oracle', 'redshift', 'bigquery', 'query', 'table', 'db'], docsAnchor: 'database-reader' },
+      { type: 'cloud_storage_reader', name: 'Read from Cloud', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['s3', 'aws', 'azure', 'adls', 'gcs', 'blob', 'bucket', 'cloud', 'object storage'], docsAnchor: 'cloud-storage-reader' },
       { type: 'rest_api_reader', name: 'REST API', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['rest', 'api', 'http', 'json', 'endpoint', 'pagination', 'auth'] },
       { type: 'kafka_source', name: 'Kafka Source', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['kafka', 'redpanda', 'stream', 'streaming', 'topic', 'events'] },
       { type: 'google_analytics_reader', name: 'Google Analytics', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['google analytics', 'ga', 'ga4', 'analytics', 'web analytics'] }
@@ -553,7 +555,7 @@ const nodeCategories = ref<NodeCategory[]>([
   {
     name: 'Transformations',
     isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/transform/',
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/transform',
     nodes: [
       { type: 'filter', name: 'Filter', icon: 'filter.png', inputs: 1, outputs: 1, keywords: ['where', 'subset', 'condition', 'rows'] },
       { type: 'select', name: 'Select', icon: 'select.png', inputs: 1, outputs: 1, keywords: ['columns', 'rename', 'reorder', 'keep', 'drop'] },
@@ -566,26 +568,26 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'head', name: 'Take Sample', icon: 'sample.png', inputs: 1, outputs: 1, keywords: ['sample', 'limit', 'top', 'head', 'subset'] },
       { type: 'window_functions', name: 'Window Functions', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['window', 'rolling', 'cumulative', 'rank', 'partition', 'lag', 'lead', 'over'] },
       { type: 'sql_query', name: 'SQL Query', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['sql', 'query', 'select', 'where', 'duckdb'] },
-      { type: 'python_script', name: 'Python Script', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['python', 'code', 'script', 'kernel', 'pandas'] }
+      { type: 'python_script', name: 'Python Script', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['python', 'code', 'script', 'kernel', 'pandas'], docsAnchor: 'python-script' }
     ]
   },
   {
     name: 'Combine Operations',
     isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/combine/',
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/combine',
     nodes: [
       { type: 'join', name: 'Join', icon: 'join.png', inputs: 2, outputs: 1, keywords: ['merge', 'lookup', 'vlookup', 'inner', 'left', 'right', 'outer'] },
       { type: 'cross_join', name: 'Cross Join', icon: 'cross_join.png', inputs: 2, outputs: 1, keywords: ['cartesian', 'cross', 'combinations'] },
       // inputs: 1 — single handle accepts multiple connections (like polars_code).
       { type: 'union', name: 'Union', icon: 'union.png', inputs: 1, outputs: 1, keywords: ['concat', 'append', 'stack', 'combine'] },
-      { type: 'fuzzy_match', name: 'Fuzzy Match', icon: '', inputs: 2, outputs: 1, available: false, keywords: ['fuzzy', 'similarity', 'levenshtein', 'approximate', 'fuzzy join'] },
-      { type: 'graph_solver', name: 'Graph Solver', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['graph', 'network', 'cluster', 'connected components'] }
+      { type: 'fuzzy_match', name: 'Fuzzy Match', icon: '', inputs: 2, outputs: 1, available: false, keywords: ['fuzzy', 'similarity', 'levenshtein', 'approximate', 'fuzzy join'], docsAnchor: 'fuzzy-match' },
+      { type: 'graph_solver', name: 'Graph Solver', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['graph', 'network', 'cluster', 'connected components'], docsAnchor: 'graph-solver' }
     ]
   },
   {
     name: 'Aggregations',
     isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/aggregate/',
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/aggregate',
     nodes: [
       { type: 'group_by', name: 'Group By', icon: 'group_by.png', inputs: 1, outputs: 1, keywords: ['aggregate', 'sum', 'mean', 'average', 'count', 'min', 'max', 'median', 'summarize'] },
       { type: 'pivot', name: 'Pivot', icon: 'pivot.png', inputs: 1, outputs: 1, keywords: ['crosstab', 'wide', 'reshape', 'spread'] },
@@ -595,24 +597,24 @@ const nodeCategories = ref<NodeCategory[]>([
   {
     name: 'Machine Learning',
     isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/ml/',
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/ml',
     nodes: [
-      { type: 'train_model', name: 'Train Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'train', 'model', 'regression', 'classification', 'fit', 'sklearn'] },
-      { type: 'apply_model', name: 'Apply Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'predict', 'score', 'inference', 'model'] },
-      { type: 'evaluate_model', name: 'Evaluate Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'evaluate', 'metrics', 'accuracy', 'model'] }
+      { type: 'train_model', name: 'Train Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'train', 'model', 'regression', 'classification', 'fit', 'sklearn'], docsAnchor: 'train-model' },
+      { type: 'apply_model', name: 'Apply Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'predict', 'score', 'inference', 'model'], docsAnchor: 'apply-model' },
+      { type: 'evaluate_model', name: 'Evaluate Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'evaluate', 'metrics', 'accuracy', 'model'], docsAnchor: 'evaluate-model' }
     ]
   },
   {
     name: 'Output Operations',
     isOpen: true,
-    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/output/',
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/output',
     nodes: [
       { type: 'explore_data', name: 'Explore Data', icon: 'explore_data.png', inputs: 1, outputs: 0, keywords: ['profile', 'describe', 'preview', 'eda', 'visualize', 'chart'] },
       { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0, keywords: ['csv', 'excel', 'parquet', 'write', 'save', 'export', 'file'] },
       { type: 'write_to_catalog', name: 'Write to Catalog', icon: 'catalog_writer.svg', inputs: 1, outputs: 0, keywords: ['catalog', 'table', 'save'] },
       { type: 'external_output', name: 'External Output', icon: 'external_output.svg', inputs: 1, outputs: 0, keywords: ['url', 'http', 'api', 'send', 'webhook'] },
-      { type: 'database_writer', name: 'Write to Database', icon: '', inputs: 1, outputs: 0, available: false, keywords: ['sql', 'postgres', 'mysql', 'snowflake', 'redshift', 'bigquery', 'insert', 'table', 'db'] },
-      { type: 'cloud_storage_writer', name: 'Write to Cloud', icon: '', inputs: 1, outputs: 0, available: false, keywords: ['s3', 'aws', 'azure', 'adls', 'gcs', 'blob', 'bucket', 'cloud'] }
+      { type: 'database_writer', name: 'Write to Database', icon: '', inputs: 1, outputs: 0, available: false, keywords: ['sql', 'postgres', 'mysql', 'snowflake', 'redshift', 'bigquery', 'insert', 'table', 'db'], docsAnchor: 'database-writer' },
+      { type: 'cloud_storage_writer', name: 'Write to Cloud', icon: '', inputs: 1, outputs: 0, available: false, keywords: ['s3', 'aws', 'azure', 'adls', 'gcs', 'blob', 'bucket', 'cloud'], docsAnchor: 'cloud-storage-writer' }
     ]
   }
 ])
@@ -650,6 +652,14 @@ function findNodeDef(type: string): NodeDefinition | undefined {
     if (node) return node
   }
   return undefined
+}
+
+// "Learn more" target for a locked (full-app) node: the category docs page plus the
+// node's heading anchor. Nodes without a documented section omit docsAnchor and land
+// on the category page.
+function nodeDocsUrl(category: NodeCategory, node: NodeDefinition): string {
+  const base = category.docsUrl ?? ''
+  return node.docsAnchor ? `${base}#${node.docsAnchor}` : base
 }
 
 const vueNodes = computed<Node[]>({
