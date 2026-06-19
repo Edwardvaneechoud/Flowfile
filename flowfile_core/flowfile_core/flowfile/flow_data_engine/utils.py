@@ -93,6 +93,7 @@ def execute_write_method(
     sheet_name: str = None,
     delimiter: str = None,
     write_mode: str = "create",
+    compression: str = None,
 ):
     if data_type == "excel":
         logger.info("Writing as excel file")
@@ -106,7 +107,14 @@ def execute_write_method(
             write_method(path, separator=delimiter, quote_style="always")
     elif data_type == "parquet":
         logger.info("Writing as parquet file")
-        write_method(path)
+        write_method(path, compression=compression) if compression else write_method(path)
+    elif data_type == "ndjson":
+        logger.info("Writing as ndjson file")
+        # check_extension=False: compressed ndjson otherwise requires a .gz/.zst suffix.
+        write_method(path, compression=compression, check_extension=False) if compression else write_method(path)
+    elif data_type in ("ipc", "avro"):
+        logger.info(f"Writing as {data_type} file")
+        write_method(path, compression=compression) if compression else write_method(path)
 
 
 def local_write_output(
@@ -116,6 +124,7 @@ def local_write_output(
     write_mode: str,
     sheet_name: str = None,
     delimiter: str = None,
+    compression: str = None,
     flow_id: int = -1,
     node_id: int | str = -1,
 ):
@@ -140,6 +149,7 @@ def local_write_output(
             sheet_name=sheet_name,
             delimiter=delimiter,
             write_mode=write_mode,
+            compression=compression,
         )
 
 

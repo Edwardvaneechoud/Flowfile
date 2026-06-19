@@ -10,7 +10,7 @@ Output nodes represent the final steps in your data pipeline, allowing you to sa
 
 ### ![Write Data](../../../assets/images/nodes/output.png){ width="50" height="50" } Write Data  
 
-The **Write Data** node allows you to save your processed data in different formats. It supports **CSV**, **Excel**, and **Parquet**, each with specific configuration options.  
+The **Write Data** node allows you to save your processed data in different formats. It supports **CSV**, **Excel**, **Parquet**, **Arrow IPC/Feather**, **NDJSON**, and **Avro**, each with specific configuration options.  
 
 ---
 
@@ -19,6 +19,9 @@ The **Write Data** node allows you to save your processed data in different form
 - **CSV files** (`.csv`)  
 - **Excel files** (`.xlsx`)  
 - **Parquet files** (`.parquet`)  
+- **Arrow IPC / Feather files** (`.arrow`)  
+- **NDJSON files** (`.ndjson`)  
+- **Avro files** (`.avro`)  
 
 ---
 
@@ -52,11 +55,42 @@ When an **Excel** file is selected, additional configurations allow customizing 
 ---
 
 ### Parquet  
-When a **Parquet** file is selected, no additional setup options are required. Parquet is a **columnar storage format**, optimized for efficient reading and writing.
+When a **Parquet** file is selected, you can choose a compression codec. Parquet is a **columnar storage format**, optimized for efficient reading and writing.
 
-| Parameter       | Description                                                   |
-|-----------------|---------------------------------------------------------------|
-| **Write Mode**  | Determines how the file is saved (`overwrite` or `new file`). |
+| Parameter       | Description                                                                                   |
+|-----------------|------------------------------------------------------------------------------------------------|
+| **Compression** | Codec used to compress the file: `zstd` (default), `snappy`, `gzip`, `lz4`, `brotli`, `uncompressed`. |
+| **Write Mode**  | Determines how the file is saved (`overwrite` or `new file`).                                  |
+
+---
+
+### Arrow IPC / Feather  
+When an **Arrow IPC/Feather** file is selected, you can choose a compression codec. The Arrow IPC format stores schema and data types natively and is written via a streaming sink.
+
+| Parameter       | Description                                                          |
+|-----------------|----------------------------------------------------------------------|
+| **Compression** | Codec used to compress the file: `uncompressed` (default), `lz4`, `zstd`. |
+| **Write Mode**  | Determines how the file is saved (`overwrite` or `new file`).        |
+
+---
+
+### NDJSON  
+When a **newline-delimited JSON** file is selected, you can choose a compression codec. Each row is written as a JSON record.
+
+| Parameter       | Description                                                          |
+|-----------------|----------------------------------------------------------------------|
+| **Compression** | Codec used to compress the file: `uncompressed` (default), `gzip`, `zstd`. |
+| **Write Mode**  | Determines how the file is saved (`overwrite` or `new file`).        |
+
+---
+
+### Avro  
+When an **Avro** file is selected, you can choose a compression codec. Avro is a row-based binary format that embeds its own schema. The write is materialized on the compute worker.
+
+| Parameter       | Description                                                            |
+|-----------------|------------------------------------------------------------------------|
+| **Compression** | Codec used to compress the file: `uncompressed` (default), `snappy`, `deflate`. |
+| **Write Mode**  | Determines how the file is saved (`overwrite` or `new file`).          |
 
 ---
 
@@ -65,7 +99,7 @@ When a **Parquet** file is selected, no additional setup options are required. P
 | Parameter          | Description                                                                                                                 |
 |--------------------|-----------------------------------------------------------------------------------------------------------------------------|
 | **File Path**      | Directory and filename for the output file.                                                                                 |
-| **File Format**    | Selects the output format (`CSV`, `Excel`, `Parquet`).                                                                      |
+| **File Format**    | Selects the output format (`CSV`, `Excel`, `Parquet`, `IPC`, `NDJSON`, `Avro`).                                             |
 | **Overwrite Mode** | Controls whether to replace or append data. When `new file` is selected it will throw an error when the file already exists |
 
 This node ensures that your transformed data is **saved in the correct format**, ready for further use or analysis.

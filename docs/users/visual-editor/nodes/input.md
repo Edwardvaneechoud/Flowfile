@@ -9,13 +9,16 @@ Input nodes are the starting point for any data flow. Flowfile supports reading 
 
 ### ![Read Data](../../../assets/images/nodes/input_data.png){ width="50" height="50" } Read Data
 
-The **Read Data** node allows you to load local data into your flow. It currently supports **CSV**, **Excel**, and **Parquet** file formats, each with specific configuration options.
+The **Read Data** node allows you to load local data into your flow. It supports **CSV**, **Excel**, **Parquet**, **Arrow IPC/Feather**, **NDJSON**, and **Avro** file formats, each with specific configuration options.
 
 #### **Supported Formats:**
 
-- **CSV files** (`.csv`)
+- **CSV files** (`.csv`, `.txt`)
 - **Excel files** (`.xlsx`, `.xls`)
 - **Parquet files** (`.parquet`)
+- **Arrow IPC / Feather files** (`.arrow`, `.ipc`, `.feather`)
+- **NDJSON files** (`.ndjson`, `.jsonl`)
+- **Avro files** (`.avro`)
 
 #### **Usage:**
 
@@ -58,6 +61,21 @@ When an **Excel** file is selected, you can specify the sheet, select specific r
 
 #### Parquet  
 When a **Parquet** file is selected, no additional setup options are required. Parquet is a columnar storage format optimized for efficiency and performance. It retains schema information and data types, enabling faster reads and writes without manual configuration.
+
+---
+
+#### Arrow IPC / Feather  
+When an **Arrow IPC/Feather** file is selected, no additional setup options are required. The Arrow IPC format stores schema and data types natively and is read lazily, so large files stream efficiently without holding the dataset in memory.
+
+---
+
+#### NDJSON  
+When a **newline-delimited JSON** file is selected, no additional setup options are required. Each line is parsed as a JSON record and the schema is inferred automatically. NDJSON is read lazily.
+
+---
+
+#### Avro  
+When an **Avro** file is selected, no additional setup options are required. Avro is a row-based binary format that embeds its own schema. Avro is read eagerly (the load runs on the compute worker, not the core service).
 
 ---
 

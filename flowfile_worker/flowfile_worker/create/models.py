@@ -72,8 +72,33 @@ class InputExcelTable(InputTableBase):
         return self
 
 
+class InputIpcTable(InputTableBase):
+    """Defines settings for reading an Arrow IPC/Feather file."""
+
+    file_type: Literal["ipc"] = "ipc"
+
+
+class InputNdjsonTable(InputTableBase):
+    """Defines settings for reading a newline-delimited JSON file."""
+
+    file_type: Literal["ndjson"] = "ndjson"
+
+
+class InputAvroTable(InputTableBase):
+    """Defines settings for reading an Avro file."""
+
+    file_type: Literal["avro"] = "avro"
+
+
 InputTableSettings = Annotated[
-    InputCsvTable | InputJsonTable | InputParquetTable | InputExcelTable, Field(discriminator="file_type")
+    InputCsvTable
+    | InputJsonTable
+    | InputParquetTable
+    | InputExcelTable
+    | InputIpcTable
+    | InputNdjsonTable
+    | InputAvroTable,
+    Field(discriminator="file_type"),
 ]
 
 
@@ -90,12 +115,14 @@ class ReceivedTable(BaseModel):
     fields: list[MinimalFieldInfo] = Field(default_factory=list)
     abs_file_path: str | None = None
 
-    file_type: Literal["csv", "json", "parquet", "excel"]
+    file_type: Literal["csv", "json", "parquet", "excel", "ipc", "ndjson", "avro"]
 
     table_settings: InputTableSettings
 
     @classmethod
-    def create_from_path(cls, path: str, file_type: Literal["csv", "json", "parquet", "excel"] = "csv"):
+    def create_from_path(
+        cls, path: str, file_type: Literal["csv", "json", "parquet", "excel", "ipc", "ndjson", "avro"] = "csv"
+    ):
         """Creates an instance from a file path string."""
         filename = Path(path).name
 
@@ -104,6 +131,9 @@ class ReceivedTable(BaseModel):
             "json": InputJsonTable(),
             "parquet": InputParquetTable(),
             "excel": InputExcelTable(),
+            "ipc": InputIpcTable(),
+            "ndjson": InputNdjsonTable(),
+            "avro": InputAvroTable(),
         }
 
         return cls(
@@ -141,6 +171,9 @@ class ReceivedTable(BaseModel):
                 "json": InputJsonTable(),
                 "parquet": InputParquetTable(),
                 "excel": InputExcelTable(),
+                "ipc": InputIpcTable(),
+                "ndjson": InputNdjsonTable(),
+                "avro": InputAvroTable(),
             }
             return settings_map.get(file_type, InputCsvTable())
 

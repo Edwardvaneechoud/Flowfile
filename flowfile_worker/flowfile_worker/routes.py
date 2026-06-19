@@ -243,6 +243,7 @@ def write_results(polars_script_write: models.PolarsScriptWrite, background_task
                 write_mode=polars_script_write.write_mode,
                 sheet_name=polars_script_write.sheet_name,
                 delimiter=polars_script_write.delimiter,
+                compression=polars_script_write.compression,
             ),
         )
         logger.info(f"Started write task: {task_id} with type: {polars_script_write.data_type}")

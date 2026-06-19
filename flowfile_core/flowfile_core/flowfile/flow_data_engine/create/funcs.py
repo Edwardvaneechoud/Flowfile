@@ -149,6 +149,26 @@ def create_from_path_parquet(received_table: input_schema.ReceivedTable) -> pl.L
     return pl.scan_parquet(source=f, low_memory=low_mem)
 
 
+def create_from_path_ipc(received_table: input_schema.ReceivedTable) -> pl.LazyFrame:
+    if not isinstance(received_table.table_settings, input_schema.InputIpcTable):
+        raise ValueError("Received table settings are not of type InputIpcTable")
+    return pl.scan_ipc(received_table.abs_file_path)
+
+
+def create_from_path_ndjson(received_table: input_schema.ReceivedTable) -> pl.LazyFrame:
+    if not isinstance(received_table.table_settings, input_schema.InputNdjsonTable):
+        raise ValueError("Received table settings are not of type InputNdjsonTable")
+    f = received_table.abs_file_path
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 10
+    return pl.scan_ndjson(f, low_memory=low_mem)
+
+
+def create_from_path_avro(received_table: input_schema.ReceivedTable) -> pl.DataFrame:
+    if not isinstance(received_table.table_settings, input_schema.InputAvroTable):
+        raise ValueError("Received table settings are not of type InputAvroTable")
+    return pl.read_avro(received_table.abs_file_path)
+
+
 def create_from_path_excel(received_table: input_schema.ReceivedTable):
     if not isinstance(received_table.table_settings, input_schema.InputExcelTable):
         raise ValueError("Received table settings are not of type InputExcelTable")

@@ -678,21 +678,6 @@ def polars_function_wrapper(
         return decorator
 
 
-@polars_function_wrapper("read_json", return_type="FlowFrame")
-def read_json(*args, flow_graph: FlowGraph | None = None, **kwargs) -> FlowFrame:
-    pass
-
-
-@polars_function_wrapper("read_avro", return_type="FlowFrame")
-def read_avro(*args, flow_graph: FlowGraph | None = None, **kwargs) -> FlowFrame:
-    pass
-
-
-@polars_function_wrapper("read_ndjson", return_type="FlowFrame")
-def read_ndjson(*args, flow_graph: FlowGraph | None = None, **kwargs) -> FlowFrame:
-    pass
-
-
 @polars_function_wrapper("fold", return_type="Expr")
 def fold(*args, **kwargs) -> "Expr":  # Type hint 'Expr' refers to flowfile_frame.expr.Expr
     pass
