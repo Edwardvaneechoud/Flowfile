@@ -19,6 +19,7 @@ const ns = (id: number, name: string, children: NamespaceTree[] = []): Namespace
     artifacts: [],
     tables: [],
     visualizations: [],
+    notebooks: [],
   }) as NamespaceTree;
 
 const tree = [

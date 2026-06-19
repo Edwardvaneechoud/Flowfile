@@ -20,6 +20,7 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRegistrationOut,
     GlobalArtifactOut,
     NamespaceTree,
+    NotebookSummaryOut,
     VisualizationOut,
 )
 
@@ -131,6 +132,7 @@ class NamespaceService:
         user_id: int,
         *,
         list_visualizations: Callable[[int | None], list[VisualizationOut]],
+        list_notebooks: Callable[[int | None], list[NotebookSummaryOut]],
         bulk_enrich_tables: Callable[[list, int], list[CatalogTableOut]],
         bulk_enrich_flows: Callable[[list[FlowRegistration], int], list[FlowRegistrationOut]],
     ) -> list[NamespaceTree]:
@@ -157,6 +159,12 @@ class NamespaceService:
             if v.namespace_id is None:
                 continue
             viz_by_namespace.setdefault(v.namespace_id, []).append(v)
+
+        nb_by_namespace: dict[int, list[NotebookSummaryOut]] = {}
+        for nb in list_notebooks(user_id):
+            if nb.namespace_id is None:
+                continue
+            nb_by_namespace.setdefault(nb.namespace_id, []).append(nb)
 
         for cat in catalogs:
             cat_flows = self.repo.list_flows(namespace_id=cat.id)
@@ -199,6 +207,7 @@ class NamespaceService:
                         artifacts=namespace_artifact_map.get(schema.id, []),
                         tables=namespace_table_map.get(schema.id, []),
                         visualizations=viz_by_namespace.get(schema.id, []),
+                        notebooks=nb_by_namespace.get(schema.id, []),
                     )
                 )
             cat_flows = namespace_flow_map.get(cat.id, [])
@@ -218,6 +227,7 @@ class NamespaceService:
                     artifacts=namespace_artifact_map.get(cat.id, []),
                     tables=namespace_table_map.get(cat.id, []),
                     visualizations=viz_by_namespace.get(cat.id, []),
+                    notebooks=nb_by_namespace.get(cat.id, []),
                 )
             )
         return result

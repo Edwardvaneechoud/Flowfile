@@ -101,6 +101,7 @@
               @artifact-context-menu="onArtifactContextMenu($event)"
               @flow-context-menu="onFlowContextMenu($event)"
               @select-visualization="openVisualization($event)"
+              @select-notebook="openNotebook($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
               @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
               @register-flow="openRegisterFlow($event)"
@@ -498,6 +499,7 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElCheckbox, ElLoading, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useNotebookStore } from "../../stores/notebook-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
@@ -548,6 +550,7 @@ const router = useRouter();
 const route = useRoute();
 
 const catalogStore = useCatalogStore();
+const notebookStore = useNotebookStore();
 const flowStore = useFlowStore();
 const { recordFlow } = useRecentFlows();
 
@@ -732,22 +735,31 @@ function handleTabClick(tab: CatalogTab) {
 }
 
 function selectFlow(flowId: number) {
+  // Flow detail only renders on the catalog tab, so switch to it (the tree is
+  // visible on every tab).
   router.push({
     name: "catalog",
-    query: { tab: catalogStore.activeTab, flowId: String(flowId) },
+    query: { tab: "catalog", flowId: String(flowId) },
   });
 }
 
 function selectTable(tableId: number) {
   router.push({
     name: "catalog",
-    query: { tab: catalogStore.activeTab, tableId: String(tableId) },
+    query: { tab: "catalog", tableId: String(tableId) },
   });
 }
 
 function openVisualization(vizId: number) {
   activeVizId.value = vizId;
   vizViewerOpen.value = true;
+}
+
+function openNotebook(notebookId: number) {
+  void notebookStore.openNotebook(notebookId);
+  if (catalogStore.activeTab !== "notebook") {
+    router.push({ name: "catalog", query: { tab: "notebook" } });
+  }
 }
 
 function closeVizViewer() {

@@ -100,12 +100,17 @@ class NotebookService:
         return self._notebook_to_out(nb)
 
     def create_notebook(self, payload: NotebookCreate, user_id: int) -> NotebookOut:
-        if payload.namespace_id is not None and self.repo.get_namespace(payload.namespace_id) is None:
-            raise NamespaceNotFoundError(namespace_id=payload.namespace_id)
+        # Unfiled notebooks default to General/default so they surface in the
+        # catalog tree instead of being reachable only via the notebook list.
+        namespace_id = payload.namespace_id
+        if namespace_id is None:
+            namespace_id = self._namespaces.get_default_namespace_id()
+        if namespace_id is not None and self.repo.get_namespace(namespace_id) is None:
+            raise NamespaceNotFoundError(namespace_id=namespace_id)
         nb = CatalogNotebook(
             name=payload.name,
             description=payload.description,
-            namespace_id=payload.namespace_id,
+            namespace_id=namespace_id,
             cells_json=self._dump_cells(payload.cells),
             default_kernel_id=payload.default_kernel_id,
             owner_id=user_id,

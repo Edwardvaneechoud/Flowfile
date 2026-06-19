@@ -137,6 +137,48 @@ class TestNotebookCRUD:
         assert client.get("/catalog/notebooks/999999").status_code == 404
 
 
+class TestNotebookInNamespaceTree:
+    def test_notebook_surfaced_in_namespace_tree(self, client):
+        ns_id = _make_namespace("TreeNs")
+        created = client.post(
+            "/catalog/notebooks",
+            json={"name": "tree_nb", "namespace_id": ns_id, "cells": SAMPLE_CELLS},
+        ).json()
+
+        tree = client.get("/catalog/namespaces/tree")
+        assert tree.status_code == 200, tree.text
+        node = next(n for n in tree.json() if n["id"] == ns_id)
+        nb = next(nb for nb in node["notebooks"] if nb["id"] == created["id"])
+        assert nb["name"] == "tree_nb"
+        assert nb["namespace_id"] == ns_id
+        # The tree carries the lightweight summary — no cells.
+        assert "cells" not in nb
+
+    def test_notebook_without_namespace_not_in_tree(self, client):
+        _make_namespace("HasNs")
+        client.post("/catalog/notebooks", json={"name": "orphan", "cells": []})
+
+        tree = client.get("/catalog/namespaces/tree")
+        all_names = [nb["name"] for node in tree.json() for nb in node.get("notebooks", [])]
+        assert "orphan" not in all_names
+
+    def test_create_defaults_to_general_default_namespace(self, client):
+        # Recreate the General/default schema the autouse cleanup removes.
+        with get_db_context() as db:
+            general = CatalogNamespace(name="General", parent_id=None, level=0, owner_id=1)
+            db.add(general)
+            db.commit()
+            db.refresh(general)
+            default = CatalogNamespace(name="default", parent_id=general.id, level=1, owner_id=1)
+            db.add(default)
+            db.commit()
+            db.refresh(default)
+            default_id = default.id
+
+        created = client.post("/catalog/notebooks", json={"name": "nb_default", "cells": []}).json()
+        assert created["namespace_id"] == default_id
+
+
 class TestNotebookGrantCleanup:
     def test_delete_clears_grants(self):
         """Deleting a notebook must remove its resource grants — SQLite reuses

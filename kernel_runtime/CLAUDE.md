@@ -9,7 +9,7 @@ Image flavours (selected by core, not by this package): **base** / **ml** / **li
 
 ## Layout
 - `kernel_runtime/main.py` — FastAPI app, `/execute` + clear/artifact/persistence/recovery/memory/display/health endpoints, per-flow namespace store, SIGUSR1 interrupt handling.
-- `kernel_runtime/flowfile_client.py` — the injected `flowfile_ctx` module: `read_input`/`read_inputs`/`read_first`/`publish_output`, in-memory + global artifacts, catalog `TableRef`/`SchemaRef`/`CatalogRef`, logging, `display`, host→container path translation.
+- `kernel_runtime/flowfile_client.py` — the injected `flowfile_ctx` module: `read_input`/`read_inputs`/`read_first`/`publish_output`, in-memory + global artifacts, catalog `TableRef`/`SchemaRef`/`CatalogRef`, logging, `display`/`explore` (Polars frames render as an interactive table / full Graphic Walker explorer via the `application/vnd.flowfile.{table,gwalker}+json` mimes), host→container path translation.
 - `kernel_runtime/artifact_store.py` — thread-safe in-memory artifact store keyed by `(flow_id, name)`, with lazy/eager disk recovery.
 - `kernel_runtime/artifact_persistence.py` — disk-backed cloudpickle persistence + `RecoveryMode` enum (`lazy`/`eager`/`clear`).
 - `kernel_runtime/serialization.py` — `detect_format` + (de)serialise for global artifacts (parquet/joblib/json/pickle, all via cloudpickle for pickle).

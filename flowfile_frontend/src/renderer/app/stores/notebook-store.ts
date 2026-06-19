@@ -221,6 +221,8 @@ export const useNotebookStore = defineStore("notebook", {
     },
 
     async openNotebook(id: number) {
+      // Hydrate first so a later panel mount doesn't clobber the tab we add here.
+      this.ensureHydrated();
       const existing = this.openNotebooks.find((n) => n.persistedId === id);
       if (existing) {
         this.activeTabId = existing.tabId;

@@ -50,6 +50,7 @@ class NamespaceTree(NamespaceOut):
     artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
     tables: list["CatalogTableOut"] = Field(default_factory=list)
     visualizations: list["VisualizationOut"] = Field(default_factory=list)
+    notebooks: list["NotebookSummaryOut"] = Field(default_factory=list)
 
 
 # ==================== Flow Registration Schemas ====================

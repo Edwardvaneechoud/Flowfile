@@ -20,24 +20,35 @@
 
     <!-- Cell list -->
     <div class="notebook-cells">
-      <NotebookCellComponent
-        v-for="(cell, index) in cells"
-        :key="cell.id"
-        :cell="cell"
-        :cell-index="index"
-        :is-executing="executingCellId === cell.id"
-        :is-last-cell="index === cells.length - 1"
-        :cell-count="cells.length"
-        :input-names="inputNames"
-        :upstream-columns="upstreamColumns"
-        :prior-cell-codes="cells.slice(0, index).map((c) => c.code)"
-        @update:code="(code) => updateCellCode(cell.id, code)"
-        @run-cell="() => runCell(cell.id)"
-        @run-cell-and-advance="() => runCellAndAdvance(cell.id, index)"
-        @move-up="() => moveCell(index, -1)"
-        @move-down="() => moveCell(index, 1)"
-        @delete="() => deleteCell(cell.id)"
-      />
+      <template v-for="(cell, index) in cells" :key="cell.id">
+        <NotebookCellComponent
+          :cell="cell"
+          :cell-index="index"
+          :is-executing="executingCellId === cell.id"
+          :is-last-cell="index === cells.length - 1"
+          :cell-count="cells.length"
+          :input-names="inputNames"
+          :upstream-columns="upstreamColumns"
+          :prior-cell-codes="cells.slice(0, index).map((c) => c.code)"
+          @update:code="(code) => updateCellCode(cell.id, code)"
+          @run-cell="() => runCell(cell.id)"
+          @run-cell-and-advance="() => runCellAndAdvance(cell.id, index)"
+          @move-up="() => moveCell(index, -1)"
+          @move-down="() => moveCell(index, 1)"
+          @delete="() => deleteCell(cell.id)"
+        />
+
+        <!-- Hover-to-insert: a faint "+" appears between cells; click to add a
+             cell at this position. -->
+        <div
+          v-if="index < cells.length - 1"
+          class="nb-insert-zone"
+          title="Add cell here"
+          @click="insertCellAt(index)"
+        >
+          <span class="nb-insert-plus"><i class="fa-solid fa-plus"></i></span>
+        </div>
+      </template>
     </div>
 
     <!-- Add cell button -->
@@ -87,6 +98,12 @@ const updateCellCode = (cellId: string, code: string) => {
 
 const addCell = () => {
   emit("update:cells", [...props.cells, { id: crypto.randomUUID(), code: "", output: null }]);
+};
+
+const insertCellAt = (afterIndex: number) => {
+  const newCells = [...props.cells];
+  newCells.splice(afterIndex + 1, 0, { id: crypto.randomUUID(), code: "", output: null });
+  emit("update:cells", newCells);
 };
 
 const deleteCell = (cellId: string) => {
@@ -246,6 +263,48 @@ const restartKernel = async () => {
 .notebook-cells {
   border-left: 1px solid var(--el-border-color-lighter);
   border-right: 1px solid var(--el-border-color-lighter);
+}
+
+/* Hover-to-insert zone between cells: a thin gap that reveals a centered "+"
+   (with a faint connecting line) only on hover. */
+.nb-insert-zone {
+  position: relative;
+  height: 12px;
+  cursor: pointer;
+}
+.nb-insert-zone::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--el-color-primary);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.nb-insert-plus {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--el-color-primary);
+  color: #fff;
+  font-size: 9px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.nb-insert-zone:hover::before {
+  opacity: 0.35;
+}
+.nb-insert-zone:hover .nb-insert-plus {
+  opacity: 0.85;
 }
 
 .add-cell-button {

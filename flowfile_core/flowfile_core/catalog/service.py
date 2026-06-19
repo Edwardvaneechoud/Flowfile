@@ -450,6 +450,7 @@ class CatalogService:
         tree = self._namespaces.get_namespace_tree(
             user_id,
             list_visualizations=lambda uid: self._visualizations.list_visualization_library(uid),
+            list_notebooks=lambda uid: self._notebooks.list_notebooks(uid),
             bulk_enrich_tables=self._tables.bulk_enrich_tables,
             bulk_enrich_flows=self._flows.bulk_enrich_flows,
         )
@@ -464,12 +465,20 @@ class CatalogService:
         (public/owned/granted) OR still has any visible child (context-only ancestor)."""
         visible_ns = self.access.visible_namespace_ids()
         accessible = {
-            t: self.access.accessible_ids(t) for t in ("flow", "catalog_table", "visualization", "global_artifact")
+            t: self.access.accessible_ids(t)
+            for t in ("flow", "catalog_table", "visualization", "global_artifact", "catalog_notebook")
         }
         # Compute the per-type granted-detail maps once (reused for every node).
         details = {
             t: self._access_detail_map(t)
-            for t in ("flow", "catalog_table", "visualization", "global_artifact", "catalog_namespace")
+            for t in (
+                "flow",
+                "catalog_table",
+                "visualization",
+                "global_artifact",
+                "catalog_notebook",
+                "catalog_namespace",
+            )
         }
 
         def _prune(node: NamespaceTree) -> NamespaceTree | None:
@@ -486,6 +495,11 @@ class CatalogService:
                 "visualization",
                 details["visualization"],
             )
+            node.notebooks = self._stamp_access(
+                [n for n in node.notebooks if n.id in accessible["catalog_notebook"]],
+                "catalog_notebook",
+                details["catalog_notebook"],
+            )
             node.artifacts = self._stamp_access(
                 [a for a in node.artifacts if a.id in accessible["global_artifact"]],
                 "global_artifact",
@@ -493,7 +507,14 @@ class CatalogService:
             )
             node.children = [c for c in (_prune(child) for child in node.children) if c is not None]
             self._stamp_access([node], "catalog_namespace", details["catalog_namespace"])
-            has_items = bool(node.flows or node.tables or node.visualizations or node.artifacts or node.children)
+            has_items = bool(
+                node.flows
+                or node.tables
+                or node.visualizations
+                or node.notebooks
+                or node.artifacts
+                or node.children
+            )
             if node.id in visible_ns:
                 return node
             if has_items:

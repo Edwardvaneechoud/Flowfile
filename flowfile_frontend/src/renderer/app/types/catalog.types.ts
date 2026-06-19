@@ -1,6 +1,7 @@
 // Catalog TypeScript interfaces
 // Maps to backend schemas in catalog_schema.py
 import type { AccessInfo } from "./sharing.types";
+import type { NotebookSummary } from "../api/notebook.api";
 
 // Namespace (Unity Catalog-style hierarchy)
 
@@ -22,6 +23,7 @@ export interface NamespaceTree extends CatalogNamespace {
   artifacts: GlobalArtifact[];
   tables: CatalogTable[];
   visualizations: CatalogVisualization[];
+  notebooks: NotebookSummary[];
 }
 
 // System-managed schemas under "General" that users never pick as a store target.

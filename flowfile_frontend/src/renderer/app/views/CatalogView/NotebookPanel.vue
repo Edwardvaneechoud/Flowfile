@@ -93,36 +93,65 @@
 
     <!-- Cells of the active notebook -->
     <div v-if="store.active" class="nb-cells">
-      <CatalogNotebookCell
-        v-for="(cell, idx) in store.active.cells"
-        :key="cell.id"
-        :cell="cell"
-        :index="idx"
-        :cell-count="store.active.cells.length"
-        :prior-cell-codes="priorCodes(idx)"
-        @run="store.runCell(cell.id)"
-        @update:code="(code: string) => store.setCellCode(cell.id, code)"
-        @update:type="(t: CellType) => store.setCellType(cell.id, t)"
-        @update:editing="(e: boolean) => store.setCellEditing(cell.id, e)"
-        @move="(dir: -1 | 1) => store.moveCell(cell.id, dir)"
-        @remove="store.removeCell(cell.id)"
-      />
+      <template v-for="(cell, idx) in store.active.cells" :key="cell.id">
+        <CatalogNotebookCell
+          :cell="cell"
+          :index="idx"
+          :cell-count="store.active.cells.length"
+          :prior-cell-codes="priorCodes(idx)"
+          @run="store.runCell(cell.id)"
+          @update:code="(code: string) => store.setCellCode(cell.id, code)"
+          @update:type="(t: CellType) => store.setCellType(cell.id, t)"
+          @update:editing="(e: boolean) => store.setCellEditing(cell.id, e)"
+          @move="(dir: -1 | 1) => store.moveCell(cell.id, dir)"
+          @remove="store.removeCell(cell.id)"
+        />
 
-      <!-- Add cell (centered) -->
+        <!-- Hover-to-insert: a faint "+" appears between cells; click to add a
+             Python cell at this position. -->
+        <div
+          v-if="idx < store.active.cells.length - 1"
+          class="nb-insert-zone"
+          title="Add cell here"
+          @click="onAddCell('python', idx)"
+        >
+          <span class="nb-insert-plus"><i class="fa-solid fa-plus"></i></span>
+        </div>
+      </template>
+
+      <!-- Add cell (centered). Adds a Python cell by default; switch to
+           Markdown via the per-cell type selector. -->
       <div class="nb-add-row">
-        <el-dropdown trigger="click" @command="onAddCell">
-          <el-button size="small" class="nb-add-btn">
-            <i class="fa-solid fa-plus" style="margin-right: 4px"></i> Add cell
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="python">Python</el-dropdown-item>
-              <el-dropdown-item command="markdown">Markdown</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <el-button size="small" class="nb-add-btn" @click="onAddCell('python')">
+          <i class="fa-solid fa-plus" style="margin-right: 4px"></i> Add cell
+        </el-button>
       </div>
     </div>
+
+    <!-- Save As: name + catalog namespace (so the notebook lands in the tree) -->
+    <el-dialog v-model="saveAsVisible" title="Save notebook" width="420px" append-to-body>
+      <div class="nb-saveas">
+        <label class="nb-saveas-label">Name</label>
+        <el-input v-model="saveAsName" placeholder="Notebook name" @keyup.enter="confirmSaveAs" />
+        <label class="nb-saveas-label">Namespace</label>
+        <el-select
+          v-model="saveAsNamespaceId"
+          placeholder="Select namespace"
+          clearable
+          style="width: 100%"
+        >
+          <el-option v-for="ns in schemaNamespaces" :key="ns.id" :label="ns.label" :value="ns.id" />
+        </el-select>
+        <p v-if="!schemaNamespaces.length" class="nb-saveas-hint">
+          No namespaces available — the notebook will be saved without one and won't appear in the
+          catalog tree.
+        </p>
+      </div>
+      <template #footer>
+        <el-button @click="saveAsVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="saveAsSaving" @click="confirmSaveAs">Save</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -130,6 +159,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
 import { useNotebookStore } from "../../stores/notebook-store";
+import { useCatalogStore } from "../../stores/catalog-store";
 import { KernelApi } from "../../api/kernel.api";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
 import type { CellType } from "../../components/notebook/types";
@@ -138,6 +168,28 @@ import type { KernelInfo } from "../../types/kernel.types";
 const KERNEL_POLL_MS = 5000;
 
 const store = useNotebookStore();
+const catalogStore = useCatalogStore();
+
+const saveAsVisible = ref(false);
+const saveAsName = ref("");
+const saveAsNamespaceId = ref<number | null>(null);
+const saveAsSaving = ref(false);
+
+// Selectable namespaces (level-1 schemas), mirroring RegisterFlowModal.
+const schemaNamespaces = computed(() => {
+  const result: { id: number; label: string }[] = [];
+  for (const catalog of catalogStore.tree) {
+    for (const schema of catalog.children) {
+      result.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
+    }
+  }
+  return result;
+});
+
+const defaultNamespaceId = computed<number | null>(() => {
+  const general = catalogStore.tree.find((c) => c.name === "General");
+  return general?.children.find((s) => s.name === "default")?.id ?? null;
+});
 
 const kernels = ref<KernelInfo[]>([]);
 const dockerAvailable = ref(true);
@@ -198,28 +250,15 @@ function onTabRemove(name: TabPaneName) {
   store.closeTab(String(name));
 }
 
-function onAddCell(command: string) {
-  store.addCell(command as CellType);
-}
-
-async function promptName(title: string, defaultValue = ""): Promise<string | null> {
-  try {
-    const { value } = await ElMessageBox.prompt("Name", title, {
-      confirmButtonText: "Save",
-      cancelButtonText: "Cancel",
-      inputValue: defaultValue,
-      inputValidator: (v: string) => (v && v.trim() ? true : "A name is required"),
-    });
-    return value.trim();
-  } catch {
-    return null;
-  }
+function onAddCell(command: string, afterIndex?: number) {
+  store.addCell(command as CellType, afterIndex);
 }
 
 async function onSave() {
   if (isPersisted.value) {
     try {
       await store.save();
+      void catalogStore.loadTree();
       ElMessage.success("Notebook saved");
     } catch (e: any) {
       ElMessage.error(e?.message ?? "Failed to save notebook");
@@ -230,16 +269,30 @@ async function onSave() {
 }
 
 async function onSaveAs() {
-  const name = await promptName(
-    "Save notebook as",
-    isPersisted.value ? `${store.active?.name} copy` : "",
-  );
-  if (!name) return;
+  if (!catalogStore.tree.length) {
+    await catalogStore.loadTree().catch(() => undefined);
+  }
+  saveAsName.value = isPersisted.value ? `${store.active?.name} copy` : "";
+  saveAsNamespaceId.value = store.active?.namespaceId ?? defaultNamespaceId.value;
+  saveAsVisible.value = true;
+}
+
+async function confirmSaveAs() {
+  const name = saveAsName.value.trim();
+  if (!name) {
+    ElMessage.warning("A name is required");
+    return;
+  }
+  saveAsSaving.value = true;
   try {
-    await store.saveAs(name, store.active?.namespaceId ?? null);
+    await store.saveAs(name, saveAsNamespaceId.value);
+    void catalogStore.loadTree();
     ElMessage.success("Notebook saved");
+    saveAsVisible.value = false;
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Failed to save notebook");
+  } finally {
+    saveAsSaving.value = false;
   }
 }
 
@@ -257,6 +310,7 @@ async function onDelete() {
   }
   try {
     await store.deleteNotebook(id);
+    void catalogStore.loadTree();
     ElMessage.success("Notebook deleted");
   } catch (e: any) {
     ElMessage.error(e?.message ?? "Failed to delete notebook");
@@ -275,7 +329,7 @@ async function onDelete() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--el-border-color-lighter, #e4e7ed);
   flex-wrap: wrap;
 }
@@ -285,12 +339,29 @@ async function onDelete() {
 .nb-name-input {
   width: 200px;
 }
+.nb-saveas {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nb-saveas-label {
+  font-size: 12px;
+  color: var(--el-text-color-regular, #606266);
+  margin-top: 4px;
+}
+.nb-saveas-hint {
+  font-size: 12px;
+  color: var(--el-color-warning, #e6a23c);
+  margin: 4px 0 0;
+}
 .nb-dirty {
   color: var(--el-color-warning, #e6a23c);
   margin-left: 2px;
 }
 .nb-tabs {
-  padding: 0 10px;
+  /* 12px left gutter so the tab strip's card aligns with the toolbar above and
+     the cells (canvas) below, which all inset content by 12px. */
+  padding: 0 12px;
 }
 .nb-tabs :deep(.el-tabs__header) {
   margin: 0;
@@ -313,5 +384,48 @@ async function onDelete() {
   display: flex;
   justify-content: center;
   margin-top: 8px;
+}
+
+/* Hover-to-insert zone between cells: a thin gap that reveals a centered "+"
+   (with a faint connecting line) only on hover. */
+.nb-insert-zone {
+  position: relative;
+  height: 14px;
+  margin: 2px 0;
+  cursor: pointer;
+}
+.nb-insert-zone::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--el-color-primary, #409eff);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.nb-insert-plus {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--el-color-primary, #409eff);
+  color: #fff;
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.nb-insert-zone:hover::before {
+  opacity: 0.35;
+}
+.nb-insert-zone:hover .nb-insert-plus {
+  opacity: 0.85;
 }
 </style>
