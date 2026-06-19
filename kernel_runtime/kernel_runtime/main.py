@@ -9,6 +9,7 @@ import signal
 import threading
 import time
 import warnings
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -66,8 +67,25 @@ _namespace_access: dict[int, float] = {}  # flow_id -> last access timestamp
 _MAX_NAMESPACES = int(os.environ.get("MAX_NAMESPACES", "20"))
 
 # Display outputs from the most recent execution of each node, retrievable by
-# the frontend after a flow run completes.
-_display_output_store: dict[tuple[int, int], list[dict]] = {}
+# the frontend after a flow run completes. Bounded (LRU) so base64-image / 10k-row
+# table payloads can't accumulate across the kernel's lifetime.
+_display_output_store: OrderedDict[tuple[int, int], list[dict]] = OrderedDict()
+_MAX_DISPLAY_OUTPUTS = int(os.environ.get("MAX_DISPLAY_OUTPUTS", "200"))
+
+
+def _store_display_outputs(flow_id: int, node_id: int, payload: list[dict]) -> None:
+    """Store a node's display outputs, evicting the oldest entries past the cap."""
+    key = (flow_id, node_id)
+    _display_output_store.pop(key, None)
+    _display_output_store[key] = payload
+    while len(_display_output_store) > _MAX_DISPLAY_OUTPUTS:
+        _display_output_store.popitem(last=False)
+
+
+def _purge_display_outputs(flow_id: int) -> None:
+    """Drop all stored display outputs belonging to a flow."""
+    for key in [k for k in _display_output_store if k[0] == flow_id]:
+        del _display_output_store[key]
 
 
 def _evict_oldest_namespace() -> None:
@@ -95,6 +113,7 @@ def _clear_namespace(flow_id: int) -> None:
     """Clear the namespace for a flow (e.g., on kernel restart)."""
     _namespace_store.pop(flow_id, None)
     _namespace_access.pop(flow_id, None)
+    _purge_display_outputs(flow_id)
 
 
 # Execution cancellation.
@@ -438,7 +457,7 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
 
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
 
-        _display_output_store[(request.flow_id, request.node_id)] = [d.model_dump() for d in display_outputs]
+        _store_display_outputs(request.flow_id, request.node_id, [d.model_dump() for d in display_outputs])
 
         output_paths: list[str] = []
         if output_dir and Path(output_dir).exists():
@@ -474,7 +493,7 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
         )
     except Exception as exc:
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
-        _display_output_store[(request.flow_id, request.node_id)] = [d.model_dump() for d in display_outputs]
+        _store_display_outputs(request.flow_id, request.node_id, [d.model_dump() for d in display_outputs])
         elapsed = (time.perf_counter() - start) * 1000
         return ExecuteResponse(
             success=False,
@@ -512,6 +531,7 @@ async def clear_artifacts(flow_id: int | None = Query(default=None)):
     else:
         _namespace_store.clear()
         _namespace_access.clear()
+        _display_output_store.clear()
     return {"status": "cleared"}
 
 

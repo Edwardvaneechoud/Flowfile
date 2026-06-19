@@ -5,6 +5,9 @@ full-document update, name/namespace uniqueness, the summary listing, and the
 grant-cleanup-on-delete invariant (SQLite rowid reuse hazard).
 """
 
+import datetime
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -54,7 +57,7 @@ def _make_namespace(name: str = "NbNs") -> int:
 SAMPLE_CELLS = [
     {"id": "c1", "type": "markdown", "source": "# Explore orders", "metadata": {}},
     {"id": "c2", "type": "sql", "source": "SELECT * FROM orders", "metadata": {"max_rows": 100}},
-    {"id": "c3", "type": "python", "source": "df = flowfile_ctx.read_table('orders')\ndf", "metadata": {}},
+    {"id": "c3", "type": "python", "source": "df = flowfile_ctx.read_catalog_table('orders')\ndf", "metadata": {}},
 ]
 
 
@@ -211,9 +214,7 @@ class TestNotebookGrantCleanup:
             SQLAlchemyCatalogRepository(db).delete_notebook(notebook_id)
 
             remaining = (
-                db.query(ResourceGrant)
-                .filter_by(resource_type="catalog_notebook", resource_id=notebook_id)
-                .count()
+                db.query(ResourceGrant).filter_by(resource_type="catalog_notebook", resource_id=notebook_id).count()
             )
             assert remaining == 0
             # Cleanup
@@ -221,3 +222,78 @@ class TestNotebookGrantCleanup:
             db.query(UserGroup).delete()
             db.query(CatalogNamespace).delete()
             db.commit()
+
+
+class TestNotebookValidation:
+    def test_create_in_missing_namespace_returns_404(self, client):
+        resp = client.post("/catalog/notebooks", json={"name": "nb", "namespace_id": 999999, "cells": []})
+        assert resp.status_code == 404, resp.text
+
+    def test_update_name_null_returns_422(self, client):
+        created = client.post("/catalog/notebooks", json={"name": "nb", "cells": []}).json()
+        resp = client.put(f"/catalog/notebooks/{created['id']}", json={"name": None})
+        assert resp.status_code == 422, resp.text
+
+    def test_update_cells_null_returns_422(self, client):
+        created = client.post("/catalog/notebooks", json={"name": "nb", "cells": []}).json()
+        resp = client.put(f"/catalog/notebooks/{created['id']}", json={"cells": None})
+        assert resp.status_code == 422, resp.text
+
+    def test_parse_cells_degrades_gracefully_on_malformed_json(self):
+        """Seeding a corrupt cells_json must not crash the read path — GET still
+        returns the notebook with the bad cells dropped (pairs with NB-06)."""
+        from flowfile_core.catalog.services.notebooks import NotebookService
+
+        # Not valid JSON at all -> empty list, no raise.
+        assert NotebookService._parse_cells("{not json") == []
+        # Valid JSON but not a list -> empty list.
+        assert NotebookService._parse_cells('{"a": 1}') == []
+        # A list mixing one valid cell with junk -> only the valid cell survives.
+        good = {"id": "c1", "type": "markdown", "source": "# ok", "metadata": {}}
+        parsed = NotebookService._parse_cells(json.dumps([good, 42, {"missing": "type"}]))
+        assert len(parsed) == 1
+        assert parsed[0].id == "c1"
+
+    def test_get_notebook_with_malformed_cells_json(self, client):
+        """End-to-end: a notebook whose stored cells_json is corrupt still reads
+        back over HTTP, with the malformed cells silently dropped."""
+        with get_db_context() as db:
+            nb = CatalogNotebook(name="corrupt", cells_json="{not a list", owner_id=1)
+            db.add(nb)
+            db.commit()
+            db.refresh(nb)
+            nb_id = nb.id
+        resp = client.get(f"/catalog/notebooks/{nb_id}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cells"] == []
+
+
+class TestNotebookTimestampsAndOrdering:
+    def test_create_response_has_timestamps(self, client):
+        body = client.post("/catalog/notebooks", json={"name": "ts", "cells": []}).json()
+        assert body["created_at"] is not None
+        assert body["updated_at"] is not None
+
+    def test_updated_at_advances_after_put(self, client):
+        created = client.post("/catalog/notebooks", json={"name": "adv", "cells": []}).json()
+        # Force updated_at to an older value so the onupdate bump is observable.
+        with get_db_context() as db:
+            nb = db.query(CatalogNotebook).filter_by(id=created["id"]).first()
+            nb.updated_at = datetime.datetime(2000, 1, 1)
+            db.commit()
+            old_updated = nb.updated_at.isoformat()
+
+        updated = client.put(f"/catalog/notebooks/{created['id']}", json={"description": "touched"}).json()
+        assert updated["updated_at"] > old_updated
+
+    def test_list_returns_most_recently_updated_first(self, client):
+        a = client.post("/catalog/notebooks", json={"name": "older", "cells": []}).json()
+        b = client.post("/catalog/notebooks", json={"name": "newer", "cells": []}).json()
+        # Pin distinct updated_at values so ordering doesn't depend on clock resolution.
+        with get_db_context() as db:
+            db.query(CatalogNotebook).filter_by(id=a["id"]).first().updated_at = datetime.datetime(2030, 1, 1)
+            db.query(CatalogNotebook).filter_by(id=b["id"]).first().updated_at = datetime.datetime(2020, 1, 1)
+            db.commit()
+
+        names = [n["name"] for n in client.get("/catalog/notebooks").json()]
+        assert names == ["older", "newer"]

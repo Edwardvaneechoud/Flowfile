@@ -304,6 +304,8 @@ class CatalogRepository(Protocol):
 
     def delete_notebook(self, notebook_id: int) -> None: ...
 
+    def count_notebooks_in_namespace(self, namespace_id: int) -> int: ...
+
     def list_table_trigger_schedules(self) -> list[FlowSchedule]: ...
 
     def list_table_trigger_schedules_for_table(self, table_id: int) -> list[FlowSchedule]: ...
@@ -1182,3 +1184,6 @@ class SQLAlchemyCatalogRepository:
             sharing.delete_grants_for_resource(self._db, "catalog_notebook", notebook_id)
             self._db.delete(notebook)
             self._db.commit()
+
+    def count_notebooks_in_namespace(self, namespace_id: int) -> int:
+        return self._db.query(CatalogNotebook).filter_by(namespace_id=namespace_id).count()

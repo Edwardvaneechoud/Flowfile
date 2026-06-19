@@ -829,6 +829,23 @@ class TestDisplayOutputs:
         assert len(outs) == 1
         assert outs[0]["mime_type"] == "application/vnd.flowfile.table+json"
 
+    def test_explore_dataframe_emits_gwalker_mime(self, client: TestClient):
+        """flowfile_ctx.explore(df) renders via the full Graphic Walker explorer."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 72,
+                "code": "import polars as pl\nflowfile_ctx.explore(pl.DataFrame({'a': [1, 2, 3]}))",
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        assert len(data["display_outputs"]) == 1
+        assert data["display_outputs"][0]["mime_type"] == "application/vnd.flowfile.gwalker+json"
+
     def test_non_interactive_mode_no_auto_display(self, client: TestClient):
         """Non-interactive mode should not auto-display the last expression."""
         resp = client.post(

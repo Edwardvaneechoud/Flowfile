@@ -291,8 +291,9 @@ export const useNotebookStore = defineStore("notebook", {
           default_kernel_id: nb.kernelId,
         });
         nb.dirty = false;
-        await this.loadList();
         this._schedulePersist();
+        // A list-refresh failure must not surface as a save failure (dirty is already cleared).
+        await this.loadList().catch(() => undefined);
       } finally {
         nb.saving = false;
       }
@@ -417,7 +418,7 @@ export const useNotebookStore = defineStore("notebook", {
       const nb = this.active;
       if (!nb) return;
       const cell = newCell("python");
-      cell.code = `df = flowfile_ctx.read_table(${JSON.stringify(tableName)})\ndf`;
+      cell.code = `df = flowfile_ctx.read_catalog_table(${JSON.stringify(tableName)})\ndf`;
       nb.cells.push(cell);
       nb.dirty = true;
       this._schedulePersist();
@@ -439,8 +440,8 @@ export const useNotebookStore = defineStore("notebook", {
       cell.execState = "idle";
     },
 
-    async runPythonCell(cell: NotebookCellModel) {
-      const nb = this.active;
+    async runPythonCell(cell: NotebookCellModel, nb: OpenNotebook | null = this.active) {
+      if (cell.execState === "running") return; // re-entrancy guard (also covers Shift+Enter)
       if (!nb) return;
       if (!nb.kernelId) {
         cell.output = {
@@ -491,8 +492,14 @@ export const useNotebookStore = defineStore("notebook", {
       const nb = this.active;
       if (!nb) return;
       for (const cell of nb.cells) {
-        if (cell.cellType === "python" && !nb.kernelId) continue;
-        await this.runCell(cell.id);
+        if (cell.cellType === "markdown") {
+          this.runMarkdownCell(cell);
+          continue;
+        }
+        if (!nb.kernelId) continue;
+        await this.runPythonCell(cell, nb);
+        // A mid-run tab switch must not let later cells render on the wrong tab.
+        if (this.active !== nb) break;
         if (cell.execState === "error") break;
       }
     },

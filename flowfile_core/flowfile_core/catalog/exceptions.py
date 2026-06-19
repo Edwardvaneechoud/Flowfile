@@ -48,11 +48,12 @@ class NestingLimitError(CatalogError):
 class NamespaceNotEmptyError(CatalogError):
     """Raised when trying to delete a namespace that still has children, flows, or tables."""
 
-    def __init__(self, namespace_id: int, children: int = 0, flows: int = 0, tables: int = 0):
+    def __init__(self, namespace_id: int, children: int = 0, flows: int = 0, tables: int = 0, notebooks: int = 0):
         self.namespace_id = namespace_id
         self.children = children
         self.flows = flows
         self.tables = tables
+        self.notebooks = notebooks
         parts = []
         if children:
             parts.append(f"{children} child namespace(s)")
@@ -60,6 +61,8 @@ class NamespaceNotEmptyError(CatalogError):
             parts.append(f"{flows} flow(s)")
         if tables:
             parts.append(f"{tables} table(s)")
+        if notebooks:
+            parts.append(f"{notebooks} notebook(s)")
         detail = ", ".join(parts) if parts else "children or flows"
         super().__init__(f"Cannot delete namespace: still contains {detail}")
 

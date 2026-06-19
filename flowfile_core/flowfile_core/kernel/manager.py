@@ -1495,7 +1495,7 @@ class KernelManager:
                 response = await client.post(url, json=request.model_dump())
                 response.raise_for_status()
                 return ExecuteResult(**response.json())
-        except (httpx.HTTPError, OSError):
+        except (httpx.HTTPError, OSError) as exc:
             if self._check_oom_killed(kernel_id):
                 kernel.state = KernelState.ERROR
                 kernel.error_message = "Kernel ran out of memory"
@@ -1509,6 +1509,14 @@ class KernelManager:
                 kernel.state = KernelState.STOPPED
                 kernel.container_id = None
                 return ExecuteResult(success=False, error=_KERNEL_DOWN_MSG)
+            if isinstance(exc, httpx.TimeoutException):
+                # Tell the kernel to interrupt the still-running cell, otherwise it
+                # keeps mutating the namespace and the next cell runs concurrently.
+                self.interrupt_execution_sync(kernel_id)
+                return ExecuteResult(
+                    success=False,
+                    error="Cell exceeded the 300s execution limit and was interrupted.",
+                )
             raise
         finally:
             # Only return to IDLE if we haven't been stopped/errored in the meantime

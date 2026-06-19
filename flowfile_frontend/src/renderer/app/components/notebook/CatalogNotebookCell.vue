@@ -7,6 +7,7 @@
     <div class="nb-cell-bar">
       <button
         class="nb-run"
+        :disabled="cell.execState === 'running'"
         :title="cell.cellType === 'markdown' ? 'Render (Shift+Enter)' : 'Run (Shift+Enter)'"
         @click="emit('run')"
       >

@@ -199,6 +199,85 @@ describe("run routing", () => {
     expect(md.renderedHtml).toBe("<md>## hi</md>");
     expect(py.output).toBeNull();
   });
+
+  it("executeCell rejection sets execState=error and surfaces the message", async () => {
+    mocks.executeCell.mockRejectedValueOnce(new Error("kernel exploded"));
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kern-1");
+    const cell = store.active!.cells[0];
+    await store.runCell(cell.id);
+    expect(cell.execState).toBe("error");
+    expect(cell.output?.error).toBe("kernel exploded");
+  });
+
+  it("a non-empty display_outputs result lands on cell.output", async () => {
+    const display = [{ mime_type: "text/plain", data: "boom" }];
+    mocks.executeCell.mockResolvedValueOnce({ ...okExecResult, display_outputs: display });
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kern-1");
+    const cell = store.active!.cells[0];
+    await store.runCell(cell.id);
+    expect(cell.output?.display_outputs).toEqual(display);
+  });
+
+  it("a python cell error mid-runAll halts the loop before a later cell", async () => {
+    mocks.executeCell
+      .mockResolvedValueOnce({ ...okExecResult, error: "boom" })
+      .mockResolvedValueOnce(okExecResult);
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.active!.cells = [];
+    const first = store.addCell("python")!;
+    const second = store.addCell("python")!;
+    store.setKernel("kern-1");
+    await store.runAll();
+    expect(mocks.executeCell).toHaveBeenCalledTimes(1); // stopped after the failing cell
+    expect(first.execState).toBe("error");
+    expect(second.execState).toBe("idle");
+    expect(second.output).toBeNull();
+  });
+
+  it("double-invoking runCell on a running cell does not double-run (NB-03)", async () => {
+    let resolve!: (v: unknown) => void;
+    mocks.executeCell.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kern-1");
+    const cell = store.active!.cells[0];
+    const first = store.runCell(cell.id);
+    expect(cell.execState).toBe("running");
+    await store.runCell(cell.id); // re-entrant call while running
+    expect(mocks.executeCell).toHaveBeenCalledTimes(1);
+    resolve(okExecResult);
+    await first;
+    expect(cell.execState).toBe("idle");
+  });
+
+  it("a mid-run tab switch keeps output on the originating tab (NB-04)", async () => {
+    let resolve!: (v: unknown) => void;
+    mocks.executeCell
+      .mockReturnValueOnce(new Promise((r) => (resolve = r)))
+      .mockResolvedValue(okExecResult);
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const originTab = store.active!;
+    originTab.cells = [];
+    const c1 = store.addCell("python")!;
+    const c2 = store.addCell("python")!;
+    store.setKernel("kern-1");
+    const otherTab = store.newTab(); // switches active away from origin
+    store.setActiveTab(originTab.tabId);
+    const run = store.runAll();
+    store.setActiveTab(otherTab.tabId); // switch tabs mid-run
+    resolve(okExecResult);
+    await run;
+    // First cell finished before the switch; the second must not have executed.
+    expect(mocks.executeCell).toHaveBeenCalledTimes(1);
+    expect(c1.output).not.toBeNull();
+    expect(c2.output).toBeNull();
+  });
 });
 
 describe("insertReadCell", () => {
@@ -207,7 +286,7 @@ describe("insertReadCell", () => {
     store.ensureHydrated();
     const cell = store.insertReadCell("orders")!;
     expect(cell.cellType).toBe("python");
-    expect(cell.code).toBe('df = flowfile_ctx.read_table("orders")\ndf');
+    expect(cell.code).toBe('df = flowfile_ctx.read_catalog_table("orders")\ndf');
   });
 });
 
@@ -261,6 +340,59 @@ describe("persistence mapping + legacy coercion", () => {
     expect(payload.cells[0]).not.toHaveProperty("cellType");
     expect(store.active!.persistedId).toBe(99);
     expect(store.active!.sessionFlowId).toBe(-99);
+    expect(store.active!.dirty).toBe(false);
+  });
+
+  it("save (update path) sends wire cells to NotebookApi.update and clears dirty", async () => {
+    mocks.nbGet.mockResolvedValue({
+      id: 21,
+      name: "nb21",
+      description: null,
+      namespace_id: null,
+      default_kernel_id: null,
+      owner_id: 1,
+      created_at: "",
+      updated_at: "",
+      namespace_name: null,
+      access: null,
+      cells: [{ id: "c1", type: "python", source: "x=1", metadata: {} }],
+    });
+    mocks.nbUpdate.mockResolvedValue(undefined);
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    await store.openNotebook(21);
+    store.setCellCode(store.active!.cells[0].id, "print(2)");
+    expect(store.active!.dirty).toBe(true);
+    await store.save();
+    expect(mocks.nbUpdate).toHaveBeenCalledTimes(1);
+    const [id, payload] = mocks.nbUpdate.mock.calls[0];
+    expect(id).toBe(21);
+    expect(payload.cells[0]).toMatchObject({ type: "python", source: "print(2)" });
+    expect(payload.cells[0]).not.toHaveProperty("cellType");
+    expect(store.active!.dirty).toBe(false);
+  });
+
+  it("save does not surface a loadList failure as a save failure (dirty stays cleared)", async () => {
+    mocks.nbGet.mockResolvedValue({
+      id: 22,
+      name: "nb22",
+      description: null,
+      namespace_id: null,
+      default_kernel_id: null,
+      owner_id: 1,
+      created_at: "",
+      updated_at: "",
+      namespace_name: null,
+      access: null,
+      cells: [{ id: "c1", type: "python", source: "x=1", metadata: {} }],
+    });
+    mocks.nbUpdate.mockResolvedValue(undefined);
+    mocks.nbList.mockRejectedValueOnce(new Error("network down"));
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    await store.openNotebook(22);
+    store.setCellCode(store.active!.cells[0].id, "print(3)");
+    await expect(store.save()).resolves.toBeUndefined();
     expect(store.active!.dirty).toBe(false);
   });
 

@@ -40,20 +40,25 @@ class NotebookService:
     # ---- serialization -------------------------------------------------- #
 
     @staticmethod
-    def _parse_cells(cells_json: str | None) -> list[NotebookCellModel]:
+    def _parse_cells(cells_json: str | None, notebook_id: int | None = None) -> list[NotebookCellModel]:
+        ctx = f"notebook {notebook_id}" if notebook_id is not None else "notebook"
         try:
             raw = json.loads(cells_json) if cells_json else []
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.warning("Failed to parse cells_json for %s: %s", ctx, exc)
             raw = []
         if not isinstance(raw, list):
+            logger.warning("cells_json for %s is not a list (got %s); dropping all cells", ctx, type(raw).__name__)
             return []
         cells: list[NotebookCellModel] = []
-        for item in raw:
+        for index, item in enumerate(raw):
             if not isinstance(item, dict):
+                logger.warning("Skipping non-object cell at index %d in %s", index, ctx)
                 continue
             try:
                 cells.append(NotebookCellModel.model_validate(item))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                logger.warning("Skipping invalid cell at index %d in %s: %s", index, ctx, exc)
                 continue
         return cells
 
@@ -67,7 +72,7 @@ class NotebookService:
             name=nb.name,
             description=nb.description,
             namespace_id=nb.namespace_id,
-            cells=self._parse_cells(nb.cells_json),
+            cells=self._parse_cells(nb.cells_json, notebook_id=nb.id),
             default_kernel_id=nb.default_kernel_id,
             owner_id=nb.owner_id,
             created_at=nb.created_at,
