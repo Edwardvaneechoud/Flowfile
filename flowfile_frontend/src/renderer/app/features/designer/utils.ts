@@ -3,7 +3,6 @@ import { flowfileCorebaseURL } from "../../../config/constants";
 import { fetchNodeTemplates } from "../../composables/useNodes";
 
 const BUILTIN_ICONS = new Set([
-  "Output2.png",
   "airbyte.png",
   "catalog_reader.svg",
   "catalog_writer.svg",
@@ -15,11 +14,9 @@ const BUILTIN_ICONS = new Set([
   "database_writer.svg",
   "dynamic_rename.svg",
   "google_sheet.png",
-  "old_join.png",
   "python_code.svg",
   "sql_query.svg",
   "random_split.svg",
-  "summarize.png",
   "user-defined-icon.png",
   "view.png",
   "window_functions.svg",
