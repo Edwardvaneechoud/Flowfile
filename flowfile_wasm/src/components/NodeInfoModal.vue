@@ -86,7 +86,7 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') emit('close')
 }
 
-function onMousedown(event: MouseEvent) {
+function onPointerDown(event: PointerEvent) {
   if (cardRef.value && !cardRef.value.contains(event.target as Node)) {
     emit('close')
   }
@@ -95,12 +95,13 @@ function onMousedown(event: MouseEvent) {
 onMounted(() => {
   nextTick(clampToViewport)
   document.addEventListener('keydown', onKeydown)
-  document.addEventListener('mousedown', onMousedown)
+  // Capture phase so the VueFlow canvas can't swallow the event before we see it.
+  document.addEventListener('pointerdown', onPointerDown, true)
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)
-  document.removeEventListener('mousedown', onMousedown)
+  document.removeEventListener('pointerdown', onPointerDown, true)
 })
 </script>
 

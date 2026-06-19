@@ -62,4 +62,22 @@ describe('NodeInfoModal', () => {
     document.body.querySelector<HTMLButtonElement>('.node-info-close')!.click()
     expect(wrapper.emitted('close')).toBeTruthy()
   })
+
+  it('closes on a pointerdown outside the popup', () => {
+    wrapper = mount(NodeInfoModal, {
+      props: { name: 'Filter', intro: '', docsUrl: '', available: true, position: { x: 100, y: 100 } }
+    })
+
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('stays open on a pointerdown inside the popup', () => {
+    wrapper = mount(NodeInfoModal, {
+      props: { name: 'Filter', intro: '', docsUrl: '', available: true, position: { x: 100, y: 100 } }
+    })
+
+    document.body.querySelector('.node-info-card')!.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(wrapper.emitted('close')).toBeFalsy()
+  })
 })
