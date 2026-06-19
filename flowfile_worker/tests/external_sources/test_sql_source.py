@@ -1,4 +1,5 @@
 import socket
+import sys
 import time
 
 import polars as pl
@@ -143,5 +144,114 @@ def test_write_serialized_df_to_database(pw):
     database_read_settings = DatabaseReadSettings(connection=database_connection, query='SELECT * FROM public.test_output')
     result_df = read_sql_source(database_read_settings)
     assert df.equals(result_df), "DataFrame written to the database should match the original DataFrame"
+
+
+# SQLite writes use the stdlib sqlite3 driver: no pandas, no running server, run everywhere.
+
+def _sqlite_settings(db_path, table_name, if_exists="replace"):
+    connection = DataBaseConnection(database_type="sqlite", database=f"sqlite:///{db_path}")
+    return DatabaseWriteSettings(connection=connection, table_name=table_name, if_exists=if_exists)
+
+
+def test_write_df_to_sqlite_roundtrip(tmp_path):
+    db = tmp_path / "out.db"
+    df = pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
+    assert write_df_to_database(df, _sqlite_settings(db, "people"))
+    back = pl.read_database_uri("SELECT * FROM people", f"sqlite:///{db}")
+    assert back.sort("id").equals(df)
+
+
+def test_write_df_to_sqlite_mixed_dtypes(tmp_path):
+    import datetime
+    import decimal
+
+    db = tmp_path / "mixed.db"
+    df = pl.DataFrame({
+        "i": pl.Series([1, 2], dtype=pl.Int64),
+        "f": [1.5, None],
+        "b": [True, False],
+        "d": [datetime.date(2024, 1, 1), datetime.date(2024, 1, 2)],
+        "ts": [datetime.datetime(2024, 1, 1, 3, 4, 5), datetime.datetime(2024, 1, 2, 0, 0, 0)],
+        "dec": pl.Series([decimal.Decimal("1.23"), decimal.Decimal("4.56")], dtype=pl.Decimal(10, 2)),
+        "tags": [["x", "y"], []],
+        "meta": [{"k": 1}, {"k": 2}],
+    })
+    # schema-qualified target (the user's real case was main.<table>)
+    assert write_df_to_database(df, _sqlite_settings(db, "main.events"))
+    back = pl.read_database_uri("SELECT * FROM main.events", f"sqlite:///{db}")
+    assert len(back) == 2
+    assert back["b"].to_list() == [1, 0]
+    assert back["f"].to_list() == [1.5, None]
+    assert back["tags"].to_list() == ['["x", "y"]', "[]"]
+    assert back["meta"][0] == '{"k": 1}'
+    assert back["ts"][0] == "2024-01-01 03:04:05.000000"
+
+
+def test_write_df_to_sqlite_if_exists_modes(tmp_path):
+    db = tmp_path / "modes.db"
+    df = pl.DataFrame({"id": [1, 2]})
+
+    def count():
+        return pl.read_database_uri("SELECT count(*) c FROM t", f"sqlite:///{db}")["c"][0]
+
+    write_df_to_database(df, _sqlite_settings(db, "t", "replace"))
+    write_df_to_database(df, _sqlite_settings(db, "t", "append"))
+    assert count() == 4
+    write_df_to_database(df, _sqlite_settings(db, "t", "replace"))
+    assert count() == 2
+    with pytest.raises(ValueError, match="already exists"):
+        write_df_to_database(df, _sqlite_settings(db, "t", "fail"))
+
+
+def test_write_df_to_sqlite_empty_frame(tmp_path):
+    db = tmp_path / "empty.db"
+    df = pl.DataFrame({"id": [1]}).head(0)
+    assert write_df_to_database(df, _sqlite_settings(db, "t"))
+    assert pl.read_database_uri("SELECT count(*) c FROM t", f"sqlite:///{db}")["c"][0] == 0
+
+
+def test_write_serialized_df_to_sqlite(tmp_path):
+    db = tmp_path / "ser.db"
+    df = pl.DataFrame({"id": [1, 2], "v": ["a", "b"]})
+    assert write_serialized_df_to_database(df.lazy().serialize(), _sqlite_settings(db, "t"))
+    back = pl.read_database_uri("SELECT * FROM t", f"sqlite:///{db}")
+    assert back.sort("id").equals(df)
+
+
+def test_sqlite_write_does_not_require_pandas(tmp_path, monkeypatch):
+    # Blocking the pandas import proves the sqlite path is pandas-free (the bug we fixed).
+    monkeypatch.setitem(sys.modules, "pandas", None)
+    db = tmp_path / "nopandas.db"
+    df = pl.DataFrame({"id": [1, 2], "v": ["a", "b"]})
+    assert write_df_to_database(df, _sqlite_settings(db, "t"))
+    with pytest.raises(ImportError):
+        import pandas  # noqa: F401
+    assert pl.read_database_uri("SELECT count(*) c FROM t", f"sqlite:///{db}")["c"][0] == 2
+
+
+def _mysql_reachable() -> bool:
+    s = socket.socket()
+    s.settimeout(0.5)
+    try:
+        s.connect(("localhost", 3307))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+@pytest.mark.skipif(not _mysql_reachable(), reason="MySQL test container is not running on localhost:3307")
+def test_write_df_to_mysql(pw):
+    df = pl.DataFrame({"id": [1, 2], "title": ["Movie1", "Movie2"]})
+    connection = DataBaseConnection(host="localhost", password=pw, username="testuser", port=3307,
+                                    database="testdb", database_type="mysql")
+    settings = DatabaseWriteSettings(connection=connection, table_name="mysql_write_test", if_exists="replace")
+    assert write_df_to_database(df, settings)
+    result = read_sql_source(
+        DatabaseReadSettings(connection=connection, query="SELECT * FROM mysql_write_test")
+    )
+    assert len(result) == 2
+    assert sorted(result["title"].to_list()) == ["Movie1", "Movie2"]
 
 

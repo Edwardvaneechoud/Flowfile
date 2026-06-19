@@ -1,6 +1,10 @@
 import { ref, type Ref } from "vue";
+import { ElMessage } from "element-plus";
 import type { NodeBase } from "../types/node.types";
 import { useNodeStore } from "../stores/node-store";
+import { extractSaveErrorMessage } from "./saveError";
+
+export { extractSaveErrorMessage };
 
 /**
  * Options for configuring the useNodeSettings composable
@@ -155,6 +159,7 @@ export function useNodeSettings<T extends NodeBase>(
       return true;
     } catch (error) {
       console.error("useNodeSettings: Error saving settings:", error);
+      ElMessage.error({ message: extractSaveErrorMessage(error), showClose: true, duration: 6000 });
       return false;
     } finally {
       isSaving.value = false;
