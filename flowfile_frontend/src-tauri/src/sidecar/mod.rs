@@ -168,9 +168,7 @@ fn binary_path(app: &AppHandle, kind: SidecarKind) -> Result<PathBuf, SidecarErr
     Ok(path)
 }
 
-/// Ensure the executable bit is set on Unix. Tauri's `bundle.resources` copy
-/// may strip it; without this the .app bundle would refuse to spawn the
-/// sidecar with EACCES.
+/// Ensure the executable bit is set on Unix — Tauri's `bundle.resources` copy may strip it, causing EACCES on spawn.
 #[cfg(unix)]
 fn ensure_executable(path: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -205,13 +203,7 @@ pub(crate) fn spawn_service(
     let name = kind.name();
     log::info!("spawning sidecar {} from {}", name, path.display());
 
-    // Run the sidecar from the user's home directory rather than inheriting the
-    // shell's cwd (which is the app bundle / a read-only location like `/` when
-    // packaged). The Python backend resolves a relative output `directory`
-    // (e.g. the legacy `"."` default) against the process cwd, so without this a
-    // write to `output.csv` lands at `/output.csv` and fails with
-    // "Read-only file system". Home matches the HOME/FLOWFILE_STORAGE_DIR base
-    // exported in env.rs and the file browser's default location.
+    // Run from the user's home dir so the backend's relative output paths don't resolve against a read-only packaged cwd (e.g. `/`).
     let work_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
 
     let mut cmd = TokioCommand::new(&path);
@@ -222,21 +214,12 @@ pub(crate) fn spawn_service(
         .stderr(Stdio::piped())
         .kill_on_drop(false);
 
-    // Put each sidecar in its own process group (pgid == this child's pid) so
-    // shutdown can signal the whole subtree in one call. The worker forks
-    // multiprocessing viz-session children that inherit this group, so the
-    // group SIGTERM/SIGKILL in shutdown.rs reaps them too — a plain kill(pid)
-    // on Unix would orphan those grandchildren. (Core's scheduled-flow runs use
-    // start_new_session=True to escape into their own session, so they are
-    // deliberately NOT in this group and survive app exit.)
+    // Own process group (pgid == child pid) so shutdown can SIGTERM/SIGKILL the whole subtree at once, reaping the worker's multiprocessing children a plain kill(pid) would orphan.
+    // (Core's scheduled-flow runs use start_new_session=True to deliberately escape this group and survive app exit.)
     #[cfg(unix)]
     cmd.process_group(0);
 
-    // The PyInstaller sidecars are console-subsystem binaries. Without this flag
-    // Windows allocates a visible console window for each one when spawned from
-    // the GUI shell. CREATE_NO_WINDOW suppresses those terminals; stdout/stderr
-    // are still piped to pump_stream for logging. (creation_flags is an inherent
-    // method on tokio's Command on Windows.)
+    // CREATE_NO_WINDOW suppresses the console window Windows would otherwise allocate for each console-subsystem PyInstaller sidecar; stdout/stderr are still piped to pump_stream.
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -330,11 +313,8 @@ async fn handle_termination(
 
     if *state.is_shutting_down.lock() {
         log::debug!("{} terminated during shutdown, not restarting", kind.name());
-        // TODO(C): this early return leaves the stale pid in state, so
-        // shutdown.rs's `.take()` + killpg may target a process/group whose PID
-        // has been recycled. Clear the pid here too (as the restart path does
-        // just below) so shutdown skips the kill entirely once the process is
-        // known dead.
+        // TODO(C): clear the pid here too — leaving it stale lets shutdown.rs's
+        // `.take()` + killpg target a process/group whose PID has been recycled.
         return;
     }
 
@@ -393,16 +373,12 @@ async fn handle_termination(
         SidecarKind::Worker => worker_port,
     };
 
-    // Re-check is_shutting_down and respawn while *holding* the lock, closing the
-    // restart↔shutdown race. shutdown_all/kill_spawned flip the flag to true under
-    // this same lock and only `.take()` the pid afterwards, so holding the lock
-    // across the spawn serializes the two: either we see the flag already set and
-    // bail, or we win the lock and store the new pid (inside spawn_service) before
-    // releasing — so shutdown, which can't set the flag until we release, then
-    // observes that pid when it takes it, and kills the respawn. No orphan in the
-    // gap. spawn_service is synchronous, so holding the parking_lot guard across it
-    // is safe; we must NOT hold it across the async readiness wait, hence the guard
-    // is scoped to this block.
+    // Hold the lock across the re-check + respawn to close the restart↔shutdown
+    // race: shutdown flips the flag and `.take()`s the pid under this same lock,
+    // so we either see it set and bail, or store the new pid (in spawn_service)
+    // before releasing and shutdown then kills the respawn — no orphan in the gap.
+    // spawn_service is sync so holding the parking_lot guard is safe; the guard
+    // MUST NOT span the async readiness wait, hence the scoped block.
     let respawn = {
         let shutting_down = state.is_shutting_down.lock();
         if *shutting_down {
