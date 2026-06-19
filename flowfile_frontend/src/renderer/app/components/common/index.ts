@@ -8,7 +8,6 @@ export { default as CollapsibleSection } from "./CollapsibleSection/CollapsibleS
 export { default as CloudConnectionPicker } from "./CloudConnectionPicker/CloudConnectionPicker.vue";
 
 export { default as PageHelpModal } from "./PageHelpModal/PageHelpModal.vue";
-export { default as Squad } from "./Squad/Squad.vue";
 
 // Re-export types and utilities
 export * from "./DraggableItem/stateStore";

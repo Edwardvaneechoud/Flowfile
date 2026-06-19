@@ -99,7 +99,12 @@ error-linux
 
 # Repo-root local Claude state only — leave subtree configs
 # (e.g. plugin/agent dirs nested under packages) tracked.
-/.claude/
+# The shared development-squad agent definitions under /.claude/agents/ ARE
+# tracked; everything else under /.claude/ (local settings, locks) stays ignored.
+/.claude/*
+!/.claude/agents/
+/.claude/agents/*
+!/.claude/agents/*.md
 
 # Signing checklist holds real cert/notarization secrets — never commit
 flowfile_frontend/src-tauri/SIGNING_CHECKLIST.md
