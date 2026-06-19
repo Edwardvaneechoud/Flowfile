@@ -45,6 +45,7 @@
                   : undefined
               "
               @dragstart="onDragStart($event, node)"
+              @contextmenu.prevent="openNodeInfo(node.type)"
             >
               <img
                 v-if="node.available !== false"
@@ -56,16 +57,13 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               </span>
               <span class="node-name">{{ node.name }}</span>
-              <a
+              <button
                 v-if="node.available === false"
-                :href="nodeDocsUrl(category, node)"
-                target="_blank"
-                rel="noopener noreferrer"
-                draggable="false"
+                type="button"
                 class="node-learn-more"
-                :title="`${node.name} runs in the full Flowfile app — open the docs`"
-                @click.stop
-              >Learn more&nbsp;↗</a>
+                :title="`Learn more about ${node.name}`"
+                @click.stop="openNodeInfo(node.type)"
+              >Learn more</button>
             </div>
           </div>
         </div>
@@ -148,6 +146,7 @@
             @view-data="handleViewData"
             @copy="handleCopyNode"
             @save-to-catalog="handleSaveToCatalog"
+            @show-info="openNodeInfo"
           />
         </template>
         <MiniMap />
@@ -369,6 +368,15 @@
       </div>
     </div>
 
+    <NodeInfoModal
+      v-if="nodeInfo"
+      :name="nodeInfo.name"
+      :intro="nodeInfo.intro"
+      :docs-url="nodeInfo.docsUrl"
+      :available="nodeInfo.available"
+      @close="closeNodeInfo"
+    />
+
   </div>
 </template>
 
@@ -427,6 +435,7 @@ import DynamicRenameSettings from './nodes/DynamicRenameSettings.vue'
 import NodeSettingsWrapper from './nodes/NodeSettingsWrapper.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
+import NodeInfoModal from './NodeInfoModal.vue'
 import DemoButton from './DemoButton.vue'
 import LayoutControls from './common/LayoutControls.vue'
 import { useDemo } from '../composables/useDemo'
@@ -660,6 +669,30 @@ function findNodeDef(type: string): NodeDefinition | undefined {
 function nodeDocsUrl(category: NodeCategory, node: NodeDefinition): string {
   const base = category.docsUrl ?? ''
   return node.docsAnchor ? `${base}#${node.docsAnchor}` : base
+}
+
+// Node info popup, surfaced by right-clicking any node (palette or canvas) and by a
+// locked node's "Learn more". Resolves everything from the palette registry by type,
+// so canvas nodes (which only know their type) and palette items share one path.
+const nodeInfo = ref<{ name: string; intro: string; docsUrl: string; available: boolean } | null>(null)
+
+function openNodeInfo(type: string) {
+  for (const cat of nodeCategories.value) {
+    const node = cat.nodes.find(n => n.type === type)
+    if (node) {
+      nodeInfo.value = {
+        name: node.name,
+        intro: getNodeDescription(type).intro,
+        docsUrl: nodeDocsUrl(cat, node),
+        available: node.available !== false
+      }
+      return
+    }
+  }
+}
+
+function closeNodeInfo() {
+  nodeInfo.value = null
 }
 
 const vueNodes = computed<Node[]>({
@@ -1540,11 +1573,14 @@ onUnmounted(() => {
 .node-learn-more {
   margin-left: auto;
   padding: 1px 4px;
+  font-family: inherit;
   font-size: 11px;
   white-space: nowrap;
   cursor: pointer;
   text-decoration: none;
   color: var(--accent-color);
+  background: none;
+  border: none;
   border-radius: var(--radius-sm);
 }
 

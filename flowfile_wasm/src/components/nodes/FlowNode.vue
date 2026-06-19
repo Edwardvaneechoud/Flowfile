@@ -70,6 +70,10 @@
             </svg>
             <span>View data</span>
           </div>
+          <div class="context-menu-item" @click="learnAboutNode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <span>Learn about this node</span>
+          </div>
           <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="runNode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -160,6 +164,7 @@ const emit = defineEmits<{
   (e: 'view-data', id: number): void
   (e: 'copy', id: number): void
   (e: 'save-to-catalog', id: number): void
+  (e: 'show-info', type: string): void
 }>()
 
 const flowStore = useFlowStore()
@@ -326,6 +331,11 @@ function editNode() {
 
 function viewData() {
   emit('view-data', props.data.id)
+  closeContextMenu()
+}
+
+function learnAboutNode() {
+  emit('show-info', props.data.type)
   closeContextMenu()
 }
 
