@@ -31,12 +31,47 @@
           :data-tutorial-node="node.item"
           draggable="true"
           @dragstart="$emit('dragstart', $event, node)"
+          @contextmenu.prevent="openNodeInfo(node, $event)"
         >
           <img :src="getImageUrl(node.image)" :alt="node.name" class="node-image" />
           <span class="node-name">{{ node.name }}</span>
+          <button
+            type="button"
+            class="node-info-btn"
+            :title="`About ${node.name}`"
+            :aria-label="`About ${node.name}`"
+            draggable="false"
+            @click.stop="openNodeInfo(node, $event)"
+            @mousedown.stop
+            @dragstart.stop.prevent
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+          </button>
         </div>
       </div>
     </div>
+
+    <!-- Node info popup: name, description and a docs link, surfaced by the per-item
+         info button or by right-clicking a node. -->
+    <NodeInfoCard
+      v-if="nodeInfo"
+      :name="nodeInfo.name"
+      :intro="nodeInfo.intro"
+      :docs-url="nodeInfo.docsUrl"
+      :position="nodeInfo.position"
+      @close="closeNodeInfo"
+    />
   </div>
 </template>
 
@@ -46,6 +81,8 @@ import { ArrowDown, ArrowRight } from "@element-plus/icons-vue";
 import { getImageUrl } from "../../features/designer/utils";
 import { useNodes } from "./useNodes";
 import { NodeTemplate } from "../../types";
+import NodeInfoCard from "./NodeInfoCard.vue";
+import { nodeDocsUrl } from "./nodeDocs";
 
 const { nodes } = useNodes();
 
@@ -119,6 +156,28 @@ const isCategoryOpen = (category: CategoryKey) => {
 const toggleCategory = (category: CategoryKey) => {
   if (searchQuery.value) return;
   openCategories.value[category] = !openCategories.value[category];
+};
+
+// Node info popup, surfaced by a node's info button or by right-clicking it. Anchors
+// at the click position (clamped to the viewport inside NodeInfoCard).
+const nodeInfo = ref<{
+  name: string;
+  intro: string;
+  docsUrl: string;
+  position: { x: number; y: number };
+} | null>(null);
+
+const openNodeInfo = (node: NodeTemplate, event: MouseEvent) => {
+  nodeInfo.value = {
+    name: node.name,
+    intro: node.drawer_intro ?? "",
+    docsUrl: nodeDocsUrl(node.node_group),
+    position: { x: event.clientX, y: event.clientY },
+  };
+};
+
+const closeNodeInfo = () => {
+  nodeInfo.value = null;
 };
 
 defineEmits(["dragstart"]);
@@ -220,6 +279,49 @@ defineEmits(["dragstart"]);
 .node-name {
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
+}
+
+/* Info affordance: hidden until the row is hovered (or the button is focused),
+   so it stays out of the way while keeping node docs one click away. */
+.node-info-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--border-radius-md);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--transition-fast),
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.node-item:hover .node-info-btn {
+  opacity: 1;
+}
+
+.node-info-btn:hover {
+  background-color: var(--color-background-muted);
+  color: var(--color-accent);
+}
+
+.node-info-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.node-info-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* Custom scrollbar */
