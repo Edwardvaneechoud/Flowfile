@@ -48,9 +48,23 @@ def safe_stem(name: str | None) -> str:
     return cleaned or "flow"
 
 
+def unique_stem(name: str | None) -> str:
+    """A filesystem-safe stem that stays distinct when cleaning is lossy. ``prod db``/``prod/db``
+    both clean to ``prod_db`` and would overwrite each other's file; appending a short hash of the
+    original name keeps them separate while staying byte-identical across runs (the suffix is
+    derived only from the name). Names needing no cleaning keep their bare stem."""
+    base = safe_stem(name)
+    if base == (name or ""):
+        return base
+    digest = hashlib.sha256((name or "").encode()).hexdigest()[:8]
+    return f"{base}_{digest}"
+
+
 def deterministic_flow_id(flow_uuid: str) -> int:
-    """A stable 32-bit flowfile_id derived from the flow's uuid (no host/time entropy)."""
-    return int(hashlib.sha256(flow_uuid.encode()).hexdigest(), 16) & 0xFFFFFFFF
+    """A stable 63-bit positive flowfile_id derived from the flow's uuid (no host/time entropy).
+    Uses the full positive int64 range so two flows don't collide and evict each other from the
+    in-memory handler on import."""
+    return int(hashlib.sha256(flow_uuid.encode()).hexdigest(), 16) & 0x7FFFFFFFFFFFFFFF
 
 
 # (node type → settings key) for nodes whose target namespace must be portable across installs.

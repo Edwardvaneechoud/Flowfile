@@ -185,12 +185,42 @@ def test_reload_with_tracking_off_leaves_db_tables_and_models(tmp_path):
         project_sync.init_project(str(root), "Safe Test", OWNER, track_data_artifacts=False)
         assert not (root / "tables.yaml").exists() and not (root / "models.yaml").exists()
 
-        project_sync.reload_from_disk(OWNER)  # prune=True
+        project_sync.reload_from_disk(OWNER, force=True)  # prune=True
 
         with get_db_context() as db:
             assert db.query(CatalogTable).filter_by(id=table_id).first() is not None
             a = db.query(GlobalArtifact).filter_by(id=artifact_id).first()
             assert a is not None and a.status == "active"
+    finally:
+        _cleanup(table, model, flow_uuid)
+
+
+def test_prune_removes_flow_with_artifact_when_tracking_off(tmp_path):
+    """M-C2: with tracking off the artifact-prune pass is skipped, so a pruned flow that still owns an
+    active artifact used to raise FlowHasArtifactsError (swallowed) and survive as a resurrectable
+    ghost. The flow's artifacts must be released regardless of the toggle so the flow is fully removed
+    and no prune error is reported."""
+    project_sync.close_project(OWNER)
+    table, model = f"ghost_tbl_{uuid4().hex[:6]}", f"ghost_mdl_{uuid4().hex[:6]}"
+    flow_uuid = _make_flow(tmp_path, f"ghost_flow_{uuid4().hex[:6]}")
+    artifact_id = _make_artifact(model, _reg_id(flow_uuid))
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Ghost Test", OWNER, track_data_artifacts=False)
+        # Drop the flow from the project files, keeping tracking off (no tables.yaml/models.yaml).
+        for p in (root / "flows").glob("*.flow.yaml"):
+            p.unlink()
+
+        result = project_sync.reload_from_disk(OWNER, force=True)
+
+        assert result.prune_errors == [], "the flow delete must not silently fail"
+        with get_db_context() as db:
+            assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None, (
+                "pruned flow must be removed, not left as a ghost"
+            )
+            # The flow's artifact is released (no longer active) so the delete could succeed.
+            a = db.query(GlobalArtifact).filter_by(id=artifact_id).first()
+            assert a is None or a.status != "active", "the flow's active artifact must be released"
     finally:
         _cleanup(table, model, flow_uuid)
 

@@ -148,7 +148,7 @@ def test_kernel_prune_removes_absent_kernel(tmp_path):
         # Rewrite the manifest keeping only the survivor (preserving its exact projected entry).
         manifest = _kernels_yaml(root)
         write_yaml(root / "kernels.yaml", {"kernels": [manifest[keep]]})
-        project_sync.reload_from_disk(OWNER)
+        project_sync.reload_from_disk(OWNER, force=True)
 
         assert _kernel_row(drop) is None, "kernel absent from the manifest must be pruned"
         survivor = _kernel_row(keep)

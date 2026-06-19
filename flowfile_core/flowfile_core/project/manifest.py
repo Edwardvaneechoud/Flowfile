@@ -22,7 +22,28 @@ _GITIGNORE = """\
 .flowfile/
 data/
 catalog_tables/
+master_key.txt
+*.key
+*.pem
+.secret_key
+*.json.enc
 """
+
+# Lines that MUST appear in any project's .gitignore. A hand-crafted
+# project opened with a weaker file gets these appended automatically.
+_REQUIRED_IGNORE_LINES = {
+    ".env",
+    "*.secret",
+    "*.db",
+    ".flowfile/",
+    "data/",
+    "catalog_tables/",
+    "master_key.txt",
+    "*.key",
+    "*.pem",
+    ".secret_key",
+    "*.json.enc",
+}
 
 
 @dataclass
@@ -68,9 +89,21 @@ def read_manifest(root: Path) -> ProjectManifest | None:
 
 
 def write_gitignore(root: Path) -> None:
+    """Write or harden .gitignore.
+
+    If absent, write the full template. If present (e.g. a hand-crafted project
+    opened via ``open_project``), append any required lines that are missing so a
+    weak .gitignore can never commit key files or secret-bearing patterns."""
     gi = root / ".gitignore"
     if not gi.exists():
         gi.write_text(_GITIGNORE, encoding="utf-8")
+        return
+    existing_text = gi.read_text(encoding="utf-8")
+    existing_lines = {ln.strip() for ln in existing_text.splitlines()}
+    missing = [ln for ln in sorted(_REQUIRED_IGNORE_LINES) if ln not in existing_lines]
+    if missing:
+        addition = "\n# Added by Flowfile — required secret/data guards\n" + "\n".join(missing) + "\n"
+        gi.write_text(existing_text.rstrip("\n") + "\n" + addition, encoding="utf-8")
 
 
 def flows_dir(root: Path) -> Path:

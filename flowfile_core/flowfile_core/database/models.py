@@ -1,6 +1,7 @@
 import uuid
 from typing import Literal
 
+import sqlalchemy as sa
 from sqlalchemy import (
     Boolean,
     Column,
@@ -201,7 +202,7 @@ class WorkspaceProject(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
-    folder_path = Column(String, nullable=False, unique=True)
+    folder_path = Column(String, nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     is_active = Column(Boolean, default=False, nullable=False)
     # Git HEAD we last projected/imported at; differs from the live HEAD only when git
@@ -212,6 +213,11 @@ class WorkspaceProject(Base):
     track_data_artifacts = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("owner_id", "folder_path", name="uq_project_owner_path"),
+        Index("ix_workspace_projects_active_owner", "owner_id", sqlite_where=sa.text("is_active = 1"), unique=True),
+    )
 
 
 class FlowRun(Base):
@@ -326,12 +332,8 @@ class ApiConsumerEndpoint(Base):
     __tablename__ = "api_consumer_endpoints"
 
     id = Column(Integer, primary_key=True, index=True)
-    consumer_id = Column(
-        Integer, ForeignKey("api_consumers.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    endpoint_id = Column(
-        Integer, ForeignKey("flow_api_endpoints.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    consumer_id = Column(Integer, ForeignKey("api_consumers.id", ondelete="CASCADE"), nullable=False, index=True)
+    endpoint_id = Column(Integer, ForeignKey("flow_api_endpoints.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("consumer_id", "endpoint_id", name="uq_consumer_endpoint"),)
@@ -741,7 +743,7 @@ class AiProviderCredential(Base):
     api_base = Column(String, nullable=True)
     default_model = Column(String, nullable=True)
     # JSON-encoded list[str] of models the user has curated for this credential
-    #. Decoded at the schema layer in flowfile_core.ai.credentials. Null
+    # . Decoded at the schema layer in flowfile_core.ai.credentials. Null
     # or an empty list both mean "no curated list — fall through to the
     # resolution order".
     models = Column(Text, nullable=True)

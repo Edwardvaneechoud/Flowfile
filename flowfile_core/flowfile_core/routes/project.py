@@ -7,19 +7,32 @@ There is deliberately no "export" or "apply" endpoint — the folder stays in sy
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, SecretStr
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import Path as FPath
+from pydantic import BaseModel, SecretStr, field_validator
 
 from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
 from flowfile_core.project import git_ops, project_sync
 from flowfile_core.project.models import ActiveProject
 from flowfile_core.secret_manager.secret_manager import SecretInput, upsert_secret
 
-router = APIRouter(dependencies=[Depends(get_current_active_user)])
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+
+def require_projects_enabled() -> None:
+    """404 (not 403/503) in docker unless an operator opted in: in a multi-tenant deployment the
+    git-tracking router does not exist by default. package/electron are always on."""
+    if settings.is_docker_mode() and not settings.FLOWFILE_ENABLE_PROJECTS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
+router = APIRouter(dependencies=[Depends(get_current_active_user), Depends(require_projects_enabled)])
 
 
 class InitProjectRequest(BaseModel):
@@ -43,6 +56,18 @@ class SaveVersionRequest(BaseModel):
 class RestoreRequest(BaseModel):
     sha: str
     label: str | None = None
+    force: bool = False
+
+    @field_validator("sha")
+    @classmethod
+    def _validate_sha(cls, v: str) -> str:
+        if not _SHA_RE.match(v):
+            raise ValueError(f"sha must be 7-40 hex characters, got {v!r}")
+        return v
+
+
+class ReloadRequest(BaseModel):
+    force: bool = False
 
 
 class PlaceholderSecret(BaseModel):
@@ -63,7 +88,10 @@ def _payload(project: ActiveProject) -> dict:
 def init_project(req: InitProjectRequest, current_user=Depends(get_current_active_user)) -> dict:
     folder_path = validate_path_under_cwd(req.folder_path)
     name = req.name or Path(folder_path).name
-    project = project_sync.init_project(folder_path, name, current_user.id, req.track_data_artifacts)
+    try:
+        project = project_sync.init_project(folder_path, name, current_user.id, req.track_data_artifacts)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, str(e)) from e
     return {"project": _payload(project)}
 
 
@@ -74,6 +102,8 @@ def open_project(req: OpenProjectRequest, current_user=Depends(get_current_activ
         project, result = project_sync.open_project(folder_path, current_user.id)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, str(e)) from e
     return {"project": _payload(project), **result.to_dict()}
 
 
@@ -108,7 +138,10 @@ def save_version(req: SaveVersionRequest, current_user=Depends(get_current_activ
 
 
 @router.get("/versions")
-def list_versions(limit: int = 50, current_user=Depends(get_current_active_user)) -> dict:
+def list_versions(
+    limit: int = Query(50, ge=1, le=500),
+    current_user=Depends(get_current_active_user),
+) -> dict:
     project = project_sync.get_active_project(current_user.id)
     if project is None:
         raise HTTPException(409, "No active project")
@@ -118,14 +151,22 @@ def list_versions(limit: int = 50, current_user=Depends(get_current_active_user)
 @router.post("/restore")
 def restore_version(req: RestoreRequest, current_user=Depends(get_current_active_user)) -> dict:
     try:
-        result = project_sync.restore_version(current_user.id, req.sha, req.label)
+        result = project_sync.restore_version(current_user.id, req.sha, req.label, req.force)
     except RuntimeError as e:
         raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, str(e)) from e
     return result.to_dict()
 
 
+_SHA_PATH = FPath(..., pattern=r"^[0-9a-fA-F]{7,40}$")
+
+
 @router.get("/versions/{sha}/changes")
-def version_changes(sha: str, current_user=Depends(get_current_active_user)) -> dict:
+def version_changes(
+    sha: str = _SHA_PATH,
+    current_user=Depends(get_current_active_user),
+) -> dict:
     try:
         changes = project_sync.changes_for_version(current_user.id, sha)
     except RuntimeError as e:
@@ -134,7 +175,10 @@ def version_changes(sha: str, current_user=Depends(get_current_active_user)) -> 
 
 
 @router.get("/versions/{sha}/diff")
-def version_diff(sha: str, current_user=Depends(get_current_active_user)) -> dict:
+def version_diff(
+    sha: str = _SHA_PATH,
+    current_user=Depends(get_current_active_user),
+) -> dict:
     try:
         changes = project_sync.version_diff(current_user.id, sha)
     except RuntimeError as e:
@@ -152,11 +196,14 @@ def uncommitted(current_user=Depends(get_current_active_user)) -> dict:
 
 
 @router.post("/reload")
-def reload_project(current_user=Depends(get_current_active_user)) -> dict:
+def reload_project(req: ReloadRequest | None = None, current_user=Depends(get_current_active_user)) -> dict:
+    force = req.force if req is not None else False
     try:
-        result = project_sync.reload_from_disk(current_user.id)
+        result = project_sync.reload_from_disk(current_user.id, force)
     except RuntimeError as e:
         raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, str(e)) from e
     return result.to_dict()
 
 

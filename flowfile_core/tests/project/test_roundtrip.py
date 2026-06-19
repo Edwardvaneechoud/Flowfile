@@ -6,7 +6,6 @@ leaks projection side-effects into other tests.
 """
 
 import json
-import os
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -14,7 +13,6 @@ from uuid import uuid4
 import pytest
 import yaml
 
-from flowfile_core import flow_file_handler
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
@@ -203,6 +201,110 @@ def test_import_creates_placeholder_when_secret_missing(tmp_path, monkeypatch):
         assert conn in result.placeholder_secrets
     finally:
         _cleanup([conn], [])
+
+
+def test_commit_only_stages_managed_paths(tmp_path):
+    """M-D2: commit_all must not sweep unrelated files into git history.
+
+    The init commit must contain only managed manifest paths; an unmanaged sibling
+    placed in the project root (e.g. .secret_key, .env) must never appear in any
+    commit, even when followed by a save_version that triggers commit_all."""
+    from flowfile_core.project import git_ops
+
+    if not git_ops.git_available():
+        pytest.skip("git not available")
+
+    project_sync.close_project(OWNER)
+    conn = "proj_db_staged"
+    _make_connection(conn, "pw_staged")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Staged Test", OWNER)
+        sha = git_ops.head_sha(root)
+        assert sha, "init_project must produce a commit"
+
+        from git import Repo
+
+        repo = Repo(str(root))
+        commit = repo.commit(sha)
+        committed_paths = {item.path for item in commit.tree.traverse() if item.type == "blob"}
+
+        # Verify all committed paths are under managed dirs/files.
+        managed_prefixes = (
+            "flows/",
+            "connections/",
+            "schedules/",
+        )
+        managed_root_files = {
+            "project.yaml",
+            ".gitignore",
+            "secrets.yaml",
+            "namespaces.yaml",
+            "tables.yaml",
+            "models.yaml",
+            "kernels.yaml",
+            "visualizations.yaml",
+            "dashboards.yaml",
+        }
+        for path in committed_paths:
+            is_managed = path in managed_root_files or any(path.startswith(p) for p in managed_prefixes)
+            assert is_managed, f"unmanaged file in commit: {path!r}"
+
+        # Place secret-bearing files alongside the project; they must not be staged.
+        secret_file = root / ".secret_key"
+        secret_file.write_text("fernet_master_key_value", encoding="utf-8")
+        env_file = root / ".env"
+        env_file.write_text("DB_PASS=hunter2", encoding="utf-8")
+        # Add a managed change so commit_all has something to commit.
+        flows_dir = root / "flows"
+        flows_dir.mkdir(exist_ok=True)
+        (flows_dir / "marker.flow.yaml").write_text("version: 1\n", encoding="utf-8")
+        sha2 = git_ops.commit_all(root, "second save with secret siblings")
+        assert sha2, "expected a commit with the managed flow file"
+        commit2 = repo.commit(sha2)
+        paths2 = {item.path for item in commit2.tree.traverse() if item.type == "blob"}
+        assert ".secret_key" not in paths2, ".secret_key must not appear in any commit"
+        assert ".env" not in paths2, ".env must not appear in any commit"
+        assert any(p.startswith("flows/") for p in paths2), "managed flows/ file must be committed"
+    finally:
+        _cleanup([conn], [])
+
+
+def test_init_commit_excludes_unmanaged_files(tmp_path):
+    """M-D2 regression: the very first commit_all (no HEAD) must not sweep unmanaged files.
+
+    Reproduces the no-HEAD branch bug: after ``git add -A`` on a repo with no commits,
+    ``repo.index.diff(None)`` (index-vs-worktree) is empty, so the old code left ``to_reset``
+    as ``[]`` and every staged file was committed — including stray.txt.  The fix enumerates
+    ``repo.index.entries`` instead.
+    """
+    from git import Repo
+
+    from flowfile_core.project import git_ops
+
+    if not git_ops.git_available():
+        pytest.skip("git not available")
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    git_ops.init(root)
+
+    (root / "project.yaml").write_text("name: test\n", encoding="utf-8")
+    (root / "flows").mkdir()
+    (root / "flows" / "a.flow.yaml").write_text("version: 1\n", encoding="utf-8")
+    (root / "stray.txt").write_text("not a managed file\n", encoding="utf-8")
+    (root / ".env").write_text("SECRET=hunter2\n", encoding="utf-8")
+
+    sha = git_ops.commit_all(root, "init")
+    assert sha, "commit_all must produce a commit even on first call"
+
+    repo = Repo(str(root))
+    committed = {item.path for item in repo.commit(sha).tree.traverse() if item.type == "blob"}
+
+    assert "stray.txt" not in committed, "stray.txt must not appear in the initial commit"
+    assert ".env" not in committed, ".env must not appear in the initial commit"
+    assert "project.yaml" in committed, "managed project.yaml must be committed"
+    assert "flows/a.flow.yaml" in committed, "managed flows/ file must be committed"
 
 
 def test_projection_failure_does_not_break_the_primary_operation(tmp_path, monkeypatch):
@@ -424,7 +526,7 @@ def test_reload_prunes_emptied_custom_namespace(tmp_path):
 
         write_yaml(root / "namespaces.yaml", {"namespaces": []})
 
-        project_sync.reload_from_disk(OWNER)
+        project_sync.reload_from_disk(OWNER, force=True)
 
         with get_db_context() as db:
             assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None
@@ -911,7 +1013,7 @@ def test_prune_keeps_table_data_and_model_blob(tmp_path):
         # Remove only the table + model from the manifests; keep the flow.
         write_yaml(root / "tables.yaml", {"tables": []})
         write_yaml(root / "models.yaml", {"models": []})
-        project_sync.reload_from_disk(OWNER)
+        project_sync.reload_from_disk(OWNER, force=True)
 
         with get_db_context() as db:
             # Table row pruned, but its Delta data is kept on disk.
@@ -947,7 +1049,7 @@ def test_prune_removes_flow_with_its_artifact(tmp_path):
         write_yaml(root / "models.yaml", {"models": []})
         write_yaml(root / "namespaces.yaml", {"namespaces": []})
 
-        project_sync.reload_from_disk(OWNER)  # must not raise FlowHasArtifactsError
+        project_sync.reload_from_disk(OWNER, force=True)  # must not raise FlowHasArtifactsError
 
         with get_db_context() as db:
             assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None

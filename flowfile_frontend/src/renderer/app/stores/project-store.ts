@@ -1,8 +1,17 @@
 // Project store — git-versioning lifecycle and the always-on sync status.
 // Fully optional: with no active project everything is a cheap no-op and the UI hides.
+import { ElMessage } from "element-plus";
 import { defineStore } from "pinia";
 import { ProjectApi, ProjectFeatureUnavailable } from "../api/project.api";
 import type { ImportResult, ProjectInfo, ProjectVersion, ProjectVersionChange } from "../types";
+
+function warnPruneErrors(res: ImportResult): void {
+  if (res.prune_errors?.length) {
+    ElMessage.warning(
+      `Some resources could not be removed during sync: ${res.prune_errors.join(", ")}`,
+    );
+  }
+}
 
 export type ProjectStatus = "none" | "external" | "unsaved" | "clean";
 
@@ -178,6 +187,7 @@ export const useProjectStore = defineStore("project", {
     async restoreVersion(sha: string, label?: string): Promise<void> {
       const res = await ProjectApi.restore(sha, label);
       this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
+      warnPruneErrors(res);
       await this.refreshActive();
       this.loadVersions().catch(() => undefined);
     },
@@ -186,6 +196,7 @@ export const useProjectStore = defineStore("project", {
       try {
         const res = await ProjectApi.reload();
         this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
+        warnPruneErrors(res);
         await this.refreshActive();
         return res;
       } catch (e: any) {

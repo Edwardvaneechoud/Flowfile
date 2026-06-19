@@ -220,7 +220,7 @@ def test_prune_removes_absent_viz_and_dashboard(tmp_path):
 
         write_yaml(root / "visualizations.yaml", {"visualizations": []})
         write_yaml(root / "dashboards.yaml", {"dashboards": []})
-        project_sync.reload_from_disk(OWNER)
+        project_sync.reload_from_disk(OWNER, force=True)
 
         with get_db_context() as db:
             assert db.query(CatalogVisualization).filter_by(viz_uuid=vuuid).first() is None

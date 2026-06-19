@@ -30,7 +30,7 @@ from flowfile_core.database.models import (
     Secret,
 )
 from flowfile_core.project import manifest
-from flowfile_core.project.normalize import normalize_flow_data, safe_stem, write_yaml
+from flowfile_core.project.normalize import normalize_flow_data, safe_stem, unique_stem, write_yaml
 from flowfile_core.project.secrets_resolver import make_placeholder
 
 logger = logging.getLogger(__name__)
@@ -74,8 +74,17 @@ def _name_stem(name: str | None) -> str:
     return safe_stem(name)
 
 
-def _flow_stem(reg: FlowRegistration) -> str:
-    """The flow's file stem: its intrinsic ``flowfile_name`` (stable across the DB↔files round-trip)."""
+def _flow_stem(root: Path, reg: FlowRegistration) -> str:
+    """The stem of the flow's actual projected file (matched by ``flow_uuid``), so a schedule lines up
+    with a disambiguated ``<stem>_<uuid8>.flow.yaml`` instead of overwriting a same-named flow's file.
+    Falls back to the intrinsic ``flowfile_name`` stem when the flow file isn't on disk yet."""
+    for p in manifest.flows_dir(root).glob("*.flow.yaml"):
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        if data.get("flow_uuid") == reg.flow_uuid:
+            return p.name[: -len(".flow.yaml")]
     data = _load_flow_data(reg.flow_path) or {}
     return _name_stem(data.get("flowfile_name") or reg.name)
 
@@ -127,12 +136,12 @@ def remove_flow(root: Path, flow_uuid: str | None = None, name: str | None = Non
                 continue
             if data.get("flow_uuid") == flow_uuid:
                 p.unlink(missing_ok=True)
-                stem = _name_stem(data.get("flowfile_name") or p.name)
-                manifest.schedules_dir(root).joinpath(f"{stem}.yaml").unlink(missing_ok=True)
+                manifest.schedules_dir(root).joinpath(f"{p.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
     elif name:
         stem = _name_stem(name)
         for p in flows_dir.glob(f"{stem}*.flow.yaml"):
             p.unlink(missing_ok=True)
+            manifest.schedules_dir(root).joinpath(f"{p.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
         manifest.schedules_dir(root).joinpath(f"{stem}.yaml").unlink(missing_ok=True)
 
 
@@ -148,8 +157,7 @@ def remove_stale_flow_files(root: Path, flow_uuid: str, keep: Path) -> None:
             continue
         if data.get("flow_uuid") == flow_uuid:
             p.unlink(missing_ok=True)
-            stem = _name_stem(data.get("flowfile_name") or p.name)
-            manifest.schedules_dir(root).joinpath(f"{stem}.yaml").unlink(missing_ok=True)
+            manifest.schedules_dir(root).joinpath(f"{p.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
 
 
 # --- connections -------------------------------------------------------------
@@ -201,7 +209,7 @@ def project_database_connection(db: Session, root: Path, name: str, owner_id: in
     )
     if conn is None:
         return None
-    target = manifest.connections_dir(root, "database") / f"{safe_stem(name)}.yaml"
+    target = manifest.connections_dir(root, "database") / f"{unique_stem(name)}.yaml"
     write_yaml(target, _db_connection_dict(db, conn))
     return target
 
@@ -214,13 +222,13 @@ def project_cloud_connection(db: Session, root: Path, name: str, owner_id: int) 
     )
     if conn is None:
         return None
-    target = manifest.connections_dir(root, "cloud") / f"{safe_stem(name)}.yaml"
+    target = manifest.connections_dir(root, "cloud") / f"{unique_stem(name)}.yaml"
     write_yaml(target, _cloud_connection_dict(db, conn))
     return target
 
 
 def remove_connection(root: Path, kind: str, name: str) -> None:
-    manifest.connections_dir(root, kind).joinpath(f"{safe_stem(name)}.yaml").unlink(missing_ok=True)
+    manifest.connections_dir(root, kind).joinpath(f"{unique_stem(name)}.yaml").unlink(missing_ok=True)
 
 
 # --- schedules ---------------------------------------------------------------
@@ -251,8 +259,8 @@ def project_schedules_for_registration(
         .all()
     )
     # Share the flow's file stem so a flow and its schedule always line up (caller passes the
-    # resolved stem in full projection; the single-schedule hook recomputes it).
-    target = manifest.schedules_dir(root) / f"{stem or _flow_stem(reg)}.yaml"
+    # resolved stem in full projection; the single-schedule hook resolves it from the projected file).
+    target = manifest.schedules_dir(root) / f"{stem or _flow_stem(root, reg)}.yaml"
     if not schedules:
         target.unlink(missing_ok=True)
         return None
@@ -312,8 +320,10 @@ def regenerate_namespace_manifest(db: Session, root: Path, owner_id: int) -> Non
             parent = db.get(CatalogNamespace, ns.parent_id)
             catalog_name = parent.name if parent else ns.name
             if catalog_name not in catalogs:  # parent owned by another user (e.g. shared public General)
+                # Emit only the name for cross-owner parents to avoid writing another user's
+                # description into the project's git history.
                 catalogs[catalog_name] = _namespace_entry(
-                    "catalog", catalog_name, parent.description if parent else None, bool(parent and parent.is_public)
+                    "catalog", catalog_name, None, bool(parent and parent.is_public)
                 )
             schemas.setdefault(catalog_name, []).append(
                 _namespace_entry("name", ns.name, ns.description, bool(ns.is_public))
@@ -404,11 +414,7 @@ def regenerate_models_manifest(db: Session, root: Path, owner_id: int) -> None:
     """models.yaml mirrors the owner's active global artifacts as definition + lineage. The blob
     lives outside the project (global_artifacts_directory) and is never committed; on a fresh clone
     the row reappears and the blob refills when its producing flow re-runs."""
-    rows = (
-        db.query(GlobalArtifact)
-        .filter(GlobalArtifact.owner_id == owner_id, GlobalArtifact.status == "active")
-        .all()
-    )
+    rows = db.query(GlobalArtifact).filter(GlobalArtifact.owner_id == owner_id, GlobalArtifact.status == "active").all()
     entries = [_artifact_entry(db, a) for a in rows]
     entries.sort(key=lambda e: (e["name"], json.dumps(e.get("namespace"), sort_keys=True), e["version"]))
     write_yaml(manifest.models_manifest_path(root), {"models": entries})

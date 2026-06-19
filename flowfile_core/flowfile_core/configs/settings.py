@@ -36,6 +36,13 @@ FLOWFILE_AI_LOG_PROMPTS_SCRUB: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_AI_LOG_PROMPTS_SCRUB", "0").strip().lower() in ("true", "1", "yes", "on")
 )
 
+# Ops opt-in for the `/project` git-tracking router in docker mode. The router is meant for
+# single-user/package use; in docker it 404s by default unless an operator deliberately enables
+# multi-tenant projects (the per-owner confinement in project/service.py then keeps tenants isolated).
+FLOWFILE_ENABLE_PROJECTS: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_ENABLE_PROJECTS", "0").strip().lower() in ("true", "1", "yes", "on")
+)
+
 
 def parse_args():
     """Parse command line arguments"""

@@ -316,8 +316,21 @@ class SQLAlchemyCatalogRepository:
     def get_namespace(self, namespace_id: int) -> CatalogNamespace | None:
         return self._db.get(CatalogNamespace, namespace_id)
 
-    def get_namespace_by_name(self, name: str, parent_id: int | None) -> CatalogNamespace | None:
-        return self._db.query(CatalogNamespace).filter_by(name=name, parent_id=parent_id).first()
+    def get_namespace_by_name(
+        self, name: str, parent_id: int | None, owner_id: int | None = None, include_public: bool = False
+    ) -> CatalogNamespace | None:
+        """Resolve a namespace by (name, parent). With ``owner_id`` the lookup is owner-scoped (a row
+        owned by another user is invisible). When ``include_public`` is also set and the owner has no
+        such row, fall back to an existing ``is_public=True`` row of that name/parent owned by anyone
+        (the seeded ``General``/``default``/... system namespaces) so a non-seed user importing a
+        project can resolve the public namespace for READ/placement — the caller must never mutate it."""
+        q = self._db.query(CatalogNamespace).filter_by(name=name, parent_id=parent_id)
+        if owner_id is not None:
+            owned = q.filter(CatalogNamespace.owner_id == owner_id).first()
+            if owned is not None or not include_public:
+                return owned
+            return q.filter(CatalogNamespace.is_public.is_(True)).first()
+        return q.first()
 
     def list_namespaces(self, parent_id: int | None = None) -> list[CatalogNamespace]:
         q = self._db.query(CatalogNamespace)
@@ -407,13 +420,12 @@ class SQLAlchemyCatalogRepository:
         # Schedules don't FK-cascade; a flow can't have schedules without the flow, so drop them
         # (and their trigger-table links) — otherwise they'd be orphaned on the flow's deletion.
         schedule_ids = [
-            row[0]
-            for row in self._db.query(FlowSchedule.id).filter_by(registration_id=registration_id).all()
+            row[0] for row in self._db.query(FlowSchedule.id).filter_by(registration_id=registration_id).all()
         ]
         if schedule_ids:
-            self._db.query(ScheduleTriggerTable).filter(
-                ScheduleTriggerTable.schedule_id.in_(schedule_ids)
-            ).delete(synchronize_session=False)
+            self._db.query(ScheduleTriggerTable).filter(ScheduleTriggerTable.schedule_id.in_(schedule_ids)).delete(
+                synchronize_session=False
+            )
             self._db.query(FlowSchedule).filter(FlowSchedule.registration_id == registration_id).delete(
                 synchronize_session=False
             )
@@ -714,8 +726,13 @@ class SQLAlchemyCatalogRepository:
     def get_table(self, table_id: int) -> CatalogTable | None:
         return self._db.get(CatalogTable, table_id)
 
-    def get_table_by_name(self, name: str, namespace_id: int | None) -> CatalogTable | None:
-        return self._db.query(CatalogTable).filter_by(name=name, namespace_id=namespace_id).first()
+    def get_table_by_name(
+        self, name: str, namespace_id: int | None, owner_id: int | None = None
+    ) -> CatalogTable | None:
+        q = self._db.query(CatalogTable).filter_by(name=name, namespace_id=namespace_id)
+        if owner_id is not None:
+            q = q.filter(CatalogTable.owner_id == owner_id)
+        return q.first()
 
     def list_tables_by_name(self, name: str) -> list[CatalogTable]:
         return (

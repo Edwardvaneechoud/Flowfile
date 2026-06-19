@@ -55,15 +55,15 @@ def test_version_lifecycle_via_routes(tmp_path):
         assert active["dirty"] is False
         assert active["has_external_changes"] is False
 
-        # A tracked file change between two saved versions gives history to restore.
-        (root / "marker.txt").write_text("a", encoding="utf-8")
+        # Add a standalone secret so save_version has a managed change (secrets.yaml).
+        client.post("/project/secrets", json=[{"name": "ROUTE_SECRET", "value": "v_a"}])
         assert client.get("/project/active").json()["dirty"] is True
         unsaved = client.get("/project/uncommitted").json()["changes"]
-        assert any(c["path"] == "marker.txt" and c["change"] == "added" for c in unsaved), unsaved
-        assert client.post("/project/versions", json={"message": "marker a"}).json()["sha"]
+        assert any(c["path"] == "secrets.yaml" for c in unsaved), unsaved
+        assert client.post("/project/versions", json={"message": "version a"}).json()["sha"]
 
-        (root / "marker.txt").write_text("b", encoding="utf-8")
-        assert client.post("/project/versions", json={"message": "marker b"}).json()["sha"]
+        client.post("/project/secrets", json=[{"name": "ROUTE_SECRET_2", "value": "v_b"}])
+        assert client.post("/project/versions", json={"message": "version b"}).json()["sha"]
         assert client.get("/project/active").json()["dirty"] is False
 
         versions = client.get("/project/versions").json()["versions"]
@@ -76,18 +76,74 @@ def test_version_lifecycle_via_routes(tmp_path):
         # as a new version (so the tree is clean afterwards).
         restored = client.post("/project/restore", json={"sha": version_a})
         assert restored.status_code == 200
-        assert set(restored.json()) == {"imported", "placeholder_secrets"}
-        assert (root / "marker.txt").read_text(encoding="utf-8") == "a"
+        assert set(restored.json()) == {"imported", "placeholder_secrets", "prune_errors", "recovery_sha"}
         assert client.get("/project/active").json()["dirty"] is False
         assert client.get("/project/versions").json()["versions"][0]["message"].startswith("Restore")
 
         # Reload accepts on-disk state and returns the same import shape.
         reloaded = client.post("/project/reload")
         assert reloaded.status_code == 200
-        assert set(reloaded.json()) == {"imported", "placeholder_secrets"}
+        assert set(reloaded.json()) == {"imported", "placeholder_secrets", "prune_errors", "recovery_sha"}
 
         assert client.post("/project/close").json() == {"ok": True}
         assert client.get("/project/active").json() == {"project": None}
+    finally:
+        project_sync.close_project(OWNER)
+
+
+def test_restore_on_dirty_tree_409s_without_force(tmp_path):
+    """M-C1: restore/reload reset the tree and hard-prune the DB, destroying uncommitted work. A dirty
+    tree must be 409'd (not silently discarded) unless the caller passes force=true."""
+    root = tmp_path / "proj"
+    project_sync.close_project(OWNER)
+    try:
+        assert client.post("/project/init", json={"folder_path": str(root), "name": "Dirty"}).status_code == 200
+        # Use a standalone secret to create a managed diff that persists through project_all.
+        client.post("/project/secrets", json=[{"name": "DIRTY_SECRET_V1", "value": "v1"}])
+        assert client.post("/project/versions", json={"message": "v1"}).json()["sha"]
+        version_v1 = client.get("/project/versions").json()["versions"][0]["sha"]
+        client.post("/project/secrets", json=[{"name": "DIRTY_SECRET_V2", "value": "v2"}])
+        assert client.post("/project/versions", json={"message": "v2"}).json()["sha"]
+
+        # Make an uncommitted change (untracked file is enough for is_dirty).
+        (root / "unsaved.txt").write_text("uncommitted", encoding="utf-8")
+        assert client.get("/project/active").json()["dirty"] is True
+        blocked = client.post("/project/restore", json={"sha": version_v1})
+        assert blocked.status_code == 409
+        # The unsaved file is untouched (nothing destroyed).
+        assert (root / "unsaved.txt").read_text(encoding="utf-8") == "uncommitted"
+
+        # reload is guarded the same way.
+        assert client.post("/project/reload", json={"force": False}).status_code == 409
+        assert (root / "unsaved.txt").read_text(encoding="utf-8") == "uncommitted"
+    finally:
+        project_sync.close_project(OWNER)
+
+
+def test_restore_with_force_autosaves_uncommitted_work(tmp_path):
+    """M-C1: with force=true the uncommitted work is snapshotted into git history (recovery_sha) before
+    the destructive reset, so it stays recoverable rather than being silently lost."""
+    root = tmp_path / "proj"
+    project_sync.close_project(OWNER)
+    try:
+        assert client.post("/project/init", json={"folder_path": str(root), "name": "Force"}).status_code == 200
+        # Commit a v1 with a standalone secret so there is a restore target.
+        client.post("/project/secrets", json=[{"name": "FORCE_SECRET_V1", "value": "v1"}])
+        assert client.post("/project/versions", json={"message": "v1"}).json()["sha"]
+        version_v1 = client.get("/project/versions").json()["versions"][0]["sha"]
+
+        # Create uncommitted work that will be captured by the autosave:
+        # add a second secret, which changes secrets.yaml (a managed path).
+        client.post("/project/secrets", json=[{"name": "FORCE_SECRET_UNSAVED", "value": "unsaved"}])
+        assert client.get("/project/active").json()["dirty"] is True
+        restored = client.post("/project/restore", json={"sha": version_v1, "force": True})
+        assert restored.status_code == 200
+        recovery_sha = restored.json()["recovery_sha"]
+        assert recovery_sha, "force restore must record a recovery commit for managed-path changes"
+        # The autosave commit captured the dirty managed change.
+        recovered = git_ops.diff_name_status(root, version_v1, recovery_sha)
+        assert any(c["path"] == "secrets.yaml" for c in recovered), recovered
+        assert any(m["message"].startswith("Autosave before") for m in git_ops.log(root))
     finally:
         project_sync.close_project(OWNER)
 

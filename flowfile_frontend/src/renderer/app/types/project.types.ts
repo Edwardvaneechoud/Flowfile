@@ -17,6 +17,8 @@ export interface ImportedCounts {
 export interface ImportResult {
   imported: ImportedCounts;
   placeholder_secrets: string[];
+  prune_errors?: string[]; // resources that failed to prune during restore/reload
+  recovery_sha?: string | null; // autosave commit made before a forced restore/reload
 }
 
 export interface OpenProjectResult extends ImportResult {

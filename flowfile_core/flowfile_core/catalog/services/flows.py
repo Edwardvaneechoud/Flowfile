@@ -189,6 +189,8 @@ class FlowRegistrationService:
         flow = self.repo.get_flow(registration_id)
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
+        name_changed = name is not None and flow.name != name
+        desc_changed = description is not None and flow.description != description
         ns_changed = namespace_id is not None and flow.namespace_id != namespace_id
         moved_path, moved_owner = flow.flow_path, flow.owner_id
         if name is not None:
@@ -198,7 +200,7 @@ class FlowRegistrationService:
         if namespace_id is not None:
             flow.namespace_id = namespace_id
         flow = self.repo.update_flow(flow)
-        if ns_changed and moved_path:
+        if (name_changed or desc_changed or ns_changed) and moved_path:
             _project_sync_flow_saved(moved_path, moved_owner)
         return self.enrich_flow_registration(flow, requesting_user_id)
 

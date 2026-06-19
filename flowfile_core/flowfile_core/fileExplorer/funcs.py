@@ -384,6 +384,23 @@ def validate_file_path(user_path: str, allowed_base: Path) -> Path | None:
         return None
 
 
+def _is_contained(base: str, candidate: str) -> bool:
+    """True when ``candidate`` resolves to ``base`` or a path under it.
+
+    Realpaths both sides *before* the containment test, so a symlink whose target escapes the base is
+    rejected here rather than followed later (M-P2), and uses ``commonpath`` rather than a bare prefix
+    so a sibling dir sharing a name prefix (``/data/userX`` vs ``/data/user2``) cannot pass (M-P1).
+    """
+    base = os.path.realpath(base)
+    candidate = os.path.realpath(candidate)
+    if candidate == base:
+        return True
+    try:
+        return os.path.commonpath([base, candidate]) == base
+    except ValueError:  # different drives / mixed abs+rel
+        return False
+
+
 def _local_filesystem_roots() -> list[str]:
     """Return the filesystem roots a desktop (electron) user may access.
 
@@ -432,28 +449,20 @@ def validate_path_under_cwd(user_path: str) -> str:
         for root in _local_filesystem_roots():
             base_path = os.path.normpath(root)
             fullpath = os.path.normpath(os.path.join(base_path, normalized_path))
-            if fullpath.startswith(base_path):
+            if _is_contained(base_path, fullpath):
                 return fullpath
         raise HTTPException(403, "Access denied")
 
-    # In Docker/package mode, enforce strict sandboxing
-    base_path = os.path.normpath(os.getcwd())
-    fullpath = os.path.normpath(os.path.join(base_path, user_path))
-    if fullpath.startswith(base_path):
-        return fullpath
-
-    # Try flowfile storage directory (~/.flowfile)
-    base_path = os.path.normpath(str(storage.base_directory))
-    fullpath = os.path.normpath(os.path.join(base_path, user_path))
-    if fullpath.startswith(base_path):
-        return fullpath
-
-    # Try user data directory (consistent with SecureFileExplorer sandbox)
-    # In local mode this is the home directory, in Docker it's /data/user
-    base_path = os.path.normpath(str(storage.user_data_directory))
-    fullpath = os.path.normpath(os.path.join(base_path, user_path))
-    if fullpath.startswith(base_path):
-        return fullpath
+    # In Docker/package mode, enforce strict sandboxing. Reject `..` lexically (mirrors the electron
+    # guard; closes I1), then realpath both sides in `_is_contained` so a sibling-prefix dir (M-P1) or
+    # a symlink whose target escapes (M-P2) is rejected rather than passing a bare startswith.
+    if ".." in user_path:
+        raise HTTPException(403, "Access denied: path traversal not allowed")
+    for base in (os.getcwd(), str(storage.base_directory), str(storage.user_data_directory)):
+        base_path = os.path.normpath(base)
+        fullpath = os.path.normpath(os.path.join(base_path, user_path))
+        if _is_contained(base_path, fullpath):
+            return fullpath
 
     raise HTTPException(403, "Access denied")
 
