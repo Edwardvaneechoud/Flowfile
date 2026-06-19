@@ -166,9 +166,34 @@ class InputExcelTable(InputTableBase):
         return self
 
 
+class InputIpcTable(InputTableBase):
+    """Defines settings for reading an Arrow IPC/Feather file."""
+
+    file_type: Literal["ipc"] = "ipc"
+
+
+class InputNdjsonTable(InputTableBase):
+    """Defines settings for reading a newline-delimited JSON file."""
+
+    file_type: Literal["ndjson"] = "ndjson"
+
+
+class InputAvroTable(InputTableBase):
+    """Defines settings for reading an Avro file."""
+
+    file_type: Literal["avro"] = "avro"
+
+
 # Create the discriminated union (similar to OutputTableSettings)
 InputTableSettings = Annotated[
-    InputCsvTable | InputJsonTable | InputParquetTable | InputExcelTable, Field(discriminator="file_type")
+    InputCsvTable
+    | InputJsonTable
+    | InputParquetTable
+    | InputExcelTable
+    | InputIpcTable
+    | InputNdjsonTable
+    | InputAvroTable,
+    Field(discriminator="file_type"),
 ]
 
 
@@ -185,12 +210,14 @@ class ReceivedTable(BaseModel):
     fields: list[MinimalFieldInfo] = Field(default_factory=list)
     abs_file_path: str | None = None
 
-    file_type: Literal["csv", "json", "parquet", "excel"]
+    file_type: Literal["csv", "json", "parquet", "excel", "ipc", "ndjson", "avro"]
 
     table_settings: InputTableSettings
 
     @classmethod
-    def create_from_path(cls, path: str, file_type: Literal["csv", "json", "parquet", "excel"] = "csv"):
+    def create_from_path(
+        cls, path: str, file_type: Literal["csv", "json", "parquet", "excel", "ipc", "ndjson", "avro"] = "csv"
+    ):
         """Creates an instance from a file path string."""
         filename = Path(path).name
 
@@ -199,6 +226,9 @@ class ReceivedTable(BaseModel):
             "json": InputJsonTable(),
             "parquet": InputParquetTable(),
             "excel": InputExcelTable(),
+            "ipc": InputIpcTable(),
+            "ndjson": InputNdjsonTable(),
+            "avro": InputAvroTable(),
         }
 
         return cls(
@@ -257,6 +287,8 @@ class OutputParquetTable(BaseModel):
     """Defines settings for writing a Parquet file."""
 
     file_type: Literal["parquet"] = "parquet"
+    # Polars default for write_parquet/sink_parquet
+    compression: Literal["lz4", "uncompressed", "snappy", "gzip", "brotli", "zstd"] = "zstd"
 
 
 class OutputExcelTable(BaseModel):
@@ -266,9 +298,31 @@ class OutputExcelTable(BaseModel):
     sheet_name: str = "Sheet1"
 
 
+class OutputIpcTable(BaseModel):
+    """Defines settings for writing an Arrow IPC/Feather file."""
+
+    file_type: Literal["ipc"] = "ipc"
+    compression: Literal["uncompressed", "lz4", "zstd"] = "uncompressed"
+
+
+class OutputNdjsonTable(BaseModel):
+    """Defines settings for writing a newline-delimited JSON file."""
+
+    file_type: Literal["ndjson"] = "ndjson"
+    compression: Literal["uncompressed", "gzip", "zstd"] = "uncompressed"
+
+
+class OutputAvroTable(BaseModel):
+    """Defines settings for writing an Avro file."""
+
+    file_type: Literal["avro"] = "avro"
+    compression: Literal["uncompressed", "snappy", "deflate"] = "uncompressed"
+
+
 # Create a discriminated union
 OutputTableSettings = Annotated[
-    OutputCsvTable | OutputParquetTable | OutputExcelTable, Field(discriminator="file_type")
+    OutputCsvTable | OutputParquetTable | OutputExcelTable | OutputIpcTable | OutputNdjsonTable | OutputAvroTable,
+    Field(discriminator="file_type"),
 ]
 
 
@@ -297,6 +351,15 @@ class OutputSettings(BaseModel):
             result["fields"] = self.fields
         # Only include table_settings if it has non-default values beyond file_type
         ts_dict = self.table_settings.model_dump(exclude={"file_type"})
+        # Drop compression when it equals the format default so YAML stays minimal
+        # and the "omit table_settings when all-default" invariant still holds.
+        compression_field = type(self.table_settings).model_fields.get("compression")
+        if (
+            "compression" in ts_dict
+            and compression_field is not None
+            and ts_dict["compression"] == compression_field.default
+        ):
+            ts_dict.pop("compression")
         if any(v for v in ts_dict.values()):
             result["table_settings"] = ts_dict
         return result
@@ -311,6 +374,10 @@ class OutputSettings(BaseModel):
         if self.file_type == "csv":
             return self.table_settings.delimiter
 
+    @property
+    def compression(self) -> str | None:
+        return getattr(self.table_settings, "compression", None)
+
     @field_validator("table_settings", mode="before")
     @classmethod
     def validate_table_settings(cls, v, info: ValidationInfo):
@@ -324,6 +391,12 @@ class OutputSettings(BaseModel):
                     return OutputParquetTable()
                 case "excel":
                     return OutputExcelTable()
+                case "ipc":
+                    return OutputIpcTable()
+                case "ndjson":
+                    return OutputNdjsonTable()
+                case "avro":
+                    return OutputAvroTable()
                 case _:
                     return OutputCsvTable()
 

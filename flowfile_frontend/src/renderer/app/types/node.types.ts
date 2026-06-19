@@ -193,11 +193,26 @@ export interface InputExcelTable {
   type_inference: boolean;
 }
 
+export interface InputIpcTable {
+  file_type: "ipc";
+}
+
+export interface InputNdjsonTable {
+  file_type: "ndjson";
+}
+
+export interface InputAvroTable {
+  file_type: "avro";
+}
+
 export type InputTableSettings =
   | InputCsvTable
   | InputJsonTable
   | InputParquetTable
-  | InputExcelTable;
+  | InputExcelTable
+  | InputIpcTable
+  | InputNdjsonTable
+  | InputAvroTable;
 
 export function isInputCsvTable(settings: InputTableSettings): settings is InputCsvTable {
   return settings.file_type === "csv";
@@ -211,6 +226,18 @@ export function isInputParquetTable(settings: InputTableSettings): settings is I
   return settings.file_type === "parquet";
 }
 
+export function isInputIpcTable(settings: InputTableSettings): settings is InputIpcTable {
+  return settings.file_type === "ipc";
+}
+
+export function isInputNdjsonTable(settings: InputTableSettings): settings is InputNdjsonTable {
+  return settings.file_type === "ndjson";
+}
+
+export function isInputAvroTable(settings: InputTableSettings): settings is InputAvroTable {
+  return settings.file_type === "avro";
+}
+
 // Output Table Settings
 
 export interface OutputCsvTable {
@@ -221,6 +248,7 @@ export interface OutputCsvTable {
 
 export interface OutputParquetTable {
   file_type: string;
+  compression?: string;
 }
 
 export interface OutputExcelTable {
@@ -228,7 +256,28 @@ export interface OutputExcelTable {
   file_type: string;
 }
 
-export type OutputTableSettings = OutputCsvTable | OutputParquetTable | OutputExcelTable;
+export interface OutputIpcTable {
+  file_type: string;
+  compression?: string;
+}
+
+export interface OutputNdjsonTable {
+  file_type: string;
+  compression?: string;
+}
+
+export interface OutputAvroTable {
+  file_type: string;
+  compression?: string;
+}
+
+export type OutputTableSettings =
+  | OutputCsvTable
+  | OutputParquetTable
+  | OutputExcelTable
+  | OutputIpcTable
+  | OutputNdjsonTable
+  | OutputAvroTable;
 
 export function isOutputCsvTable(settings: OutputTableSettings): settings is OutputCsvTable {
   return settings.file_type === "csv";
@@ -244,10 +293,22 @@ export function isOutputExcelTable(settings: OutputTableSettings): settings is O
   return settings.file_type === "excel";
 }
 
+export function isOutputIpcTable(settings: OutputTableSettings): settings is OutputIpcTable {
+  return settings.file_type === "ipc";
+}
+
+export function isOutputNdjsonTable(settings: OutputTableSettings): settings is OutputNdjsonTable {
+  return settings.file_type === "ndjson";
+}
+
+export function isOutputAvroTable(settings: OutputTableSettings): settings is OutputAvroTable {
+  return settings.file_type === "avro";
+}
+
 export interface OutputSettings {
   name: string;
   directory: string;
-  file_type: "parquet" | "csv" | "excel";
+  file_type: "parquet" | "csv" | "excel" | "ipc" | "ndjson" | "avro";
   fields?: string[];
   write_mode: "overwrite" | "append" | "error";
   table_settings: OutputTableSettings;
@@ -613,7 +674,7 @@ export interface ReceivedTable {
   status?: string;
   fields?: MinimalFieldInput[];
   abs_file_path?: string;
-  file_type: "csv" | "json" | "parquet" | "excel";
+  file_type: "csv" | "json" | "parquet" | "excel" | "ipc" | "ndjson" | "avro";
   table_settings: InputTableSettings;
 }
 

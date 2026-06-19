@@ -1687,6 +1687,7 @@ class FlowFrame:
         self,
         path: str | os.PathLike,
         *,
+        compression: str | None = None,
         description: str = None,
         convert_to_absolute_path: bool = True,
         **kwargs: Any,
@@ -1726,11 +1727,16 @@ class FlowFrame:
         file_name = file_str.split(os.sep)[-1]
         use_polars_code = bool(kwargs.items()) or not is_path_input
 
+        parquet_table = (
+            input_schema.OutputParquetTable(compression=compression)
+            if compression
+            else input_schema.OutputParquetTable()
+        )
         output_settings = input_schema.OutputSettings(
             file_type="parquet",
             name=file_name,
             directory=file_str if is_path_input else str(file_str),
-            table_settings=input_schema.OutputParquetTable(),
+            table_settings=parquet_table,
         )
 
         if is_path_input:
@@ -1758,8 +1764,11 @@ class FlowFrame:
                     " File-like objects are not supported with the Polars Code fallback."
                 )
 
+            fallback_kwargs = dict(kwargs)
+            if compression is not None:
+                fallback_kwargs.setdefault("compression", compression)
             path_arg_repr = repr(output_settings.directory)
-            kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in kwargs.items())
+            kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in fallback_kwargs.items())
             args_str = f"path={path_arg_repr}"
             if kwargs_repr:
                 args_str += f", {kwargs_repr}"
@@ -1769,6 +1778,212 @@ class FlowFrame:
             self._add_polars_code(new_node_id, code, description)
 
         return self._create_child_frame(new_node_id)
+
+    def _write_simple_file(
+        self,
+        path: str | os.PathLike,
+        file_type: str,
+        table_settings: Any,
+        fallback_code_template: str,
+        *,
+        compression: str | None = None,
+        description: str = None,
+        convert_to_absolute_path: bool = True,
+        **kwargs: Any,
+    ) -> FlowFrame:
+        """Shared implementation for option-light file writers (ipc/ndjson/avro).
+
+        Creates a standard Output node when only a path (and optional compression)
+        is given; falls back to a Polars Code node when extra kwargs are supplied.
+        ``compression`` rides on ``table_settings`` for the standard path and is
+        merged into the generated call for the fallback path. ``fallback_code_template``
+        is formatted with ``args_str``.
+        """
+        new_node_id = generate_node_id()
+
+        is_path_input = isinstance(path, str | os.PathLike)
+        file_str = str(path)
+        if "~" in file_str:
+            file_str = os.path.expanduser(file_str)
+        file_name = file_str.split(os.sep)[-1]
+        use_polars_code = bool(kwargs.items()) or not is_path_input
+
+        output_settings = input_schema.OutputSettings(
+            file_type=file_type,
+            name=file_name,
+            directory=file_str,
+            table_settings=table_settings,
+        )
+
+        if is_path_input:
+            try:
+                output_settings.set_absolute_filepath()
+                if convert_to_absolute_path:
+                    output_settings.directory = output_settings.abs_file_path
+            except Exception as e:
+                logger.warning(f"Could not determine absolute path for {file_str}: {e}")
+
+        if not use_polars_code:
+            node_output = input_schema.NodeOutput(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                output_settings=output_settings,
+                depending_on_id=self.node_id,
+                description=description,
+            )
+            self.flow_graph.add_output(node_output)
+        else:
+            if not is_path_input:
+                raise TypeError(
+                    f"Input 'path' must be a string or Path-like object when using advanced "
+                    f"write_{file_type} options (kwargs={kwargs.items()}), got {type(path)}."
+                    " File-like objects are not supported with the Polars Code fallback."
+                )
+            fallback_kwargs = dict(kwargs)
+            if compression is not None:
+                fallback_kwargs.setdefault("compression", compression)
+            path_arg_repr = repr(output_settings.directory)
+            kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in fallback_kwargs.items())
+            args_str = f"path={path_arg_repr}"
+            if kwargs_repr:
+                args_str += f", {kwargs_repr}"
+            code = fallback_code_template.format(args_str=args_str)
+            logger.debug(f"Generated Polars Code: {code}")
+            self._add_polars_code(new_node_id, code, description)
+
+        return self._create_child_frame(new_node_id)
+
+    def write_ipc(
+        self,
+        path: str | os.PathLike,
+        *,
+        compression: str | None = None,
+        description: str = None,
+        convert_to_absolute_path: bool = True,
+        **kwargs: Any,
+    ) -> FlowFrame:
+        """Write the data to an Arrow IPC/Feather file.
+
+        Creates a standard Output node if only 'path' (and optional compression)
+        is provided; falls back to a Polars Code node (``sink_ipc``) when other
+        keyword arguments are used.
+
+        Args:
+            path: Path or filename for the IPC/Arrow file.
+            compression: One of 'uncompressed', 'lz4', 'zstd' (default 'uncompressed').
+            description: Description of this operation for the ETL graph.
+            convert_to_absolute_path: If the path needs to be set to a fixed location.
+            **kwargs: Additional keyword arguments for polars.LazyFrame.sink_ipc.
+
+        Returns:
+            Self for method chaining (new FlowFrame pointing to the output node).
+        """
+        table_settings = (
+            input_schema.OutputIpcTable(compression=compression) if compression else input_schema.OutputIpcTable()
+        )
+        return self._write_simple_file(
+            path,
+            "ipc",
+            table_settings,
+            "input_df.sink_ipc({args_str})",
+            compression=compression,
+            description=description,
+            convert_to_absolute_path=convert_to_absolute_path,
+            **kwargs,
+        )
+
+    def sink_ipc(
+        self, path: str | os.PathLike, *, compression: str | None = None, description: str = None, **kwargs: Any
+    ) -> FlowFrame:
+        """Alias for :meth:`write_ipc`."""
+        return self.write_ipc(path, compression=compression, description=description, **kwargs)
+
+    def write_ndjson(
+        self,
+        path: str | os.PathLike,
+        *,
+        compression: str | None = None,
+        description: str = None,
+        convert_to_absolute_path: bool = True,
+        **kwargs: Any,
+    ) -> FlowFrame:
+        """Write the data to a newline-delimited JSON file.
+
+        Creates a standard Output node if only 'path' (and optional compression)
+        is provided; falls back to a Polars Code node (``sink_ndjson``) when other
+        keyword arguments are used.
+
+        Args:
+            path: Path or filename for the NDJSON file.
+            compression: One of 'uncompressed', 'gzip', 'zstd' (default 'uncompressed').
+            description: Description of this operation for the ETL graph.
+            convert_to_absolute_path: If the path needs to be set to a fixed location.
+            **kwargs: Additional keyword arguments for polars.LazyFrame.sink_ndjson.
+
+        Returns:
+            Self for method chaining (new FlowFrame pointing to the output node).
+        """
+        table_settings = (
+            input_schema.OutputNdjsonTable(compression=compression)
+            if compression
+            else input_schema.OutputNdjsonTable()
+        )
+        return self._write_simple_file(
+            path,
+            "ndjson",
+            table_settings,
+            "input_df.sink_ndjson({args_str})",
+            compression=compression,
+            description=description,
+            convert_to_absolute_path=convert_to_absolute_path,
+            **kwargs,
+        )
+
+    def sink_ndjson(
+        self, path: str | os.PathLike, *, compression: str | None = None, description: str = None, **kwargs: Any
+    ) -> FlowFrame:
+        """Alias for :meth:`write_ndjson`."""
+        return self.write_ndjson(path, compression=compression, description=description, **kwargs)
+
+    def write_avro(
+        self,
+        path: str | os.PathLike,
+        *,
+        compression: str | None = None,
+        description: str = None,
+        convert_to_absolute_path: bool = True,
+        **kwargs: Any,
+    ) -> FlowFrame:
+        """Write the data to an Avro file.
+
+        Creates a standard Output node if only 'path' (and optional compression)
+        is provided; falls back to a Polars Code node (``collect().write_avro``)
+        when other keyword arguments are used. Avro has no lazy sink, so writing
+        materialises in the worker.
+
+        Args:
+            path: Path or filename for the Avro file.
+            compression: One of 'uncompressed', 'snappy', 'deflate' (default 'uncompressed').
+            description: Description of this operation for the ETL graph.
+            convert_to_absolute_path: If the path needs to be set to a fixed location.
+            **kwargs: Additional keyword arguments for polars.DataFrame.write_avro.
+
+        Returns:
+            Self for method chaining (new FlowFrame pointing to the output node).
+        """
+        table_settings = (
+            input_schema.OutputAvroTable(compression=compression) if compression else input_schema.OutputAvroTable()
+        )
+        return self._write_simple_file(
+            path,
+            "avro",
+            table_settings,
+            "input_df.collect().write_avro({args_str})",
+            compression=compression,
+            description=description,
+            convert_to_absolute_path=convert_to_absolute_path,
+            **kwargs,
+        )
 
     def write_csv(
         self,

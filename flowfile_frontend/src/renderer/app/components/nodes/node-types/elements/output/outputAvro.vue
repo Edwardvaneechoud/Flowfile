@@ -3,7 +3,7 @@
     <div class="input-group">
       <label>Compression:</label>
       <el-select
-        v-model="localParquetTable.compression"
+        v-model="localTable.compression"
         placeholder="Select compression"
         size="small"
         style="max-width: 200px"
@@ -24,27 +24,27 @@
 import { ref, watch } from "vue";
 import { ElSelect, ElOption } from "element-plus";
 import "element-plus/dist/index.css";
-import { OutputParquetTable } from "../../../baseNode/nodeInput";
+import { OutputAvroTable } from "../../../baseNode/nodeInput";
 
 const props = defineProps({
   modelValue: {
-    type: Object as () => OutputParquetTable,
+    type: Object as () => OutputAvroTable,
     required: true,
   },
 });
 
 const emit = defineEmits(["update:modelValue"]);
-const localParquetTable = ref(props.modelValue);
-const compressionOptions = ["zstd", "snappy", "gzip", "lz4", "brotli", "uncompressed"];
+const localTable = ref(props.modelValue);
+const compressionOptions = ["uncompressed", "snappy", "deflate"];
 
 const updateParent = () => {
-  emit("update:modelValue", localParquetTable.value);
+  emit("update:modelValue", localTable.value);
 };
 
 watch(
   () => props.modelValue,
   (newVal) => {
-    localParquetTable.value = newVal;
+    localTable.value = newVal;
   },
   { deep: true },
 );

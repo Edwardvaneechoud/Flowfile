@@ -20,9 +20,9 @@ from polars._utils.async_ import _GeventDataFrameResult
 from polars._dependencies import polars_cloud as pc
 from polars.io.cloud import CredentialProviderFunction
 from polars.lazyframe.frame import LazyGroupBy
-from polars import LazyFrame, DataFrame, QueryOptFlags, Schema, CompatLevel
+from polars import LazyFrame, DataFrame, QueryOptFlags, Schema
 from polars.lazyframe.opt_flags import DEFAULT_QUERY_OPT_FLAGS
-from polars._typing import (IntoExpr, ClosedInterval, Label, StartBy, IpcCompression, SyncOnCloseMethod, ExplainFormat, EngineType, SerializationFormat, AsofJoinStrategy)
+from polars._typing import (IntoExpr, ClosedInterval, Label, StartBy, SyncOnCloseMethod, ExplainFormat, EngineType, SerializationFormat, AsofJoinStrategy)
 
 # Local application/library specific imports
 from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -132,6 +132,9 @@ class FlowFrame:
     def _should_use_polars_code_for_join(self, maintain_order, coalesce, nulls_equal, validate, suffix) -> bool: ...
 
     def _with_flowfile_formula(self, flowfile_formula: str, output_column_name: str, output_column_datatype: str = 'Auto', description: str = None) -> 'FlowFrame': ...
+
+    # Shared implementation for option-light file writers (ipc/ndjson/avro).
+    def _write_simple_file(self, path: str | os.PathLike, file_type: str, table_settings: Any, fallback_code_template: str, compression: str | None = None, convert_to_absolute_path: bool = True, description: str = None, **kwargs) -> 'FlowFrame': ...
 
     # Score the data using a trained model.
     def apply_model(self, upstream: FlowFrame | None = None, model_name: str = '', output_column: str = 'prediction', version: int | None = None, schema: SchemaReference | None = None, namespace_id: int | None = None, description: str | None = None) -> 'FlowFrame': ...
@@ -371,11 +374,11 @@ class FlowFrame:
     # Sink a LazyFrame to an Iceberg table.
     def sink_iceberg(self, target: str | pyiceberg.table.Table, mode: Literal['append', 'overwrite'], catalog: pyiceberg.catalog.Catalog | polars.io.iceberg.IcebergCatalogConfig | None = None, storage_options: StorageOptionsDict | None = None, description: Optional[str] = None) -> pl.DataFrame: ...
 
-    # Evaluate the query in streaming mode and write to an IPC file.
-    def sink_ipc(self, path: str | Path | IO[bytes] | PartitionBy, compression: IpcCompression | None = 'uncompressed', compat_level: CompatLevel | None = None, record_batch_size: int | None = None, maintain_order: bool = True, storage_options: StorageOptionsDict | None = None, credential_provider: CredentialProviderFunction | Literal['auto'] | None = 'auto', retries: int | None = None, sync_on_close: SyncOnCloseMethod | None = None, mkdir: bool = False, lazy: bool = False, engine: EngineType = 'auto', optimizations: QueryOptFlags = DEFAULT_QUERY_OPT_FLAGS, _record_batch_statistics: bool = False, description: Optional[str] = None) -> LazyFrame | None: ...
+    # Alias for :meth:`write_ipc`.
+    def sink_ipc(self, path: str | os.PathLike, compression: str | None = None, description: str = None, **kwargs) -> 'FlowFrame': ...
 
-    # Evaluate the query in streaming mode and write to an NDJSON file.
-    def sink_ndjson(self, path: str | Path | IO[bytes] | IO[str] | PartitionBy, compression: Literal['uncompressed', 'gzip', 'zstd'] = 'uncompressed', compression_level: int | None = None, check_extension: bool = True, maintain_order: bool = True, storage_options: StorageOptionsDict | None = None, credential_provider: CredentialProviderFunction | Literal['auto'] | None = 'auto', retries: int | None = None, sync_on_close: SyncOnCloseMethod | None = None, mkdir: bool = False, lazy: bool = False, engine: EngineType = 'auto', optimizations: QueryOptFlags = DEFAULT_QUERY_OPT_FLAGS, description: Optional[str] = None) -> LazyFrame | None: ...
+    # Alias for :meth:`write_ndjson`.
+    def sink_ndjson(self, path: str | os.PathLike, compression: str | None = None, description: str = None, **kwargs) -> 'FlowFrame': ...
 
     # Evaluate the query in streaming mode and write to a Parquet file.
     def sink_parquet(self, path: str | Path | IO[bytes] | PartitionBy, compression: str = 'zstd', compression_level: int | None = None, statistics: bool | str | dict[str, bool] = True, row_group_size: int | None = None, data_page_size: int | None = None, maintain_order: bool = True, storage_options: StorageOptionsDict | None = None, credential_provider: CredentialProviderFunction | Literal['auto'] | None = 'auto', retries: int | None = None, sync_on_close: SyncOnCloseMethod | None = None, metadata: ParquetMetadata | None = None, arrow_schema: ArrowSchemaExportable | None = None, mkdir: bool = False, lazy: bool = False, engine: EngineType = 'auto', optimizations: QueryOptFlags = DEFAULT_QUERY_OPT_FLAGS, description: Optional[str] = None) -> LazyFrame | None: ...
@@ -449,6 +452,9 @@ class FlowFrame:
     # Add a row index as the first column in the DataFrame.
     def with_row_index(self, name: str = 'index', offset: int = 0, description: str = None) -> 'FlowFrame': ...
 
+    # Write the data to an Avro file.
+    def write_avro(self, path: str | os.PathLike, compression: str | None = None, convert_to_absolute_path: bool = True, description: str = None, **kwargs) -> 'FlowFrame': ...
+
     # Write the data frame to the Flowfile catalog.
     def write_catalog_table(self, table_name: str, schema: SchemaReference | None = None, namespace_id: int | None = None, write_mode: Literal['overwrite', 'error', 'append', 'upsert', 'update', 'delete', 'virtual'] = 'overwrite', merge_keys: list[str] | None = None, partition_by: list[str] | None = None, description: str | None = None) -> 'FlowFrame': ...
 
@@ -466,11 +472,17 @@ class FlowFrame:
     # Write the data to an Excel file.
     def write_excel(self, path: str | os.PathLike, worksheet: str = 'Sheet1', convert_to_absolute_path: bool = True, description: str = None, **kwargs) -> 'FlowFrame': ...
 
+    # Write the data to an Arrow IPC/Feather file.
+    def write_ipc(self, path: str | os.PathLike, compression: str | None = None, convert_to_absolute_path: bool = True, description: str = None, **kwargs) -> 'FlowFrame': ...
+
     # Write the data frame to cloud storage in JSON format.
     def write_json_to_cloud_storage(self, path: str, connection_name: str | None = None, description: str | None = None) -> 'FlowFrame': ...
 
+    # Write the data to a newline-delimited JSON file.
+    def write_ndjson(self, path: str | os.PathLike, compression: str | None = None, convert_to_absolute_path: bool = True, description: str = None, **kwargs) -> 'FlowFrame': ...
+
     # Write the data to a Parquet file. Creates a standard Output node if only
-    def write_parquet(self, path: str | os.PathLike, convert_to_absolute_path: bool = True, description: str = None, **kwargs) -> 'FlowFrame': ...
+    def write_parquet(self, path: str | os.PathLike, compression: str | None = None, convert_to_absolute_path: bool = True, description: str = None, **kwargs) -> 'FlowFrame': ...
 
     # Write the data frame to cloud storage in Parquet format.
     def write_parquet_to_cloud_storage(self, path: str, connection_name: str | None = None, compression: Literal['snappy', 'gzip', 'brotli', 'lz4', 'zstd'] = 'snappy', description: str | None = None) -> 'FlowFrame': ...

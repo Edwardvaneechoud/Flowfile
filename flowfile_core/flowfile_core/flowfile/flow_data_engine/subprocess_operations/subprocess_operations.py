@@ -163,7 +163,7 @@ def trigger_create_operation(
     flow_id: int,
     node_id: int | str,
     received_table: ReceivedTable,
-    file_type: str = Literal["csv", "parquet", "json", "excel"],
+    file_type: str = Literal["csv", "parquet", "json", "excel", "ipc", "ndjson", "avro"],
 ):
     f = requests.post(
         url=f"{WORKER_URL}/create_table/{file_type}",
@@ -248,6 +248,7 @@ def trigger_write_output(
     node_id: int | str,
     sheet_name: str | None = None,
     delimiter: str | None = None,
+    compression: str | None = None,
 ) -> Status:
     from base64 import encodebytes
 
@@ -261,6 +262,7 @@ def trigger_write_output(
             "write_mode": write_mode,
             "sheet_name": sheet_name,
             "delimiter": delimiter,
+            "compression": compression,
             "flowfile_node_id": node_id,
             "flowfile_flow_id": flow_id,
         },
@@ -1193,6 +1195,7 @@ class ExternalOutputWriter(BaseFetcher):
         node_id: int | str,
         sheet_name: str | None = None,
         delimiter: str | None = None,
+        compression: str | None = None,
         wait_on_completion: bool = True,
     ):
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
@@ -1203,6 +1206,7 @@ class ExternalOutputWriter(BaseFetcher):
             write_mode=write_mode,
             sheet_name=sheet_name,
             delimiter=delimiter,
+            compression=compression,
             flow_id=flow_id,
             node_id=node_id,
         )
