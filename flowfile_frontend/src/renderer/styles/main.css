@@ -437,6 +437,16 @@ button {
   color: var(--color-accent);
 }
 
+/* Sub-menu parents (Catalog, Connections) carry is-active on the root .el-sub-menu, not the item — mirror the plain active highlight so their rail icon turns accent too. */
+.el-sub-menu.is-active > .el-sub-menu__title {
+  color: var(--color-accent);
+  background-color: var(--color-background-selected);
+}
+
+.el-sub-menu.is-active > .el-sub-menu__title i {
+  color: var(--color-accent);
+}
+
 /* ========== Element Plus Tabs Styling ========== */
 .el-tabs__header {
   background-color: var(--color-background-primary);

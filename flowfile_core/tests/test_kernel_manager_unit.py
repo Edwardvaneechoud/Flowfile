@@ -628,3 +628,80 @@ class TestStartupSequence:
         KernelManager(shared_volume_path="/tmp/x")
 
         assert called == ["restore", "reclaim", "gc"]
+
+
+# Container liveness + execute self-heal
+
+
+class TestContainerLiveness:
+    def test_running_container_is_alive(self):
+        mgr = _bare_manager()
+        mgr._kernels["k1"] = _kernel("k1", state=KernelState.IDLE)
+        container = MagicMock()
+        container.status = "running"
+        mgr._docker.containers.get.return_value = container
+        assert mgr._is_container_running("k1") is True
+
+    def test_exited_container_is_down(self):
+        mgr = _bare_manager()
+        mgr._kernels["k1"] = _kernel("k1", state=KernelState.IDLE)
+        container = MagicMock()
+        container.status = "exited"
+        mgr._docker.containers.get.return_value = container
+        assert mgr._is_container_running("k1") is False
+
+    def test_missing_container_is_down(self):
+        import docker
+
+        mgr = _bare_manager()
+        mgr._kernels["k1"] = _kernel("k1", state=KernelState.IDLE)
+        mgr._docker.containers.get.side_effect = docker.errors.NotFound("gone")
+        assert mgr._is_container_running("k1") is False
+
+    def test_transient_docker_error_assumed_alive(self):
+        import docker
+
+        mgr = _bare_manager()
+        mgr._kernels["k1"] = _kernel("k1", state=KernelState.IDLE)
+        mgr._docker.containers.get.side_effect = docker.errors.DockerException("boom")
+        assert mgr._is_container_running("k1") is True
+
+
+class TestExecuteKernelDown:
+    def test_marks_stopped_with_clear_error_when_container_gone(self, monkeypatch):
+        import docker
+        import httpx
+
+        from flowfile_core.kernel.manager import _KERNEL_DOWN_MSG
+        from flowfile_core.kernel.models import ExecuteRequest
+
+        mgr = _bare_manager()
+        k = _kernel("k1", state=KernelState.IDLE)
+        k.port = 19000
+        k.container_id = "abc"
+        mgr._kernels["k1"] = k
+        # Container is gone — both the OOM probe and the liveness probe see NotFound.
+        mgr._docker.containers.get.side_effect = docker.errors.NotFound("gone")
+
+        class _FailingClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def post(self, *a, **kw):
+                raise httpx.ConnectError("connection failed")
+
+        monkeypatch.setattr(httpx, "AsyncClient", _FailingClient)
+
+        req = ExecuteRequest(node_id=1, code="1", source_registration_id=1)
+        result = _run(mgr.execute("k1", req))
+
+        assert result.success is False
+        assert result.error == _KERNEL_DOWN_MSG
+        assert k.state == KernelState.STOPPED
+        assert k.container_id is None

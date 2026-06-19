@@ -282,6 +282,19 @@
   --color-border-secondary: #475569;
   --color-border-light: #1e293b;
 
+  /* Status colors: the light-mode "-light" fills (e.g. #fef3c7) and "-dark"
+     text (e.g. #92400e) are tuned for pale backgrounds and read as glaring
+     boxes / unreadable text on dark surfaces. Flip "-light" to a translucent
+     same-hue fill and "-dark" to a light tint so status surfaces sit correctly
+     on the dark theme. */
+  --color-success-light: rgba(16, 185, 129, 0.15);
+  --color-success-dark: #6ee7b7;
+  --color-warning-light: rgba(245, 158, 11, 0.15);
+  --color-warning-dark: #fbbf24;
+  --color-warning-darker: #fcd34d;
+  --color-danger-light: rgba(239, 68, 68, 0.15);
+  --color-info-light: rgba(59, 130, 246, 0.15);
+
   /* Gray scale adjustments for dark mode */
   --color-gray-50: #1f2937;
   --color-gray-100: #374151;

@@ -164,7 +164,6 @@ const handleLogout = () => {
 }
 
 .sidebar-container {
-  border-top: 1px solid var(--color-border-primary);
   display: flex;
   flex-direction: column;
   flex: 1;

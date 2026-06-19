@@ -1279,4 +1279,36 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   overflow-y: auto;
   padding: 0 1rem;
 }
+
+/* ─── Dark mode ───────────────────────────────────────────────────────────
+   Element Plus's own dark theme isn't wired up (the app themes via
+   [data-theme], not the .dark class), so these --el-color-*-light-9 fills and
+   -dark-2 text keep their light values and read as glaring pale boxes on dark.
+   Flip them to translucent same-hue fills + light text. */
+[data-theme="dark"] .kernel-memory--normal {
+  color: #a4da89;
+  background-color: rgba(103, 194, 58, 0.15);
+}
+[data-theme="dark"] .kernel-memory--warning {
+  color: #f0c78a;
+  background-color: rgba(230, 162, 60, 0.15);
+}
+[data-theme="dark"] .kernel-memory--critical {
+  color: #f3a0a0;
+  background-color: rgba(245, 108, 108, 0.15);
+}
+[data-theme="dark"] .kernel-warning {
+  color: #f0c78a;
+  background-color: rgba(230, 162, 60, 0.15);
+  border-color: rgba(230, 162, 60, 0.4);
+}
+[data-theme="dark"] .ps-collapse__summary--warning {
+  color: #f0c78a;
+}
+[data-theme="dark"] .ps-collapse__summary--critical {
+  color: #f3a0a0;
+}
+[data-theme="dark"] .add-output-button:hover {
+  background-color: rgba(64, 158, 255, 0.12);
+}
 </style>
