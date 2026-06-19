@@ -56,7 +56,16 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               </span>
               <span class="node-name">{{ node.name }}</span>
-              <span v-if="node.available === false" class="node-badge">Full app</span>
+              <a
+                v-if="node.available === false"
+                :href="category.docsUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                draggable="false"
+                class="node-learn-more"
+                :title="`${node.name} runs in the full Flowfile app — open the docs`"
+                @click.stop
+              >Learn more&nbsp;↗</a>
             </div>
           </div>
         </div>
@@ -468,9 +477,10 @@ const paneMenu = ref({ x: 0, y: 0 })
 let paneFlowPos = { x: 0, y: 0 }
 const canPaste = computed(() => flowStore.hasClipboard())
 const searchQuery = ref('')
-// Full-app nodes that don't run in-browser are shown greyed-out by default so the
-// breadth is visible; this toggle lets users hide them and see only what runs here.
-const showUnavailable = ref(true)
+// Full-app nodes that don't run in-browser are HIDDEN by default to keep the palette
+// focused on what works here. An explicit search still surfaces them, and this toggle
+// reveals the whole set; either way they render greyed-out with a "learn more" docs link.
+const showUnavailable = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
@@ -515,6 +525,8 @@ interface NodeDefinition {
 interface NodeCategory {
   name: string
   isOpen: boolean
+  // Docs page for this category's nodes; locked (full-app) nodes link here.
+  docsUrl?: string
   nodes: NodeDefinition[]
 }
 
@@ -525,6 +537,7 @@ const nodeCategories = ref<NodeCategory[]>([
   {
     name: 'Input Sources',
     isOpen: true,
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/input/',
     nodes: [
       { type: 'read', name: 'Read File', icon: 'input_data.png', inputs: 0, outputs: 1, keywords: ['csv', 'excel', 'parquet', 'json', 'file', 'import', 'load'] },
       { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1, keywords: ['paste', 'type', 'create', 'test data'] },
@@ -540,6 +553,7 @@ const nodeCategories = ref<NodeCategory[]>([
   {
     name: 'Transformations',
     isOpen: true,
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/transform/',
     nodes: [
       { type: 'filter', name: 'Filter', icon: 'filter.png', inputs: 1, outputs: 1, keywords: ['where', 'subset', 'condition', 'rows'] },
       { type: 'select', name: 'Select', icon: 'select.png', inputs: 1, outputs: 1, keywords: ['columns', 'rename', 'reorder', 'keep', 'drop'] },
@@ -558,6 +572,7 @@ const nodeCategories = ref<NodeCategory[]>([
   {
     name: 'Combine Operations',
     isOpen: true,
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/combine/',
     nodes: [
       { type: 'join', name: 'Join', icon: 'join.png', inputs: 2, outputs: 1, keywords: ['merge', 'lookup', 'vlookup', 'inner', 'left', 'right', 'outer'] },
       { type: 'cross_join', name: 'Cross Join', icon: 'cross_join.png', inputs: 2, outputs: 1, keywords: ['cartesian', 'cross', 'combinations'] },
@@ -570,6 +585,7 @@ const nodeCategories = ref<NodeCategory[]>([
   {
     name: 'Aggregations',
     isOpen: true,
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/aggregate/',
     nodes: [
       { type: 'group_by', name: 'Group By', icon: 'group_by.png', inputs: 1, outputs: 1, keywords: ['aggregate', 'sum', 'mean', 'average', 'count', 'min', 'max', 'median', 'summarize'] },
       { type: 'pivot', name: 'Pivot', icon: 'pivot.png', inputs: 1, outputs: 1, keywords: ['crosstab', 'wide', 'reshape', 'spread'] },
@@ -579,6 +595,7 @@ const nodeCategories = ref<NodeCategory[]>([
   {
     name: 'Machine Learning',
     isOpen: true,
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/ml/',
     nodes: [
       { type: 'train_model', name: 'Train Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'train', 'model', 'regression', 'classification', 'fit', 'sklearn'] },
       { type: 'apply_model', name: 'Apply Model', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['ml', 'machine learning', 'predict', 'score', 'inference', 'model'] },
@@ -588,6 +605,7 @@ const nodeCategories = ref<NodeCategory[]>([
   {
     name: 'Output Operations',
     isOpen: true,
+    docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/output/',
     nodes: [
       { type: 'explore_data', name: 'Explore Data', icon: 'explore_data.png', inputs: 1, outputs: 0, keywords: ['profile', 'describe', 'preview', 'eda', 'visualize', 'chart'] },
       { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0, keywords: ['csv', 'excel', 'parquet', 'write', 'save', 'export', 'file'] },
@@ -605,14 +623,15 @@ const filteredCategories = computed(() => {
     .map(cat => ({
       ...cat,
       nodes: cat.nodes.filter(n => {
-        // Availability toggle: optionally hide the locked full-app nodes.
-        if (!showUnavailable.value && n.available === false) return false
-        if (!query) return true
-        // Match the display name OR any of the node's search keywords.
-        return (
+        const matchesQuery =
+          !query ||
           n.name.toLowerCase().includes(query) ||
           (n.keywords ?? []).some(k => k.toLowerCase().includes(query))
-        )
+        if (!matchesQuery) return false
+        // Locked full-app nodes are hidden from the default browse view to keep the
+        // palette focused, but still surface on an explicit search or via the toggle.
+        if (n.available === false && !showUnavailable.value && !query) return false
+        return true
       })
     }))
     .filter(cat => cat.nodes.length > 0)
@@ -1508,16 +1527,19 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
-.node-badge {
+.node-learn-more {
   margin-left: auto;
-  padding: 1px 5px;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  font-size: 11px;
   white-space: nowrap;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-color);
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--accent-color);
   border-radius: var(--radius-sm);
+}
+
+.node-learn-more:hover {
+  text-decoration: underline;
 }
 
 /* Node settings Apply button (mirrors the main editor's primary Apply) */
