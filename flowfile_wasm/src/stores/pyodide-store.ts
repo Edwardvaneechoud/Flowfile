@@ -5,7 +5,8 @@ import { ref, shallowRef } from 'vue'
 // inlines each module's source as a string (?raw); at runtime we write them into
 // Pyodide's virtual filesystem and `from engine import *` (see setupExecutionEngine).
 const engineFiles = import.meta.glob('../pyodide/engine/*.py', {
-  as: 'raw',
+  query: '?raw',
+  import: 'default',
   eager: true,
 }) as Record<string, string>
 
