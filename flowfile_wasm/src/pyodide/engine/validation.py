@@ -95,11 +95,3 @@ def clean_setting_input(settings: dict) -> dict:
     if settings is None:
         return None
     return {k: v for k, v in settings.items() if k not in SETTING_INPUT_EXCLUDE}
-
-
-def prepare_node_for_export(node: dict) -> dict:
-    """Prepare a node for export by cleaning setting_input."""
-    result = dict(node)
-    if "setting_input" in result and result["setting_input"]:
-        result["setting_input"] = clean_setting_input(result["setting_input"])
-    return result

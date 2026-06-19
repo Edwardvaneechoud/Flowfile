@@ -147,11 +147,9 @@ const tableAsJson = computed(() => {
 
 function loadData() {
   const settings = props.settings as any
-  console.log('[ManualInputSettings] loadData called with:', settings)
 
   if (settings?.raw_data_format?.columns?.length > 0) {
     const rd = settings.raw_data_format as RawData
-    console.log('[ManualInputSettings] Loading from raw_data_format:', rd)
 
     columns.value = rd.columns.map((f: MinimalFieldInfo, idx: number) => ({
       id: idx + 1,
@@ -182,7 +180,6 @@ function loadData() {
   }
 
   if (settings?.manual_input?.data) {
-    console.log('[ManualInputSettings] Loading from manual_input')
     const mi = settings.manual_input
     try {
       loadFromCsv(mi.data, mi.has_headers ?? true, mi.delimiter || ',')
@@ -195,7 +192,6 @@ function loadData() {
 
   const storedContent = flowStore.getTextContent(props.nodeId)
   if (storedContent) {
-    console.log('[ManualInputSettings] Loading from fileContents')
     try {
       loadFromCsv(storedContent, true, ',')
       jsonInput.value = JSON.stringify(tableAsJson.value, null, 2)
@@ -205,7 +201,6 @@ function loadData() {
     }
   }
 
-  console.log('[ManualInputSettings] No data found, initializing empty table')
   initializeEmptyTable()
   jsonInput.value = '[]'
 }
@@ -279,7 +274,6 @@ function inferDataType(colId: number): string {
 }
 
 function saveData() {
-  console.log('[ManualInputSettings] saveData called')
   errorMessage.value = ''
 
   const columnsData: MinimalFieldInfo[] = columns.value.map(col => ({
@@ -315,7 +309,6 @@ function saveData() {
     }
   } as any
 
-  console.log('[ManualInputSettings] Emitting settings:', newSettings)
   emit('update:settings', newSettings)
 
   flowStore.setFileContent(props.nodeId, csvData)

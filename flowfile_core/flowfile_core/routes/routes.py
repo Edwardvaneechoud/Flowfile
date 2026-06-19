@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, Response
 
 # External dependencies
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -1108,6 +1108,17 @@ def clear_history(flow_id: int):
 # ==================== End History Endpoints ====================
 
 
+def _format_validation_error(error: ValidationError) -> str:
+    """Turn a Pydantic ValidationError into a short, user-facing message."""
+    messages = []
+    for err in error.errors():
+        loc = err.get("loc") or ()
+        field = str(loc[-1]) if loc else ""
+        msg = err.get("msg", "").removeprefix("Value error, ")
+        messages.append(f"{field}: {msg}" if field else msg)
+    return "; ".join(messages) or str(error)
+
+
 @router.post("/update_settings/", tags=["transform"], response_model=OperationResponse)
 def add_generic_settings(
     input_data: dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)
@@ -1140,8 +1151,10 @@ def add_generic_settings(
         ref = get_node_model(setting_name_ref)
         if ref:
             parsed_input = ref(**input_data)
+    except ValidationError as e:
+        raise HTTPException(422, _format_validation_error(e)) from e
     except Exception as e:
-        raise HTTPException(421, str(e)) from e
+        raise HTTPException(422, str(e)) from e
     if parsed_input is None:
         raise HTTPException(404, "could not find the interface")
     try:
@@ -1176,8 +1189,10 @@ def fetch_rest_api_sample(
     input_data["user_id"] = current_user.id
     try:
         node = input_schema.NodeRestApiReader(**input_data)
+    except ValidationError as e:
+        raise HTTPException(422, _format_validation_error(e)) from e
     except Exception as e:
-        raise HTTPException(421, str(e)) from e
+        raise HTTPException(422, str(e)) from e
 
     flow = flow_file_handler.get_flow(node.flow_id)
     if flow is None:

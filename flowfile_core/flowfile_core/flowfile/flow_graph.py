@@ -3655,22 +3655,39 @@ class FlowGraph:
         database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
 
         def _func(df: FlowDataEngine):
-            # Resolve the connection lazily so opening/undoing a flow never requires
-            # the current session to own the connection (runs under the node's
-            # ``user_id`` — the flow owner at execution time).
-            _, encrypted_password, database_reference_settings = _resolve_database_credentials(
+            database_connection, encrypted_password, database_reference_settings = _resolve_database_credentials(
                 database_settings, node_database_writer.user_id
             )
             df.lazy = True
+            table_name = (
+                database_settings.schema_name + "." + database_settings.table_name
+                if database_settings.schema_name
+                else database_settings.table_name
+            )
+
+            if self.execution_location == "local":
+                df.to_database_obj(
+                    database_type=database_connection.database_type,
+                    uri=sql_utils.construct_sql_uri(
+                        database_type=database_connection.database_type,
+                        host=database_connection.host,
+                        port=database_connection.port,
+                        database=database_connection.database,
+                        username=database_connection.username,
+                        password=decrypt_secret(encrypted_password) if encrypted_password else None,
+                        ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
+                        connect_timeout=10,
+                    ),
+                    table_name=table_name,
+                    if_exists=database_settings.if_exists or "append",
+                )
+                return df
+
             database_external_write_settings = (
                 sql_models.DatabaseExternalWriteSettings.create_from_from_node_database_writer(
                     node_database_writer=node_database_writer,
                     password=encrypted_password,
-                    table_name=(
-                        database_settings.schema_name + "." + database_settings.table_name
-                        if database_settings.schema_name
-                        else database_settings.table_name
-                    ),
+                    table_name=table_name,
                     database_reference_settings=(
                         database_reference_settings if database_settings.connection_mode == "reference" else None
                     ),

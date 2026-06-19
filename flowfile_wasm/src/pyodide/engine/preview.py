@@ -8,9 +8,7 @@ from .state import (
     _PREVIEW_CACHE_MAX_MEMORY_MB,
     _PREVIEW_CACHE_MAX_SIZE,
     _lazyframes,
-    _plan_hashes,
     _preview_cache,
-    _schemas,
     get_cached_preview,
     has_cached_preview,
 )
@@ -149,17 +147,6 @@ def invalidate_downstream_previews(node_id: int, node_graph: dict[int, list[int]
 
         downstream = node_graph.get(current, [])
         to_invalidate.extend(downstream)
-
-
-def get_memory_stats() -> dict:
-    """Get memory statistics for debugging."""
-    return {
-        "lazyframes_count": len(_lazyframes),
-        "preview_cache_count": len(_preview_cache),
-        "schemas_count": len(_schemas),
-        "plan_hashes_count": len(_plan_hashes),
-        "preview_cache_size_estimate_mb": sum(_estimate_preview_size_mb(v) for v in _preview_cache.values()),
-    }
 
 
 def df_to_preview(df: pl.DataFrame, max_rows: int = 100) -> dict:

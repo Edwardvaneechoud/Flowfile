@@ -310,6 +310,25 @@ def test_add_generic_settings():
     ), "Settings not set"
 
 
+def test_update_settings_invalid_identifier_returns_422():
+    flow_id = ensure_clean_flow()
+    add_node_placeholder("database_writer", flow_id=flow_id)
+    bad_settings = {
+        "flow_id": flow_id,
+        "node_id": 1,
+        "database_write_settings": {
+            "connection_mode": "inline",
+            "table_name": "tesst-2",
+            "if_exists": "append",
+        },
+    }
+    r = client.post("/update_settings/", json=bad_settings, params={"node_type": "database_writer"})
+    assert r.status_code == 422, f"Validation errors should be 422, got {r.status_code}"
+    detail = r.json()["detail"]
+    assert "Invalid SQL identifier" in detail, detail
+    assert "table_name" in detail, detail
+
+
 def test_connect_node():
     flow_id = ensure_clean_flow()
     add_node(flow_id, 1, node_type="manual_input", pos_x=0, pos_y=0)
