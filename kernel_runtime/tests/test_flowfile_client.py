@@ -690,3 +690,18 @@ class TestDisplayDataFrames:
 
         out = flowfile_client._get_displays()
         assert out[0]["mime_type"] == "text/plain"
+
+    def test_auto_display_dataframe_is_text_repr(self):
+        flowfile_client._reset_displays()
+        flowfile_client._auto_display(pl.DataFrame({"a": [1, 2]}))
+
+        out = flowfile_client._get_displays()
+        assert out[0]["mime_type"] == "text/plain"
+        assert "shape:" in out[0]["data"]
+
+    def test_auto_display_non_frame_delegates_to_display(self):
+        flowfile_client._reset_displays()
+        flowfile_client._auto_display("<b>hi</b>")
+
+        out = flowfile_client._get_displays()
+        assert out[0]["mime_type"] == "text/html"

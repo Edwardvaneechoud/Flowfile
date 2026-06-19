@@ -95,14 +95,14 @@ Flowfile does **not** define compatibility *ranges* between app and kernel versi
 | Version | Where | Example | Role |
 |---------|-------|---------|------|
 | App / root | root `pyproject.toml` | `0.11.0` | The Flowfile release |
-| Kernel **image** tag | `flowfile_core/flowfile_core/kernel/manager.py` (`_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT`) | `0.3.2` | The image the app pulls / runs |
-| Kernel **runtime API** | `kernel_runtime/__init__.py` (`__version__`) | `0.2.3` | The kernel's HTTP API version, reported by `/health` |
+| Kernel **image** tag | `flowfile_core/flowfile_core/kernel/manager.py` (`_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT`) | `0.3.3` | The image the app pulls / runs |
+| Kernel **runtime API** | `kernel_runtime/__init__.py` (`__version__`) | `0.2.4` | The kernel's HTTP API version, reported by `/health` |
 
 These evolve **independently** — bumping the app does not require bumping the kernel image, and vice versa.
 
 ### How the pin works
 
-- Each Flowfile version hardcodes **one exact kernel tag per flavour** (e.g. `edwardvaneechoud/flowfile-kernel-ml:0.3.2`) in `manager.py`. That single tag — not a `>=x,<y` range — is the version the app is built and tested against.
+- Each Flowfile version hardcodes **one exact kernel tag per flavour** (e.g. `edwardvaneechoud/flowfile-kernel-ml:0.3.3`) in `manager.py`. That single tag — not a `>=x,<y` range — is the version the app is built and tested against.
 - Core reads the running kernel's runtime version from `/health` into `KernelInfo.kernel_version` **for display only** (the "Kernel runtime" line in the Kernel Manager). There is no min/max gate and nothing that rejects or warns about an "out-of-range" kernel.
 - The only **hard** coupling is **polars**: `kernel_runtime` pins a polars (and the `polars-ds` plugin) compatible with the app's `polars >=1.8.2,<1.40`. These must be bumped together, but that compatibility is guaranteed at *image-build time* via the pinned tag — not by a runtime check.
 

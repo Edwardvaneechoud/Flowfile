@@ -790,6 +790,45 @@ class TestDisplayOutputs:
         assert len(data["display_outputs"]) == 1
         assert data["display_outputs"][0]["data"] == "6"
 
+    def test_interactive_bare_dataframe_is_text_not_table(self, client: TestClient):
+        """A bare DataFrame as the last expression shows its repr, not the table."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 70,
+                "code": "import polars as pl\npl.DataFrame({'a': [1, 2]})",
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": True,
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        outs = data["display_outputs"]
+        assert len(outs) == 1
+        assert outs[0]["mime_type"] == "text/plain"
+        assert "shape:" in outs[0]["data"]
+
+    def test_interactive_explicit_display_dataframe_is_table(self, client: TestClient):
+        """An explicit display(df) renders the interactive table (and isn't double-wrapped)."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 71,
+                "code": "import polars as pl\nflowfile_ctx.display(pl.DataFrame({'a': [1]}))",
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": True,
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        outs = data["display_outputs"]
+        assert len(outs) == 1
+        assert outs[0]["mime_type"] == "application/vnd.flowfile.table+json"
+
     def test_non_interactive_mode_no_auto_display(self, client: TestClient):
         """Non-interactive mode should not auto-display the last expression."""
         resp = client.post(

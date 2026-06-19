@@ -266,7 +266,7 @@ flowfile_ctx.explore(df)
 ```
 
 !!! tip "Interactive mode"
-    In cell-execution mode, the last expression in your code is automatically displayed — similar to Jupyter notebooks. A bare `df` therefore renders as an interactive table.
+    In cell-execution mode, the last expression in your code is automatically displayed — similar to Jupyter notebooks. A bare `df` shows its **repr** (what the object is); call `flowfile_ctx.display(df)` for the interactive table or `flowfile_ctx.explore(df)` for the explorer.
 
 ### Logging
 

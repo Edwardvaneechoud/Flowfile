@@ -955,6 +955,20 @@ def explore(obj: Any, title: str = "", max_rows: int = _GW_TABLE_MAX_ROWS) -> No
     _displays.set(displays)
 
 
+def _auto_display(obj: Any) -> None:
+    """Auto-display a cell's last expression.
+
+    Polars frames show their plain repr (use display()/explore() for the
+    interactive table); other rich types still render via display().
+    """
+    if _is_polars_frame(obj):
+        displays = _displays.get([])
+        displays.append({"mime_type": "text/plain", "data": str(obj), "title": ""})
+        _displays.set(displays)
+        return
+    display(obj)
+
+
 # ===== Catalog Tables APIs =====
 #
 # These wrap Core's ``/catalog/tables/*`` HTTP endpoints. The kernel writes

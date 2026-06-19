@@ -5,48 +5,45 @@
   >
     <!-- Cell toolbar -->
     <div class="nb-cell-bar">
+      <button
+        class="nb-run"
+        :title="cell.cellType === 'markdown' ? 'Render (Shift+Enter)' : 'Run (Shift+Enter)'"
+        @click="emit('run')"
+      >
+        <i v-if="cell.execState === 'running'" class="fa-solid fa-spinner fa-spin"></i>
+        <i v-else-if="cell.cellType === 'markdown'" class="fa-solid fa-eye"></i>
+        <i v-else class="fa-solid fa-play"></i>
+      </button>
+
       <el-select
         v-if="allowedTypes.length > 1"
         :model-value="cell.cellType"
         size="small"
-        style="width: 110px"
+        class="nb-type-select"
         @change="(v: CellType) => emit('update:type', v)"
       >
         <el-option v-for="t in allowedTypes" :key="t" :label="TYPE_LABELS[t]" :value="t" />
       </el-select>
       <span v-else class="nb-cell-type-badge">{{ TYPE_LABELS[cell.cellType] }}</span>
 
-      <el-button
-        size="small"
-        type="primary"
-        :loading="cell.execState === 'running'"
-        @click="emit('run')"
-      >
-        <i
-          v-if="cell.execState !== 'running'"
-          class="fa-solid fa-play"
-          style="margin-right: 4px"
-        ></i>
-        {{ cell.cellType === "markdown" ? "Render" : "Run" }}
-      </el-button>
-
       <div class="nb-cell-bar-spacer"></div>
 
-      <el-tooltip content="Move up" :show-after="400">
-        <el-button size="small" text :disabled="index === 0" @click="emit('move', -1)">
+      <div class="nb-cell-actions">
+        <button class="nb-act" :disabled="index === 0" title="Move up" @click="emit('move', -1)">
           <i class="fa-solid fa-arrow-up"></i>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="Move down" :show-after="400">
-        <el-button size="small" text :disabled="index === cellCount - 1" @click="emit('move', 1)">
+        </button>
+        <button
+          class="nb-act"
+          :disabled="index === cellCount - 1"
+          title="Move down"
+          @click="emit('move', 1)"
+        >
           <i class="fa-solid fa-arrow-down"></i>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="Delete cell" :show-after="400">
-        <el-button size="small" text @click="emit('remove')">
+        </button>
+        <button class="nb-act nb-act--danger" title="Delete cell" @click="emit('remove')">
           <i class="fa-solid fa-trash"></i>
-        </el-button>
-      </el-tooltip>
+        </button>
+      </div>
     </div>
 
     <!-- Editor -->
@@ -75,7 +72,6 @@
         v-else
         :model-value="cell.code"
         placeholder="# Python — Shift+Enter to run"
-        :style="{ minHeight: '60px' }"
         :indent-with-tab="false"
         :tab-size="4"
         :extensions="extensions"
@@ -91,24 +87,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { Codemirror } from "vue-codemirror";
-import { keymap } from "@codemirror/view";
-import { Extension, EditorState, Prec } from "@codemirror/state";
-import { python, pythonLanguage } from "@codemirror/lang-python";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { autocompletion } from "@codemirror/autocomplete";
 import CellOutput from "../nodes/node-types/elements/pythonScript/CellOutput.vue";
-import { bodyTooltips } from "@/utils/codemirrorTooltips";
-import {
-  catalogRefChainCompletions,
-  createNamedInputCompletions,
-  createPolarsExprCompletions,
-  createRefVariableCompletions,
-  createScopeCompletions,
-  createUpstreamColumnCompletions,
-  flowfileApiCompletions,
-  globalIdentifierCompletions,
-  polarsModuleCompletions,
-} from "../nodes/node-types/elements/pythonScript/flowfileCompletions";
+import { buildNotebookEditorExtensions } from "../nodes/node-types/elements/pythonScript/notebookEditor";
 import type { CellType, NotebookCellModel } from "./types";
 
 const props = defineProps<{
@@ -136,68 +116,131 @@ const TYPE_LABELS: Record<CellType, string> = {
   markdown: "Markdown",
 };
 
-const runKeymap = keymap.of([
-  { key: "Shift-Enter", run: () => (emit("run"), true) },
-  { key: "Mod-Enter", run: () => (emit("run"), true) },
-]);
-
-// Same completion stack as the graph notebook cell. The flow-only sources
-// (named inputs, upstream columns) get empty getters since a catalog notebook
-// has no flow graph; flowfile_ctx + Polars + prior-cell-scope all work standalone.
-// Getters read props live, so the extension array is built once (no churn).
-const getPrior = () => props.priorCellCodes ?? [];
-const extensions: Extension[] = [
-  python(),
-  pythonLanguage.data.of({ autocomplete: flowfileApiCompletions }),
-  pythonLanguage.data.of({ autocomplete: globalIdentifierCompletions }),
-  pythonLanguage.data.of({ autocomplete: catalogRefChainCompletions }),
-  pythonLanguage.data.of({ autocomplete: createRefVariableCompletions(getPrior) }),
-  pythonLanguage.data.of({ autocomplete: polarsModuleCompletions }),
-  pythonLanguage.data.of({ autocomplete: createPolarsExprCompletions(getPrior) }),
-  pythonLanguage.data.of({ autocomplete: createNamedInputCompletions(() => []) }),
-  pythonLanguage.data.of({ autocomplete: createUpstreamColumnCompletions(() => []) }),
-  pythonLanguage.data.of({ autocomplete: createScopeCompletions(getPrior) }),
-  oneDark,
-  EditorState.tabSize.of(4),
-  autocompletion({ defaultKeymap: true, closeOnBlur: false }),
-  bodyTooltips(),
-  Prec.highest(runKeymap),
-];
+// Flow-graph completions stay empty — a catalog notebook has no graph.
+const extensions = buildNotebookEditorExtensions({
+  onRun: () => emit("run"),
+  getPriorCellCodes: () => props.priorCellCodes ?? [],
+});
 </script>
 
 <style scoped>
 .nb-cell {
-  border: 1px solid var(--el-border-color-lighter, #e4e7ed);
+  border: 1px solid var(--el-border-color-lighter, #ebeef5);
   border-radius: 6px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   background: var(--el-bg-color, #fff);
   overflow: hidden;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+}
+.nb-cell:hover {
+  border-color: var(--el-border-color, #dcdfe6);
 }
 .nb-cell.running {
   border-color: var(--el-color-primary, #409eff);
+  box-shadow: inset 3px 0 0 var(--el-color-primary, #409eff);
 }
+
+/* Toolbar: thin, flat, no filled background */
 .nb-cell-bar {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
-  background: var(--el-fill-color-light, #f5f7fa);
-  border-bottom: 1px solid var(--el-border-color-lighter, #e4e7ed);
+  padding: 3px 6px;
 }
 .nb-cell-bar-spacer {
   flex: 1;
+}
+
+/* Compact ghost run button (replaces the big primary button) */
+.nb-run {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--el-color-primary, #409eff);
+  cursor: pointer;
+  font-size: 12px;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.nb-run:hover {
+  background: var(--el-color-primary-light-9, #ecf5ff);
+}
+.nb-run .fa-play {
+  margin-left: 1px; /* optical-center the triangle */
+}
+
+/* Type selector — lighter, borderless until hover */
+.nb-type-select {
+  width: 92px;
+}
+.nb-type-select :deep(.el-input__wrapper) {
+  box-shadow: none;
+  background: transparent;
+  padding-left: 6px;
+}
+.nb-type-select :deep(.el-input__wrapper:hover),
+.nb-type-select :deep(.el-input__wrapper.is-focus) {
+  background: var(--el-fill-color-light, #f5f7fa);
 }
 .nb-cell-type-badge {
   font-size: 12px;
   font-weight: 600;
   color: var(--el-text-color-secondary, #909399);
-  width: 110px;
 }
+
+/* Secondary actions — revealed on hover/focus */
+.nb-cell-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.nb-cell:hover .nb-cell-actions,
+.nb-cell:focus-within .nb-cell-actions {
+  opacity: 1;
+}
+.nb-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--el-text-color-secondary, #909399);
+  cursor: pointer;
+  font-size: 12px;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.nb-act:hover:not(:disabled) {
+  background: var(--el-fill-color, #f0f2f5);
+  color: var(--el-text-color-primary, #303133);
+}
+.nb-act:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.nb-act--danger:hover:not(:disabled) {
+  color: var(--el-color-danger, #f56c6c);
+  background: var(--el-color-danger-light-9, #fef0f0);
+}
+
 .nb-cell-editor {
-  padding: 4px;
+  padding: 2px 4px 4px;
 }
 .nb-md-rendered {
-  padding: 8px 12px;
+  padding: 6px 10px;
   cursor: text;
   line-height: 1.5;
 }

@@ -891,7 +891,7 @@ function onVizCreated() {
 function selectArtifact(artifactId: number) {
   router.push({
     name: "catalog",
-    query: { tab: catalogStore.activeTab, artifactId: String(artifactId) },
+    query: { tab: "catalog", artifactId: String(artifactId) },
   });
 }
 

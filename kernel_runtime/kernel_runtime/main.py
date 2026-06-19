@@ -53,6 +53,7 @@ class _DeprecatedFlowfileAlias:
     def __repr__(self):
         return f"<DeprecatedFlowfileAlias for {self._target!r}>"
 
+
 logger = logging.getLogger(__name__)
 
 artifact_store = ArtifactStore()
@@ -267,10 +268,9 @@ except ImportError:
 
 
 def _maybe_wrap_last_expression(code: str) -> str:
-    """If the last statement is a bare expression, wrap it in flowfile_ctx.display().
+    """Wrap a bare last expression in flowfile_ctx._auto_display() (Jupyter-like).
 
-    This provides Jupyter-like behavior where the result of the last expression
-    is automatically displayed.
+    DataFrames show their repr there; use display()/explore() for the rich table.
     """
     try:
         tree = ast.parse(code)
@@ -282,14 +282,14 @@ def _maybe_wrap_last_expression(code: str) -> str:
     if not isinstance(last, ast.Expr):
         return code
 
-    # Don't wrap if the expression is None, a string literal, or already a call to display/print
+    # Don't wrap a None literal or an explicit print/display/explore call.
     if isinstance(last.value, ast.Constant) and last.value.value is None:
         return code
     if isinstance(last.value, ast.Call):
         func = last.value.func
-        if isinstance(func, ast.Name) and func.id in ("print", "display"):
+        if isinstance(func, ast.Name) and func.id in ("print", "display", "explore"):
             return code
-        if isinstance(func, ast.Attribute) and func.attr in ("print", "display"):
+        if isinstance(func, ast.Attribute) and func.attr in ("print", "display", "explore"):
             return code
 
     last_expr_text = ast.get_source_segment(code, last)
@@ -300,7 +300,7 @@ def _maybe_wrap_last_expression(code: str) -> str:
     prefix = "\n".join(lines[: last.lineno - 1])
     if prefix:
         prefix += "\n"
-    return prefix + f"flowfile_ctx.display({last_expr_text})\n"
+    return prefix + f"flowfile_ctx._auto_display({last_expr_text})\n"
 
 
 class ExecuteRequest(BaseModel):
