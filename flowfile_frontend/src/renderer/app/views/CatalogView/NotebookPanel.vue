@@ -614,6 +614,55 @@ async function onDelete() {
   overflow-y: auto;
   padding: 12px;
 }
+.nb-primer {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter, #fafafa);
+}
+.nb-primer-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary, #303133);
+  margin-bottom: 4px;
+}
+.nb-primer-text {
+  font-size: 12px;
+  color: var(--el-text-color-regular, #606266);
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+.nb-primer-text kbd {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 0 4px;
+  border: 1px solid var(--el-border-color, #dcdfe6);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: var(--el-bg-color, #fff);
+}
+.nb-primer-code {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: #282c34;
+  overflow-x: auto;
+}
+.nb-primer-code code {
+  font-family: "Fira Code", monospace;
+  font-size: 12px;
+  color: #abb2bf;
+  white-space: pre;
+}
+.nb-primer-link {
+  font-size: 12px;
+  color: var(--el-color-primary, #409eff);
+  cursor: pointer;
+}
+.nb-primer-link:hover {
+  text-decoration: underline;
+}
 .nb-add-row {
   display: flex;
   justify-content: center;

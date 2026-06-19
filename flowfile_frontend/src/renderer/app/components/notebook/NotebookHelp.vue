@@ -52,7 +52,9 @@
               </p>
             </div>
             <div class="api-item">
-              <code>flowfile_ctx.get_catalog("Demo").get_schema("market").read_table("fx_rates")</code>
+              <code
+                >flowfile_ctx.get_catalog("Demo").get_schema("market").read_table("fx_rates")</code
+              >
               <p>Read a table by catalog → schema → name.</p>
             </div>
             <div class="api-item">
