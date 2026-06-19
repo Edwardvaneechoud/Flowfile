@@ -104,6 +104,7 @@ export interface NodeTemplate {
   drawer_title: string;
   drawer_intro: string;
   custom_node: boolean;
+  tags?: string[];
   output_names?: string[];
 }
 
