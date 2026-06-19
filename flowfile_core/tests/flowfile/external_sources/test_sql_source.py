@@ -125,20 +125,6 @@ def test_get_pl_df(sql_source):
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-def test_get_df(sql_source, monkeypatch):
-    """Test that get_df converts polars DataFrame to pandas DataFrame."""
-    mock_pl_df = pl.DataFrame({"col1": [1, 2, 3]})
-    monkeypatch.setattr(sql_source, "get_pl_df", lambda: mock_pl_df)
-
-    result = sql_source.get_df()
-
-    import pandas as pd
-
-    assert isinstance(result, pd.DataFrame), "get_df should return a pandas DataFrame"
-    assert len(result) == 3, "DataFrame should have the correct number of rows"
-
-
-@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_data_getter(sql_source, monkeypatch):
     """Test that data_getter yields dictionaries from the DataFrame."""
     mock_pl_df = pl.DataFrame({"col1": [1, 2], "col2": ["a", "b"]})

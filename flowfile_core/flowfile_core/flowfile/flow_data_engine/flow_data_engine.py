@@ -69,6 +69,7 @@ from shared.cloud_storage import (
 )
 from shared.cloud_storage.utils import normalize_delta_path
 from shared.cloud_storage.writers import write_to_cloud
+from shared.db_writer import write_dataframe_to_database
 from shared.path_utils import is_url
 
 T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
@@ -471,6 +472,17 @@ class FlowDataEngine:
             credential_provider=credential_provider,
             use_pyarrow=use_pyarrow,
             logger=logger,
+        )
+
+    def to_database_obj(self, *, database_type: str, uri: str, table_name: str, if_exists: str) -> None:
+        """Writes the DataFrame to a SQL database in-process (local execution path)."""
+        logger.info(f"Writing to {database_type} table {table_name}")
+        write_dataframe_to_database(
+            self.collect(),
+            database_type=database_type,
+            uri=uri,
+            table_name=table_name,
+            if_exists=if_exists,
         )
 
     @classmethod

@@ -8,7 +8,7 @@ export type SortDirectionType = "asc" | "desc";
  * Context types for different file browser use cases.
  * Each context maintains its own independent path state.
  */
-export type FileBrowserContext = "flows" | "dataFiles";
+export type FileBrowserContext = "flows" | "dataFiles" | "output";
 
 /**
  * State for a single file browser context
@@ -61,6 +61,9 @@ export const useFileBrowserStore = defineStore("fileBrowser", {
     contexts: {
       flows: loadContextState("flows"),
       dataFiles: loadContextState("dataFiles"),
+      // Output nodes keep their own remembered directory, independent from the
+      // read-file browser, so "where I last wrote" doesn't follow "where I last read".
+      output: loadContextState("output"),
     } as Record<FileBrowserContext, ContextState>,
   }),
 

@@ -90,6 +90,7 @@
                 <i v-else class="fa-solid fa-refresh"></i>
               </button>
             </div>
+            <p v-if="schemaNameError" class="field-error">{{ schemaNameError }}</p>
           </div>
 
           <div class="form-group half">
@@ -120,6 +121,7 @@
                 <i v-else class="fa-solid fa-refresh"></i>
               </button>
             </div>
+            <p v-if="tableNameError" class="field-error">{{ tableNameError }}</p>
           </div>
         </div>
       </div>
@@ -156,13 +158,14 @@
 //   See DatabaseReader.vue header for the shared extraction plan
 //   (DatabaseConnectionPicker + databaseConnectionFormatters).
 import { CodeLoader } from "vue-content-loader";
-import { ref, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import {
   NodeDatabaseWriter,
   IfExistAction,
   ConnectionModeOption,
 } from "../../../baseNode/nodeInput";
 import { createNodeDatabaseWriter } from "./utils";
+import { validateSqlIdentifier } from "./validation";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { fetchDatabaseConnectionsInterfaces } from "../../../../../views/DatabaseView/api";
@@ -191,16 +194,33 @@ const tablesAreLoading = ref(false);
 const schemaSelectRef = ref();
 const tableSelectRef = ref();
 
+const schemaNameError = computed(() =>
+  validateSqlIdentifier(nodeData.value?.database_write_settings?.schema_name),
+);
+const tableNameError = computed(() =>
+  validateSqlIdentifier(nodeData.value?.database_write_settings?.table_name),
+);
+
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeData,
   onBeforeSave: () => {
     if (!nodeData.value) {
       return false;
     }
-    if (nodeData.value.database_write_settings.connection_mode === "reference") {
-      nodeData.value.database_write_settings.database_connection = undefined;
+    const writeSettings = nodeData.value.database_write_settings;
+    if (!writeSettings.table_name) {
+      ElMessage.error("Table name is required");
+      return false;
+    }
+    const identifierError = tableNameError.value || schemaNameError.value;
+    if (identifierError) {
+      ElMessage.error(identifierError);
+      return false;
+    }
+    if (writeSettings.connection_mode === "reference") {
+      writeSettings.database_connection = undefined;
     } else {
-      nodeData.value.database_write_settings.database_connection_name = undefined;
+      writeSettings.database_connection_name = undefined;
     }
     return true;
   },
@@ -361,6 +381,12 @@ defineExpose({
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--color-text-secondary);
+}
+
+.field-error {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.75rem;
+  color: var(--color-danger, #f56c6c);
 }
 
 .form-row {

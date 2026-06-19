@@ -31,10 +31,6 @@
       />
     </div>
 
-    <div v-if="validationError" class="validation-error">
-      {{ validationError }}
-    </div>
-
     <div class="help-section">
       <div class="help-title">Quick Reference</div>
       <div class="help-grid">
@@ -91,7 +87,6 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 const view = shallowRef<EditorView | null>(null)
-const validationError = ref<string | null>(null)
 
 const snippets = {
   passthrough: 'input_df',
@@ -176,7 +171,6 @@ const handleReady = (payload: { view: EditorView }) => {
 
 function handleCodeChange(newCode: string) {
   polarsCode.value = newCode
-  validationError.value = null
   emitUpdate()
 }
 
@@ -287,14 +281,6 @@ function emitUpdate() {
   color: #6272a4;
 }
 
-.validation-error {
-  padding: 8px 12px;
-  color: #ff5555;
-  background: rgba(255, 85, 85, 0.1);
-  border-top: 1px solid rgba(255, 85, 85, 0.3);
-  font-size: 12px;
-  font-family: monospace;
-}
 
 .help-section {
   padding: 10px 12px;

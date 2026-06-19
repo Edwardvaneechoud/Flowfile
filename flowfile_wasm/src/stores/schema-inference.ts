@@ -426,18 +426,6 @@ export function isSourceNode(nodeType: string): boolean {
 }
 
 /**
- * Get downstream node IDs from a given node
- */
-export function getDownstreamNodeIds(
-  nodeId: number,
-  edges: { source: string; target: string }[]
-): number[] {
-  return edges
-    .filter(e => e.source === String(nodeId))
-    .map(e => parseInt(e.target))
-}
-
-/**
  * Infer a data type from a sample of string values
  */
 function inferDataTypeFromValues(values: string[]): string {
@@ -459,20 +447,6 @@ function inferDataTypeFromValues(values: string[]): string {
   if (allNumbers) return 'Float64'
 
   return 'String'
-}
-
-/**
- * Schema from a FileContent: text delegates to CSV inference; binary
- * (xlsx/parquet) returns null — the schema resolves on execution, riding the
- * same lazy-execution contract as polars_code/pivot.
- */
-export function inferSchemaFromContent(
-  content: import('../types/file-content').FileContent,
-  hasHeaders: boolean = true,
-  delimiter: string = ','
-): ColumnSchema[] | null {
-  if (content.kind !== 'text') return null
-  return inferSchemaFromCsv(content.data, hasHeaders, delimiter)
 }
 
 /**
