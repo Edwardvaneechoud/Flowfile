@@ -75,7 +75,7 @@ This node ensures that your transformed data is **saved in the correct format**,
 
 ### ![Cloud Storage Writer](../../../assets/images/nodes/cloud_storage_writer.png){ width="50" height="50" } Cloud Storage Writer
 
-The **Cloud Storage Writer** node allows you to save your processed data directly to cloud storage services like AWS S3.
+The **Cloud Storage Writer** node saves your processed data directly to cloud object storage. It supports **AWS S3** (including S3-compatible services like MinIO), **Azure Data Lake Storage (ADLS)**, and **Google Cloud Storage (GCS)**.
 
 <details markdown="1">
 <summary>Screenshot: Cloud Storage Writer Configuration</summary>
@@ -85,8 +85,8 @@ The **Cloud Storage Writer** node allows you to save your processed data directl
 </details>
 
 #### **Connection Options:**
-- Use existing cloud storage connections configured in your workspace (see [Manage Cloud Connections](../tutorials/cloud-connections.md))
-- Use local AWS CLI credentials or environment variables for authentication
+- Use a saved cloud connection — **AWS S3**, **Azure Data Lake Storage (ADLS)**, or **Google Cloud Storage (GCS)** (see [Manage Cloud Connections](../tutorials/cloud-connections.md))
+- For S3, use local AWS credentials instead (an AWS CLI profile or environment variables)
 
 #### **File Settings:**
 
@@ -119,7 +119,7 @@ The **Cloud Storage Writer** node allows you to save your processed data directl
 
 ### ![Database Writer](../../../assets/images/nodes/database_reader.png){ width="50" height="50" } Database Writer
 
-The **Database Writer** node saves processed data to a database table. It supports PostgreSQL and MySQL.
+The **Database Writer** node saves processed data to a database table. It supports **PostgreSQL**, **MySQL**, and **SQLite**.
 
 #### **Connection Modes:**
 

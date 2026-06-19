@@ -23,6 +23,10 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 |----------|----------|
 | **PostgreSQL** | `postgresql` |
 | **MySQL** | `mysql` |
+| **SQLite** | `sqlite` |
+
+!!! note "SQLite connections"
+    SQLite connects to a local database **file path** (e.g. `/path/to/database.db`) — no host, port, or credentials are required.
 
 ### Creating a Database Connection
 
@@ -77,9 +81,8 @@ In a **Database Reader** or **Database Writer** node:
 | Provider | Description |
 |----------|-------------|
 | **AWS S3** | Amazon Simple Storage Service (including S3-compatible services like MinIO) |
-
-!!! note "Coming Soon"
-    Azure Data Lake Storage and Google Cloud Storage support are planned for a future release.
+| **Azure Data Lake Storage (ADLS)** | Azure Data Lake Storage Gen2 / Blob Storage |
+| **Google Cloud Storage (GCS)** | Google Cloud object storage buckets |
 
 ### Creating a Cloud Storage Connection
 
@@ -90,13 +93,16 @@ In a **Database Reader** or **Database Writer** node:
 | Field | Description |
 |-------|-------------|
 | **Connection Name** | Unique identifier (e.g., `my_s3_storage`) |
-| **Storage Type** | AWS S3 |
+| **Storage Type** | **AWS S3**, **Azure Data Lake Storage**, or **Google Cloud Storage** |
 | **AWS Access Key ID** | Your access key |
 | **AWS Secret Access Key** | Stored as encrypted secret |
 | **AWS Region** | e.g., `us-east-1` |
 | **Custom Endpoint URL** | For S3-compatible services (MinIO, etc.) |
 | **Verify SSL** | Disable only for self-signed certificates |
 | **Allow Unsafe HTTP** | Enable for non-HTTPS endpoints (e.g., local MinIO) |
+
+!!! note "Provider-specific fields"
+    The fields above describe an **AWS S3** connection. The credential fields adapt to the selected **Storage Type**: **Azure Data Lake Storage** uses an account name with service-principal or SAS-token credentials, and **Google Cloud Storage** uses a project ID with a service-account key.
 
 4. Click **Create Connection**
 

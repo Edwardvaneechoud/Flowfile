@@ -63,7 +63,7 @@ When a **Parquet** file is selected, no additional setup options are required. P
 
 ### ![Cloud Storage](../../../assets/images/nodes/cloud_storage_reader.png){ width="50" height="50" } Cloud Storage Reader
 
-The **Cloud Storage Reader** node allows you to read data directly from AWS S3.
+The **Cloud Storage Reader** node reads data directly from cloud object storage. It supports **AWS S3** (including S3-compatible services like MinIO), **Azure Data Lake Storage (ADLS)**, and **Google Cloud Storage (GCS)**.
 
 <details  markdown="1">
 <summary>Screenshot: Cloud Storage Reader Configuration</summary>
@@ -73,8 +73,8 @@ The **Cloud Storage Reader** node allows you to read data directly from AWS S3.
 </details>
 
 #### **Connection Options:**
-- Use existing S3 connections configured in your workspace (see [Manage Cloud Connections](../tutorials/cloud-connections.md))
-- Use local AWS CLI credentials or environment variables
+- Use a saved cloud connection — **AWS S3**, **Azure Data Lake Storage (ADLS)**, or **Google Cloud Storage (GCS)** (see [Manage Cloud Connections](../tutorials/cloud-connections.md))
+- For S3, use local AWS credentials instead (an AWS CLI profile or environment variables)
 
 #### **File Settings:**
 
@@ -104,7 +104,7 @@ The **Manual Input** node allows you to create data directly within Flowfile or 
 
 ### ![Database Reader](../../../assets/images/nodes/database_reader.png){ width="50" height="50" } Database Reader
 
-The **Database Reader** node loads data from database tables or custom SQL queries. It supports PostgreSQL and MySQL.
+The **Database Reader** node loads data from database tables or custom SQL queries. It supports **PostgreSQL**, **MySQL**, and **SQLite**.
 
 #### **Connection Modes:**
 
