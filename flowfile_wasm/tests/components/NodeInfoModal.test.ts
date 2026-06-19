@@ -24,7 +24,8 @@ describe('NodeInfoModal', () => {
         name: 'Read from Database',
         intro: '',
         docsUrl: 'https://example.com/docs/input#database-reader',
-        available: false
+        available: false,
+        position: { x: 100, y: 100 }
       }
     })
 
@@ -41,7 +42,8 @@ describe('NodeInfoModal', () => {
         name: 'Filter',
         intro: 'Filter rows based on conditions.',
         docsUrl: 'https://example.com/docs/transform#filter-data',
-        available: true
+        available: true,
+        position: { x: 100, y: 100 }
       }
     })
 
@@ -54,7 +56,7 @@ describe('NodeInfoModal', () => {
 
   it('emits close when the close button is clicked', () => {
     wrapper = mount(NodeInfoModal, {
-      props: { name: 'Filter', intro: '', docsUrl: '', available: true }
+      props: { name: 'Filter', intro: '', docsUrl: '', available: true, position: { x: 100, y: 100 } }
     })
 
     document.body.querySelector<HTMLButtonElement>('.node-info-close')!.click()

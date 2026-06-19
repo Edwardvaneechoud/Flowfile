@@ -164,7 +164,7 @@ const emit = defineEmits<{
   (e: 'view-data', id: number): void
   (e: 'copy', id: number): void
   (e: 'save-to-catalog', id: number): void
-  (e: 'show-info', type: string): void
+  (e: 'show-info', type: string, position: { x: number; y: number }): void
 }>()
 
 const flowStore = useFlowStore()
@@ -334,8 +334,8 @@ function viewData() {
   closeContextMenu()
 }
 
-function learnAboutNode() {
-  emit('show-info', props.data.type)
+function learnAboutNode(event: MouseEvent) {
+  emit('show-info', props.data.type, { x: event.clientX, y: event.clientY })
   closeContextMenu()
 }
 

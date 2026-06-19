@@ -45,7 +45,7 @@
                   : undefined
               "
               @dragstart="onDragStart($event, node)"
-              @contextmenu.prevent="openNodeInfo(node.type)"
+              @contextmenu.prevent="openNodeInfo(node.type, { x: $event.clientX, y: $event.clientY })"
             >
               <img
                 v-if="node.available !== false"
@@ -62,7 +62,7 @@
                 type="button"
                 class="node-learn-more"
                 :title="`Learn more about ${node.name}`"
-                @click.stop="openNodeInfo(node.type)"
+                @click.stop="openNodeInfo(node.type, { x: $event.clientX, y: $event.clientY })"
               >Learn more</button>
             </div>
           </div>
@@ -374,6 +374,7 @@
       :intro="nodeInfo.intro"
       :docs-url="nodeInfo.docsUrl"
       :available="nodeInfo.available"
+      :position="nodeInfo.position"
       @close="closeNodeInfo"
     />
 
@@ -674,9 +675,15 @@ function nodeDocsUrl(category: NodeCategory, node: NodeDefinition): string {
 // Node info popup, surfaced by right-clicking any node (palette or canvas) and by a
 // locked node's "Learn more". Resolves everything from the palette registry by type,
 // so canvas nodes (which only know their type) and palette items share one path.
-const nodeInfo = ref<{ name: string; intro: string; docsUrl: string; available: boolean } | null>(null)
+const nodeInfo = ref<{
+  name: string
+  intro: string
+  docsUrl: string
+  available: boolean
+  position: { x: number; y: number }
+} | null>(null)
 
-function openNodeInfo(type: string) {
+function openNodeInfo(type: string, position: { x: number; y: number }) {
   for (const cat of nodeCategories.value) {
     const node = cat.nodes.find(n => n.type === type)
     if (node) {
@@ -684,7 +691,8 @@ function openNodeInfo(type: string) {
         name: node.name,
         intro: getNodeDescription(type).intro,
         docsUrl: nodeDocsUrl(cat, node),
-        available: node.available !== false
+        available: node.available !== false,
+        position
       }
       return
     }

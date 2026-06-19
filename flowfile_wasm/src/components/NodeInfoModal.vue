@@ -1,94 +1,118 @@
 <template>
   <Teleport to="body">
-    <Transition name="node-info-fade" appear>
-      <div class="node-info-overlay" @click.self="emit('close')">
-        <div class="node-info-card" role="dialog" aria-modal="true" :aria-label="`About ${name}`">
-          <button class="node-info-close" title="Close" @click="emit('close')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-          <div class="node-info-body">
-            <div class="node-info-header">
-              <h2 class="node-info-title">{{ name }}</h2>
-              <span v-if="!available" class="node-info-badge">Full app only</span>
-            </div>
-
-            <p v-if="intro" class="node-info-intro">{{ intro }}</p>
-
-            <!-- Full-app-only nodes: explain the limitation and link to the installer. -->
-            <div v-if="!available" class="node-info-upgrade">
-              <p class="node-info-upgrade-title">This node runs in the full Flowfile installation only.</p>
-              <p class="node-info-upgrade-text">
-                The in-browser editor is a lite build. Install the full version to use this node —
-                along with scheduling, database &amp; cloud connections, and more.
-              </p>
-              <a
-                class="node-info-upgrade-btn"
-                href="https://flowfile.io/install/"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <span>Install the full version</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-              </a>
-            </div>
-
-            <!-- Learn more: the node's documentation section (opens in a new tab). -->
-            <a
-              v-if="docsUrl"
-              class="node-info-docs"
-              :href="docsUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-              <span>Learn more about this node</span>
-            </a>
-          </div>
+    <div
+      ref="cardRef"
+      class="node-info-card"
+      :style="{ top: `${coords.y}px`, left: `${coords.x}px` }"
+      role="dialog"
+      :aria-label="`About ${name}`"
+    >
+      <button class="node-info-close" title="Close" @click="emit('close')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <div class="node-info-body">
+        <div class="node-info-header">
+          <h2 class="node-info-title">{{ name }}</h2>
+          <span v-if="!available" class="node-info-badge">Full app only</span>
         </div>
+
+        <p v-if="intro" class="node-info-intro">{{ intro }}</p>
+
+        <!-- Full-app-only nodes: explain the limitation and link to the installer. -->
+        <div v-if="!available" class="node-info-upgrade">
+          <p class="node-info-upgrade-title">This node runs in the full Flowfile installation only.</p>
+          <p class="node-info-upgrade-text">
+            The in-browser editor is a lite build. Install the full version to use this node —
+            along with scheduling, database &amp; cloud connections, and more.
+          </p>
+          <a
+            class="node-info-upgrade-btn"
+            href="https://flowfile.io/install/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span>Install the full version</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </a>
+        </div>
+
+        <!-- Learn more: the node's documentation section (opens in a new tab). -->
+        <a
+          v-if="docsUrl"
+          class="node-info-docs"
+          :href="docsUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          <span>Learn more about this node</span>
+        </a>
       </div>
-    </Transition>
+    </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, nextTick, ref } from 'vue'
 
-defineProps<{
+const props = defineProps<{
   name: string
   intro: string
   docsUrl: string
   available: boolean
+  // Viewport coordinates of the click that opened the popup; the card anchors here.
+  position: { x: number; y: number }
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+
+const cardRef = ref<HTMLElement | null>(null)
+const coords = ref({ x: props.position.x, y: props.position.y })
+
+// Keep the card on-screen: shift it left/up if anchoring at the cursor would overflow.
+function clampToViewport() {
+  const el = cardRef.value
+  if (!el) return
+  const margin = 8
+  const rect = el.getBoundingClientRect()
+  let left = props.position.x
+  let top = props.position.y
+  if (left + rect.width > window.innerWidth - margin) left = window.innerWidth - rect.width - margin
+  if (top + rect.height > window.innerHeight - margin) top = window.innerHeight - rect.height - margin
+  coords.value = { x: Math.max(margin, left), y: Math.max(margin, top) }
+}
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') emit('close')
 }
 
-onMounted(() => document.addEventListener('keydown', onKeydown))
-onUnmounted(() => document.removeEventListener('keydown', onKeydown))
+function onMousedown(event: MouseEvent) {
+  if (cardRef.value && !cardRef.value.contains(event.target as Node)) {
+    emit('close')
+  }
+}
+
+onMounted(() => {
+  nextTick(clampToViewport)
+  document.addEventListener('keydown', onKeydown)
+  document.addEventListener('mousedown', onMousedown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('mousedown', onMousedown)
+})
 </script>
 
 <style scoped>
-.node-info-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-index-modal, 1050);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-overlay, rgba(0, 0, 0, 0.5));
-  padding: var(--spacing-4);
-}
-
 .node-info-card {
-  position: relative;
-  width: 100%;
-  max-width: 420px;
+  position: fixed;
+  z-index: var(--z-index-canvas-context-menu, 100002);
+  width: 320px;
+  max-width: calc(100vw - 16px);
   background: var(--color-background-primary);
   border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-xl);
+  border-radius: var(--border-radius-lg);
   box-shadow: var(--shadow-lg);
 }
 
@@ -99,8 +123,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border: none;
   background: transparent;
   border-radius: var(--border-radius-md);
@@ -114,7 +138,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
   display: flex;
   flex-direction: column;
   gap: var(--spacing-3);
-  padding: var(--spacing-5);
+  padding: var(--spacing-4);
 }
 
 .node-info-header {
@@ -126,7 +150,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 
 .node-info-title {
   margin: 0;
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
 }
@@ -150,10 +174,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 }
 
 .node-info-upgrade {
-  padding: var(--spacing-4);
+  padding: var(--spacing-3);
   background: rgba(8, 145, 178, 0.1);
   border: 1px solid rgba(8, 145, 178, 0.35);
-  border-radius: var(--border-radius-lg);
+  border-radius: var(--border-radius-md);
 }
 
 .node-info-upgrade-title {
@@ -204,7 +228,4 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 }
 .node-info-docs:hover { background: var(--color-background-tertiary); border-color: var(--color-accent); color: var(--color-accent); }
 .node-info-docs svg { width: 15px; height: 15px; }
-
-.node-info-fade-enter-active, .node-info-fade-leave-active { transition: opacity var(--transition-base); }
-.node-info-fade-enter-from, .node-info-fade-leave-to { opacity: 0; }
 </style>
