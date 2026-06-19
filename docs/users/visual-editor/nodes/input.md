@@ -7,7 +7,7 @@ Input nodes are the starting point for any data flow. Flowfile supports reading 
 
 ## Node Details
 
-### ![Read Data](../../../assets/images/nodes/input_data.png){ width="50" height="50" } Read Data
+### ![Read Data](../../../assets/images/nodes/input_data.svg){ width="50" height="50" } Read Data
 
 The **Read Data** node allows you to load local data into your flow. It supports **CSV**, **Excel**, **Parquet**, **Arrow IPC/Feather**, **NDJSON**, and **Avro** file formats, each with specific configuration options.
 
@@ -79,7 +79,7 @@ When an **Avro** file is selected, no additional setup options are required. Avr
 
 ---
 
-### ![Cloud Storage](../../../assets/images/nodes/cloud_storage_reader.png){ width="50" height="50" } Cloud Storage Reader
+### ![Cloud Storage](../../../assets/images/nodes/cloud_storage_reader.svg){ width="50" height="50" } Cloud Storage Reader
 
 The **Cloud Storage Reader** node reads data directly from cloud object storage. It supports **AWS S3** (including S3-compatible services like MinIO), **Azure Data Lake Storage (ADLS)**, and **Google Cloud Storage (GCS)**.
 
@@ -114,13 +114,13 @@ The **Cloud Storage Reader** node reads data directly from cloud object storage.
 
 ---
 
-### ![Manual Input](../../../assets/images/nodes/manual_input.png){ width="50" height="50" } Manual Input
+### ![Manual Input](../../../assets/images/nodes/manual_input.svg){ width="50" height="50" } Manual Input
 
 The **Manual Input** node allows you to create data directly within Flowfile or paste data from your clipboard.
 
 ---
 
-### ![Database Reader](../../../assets/images/nodes/database_reader.png){ width="50" height="50" } Database Reader
+### ![Database Reader](../../../assets/images/nodes/database_reader.svg){ width="50" height="50" } Database Reader
 
 The **Database Reader** node loads data from database tables or custom SQL queries. It supports **PostgreSQL**, **MySQL**, and **SQLite**.
 

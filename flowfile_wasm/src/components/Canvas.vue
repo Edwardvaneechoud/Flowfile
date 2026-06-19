@@ -551,8 +551,8 @@ const nodeCategories = ref<NodeCategory[]>([
     isOpen: true,
     docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/input',
     nodes: [
-      { type: 'read', name: 'Read File', icon: 'input_data.png', inputs: 0, outputs: 1, keywords: ['csv', 'excel', 'parquet', 'json', 'file', 'import', 'load'] },
-      { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1, keywords: ['paste', 'type', 'create', 'test data'] },
+      { type: 'read', name: 'Read File', icon: 'input_data.svg', inputs: 0, outputs: 1, keywords: ['csv', 'excel', 'parquet', 'json', 'file', 'import', 'load'] },
+      { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.svg', inputs: 0, outputs: 1, keywords: ['paste', 'type', 'create', 'test data'] },
       { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1, keywords: ['url', 'http', 'fetch', 'remote', 'web', 'api'] },
       { type: 'read_from_catalog', name: 'Read from Catalog', icon: 'catalog_reader.svg', inputs: 0, outputs: 1, keywords: ['catalog', 'table', 'dataset', 'saved'] },
       { type: 'database_reader', name: 'Read from Database', icon: '', inputs: 0, outputs: 1, available: false, keywords: ['sql', 'postgres', 'postgresql', 'mysql', 'snowflake', 'oracle', 'redshift', 'bigquery', 'query', 'table', 'db'], docsAnchor: 'database-reader' },
@@ -567,15 +567,15 @@ const nodeCategories = ref<NodeCategory[]>([
     isOpen: true,
     docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/transform',
     nodes: [
-      { type: 'filter', name: 'Filter', icon: 'filter.png', inputs: 1, outputs: 1, keywords: ['where', 'subset', 'condition', 'rows'] },
-      { type: 'select', name: 'Select', icon: 'select.png', inputs: 1, outputs: 1, keywords: ['columns', 'rename', 'reorder', 'keep', 'drop'] },
-      { type: 'formula', name: 'Formula', icon: 'formula.png', inputs: 1, outputs: 1, keywords: ['expression', 'calculate', 'compute', 'sum', 'math', 'concat', 'new column'] },
-      { type: 'sort', name: 'Sort', icon: 'sort.png', inputs: 1, outputs: 1, keywords: ['order', 'arrange', 'rank', 'ascending', 'descending'] },
-      { type: 'polars_code', name: 'Polars Code', icon: 'polars_code.png', inputs: 1, outputs: 1, keywords: ['python', 'code', 'custom', 'script', 'dataframe'] },
-      { type: 'unique', name: 'Unique', icon: 'unique.png', inputs: 1, outputs: 1, keywords: ['dedupe', 'distinct', 'drop duplicates', 'deduplicate'] },
+      { type: 'filter', name: 'Filter', icon: 'filter.svg', inputs: 1, outputs: 1, keywords: ['where', 'subset', 'condition', 'rows'] },
+      { type: 'select', name: 'Select', icon: 'select.svg', inputs: 1, outputs: 1, keywords: ['columns', 'rename', 'reorder', 'keep', 'drop'] },
+      { type: 'formula', name: 'Formula', icon: 'formula.svg', inputs: 1, outputs: 1, keywords: ['expression', 'calculate', 'compute', 'sum', 'math', 'concat', 'new column'] },
+      { type: 'sort', name: 'Sort', icon: 'sort.svg', inputs: 1, outputs: 1, keywords: ['order', 'arrange', 'rank', 'ascending', 'descending'] },
+      { type: 'polars_code', name: 'Polars Code', icon: 'polars_code.svg', inputs: 1, outputs: 1, keywords: ['python', 'code', 'custom', 'script', 'dataframe'] },
+      { type: 'unique', name: 'Unique', icon: 'unique.svg', inputs: 1, outputs: 1, keywords: ['dedupe', 'distinct', 'drop duplicates', 'deduplicate'] },
       { type: 'dynamic_rename', name: 'Rename', icon: 'dynamic_rename.svg', inputs: 1, outputs: 1, keywords: ['rename', 'columns', 'prefix', 'suffix'] },
-      { type: 'record_id', name: 'Record ID', icon: 'record_id.png', inputs: 1, outputs: 1, keywords: ['row number', 'index', 'id', 'sequence'] },
-      { type: 'head', name: 'Take Sample', icon: 'sample.png', inputs: 1, outputs: 1, keywords: ['sample', 'limit', 'top', 'head', 'subset'] },
+      { type: 'record_id', name: 'Record ID', icon: 'record_id.svg', inputs: 1, outputs: 1, keywords: ['row number', 'index', 'id', 'sequence'] },
+      { type: 'head', name: 'Take Sample', icon: 'sample.svg', inputs: 1, outputs: 1, keywords: ['sample', 'limit', 'top', 'head', 'subset'] },
       { type: 'window_functions', name: 'Window Functions', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['window', 'rolling', 'cumulative', 'rank', 'partition', 'lag', 'lead', 'over'], docsAnchor: 'window-functions' },
       { type: 'sql_query', name: 'SQL Query', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['sql', 'query', 'select', 'where', 'duckdb'], docsAnchor: 'sql-query' },
       { type: 'python_script', name: 'Python Script', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['python', 'code', 'script', 'kernel', 'pandas'], docsAnchor: 'python-script' }
@@ -586,10 +586,10 @@ const nodeCategories = ref<NodeCategory[]>([
     isOpen: true,
     docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/combine',
     nodes: [
-      { type: 'join', name: 'Join', icon: 'join.png', inputs: 2, outputs: 1, keywords: ['merge', 'lookup', 'vlookup', 'inner', 'left', 'right', 'outer'] },
-      { type: 'cross_join', name: 'Cross Join', icon: 'cross_join.png', inputs: 2, outputs: 1, keywords: ['cartesian', 'cross', 'combinations'] },
+      { type: 'join', name: 'Join', icon: 'join.svg', inputs: 2, outputs: 1, keywords: ['merge', 'lookup', 'vlookup', 'inner', 'left', 'right', 'outer'] },
+      { type: 'cross_join', name: 'Cross Join', icon: 'cross_join.svg', inputs: 2, outputs: 1, keywords: ['cartesian', 'cross', 'combinations'] },
       // inputs: 1 — single handle accepts multiple connections (like polars_code).
-      { type: 'union', name: 'Union', icon: 'union.png', inputs: 1, outputs: 1, keywords: ['concat', 'append', 'stack', 'combine'] },
+      { type: 'union', name: 'Union', icon: 'union.svg', inputs: 1, outputs: 1, keywords: ['concat', 'append', 'stack', 'combine'] },
       { type: 'fuzzy_match', name: 'Fuzzy Match', icon: '', inputs: 2, outputs: 1, available: false, keywords: ['fuzzy', 'similarity', 'levenshtein', 'approximate', 'fuzzy join'], docsAnchor: 'fuzzy-match' },
       { type: 'graph_solver', name: 'Graph Solver', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['graph', 'network', 'cluster', 'connected components'], docsAnchor: 'graph-solver' }
     ]
@@ -599,9 +599,9 @@ const nodeCategories = ref<NodeCategory[]>([
     isOpen: true,
     docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/aggregate',
     nodes: [
-      { type: 'group_by', name: 'Group By', icon: 'group_by.png', inputs: 1, outputs: 1, keywords: ['aggregate', 'sum', 'mean', 'average', 'count', 'min', 'max', 'median', 'summarize'] },
-      { type: 'pivot', name: 'Pivot', icon: 'pivot.png', inputs: 1, outputs: 1, keywords: ['crosstab', 'wide', 'reshape', 'spread'] },
-      { type: 'unpivot', name: 'Unpivot', icon: 'unpivot.png', inputs: 1, outputs: 1, keywords: ['melt', 'long', 'reshape', 'gather'] }
+      { type: 'group_by', name: 'Group By', icon: 'group_by.svg', inputs: 1, outputs: 1, keywords: ['aggregate', 'sum', 'mean', 'average', 'count', 'min', 'max', 'median', 'summarize'] },
+      { type: 'pivot', name: 'Pivot', icon: 'pivot.svg', inputs: 1, outputs: 1, keywords: ['crosstab', 'wide', 'reshape', 'spread'] },
+      { type: 'unpivot', name: 'Unpivot', icon: 'unpivot.svg', inputs: 1, outputs: 1, keywords: ['melt', 'long', 'reshape', 'gather'] }
     ]
   },
   {
@@ -619,8 +619,8 @@ const nodeCategories = ref<NodeCategory[]>([
     isOpen: true,
     docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/output',
     nodes: [
-      { type: 'explore_data', name: 'Explore Data', icon: 'explore_data.png', inputs: 1, outputs: 0, keywords: ['profile', 'describe', 'preview', 'eda', 'visualize', 'chart'] },
-      { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0, keywords: ['csv', 'excel', 'parquet', 'write', 'save', 'export', 'file'] },
+      { type: 'explore_data', name: 'Explore Data', icon: 'explore_data.svg', inputs: 1, outputs: 0, keywords: ['profile', 'describe', 'preview', 'eda', 'visualize', 'chart'] },
+      { type: 'output', name: 'Write Data', icon: 'output.svg', inputs: 1, outputs: 0, keywords: ['csv', 'excel', 'parquet', 'write', 'save', 'export', 'file'] },
       { type: 'write_to_catalog', name: 'Write to Catalog', icon: 'catalog_writer.svg', inputs: 1, outputs: 0, keywords: ['catalog', 'table', 'save'] },
       { type: 'external_output', name: 'External Output', icon: 'external_output.svg', inputs: 1, outputs: 0, keywords: ['url', 'http', 'api', 'send', 'webhook'] },
       { type: 'database_writer', name: 'Write to Database', icon: '', inputs: 1, outputs: 0, available: false, keywords: ['sql', 'postgres', 'mysql', 'snowflake', 'redshift', 'bigquery', 'insert', 'table', 'db'], docsAnchor: 'database-writer' },

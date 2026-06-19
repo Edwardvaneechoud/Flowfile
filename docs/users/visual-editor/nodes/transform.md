@@ -8,7 +8,7 @@ Transform nodes modify and shape your data. These nodes handle everything from b
 ## Node Details
 
 
-### ![Add Record ID](../../../assets/images/nodes/record_id.png){ width="50" height="50" } Add Record ID  
+### ![Add Record ID](../../../assets/images/nodes/record_id.svg){ width="50" height="50" } Add Record ID  
 
 The **Add Record ID** transformation generates a unique identifier for each record in your dataset. You can create a simple sequential ID or generate grouped IDs based on one or more columns.
 
@@ -45,7 +45,7 @@ This transformation helps in creating unique keys, tracking row order, or struct
 
 ---
 
-### ![Formula](../../../assets/images/nodes/formula.png){ width="50" height="50" } Formula  
+### ![Formula](../../../assets/images/nodes/formula.svg){ width="50" height="50" } Formula  
 
 The **Formula** node creates a new column — or replaces an existing one — by evaluating a formula for every row. Formulas are written in the [Flowfile formula language](../../formulas/index.md): reference columns as `[column]`, call any of the [95 built-in functions](../../formulas/functions.md), and use `if ... then ... else ... endif` for conditional logic.
 
@@ -93,7 +93,7 @@ This transformation is useful for feature engineering, data cleaning, and enrich
 
 ---
 
-### ![Select Data](../../../assets/images/nodes/select.png){ width="50" height="50" } Select Data  
+### ![Select Data](../../../assets/images/nodes/select.svg){ width="50" height="50" } Select Data  
 
 The **Select Data** node allows you to choose which columns to keep, rename, and reorder. This transformation is useful for refining datasets, dropping unnecessary fields, and ensuring a structured column layout.
 
@@ -129,7 +129,7 @@ This transformation ensures that datasets are structured efficiently before furt
 
 ---
 
-### ![Filter Data](../../../assets/images/nodes/filter.png){ width="50" height="50" } Filter Data
+### ![Filter Data](../../../assets/images/nodes/filter.svg){ width="50" height="50" } Filter Data
 
 The **Filter Data** node keeps only rows that match a specified condition.
 
@@ -166,7 +166,7 @@ Advanced filters use the [Flowfile formula language](../../formulas/index.md) �
 
 ---
 
-### ![Sort Data](../../../assets/images/nodes/sort.png){ width="50" height="50" } Sort Data  
+### ![Sort Data](../../../assets/images/nodes/sort.svg){ width="50" height="50" } Sort Data  
 
 The **Sort Data** node orders your data based on one or more columns.
 
@@ -195,13 +195,13 @@ This node ensures structured and ordered data for better analysis.
 
 ---
 
-### ![Take Sample](../../../assets/images/nodes/sample.png){ width="50" height="50" } Take Sample
+### ![Take Sample](../../../assets/images/nodes/sample.svg){ width="50" height="50" } Take Sample
 
 The Take Sample node lets you work with a subset of your data.
 
 ---
 
-### ![Drop Duplicates](../../../assets/images/nodes/unique.png){ width="50" height="50" } Drop Duplicates  
+### ![Drop Duplicates](../../../assets/images/nodes/unique.svg){ width="50" height="50" } Drop Duplicates  
 
 The **Drop Duplicates** node removes duplicate rows based on selected columns. Only the first occurrence is kept by default.
 
@@ -231,7 +231,7 @@ This node ensures a clean dataset by eliminating redundant rows.
 
 ---
 
-### ![Text to Rows](../../../assets/images/nodes/text_to_rows.png){ width="50" height="50" } Text to Rows  
+### ![Text to Rows](../../../assets/images/nodes/text_to_rows.svg){ width="50" height="50" } Text to Rows  
 
 The **Text to Rows** node splits text from a selected column into multiple rows based on a delimiter.
 
@@ -313,7 +313,7 @@ For rolling functions, **incomplete windows** (the first rows, before the window
 This node is useful for time-series features such as moving averages, running totals, ranking within groups, and bucketing rows into quantiles.
 
 ---
-### ![Polars Code](../../../assets/images/nodes/polars_code.png){ width="50" height="50" } Polars Code  
+### ![Polars Code](../../../assets/images/nodes/polars_code.svg){ width="50" height="50" } Polars Code  
 
 The **Polars Code** node allows you to write custom **Polars DataFrame** transformations directly in your workflow.
 
