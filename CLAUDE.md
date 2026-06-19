@@ -64,6 +64,27 @@ WASM frontend (Pyodide) runs fully in-browser — no core/worker/kernel.
 - **Scheduler**: `flowfile_scheduler` is deliberately **free of `flowfile_core` imports** — it polls the shared SQLite DB via reflected tables (`flowfile_scheduler/models.py`). Keep it dependency-light.
 - **Polars version lock**: root `pyproject.toml`, `kernel_runtime`, and `flowfile_frame` must pin compatible Polars; kernel containers read their own `poetry.lock` at startup to surface versions and avoid drift. Bump them together; the kernel image version evolves independently of the app version.
 
+## Development Squad (Claude Code subagents)
+
+This repo ships a **squad** of specialist subagents under `.claude/agents/` (see
+`.claude/agents/README.md`). When a task lands squarely in one package or
+cross-cutting area, **delegate to the matching specialist** via the Agent tool —
+each is pre-loaded with that area's architecture, test commands, and the
+invariants it must not break. The main session stays the coordinator.
+
+| Agent | When to use |
+|-------|-------------|
+| `core-engineer` | `flowfile_core/` — backend, DAG engine, auth, catalog, secrets, AI, kernels, migrations |
+| `worker-engineer` | `flowfile_worker/` — spawn-subprocess compute service, connectors, streaming |
+| `frame-engineer` | `flowfile_frame/` — Polars-like API building FlowGraphs (+ `.pyi` stub gate) |
+| `frontend-engineer` | `flowfile_frontend/` — Tauri 2 shell + Vue 3 renderer |
+| `wasm-engineer` | `flowfile_wasm/` — browser-only Pyodide editor |
+| `scheduler-engineer` | `flowfile_scheduler/` — embeddable polling engine (core→scheduler only) |
+| `shared-engineer` | `shared/` — storage paths, wire/DB models, cloud/Kafka/ML helpers |
+| `kernel-engineer` | `kernel_runtime/` — sandboxed Docker code-exec kernel, `flowfile_ctx` |
+| `docs-writer` | MkDocs site, `mkdocs.yml`, `CLAUDE.md` guides, frame API docstrings |
+| `release-engineer` | Makefile, PyInstaller/Tauri builds, `.github/workflows/*`, Docker, version pins |
+
 ## Development Setup
 
 ### Python Backend
