@@ -89,6 +89,15 @@
           />
         </el-select>
 
+        <el-button
+          size="small"
+          class="nb-overflow-btn"
+          title="Notebook help"
+          @click="showHelp = true"
+        >
+          <i class="fa-solid fa-circle-question"></i>
+        </el-button>
+
         <!-- Overflow: kernel / output maintenance -->
         <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
           <el-button size="small" class="nb-overflow-btn" title="More actions">
@@ -156,6 +165,21 @@
 
     <!-- Cells of the active notebook -->
     <div v-if="store.active" class="nb-cells">
+      <!-- Quick-start primer, shown only while the notebook is empty. -->
+      <div v-if="showPrimer" class="nb-primer">
+        <div class="nb-primer-title"><i class="fa-solid fa-book"></i> New notebook</div>
+        <p class="nb-primer-text">
+          Pick a kernel above, write Python, and press <kbd>Shift</kbd>+<kbd>Enter</kbd> to run.
+          Read from the catalog and show results:
+        </p>
+        <pre
+          class="nb-primer-code"
+        ><code>df = flowfile_ctx.read_catalog_table("fx_rates", schema="market")
+flowfile_ctx.display(df)      # interactive table
+flowfile_ctx.explore(df)      # full explorer</code></pre>
+        <a class="nb-primer-link" @click="showHelp = true">Open full reference →</a>
+      </div>
+
       <template v-for="(cell, idx) in store.active.cells" :key="cell.id">
         <CatalogNotebookCell
           :cell="cell"
@@ -215,6 +239,8 @@
         <el-button type="primary" :loading="saveAsSaving" @click="confirmSaveAs">Save</el-button>
       </template>
     </el-dialog>
+
+    <NotebookHelp v-if="showHelp" @close="showHelp = false" />
   </div>
 </template>
 
@@ -225,6 +251,7 @@ import { useNotebookStore } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { KernelApi } from "../../api/kernel.api";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
+import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
 import type { CellType } from "../../components/notebook/types";
 import type { KernelInfo } from "../../types/kernel.types";
 
@@ -260,6 +287,12 @@ const running = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const isPersisted = computed(() => store.active?.persistedId != null);
+
+const showHelp = ref(false);
+// Primer shows only while the notebook has no code yet; it hides as soon as you type.
+const showPrimer = computed(
+  () => !!store.active && store.active.cells.every((c) => !c.code.trim()),
+);
 
 function priorCodes(idx: number): string[] {
   return store.active ? store.active.cells.slice(0, idx).map((c) => c.code) : [];
