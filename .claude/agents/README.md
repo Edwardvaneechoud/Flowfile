@@ -24,7 +24,12 @@ the matching specialist (the main session stays the coordinator).
 |-------|------|------|
 | `docs-writer` | Documentation | MkDocs site under `docs/`, `mkdocs.yml`, `CLAUDE.md` guides, frame API docstrings |
 | `release-engineer` | Build / CI / release | Makefile, PyInstaller + Tauri bundling, `.github/workflows/*`, Docker images, version pins |
+| `test-engineer` | Testing | pytest across the Python packages, Vitest unit, Playwright E2E, coverage, Docker-gated markers |
+| `security-reviewer` | Security | Auth/secrets/sharing/kernel/connector review; knows the deliberate do-not-"fix" choices |
 
 These are definitions only — they ship no runtime code into the packages and
-have no effect on the built application. Add a new member here (and to the table
-above) when the squad needs to grow.
+have no effect on the built application. They are repo tooling and are kept out
+of every shippable artifact: excluded from Docker images (`.dockerignore`), the
+PyPI sdist/wheel (`pyproject.toml` `exclude` + explicit-include packaging), and
+the Tauri bundle (which only bundles `build/renderer` + `binaries/`). Add a new
+member here (and to the table above) when the squad needs to grow.

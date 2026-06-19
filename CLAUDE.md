@@ -84,6 +84,10 @@ invariants it must not break. The main session stays the coordinator.
 | `kernel-engineer` | `kernel_runtime/` — sandboxed Docker code-exec kernel, `flowfile_ctx` |
 | `docs-writer` | MkDocs site, `mkdocs.yml`, `CLAUDE.md` guides, frame API docstrings |
 | `release-engineer` | Makefile, PyInstaller/Tauri builds, `.github/workflows/*`, Docker, version pins |
+| `test-engineer` | Testing across the stack — pytest, Vitest, Playwright, coverage, Docker-gated markers |
+| `security-reviewer` | Security review — auth, secrets, group-sharing, kernel sandbox, connectors |
+
+The `.claude/` dir is repo tooling: it's excluded from the Docker build context (`.dockerignore`), the PyPI sdist/wheel (`pyproject.toml` `exclude`), and is never referenced by the Tauri bundle.
 
 ## Development Setup
 
