@@ -23,7 +23,7 @@
           <p class="node-info-upgrade-title">This node runs in the full Flowfile installation only.</p>
           <p class="node-info-upgrade-text">
             The in-browser editor is a lite build. Install the full version to use this node —
-            along with scheduling, database &amp; cloud connections, and more.
+            along with scheduling, database &amp; cloud connections, and more. <strong>It's free!</strong>
           </p>
           <a
             class="node-info-upgrade-btn"
