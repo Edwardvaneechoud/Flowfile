@@ -8,7 +8,7 @@ Output nodes represent the final steps in your data pipeline, allowing you to sa
 ## Node Details
 ## Node Details  
 
-### ![Write Data](../../../assets/images/nodes/output.png){ width="50" height="50" } Write Data  
+### ![Write Data](../../../assets/images/nodes/output.svg){ width="50" height="50" } Write Data  
 
 The **Write Data** node allows you to save your processed data in different formats. It supports **CSV**, **Excel**, and **Parquet**, each with specific configuration options.  
 
@@ -73,7 +73,7 @@ This node ensures that your transformed data is **saved in the correct format**,
 
 ---
 
-### ![Cloud Storage Writer](../../../assets/images/nodes/cloud_storage_writer.png){ width="50" height="50" } Cloud Storage Writer
+### ![Cloud Storage Writer](../../../assets/images/nodes/cloud_storage_writer.svg){ width="50" height="50" } Cloud Storage Writer
 
 The **Cloud Storage Writer** node saves your processed data directly to cloud object storage. It supports **AWS S3** (including S3-compatible services like MinIO), **Azure Data Lake Storage (ADLS)**, and **Google Cloud Storage (GCS)**.
 
@@ -117,7 +117,7 @@ The **Cloud Storage Writer** node saves your processed data directly to cloud ob
 
 ---
 
-### ![Database Writer](../../../assets/images/nodes/database_reader.png){ width="50" height="50" } Database Writer
+### ![Database Writer](../../../assets/images/nodes/database_writer.svg){ width="50" height="50" } Database Writer
 
 The **Database Writer** node saves processed data to a database table. It supports **PostgreSQL**, **MySQL**, and **SQLite**.
 
@@ -213,7 +213,7 @@ For the full guide on virtual tables, optimization, and when to use them, see [V
 
 ---
 
-### ![Explore Data](../../../assets/images/nodes/explore_data.png){ width="50" height="50" } Explore Data
+### ![Explore Data](../../../assets/images/nodes/explore_data.svg){ width="50" height="50" } Explore Data
 
 The Explore Data node provides interactive data exploration and analysis capabilities.
 

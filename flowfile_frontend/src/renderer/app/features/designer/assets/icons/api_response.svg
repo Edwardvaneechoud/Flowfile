@@ -1,6 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
-  <rect x="4" y="4" width="40" height="40" rx="9" fill="#2c7be5"/>
-  <path d="M16 18l-6 6 6 6" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M32 18l6 6-6 6" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M27 14l-6 20" fill="none" stroke="#cfe3ff" stroke-width="2.6" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A4FA6"/><stop offset="1" stop-color="#243A82"/></linearGradient></defs>
+  <circle cx="50" cy="50" r="48" fill="url(#bg)"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M40 28 a7 7 0 0 0 -7 7 v8 a7 7 0 0 1 -7 7 a7 7 0 0 1 7 7 v8 a7 7 0 0 0 7 7"/>
+    <path d="M52 28 a7 7 0 0 1 7 7 v8 a7 7 0 0 0 7 7 a7 7 0 0 0 -7 7 v8 a7 7 0 0 1 -7 7"/>
+    <circle cx="46" cy="57" r="2.4" fill="#FFFFFF" stroke="none"/>
+    <line x1="62" y1="57" x2="78" y2="57"/>
+    <polyline points="72,51 78,57 72,63"/>
+  </g>
 </svg>
