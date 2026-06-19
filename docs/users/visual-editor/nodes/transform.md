@@ -265,6 +265,54 @@ This transformation helps normalize datasets by converting **text lists into str
 
 
 ---
+
+### Window Functions
+
+The **Window Functions** node adds rolling, cumulative, rank, or tile columns calculated over ordered — and optionally partitioned — rows. Each configured function produces one new column using Polars `over(...)` semantics, without collapsing rows the way a Group By does.
+
+---
+
+#### **Key Features**
+
+- **Partition** calculations so they restart per group (like `.over(...)`)
+- **Order** rows within each partition
+- **Rolling**, **cumulative**, **ranking**, and **tile** functions
+- Add multiple functions in one node — each writes its own output column
+
+---
+
+#### **Configuration Options**
+
+| Parameter | Description |
+|-----------|-------------|
+| **Partition by** | *(Optional)* Columns that reset each calculation per group. Leave empty to compute over the whole table. |
+| **Order by** | Column(s) and direction (ascending/descending) defining row order within each partition. **Required** for rolling and tile functions. |
+| **Window functions** | One or more operations. Each takes a **function**, a **source column**, an **output column name**, and any function-specific parameters. |
+
+---
+
+#### **Available Functions**
+
+| Function | Group | Parameters | Output |
+|----------|-------|------------|--------|
+| **Rolling sum / mean / min / max / std** | Rolling | **Window size** (rows) and how to handle **incomplete windows** | Aggregate over a sliding window of rows |
+| **Cumulative sum / count / min / max** | Cumulative | — | Running total / count / min / max up to each row |
+| **Rank** | Ranking | **Tie-breaking method**: `ordinal`, `dense`, `min`, `max`, or `average` | Rank of each row |
+| **Tile** | Ranking | **Number of groups** | Splits the ordered rows into N equal-sized groups |
+
+For rolling functions, **incomplete windows** (the first rows, before the window is full) can be left empty (`null`, the default), computed from the **partial** window, or **filled with 0**.
+
+---
+
+#### **Behavior**
+
+- Rolling and tile functions require at least one **Order by** column; cumulative functions don't require ordering but usually want it.
+- Each window function must have a **unique output column name**.
+- Existing columns are preserved — every function adds a new column.
+
+This node is useful for time-series features such as moving averages, running totals, ranking within groups, and bucketing rows into quantiles.
+
+---
 ### ![Polars Code](../../../assets/images/nodes/polars_code.png){ width="50" height="50" } Polars Code  
 
 The **Polars Code** node allows you to write custom **Polars DataFrame** transformations directly in your workflow.
@@ -299,6 +347,72 @@ result = input_df.select(['Name', 'City'])
 filtered = result.filter(pl.col('City') == 'Amsterdam')
 output_df = filtered.with_columns(pl.col('Name').alias('Customer_Name')) # this will be the output of the node
 ```
+
+---
+
+### SQL Query
+
+The **SQL Query** node runs a SQL `SELECT` query across one or more connected inputs using the **Polars SQL** dialect. Use it to filter, aggregate, join, and reshape data with familiar SQL.
+
+---
+
+#### **Key Features**
+
+- Query connected inputs as tables named `input_1`, `input_2`, … (in connection order)
+- Join, filter, group, and compute across **up to 10 inputs**
+- Chain SQL Query nodes together like any other transform
+- Read-only by design — only `SELECT` / `WITH` queries are allowed
+
+---
+
+#### **Usage**
+
+1. Connect one or more inputs to the **SQL Query** node.
+2. Write a query that references each input as `input_1`, `input_2`, etc.
+3. Run the flow to materialize the query result.
+
+---
+
+#### **Configuration Options**
+
+| Parameter | Description |
+|-----------|-------------|
+| **SQL Query** | The `SELECT` statement to execute. Connected inputs are available as `input_1`, `input_2`, … |
+
+---
+
+#### **Example Queries**
+
+##### **Filter and select**
+
+```sql
+SELECT name, city FROM input_1 WHERE city = 'Amsterdam'
+```
+
+##### **Aggregate**
+
+```sql
+SELECT city, COUNT(*) AS cnt FROM input_1 GROUP BY city
+```
+
+##### **Join two inputs**
+
+```sql
+SELECT c.name, SUM(o.amount) AS total
+FROM input_1 c
+JOIN input_2 o ON c.id = o.customer_id
+GROUP BY c.name
+```
+
+---
+
+#### **Behavior**
+
+- Queries must start with `SELECT` or `WITH` (for common table expressions). Statements that modify data or schema — such as `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, or `TRUNCATE` — are rejected.
+- Invalid or unsafe SQL surfaces as a node error before the flow runs.
+
+!!! tip "Querying catalog tables"
+    To run SQL across registered **catalog** tables instead of connected nodes, use the [Catalog Reader's SQL mode](../catalog/sql-editor.md).
 
 ---
 
