@@ -11,7 +11,7 @@ These transformations are essential for tasks like **data preparation, consolida
 
 ## Node Details
 
-### ![Join](../../../assets/images/nodes/join.png){ width="50" height="50" } Join  
+### ![Join](../../../assets/images/nodes/join.svg){ width="50" height="50" } Join  
 
 The **Join** node merges two datasets based on matching values in selected columns.
 
@@ -42,7 +42,7 @@ The **Join** node merges two datasets based on matching values in selected colum
 This node is useful for merging related datasets, such as **combining customer data with orders** or **linking product details with inventory**.
 
 
-### ![Fuzzy Match](../../../assets/images/nodes/fuzzy_match.jpg){ width="50" height="50" } Fuzzy Match  
+### ![Fuzzy Match](../../../assets/images/nodes/fuzzy_match.svg){ width="50" height="50" } Fuzzy Match  
 
 The **Fuzzy Match** node joins datasets based on **similar values** instead of exact matches, using various matching algorithms.
 
@@ -75,7 +75,7 @@ The **Fuzzy Match** node joins datasets based on **similar values** instead of e
 This node is useful for handling **typos, name variations, and inconsistent formatting** when merging datasets.
 
 
-### ![Union Data](../../../assets/images/nodes/union.png){ width="50" height="50" } Union Data  
+### ![Union Data](../../../assets/images/nodes/union.svg){ width="50" height="50" } Union Data  
 
 The **Union Data** node merges multiple datasets by stacking rows together.
 
@@ -99,7 +99,7 @@ The **Union Data** node merges multiple datasets by stacking rows together.
 This node is useful for **combining similar datasets**, such as **monthly reports or regional data**.
 
 
-### ![Cross Join](../../../assets/images/nodes/cross_join.png){ width="50" height="50" } Cross Join
+### ![Cross Join](../../../assets/images/nodes/cross_join.svg){ width="50" height="50" } Cross Join
 
 The **Cross Join** node creates all possible combinations between two datasets.
 
@@ -125,7 +125,7 @@ This node is useful for **creating test scenarios, generating all possible produ
 
 ---
 
-### ![Graph Solver](../../../assets/images/nodes/graph_solver.png){ width="50" height="50" } Graph Solver
+### ![Graph Solver](../../../assets/images/nodes/graph_solver.svg){ width="50" height="50" } Graph Solver
 
 The **Graph Solver** node groups related records based on connections in a graph-structured dataset.
 

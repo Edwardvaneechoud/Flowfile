@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Any, ClassVar, Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_serializer, field_validator
@@ -354,6 +355,203 @@ class FlowfileData(BaseModel):
     groups: list[FlowfileGroup] = Field(default_factory=list)
 
 
+class NodeTag(str, Enum):
+    """Controlled vocabulary of palette search keywords.
+
+    Matched (case-insensitive substring) against the user's query in the node palette so a
+    node surfaces by concept, format, or tool rather than only its display name
+    (e.g. "s3" -> cloud reader/writer, "sum" -> formula and group by). As a ``str`` enum each
+    member serializes to its plain string value for the frontend.
+    """
+
+    # File formats & local IO
+    CSV = "csv"
+    EXCEL = "excel"
+    PARQUET = "parquet"
+    JSON = "json"
+    FILE = "file"
+    READ = "read"
+    WRITE = "write"
+    IMPORT = "import"
+    EXPORT = "export"
+    SAVE = "save"
+    DELTA = "delta"
+
+    # Connectivity & APIs
+    API = "api"
+    REST = "rest"
+    HTTP = "http"
+    EXTERNAL = "external"
+    RESPONSE = "response"
+    PAGINATION = "pagination"
+
+    # Databases
+    DATABASE = "database"
+    SQL = "sql"
+    QUERY = "query"
+    TABLE = "table"
+    DUCKDB = "duckdb"
+    POSTGRES = "postgres"
+    MYSQL = "mysql"
+    SQL_SERVER = "sql server"
+    SNOWFLAKE = "snowflake"
+    ORACLE = "oracle"
+    SQLITE = "sqlite"
+    REDSHIFT = "redshift"
+    BIGQUERY = "bigquery"
+
+    # Cloud storage
+    S3 = "s3"
+    AWS = "aws"
+    AZURE = "azure"
+    ADLS = "adls"
+    GCS = "gcs"
+    BLOB = "blob"
+    BUCKET = "bucket"
+    CLOUD = "cloud"
+
+    # Catalog / lakehouse
+    CATALOG = "catalog"
+    LAKEHOUSE = "lakehouse"
+    TIME_TRAVEL = "time travel"
+
+    # Streaming
+    KAFKA = "kafka"
+    REDPANDA = "redpanda"
+    STREAMING = "streaming"
+    TOPIC = "topic"
+
+    # Analytics sources
+    GOOGLE_ANALYTICS = "google analytics"
+    GA4 = "ga4"
+    ANALYTICS = "analytics"
+
+    # Data entry
+    MANUAL = "manual"
+    PASTE = "paste"
+    INPUT = "input"
+
+    # Column shaping
+    SELECT = "select"
+    COLUMNS = "columns"
+    RENAME = "rename"
+    REORDER = "reorder"
+    PROJECTION = "projection"
+
+    # Row selection
+    FILTER = "filter"
+    WHERE = "where"
+    SUBSET = "subset"
+    SAMPLE = "sample"
+
+    # Formula / compute
+    FORMULA = "formula"
+    EXPRESSION = "expression"
+    CALCULATE = "calculate"
+    MATH = "math"
+    CONCAT = "concat"
+
+    # Aggregation
+    GROUP_BY = "group by"
+    AGGREGATE = "aggregate"
+    SUM = "sum"
+    MEAN = "mean"
+    AVERAGE = "average"
+    COUNT = "count"
+    MIN = "min"
+    MAX = "max"
+    MEDIAN = "median"
+    SUMMARIZE = "summarize"
+    RECORD_COUNT = "record count"
+    ROWS = "rows"
+
+    # Window functions
+    WINDOW = "window"
+    ROLLING = "rolling"
+    CUMULATIVE = "cumulative"
+    RANK = "rank"
+    PARTITION = "partition"
+    LAG = "lag"
+    LEAD = "lead"
+
+    # Joins & combine
+    JOIN = "join"
+    MERGE = "merge"
+    LOOKUP = "lookup"
+    VLOOKUP = "vlookup"
+    INNER = "inner"
+    OUTER = "outer"
+    CROSS_JOIN = "cross join"
+    CARTESIAN = "cartesian"
+    FUZZY = "fuzzy"
+    SIMILARITY = "similarity"
+    LEVENSHTEIN = "levenshtein"
+    UNION = "union"
+    APPEND = "append"
+    WAIT = "wait"
+    DEPENDENCY = "dependency"
+
+    # Reshape
+    PIVOT = "pivot"
+    CROSSTAB = "crosstab"
+    UNPIVOT = "unpivot"
+    MELT = "melt"
+    RESHAPE = "reshape"
+    TEXT_TO_ROWS = "text to rows"
+    SPLIT = "split"
+    EXPLODE = "explode"
+
+    # Deduplication
+    UNIQUE = "unique"
+    DEDUPE = "dedupe"
+    DISTINCT = "distinct"
+    DROP_DUPLICATES = "drop duplicates"
+
+    # Graph
+    GRAPH = "graph"
+    NETWORK = "network"
+    CLUSTER = "cluster"
+    CONNECTED_COMPONENTS = "connected components"
+
+    # Identifiers & ordering
+    RECORD_ID = "record id"
+    ROW_NUMBER = "row number"
+    INDEX = "index"
+    SORT = "sort"
+    ORDER = "order"
+    ASCENDING = "ascending"
+    DESCENDING = "descending"
+
+    # Code
+    POLARS = "polars"
+    CODE = "code"
+    PYTHON = "python"
+    SCRIPT = "script"
+    KERNEL = "kernel"
+    CUSTOM = "custom"
+    DATAFRAME = "dataframe"
+
+    # Explore
+    EXPLORE = "explore"
+    PROFILE = "profile"
+    PREVIEW = "preview"
+    EDA = "eda"
+    STATISTICS = "statistics"
+
+    # Machine learning
+    ML = "ml"
+    MACHINE_LEARNING = "machine learning"
+    TRAIN = "train"
+    TEST = "test"
+    MODEL = "model"
+    REGRESSION = "regression"
+    CLASSIFICATION = "classification"
+    PREDICT = "predict"
+    SCORE = "score"
+    EVALUATE = "evaluate"
+    METRICS = "metrics"
+
+
 class NodeTemplate(BaseModel):
     """
     Defines the template for a node type, specifying its UI and functional characteristics.
@@ -386,6 +584,7 @@ class NodeTemplate(BaseModel):
     custom_node: bool | None = False
     laziness: LazinessLiteral = "eager"
     output_names: list[str] | None = None
+    tags: list[NodeTag] = Field(default_factory=list)
 
 
 class NodeInformation(BaseModel):

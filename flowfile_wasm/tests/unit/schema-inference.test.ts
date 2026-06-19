@@ -7,7 +7,6 @@ import { describe, it, expect } from 'vitest'
 import {
   inferOutputSchema,
   isSourceNode,
-  getDownstreamNodeIds,
   inferSchemaFromCsv,
   inferSchemaFromRawData,
   resolveDynamicRenameMap
@@ -51,25 +50,6 @@ describe('Schema Inference', () => {
       expect(isSourceNode('select')).toBe(false)
       expect(isSourceNode('join')).toBe(false)
       expect(isSourceNode('group_by')).toBe(false)
-    })
-  })
-
-  describe('getDownstreamNodeIds', () => {
-    it('should return downstream node IDs from edges', () => {
-      const edges = [
-        { source: '1', target: '2' },
-        { source: '1', target: '3' },
-        { source: '2', target: '4' }
-      ]
-
-      expect(getDownstreamNodeIds(1, edges)).toEqual([2, 3])
-      expect(getDownstreamNodeIds(2, edges)).toEqual([4])
-      expect(getDownstreamNodeIds(3, edges)).toEqual([])
-    })
-
-    it('should return empty array for nodes with no downstream', () => {
-      const edges = [{ source: '1', target: '2' }]
-      expect(getDownstreamNodeIds(2, edges)).toEqual([])
     })
   })
 

@@ -48,6 +48,50 @@ def test_write_parquet(tmp_path):
     assert pl.read_parquet(output_path)["value"].to_list() == [1, 2, 3]
 
 
+@pytest.mark.parametrize("data_type,ext,compression", [
+    ("ipc", "arrow", None),
+    ("ndjson", "ndjson", None),
+    ("avro", "avro", None),
+    ("ipc", "arrow", "zstd"),
+    ("ndjson", "ndjson", "gzip"),
+    ("avro", "avro", "deflate"),
+    ("parquet", "parquet", "snappy"),
+])
+def test_write_output_new_formats(tmp_path, data_type, ext, compression):
+    """The worker write path must actually produce a non-empty, readable file for
+    each new format and compression (a missing execute_write_method branch silently
+    no-ops)."""
+    from flowfile_worker.funcs import write_output
+
+    lf = pl.LazyFrame({"value": [1, 2, 3], "name": ["a", "b", "c"]})
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    out = tmp_path / f"out.{ext}"
+
+    write_output(
+        polars_serializable_object=lf.serialize(),
+        progress=progress,
+        error_message=error_message,
+        queue=Queue(maxsize=1),
+        file_path="",
+        data_type=data_type,
+        path=str(out),
+        write_mode="overwrite",
+        compression=compression,
+    )
+
+    assert progress.value == 100, error_message[:].decode(errors="replace")
+    assert out.exists() and out.stat().st_size > 0, f"{data_type} file not written"
+    assert getattr(pl, f"read_{data_type}")(str(out)).shape == (3, 2)
+
+
+def test_table_creator_factory_new_formats():
+    from flowfile_worker.create import table_creator_factory_method
+
+    for file_type in ("ipc", "ndjson", "avro"):
+        assert callable(table_creator_factory_method(file_type))
+
+
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_write_to_cloud_storage(cloud_storage_connection_settings):
     write_settings = WriteSettings(

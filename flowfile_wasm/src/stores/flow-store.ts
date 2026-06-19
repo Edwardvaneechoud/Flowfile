@@ -32,6 +32,38 @@ import type {
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
 
+// polars-expr-transformer pin (browser micropip + tests/python/requirements.txt).
+const EXPR_TRANSFORMER_PKG = 'polars-expr-transformer==0.5.6'
+
+// Single-input transform nodes share one bridge shape —
+// execute_<fn>(nodeId, inputId, settings) — and differ only in the engine
+// function name. Keep these keys in sync with the single-input `case` labels
+// in executeNode.
+const SINGLE_INPUT_EXECUTORS: Record<string, string> = {
+  filter: 'execute_filter',
+  select: 'execute_select',
+  group_by: 'execute_group_by',
+  sort: 'execute_sort',
+  record_id: 'execute_record_id',
+  unique: 'execute_unique',
+  head: 'execute_head',
+  explore_data: 'execute_explore_data',
+  pivot: 'execute_pivot',
+  unpivot: 'execute_unpivot',
+  formula: 'execute_formula',
+  dynamic_rename: 'execute_dynamic_rename',
+}
+
+// Lazily-installed packages some single-input executors need before running.
+// Returns the packages required for the given settings (empty = none).
+const SINGLE_INPUT_PACKAGES: Record<string, (settings: any) => string[]> = {
+  formula: () => [EXPR_TRANSFORMER_PKG],
+  // dynamic_rename only needs the expr engine in formula mode.
+  dynamic_rename: (s) =>
+    s?.dynamic_rename_input?.rename_mode === 'formula' ? [EXPR_TRANSFORMER_PKG] : [],
+}
+
+
 /**
  * A full, self-contained snapshot of a flow's live state — graph (FlowfileData),
  * in-memory CSV file contents (by node id), the node-id counter, and the flow
@@ -381,7 +413,6 @@ export const useFlowStore = defineStore('flow', () => {
     }
 
     edges.value.push(...derivedEdges)
-    console.log('[deriveEdgesFromNodes] Created edges:', derivedEdges.map(e => `${e.source}->${e.target}`))
   }
 
   // Save state to session storage using FlowfileData format (flowfile_core compatible)
@@ -1323,7 +1354,7 @@ gc.collect()
    * the settings watcher (which would loop schema propagation forever).
    * Returns true if settings were modified.
    */
-  function syncNodeSettingsWithSchema(node: FlowNode, inputSchema: ColumnSchema[], rightInputSchema?: ColumnSchema[] | null): boolean {
+  function syncNodeSettingsWithSchema(node: FlowNode, inputSchema: ColumnSchema[]): boolean {
     const settings = node.settings as any
     let modified = false
 
@@ -1387,23 +1418,6 @@ gc.collect()
       if (JSON.stringify(settings.groupby_input ?? null) !== JSON.stringify(newGroupbyInput)) {
         settings.groupby_input = newGroupbyInput
         modified = true
-      }
-    }
-
-    if (node.type === 'join' && rightInputSchema) {
-      // Store available columns for join configuration UI
-      // The join settings UI can use getLeftInputSchema and getRightInputSchema
-      // but we can also store column availability here if needed
-    }
-
-    if (node.type === 'filter') {
-      const filterInput = settings.filter_input
-      if (filterInput?.basic_filter?.field) {
-        const fieldExists = inputSchema.some(c => c.name === filterInput.basic_filter.field)
-        if (!fieldExists && filterInput.basic_filter.field !== '') {
-          // Field no longer exists - we could clear it or mark it
-          // For now, just leave it as is so user can see and fix
-        }
       }
     }
 
@@ -1513,11 +1527,8 @@ result
 
       const primaryInputId = node.leftInputId || node.inputIds[0]
       const inputSchema = primaryInputId ? (nodeResults.value.get(primaryInputId)?.schema || null) : null
-      const rightInputSchema = (node.type === 'join' && node.rightInputId)
-        ? (nodeResults.value.get(node.rightInputId)?.schema || null)
-        : null
       if (inputSchema && inputSchema.length > 0) {
-        syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
+        syncNodeSettingsWithSchema(node, inputSchema)
       }
 
       const info = res[String(nodeId)]
@@ -1597,14 +1608,14 @@ result
         inputHasData = !!(inputResult?.success || inputResult?.data)
       }
 
-      // For join nodes, also get right input schema
+      // For join nodes, also get right input schema (used by inferOutputSchema below)
       if ((node.type === 'join' || node.type === 'cross_join') && node.rightInputId) {
         const rightResult = nodeResults.value.get(node.rightInputId)
         rightInputSchema = rightResult?.schema || null
       }
 
       if (inputSchema && inputSchema.length > 0) {
-        syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
+        syncNodeSettingsWithSchema(node, inputSchema)
       }
 
       // For polars_code/formula nodes, try lazy execution if input data is available
@@ -1970,6 +1981,14 @@ result
     console.debug(`[flowfile] executeNode ${nodeId} (${node.type})`)
     const { runPythonWithResult, setGlobal, deleteGlobal } = pyodideStore
 
+    // Build + run an `execute_*` bridge whose call expression is `call`.
+    const runExecutor = (call: string): Promise<NodeResult> =>
+      runPythonWithResult(`
+import json
+result = ${call}
+result
+`)
+
     try {
       let result: NodeResult
 
@@ -2134,222 +2153,65 @@ result
           break
         }
 
-        case 'filter': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return failNode(nodeId, 'No input connected')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_filter(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'select': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return failNode(nodeId, 'No input connected')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_select(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'group_by': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return failNode(nodeId, 'No input connected')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_group_by(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'join': {
-          const leftId = node.leftInputId || node.inputIds[0]
-          const rightId = node.rightInputId
-          if (!leftId || !rightId) {
-            return failNode(nodeId, 'Both left and right inputs required for join')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_join(${nodeId}, ${leftId}, ${rightId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'sort': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return failNode(nodeId, 'No input connected')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_sort(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'polars_code': {
-          result = await runPythonWithResult(`
-import json
-result = execute_polars_code(${nodeId}, [${node.inputIds.join(', ')}], json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'formula': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return failNode(nodeId, 'No input connected')
-          }
-          try {
-            await pyodideStore.ensurePyPackages(['polars-expr-transformer==0.5.6'])
-          } catch (err) {
-            return failNode(nodeId, err instanceof Error ? err.message : String(err))
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_formula(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'cross_join': {
-          const leftId = node.leftInputId || node.inputIds[0]
-          const rightId = node.rightInputId
-          if (!leftId || !rightId) {
-            return failNode(nodeId, 'Both left and right inputs required for cross join')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_cross_join(${nodeId}, ${leftId}, ${rightId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'union': {
-          if (node.inputIds.length < 1) {
-            return failNode(nodeId, 'No input connected')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_union(${nodeId}, [${node.inputIds.join(', ')}], json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'record_id': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return failNode(nodeId, 'No input connected')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_record_id(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
+        // Single-input transforms: one bridge shape, keyed by node type via
+        // SINGLE_INPUT_EXECUTORS (+ optional lazy packages via SINGLE_INPUT_PACKAGES).
+        case 'filter':
+        case 'select':
+        case 'group_by':
+        case 'sort':
+        case 'record_id':
+        case 'unique':
+        case 'head':
+        case 'explore_data':
+        case 'pivot':
+        case 'unpivot':
+        case 'formula':
         case 'dynamic_rename': {
           const inputId = node.inputIds[0]
           if (!inputId) {
             return failNode(nodeId, 'No input connected')
           }
-          // Formula mode needs the lazily-installed expression package.
-          const renameMode = (node.settings as any)?.dynamic_rename_input?.rename_mode
-          if (renameMode === 'formula') {
+          const pkgs = SINGLE_INPUT_PACKAGES[node.type]?.(node.settings) ?? []
+          if (pkgs.length) {
             try {
-              await pyodideStore.ensurePyPackages(['polars-expr-transformer==0.5.6'])
+              await pyodideStore.ensurePyPackages(pkgs)
             } catch (err) {
               return failNode(nodeId, err instanceof Error ? err.message : String(err))
             }
           }
-          result = await runPythonWithResult(`
-import json
-result = execute_dynamic_rename(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
+          result = await runExecutor(
+            `${SINGLE_INPUT_EXECUTORS[node.type]}(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))`
+          )
           break
         }
 
-        case 'unique': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return failNode(nodeId, 'No input connected')
+        // Two-input joins: identical except the engine fn name + operation label.
+        case 'join':
+        case 'cross_join': {
+          const leftId = node.leftInputId || node.inputIds[0]
+          const rightId = node.rightInputId
+          if (!leftId || !rightId) {
+            const label = node.type === 'cross_join' ? 'cross join' : 'join'
+            return failNode(nodeId, `Both left and right inputs required for ${label}`)
           }
-          result = await runPythonWithResult(`
-import json
-result = execute_unique(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
+          const fn = node.type === 'cross_join' ? 'execute_cross_join' : 'execute_join'
+          result = await runExecutor(
+            `${fn}(${nodeId}, ${leftId}, ${rightId}, json.loads(${toPythonJson(node.settings)}))`
+          )
           break
         }
 
-        case 'head': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
+        // Multi-input: pass the full ordered input list.
+        case 'polars_code':
+        case 'union': {
+          // polars_code may synthesize data with no inputs; union needs ≥1.
+          if (node.type === 'union' && node.inputIds.length < 1) {
             return failNode(nodeId, 'No input connected')
           }
-          result = await runPythonWithResult(`
-import json
-result = execute_head(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'explore_data': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return failNode(nodeId, 'No input connected')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_explore_data(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'pivot': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return failNode(nodeId, 'No input connected')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_pivot(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
-          break
-        }
-
-        case 'unpivot': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return failNode(nodeId, 'No input connected')
-          }
-          result = await runPythonWithResult(`
-import json
-result = execute_unpivot(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
-result
-`)
+          const fn = node.type === 'union' ? 'execute_union' : 'execute_polars_code'
+          result = await runExecutor(
+            `${fn}(${nodeId}, [${node.inputIds.join(', ')}], json.loads(${toPythonJson(node.settings)}))`
+          )
           break
         }
 
@@ -2906,7 +2768,6 @@ result
    * - Uses version '1.0.0' for cross-system compatibility
    */
   function exportToFlowfile(name: string = 'Untitled Flow'): FlowfileData {
-    console.log('[exportToFlowfile] Current edges:', edges.value.map(e => `${e.source}->${e.target}`))
     const flowfileNodes: FlowfileNode[] = []
 
     nodes.value.forEach((node, id) => {

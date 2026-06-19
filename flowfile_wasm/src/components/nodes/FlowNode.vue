@@ -70,6 +70,10 @@
             </svg>
             <span>View data</span>
           </div>
+          <div class="context-menu-item" @click="learnAboutNode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <span>Learn about this node</span>
+          </div>
           <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="runNode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -115,27 +119,27 @@ import { useFlowStore } from '../../stores/flow-store'
 import { iconUrls } from '../../utils/iconUrls'
 
 const iconMap: Record<string, string> = {
-  read: 'input_data.png',
-  manual_input: 'manual_input.png',
+  read: 'input_data.svg',
+  manual_input: 'manual_input.svg',
   external_data: 'external_data.svg',
   read_from_catalog: 'catalog_reader.svg',
-  filter: 'filter.png',
-  select: 'select.png',
-  formula: 'formula.png',
-  group_by: 'group_by.png',
-  join: 'join.png',
-  cross_join: 'cross_join.png',
-  union: 'union.png',
-  sort: 'sort.png',
-  polars_code: 'polars_code.png',
-  unique: 'unique.png',
+  filter: 'filter.svg',
+  select: 'select.svg',
+  formula: 'formula.svg',
+  group_by: 'group_by.svg',
+  join: 'join.svg',
+  cross_join: 'cross_join.svg',
+  union: 'union.svg',
+  sort: 'sort.svg',
+  polars_code: 'polars_code.svg',
+  unique: 'unique.svg',
   dynamic_rename: 'dynamic_rename.svg',
-  record_id: 'record_id.png',
-  head: 'sample.png',
-  explore_data: 'explore_data.png',
-  pivot: 'pivot.png',
-  unpivot: 'unpivot.png',
-  output: 'output.png',
+  record_id: 'record_id.svg',
+  head: 'sample.svg',
+  explore_data: 'explore_data.svg',
+  pivot: 'pivot.svg',
+  unpivot: 'unpivot.svg',
+  output: 'output.svg',
   external_output: 'external_output.svg',
   write_to_catalog: 'catalog_writer.svg'
 }
@@ -160,6 +164,7 @@ const emit = defineEmits<{
   (e: 'view-data', id: number): void
   (e: 'copy', id: number): void
   (e: 'save-to-catalog', id: number): void
+  (e: 'show-info', type: string, position: { x: number; y: number }): void
 }>()
 
 const flowStore = useFlowStore()
@@ -326,6 +331,11 @@ function editNode() {
 
 function viewData() {
   emit('view-data', props.data.id)
+  closeContextMenu()
+}
+
+function learnAboutNode(event: MouseEvent) {
+  emit('show-info', props.data.type, { x: event.clientX, y: event.clientY })
   closeContextMenu()
 }
 

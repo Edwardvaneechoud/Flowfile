@@ -8,7 +8,7 @@ Transform nodes modify and shape your data. These nodes handle everything from b
 ## Node Details
 
 
-### ![Add Record ID](../../../assets/images/nodes/record_id.png){ width="50" height="50" } Add Record ID  
+### ![Add Record ID](../../../assets/images/nodes/record_id.svg){ width="50" height="50" } Add Record ID  
 
 The **Add Record ID** transformation generates a unique identifier for each record in your dataset. You can create a simple sequential ID or generate grouped IDs based on one or more columns.
 
@@ -45,7 +45,7 @@ This transformation helps in creating unique keys, tracking row order, or struct
 
 ---
 
-### ![Formula](../../../assets/images/nodes/formula.png){ width="50" height="50" } Formula  
+### ![Formula](../../../assets/images/nodes/formula.svg){ width="50" height="50" } Formula  
 
 The **Formula** node creates a new column — or replaces an existing one — by evaluating a formula for every row. Formulas are written in the [Flowfile formula language](../../formulas/index.md): reference columns as `[column]`, call any of the [95 built-in functions](../../formulas/functions.md), and use `if ... then ... else ... endif` for conditional logic.
 
@@ -93,7 +93,7 @@ This transformation is useful for feature engineering, data cleaning, and enrich
 
 ---
 
-### ![Select Data](../../../assets/images/nodes/select.png){ width="50" height="50" } Select Data  
+### ![Select Data](../../../assets/images/nodes/select.svg){ width="50" height="50" } Select Data  
 
 The **Select Data** node allows you to choose which columns to keep, rename, and reorder. This transformation is useful for refining datasets, dropping unnecessary fields, and ensuring a structured column layout.
 
@@ -129,7 +129,7 @@ This transformation ensures that datasets are structured efficiently before furt
 
 ---
 
-### ![Filter Data](../../../assets/images/nodes/filter.png){ width="50" height="50" } Filter Data
+### ![Filter Data](../../../assets/images/nodes/filter.svg){ width="50" height="50" } Filter Data
 
 The **Filter Data** node keeps only rows that match a specified condition.
 
@@ -166,7 +166,7 @@ Advanced filters use the [Flowfile formula language](../../formulas/index.md) �
 
 ---
 
-### ![Sort Data](../../../assets/images/nodes/sort.png){ width="50" height="50" } Sort Data  
+### ![Sort Data](../../../assets/images/nodes/sort.svg){ width="50" height="50" } Sort Data  
 
 The **Sort Data** node orders your data based on one or more columns.
 
@@ -195,13 +195,13 @@ This node ensures structured and ordered data for better analysis.
 
 ---
 
-### ![Take Sample](../../../assets/images/nodes/sample.png){ width="50" height="50" } Take Sample
+### ![Take Sample](../../../assets/images/nodes/sample.svg){ width="50" height="50" } Take Sample
 
 The Take Sample node lets you work with a subset of your data.
 
 ---
 
-### ![Drop Duplicates](../../../assets/images/nodes/unique.png){ width="50" height="50" } Drop Duplicates  
+### ![Drop Duplicates](../../../assets/images/nodes/unique.svg){ width="50" height="50" } Drop Duplicates  
 
 The **Drop Duplicates** node removes duplicate rows based on selected columns. Only the first occurrence is kept by default.
 
@@ -231,7 +231,7 @@ This node ensures a clean dataset by eliminating redundant rows.
 
 ---
 
-### ![Text to Rows](../../../assets/images/nodes/text_to_rows.png){ width="50" height="50" } Text to Rows  
+### ![Text to Rows](../../../assets/images/nodes/text_to_rows.svg){ width="50" height="50" } Text to Rows  
 
 The **Text to Rows** node splits text from a selected column into multiple rows based on a delimiter.
 
@@ -265,7 +265,55 @@ This transformation helps normalize datasets by converting **text lists into str
 
 
 ---
-### ![Polars Code](../../../assets/images/nodes/polars_code.png){ width="50" height="50" } Polars Code  
+
+### Window Functions
+
+The **Window Functions** node adds rolling, cumulative, rank, or tile columns calculated over ordered — and optionally partitioned — rows. Each configured function produces one new column using Polars `over(...)` semantics, without collapsing rows the way a Group By does.
+
+---
+
+#### **Key Features**
+
+- **Partition** calculations so they restart per group (like `.over(...)`)
+- **Order** rows within each partition
+- **Rolling**, **cumulative**, **ranking**, and **tile** functions
+- Add multiple functions in one node — each writes its own output column
+
+---
+
+#### **Configuration Options**
+
+| Parameter | Description |
+|-----------|-------------|
+| **Partition by** | *(Optional)* Columns that reset each calculation per group. Leave empty to compute over the whole table. |
+| **Order by** | Column(s) and direction (ascending/descending) defining row order within each partition. **Required** for rolling and tile functions. |
+| **Window functions** | One or more operations. Each takes a **function**, a **source column**, an **output column name**, and any function-specific parameters. |
+
+---
+
+#### **Available Functions**
+
+| Function | Group | Parameters | Output |
+|----------|-------|------------|--------|
+| **Rolling sum / mean / min / max / std** | Rolling | **Window size** (rows) and how to handle **incomplete windows** | Aggregate over a sliding window of rows |
+| **Cumulative sum / count / min / max** | Cumulative | — | Running total / count / min / max up to each row |
+| **Rank** | Ranking | **Tie-breaking method**: `ordinal`, `dense`, `min`, `max`, or `average` | Rank of each row |
+| **Tile** | Ranking | **Number of groups** | Splits the ordered rows into N equal-sized groups |
+
+For rolling functions, **incomplete windows** (the first rows, before the window is full) can be left empty (`null`, the default), computed from the **partial** window, or **filled with 0**.
+
+---
+
+#### **Behavior**
+
+- Rolling and tile functions require at least one **Order by** column; cumulative functions don't require ordering but usually want it.
+- Each window function must have a **unique output column name**.
+- Existing columns are preserved — every function adds a new column.
+
+This node is useful for time-series features such as moving averages, running totals, ranking within groups, and bucketing rows into quantiles.
+
+---
+### ![Polars Code](../../../assets/images/nodes/polars_code.svg){ width="50" height="50" } Polars Code  
 
 The **Polars Code** node allows you to write custom **Polars DataFrame** transformations directly in your workflow.
 
@@ -299,6 +347,72 @@ result = input_df.select(['Name', 'City'])
 filtered = result.filter(pl.col('City') == 'Amsterdam')
 output_df = filtered.with_columns(pl.col('Name').alias('Customer_Name')) # this will be the output of the node
 ```
+
+---
+
+### SQL Query
+
+The **SQL Query** node runs a SQL `SELECT` query across one or more connected inputs using the **Polars SQL** dialect. Use it to filter, aggregate, join, and reshape data with familiar SQL.
+
+---
+
+#### **Key Features**
+
+- Query connected inputs as tables named `input_1`, `input_2`, … (in connection order)
+- Join, filter, group, and compute across **up to 10 inputs**
+- Chain SQL Query nodes together like any other transform
+- Read-only by design — only `SELECT` / `WITH` queries are allowed
+
+---
+
+#### **Usage**
+
+1. Connect one or more inputs to the **SQL Query** node.
+2. Write a query that references each input as `input_1`, `input_2`, etc.
+3. Run the flow to materialize the query result.
+
+---
+
+#### **Configuration Options**
+
+| Parameter | Description |
+|-----------|-------------|
+| **SQL Query** | The `SELECT` statement to execute. Connected inputs are available as `input_1`, `input_2`, … |
+
+---
+
+#### **Example Queries**
+
+##### **Filter and select**
+
+```sql
+SELECT name, city FROM input_1 WHERE city = 'Amsterdam'
+```
+
+##### **Aggregate**
+
+```sql
+SELECT city, COUNT(*) AS cnt FROM input_1 GROUP BY city
+```
+
+##### **Join two inputs**
+
+```sql
+SELECT c.name, SUM(o.amount) AS total
+FROM input_1 c
+JOIN input_2 o ON c.id = o.customer_id
+GROUP BY c.name
+```
+
+---
+
+#### **Behavior**
+
+- Queries must start with `SELECT` or `WITH` (for common table expressions). Statements that modify data or schema — such as `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, or `TRUNCATE` — are rejected.
+- Invalid or unsafe SQL surfaces as a node error before the flow runs.
+
+!!! tip "Querying catalog tables"
+    To run SQL across registered **catalog** tables instead of connected nodes, use the [Catalog Reader's SQL mode](../catalog/sql-editor.md).
 
 ---
 

@@ -1,6 +1,7 @@
 import io
 import os
 from flowfile_frame.flow_frame_methods import (read_parquet, from_dict, concat,
+                                               read_ipc, read_ndjson, read_avro,
                                                scan_csv_from_cloud_storage,
                                                scan_parquet_from_cloud_storage,
                                                scan_json_from_cloud_storage,
@@ -479,6 +480,42 @@ def test_write_read_parquet(tmpdir):
     result = df2.collect()
     assert len(result) == 3
     assert result.columns == ["id", "name"]
+    assert result["name"].to_list() == ["Alice", "Bob", "Charlie"]
+
+
+@pytest.mark.parametrize("ext,writer,reader", [
+    ("arrow", "write_ipc", read_ipc),
+    ("ndjson", "write_ndjson", read_ndjson),
+    ("avro", "write_avro", read_avro),
+])
+def test_write_read_new_formats(tmpdir, ext, writer, reader):
+    """Round-trip the newly supported file connectors through the FlowFrame API."""
+    df = FlowFrame({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]})
+    temp_path = os.path.join(tmpdir, f"test_data.{ext}")
+
+    getattr(df, writer)(temp_path)
+
+    result = reader(temp_path, flow_graph=df.flow_graph).collect()
+    assert len(result) == 3
+    assert result.columns == ["id", "name"]
+    assert result["name"].to_list() == ["Alice", "Bob", "Charlie"]
+
+
+@pytest.mark.parametrize("ext,writer,reader,compression", [
+    ("parquet", "write_parquet", read_parquet, "snappy"),
+    ("arrow", "write_ipc", read_ipc, "zstd"),
+    ("ndjson", "write_ndjson", read_ndjson, "gzip"),
+    ("avro", "write_avro", read_avro, "deflate"),
+])
+def test_write_read_with_compression(tmpdir, ext, writer, reader, compression):
+    """Writing with a non-default compression produces a readable file."""
+    df = FlowFrame({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]})
+    temp_path = os.path.join(tmpdir, f"compressed.{ext}")
+
+    getattr(df, writer)(temp_path, compression=compression)
+
+    result = reader(temp_path, flow_graph=df.flow_graph).collect()
+    assert len(result) == 3
     assert result["name"].to_list() == ["Alice", "Bob", "Charlie"]
 
 
