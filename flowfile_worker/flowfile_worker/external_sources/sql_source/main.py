@@ -10,6 +10,7 @@ from flowfile_worker.external_sources.sql_source.models import (
 )
 from flowfile_worker.flow_logger import get_worker_logger
 from shared.db_reader import read_sql_with_fallback
+from shared.db_writer import write_dataframe_to_database
 
 # Default ports per database type for the pre-flight connectivity check.
 _DEFAULT_DB_PORTS = {
@@ -45,16 +46,13 @@ def verify_database_reachable(connection: DataBaseConnection, timeout: float = 3
 
 
 def write_df_to_database(df: pl.DataFrame, database_write_settings: DatabaseWriteSettings):
-    """
-    Writes a Polars DataFrame to a SQL database.
-    Args:
-        df (pl.DataFrame): The DataFrame to write.
-        database_write_settings (DatabaseWriteSettings): The settings for the database connection and table.
-    """
-    df.write_database(
+    """Write a Polars DataFrame to a SQL database (delegates to ``shared.db_writer``)."""
+    write_dataframe_to_database(
+        df,
+        database_type=database_write_settings.connection.database_type,
+        uri=database_write_settings.connection.create_uri(),
         table_name=database_write_settings.table_name,
-        connection=database_write_settings.connection.create_sqlalchemy_uri(),
-        if_table_exists=database_write_settings.if_exists,
+        if_exists=database_write_settings.if_exists or "append",
     )
     return True
 
