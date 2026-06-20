@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import base64
 import contextvars
+import datetime
 import io
+import json
+import math
 import os
 import re
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -700,6 +704,132 @@ def _is_html_string(obj: Any) -> bool:
     return bool(_HTML_TAG_RE.search(obj))
 
 
+# DataFrame display payload: dtype->field mapping mirrors flowfile_wasm nodes_explore
+
+_GW_TABLE_MAX_ROWS = 10_000
+_GW_TABLE_MIME = "application/vnd.flowfile.table+json"
+_GW_EXPLORE_MIME = "application/vnd.flowfile.gwalker+json"
+
+_GW_QUANTITATIVE = {
+    "Int8",
+    "Int16",
+    "Int32",
+    "Int64",
+    "Int128",
+    "UInt8",
+    "UInt16",
+    "UInt32",
+    "UInt64",
+    "Float32",
+    "Float64",
+    "Decimal",
+}
+_GW_TEMPORAL = {"Date", "Datetime", "Time", "Duration"}
+
+
+def _gw_semantic_type(pl_dtype: Any) -> str:
+    """Map a Polars DataType to a Graphic Walker semanticType."""
+    try:
+        base = pl_dtype.base_type().__name__
+    except Exception:
+        base = str(pl_dtype)
+    if base in _GW_QUANTITATIVE:
+        return "quantitative"
+    if base in _GW_TEMPORAL:
+        return "temporal"
+    return "nominal"
+
+
+def _gw_analytic_type(semantic_type: str) -> str:
+    return "measure" if semantic_type == "quantitative" else "dimension"
+
+
+def _gw_build_fields(schema: Any) -> list[dict[str, Any]]:
+    """Build a Graphic Walker IMutField list from a Polars schema."""
+    fields: list[dict[str, Any]] = []
+    for name, dtype in schema.items():
+        sem = _gw_semantic_type(dtype)
+        fields.append(
+            {
+                "fid": name,
+                "key": name,
+                "name": name,
+                "basename": name,
+                "semanticType": sem,
+                "analyticType": _gw_analytic_type(sem),
+                "disable": False,
+            }
+        )
+    return fields
+
+
+def _is_polars_frame(obj: Any) -> bool:
+    """Check if obj is a Polars DataFrame or LazyFrame."""
+    return isinstance(obj, pl.DataFrame | pl.LazyFrame)
+
+
+def _json_default(value: Any) -> Any:
+    """json.dumps fallback for non-serializable Polars cells (temporal/decimal/bytes)."""
+    if isinstance(value, datetime.datetime | datetime.date | datetime.time):
+        return value.isoformat()
+    if isinstance(value, datetime.timedelta):
+        return value.total_seconds()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, bytes | bytearray):
+        try:
+            return bytes(value).decode("utf-8", errors="replace")
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _sanitize_non_finite(value: Any) -> Any:
+    """Replace NaN/Inf floats with None (recurses) so the JSON parses in JS."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, list):
+        return [_sanitize_non_finite(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _sanitize_non_finite(v) for k, v in value.items()}
+    return value
+
+
+def _build_table_payload(obj: Any, max_rows: int) -> dict[str, Any]:
+    """Materialize up to ``max_rows`` rows of a Polars frame as a GW payload."""
+    if isinstance(obj, pl.LazyFrame):
+        try:
+            total_rows = obj.select(pl.len()).collect().item()
+        except Exception:
+            total_rows = None
+        df = obj.head(max_rows).collect()
+    else:
+        total_rows = obj.height
+        df = obj.head(max_rows)
+
+    loaded_rows = df.height
+    if total_rows is None:
+        total_rows = loaded_rows
+    return {
+        "columns": df.columns,
+        "fields": _gw_build_fields(df.schema),
+        "data": df.to_dicts(),
+        "total_rows": total_rows,
+        "loaded_rows": loaded_rows,
+        "truncated": bool(total_rows > loaded_rows),
+        "max_rows": max_rows,
+    }
+
+
+def _dump_table_payload(payload: dict[str, Any]) -> str:
+    """Serialize a GW payload to a JSON string the frontend can ``JSON.parse``."""
+    try:
+        return json.dumps(payload, default=_json_default, allow_nan=False)
+    except ValueError:
+        payload["data"] = [_sanitize_non_finite(row) for row in payload["data"]]
+        return json.dumps(payload, default=_json_default, allow_nan=False)
+
+
 def _reset_displays() -> None:
     """Clear the display outputs list. Called at start of each execution."""
     _displays.set([])
@@ -710,10 +840,13 @@ def _get_displays() -> list[dict[str, str]]:
     return _displays.get([])
 
 
-def display(obj: Any, title: str = "") -> None:
+def display(obj: Any, title: str = "", max_rows: int = _GW_TABLE_MAX_ROWS) -> None:
     """Display a rich object in the output panel.
 
     Supported object types:
+    - polars.DataFrame / polars.LazyFrame: Rendered as an interactive table
+      (LazyFrames are head-collected). Use ``explore`` for the full
+      drag-to-chart Graphic Walker explorer instead.
     - matplotlib.figure.Figure: Rendered as PNG image
     - plotly.graph_objects.Figure: Rendered as interactive HTML
     - PIL.Image.Image: Rendered as PNG image
@@ -723,6 +856,7 @@ def display(obj: Any, title: str = "") -> None:
     Args:
         obj: The object to display.
         title: Optional title for the display output.
+        max_rows: Row cap materialized for table rendering (default 10,000).
     """
     displays = _displays.get([])
 
@@ -759,6 +893,17 @@ def display(obj: Any, title: str = "") -> None:
                 "title": title,
             }
         )
+    elif _is_polars_frame(obj):
+        try:
+            displays.append(
+                {
+                    "mime_type": _GW_TABLE_MIME,
+                    "data": _dump_table_payload(_build_table_payload(obj, max_rows)),
+                    "title": title,
+                }
+            )
+        except Exception:
+            displays.append({"mime_type": "text/plain", "data": str(obj), "title": title})
     elif _is_html_string(obj):
         displays.append(
             {
@@ -779,6 +924,51 @@ def display(obj: Any, title: str = "") -> None:
     _displays.set(displays)
 
 
+def explore(obj: Any, title: str = "", max_rows: int = _GW_TABLE_MAX_ROWS) -> None:
+    """Open the full Graphic Walker explorer for a Polars DataFrame/LazyFrame.
+
+    Where ``display`` renders a lightweight interactive table, ``explore`` mounts
+    the full Tableau-style explorer — a Data tab plus a Visualization tab where
+    columns can be dragged onto shelves to build charts inline. LazyFrames are
+    head-collected. Non-Polars objects fall back to ``display``.
+
+    Args:
+        obj: The DataFrame/LazyFrame to explore.
+        title: Optional title for the display output.
+        max_rows: Row cap materialized for the explorer (default 10,000).
+    """
+    if not _is_polars_frame(obj):
+        display(obj, title)
+        return
+
+    displays = _displays.get([])
+    try:
+        displays.append(
+            {
+                "mime_type": _GW_EXPLORE_MIME,
+                "data": _dump_table_payload(_build_table_payload(obj, max_rows)),
+                "title": title,
+            }
+        )
+    except Exception:
+        displays.append({"mime_type": "text/plain", "data": str(obj), "title": title})
+    _displays.set(displays)
+
+
+def _auto_display(obj: Any) -> None:
+    """Auto-display a cell's last expression.
+
+    Polars frames show their plain repr (use display()/explore() for the
+    interactive table); other rich types still render via display().
+    """
+    if _is_polars_frame(obj):
+        displays = _displays.get([])
+        displays.append({"mime_type": "text/plain", "data": str(obj), "title": ""})
+        _displays.set(displays)
+        return
+    display(obj)
+
+
 # ===== Catalog Tables APIs =====
 #
 # These wrap Core's ``/catalog/tables/*`` HTTP endpoints. The kernel writes
@@ -786,9 +976,7 @@ def display(obj: Any, title: str = "") -> None:
 # or its DinD equivalent) and reports metadata to Core; Core never materializes
 # the dataset, matching the project rule that Core ships paths/JSON only.
 
-_CATALOG_VALID_WRITE_MODES = frozenset(
-    {"overwrite", "append", "upsert", "update", "delete", "error"}
-)
+_CATALOG_VALID_WRITE_MODES = frozenset({"overwrite", "append", "upsert", "update", "delete", "error"})
 
 
 def _kernel_catalog_dir() -> str:
@@ -1010,9 +1198,7 @@ class CatalogRef:
         """Return every schema (level-1 namespace) under this catalog."""
         auth_headers = _get_internal_auth_headers()
         with httpx.Client(timeout=30.0, headers=auth_headers) as client:
-            rows = _catalog_get(
-                client, "/catalog/namespaces", params={"parent_id": self.id}
-            ).json()
+            rows = _catalog_get(client, "/catalog/namespaces", params={"parent_id": self.id}).json()
         return [SchemaRef(id=row["id"], name=row["name"], catalog=self) for row in rows]
 
     def list_tables(self) -> list[TableRef]:
@@ -1042,9 +1228,7 @@ class SchemaRef:
         """Return every table registered in this schema."""
         auth_headers = _get_internal_auth_headers()
         with httpx.Client(timeout=30.0, headers=auth_headers) as client:
-            rows = _catalog_get(
-                client, "/catalog/tables", params={"namespace_id": self.id}
-            ).json()
+            rows = _catalog_get(client, "/catalog/tables", params={"namespace_id": self.id}).json()
         return [_table_ref_from_row(row, self) for row in rows]
 
     def get_table_ref(self, name: str) -> TableRef:
@@ -1312,11 +1496,7 @@ def default_schema() -> SchemaRef:
         default_id_raw = _catalog_get(client, "/catalog/default-namespace-id").json()
     # Endpoint may return a bare int OR a wrapper dict — tolerate both.
     if isinstance(default_id_raw, dict):
-        default_id = int(
-            default_id_raw.get("id")
-            or default_id_raw.get("namespace_id")
-            or default_id_raw["default"]
-        )
+        default_id = int(default_id_raw.get("id") or default_id_raw.get("namespace_id") or default_id_raw["default"])
     elif default_id_raw is None:
         raise LookupError(
             "Default schema has not been initialised. Create one from the visual "
@@ -1330,9 +1510,7 @@ def default_schema() -> SchemaRef:
         for schema in catalog.list_schemas():
             if schema.id == default_id:
                 return schema
-    raise LookupError(
-        f"Default schema id={default_id} returned by Core does not exist in any catalog."
-    )
+    raise LookupError(f"Default schema id={default_id} returned by Core does not exist in any catalog.")
 
 
 def list_catalogs() -> list[CatalogRef]:
@@ -1532,8 +1710,7 @@ def write_catalog_table(
     """
     if write_mode not in _CATALOG_VALID_WRITE_MODES:
         raise ValueError(
-            f"Unknown write_mode '{write_mode}'. Expected one of: "
-            f"{sorted(_CATALOG_VALID_WRITE_MODES)}"
+            f"Unknown write_mode '{write_mode}'. Expected one of: " f"{sorted(_CATALOG_VALID_WRITE_MODES)}"
         )
     if write_mode in ("upsert", "update", "delete") and not merge_keys:
         raise ValueError(f"write_mode='{write_mode}' requires merge_keys")
@@ -1565,8 +1742,7 @@ def write_catalog_table(
 
         if write_mode == "error" and existing is not None:
             raise FileExistsError(
-                f"Catalog table '{table_name}' already exists in namespace {target_ns} "
-                f"and write_mode='error'."
+                f"Catalog table '{table_name}' already exists in namespace {target_ns} " f"and write_mode='error'."
             )
 
         if existing is None:
@@ -1592,9 +1768,7 @@ def write_catalog_table(
         # Existing table: write in-place to its current path, then refresh.
         existing_host_path = _table_file_path(existing)
         if existing_host_path is None:
-            raise RuntimeError(
-                f"Existing catalog table '{table_name}' has no file_path; cannot write."
-            )
+            raise RuntimeError(f"Existing catalog table '{table_name}' has no file_path; cannot write.")
         kernel_path = _translate_host_path_to_container(existing_host_path)
         _perform_delta_write(eager_df, kernel_path, write_mode, merge_keys, table_exists=True)
         meta = _read_delta_metadata(kernel_path)
@@ -1608,9 +1782,7 @@ def write_catalog_table(
         }
         if description is not None:
             body["description"] = description
-        row = _catalog_post(
-            client, f"/catalog/tables/{existing['id']}/refresh", body
-        ).json()
+        row = _catalog_post(client, f"/catalog/tables/{existing['id']}/refresh", body).json()
         return _table_ref_from_row(row, target_schema)
 
 
@@ -1624,9 +1796,7 @@ def _schema_ref_for_namespace_id(client: httpx.Client, namespace_id: int) -> Sch
     cats = _catalog_get(client, "/catalog/namespaces").json()
     for cat in cats:
         cat_ref = CatalogRef(id=cat["id"], name=cat["name"])
-        schemas = _catalog_get(
-            client, "/catalog/namespaces", params={"parent_id": cat["id"]}
-        ).json()
+        schemas = _catalog_get(client, "/catalog/namespaces", params={"parent_id": cat["id"]}).json()
         for sch in schemas:
             if sch["id"] == namespace_id:
                 return SchemaRef(id=sch["id"], name=sch["name"], catalog=cat_ref)
@@ -1661,9 +1831,7 @@ def _perform_delta_write(
     ``flowfile_core`` or ``flowfile_worker``.
     """
     if not table_exists and write_mode in ("update", "delete"):
-        raise FileNotFoundError(
-            f"Cannot {write_mode} catalog table: table does not exist at {kernel_path!r}"
-        )
+        raise FileNotFoundError(f"Cannot {write_mode} catalog table: table does not exist at {kernel_path!r}")
     os.makedirs(kernel_path, exist_ok=True)
 
     if write_mode in ("overwrite", "append"):
@@ -1693,9 +1861,7 @@ def _perform_delta_write(
         target_col_names = {field.name for field in dt.schema().fields}
         new_cols = [c for c in df.columns if c not in target_col_names]
         if new_cols:
-            df.clear().write_delta(
-                kernel_path, mode="append", delta_write_options={"schema_mode": "merge"}
-            )
+            df.clear().write_delta(kernel_path, mode="append", delta_write_options={"schema_mode": "merge"})
             dt = DeltaTable(kernel_path)
 
     if not merge_keys:

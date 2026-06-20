@@ -9,6 +9,7 @@ export const CATALOG_TAB_KEYS = [
   "runs",
   "schedules",
   "sql",
+  "notebook",
   "visuals",
   "apis",
 ] as const;
@@ -52,6 +53,12 @@ export const catalogTabs: CatalogTabDef[] = [
     label: "SQL",
     icon: "fa-solid fa-code",
     sidebarKey: "menu.catalogSql",
+  },
+  {
+    key: "notebook",
+    label: "Notebook",
+    icon: "fa-solid fa-book",
+    sidebarKey: "menu.catalogNotebook",
   },
   {
     key: "visuals",

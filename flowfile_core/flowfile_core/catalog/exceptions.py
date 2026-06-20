@@ -48,11 +48,12 @@ class NestingLimitError(CatalogError):
 class NamespaceNotEmptyError(CatalogError):
     """Raised when trying to delete a namespace that still has children, flows, or tables."""
 
-    def __init__(self, namespace_id: int, children: int = 0, flows: int = 0, tables: int = 0):
+    def __init__(self, namespace_id: int, children: int = 0, flows: int = 0, tables: int = 0, notebooks: int = 0):
         self.namespace_id = namespace_id
         self.children = children
         self.flows = flows
         self.tables = tables
+        self.notebooks = notebooks
         parts = []
         if children:
             parts.append(f"{children} child namespace(s)")
@@ -60,6 +61,8 @@ class NamespaceNotEmptyError(CatalogError):
             parts.append(f"{flows} flow(s)")
         if tables:
             parts.append(f"{tables} table(s)")
+        if notebooks:
+            parts.append(f"{notebooks} notebook(s)")
         detail = ", ".join(parts) if parts else "children or flows"
         super().__init__(f"Cannot delete namespace: still contains {detail}")
 
@@ -244,6 +247,30 @@ class VisualizationComputeError(CatalogError):
 
     def __init__(self, message: str):
         super().__init__(f"Worker compute failed: {message}")
+
+
+class NotebookNotFoundError(CatalogError):
+    """Raised when a saved catalog notebook lookup fails."""
+
+    def __init__(self, notebook_id: int | None = None, name: str | None = None):
+        self.notebook_id = notebook_id
+        self.name = name
+        if notebook_id is not None:
+            detail = f"Notebook id={notebook_id} not found"
+        elif name is not None:
+            detail = f"Notebook '{name}' not found"
+        else:
+            detail = "Notebook not found"
+        super().__init__(detail)
+
+
+class NotebookExistsError(CatalogError):
+    """Raised when a duplicate notebook name is created in the same namespace."""
+
+    def __init__(self, name: str, namespace_id: int | None = None):
+        self.name = name
+        self.namespace_id = namespace_id
+        super().__init__(f"Notebook '{name}' already exists in namespace_id={namespace_id}")
 
 
 class DashboardNotFoundError(CatalogError):

@@ -29,9 +29,16 @@ const FLOWFILE_API_ENTRIES: Completion[] = [
   {
     label: "display",
     type: "function",
-    info: "Display a rich object (matplotlib figure, plotly figure, PIL image, HTML string) in the output panel.",
+    info: "Display a rich object inline. Polars DataFrames/LazyFrames render as an interactive table; also matplotlib/plotly figures, PIL images, and HTML strings.",
     detail: "flowfile_ctx.display(obj, title?)",
     apply: "display(obj)",
+  },
+  {
+    label: "explore",
+    type: "function",
+    info: "Open the full Graphic Walker explorer (data grid + drag-to-chart visualization) for a Polars DataFrame/LazyFrame.",
+    detail: "flowfile_ctx.explore(obj, title?)",
+    apply: "explore(obj)",
   },
   {
     label: "publish_artifact",

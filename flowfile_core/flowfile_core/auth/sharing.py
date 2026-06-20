@@ -56,6 +56,7 @@ RESOURCE_REGISTRY: dict[str, ResourceSpec] = {
     # so a NULL-owner row is reachable only by an admin or an explicit grant.
     "visualization": ResourceSpec(db_models.CatalogVisualization, "created_by", "visualization"),
     "dashboard": ResourceSpec(db_models.CatalogDashboard, "created_by", "dashboard"),
+    "catalog_notebook": ResourceSpec(db_models.CatalogNotebook, "owner_id", "notebook"),
     "global_artifact": ResourceSpec(db_models.GlobalArtifact, "owner_id", "model"),
 }
 
@@ -64,7 +65,9 @@ RESOURCE_REGISTRY: dict[str, ResourceSpec] = {
 MANAGE_DISALLOWED_TYPES = frozenset({"secret"})
 
 # Types with a namespace_id: a namespace grant cascades to all of them.
-_NAMESPACE_SCOPED_TYPES = frozenset({"catalog_table", "flow", "visualization", "dashboard", "global_artifact"})
+_NAMESPACE_SCOPED_TYPES = frozenset(
+    {"catalog_table", "flow", "visualization", "dashboard", "catalog_notebook", "global_artifact"}
+)
 
 
 def sharing_enabled() -> bool:

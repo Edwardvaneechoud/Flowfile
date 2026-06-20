@@ -22,6 +22,7 @@ from flowfile_core.catalog.constants import (
 from flowfile_core.catalog.exceptions import (
     DashboardNotFoundError,
     NotAuthorizedError,
+    NotebookNotFoundError,
     VisualizationNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
@@ -35,6 +36,7 @@ from flowfile_core.catalog.serializers import (
 from flowfile_core.catalog.services.engagement import FlowEngagementService
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
+from flowfile_core.catalog.services.notebooks import NotebookService
 from flowfile_core.catalog.services.previews import TablePreviewService
 from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.services.schedules import ScheduleService
@@ -99,6 +101,10 @@ from flowfile_core.schemas.catalog_schema import (
     FlowScheduleOut,
     GlobalArtifactOut,
     NamespaceTree,
+    NotebookCreate,
+    NotebookOut,
+    NotebookSummaryOut,
+    NotebookUpdate,
     OptimizeTableResponse,
     PaginatedFlowRuns,
     SqlQueryResult,
@@ -176,6 +182,8 @@ class CatalogService:
         self._visualizations.bind_facade(self)
         self._sql.bind_facade(self)
         self._schedules.bind_facade(self)
+
+        self._notebooks = NotebookService(repo, self._namespaces)
 
         self._stats = StatsService(repo, self._flows, self._runs, self._tables)
 
@@ -275,6 +283,30 @@ class CatalogService:
         """Guard an ad-hoc viz source. Table sources require read on that table."""
         if self._restricted and getattr(source, "source_type", None) == "table" and source.table_id is not None:
             self._require_use("catalog_table", source.table_id)
+
+    def _require_use_notebook(self, notebook_id: int) -> None:
+        """Notebook read: owner, a use/manage grant, or an inherited namespace grant."""
+        if not self._restricted:
+            return
+        nb = self.repo.get_notebook(notebook_id)
+        if nb is None:
+            raise NotebookNotFoundError(notebook_id=notebook_id)
+        if nb.owner_id == self.access.user_id:
+            return
+        if self.access.can_use("catalog_notebook", notebook_id, owner_id=nb.owner_id):
+            return
+        raise NotAuthorizedError(self.access.user_id or -1, "access this notebook")
+
+    def _require_manage_notebook(self, notebook_id: int) -> None:
+        if not self._restricted:
+            return
+        nb = self.repo.get_notebook(notebook_id)
+        if nb is None:
+            raise NotebookNotFoundError(notebook_id=notebook_id)
+        if nb.owner_id == self.access.user_id:
+            return
+        if not self.access.can_manage("catalog_notebook", notebook_id, owner_id=nb.owner_id):
+            raise NotAuthorizedError(self.access.user_id or -1, "modify this notebook")
 
     def _filter_by_access(self, items: list, resource_type: str) -> list:
         if not self._restricted:
@@ -418,6 +450,7 @@ class CatalogService:
         tree = self._namespaces.get_namespace_tree(
             user_id,
             list_visualizations=lambda uid: self._visualizations.list_visualization_library(uid),
+            list_notebooks=lambda uid: self._notebooks.list_notebooks(uid),
             bulk_enrich_tables=self._tables.bulk_enrich_tables,
             bulk_enrich_flows=self._flows.bulk_enrich_flows,
         )
@@ -432,12 +465,20 @@ class CatalogService:
         (public/owned/granted) OR still has any visible child (context-only ancestor)."""
         visible_ns = self.access.visible_namespace_ids()
         accessible = {
-            t: self.access.accessible_ids(t) for t in ("flow", "catalog_table", "visualization", "global_artifact")
+            t: self.access.accessible_ids(t)
+            for t in ("flow", "catalog_table", "visualization", "global_artifact", "catalog_notebook")
         }
         # Compute the per-type granted-detail maps once (reused for every node).
         details = {
             t: self._access_detail_map(t)
-            for t in ("flow", "catalog_table", "visualization", "global_artifact", "catalog_namespace")
+            for t in (
+                "flow",
+                "catalog_table",
+                "visualization",
+                "global_artifact",
+                "catalog_notebook",
+                "catalog_namespace",
+            )
         }
 
         def _prune(node: NamespaceTree) -> NamespaceTree | None:
@@ -454,6 +495,11 @@ class CatalogService:
                 "visualization",
                 details["visualization"],
             )
+            node.notebooks = self._stamp_access(
+                [n for n in node.notebooks if n.id in accessible["catalog_notebook"]],
+                "catalog_notebook",
+                details["catalog_notebook"],
+            )
             node.artifacts = self._stamp_access(
                 [a for a in node.artifacts if a.id in accessible["global_artifact"]],
                 "global_artifact",
@@ -461,7 +507,14 @@ class CatalogService:
             )
             node.children = [c for c in (_prune(child) for child in node.children) if c is not None]
             self._stamp_access([node], "catalog_namespace", details["catalog_namespace"])
-            has_items = bool(node.flows or node.tables or node.visualizations or node.artifacts or node.children)
+            has_items = bool(
+                node.flows
+                or node.tables
+                or node.visualizations
+                or node.notebooks
+                or node.artifacts
+                or node.children
+            )
             if node.id in visible_ns:
                 return node
             if has_items:
@@ -1292,6 +1345,34 @@ class CatalogService:
         """Delete a visualization by ID."""
         self._require_manage_visualization(viz_id)
         self._visualizations.delete_visualization(viz_id, user_id)
+
+    def list_notebooks(self, user_id: int | None = None) -> list[NotebookSummaryOut]:
+        """List saved notebooks (own ∪ granted in restricted mode)."""
+        notebooks = self._notebooks.list_notebooks(user_id)
+        notebooks = self._filter_by_access(notebooks, "catalog_notebook")
+        return self._stamp_access(notebooks, "catalog_notebook")
+
+    def get_notebook(self, notebook_id: int, user_id: int | None = None) -> NotebookOut:
+        """Get a single notebook by ID."""
+        self._require_use_notebook(notebook_id)
+        return self._stamp_access([self._notebooks.get_notebook(notebook_id, user_id)], "catalog_notebook")[0]
+
+    def create_notebook(self, payload: NotebookCreate, user_id: int) -> NotebookOut:
+        """Create a new notebook in a writable namespace."""
+        self._require_namespace_writable(payload.namespace_id)
+        return self._notebooks.create_notebook(payload, user_id)
+
+    def update_notebook(self, notebook_id: int, payload: NotebookUpdate, user_id: int) -> NotebookOut:
+        """Update a notebook's name, cells, namespace or default kernel."""
+        self._require_manage_notebook(notebook_id)
+        if payload.namespace_id is not None:
+            self._require_namespace_writable(payload.namespace_id)
+        return self._notebooks.update_notebook(notebook_id, payload, user_id)
+
+    def delete_notebook(self, notebook_id: int, user_id: int) -> None:
+        """Delete a notebook by ID."""
+        self._require_manage_notebook(notebook_id)
+        self._notebooks.delete_notebook(notebook_id, user_id)
 
     # ================== Dashboards =========================================
 

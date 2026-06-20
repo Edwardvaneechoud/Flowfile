@@ -35,9 +35,14 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.2"
-_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.2"
-_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.3.2"
+_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.3"
+_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.3"
+_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.3.3"
+
+_KERNEL_DOWN_MSG = (
+    "Kernel is not running — its container was stopped or removed (often after a "
+    "core restart). Run the cell again to restart it."
+)
 
 
 def _envvar_or_default(name: str, default: str) -> str:
@@ -1459,6 +1464,18 @@ class KernelManager:
         except (docker.errors.NotFound, docker.errors.APIError):
             return False
 
+    def _is_container_running(self, kernel_id: str) -> bool:
+        # Best-effort liveness probe; True on transient Docker errors so a brief
+        # daemon hiccup doesn't falsely mark a kernel down.
+        kernel = self._kernels.get(kernel_id)
+        ref = (kernel.container_id if kernel else None) or f"flowfile-kernel-{kernel_id}"
+        try:
+            return self._docker.containers.get(ref).status == "running"
+        except docker.errors.NotFound:
+            return False
+        except docker.errors.DockerException:
+            return True
+
     async def execute(self, kernel_id: str, request: ExecuteRequest) -> ExecuteResult:
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
@@ -1478,7 +1495,7 @@ class KernelManager:
                 response = await client.post(url, json=request.model_dump())
                 response.raise_for_status()
                 return ExecuteResult(**response.json())
-        except (httpx.HTTPError, OSError):
+        except (httpx.HTTPError, OSError) as exc:
             if self._check_oom_killed(kernel_id):
                 kernel.state = KernelState.ERROR
                 kernel.error_message = "Kernel ran out of memory"
@@ -1488,6 +1505,18 @@ class KernelManager:
                     "allocation or reducing your data size."
                 )
                 return ExecuteResult(success=False, error=oom_msg)
+            if not self._is_container_running(kernel_id):
+                kernel.state = KernelState.STOPPED
+                kernel.container_id = None
+                return ExecuteResult(success=False, error=_KERNEL_DOWN_MSG)
+            if isinstance(exc, httpx.TimeoutException):
+                # Tell the kernel to interrupt the still-running cell, otherwise it
+                # keeps mutating the namespace and the next cell runs concurrently.
+                self.interrupt_execution_sync(kernel_id)
+                return ExecuteResult(
+                    success=False,
+                    error="Cell exceeded the 300s execution limit and was interrupted.",
+                )
             raise
         finally:
             # Only return to IDLE if we haven't been stopped/errored in the meantime
@@ -1566,6 +1595,12 @@ class KernelManager:
                 if flow_logger:
                     flow_logger.error(oom_msg)
                 return ExecuteResult(success=False, error=oom_msg)
+            if not self._is_container_running(kernel_id):
+                kernel.state = KernelState.STOPPED
+                kernel.container_id = None
+                if flow_logger:
+                    flow_logger.error(_KERNEL_DOWN_MSG)
+                return ExecuteResult(success=False, error=_KERNEL_DOWN_MSG)
             raise
         finally:
             if kernel.state == KernelState.EXECUTING:

@@ -20,6 +20,7 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRegistrationOut,
     GlobalArtifactOut,
     NamespaceTree,
+    NotebookSummaryOut,
     VisualizationOut,
 )
 
@@ -104,15 +105,18 @@ class NamespaceService:
         return self.repo.update_namespace(namespace)
 
     def delete_namespace(self, namespace_id: int) -> None:
-        """Delete a namespace if it has no children, flows or tables."""
+        """Delete a namespace if it has no children, flows, tables or notebooks."""
         namespace = self.repo.get_namespace(namespace_id)
         if namespace is None:
             raise NamespaceNotFoundError(namespace_id=namespace_id)
         children = self.repo.count_children(namespace_id)
         flows = self.repo.count_flows_in_namespace(namespace_id)
         tables = self.repo.count_tables_in_namespace(namespace_id)
-        if children > 0 or flows > 0 or tables > 0:
-            raise NamespaceNotEmptyError(namespace_id=namespace_id, children=children, flows=flows, tables=tables)
+        notebooks = self.repo.count_notebooks_in_namespace(namespace_id)
+        if children > 0 or flows > 0 or tables > 0 or notebooks > 0:
+            raise NamespaceNotEmptyError(
+                namespace_id=namespace_id, children=children, flows=flows, tables=tables, notebooks=notebooks
+            )
         self.repo.delete_namespace(namespace_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:
@@ -131,6 +135,7 @@ class NamespaceService:
         user_id: int,
         *,
         list_visualizations: Callable[[int | None], list[VisualizationOut]],
+        list_notebooks: Callable[[int | None], list[NotebookSummaryOut]],
         bulk_enrich_tables: Callable[[list, int], list[CatalogTableOut]],
         bulk_enrich_flows: Callable[[list[FlowRegistration], int], list[FlowRegistrationOut]],
     ) -> list[NamespaceTree]:
@@ -157,6 +162,12 @@ class NamespaceService:
             if v.namespace_id is None:
                 continue
             viz_by_namespace.setdefault(v.namespace_id, []).append(v)
+
+        nb_by_namespace: dict[int, list[NotebookSummaryOut]] = {}
+        for nb in list_notebooks(user_id):
+            if nb.namespace_id is None:
+                continue
+            nb_by_namespace.setdefault(nb.namespace_id, []).append(nb)
 
         for cat in catalogs:
             cat_flows = self.repo.list_flows(namespace_id=cat.id)
@@ -199,6 +210,7 @@ class NamespaceService:
                         artifacts=namespace_artifact_map.get(schema.id, []),
                         tables=namespace_table_map.get(schema.id, []),
                         visualizations=viz_by_namespace.get(schema.id, []),
+                        notebooks=nb_by_namespace.get(schema.id, []),
                     )
                 )
             cat_flows = namespace_flow_map.get(cat.id, [])
@@ -218,6 +230,7 @@ class NamespaceService:
                     artifacts=namespace_artifact_map.get(cat.id, []),
                     tables=namespace_table_map.get(cat.id, []),
                     visualizations=viz_by_namespace.get(cat.id, []),
+                    notebooks=nb_by_namespace.get(cat.id, []),
                 )
             )
         return result

@@ -475,6 +475,16 @@ onBeforeUnmount(stopPullPoll);
   background: var(--color-primary, #3b82f6);
 }
 
+/* Dark: saturated amber/red fills go muddy on navy, so soften the border + drop the fill. */
+[data-theme="dark"] .km-image-row--missing {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.08);
+}
+[data-theme="dark"] .km-image-row--error {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.08);
+}
+
 .km-image-row__dot {
   flex: 0 0 auto;
   width: 0.6em;
@@ -587,6 +597,12 @@ onBeforeUnmount(stopPullPoll);
 .km-image-row__update {
   background: var(--color-primary, #3b82f6);
 }
+/* In dark mode --color-warning-dark is a light tint (for text), so the install
+   button can't use it as a fill. Keep it a solid amber CTA with dark text. */
+[data-theme="dark"] .km-image-row__install:not(.km-image-row__update) {
+  background: var(--color-warning);
+  color: var(--color-text-inverse);
+}
 
 .km-image-row__dismiss {
   background: transparent;
@@ -653,6 +669,16 @@ onBeforeUnmount(stopPullPoll);
 }
 .km-image-list__restore:hover {
   background-color: rgba(0, 0, 0, 0.05);
+}
+/* On dark, the dashed amber pill reads like a stray focus ring and the black
+   hover wash is invisible — quiet it to a neutral restore affordance. */
+[data-theme="dark"] .km-image-list__restore {
+  border-color: var(--color-border-secondary);
+  color: var(--color-text-secondary);
+}
+[data-theme="dark"] .km-image-list__restore:hover {
+  background-color: var(--color-background-tertiary);
+  color: var(--color-text-primary);
 }
 
 /* ---- kernels section ---- */

@@ -1,6 +1,9 @@
 """Tests for kernel_runtime.flowfile_client."""
 
+import datetime
+import json
 import os
+from decimal import Decimal
 from pathlib import Path
 
 import polars as pl
@@ -581,3 +584,124 @@ class TestPathTranslation:
         container = flowfile_client._translate_host_path_to_container(host)
         assert container == "/catalog_tables/orders_ab12"
         assert flowfile_client._translate_container_path_to_host(container) == host
+
+
+TABLE_MIME = "application/vnd.flowfile.table+json"
+GWALKER_MIME = "application/vnd.flowfile.gwalker+json"
+
+
+class TestDisplayDataFrames:
+    """flowfile_ctx.display / explore rendering of Polars frames."""
+
+    def test_display_dataframe_emits_table_mime(self):
+        flowfile_client._reset_displays()
+        df = pl.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+        flowfile_client.display(df)
+
+        out = flowfile_client._get_displays()
+        assert len(out) == 1
+        assert out[0]["mime_type"] == TABLE_MIME
+        payload = json.loads(out[0]["data"])
+        assert payload["columns"] == ["a", "b"]
+        assert payload["data"] == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}]
+        assert payload["total_rows"] == 2
+        assert payload["loaded_rows"] == 2
+        assert payload["truncated"] is False
+
+    def test_display_field_semantic_types(self):
+        flowfile_client._reset_displays()
+        df = pl.DataFrame({"num": [1.5], "name": ["a"], "day": [datetime.date(2024, 1, 1)]})
+        flowfile_client.display(df)
+
+        payload = json.loads(flowfile_client._get_displays()[0]["data"])
+        sem = {f["name"]: f["semanticType"] for f in payload["fields"]}
+        analytic = {f["name"]: f["analyticType"] for f in payload["fields"]}
+        assert sem == {"num": "quantitative", "name": "nominal", "day": "temporal"}
+        assert analytic == {"num": "measure", "name": "dimension", "day": "dimension"}
+
+    def test_display_lazyframe_head_collected_and_truncated(self):
+        flowfile_client._reset_displays()
+        lf = pl.LazyFrame({"n": list(range(25))})
+        flowfile_client.display(lf, max_rows=10)
+
+        payload = json.loads(flowfile_client._get_displays()[0]["data"])
+        assert payload["total_rows"] == 25
+        assert payload["loaded_rows"] == 10
+        assert payload["truncated"] is True
+        assert len(payload["data"]) == 10
+
+    def test_display_temporal_decimal_are_json_safe(self):
+        flowfile_client._reset_displays()
+        df = pl.DataFrame(
+            {
+                "d": [datetime.date(2024, 1, 2)],
+                "ts": [datetime.datetime(2024, 1, 2, 3, 4, 5)],
+                "dec": [Decimal("1.25")],
+            }
+        )
+        flowfile_client.display(df)
+
+        row = json.loads(flowfile_client._get_displays()[0]["data"])["data"][0]
+        assert row["d"] == "2024-01-02"
+        assert row["ts"] == "2024-01-02T03:04:05"
+        assert row["dec"] == 1.25
+
+    def test_display_non_finite_floats_become_null(self):
+        flowfile_client._reset_displays()
+        df = pl.DataFrame({"x": [1.0, float("nan"), float("inf")]})
+        flowfile_client.display(df)
+
+        data = flowfile_client._get_displays()[0]["data"]
+        # Browser JSON.parse rejects NaN/Infinity tokens.
+        assert "NaN" not in data
+        assert "Infinity" not in data
+        rows = json.loads(data)["data"]
+        assert rows[0]["x"] == 1.0
+        assert rows[1]["x"] is None
+        assert rows[2]["x"] is None
+
+    def test_explore_emits_gwalker_mime(self):
+        flowfile_client._reset_displays()
+        flowfile_client.explore(pl.DataFrame({"a": [1]}))
+
+        out = flowfile_client._get_displays()
+        assert out[0]["mime_type"] == GWALKER_MIME
+        assert json.loads(out[0]["data"])["columns"] == ["a"]
+
+    def test_explore_non_frame_falls_back_to_display(self):
+        flowfile_client._reset_displays()
+        flowfile_client.explore("hello")
+
+        out = flowfile_client._get_displays()
+        assert out[0]["mime_type"] == "text/plain"
+        assert out[0]["data"] == "hello"
+
+    def test_display_non_frame_stays_text(self):
+        flowfile_client._reset_displays()
+        flowfile_client.display({"k": "v"})
+
+        out = flowfile_client._get_displays()
+        assert out[0]["mime_type"] == "text/plain"
+
+    def test_display_pandas_stays_text(self):
+        pd = pytest.importorskip("pandas")
+        flowfile_client._reset_displays()
+        flowfile_client.display(pd.DataFrame({"a": [1, 2]}))
+
+        out = flowfile_client._get_displays()
+        assert out[0]["mime_type"] == "text/plain"
+
+    def test_auto_display_dataframe_is_text_repr(self):
+        flowfile_client._reset_displays()
+        flowfile_client._auto_display(pl.DataFrame({"a": [1, 2]}))
+
+        out = flowfile_client._get_displays()
+        assert out[0]["mime_type"] == "text/plain"
+        assert "shape:" in out[0]["data"]
+
+    def test_auto_display_non_frame_delegates_to_display(self):
+        flowfile_client._reset_displays()
+        flowfile_client._auto_display("<b>hi</b>")
+
+        out = flowfile_client._get_displays()
+        assert out[0]["mime_type"] == "text/html"

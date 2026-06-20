@@ -263,6 +263,16 @@ def display(obj: Any, title: str = "") -> None:
     print(obj)
 
 
+def explore(obj: Any, title: str = "", max_rows: int = 10_000) -> None:
+    """Print *obj* to stdout.
+
+    In Flowfile this mounts the full Graphic Walker explorer; exported projects
+    have no rich renderer, so it falls back to plain stdout like ``display``
+    (``max_rows`` is accepted for signature compatibility, unused here).
+    """
+    display(obj, title)
+
+
 # ===== Server-backed APIs (unavailable in exported projects) =====
 
 

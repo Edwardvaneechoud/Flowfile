@@ -137,6 +137,7 @@ After executing a cell, the output area shows results, stdout, and any errors.
 
 Output types rendered:
 
+- **Tables** — Polars DataFrames/LazyFrames as interactive sortable tables
 - **Charts** — matplotlib and plotly figures rendered inline
 - **Images** — PIL images displayed as PNG
 - **HTML** — rendered in a sandboxed iframe
@@ -239,14 +240,33 @@ Supported display types:
 
 | Object Type | Rendering |
 |-------------|-----------|
+| `polars.DataFrame` / `polars.LazyFrame` | Interactive sortable table |
 | `matplotlib.figure.Figure` | PNG image |
 | `plotly.graph_objects.Figure` | Interactive HTML |
 | `PIL.Image.Image` | PNG image |
 | HTML string (e.g. `"<b>hello</b>"`) | Rendered HTML |
 | Any other object | Plain text via `str()` |
 
+A Polars `DataFrame` or `LazyFrame` renders as an interactive, sortable table
+(LazyFrames are head-collected). Up to 10,000 rows are shown by default — pass
+`max_rows=` to change the cap:
+
+```python
+df = flowfile_ctx.read_input().collect()
+flowfile_ctx.display(df)               # interactive table
+flowfile_ctx.display(df, max_rows=500) # smaller cap
+```
+
+For ad-hoc visual exploration of a frame, use `flowfile_ctx.explore()` — it opens
+the full Graphic Walker explorer (a data grid plus a drag-to-chart visualization
+builder) inline:
+
+```python
+flowfile_ctx.explore(df)
+```
+
 !!! tip "Interactive mode"
-    In cell-execution mode, the last expression in your code is automatically displayed — similar to Jupyter notebooks.
+    In cell-execution mode, the last expression in your code is automatically displayed — similar to Jupyter notebooks. A bare `df` shows its **repr** (what the object is); call `flowfile_ctx.display(df)` for the interactive table or `flowfile_ctx.explore(df)` for the explorer.
 
 ### Logging
 

@@ -127,6 +127,120 @@ def test_public_namespace_visible_to_all(users, client_for, resource_factory):
     assert "PublicShared" in ns_names
 
 
+@pytest.fixture
+def alice_notebook(users, alice_catalog, resource_factory):
+    """A notebook owned by alice, living in her private schema."""
+    return resource_factory(
+        db_models.CatalogNotebook,
+        name="alice_nb",
+        namespace_id=alice_catalog["schema"],
+        cells_json="[]",
+        owner_id=users["alice"].id,
+    )
+
+
+def test_notebook_private_by_default(users, client_for, alice_notebook):
+    bob = client_for("bob")
+    assert "alice_nb" not in [n["name"] for n in bob.get("/catalog/notebooks").json()]
+    assert bob.get(f"/catalog/notebooks/{alice_notebook}").status_code == 403
+    alice = client_for("alice")
+    assert alice.get(f"/catalog/notebooks/{alice_notebook}").status_code == 200
+    assert "alice_nb" in [n["name"] for n in alice.get("/catalog/notebooks").json()]
+
+
+def test_notebook_direct_grant(users, client_for, alice_notebook, team, grant_factory):
+    grant_factory("catalog_notebook", alice_notebook, team, granted_by=users["alice"].id)
+    bob = client_for("bob")
+    assert bob.get(f"/catalog/notebooks/{alice_notebook}").status_code == 200
+    assert "alice_nb" in [n["name"] for n in bob.get("/catalog/notebooks").json()]
+
+
+def test_notebook_namespace_inheritance(users, client_for, alice_catalog, alice_notebook, team, grant_factory):
+    grant_factory("catalog_namespace", alice_catalog["catalog"], team, granted_by=users["alice"].id)
+    bob = client_for("bob")
+    assert bob.get(f"/catalog/notebooks/{alice_notebook}").status_code == 200
+
+
+def test_notebook_use_grant_denies_mutation(users, client_for, alice_notebook, team, grant_factory):
+    grant_factory("catalog_notebook", alice_notebook, team, permission="use", granted_by=users["alice"].id)
+    bob = client_for("bob")
+    assert bob.put(f"/catalog/notebooks/{alice_notebook}", json={"description": "x"}).status_code == 403
+    assert bob.delete(f"/catalog/notebooks/{alice_notebook}").status_code == 403
+
+
+def test_notebook_manage_grant_allows_mutation(users, client_for, alice_notebook, team, grant_factory):
+    grant_factory("catalog_notebook", alice_notebook, team, permission="manage", granted_by=users["alice"].id)
+    bob = client_for("bob")
+    resp = bob.put(f"/catalog/notebooks/{alice_notebook}", json={"description": "managed"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["description"] == "managed"
+
+
+def test_notebook_manage_grant_can_delete_and_cleans_grants(users, client_for, alice_notebook, team, grant_factory):
+    grant_factory("catalog_notebook", alice_notebook, team, permission="manage", granted_by=users["alice"].id)
+    bob = client_for("bob")
+    assert bob.delete(f"/catalog/notebooks/{alice_notebook}").status_code == 204
+    with get_db_context() as db:
+        assert (
+            db.query(db_models.ResourceGrant)
+            .filter_by(resource_type="catalog_notebook", resource_id=alice_notebook)
+            .count()
+            == 0
+        )
+
+
+def test_create_notebook_in_private_namespace_rejected(users, client_for, alice_catalog):
+    bob = client_for("bob")
+    response = bob.post("/catalog/notebooks", json={"name": "bob_nb", "namespace_id": alice_catalog["schema"]})
+    assert response.status_code == 403, response.text
+
+
+def test_create_notebook_in_public_namespace_allowed(users, client_for, resource_factory):
+    public_id = resource_factory(
+        db_models.CatalogNamespace,
+        name="PublicNbCreate",
+        parent_id=None,
+        level=0,
+        owner_id=users["alice"].id,
+        is_public=True,
+    )
+    bob = client_for("bob")
+    response = bob.post("/catalog/notebooks", json={"name": "bob_public_nb", "namespace_id": public_id})
+    assert response.status_code == 201, response.text
+    # cleanup: API-created notebooks aren't tracked by resource_factory, and a leftover
+    # row would collide with a reused namespace rowid in a later test.
+    with get_db_context() as db:
+        row = db.get(db_models.CatalogNotebook, response.json()["id"])
+        if row:
+            db.delete(row)
+            db.commit()
+
+
+def test_manage_grantee_cannot_move_notebook_into_private_namespace(
+    users, client_for, alice_catalog, alice_notebook, team, grant_factory, resource_factory
+):
+    # bob can manage his own notebook in a public namespace...
+    public_id = resource_factory(
+        db_models.CatalogNamespace,
+        name="PublicNbMove",
+        parent_id=None,
+        level=0,
+        owner_id=users["alice"].id,
+        is_public=True,
+    )
+    bob_nb = resource_factory(
+        db_models.CatalogNotebook,
+        name="bob_movable_nb",
+        namespace_id=public_id,
+        cells_json="[]",
+        owner_id=users["bob"].id,
+    )
+    bob = client_for("bob")
+    # ...but cannot move it into alice's private namespace.
+    response = bob.put(f"/catalog/notebooks/{bob_nb}", json={"namespace_id": alice_catalog["schema"]})
+    assert response.status_code == 403, response.text
+
+
 def test_namespace_tree_filtering(users, client_for, alice_catalog, team, grant_factory, resource_factory):
     public_id = resource_factory(
         db_models.CatalogNamespace,

@@ -65,6 +65,7 @@
           @artifact-context-menu="$emit('artifactContextMenu', $event)"
           @flow-context-menu="$emit('flowContextMenu', $event)"
           @select-visualization="$emit('selectVisualization', $event)"
+          @select-notebook="$emit('selectNotebook', $event)"
           @toggle-favorite="$emit('toggleFavorite', $event)"
           @toggle-table-favorite="$emit('toggleTableFavorite', $event)"
           @register-flow="$emit('registerFlow', $event)"
@@ -262,6 +263,25 @@
           </span>
         </div>
       </TreeSection>
+
+      <TreeSection
+        v-if="showNotebooksSection"
+        ref="notebooksSection"
+        title="Notebooks"
+        :count="visibleNotebooks.length"
+        :storage-key="`sec:${node.id}:notebooks`"
+        :default-expanded="sectionsDefaultExpanded"
+      >
+        <div
+          v-for="nb in visibleNotebooks"
+          :key="'nb-' + nb.id"
+          class="tree-table"
+          @click.stop="$emit('selectNotebook', nb.id)"
+        >
+          <i class="fa-solid fa-book table-icon notebook-icon" title="Notebook"></i>
+          <span class="table-name">{{ nb.name }}</span>
+        </div>
+      </TreeSection>
     </div>
   </div>
 </template>
@@ -308,6 +328,7 @@ defineEmits([
   "artifactContextMenu",
   "flowContextMenu",
   "selectVisualization",
+  "selectNotebook",
   "toggleFavorite",
   "toggleTableFavorite",
   "registerFlow",
@@ -365,6 +386,14 @@ const visibleVisualizations = computed(() => {
   return viz;
 });
 
+const visibleNotebooks = computed(() => {
+  let nbs = props.node.notebooks ?? [];
+  if (query.value) {
+    nbs = nbs.filter((n) => n.name.toLowerCase().includes(query.value));
+  }
+  return nbs;
+});
+
 const groupedArtifacts = computed((): ArtifactGroup[] => {
   const byName = new Map<string, GlobalArtifact[]>();
   for (const a of props.node.artifacts ?? []) {
@@ -412,6 +441,7 @@ const flowsSection = ref<TreeSectionRef>(null);
 const modelsSection = ref<TreeSectionRef>(null);
 const tablesSection = ref<TreeSectionRef>(null);
 const visualizationsSection = ref<TreeSectionRef>(null);
+const notebooksSection = ref<TreeSectionRef>(null);
 
 const showFlowsSection = computed(() => props.node.level === 1 && visibleFlows.value.length > 0);
 const showModelsSection = computed(
@@ -420,6 +450,9 @@ const showModelsSection = computed(
 const showTablesSection = computed(() => props.node.level === 1 && visibleTables.value.length > 0);
 const showVisualizationsSection = computed(
   () => props.node.level === 1 && visibleVisualizations.value.length > 0,
+);
+const showNotebooksSection = computed(
+  () => props.node.level === 1 && visibleNotebooks.value.length > 0,
 );
 
 watch(
@@ -458,6 +491,7 @@ watch(query, (value) => {
   if (visibleArtifacts.value.length > 0) modelsSection.value?.expand();
   if (visibleTables.value.length > 0) tablesSection.value?.expand();
   if (visibleVisualizations.value.length > 0) visualizationsSection.value?.expand();
+  if (visibleNotebooks.value.length > 0) notebooksSection.value?.expand();
 });
 
 function countUniqueArtifactNames(artifacts: GlobalArtifact[]): number {
@@ -749,6 +783,10 @@ const totalFlows = computed(() => {
 
 .tree-table .viz-sql-icon {
   color: var(--el-color-warning, #e6a23c);
+}
+
+.tree-table .notebook-icon {
+  color: #8957e5;
 }
 
 .table-virtual-badge {
