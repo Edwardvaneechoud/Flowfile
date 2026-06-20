@@ -240,3 +240,125 @@ class TestVersionsLimitClamp:
         with patch.object(git_ops, "log", return_value=[]) as mock_log:
             git_ops.log(tmp_path, 500)
             assert mock_log.call_args[0][1] == 500
+
+
+# ---------------------------------------------------------------------------
+# N4: both-miss flow_uuid race — the per-flow_uuid lock forces a re-probe so a
+# concurrent import of the same unregistered uuid mints a fresh one instead of
+# colliding on the shared flows/project/<stem>_<uuid8> path.
+# ---------------------------------------------------------------------------
+
+
+class TestFlowUuidLock:
+    def test_same_uuid_lock_is_mutually_exclusive(self):
+        """Two acquisitions of the same flow_uuid lock serialize."""
+        from flowfile_core.project.importer import _flow_uuid_lock
+
+        order: list[str] = []
+        entered = threading.Event()
+        release = threading.Event()
+
+        def hold():
+            with _flow_uuid_lock("uuid-A"):
+                order.append("t1-enter")
+                entered.set()
+                release.wait(1.0)
+                order.append("t1-exit")
+
+        t = threading.Thread(target=hold)
+        t.start()
+        entered.wait(1.0)
+        # Second acquisition of the SAME uuid must block until t1 exits.
+        release.set()
+        with _flow_uuid_lock("uuid-A"):
+            order.append("t2-enter")
+        t.join()
+        assert order == ["t1-enter", "t1-exit", "t2-enter"]
+
+    def test_different_uuids_do_not_block(self):
+        """Distinct flow_uuids use distinct locks — no over-serialization."""
+        from flowfile_core.project.importer import _flow_uuid_lock
+
+        both_in = threading.Barrier(2, timeout=1.0)
+
+        def worker(name: str):
+            with _flow_uuid_lock(name):
+                both_in.wait()  # both threads inside their own lock simultaneously
+
+        threads = [threading.Thread(target=worker, args=(n,)) for n in ("uuid-X", "uuid-Y")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        # If the locks weren't per-uuid, the barrier would time out (BrokenBarrierError).
+
+    def test_both_miss_reprobe_mints_fresh_uuid(self):
+        """When the incoming uuid is already registered (e.g. by a concurrent importer that won the
+        race), the under-lock re-probe sees it and mints a fresh uuid + distinct runtime_path."""
+        from unittest.mock import MagicMock
+
+        import flowfile_core.project.importer as importer
+
+        crafted = "00000000-0000-0000-0000-000000000000"
+        data = {"flow_uuid": crafted, "flowfile_name": "myflow"}
+
+        # owned_or_none -> None (caller owns no such flow); the GLOBAL probe (1st .first() call)
+        # returns a truthy row (another importer already registered it), driving the fresh-uuid
+        # branch. The later post-write reconcile probe (by flow_path) must return None so it no-ops.
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.side_effect = [object(), None]
+
+        captured: dict = {}
+
+        def fake_write_yaml(path, payload):
+            captured["path"] = path
+            captured["uuid"] = payload["flow_uuid"]
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(importer, "get_db_context", return_value=ctx), patch.object(
+            importer.repository, "owned_or_none", return_value=None
+        ), patch.object(importer, "write_yaml", side_effect=fake_write_yaml), patch.object(
+            importer.flow_file_handler, "import_flow"
+        ), patch.object(importer, "auto_register_flow"):
+            returned = importer._import_flow(data, owner_id=7)
+
+        assert returned != crafted  # a fresh uuid was minted
+        assert captured["uuid"] == returned
+        assert crafted[:8] not in str(captured["path"])  # path no longer keyed by the crafted uuid
+
+    def test_no_collision_path_preserves_uuid(self):
+        """Single-user happy path: the uuid is unregistered everywhere, so it is preserved and the
+        runtime_path is keyed by the original uuid (byte-identical round-trip unchanged)."""
+        from unittest.mock import MagicMock
+
+        import flowfile_core.project.importer as importer
+
+        original = "11111111-1111-1111-1111-111111111111"
+        data = {"flow_uuid": original, "flowfile_name": "myflow"}
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = None  # global probe miss + no reg
+
+        captured: dict = {}
+
+        def fake_write_yaml(path, payload):
+            captured["path"] = path
+            captured["uuid"] = payload["flow_uuid"]
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(importer, "get_db_context", return_value=ctx), patch.object(
+            importer.repository, "owned_or_none", return_value=None
+        ), patch.object(importer, "write_yaml", side_effect=fake_write_yaml), patch.object(
+            importer.flow_file_handler, "import_flow"
+        ), patch.object(importer, "auto_register_flow"):
+            returned = importer._import_flow(data, owner_id=7)
+
+        assert returned == original
+        assert captured["uuid"] == original
+        assert original[:8] in str(captured["path"])

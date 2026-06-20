@@ -18,6 +18,7 @@ export type ProjectStatus = "none" | "external" | "unsaved" | "clean";
 interface ProjectState {
   activeProject: ProjectInfo | null;
   hasExternalChanges: boolean; // git HEAD differs from last synced (files changed outside)
+  projectionFailed: boolean; // last DB→files sync hook errored — folder may have drifted from the DB
   dirty: boolean; // authoritative: working tree has uncommitted changes
   hasUnsavedChanges: boolean; // optimistic: set instantly on a local save, reconciled by refresh
   placeholderSecrets: string[];
@@ -35,6 +36,7 @@ export const useProjectStore = defineStore("project", {
   state: (): ProjectState => ({
     activeProject: null,
     hasExternalChanges: false,
+    projectionFailed: false,
     dirty: false,
     hasUnsavedChanges: false,
     placeholderSecrets: [],
@@ -68,10 +70,12 @@ export const useProjectStore = defineStore("project", {
         this.activeProject = res.project;
         if (res.project) {
           this.hasExternalChanges = !!res.has_external_changes;
+          this.projectionFailed = !!res.projection_failed;
           this.dirty = !!res.dirty;
           if (this.dirty) this.hasUnsavedChanges = false; // authoritative wins once known
         } else {
           this.hasExternalChanges = false;
+          this.projectionFailed = false;
           this.dirty = false;
           this.hasUnsavedChanges = false;
           this.placeholderSecrets = [];
@@ -90,6 +94,7 @@ export const useProjectStore = defineStore("project", {
         const project = await ProjectApi.init(folderPath, name);
         this.activeProject = project;
         this.hasExternalChanges = false;
+        this.projectionFailed = false;
         this.dirty = false;
         this.hasUnsavedChanges = false;
         this.placeholderSecrets = [];
@@ -107,6 +112,7 @@ export const useProjectStore = defineStore("project", {
         this.activeProject = res.project;
         this.placeholderSecrets = res.placeholder_secrets ?? [];
         this.hasExternalChanges = false;
+        this.projectionFailed = false;
         this.dirty = false;
         this.hasUnsavedChanges = false;
         return res;
@@ -136,7 +142,7 @@ export const useProjectStore = defineStore("project", {
       await this.refreshActive();
     },
 
-    /** Decoupled signal from a local save (flow/connection/secret/schedule). */
+    /** Optimistic dirty signal from a local flow save or delete; reconciled by refreshActive. */
     onSourceChanged(): void {
       if (this.activeProject) this.hasUnsavedChanges = true;
     },

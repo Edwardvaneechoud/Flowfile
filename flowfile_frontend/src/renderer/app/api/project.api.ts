@@ -161,7 +161,7 @@ export class ProjectApi {
   /** Set/overwrite standalone placeholder-secret values. */
   static async setSecrets(secrets: PlaceholderSecretInput[]): Promise<void> {
     try {
-      await axios.post("/project/secrets", secrets);
+      await axios.post("/project/secrets", { secrets });
     } catch (error: any) {
       if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
       throw new Error(detail(error, "Failed to set secret values"));

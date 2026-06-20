@@ -353,9 +353,14 @@ class KernelManager:
         self._core_instance_id = _load_or_create_core_instance_id()
         self._kernels: dict[str, KernelInfo] = {}
         self._kernel_owners: dict[str, int] = {}  # kernel_id -> user_id
-        # Serialises mutations of _kernels / _kernel_owners / _scratch_flow_ids
-        # so concurrent imports by different users don't clobber each other's
-        # registry entries or trigger _cleanup_container on the wrong kernel (L11).
+        # Serialises mutations of the in-memory kernel registry (_kernels /
+        # _kernel_owners / _scratch_flow_ids) across reconcile, restore, create,
+        # launch (port allocation) and delete so concurrent operations by
+        # different users don't clobber each other's entries, double-allocate a
+        # port, or trigger _cleanup_container on the wrong kernel (L11). RLock so
+        # reconcile's nested same-thread acquisitions are safe. Never held across
+        # the scratch-flow DB path (_scratch_flow_lock) to avoid lock-order
+        # coupling; long Docker build/start/stop I/O runs outside it.
         self._kernels_lock = threading.RLock()
         # Cached scratch FlowRegistration ids — one per kernel. Populated on
         # create_kernel and during _restore_kernels_from_db; consulted in the
@@ -635,7 +640,11 @@ class KernelManager:
             from flowfile_core.kernel.persistence import get_all_kernel_scratch_ids, get_all_kernels
 
             with get_db_context() as db:
-                for config, resolved_packages, user_id in get_all_kernels(db):
+                kernel_rows = list(get_all_kernels(db))
+                scratch_ids = get_all_kernel_scratch_ids(db)
+            # Guard the registry mutation against a concurrent reconcile/create/delete.
+            with self._kernels_lock:
+                for config, resolved_packages, user_id in kernel_rows:
                     if config.id in self._kernels:
                         continue
                     kernel = KernelInfo(
@@ -657,7 +666,7 @@ class KernelManager:
                 # path doesn't have to hit the DB on each call. Missing values
                 # (e.g. kernels created before this migration ran) are filled
                 # in lazily by get_scratch_flow_id.
-                for kernel_id, scratch_id in get_all_kernel_scratch_ids(db).items():
+                for kernel_id, scratch_id in scratch_ids.items():
                     if scratch_id is not None:
                         self._scratch_flow_ids[kernel_id] = scratch_id
         except Exception:
@@ -1242,12 +1251,15 @@ class KernelManager:
         return env
 
     async def create_kernel(self, config: KernelConfig, user_id: int) -> KernelInfo:
-        if config.id in self._kernels:
-            raise ValueError(f"Kernel '{config.id}' already exists")
-
-        # In Docker-in-Docker mode we don't map host ports — kernels are
-        # reached via container name on the shared Docker network.
-        port = None if self._kernel_volume else self._allocate_port()
+        # Check-and-allocate atomically so two concurrent creates can't pass the
+        # existence check or grab the same port. The long image build runs
+        # outside the lock; the registry is re-checked before the final commit.
+        with self._kernels_lock:
+            if config.id in self._kernels:
+                raise ValueError(f"Kernel '{config.id}' already exists")
+            # In Docker-in-Docker mode we don't map host ports — kernels are
+            # reached via container name on the shared Docker network.
+            port = None if self._kernel_volume else self._allocate_port()
         # Validate image flavour and packages up-front so we fail before
         # persisting state or kicking off a long-running build.
         try:
@@ -1285,8 +1297,11 @@ class KernelManager:
                 self._resolve_installed_versions, derived_tag, config.packages
             )
 
-        self._kernels[config.id] = kernel
-        self._kernel_owners[config.id] = user_id
+        with self._kernels_lock:
+            if config.id in self._kernels:
+                raise ValueError(f"Kernel '{config.id}' already exists")
+            self._kernels[config.id] = kernel
+            self._kernel_owners[config.id] = user_id
         self._persist_kernel(kernel, user_id)
         # Auto-register a scratch FlowRegistration so artifacts published from
         # interactive cells have a valid producer. See ``_create_scratch_flow``.
@@ -1328,9 +1343,12 @@ class KernelManager:
 
         kernel.image = image
 
-        # Allocate a port if needed (local mode only, not needed for DinD)
+        # Allocate a port if needed (local mode only, not needed for DinD).
+        # Guard the read of the shared registry so two concurrent launches
+        # don't pick the same free port.
         if kernel.port is None and not self._kernel_volume:
-            kernel.port = self._allocate_port()
+            with self._kernels_lock:
+                kernel.port = self._allocate_port()
 
         kernel.state = KernelState.STARTING
         kernel.error_message = None
@@ -1387,8 +1405,10 @@ class KernelManager:
 
         kernel.image = image
 
+        # Guard the shared-registry read so concurrent launches don't collide on a port.
         if kernel.port is None and not self._kernel_volume:
-            kernel.port = self._allocate_port()
+            with self._kernels_lock:
+                kernel.port = self._allocate_port()
 
         kernel.state = KernelState.STARTING
         kernel.error_message = None
@@ -1487,8 +1507,9 @@ class KernelManager:
         # doesn't fire as a side-effect; explicit deletion keeps the catalog
         # tidy. Tolerant of a missing row (manual removal, downgrade-then-upgrade).
         self._discard_scratch_flow(kernel_id)
-        del self._kernels[kernel_id]
-        self._kernel_owners.pop(kernel_id, None)
+        with self._kernels_lock:
+            del self._kernels[kernel_id]
+            self._kernel_owners.pop(kernel_id, None)
         self._remove_kernel_from_db(kernel_id)
         if had_packages:
             self._remove_derived_image(kernel_id)

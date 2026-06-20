@@ -26,12 +26,13 @@ from flowfile_core.project import git_ops, projection, repository
 from flowfile_core.project.importer import import_project, preflight_import_caps, preflight_import_caps_worktree
 from flowfile_core.project.manifest import (
     MANIFEST_NAME,
+    ROOT_MANIFESTS,
     ProjectManifest,
     read_manifest,
     write_gitignore,
     write_manifest,
 )
-from flowfile_core.project.models import ActiveProject, SetupResult
+from flowfile_core.project.models import ActiveProject, NoActiveProjectError, SetupResult
 from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
@@ -83,18 +84,8 @@ def _classify_path(path: str) -> tuple[str, str]:
     if path.startswith("schedules/"):
         return "schedule", stem
     # Root-level manifests mirror a whole resource category; show the category rather than "settings".
-    if "/" not in path:
-        manifest_kinds = {
-            "secrets": "secrets",
-            "namespaces": "namespaces",
-            "tables": "catalog tables",
-            "models": "models",
-            "kernels": "kernels",
-            "visualizations": "visualizations",
-            "dashboards": "dashboards",
-        }
-        if stem in manifest_kinds:
-            return manifest_kinds[stem], stem
+    if "/" not in path and stem in ROOT_MANIFESTS:
+        return ROOT_MANIFESTS[stem], stem
     return "settings", name
 
 
@@ -123,7 +114,21 @@ class ProjectSyncService:
     def __init__(self) -> None:
         self._by_owner: dict[int, ActiveProject] | None = None  # None = not loaded yet
         self._suppressed: set[int] = set()  # owner_ids whose projection is paused (per-owner, not global)
-        self._cache_lock = threading.RLock()  # guards _by_owner and _suppressed; separate from repo_lock
+        self._projection_failed: set[int] = set()  # owner_ids whose last projection hook errored
+        self._cache_lock = threading.RLock()  # guards _by_owner/_suppressed/_projection_failed; separate from repo_lock
+
+    def _mark_projection(self, owner_id: int, failed: bool) -> None:
+        with self._cache_lock:
+            if failed:
+                self._projection_failed.add(owner_id)
+            else:
+                self._projection_failed.discard(owner_id)
+
+    def projection_failed(self, user_id: int | None) -> bool:
+        if user_id is None:
+            return False
+        with self._cache_lock:
+            return user_id in self._projection_failed
 
     @contextmanager
     def suppress_projection(self, owner_id: int):
@@ -181,8 +186,10 @@ class ProjectSyncService:
                         target = projection.project_flow(proj.root, reg, namespace)
                         if target is not None:
                             projection.remove_stale_flow_files(proj.root, reg.flow_uuid, target)
+            self._mark_projection(proj.owner_id, failed=False)
         except Exception:
-            logger.warning("Project flow projection failed for %s", flow_path, exc_info=True)
+            self._mark_projection(proj.owner_id, failed=True)
+            logger.error("Project flow projection failed for %s", flow_path, exc_info=True)
 
     def flow_deleted(self, flow_uuid: str, user_id: int | None) -> None:
         proj = self.get_active_project(user_id)
@@ -190,8 +197,10 @@ class ProjectSyncService:
             return
         try:
             projection.remove_flow(proj.root, flow_uuid=flow_uuid)
+            self._mark_projection(proj.owner_id, failed=False)
         except Exception:
-            logger.warning("Project flow-delete projection failed for %s", flow_uuid, exc_info=True)
+            self._mark_projection(proj.owner_id, failed=True)
+            logger.error("Project flow-delete projection failed for %s", flow_uuid, exc_info=True)
 
     def connection_changed(self, kind: str, connection_name: str, user_id: int | None, deleted: bool = False) -> None:
         proj = self.get_active_project(user_id)
@@ -209,8 +218,10 @@ class ProjectSyncService:
                             projection.project_cloud_connection(db, proj.root, connection_name, proj.owner_id)
                 with get_db_context() as db:
                     projection.regenerate_secret_manifest(db, proj.root, proj.owner_id)
+            self._mark_projection(proj.owner_id, failed=False)
         except Exception:
-            logger.warning("Project connection projection failed for %s/%s", kind, connection_name, exc_info=True)
+            self._mark_projection(proj.owner_id, failed=True)
+            logger.error("Project connection projection failed for %s/%s", kind, connection_name, exc_info=True)
 
     def schedule_changed(self, registration_id: int, user_id: int | None, deleted: bool = False) -> None:
         proj = self.get_active_project(user_id)
@@ -222,85 +233,48 @@ class ProjectSyncService:
                     reg = db.query(FlowRegistration).filter(FlowRegistration.id == registration_id).first()
                     if reg is not None and reg.owner_id == proj.owner_id:
                         projection.project_schedules_for_registration(db, proj.root, reg)
+            self._mark_projection(proj.owner_id, failed=False)
         except Exception:
-            logger.warning("Project schedule projection failed for reg %s", registration_id, exc_info=True)
+            self._mark_projection(proj.owner_id, failed=True)
+            logger.error("Project schedule projection failed for reg %s", registration_id, exc_info=True)
+
+    def _project_manifest(self, user_id: int | None, regen, label: str, require_track: bool = False) -> None:
+        """Re-run one DB→file manifest regenerator under the repo lock; swallow+log on failure.
+
+        ``regen(db, root, owner_id)`` is the projection writer; ``require_track`` skips when the
+        project opts out of data-artifact tracking."""
+        proj = self.get_active_project(user_id)
+        if proj is None or (require_track and not proj.track_data_artifacts):
+            return
+        try:
+            with git_ops.repo_lock(proj.root):
+                with get_db_context() as db:
+                    regen(db, proj.root, proj.owner_id)
+            self._mark_projection(proj.owner_id, failed=False)
+        except Exception:
+            self._mark_projection(proj.owner_id, failed=True)
+            logger.error("Project %s projection failed", label, exc_info=True)
 
     def secret_changed(self, user_id: int | None) -> None:
-        proj = self.get_active_project(user_id)
-        if proj is None:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    projection.regenerate_secret_manifest(db, proj.root, proj.owner_id)
-        except Exception:
-            logger.warning("Project secret-manifest projection failed", exc_info=True)
+        self._project_manifest(user_id, projection.regenerate_secret_manifest, "secret-manifest")
 
     def namespace_changed(self, user_id: int | None) -> None:
-        proj = self.get_active_project(user_id)
-        if proj is None:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    projection.regenerate_namespace_manifest(db, proj.root, proj.owner_id)
-        except Exception:
-            logger.warning("Project namespace-manifest projection failed", exc_info=True)
+        self._project_manifest(user_id, projection.regenerate_namespace_manifest, "namespace-manifest")
 
     def tables_changed(self, user_id: int | None) -> None:
-        proj = self.get_active_project(user_id)
-        if proj is None or not proj.track_data_artifacts:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    projection.regenerate_tables_manifest(db, proj.root, proj.owner_id)
-        except Exception:
-            logger.warning("Project tables-manifest projection failed", exc_info=True)
+        self._project_manifest(user_id, projection.regenerate_tables_manifest, "tables-manifest", require_track=True)
 
     def artifacts_changed(self, user_id: int | None) -> None:
-        proj = self.get_active_project(user_id)
-        if proj is None or not proj.track_data_artifacts:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    projection.regenerate_models_manifest(db, proj.root, proj.owner_id)
-        except Exception:
-            logger.warning("Project models-manifest projection failed", exc_info=True)
+        self._project_manifest(user_id, projection.regenerate_models_manifest, "models-manifest", require_track=True)
 
     def kernels_changed(self, user_id: int | None) -> None:
-        proj = self.get_active_project(user_id)
-        if proj is None:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    projection.regenerate_kernels_manifest(db, proj.root, proj.owner_id)
-        except Exception:
-            logger.warning("Project kernels-manifest projection failed", exc_info=True)
+        self._project_manifest(user_id, projection.regenerate_kernels_manifest, "kernels-manifest")
 
     def visualizations_changed(self, user_id: int | None) -> None:
-        proj = self.get_active_project(user_id)
-        if proj is None:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    projection.regenerate_visualizations_manifest(db, proj.root, proj.owner_id)
-        except Exception:
-            logger.warning("Project visualizations-manifest projection failed", exc_info=True)
+        self._project_manifest(user_id, projection.regenerate_visualizations_manifest, "visualizations-manifest")
 
     def dashboards_changed(self, user_id: int | None) -> None:
-        proj = self.get_active_project(user_id)
-        if proj is None:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    projection.regenerate_dashboards_manifest(db, proj.root, proj.owner_id)
-        except Exception:
-            logger.warning("Project dashboards-manifest projection failed", exc_info=True)
+        self._project_manifest(user_id, projection.regenerate_dashboards_manifest, "dashboards-manifest")
 
     # --- lifecycle (explicit user actions via /project router + CLI) ----------
 
@@ -350,7 +324,7 @@ class ProjectSyncService:
     def save_version(self, user_id: int, message: str) -> str | None:
         proj = self.get_active_project(user_id)
         if proj is None:
-            raise RuntimeError("No active project")
+            raise NoActiveProjectError("No active project")
         with git_ops.repo_lock(proj.root):
             with get_db_context() as db:
                 projection.project_all(db, proj.root, proj.owner_id)
@@ -403,7 +377,7 @@ class ProjectSyncService:
         """
         proj = self.get_active_project(user_id)
         if proj is None:
-            raise RuntimeError("No active project")
+            raise NoActiveProjectError("No active project")
         with git_ops.repo_lock(proj.root):
             recovery_sha = self._autosave_before_reset(proj, force, "restore")
             # Cap-check the target tree before resetting files or rebuilding the DB, so a breach
@@ -426,7 +400,7 @@ class ProjectSyncService:
         ``force`` it is autosaved into git history before the prune so it stays recoverable."""
         proj = self.get_active_project(user_id)
         if proj is None:
-            raise RuntimeError("No active project")
+            raise NoActiveProjectError("No active project")
         with git_ops.repo_lock(proj.root):
             recovery_sha = self._autosave_before_reset(proj, force, "reload")
             # Cap-check the working tree before the rebuild mutates the DB, so a breach aborts cleanly.
@@ -440,21 +414,21 @@ class ProjectSyncService:
         """Friendly summary of what restoring ``sha`` would change vs the latest saved version."""
         proj = self.get_active_project(user_id)
         if proj is None:
-            raise RuntimeError("No active project")
+            raise NoActiveProjectError("No active project")
         return _friendly_changes(git_ops.diff_name_status(proj.root, "HEAD", sha))
 
     def version_diff(self, user_id: int, sha: str) -> list[dict]:
         """Friendly changelog of what a specific version changed vs the one before it."""
         proj = self.get_active_project(user_id)
         if proj is None:
-            raise RuntimeError("No active project")
+            raise NoActiveProjectError("No active project")
         return _friendly_changes(git_ops.changes_in(proj.root, sha))
 
     def uncommitted_changes(self, user_id: int) -> list[dict]:
         """Friendly summary of the unsaved working-tree changes (what a Save version would record)."""
         proj = self.get_active_project(user_id)
         if proj is None:
-            raise RuntimeError("No active project")
+            raise NoActiveProjectError("No active project")
         return _friendly_changes(git_ops.uncommitted_changes(proj.root))
 
     def close_project(self, owner_id: int) -> None:
@@ -462,16 +436,17 @@ class ProjectSyncService:
             repository.deactivate_owner(db, owner_id)
         with self._cache_lock:
             self._load().pop(owner_id, None)
+            self._projection_failed.discard(owner_id)
 
     def update_settings(self, user_id: int, track_data_artifacts: bool) -> bool:
         """Flip the track-data-artifacts toggle: rewrite project.yaml + the DB mirror, then
         re-project so tables.yaml / models.yaml are dropped (off) or regenerated (on)."""
         proj = self.get_active_project(user_id)
         if proj is None:
-            raise RuntimeError("No active project")
+            raise NoActiveProjectError("No active project")
         m = read_manifest(proj.root)
         if m is None:
-            raise RuntimeError("No active project")
+            raise NoActiveProjectError("No active project")
         m.track_data_artifacts = track_data_artifacts
         write_manifest(proj.root, m)
         with get_db_context() as db:

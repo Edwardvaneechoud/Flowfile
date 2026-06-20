@@ -13,19 +13,36 @@ const mocks = vi.hoisted(() => {
   return {
     ProjectFeatureUnavailable,
     getActive: vi.fn(),
+    init: vi.fn(),
+    open: vi.fn(),
     saveVersion: vi.fn(),
     getVersions: vi.fn(),
     updateSettings: vi.fn(),
+    restore: vi.fn(),
+    reload: vi.fn(),
+    setSecrets: vi.fn(),
+    close: vi.fn(),
+    warning: vi.fn(),
   };
 });
+
+vi.mock("element-plus", () => ({
+  ElMessage: { warning: mocks.warning },
+}));
 
 vi.mock("../api/project.api", () => ({
   ProjectFeatureUnavailable: mocks.ProjectFeatureUnavailable,
   ProjectApi: {
     getActive: mocks.getActive,
+    init: mocks.init,
+    open: mocks.open,
     saveVersion: mocks.saveVersion,
     getVersions: mocks.getVersions,
     updateSettings: mocks.updateSettings,
+    restore: mocks.restore,
+    reload: mocks.reload,
+    setSecrets: mocks.setSecrets,
+    close: mocks.close,
   },
 }));
 
@@ -47,7 +64,11 @@ describe("status getter", () => {
   });
 
   it("is 'clean' when active with no changes", async () => {
-    mocks.getActive.mockResolvedValue({ project: PROJECT, has_external_changes: false, dirty: false });
+    mocks.getActive.mockResolvedValue({
+      project: PROJECT,
+      has_external_changes: false,
+      dirty: false,
+    });
     const store = useProjectStore();
     await store.refreshActive();
     expect(store.isActive).toBe(true);
@@ -55,17 +76,55 @@ describe("status getter", () => {
   });
 
   it("is 'unsaved' when the working tree is dirty", async () => {
-    mocks.getActive.mockResolvedValue({ project: PROJECT, has_external_changes: false, dirty: true });
+    mocks.getActive.mockResolvedValue({
+      project: PROJECT,
+      has_external_changes: false,
+      dirty: true,
+    });
     const store = useProjectStore();
     await store.refreshActive();
     expect(store.status).toBe("unsaved");
   });
 
   it("prefers 'external' over 'unsaved'", async () => {
-    mocks.getActive.mockResolvedValue({ project: PROJECT, has_external_changes: true, dirty: true });
+    mocks.getActive.mockResolvedValue({
+      project: PROJECT,
+      has_external_changes: true,
+      dirty: true,
+    });
     const store = useProjectStore();
     await store.refreshActive();
     expect(store.status).toBe("external");
+  });
+});
+
+describe("refreshActive", () => {
+  it("captures the projection_failed flag", async () => {
+    mocks.getActive.mockResolvedValue({ project: PROJECT, projection_failed: true });
+    const store = useProjectStore();
+    await store.refreshActive();
+    expect(store.projectionFailed).toBe(true);
+  });
+
+  it("clears all status when no project is active", async () => {
+    mocks.getActive.mockResolvedValue({ project: null });
+    const store = useProjectStore();
+    store.hasExternalChanges = true;
+    store.projectionFailed = true;
+    store.dirty = true;
+    await store.refreshActive();
+    expect(store.activeProject).toBeNull();
+    expect(store.hasExternalChanges).toBe(false);
+    expect(store.projectionFailed).toBe(false);
+    expect(store.dirty).toBe(false);
+  });
+
+  it("surfaces a fetch failure on the error field without throwing", async () => {
+    mocks.getActive.mockRejectedValue(new Error("network down"));
+    const store = useProjectStore();
+    await store.refreshActive();
+    expect(store.error).toBe("network down");
+    expect(store.loading).toBe(false);
   });
 });
 
@@ -83,6 +142,121 @@ describe("onSourceChanged", () => {
     store.onSourceChanged();
     expect(store.hasUnsavedChanges).toBe(true);
     expect(store.status).toBe("unsaved");
+  });
+});
+
+describe("initProject", () => {
+  it("activates the new project with a clean status", async () => {
+    mocks.init.mockResolvedValue(PROJECT);
+    const store = useProjectStore();
+    store.hasExternalChanges = true;
+    store.projectionFailed = true;
+
+    const project = await store.initProject("/p", "Demo");
+    expect(project).toEqual(PROJECT);
+    expect(store.activeProject).toEqual(PROJECT);
+    expect(store.status).toBe("clean");
+    expect(store.projectionFailed).toBe(false);
+    expect(store.loading).toBe(false);
+  });
+});
+
+describe("openProject", () => {
+  it("activates the project and records placeholder secrets", async () => {
+    mocks.open.mockResolvedValue({
+      project: PROJECT,
+      imported: { flows: 1, connections: 0, schedules: 0 },
+      placeholder_secrets: ["prod_pw"],
+    });
+    const store = useProjectStore();
+
+    const res = await store.openProject("/p");
+    expect(res.imported.flows).toBe(1);
+    expect(store.activeProject).toEqual(PROJECT);
+    expect(store.placeholderSecrets).toEqual(["prod_pw"]);
+    expect(store.loading).toBe(false);
+  });
+});
+
+describe("restoreVersion", () => {
+  it("warns on prune errors and refreshes status", async () => {
+    mocks.restore.mockResolvedValue({
+      imported: { flows: 0, connections: 0, schedules: 0 },
+      placeholder_secrets: [],
+      prune_errors: ["table x"],
+    });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.restoreVersion("deadbeef", "rollback");
+    expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback");
+    expect(mocks.warning).toHaveBeenCalled();
+    expect(mocks.getActive).toHaveBeenCalled();
+  });
+});
+
+describe("reloadFromDisk", () => {
+  it("rebuilds from disk and reconciles status", async () => {
+    mocks.reload.mockResolvedValue({
+      imported: { flows: 2, connections: 1, schedules: 0 },
+      placeholder_secrets: ["s"],
+    });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    const res = await store.reloadFromDisk();
+    expect(res.imported.connections).toBe(1);
+    expect(store.placeholderSecrets).toEqual(["s"]);
+    expect(mocks.getActive).toHaveBeenCalled();
+  });
+
+  it("hides the reload action when the route is unavailable", async () => {
+    mocks.reload.mockRejectedValue(new mocks.ProjectFeatureUnavailable());
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await expect(store.reloadFromDisk()).rejects.toBeInstanceOf(mocks.ProjectFeatureUnavailable);
+    expect(store.reloadAvailable).toBe(false);
+  });
+});
+
+describe("fillSecrets", () => {
+  it("removes filled names from the placeholder list", async () => {
+    mocks.setSecrets.mockResolvedValue(undefined);
+    const store = useProjectStore();
+    store.placeholderSecrets = ["a", "b", "c"];
+
+    await store.fillSecrets([
+      { name: "a", value: "1" },
+      { name: "c", value: "3" },
+    ]);
+    expect(store.placeholderSecrets).toEqual(["b"]);
+  });
+});
+
+describe("closeProject", () => {
+  it("resets the store to its initial state", async () => {
+    mocks.close.mockResolvedValue(undefined);
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+    store.dirty = true;
+    store.placeholderSecrets = ["x"];
+
+    await store.closeProject();
+    expect(store.activeProject).toBeNull();
+    expect(store.dirty).toBe(false);
+    expect(store.placeholderSecrets).toEqual([]);
+  });
+
+  it("hides the close action when the route is unavailable", async () => {
+    mocks.close.mockRejectedValue(new mocks.ProjectFeatureUnavailable());
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await expect(store.closeProject()).rejects.toBeInstanceOf(mocks.ProjectFeatureUnavailable);
+    expect(store.closeAvailable).toBe(false);
   });
 });
 
@@ -129,5 +303,15 @@ describe("loadVersions capability degradation", () => {
     await store.loadVersions();
     expect(store.versionsAvailable).toBe(false);
     expect(store.error).toBeNull();
+  });
+
+  it("surfaces a non-capability failure on the error field", async () => {
+    mocks.getVersions.mockRejectedValue(new Error("boom"));
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.loadVersions();
+    expect(store.versionsAvailable).toBe(true);
+    expect(store.error).toBe("boom");
   });
 });

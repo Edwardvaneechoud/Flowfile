@@ -9,6 +9,8 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
+from flowfile_core.project import manifest
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -86,28 +88,12 @@ def init(root: Path) -> None:
         Repo.init(str(root))
 
 
-_MANAGED_PATHS = [
-    "project.yaml",
-    ".gitignore",
-    "secrets.yaml",
-    "namespaces.yaml",
-    "tables.yaml",
-    "models.yaml",
-    "kernels.yaml",
-    "visualizations.yaml",
-    "dashboards.yaml",
-    "flows",
-    "connections",
-    "schedules",
-]
-
-
 def _is_managed(path: str) -> bool:
     """True when ``path`` (repo-relative, forward-slash) belongs to the managed set.
 
     Root-level entries match exactly; directory entries match the prefix so that
     any file under ``flows/`` is considered managed."""
-    for mp in _MANAGED_PATHS:
+    for mp in manifest.MANAGED_PATHS:
         if path == mp or path.startswith(mp + "/") or path.startswith(mp + "\\"):
             return True
     return False

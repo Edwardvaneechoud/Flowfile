@@ -32,11 +32,11 @@ def _flow_data(flow_id: int) -> dict:
     }
 
 
-def test_deterministic_flow_id_is_stable_and_32bit():
+def test_deterministic_flow_id_is_stable_and_positive():
     a = deterministic_flow_id("b3f1-uuid")
     assert a == deterministic_flow_id("b3f1-uuid")
     assert a != deterministic_flow_id("other-uuid")
-    assert 0 <= a <= 0xFFFFFFFF
+    assert 0 <= a <= 0x7FFFFFFFFFFFFFFF
 
 
 def test_normalize_strips_volatile_fields():

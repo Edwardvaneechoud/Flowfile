@@ -7,14 +7,17 @@ dead-ends (the user fills them in later).
 
 from __future__ import annotations
 
+import contextvars
 import copy
 import json
 import logging
+import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from flowfile_core import flow_file_handler
 from flowfile_core.auth import sharing
@@ -48,7 +51,8 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_database_connection,
 )
 from flowfile_core.project import manifest, repository
-from flowfile_core.project.models import SetupResult
+from flowfile_core.project.manifest_entries import CloudConnectionEntry, DatabaseConnectionEntry, SchemaColumn
+from flowfile_core.project.models import KeptResources, SetupResult
 from flowfile_core.project.normalize import safe_stem, write_yaml
 from flowfile_core.project.projection import _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
 from flowfile_core.project.secrets_resolver import load_dotenv, placeholder_name, resolve
@@ -64,6 +68,44 @@ from flowfile_core.secret_manager.secret_manager import (
 from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
+
+
+class ImportTooLargeError(ValueError):
+    """A project manifest exceeds a size/entry cap (router → 413). Subclasses ``ValueError`` so
+    existing ``except ValueError`` paths keep working."""
+
+
+# Process-wide per-flow_uuid lock. The flows directory is shared across tenants in docker, so two
+# concurrent imports (different project roots -> different repo_locks) of the SAME unregistered
+# flow_uuid would both miss the existing/global probe and both compute+write the identical
+# flows_directory/project/<stem>_<uuid8> path. Serializing the existing-check → path-resolve →
+# write → register critical section by flow_uuid forces the second importer to re-probe UNDER the
+# lock, see the first's registration, and mint a fresh uuid via the existing collision branch. The
+# lock is keyed by flow_uuid only and acquired solely inside _import_flow (innermost; repo_lock is
+# the outer lock when held), so it cannot introduce a lock-ordering cycle. Single-user/single-thread
+# imports never contend, so behavior (and the byte-identical round-trip) is unchanged.
+_flow_uuid_locks: dict[str, threading.Lock] = {}
+_flow_uuid_locks_guard = threading.Lock()  # guards the dict itself, NOT held during the import
+
+
+@contextmanager
+def _flow_uuid_lock(flow_uuid: str):
+    with _flow_uuid_locks_guard:
+        lock = _flow_uuid_locks.get(flow_uuid)
+        if lock is None:
+            lock = threading.Lock()
+            _flow_uuid_locks[flow_uuid] = lock
+    lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+# Per-import memo for resolve-only namespace lookups. Namespaces are imported first and never change
+# during the rest of an import, so the same (catalog, schema, owner) read repeated per table/model/
+# flow/viz hits this map instead of a fresh session+query. Only create=False results are cached.
+_ns_resolve_cache: contextvars.ContextVar[dict | None] = contextvars.ContextVar("_ns_resolve_cache", default=None)
 
 # Import-size caps. Per-manifest-file YAML size cap (bytes); 5 MB is unreasonably large for a manifest.
 _MAX_YAML_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -84,7 +126,7 @@ def _read_yaml(path: Path) -> dict:
         return {}
     size = path.stat().st_size
     if size > _MAX_YAML_BYTES:
-        raise ValueError(
+        raise ImportTooLargeError(
             f"Project import: manifest file {path.name!r} is {size} bytes, "
             f"which exceeds the {_MAX_YAML_BYTES}-byte cap. Import aborted."
         )
@@ -115,19 +157,24 @@ def _import_standalone_secrets(root: Path, owner_id: int, dotenv: dict, result: 
             store_secret(db, SecretInput(name=name, value=SecretStr(value)), owner_id)
 
 
-def _import_db_connection(data: dict, owner_id: int, dotenv: dict, result: SetupResult) -> None:
-    name = data["connection_name"]
-    secret_name = placeholder_name(data.get("password")) or name
+def _import_db_connection(data: dict, owner_id: int, dotenv: dict, result: SetupResult) -> str | None:
+    try:
+        entry = DatabaseConnectionEntry.model_validate(data)
+    except ValidationError:
+        logger.warning("Project import: skipping malformed database connection file", exc_info=True)
+        return None
+    name = entry.connection_name
+    secret_name = placeholder_name(entry.password) or name
     value = _resolve_secret_value(secret_name, owner_id, dotenv, result)
     conn = FullDatabaseConnection(
         connection_name=name,
-        database_type=data.get("database_type", "postgresql"),
-        username=data.get("username", ""),
+        database_type=entry.database_type,
+        username=entry.username,
         password=SecretStr(value),
-        host=data.get("host"),
-        port=data.get("port"),
-        database=data.get("database"),
-        ssl_enabled=data.get("ssl_enabled", False),
+        host=entry.host,
+        port=entry.port,
+        database=entry.database,
+        ssl_enabled=entry.ssl_enabled,
     )
     with get_db_context() as db:
         if _get_own_database_connection(db, name, owner_id):
@@ -135,27 +182,33 @@ def _import_db_connection(data: dict, owner_id: int, dotenv: dict, result: Setup
         else:
             store_database_connection(db, conn, owner_id)
     result.imported_connections += 1
+    return name
 
 
-def _import_cloud_connection(data: dict, owner_id: int, dotenv: dict, result: SetupResult) -> None:
-    name = data["connection_name"]
+def _import_cloud_connection(data: dict, owner_id: int, dotenv: dict, result: SetupResult) -> str | None:
+    try:
+        entry = CloudConnectionEntry.model_validate(data)
+    except ValidationError:
+        logger.warning("Project import: skipping malformed cloud connection file", exc_info=True)
+        return None
+    name = entry.connection_name
     kwargs: dict = {
-        "storage_type": data["storage_type"],
-        "auth_method": data["auth_method"],
+        "storage_type": entry.storage_type,
+        "auth_method": entry.auth_method,
         "connection_name": name,
-        "aws_region": data.get("aws_region"),
-        "aws_access_key_id": data.get("aws_access_key_id"),
-        "aws_role_arn": data.get("aws_role_arn"),
-        "aws_allow_unsafe_html": data.get("aws_allow_unsafe_html"),
-        "azure_account_name": data.get("azure_account_name"),
-        "azure_tenant_id": data.get("azure_tenant_id"),
-        "azure_client_id": data.get("azure_client_id"),
-        "gcs_project_id": data.get("gcs_project_id"),
-        "endpoint_url": data.get("endpoint_url"),
-        "verify_ssl": data.get("verify_ssl", True),
+        "aws_region": entry.aws_region,
+        "aws_access_key_id": entry.aws_access_key_id,
+        "aws_role_arn": entry.aws_role_arn,
+        "aws_allow_unsafe_html": entry.aws_allow_unsafe_html,
+        "azure_account_name": entry.azure_account_name,
+        "azure_tenant_id": entry.azure_tenant_id,
+        "azure_client_id": entry.azure_client_id,
+        "gcs_project_id": entry.gcs_project_id,
+        "endpoint_url": entry.endpoint_url,
+        "verify_ssl": entry.verify_ssl,
     }
     for field_name, _ in _CLOUD_SECRETS:
-        ph = placeholder_name(data.get(field_name))
+        ph = placeholder_name(getattr(entry, field_name))
         kwargs[field_name] = SecretStr(_resolve_secret_value(ph, owner_id, dotenv, result)) if ph else None
     conn = FullCloudStorageConnection(**kwargs)
     with get_db_context() as db:
@@ -164,6 +217,7 @@ def _import_cloud_connection(data: dict, owner_id: int, dotenv: dict, result: Se
         else:
             store_cloud_connection(db, conn, owner_id)
     result.imported_connections += 1
+    return name
 
 
 def _create_namespace(
@@ -220,36 +274,47 @@ def _resolve_namespace(
     child schema lookup, but the child stays own-first-else-public on its own."""
     if not catalog_name:
         return None
-    with get_db_context() as db:
-        service = CatalogService(SQLAlchemyCatalogRepository(db))
-        catalog = service.repo.get_namespace_by_name(catalog_name, None, owner_id=owner_id, include_public=True)
-        if catalog is None:
-            if not create:
-                return None
-            catalog = _create_namespace(
-                service,
-                catalog_name,
-                owner_id,
-                None,
-                None if schema_name else description,
-                is_public and not schema_name,
-            )
+    cache = _ns_resolve_cache.get() if not create else None
+    cache_key = (catalog_name, schema_name, owner_id)
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
+
+    def _resolve() -> int | None:
+        with get_db_context() as db:
+            service = CatalogService(SQLAlchemyCatalogRepository(db))
+            catalog = service.repo.get_namespace_by_name(catalog_name, None, owner_id=owner_id, include_public=True)
             if catalog is None:
-                return None
-        if not schema_name:
-            return catalog.id
-        schema = service.repo.get_namespace_by_name(schema_name, catalog.id, owner_id=owner_id, include_public=True)
-        if schema is None:
-            if not create:
-                return None
-            # Never create a child under a public parent the caller doesn't own (that would collide
-            # on uq_namespace_name_parent against another user's tree). Placement falls back to None.
-            if catalog.owner_id != owner_id:
-                return None
-            schema = _create_namespace(service, schema_name, owner_id, catalog.id, description, is_public)
+                if not create:
+                    return None
+                catalog = _create_namespace(
+                    service,
+                    catalog_name,
+                    owner_id,
+                    None,
+                    None if schema_name else description,
+                    is_public and not schema_name,
+                )
+                if catalog is None:
+                    return None
+            if not schema_name:
+                return catalog.id
+            schema = service.repo.get_namespace_by_name(schema_name, catalog.id, owner_id=owner_id, include_public=True)
             if schema is None:
-                return None
-        return schema.id
+                if not create:
+                    return None
+                # Never create a child under a public parent the caller doesn't own (that would
+                # collide on uq_namespace_name_parent against another user's tree).
+                if catalog.owner_id != owner_id:
+                    return None
+                schema = _create_namespace(service, schema_name, owner_id, catalog.id, description, is_public)
+                if schema is None:
+                    return None
+            return schema.id
+
+    result = _resolve()
+    if cache is not None:
+        cache[cache_key] = result
+    return result
 
 
 def _import_namespaces(root: Path, owner_id: int) -> set[int]:
@@ -337,9 +402,9 @@ def _materialize_empty_delta(path: str, schema: list[dict]) -> None:
     from flowfile_core.schemas.input_schema import MinimalFieldInfo
     from shared.delta_utils import write_delta
 
+    cols = [SchemaColumn.model_validate(c) for c in schema]
     columns = [
-        FlowfileColumn.create_from_minimal_field_info(MinimalFieldInfo(name=c["name"], data_type=c["dtype"]))
-        for c in schema
+        FlowfileColumn.create_from_minimal_field_info(MinimalFieldInfo(name=c.name, data_type=c.dtype)) for c in cols
     ]
     empty = FlowDataEngine.create_from_schema(columns)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -602,39 +667,44 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
     target_ns_id = (
         _resolve_namespace(ns.get("catalog"), ns.get("schema"), owner_id, create=False) if ns.get("catalog") else None
     )
-    with get_db_context() as db:
-        existing = repository.owned_or_none(db, FlowRegistration, "owner_id", owner_id, flow_uuid=flow_uuid)
-        # A flow_uuid owned by another user must never resolve to their on-disk file/registration: mint a
-        # fresh uuid and write a brand-new flow under the caller's own dir instead of overwriting B's file.
-        if existing is None and db.query(FlowRegistration).filter(FlowRegistration.flow_uuid == flow_uuid).first():
-            logger.warning("Project import: flow_uuid %s owned by another user; minting a fresh uuid", flow_uuid)
-            flow_uuid = str(uuid.uuid4())
-            data = {**data, "flow_uuid": flow_uuid}
-        runtime_path = (
-            Path(existing.flow_path)
-            if existing
-            else storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
-        )
-    write_yaml(runtime_path, data)  # flow_uuid / catalog_name / namespace keys are ignored by the FlowfileData loader
-    flow_file_handler.import_flow(runtime_path, user_id=owner_id)
-    if existing is None:
-        auto_register_flow(str(runtime_path), catalog_name, owner_id)
-    # Reconcile identity + display name + namespace placement to the file (keeps flow_uuid stable for
-    # determinism, the catalog name round-tripping, and the flow landing in its real schema on import).
-    with get_db_context() as db:
-        reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(runtime_path)).first()
-        if reg:
-            changed = (
-                reg.flow_uuid != flow_uuid
-                or reg.name != catalog_name
-                or (target_ns_id is not None and reg.namespace_id != target_ns_id)
+    # Serialize the probe→resolve→write→register section by the incoming flow_uuid (the contested
+    # shared-dir resource) so a concurrent importer of the same unregistered uuid re-probes under the
+    # lock and mints a fresh one instead of colliding on the identical runtime_path.
+    with _flow_uuid_lock(flow_uuid):
+        with get_db_context() as db:
+            existing = repository.owned_or_none(db, FlowRegistration, "owner_id", owner_id, flow_uuid=flow_uuid)
+            # A flow_uuid owned by another user (or just registered by a concurrent importer) must never
+            # resolve to that on-disk file/registration: mint a fresh uuid and write a brand-new flow
+            # under the caller's own dir instead of overwriting the existing file.
+            if existing is None and db.query(FlowRegistration).filter(FlowRegistration.flow_uuid == flow_uuid).first():
+                logger.warning("Project import: flow_uuid %s already registered; minting a fresh uuid", flow_uuid)
+                flow_uuid = str(uuid.uuid4())
+                data = {**data, "flow_uuid": flow_uuid}
+            runtime_path = (
+                Path(existing.flow_path)
+                if existing
+                else storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
             )
-            reg.flow_uuid = flow_uuid
-            reg.name = catalog_name
-            if target_ns_id is not None:
-                reg.namespace_id = target_ns_id
-            if changed:
-                db.commit()
+        write_yaml(runtime_path, data)  # flow_uuid / catalog_name / namespace ignored by the FlowfileData loader
+        flow_file_handler.import_flow(runtime_path, user_id=owner_id)
+        if existing is None:
+            auto_register_flow(str(runtime_path), catalog_name, owner_id)
+        # Reconcile identity + display name + namespace placement to the file (keeps flow_uuid stable for
+        # determinism, the catalog name round-tripping, and the flow landing in its real schema on import).
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(runtime_path)).first()
+            if reg:
+                changed = (
+                    reg.flow_uuid != flow_uuid
+                    or reg.name != catalog_name
+                    or (target_ns_id is not None and reg.namespace_id != target_ns_id)
+                )
+                reg.flow_uuid = flow_uuid
+                reg.name = catalog_name
+                if target_ns_id is not None:
+                    reg.namespace_id = target_ns_id
+                if changed:
+                    db.commit()
     return flow_uuid
 
 
@@ -647,6 +717,17 @@ def _import_schedules(data: dict, owner_id: int) -> int:
         reg = repository.owned_or_none(db, FlowRegistration, "owner_id", owner_id, flow_uuid=flow_uuid)
         if reg is None:
             return 0
+        if len(schedules) > _MAX_SCHEDULES_PER_FLOW:
+            logger.warning(
+                "Project import: schedule file has %d entries for flow %s; capped at %d",
+                len(schedules),
+                flow_uuid,
+                _MAX_SCHEDULES_PER_FLOW,
+            )
+            raise ImportTooLargeError(
+                f"Project import: schedule file for flow {flow_uuid!r} has {len(schedules)} entries, "
+                f"exceeding the {_MAX_SCHEDULES_PER_FLOW}-entry cap. Import aborted."
+            )
         service = CatalogService(SQLAlchemyCatalogRepository(db))
         # The schedule file is the source of truth for this flow's interval/cron schedules, so
         # replace them wholesale. A name-based upsert duplicated nameless schedules on every
@@ -662,17 +743,6 @@ def _import_schedules(data: dict, owner_id: int) -> int:
             service.delete_schedule(s.id)
         count = 0
         seen: set[tuple] = set()
-        if len(schedules) > _MAX_SCHEDULES_PER_FLOW:
-            logger.warning(
-                "Project import: schedule file has %d entries for flow %s; capped at %d",
-                len(schedules),
-                flow_uuid,
-                _MAX_SCHEDULES_PER_FLOW,
-            )
-            raise ValueError(
-                f"Project import: schedule file for flow {flow_uuid!r} has {len(schedules)} entries, "
-                f"exceeding the {_MAX_SCHEDULES_PER_FLOW}-entry cap. Import aborted."
-            )
         for sd in schedules:
             if sd.get("schedule_type") not in _PROJECTABLE_SCHEDULE_TYPES:
                 continue
@@ -701,19 +771,20 @@ def _import_schedules(data: dict, owner_id: int) -> int:
     return count
 
 
-def _prune_removed(
-    owner_id: int,
-    kept_flow_uuids: set[str],
-    kept_db: set[str],
-    kept_cloud: set[str],
-    kept_namespace_ids: set[int],
-    kept_table_ids: set[int] | None,
-    kept_artifact_ids: set[int] | None,
-    kept_kernel_ids: set[str],
-    kept_viz_uuids: set[str],
-    kept_dashboard_uuids: set[str],
-    result: SetupResult,
-) -> None:
+def _prune_owned(db, column, owner_filter, kept: set, delete_fn, label: str) -> None:
+    """Run ``delete_fn(db, value)`` for every value of ``column`` matching ``owner_filter`` that is
+    not in ``kept`` (best-effort per row; failures are logged and skipped)."""
+    q = db.query(column).filter(owner_filter)
+    if kept:
+        q = q.filter(~column.in_(kept))
+    for (value,) in q.all():
+        try:
+            delete_fn(db, value)
+        except Exception:
+            logger.warning("Project prune: could not remove %s %s", label, value, exc_info=True)
+
+
+def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> None:
     """Delete the owner's resources that are no longer present in the project files.
 
     A project mirrors the owner's whole environment, so on restore/reload the files are the complete
@@ -730,47 +801,48 @@ def _prune_removed(
     from flowfile_core.kernel.persistence import delete_kernel
 
     with get_db_context() as db:
-        for kernel in db.query(Kernel).filter(Kernel.user_id == owner_id).all():
-            if kernel.id not in kept_kernel_ids:
-                try:
-                    delete_kernel(db, kernel.id)
-                except Exception:
-                    logger.warning("Project prune: could not remove kernel %s", kernel.id, exc_info=True)
+        _prune_owned(db, Kernel.id, Kernel.user_id == owner_id, kept.kernel_ids, delete_kernel, "kernel")
     # Dashboards then visualizations (tiles reference viz by value, not FK, so order is free). The
     # GraphicWalker spec is the whole artifact — there is no separate blob to preserve.
     # Grants must be cleaned explicitly: bulk Query.delete() bypasses the ORM after_delete backstop
     # (see auth/sharing.py:373-374), so orphaned resource_grants rows would survive and could
     # re-attach to a future resource that reuses the freed rowid.
     with get_db_context() as db:
-        for dashboard in db.query(CatalogDashboard).filter(CatalogDashboard.created_by == owner_id).all():
-            if dashboard.dashboard_uuid not in kept_dashboard_uuids:
-                sharing.delete_grants_for_resource(db, "dashboard", dashboard.id)
-                db.query(CatalogDashboard).filter_by(id=dashboard.id).delete()
-        for viz in db.query(CatalogVisualization).filter(CatalogVisualization.created_by == owner_id).all():
-            if viz.viz_uuid not in kept_viz_uuids:
-                sharing.delete_grants_for_resource(db, "visualization", viz.id)
-                db.query(CatalogVisualization).filter_by(id=viz.id).delete()
+        dq = db.query(CatalogDashboard.id).filter(CatalogDashboard.created_by == owner_id)
+        if kept.dashboard_uuids:
+            dq = dq.filter(~CatalogDashboard.dashboard_uuid.in_(kept.dashboard_uuids))
+        for (dash_id,) in dq.all():
+            sharing.delete_grants_for_resource(db, "dashboard", dash_id)
+            db.query(CatalogDashboard).filter_by(id=dash_id).delete()
+        vq = db.query(CatalogVisualization.id).filter(CatalogVisualization.created_by == owner_id)
+        if kept.viz_uuids:
+            vq = vq.filter(~CatalogVisualization.viz_uuid.in_(kept.viz_uuids))
+        for (viz_id,) in vq.all():
+            sharing.delete_grants_for_resource(db, "visualization", viz_id)
+            db.query(CatalogVisualization).filter_by(id=viz_id).delete()
         db.commit()
     # Models first (soft-delete, keep the blob): a kept flow's pruned artifact just goes inactive.
     # A pruned flow's still-active artifacts are NOT touched here (delete_flow can't drop them — it
     # raises FlowHasArtifactsError); they are soft-deleted in the flow-prune branch below regardless
     # of this toggle, so the flow delete succeeds. None = not tracked here, leave them all.
-    if kept_artifact_ids is not None:
+    if kept.artifact_ids is not None:
         with get_db_context() as db:
-            for a in (
-                db.query(GlobalArtifact)
-                .filter(GlobalArtifact.owner_id == owner_id, GlobalArtifact.status == "active")
-                .all()
-            ):
-                if a.id not in kept_artifact_ids:
-                    a.status = "deleted"
+            q = db.query(GlobalArtifact).filter(
+                GlobalArtifact.owner_id == owner_id, GlobalArtifact.status == "active"
+            )
+            if kept.artifact_ids:
+                q = q.filter(~GlobalArtifact.id.in_(kept.artifact_ids))
+            q.update({"status": "deleted"}, synchronize_session=False)
             db.commit()
     # Tables before flows (keep the data); skip flow-virtual tables (not projected, not ours to prune).
-    if kept_table_ids is not None:
+    if kept.table_ids is not None:
         with get_db_context() as db:
             service = CatalogService(SQLAlchemyCatalogRepository(db))
-            for table in db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id).all():
-                if table.id in kept_table_ids or (table.table_type == "virtual" and not table.sql_query):
+            q = db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id)
+            if kept.table_ids:
+                q = q.filter(~CatalogTable.id.in_(kept.table_ids))
+            for table in q.all():
+                if table.table_type == "virtual" and not table.sql_query:
                     continue
                 try:
                     service.delete_table(table.id, delete_file=False)
@@ -778,9 +850,10 @@ def _prune_removed(
                     logger.warning("Project prune: could not remove table %s", table.name, exc_info=True)
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
-        for reg in db.query(FlowRegistration).filter(FlowRegistration.owner_id == owner_id).all():
-            if reg.flow_uuid in kept_flow_uuids:
-                continue
+        fq = db.query(FlowRegistration).filter(FlowRegistration.owner_id == owner_id)
+        if kept.flow_uuids:
+            fq = fq.filter(~FlowRegistration.flow_uuid.in_(kept.flow_uuids))
+        for reg in fq.all():
             # A pruned flow must be fully removed even when this project doesn't track artifacts
             # (kept_artifact_ids is None, so the soft-delete pass above was skipped). Release the
             # flow's still-active artifacts here regardless of the toggle, otherwise delete_flow
@@ -798,37 +871,39 @@ def _prune_removed(
                 logger.warning("Project prune: could not remove flow %s", reg.flow_uuid, exc_info=True)
                 result.prune_errors.append(f"flow:{reg.flow_uuid}")
     with get_db_context() as db:
-        for conn in db.query(DatabaseConnection).filter(DatabaseConnection.user_id == owner_id).all():
-            if conn.connection_name not in kept_db:
-                try:
-                    delete_database_connection(db, conn.connection_name, owner_id)
-                except Exception:
-                    logger.warning("Project prune: could not remove db conn %s", conn.connection_name, exc_info=True)
+        _prune_owned(
+            db,
+            DatabaseConnection.connection_name,
+            DatabaseConnection.user_id == owner_id,
+            kept.db_connections,
+            lambda d, name: delete_database_connection(d, name, owner_id),
+            "db conn",
+        )
     with get_db_context() as db:
-        for conn in db.query(CloudStorageConnection).filter(CloudStorageConnection.user_id == owner_id).all():
-            if conn.connection_name not in kept_cloud:
-                try:
-                    delete_cloud_connection(db, conn.connection_name, owner_id)
-                except Exception:
-                    logger.warning("Project prune: could not remove cloud conn %s", conn.connection_name, exc_info=True)
+        _prune_owned(
+            db,
+            CloudStorageConnection.connection_name,
+            CloudStorageConnection.user_id == owner_id,
+            kept.cloud_connections,
+            lambda d, name: delete_cloud_connection(d, name, owner_id),
+            "cloud conn",
+        )
     # Namespaces last: flows were pruned above, so an emptied custom schema is now deletable. Delete
     # schemas (level 1) before catalogs (level 0); seeded is_public namespaces are excluded entirely.
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
-        owned = (
-            db.query(CatalogNamespace)
-            .filter(CatalogNamespace.owner_id == owner_id, CatalogNamespace.is_public.is_(False))
-            .all()
+        nq = db.query(CatalogNamespace.id, CatalogNamespace.level).filter(
+            CatalogNamespace.owner_id == owner_id, CatalogNamespace.is_public.is_(False)
         )
-        for ns in sorted(owned, key=lambda n: -(n.level or 0)):
-            if ns.id in kept_namespace_ids:
-                continue
+        if kept.namespace_ids:
+            nq = nq.filter(~CatalogNamespace.id.in_(kept.namespace_ids))
+        for ns_id, _level in sorted(nq.all(), key=lambda r: -(r[1] or 0)):
             try:
-                service.delete_namespace(ns.id)
+                service.delete_namespace(ns_id)
             except NamespaceNotEmptyError:
-                logger.info("Project prune: namespace %s still has tables/flows; skipping", ns.id)
+                logger.info("Project prune: namespace %s still has tables/flows; skipping", ns_id)
             except Exception:
-                logger.warning("Project prune: could not delete namespace %s", ns.id, exc_info=True)
+                logger.warning("Project prune: could not delete namespace %s", ns_id, exc_info=True)
 
 
 def _reconcile_kernel_manager(owner_id: int) -> None:
@@ -866,7 +941,7 @@ def _assert_within_cap(items: list, cap: int, kind: str) -> None:
     """Raise if ``items`` exceeds ``cap``, bounding per-import resource counts."""
     if len(items) <= cap:
         return
-    raise ValueError(
+    raise ImportTooLargeError(
         f"Project import: {kind} manifest exceeds the {cap}-entry cap "
         f"({len(items)} entries). Import aborted to prevent resource exhaustion."
     )
@@ -891,7 +966,7 @@ def preflight_import_caps(root: Path, sha: str) -> None:
     sizes = git_ops.tree_blob_sizes(root, sha)
     for path, size in sizes.items():
         if path.endswith(".yaml") and size > _MAX_YAML_BYTES:
-            raise ValueError(
+            raise ImportTooLargeError(
                 f"Project import: manifest file {path.split('/')[-1]!r} is {size} bytes, "
                 f"which exceeds the {_MAX_YAML_BYTES}-byte cap. Import aborted."
             )
@@ -914,7 +989,7 @@ def preflight_import_caps(root: Path, sha: str) -> None:
         text = git_ops.read_blob(root, sha, path)
         schedules = ((yaml.safe_load(text) or {}) if text else {}).get("schedules", []) or []
         if len(schedules) > _MAX_SCHEDULES_PER_FLOW:
-            raise ValueError(
+            raise ImportTooLargeError(
                 f"Project import: schedule file {path.split('/')[-1]!r} has {len(schedules)} entries, "
                 f"exceeding the {_MAX_SCHEDULES_PER_FLOW}-entry cap. Import aborted."
             )
@@ -926,7 +1001,7 @@ def preflight_import_caps_worktree(root: Path) -> None:
     restore) imports the working tree directly. Raises the same ``ValueError`` the inline caps do."""
     for path in root.rglob("*.yaml"):
         if path.is_file() and path.stat().st_size > _MAX_YAML_BYTES:
-            raise ValueError(
+            raise ImportTooLargeError(
                 f"Project import: manifest file {path.name!r} is {path.stat().st_size} bytes, "
                 f"which exceeds the {_MAX_YAML_BYTES}-byte cap. Import aborted."
             )
@@ -949,13 +1024,21 @@ def preflight_import_caps_worktree(root: Path) -> None:
     for f in sched_files:
         schedules = _read_yaml(f).get("schedules", []) or []
         if len(schedules) > _MAX_SCHEDULES_PER_FLOW:
-            raise ValueError(
+            raise ImportTooLargeError(
                 f"Project import: schedule file {f.name!r} has {len(schedules)} entries, "
                 f"exceeding the {_MAX_SCHEDULES_PER_FLOW}-entry cap. Import aborted."
             )
 
 
 def _do_import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResult:
+    token = _ns_resolve_cache.set({})
+    try:
+        return _do_import_project_inner(root, owner_id, prune)
+    finally:
+        _ns_resolve_cache.reset(token)
+
+
+def _do_import_project_inner(root: Path, owner_id: int, prune: bool = False) -> SetupResult:
     dotenv = load_dotenv(root)
     result = SetupResult()
 
@@ -965,19 +1048,17 @@ def _do_import_project(root: Path, owner_id: int, prune: bool = False) -> SetupR
     _assert_within_cap(db_files, _MAX_CONNECTIONS, "database connections")
     kept_db: set[str] = set()
     for f in db_files:
-        data = _read_yaml(f)
-        _import_db_connection(data, owner_id, dotenv, result)
-        if data.get("connection_name"):
-            kept_db.add(data["connection_name"])
+        name = _import_db_connection(_read_yaml(f), owner_id, dotenv, result)
+        if name:
+            kept_db.add(name)
 
     cloud_files = sorted(manifest.connections_dir(root, "cloud").glob("*.yaml"))
     _assert_within_cap(cloud_files, _MAX_CONNECTIONS, "cloud connections")
     kept_cloud: set[str] = set()
     for f in cloud_files:
-        data = _read_yaml(f)
-        _import_cloud_connection(data, owner_id, dotenv, result)
-        if data.get("connection_name"):
-            kept_cloud.add(data["connection_name"])
+        name = _import_cloud_connection(_read_yaml(f), owner_id, dotenv, result)
+        if name:
+            kept_cloud.add(name)
 
     kept_namespace_ids = _import_namespaces(root, owner_id)
 
@@ -1011,15 +1092,17 @@ def _do_import_project(root: Path, owner_id: int, prune: bool = False) -> SetupR
     if prune:
         _prune_removed(
             owner_id,
-            kept_flow_uuids,
-            kept_db,
-            kept_cloud,
-            kept_namespace_ids,
-            kept_table_ids,
-            kept_artifact_ids,
-            kept_kernel_ids,
-            kept_viz_uuids,
-            kept_dashboard_uuids,
+            KeptResources(
+                flow_uuids=kept_flow_uuids,
+                db_connections=kept_db,
+                cloud_connections=kept_cloud,
+                namespace_ids=kept_namespace_ids,
+                table_ids=kept_table_ids,
+                artifact_ids=kept_artifact_ids,
+                kernel_ids=kept_kernel_ids,
+                viz_uuids=kept_viz_uuids,
+                dashboard_uuids=kept_dashboard_uuids,
+            ),
             result,
         )
 

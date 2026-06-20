@@ -29,6 +29,16 @@
           </span>
         </div>
 
+        <div v-if="store.projectionFailed" class="project-pop__banner">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>The last sync to the project folder failed; it may be out of date.</span>
+        </div>
+
+        <div v-if="store.error" class="project-pop__banner">
+          <i class="fa-solid fa-circle-exclamation"></i>
+          <span>{{ store.error }}</span>
+        </div>
+
         <p v-if="store.status === 'clean'" class="project-pop__clean">
           <i class="fa-solid fa-circle-check"></i>
           All changes are saved as the latest version.

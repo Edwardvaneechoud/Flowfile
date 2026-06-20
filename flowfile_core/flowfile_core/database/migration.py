@@ -33,6 +33,14 @@ def _make_flow_registration_uuid_generator(new_conn) -> Callable[[dict], str]:
     return lambda row: str(uuid.uuid4())
 
 
+def _make_visualization_uuid_generator(new_conn) -> Callable[[dict], str]:
+    return lambda row: str(uuid.uuid4())
+
+
+def _make_dashboard_uuid_generator(new_conn) -> Callable[[dict], str]:
+    return lambda row: str(uuid.uuid4())
+
+
 def _make_flow_run_uuid_generator(new_conn) -> Callable[[dict], str | None]:
     rows = new_conn.execute(text("SELECT id, flow_uuid FROM flow_registrations")).fetchall()
     lookup: dict[int, str] = {row_id: flow_uuid for row_id, flow_uuid in rows}
@@ -48,6 +56,8 @@ def _make_flow_run_uuid_generator(new_conn) -> Callable[[dict], str | None]:
 _NEW_COLUMN_GENERATORS: dict[str, dict[str, Callable[[Any], Callable[[dict], Any]]]] = {
     "flow_registrations": {"flow_uuid": _make_flow_registration_uuid_generator},
     "flow_runs": {"flow_uuid": _make_flow_run_uuid_generator},
+    "catalog_visualizations": {"viz_uuid": _make_visualization_uuid_generator},
+    "catalog_dashboards": {"dashboard_uuid": _make_dashboard_uuid_generator},
 }
 
 

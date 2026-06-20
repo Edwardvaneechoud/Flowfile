@@ -45,10 +45,10 @@ def test_version_lifecycle_via_routes(tmp_path):
     root = tmp_path / "proj"
     project_sync.close_project(OWNER)
     try:
-        # No active project: history is a 409.
-        assert client.get("/project/versions").status_code == 409
+        # No active project: history is a 404.
+        assert client.get("/project/versions").status_code == 404
 
-        assert client.post("/project/init", json={"folder_path": str(root), "name": "Routes"}).status_code == 200
+        assert client.post("/project/init", json={"folder_path": str(root), "name": "Routes"}).status_code == 201
 
         active = client.get("/project/active").json()
         assert active["project"]["name"] == "Routes"
@@ -56,13 +56,13 @@ def test_version_lifecycle_via_routes(tmp_path):
         assert active["has_external_changes"] is False
 
         # Add a standalone secret so save_version has a managed change (secrets.yaml).
-        client.post("/project/secrets", json=[{"name": "ROUTE_SECRET", "value": "v_a"}])
+        client.post("/project/secrets", json={"secrets": [{"name": "ROUTE_SECRET", "value": "v_a"}]})
         assert client.get("/project/active").json()["dirty"] is True
         unsaved = client.get("/project/uncommitted").json()["changes"]
         assert any(c["path"] == "secrets.yaml" for c in unsaved), unsaved
         assert client.post("/project/versions", json={"message": "version a"}).json()["sha"]
 
-        client.post("/project/secrets", json=[{"name": "ROUTE_SECRET_2", "value": "v_b"}])
+        client.post("/project/secrets", json={"secrets": [{"name": "ROUTE_SECRET_2", "value": "v_b"}]})
         assert client.post("/project/versions", json={"message": "version b"}).json()["sha"]
         assert client.get("/project/active").json()["dirty"] is False
 
@@ -86,7 +86,7 @@ def test_version_lifecycle_via_routes(tmp_path):
         assert set(reloaded.json()) == {"imported", "placeholder_secrets", "prune_errors", "recovery_sha"}
 
         assert client.post("/project/close").json() == {"ok": True}
-        assert client.get("/project/active").json() == {"project": None}
+        assert client.get("/project/active").json()["project"] is None
     finally:
         project_sync.close_project(OWNER)
 
@@ -97,12 +97,12 @@ def test_restore_on_dirty_tree_409s_without_force(tmp_path):
     root = tmp_path / "proj"
     project_sync.close_project(OWNER)
     try:
-        assert client.post("/project/init", json={"folder_path": str(root), "name": "Dirty"}).status_code == 200
+        assert client.post("/project/init", json={"folder_path": str(root), "name": "Dirty"}).status_code == 201
         # Use a standalone secret to create a managed diff that persists through project_all.
-        client.post("/project/secrets", json=[{"name": "DIRTY_SECRET_V1", "value": "v1"}])
+        client.post("/project/secrets", json={"secrets": [{"name": "DIRTY_SECRET_V1", "value": "v1"}]})
         assert client.post("/project/versions", json={"message": "v1"}).json()["sha"]
         version_v1 = client.get("/project/versions").json()["versions"][0]["sha"]
-        client.post("/project/secrets", json=[{"name": "DIRTY_SECRET_V2", "value": "v2"}])
+        client.post("/project/secrets", json={"secrets": [{"name": "DIRTY_SECRET_V2", "value": "v2"}]})
         assert client.post("/project/versions", json={"message": "v2"}).json()["sha"]
 
         # Make an uncommitted change (untracked file is enough for is_dirty).
@@ -126,15 +126,15 @@ def test_restore_with_force_autosaves_uncommitted_work(tmp_path):
     root = tmp_path / "proj"
     project_sync.close_project(OWNER)
     try:
-        assert client.post("/project/init", json={"folder_path": str(root), "name": "Force"}).status_code == 200
+        assert client.post("/project/init", json={"folder_path": str(root), "name": "Force"}).status_code == 201
         # Commit a v1 with a standalone secret so there is a restore target.
-        client.post("/project/secrets", json=[{"name": "FORCE_SECRET_V1", "value": "v1"}])
+        client.post("/project/secrets", json={"secrets": [{"name": "FORCE_SECRET_V1", "value": "v1"}]})
         assert client.post("/project/versions", json={"message": "v1"}).json()["sha"]
         version_v1 = client.get("/project/versions").json()["versions"][0]["sha"]
 
         # Create uncommitted work that will be captured by the autosave:
         # add a second secret, which changes secrets.yaml (a managed path).
-        client.post("/project/secrets", json=[{"name": "FORCE_SECRET_UNSAVED", "value": "unsaved"}])
+        client.post("/project/secrets", json={"secrets": [{"name": "FORCE_SECRET_UNSAVED", "value": "unsaved"}]})
         assert client.get("/project/active").json()["dirty"] is True
         restored = client.post("/project/restore", json={"sha": version_v1, "force": True})
         assert restored.status_code == 200
@@ -158,7 +158,7 @@ def test_restore_prunes_added_flow_and_diff_lists_it(tmp_path):
     project_sync.close_project(OWNER)
     flow_uuid = None
     try:
-        assert client.post("/project/init", json={"folder_path": str(root), "name": "Prune"}).status_code == 200
+        assert client.post("/project/init", json={"folder_path": str(root), "name": "Prune"}).status_code == 201
         empty_sha = client.get("/project/versions").json()["versions"][0]["sha"]
 
         # Build a real flow, then project + commit it as a new version.
@@ -222,7 +222,7 @@ def test_deleting_a_flow_shows_as_a_project_change(tmp_path):
     project_sync.close_project(OWNER)
     flow_uuid = None
     try:
-        assert client.post("/project/init", json={"folder_path": str(root), "name": "Del"}).status_code == 200
+        assert client.post("/project/init", json={"folder_path": str(root), "name": "Del"}).status_code == 201
 
         handler = FlowfileHandler()
         handler.register_flow(schemas.FlowSettings(flow_id=646464, name="demo", path="."))
@@ -273,7 +273,7 @@ def test_schedules_do_not_duplicate_on_reimport_and_clear_on_delete(tmp_path):
     project_sync.close_project(OWNER)
     flow_uuid = None
     try:
-        assert client.post("/project/init", json={"folder_path": str(root), "name": "Sched"}).status_code == 200
+        assert client.post("/project/init", json={"folder_path": str(root), "name": "Sched"}).status_code == 201
 
         handler = FlowfileHandler()
         handler.register_flow(schemas.FlowSettings(flow_id=656565, name="demo", path="."))
@@ -324,11 +324,11 @@ def test_secret_upsert_overwrites_in_place(tmp_path):
         if get_encrypted_secret(OWNER, name) is not None:
             delete_secret(db, name, OWNER)
     try:
-        assert client.post("/project/secrets", json=[{"name": name, "value": "v1"}]).json() == {"updated": 1}
+        assert client.post("/project/secrets", json={"secrets": [{"name": name, "value": "v1"}]}).json() == {"updated": 1}
         assert decrypt_secret(get_encrypted_secret(OWNER, name)).get_secret_value() == "v1"
 
         # Second upsert overwrites the value rather than inserting a duplicate row.
-        assert client.post("/project/secrets", json=[{"name": name, "value": "v2"}]).status_code == 200
+        assert client.post("/project/secrets", json={"secrets": [{"name": name, "value": "v2"}]}).status_code == 200
         assert decrypt_secret(get_encrypted_secret(OWNER, name)).get_secret_value() == "v2"
         with get_db_context() as db:
             rows = db.query(db_models.Secret).filter_by(user_id=OWNER, name=name).all()

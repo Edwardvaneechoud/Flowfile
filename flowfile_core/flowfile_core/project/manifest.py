@@ -12,6 +12,28 @@ from flowfile_core.project.normalize import write_yaml
 PROJECT_FORMAT = 1
 MANIFEST_NAME = "project.yaml"
 
+# Single source of truth for the project's file layout. Each root manifest maps its filename
+# stem to the friendly label used in the restore-change summary; the managed-path set, the
+# projection mirror dirs, and git's staged-path filter are all derived from these.
+ROOT_MANIFESTS: dict[str, str] = {
+    "secrets": "secrets",
+    "namespaces": "namespaces",
+    "tables": "catalog tables",
+    "models": "models",
+    "kernels": "kernels",
+    "visualizations": "visualizations",
+    "dashboards": "dashboards",
+}
+# Dirs whose .yaml files mirror DB rows one-for-one (pruned to the written set on full projection).
+MIRRORED_DIRS = ("flows", "connections/database", "connections/cloud", "schedules")
+# All repo-relative entries git is allowed to stage: the project manifest, .gitignore, every root
+# manifest, plus the top-level dirs holding flows/connections/schedules.
+MANAGED_PATHS: list[str] = (
+    [MANIFEST_NAME, ".gitignore"]
+    + [f"{stem}.yaml" for stem in ROOT_MANIFESTS]
+    + ["flows", "connections", "schedules"]
+)
+
 _GITIGNORE = """\
 # Flowfile project — never commit secrets, local state, or materialized data
 .env

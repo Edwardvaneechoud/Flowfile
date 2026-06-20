@@ -46,6 +46,23 @@ _CLOUD_SECRETS = [
 _CLOUD_SECRET_FK_COLUMNS = [fk for _, fk in _CLOUD_SECRETS] + ["aws_session_token_id"]
 _PROJECTABLE_SCHEDULE_TYPES = ("interval", "cron")
 
+# Non-secret cloud-connection fields that round-trip verbatim (projection reads them off the ORM
+# row, the importer passes them straight into FullCloudStorageConnection).
+_CLOUD_PLAIN_FIELDS = (
+    "aws_region",
+    "aws_access_key_id",
+    "aws_role_arn",
+    "aws_allow_unsafe_html",
+    "azure_account_name",
+    "azure_tenant_id",
+    "azure_client_id",
+    "gcs_project_id",
+    "endpoint_url",
+    "verify_ssl",
+)
+# Non-secret database-connection fields that round-trip verbatim.
+_DB_PLAIN_FIELDS = ("database_type", "host", "port", "database", "username", "ssl_enabled")
+
 
 def _secret_name(db: Session, secret_id: int | None) -> str | None:
     if not secret_id:
@@ -165,17 +182,11 @@ def remove_stale_flow_files(root: Path, flow_uuid: str, keep: Path) -> None:
 
 def _db_connection_dict(db: Session, conn: DatabaseConnection) -> dict:
     secret_name = _secret_name(db, conn.password_id)
-    return {
-        "kind": "database_connection",
-        "connection_name": conn.connection_name,
-        "database_type": conn.database_type,
-        "host": conn.host,
-        "port": conn.port,
-        "database": conn.database,
-        "username": conn.username,
-        "ssl_enabled": conn.ssl_enabled,
-        "password": make_placeholder(secret_name) if secret_name else None,
-    }
+    d = {"kind": "database_connection", "connection_name": conn.connection_name}
+    for f in _DB_PLAIN_FIELDS:
+        d[f] = getattr(conn, f)
+    d["password"] = make_placeholder(secret_name) if secret_name else None
+    return d
 
 
 def _cloud_connection_dict(db: Session, conn: CloudStorageConnection) -> dict:
@@ -184,17 +195,9 @@ def _cloud_connection_dict(db: Session, conn: CloudStorageConnection) -> dict:
         "connection_name": conn.connection_name,
         "storage_type": conn.storage_type,
         "auth_method": conn.auth_method,
-        "aws_region": conn.aws_region,
-        "aws_access_key_id": conn.aws_access_key_id,
-        "aws_role_arn": conn.aws_role_arn,
-        "aws_allow_unsafe_html": conn.aws_allow_unsafe_html,
-        "azure_account_name": conn.azure_account_name,
-        "azure_tenant_id": conn.azure_tenant_id,
-        "azure_client_id": conn.azure_client_id,
-        "gcs_project_id": conn.gcs_project_id,
-        "endpoint_url": conn.endpoint_url,
-        "verify_ssl": conn.verify_ssl,
     }
+    for f in _CLOUD_PLAIN_FIELDS:
+        d[f] = getattr(conn, f)
     for field, fk in _CLOUD_SECRETS:
         name = _secret_name(db, getattr(conn, fk))
         d[field] = make_placeholder(name) if name else None
@@ -275,15 +278,17 @@ def regenerate_secret_manifest(db: Session, root: Path, owner_id: int) -> None:
     """secrets.yaml lists only standalone secrets; connection secrets are implied by
     the connection files (and recreated by their store functions on import)."""
     linked: set[int] = set()
-    for conn in db.query(DatabaseConnection).filter(DatabaseConnection.user_id == owner_id):
-        if conn.password_id:
-            linked.add(conn.password_id)
-    for conn in db.query(CloudStorageConnection).filter(CloudStorageConnection.user_id == owner_id):
-        for fk in _CLOUD_SECRET_FK_COLUMNS:
-            sid = getattr(conn, fk)
-            if sid:
-                linked.add(sid)
-    standalone = sorted({s.name for s in db.query(Secret).filter(Secret.user_id == owner_id) if s.id not in linked})
+    for (sid,) in db.query(DatabaseConnection.password_id).filter(DatabaseConnection.user_id == owner_id):
+        if sid:
+            linked.add(sid)
+    for row in db.query(*[getattr(CloudStorageConnection, fk) for fk in _CLOUD_SECRET_FK_COLUMNS]).filter(
+        CloudStorageConnection.user_id == owner_id
+    ):
+        linked.update(sid for sid in row if sid)
+    q = db.query(Secret.name).filter(Secret.user_id == owner_id)
+    if linked:
+        q = q.filter(~Secret.id.in_(linked))
+    standalone = sorted({name for (name,) in q})
     write_yaml(manifest.secrets_manifest_path(root), {"required_secrets": standalone})
 
 
@@ -543,9 +548,6 @@ def regenerate_dashboards_manifest(db: Session, root: Path, owner_id: int) -> No
 
 # --- full projection ---------------------------------------------------------
 
-# Project dirs that mirror the DB; everything in them is pruned to the written set on full projection.
-_MIRRORED_DIRS = ("flows", "connections/database", "connections/cloud", "schedules")
-
 
 def _prune_orphan_files(root: Path, written: set[Path]) -> None:
     """Delete project files with no matching DB resource so the folder is an exact mirror.
@@ -553,7 +555,7 @@ def _prune_orphan_files(root: Path, written: set[Path]) -> None:
     Only touches ``.yaml`` files under the mirrored dirs; ``project.yaml``, ``.gitignore`` and
     ``secrets.yaml`` live at the root and are never swept.
     """
-    for rel in _MIRRORED_DIRS:
+    for rel in manifest.MIRRORED_DIRS:
         d = root / rel
         if not d.exists():
             continue

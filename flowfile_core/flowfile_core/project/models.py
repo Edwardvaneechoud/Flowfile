@@ -15,6 +15,27 @@ class ActiveProject:
     track_data_artifacts: bool = True
 
 
+class NoActiveProjectError(RuntimeError):
+    """Raised by read/write actions when the caller has no active project (router → 404)."""
+
+
+@dataclass
+class KeptResources:
+    """The resources still present in the project files after an import — everything else of the
+    owner's is pruned. A ``None`` set means that category isn't tracked by this project and is left
+    alone entirely (never pruned)."""
+
+    flow_uuids: set[str]
+    db_connections: set[str]
+    cloud_connections: set[str]
+    namespace_ids: set[int]
+    table_ids: set[int] | None
+    artifact_ids: set[int] | None
+    kernel_ids: set[str]
+    viz_uuids: set[str]
+    dashboard_uuids: set[str]
+
+
 @dataclass
 class SetupResult:
     imported_flows: int = 0
