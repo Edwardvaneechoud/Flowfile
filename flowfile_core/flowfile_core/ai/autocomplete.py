@@ -1,15 +1,6 @@
 """Settings autocomplete logic.
 
-Two pure-async functions feed the formula and join-keys autocomplete
-endpoints:
-
-* :func:`suggest_formula_completions` — schema-aware completions for a
-  ``formula`` settings expression. The LLM emits a JSON document; we
-  extract literal column refs from each suggestion and drop those
-  that reference columns not in the upstream's predicted schema.
-  Suggestions with constructs the regex can't reason about
-  (`pl.col(variable)`) are marked ``verified=False`` so the frontend
-  renders an "unverified" badge rather than silently filtering them.
+One pure-async function feeds the join-keys autocomplete endpoint:
 
 * :func:`suggest_join_keys` — proposes ``(left_col, right_col)`` pairs
   for a join settings panel given the two upstream column lists. Pairs
@@ -17,16 +8,16 @@ endpoints:
   unconditionally — both schemas are knowable when joins are
   configured, so there's no "unverified" middle ground.
 
-Both functions:
+It:
 
-* Use the :class:`RateLimitScheduler` for RPM tracking but with no
+* Uses the :class:`RateLimitScheduler` for RPM tracking but with no
   retries — autocomplete is fail-fast on a 3-second hard timeout.
-* Pass ``response_format={"type":"json_object"}`` to the provider so
+* Passes ``response_format={"type":"json_object"}`` to the provider so
   the model is guided into JSON-mode where the provider supports it.
-* Degrade gracefully when an upstream node has no
+* Degrades gracefully when an upstream node has no
   ``predicted_schema`` (cold flow → ``degraded=True`` rather than
   auto-fetching, which would blow the latency budget).
-* Emit one :func:`metrics.record_autocomplete_call` event per call
+* Emits one :func:`metrics.record_autocomplete_call` event per call
   (NOT per keystroke).
 
 The lazy-litellm contract is preserved — this module must not import
@@ -47,7 +38,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -71,31 +61,10 @@ SURFACE: str = "settings_autocomplete"
 
 DEFAULT_TIMEOUT_SECONDS: float = 3.0
 
-MAX_FORMULA_SUGGESTIONS: int = 5
 MAX_JOIN_KEY_PAIRS: int = 5
 
 
 # Wire types
-
-
-class FormulaSuggestion(BaseModel):
-    """A single formula-completion candidate.
-
-    ``verified`` reflects column-grounding: ``True`` means the suggestion's
-    literal column refs all resolved against the upstream schema; ``False``
-    means we couldn't statically extract refs (complex expression) and the
-    frontend should render a "?" badge so the user sees it's AI-but-unverified.
-    Suggestions with extractable-but-missing refs are dropped before
-    serialisation, so a suggestion in the response is *never* known to be
-    invalid.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    insert_text: str
-    label: str
-    description: str | None = None
-    verified: bool = False
 
 
 class JoinKeyPair(BaseModel):
@@ -115,12 +84,6 @@ class JoinKeyPair(BaseModel):
     rationale: str | None = None
 
 
-class FormulaSuggestionsResponse(BaseModel):
-    suggestions: list[FormulaSuggestion] = Field(default_factory=list)
-    degraded: bool = False
-    reason: str | None = None
-
-
 class JoinKeySuggestionsResponse(BaseModel):
     key_pairs: list[JoinKeyPair] = Field(default_factory=list)
     degraded: bool = False
@@ -130,72 +93,10 @@ class JoinKeySuggestionsResponse(BaseModel):
 # Internal model: the JSON shape the LLM must emit. Separate from the public
 # response model so we can keep the public surface clean (e.g. ``degraded``
 # is set by the server, never by the LLM).
-class _FormulaLLMOutput(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    suggestions: list[FormulaSuggestion] = Field(default_factory=list)
-
-
 class _JoinKeyLLMOutput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     key_pairs: list[JoinKeyPair] = Field(default_factory=list)
-
-
-# Column reference extraction
-
-
-# Literal patterns we can statically extract column refs from:
-#   * pl.col("name")    or pl.col('name')
-#   * [name]            (bare-bracketed identifier — flowfile's `formula`
-#                        legacy syntax)
-# Everything else (e.g. `pl.col(variable)`, dynamic generation) returns
-# ``extraction_complete=False`` so the suggestion is forwarded with
-# ``verified=False`` rather than silently filtered.
-_COL_LITERAL_RE: re.Pattern[str] = re.compile(
-    r"""
-    pl\.col\(\s*(?P<q>['"])(?P<pl_name>[^'"]*)\1\s*\)   # pl.col("X")
-    |
-    \[(?P<bracket_name>[A-Za-z_][\w\-]*)\]              # [name]
-    """,
-    re.VERBOSE,
-)
-
-# Detect constructs we can't reason about:
-#   * pl.col(<non-literal>)
-#   * cs.matches(...) / cs.starts_with(...) / cs.string()  (column-selectors)
-#   * f-string-style dynamic names
-_OPAQUE_REF_RE: re.Pattern[str] = re.compile(
-    r"""
-    pl\.col\(\s*(?!['"])              # pl.col(  not followed by a quote
-    |
-    \bcs\.[a-z_]+\s*\(                # cs.matches(...) etc
-    |
-    f['"]                             # f"..." / f'...'
-    """,
-    re.VERBOSE,
-)
-
-
-def _extract_column_refs(text: str) -> tuple[set[str], bool]:
-    """Pull static column references out of a formula expression.
-
-    Returns ``(refs, extraction_complete)`` where ``extraction_complete``
-    is ``False`` when the expression contains constructs the regex can't
-    statically reason about — those suggestions can still be useful, but
-    the caller should mark them ``verified=False``.
-    """
-    if not text:
-        return set(), True
-
-    refs: set[str] = set()
-    for match in _COL_LITERAL_RE.finditer(text):
-        name = match.group("pl_name") or match.group("bracket_name")
-        if name:
-            refs.add(name)
-
-    extraction_complete = _OPAQUE_REF_RE.search(text) is None
-    return refs, extraction_complete
 
 
 # Schema lookup
@@ -215,49 +116,7 @@ def _column_names_for_node(node: FlowNode) -> list[str] | None:
     return [col.column_name for col in schema]
 
 
-def _get_main_upstream(graph: FlowGraph, node_id: int | str) -> FlowNode | None:
-    """Resolve the immediate upstream node of ``node_id`` whose schema feeds
-    the formula expression.
-
-    Formula nodes have one input. We walk ``all_inputs`` rather than
-    ``main_input`` because UDFs occasionally use the multi-port plumbing,
-    and ``all_inputs`` is the union view.
-    """
-    target = graph.get_node(node_id)
-    if target is None:
-        return None
-    inputs = target.all_inputs
-    if not inputs:
-        return None
-    return inputs[0]
-
-
 # Prompt construction
-
-
-_FORMULA_SYSTEM_PROMPT = """\
-You suggest Polars formula expressions for Flowfile's `formula` node.
-
-Output a single JSON object — no prose, no code blocks. Shape:
-
-  {"suggestions": [
-     {"insert_text": "<expression>",
-      "label": "<short label>",
-      "description": "<one-line, optional>"}
-  ]}
-
-Hard rules:
-
-* `insert_text` must be a syntactically-valid Polars expression. Prefer
-  `pl.col("X")` over `[X]` for new code, but match existing style if the
-  user has already started typing `[`.
-* You MAY only reference columns from the upstream schema you're given.
-  Do not invent column names. Do not assume capitalisation.
-* Keep suggestions short (<80 chars). Return at most {{MAX_SUGGESTIONS}}
-  suggestions, ordered by relevance to the user's partial text and
-  intent.
-* If the upstream schema is empty, return `{"suggestions": []}`.
-"""
 
 
 _JOIN_KEYS_SYSTEM_PROMPT = """\
@@ -293,30 +152,6 @@ def _format_columns_for_prompt(columns: list[str]) -> str:
     if not columns:
         return "(empty)"
     return ", ".join(columns)
-
-
-def _build_formula_messages(
-    *,
-    upstream_columns: list[str],
-    partial_text: str,
-    intent: str | None,
-    max_suggestions: int,
-) -> list[Message]:
-    user_lines = [
-        f"Upstream schema columns: {_format_columns_for_prompt(upstream_columns)}",
-        f"Partial expression: {partial_text!r}",
-    ]
-    if intent:
-        user_lines.append(f"User intent: {intent}")
-    user_lines.append(f"Return at most {max_suggestions} suggestions.")
-    # We use ``.replace`` rather than ``.format`` so the JSON shape examples in
-    # the prompt — which legitimately use ``{`` / ``}`` — don't have to be
-    # double-escaped.
-    system = _FORMULA_SYSTEM_PROMPT.replace("{{MAX_SUGGESTIONS}}", str(max_suggestions))
-    return [
-        Message(role="system", content=system),
-        Message(role="user", content="\n".join(user_lines)),
-    ]
 
 
 def _build_join_keys_messages(
@@ -408,149 +243,6 @@ def _parse_json_payload(content: str | None) -> tuple[Any, str | None]:
 
 
 # Public API
-
-
-async def suggest_formula_completions(
-    graph: FlowGraph,
-    node_id: int | str,
-    partial_text: str,
-    intent: str | None = None,
-    *,
-    provider: Provider,
-    max_suggestions: int = MAX_FORMULA_SUGGESTIONS,
-    scheduler: RateLimitScheduler | None = None,
-    timeout: float = DEFAULT_TIMEOUT_SECONDS,
-) -> FormulaSuggestionsResponse:
-    """Schema-aware completions for a formula expression.
-
-    See module docstring for invariants. The function never raises — every
-    failure mode (cold upstream, timeout, parse error, validation error)
-    becomes a ``degraded=True`` response with a stable ``reason`` string.
-    """
-    started = time.monotonic()
-    upstream = _get_main_upstream(graph, node_id)
-    upstream_columns: list[str] | None = _column_names_for_node(upstream) if upstream else None
-
-    if upstream is None:
-        latency_ms = int((time.monotonic() - started) * 1000)
-        record_autocomplete_call(
-            surface=SURFACE,
-            provider=provider.name,
-            latency_ms=latency_ms,
-            suggestion_count=0,
-            degraded_reason="missing_upstream",
-        )
-        return FormulaSuggestionsResponse(
-            suggestions=[],
-            degraded=True,
-            reason="No upstream node connected — connect a source first.",
-        )
-
-    if upstream_columns is None:
-        latency_ms = int((time.monotonic() - started) * 1000)
-        record_autocomplete_call(
-            surface=SURFACE,
-            provider=provider.name,
-            latency_ms=latency_ms,
-            suggestion_count=0,
-            degraded_reason="upstream_schema_unknown",
-        )
-        return FormulaSuggestionsResponse(
-            suggestions=[],
-            degraded=True,
-            reason="Upstream schema unknown — run the upstream node first.",
-        )
-
-    messages = _build_formula_messages(
-        upstream_columns=upstream_columns,
-        partial_text=partial_text,
-        intent=intent,
-        max_suggestions=max_suggestions,
-    )
-
-    content, err = await _call_provider_for_json(
-        provider=provider,
-        messages=messages,
-        timeout=timeout,
-        scheduler=scheduler,
-        max_tokens=512,
-    )
-    if err is not None:
-        latency_ms = int((time.monotonic() - started) * 1000)
-        record_autocomplete_call(
-            surface=SURFACE,
-            provider=provider.name,
-            latency_ms=latency_ms,
-            suggestion_count=0,
-            degraded_reason=err,
-        )
-        return FormulaSuggestionsResponse(suggestions=[], degraded=True, reason=err)
-
-    payload, parse_err = _parse_json_payload(content)
-    if parse_err is not None:
-        latency_ms = int((time.monotonic() - started) * 1000)
-        record_autocomplete_call(
-            surface=SURFACE,
-            provider=provider.name,
-            latency_ms=latency_ms,
-            suggestion_count=0,
-            degraded_reason=parse_err,
-        )
-        return FormulaSuggestionsResponse(suggestions=[], degraded=True, reason=parse_err)
-
-    try:
-        parsed = _FormulaLLMOutput.model_validate(payload)
-    except ValidationError as exc:
-        logger.debug("formula autocomplete validation error: %s", exc)
-        latency_ms = int((time.monotonic() - started) * 1000)
-        record_autocomplete_call(
-            surface=SURFACE,
-            provider=provider.name,
-            latency_ms=latency_ms,
-            suggestion_count=0,
-            degraded_reason="validation_error",
-        )
-        return FormulaSuggestionsResponse(
-            suggestions=[],
-            degraded=True,
-            reason="validation_error",
-        )
-
-    available = set(upstream_columns)
-    filtered: list[FormulaSuggestion] = []
-    for suggestion in parsed.suggestions[:max_suggestions]:
-        refs, extraction_complete = _extract_column_refs(suggestion.insert_text)
-        if extraction_complete:
-            missing = refs - available
-            if missing:
-                logger.debug(
-                    "formula autocomplete dropped suggestion citing missing columns: %s",
-                    sorted(missing),
-                )
-                continue
-            verified = True
-        else:
-            # Constructs we can't statically validate — forward with the
-            # unverified flag so the frontend renders a "?" badge.
-            verified = False
-        filtered.append(
-            FormulaSuggestion(
-                insert_text=suggestion.insert_text,
-                label=suggestion.label,
-                description=suggestion.description,
-                verified=verified,
-            )
-        )
-
-    latency_ms = int((time.monotonic() - started) * 1000)
-    record_autocomplete_call(
-        surface=SURFACE,
-        provider=provider.name,
-        latency_ms=latency_ms,
-        suggestion_count=len(filtered),
-        degraded_reason=None,
-    )
-    return FormulaSuggestionsResponse(suggestions=filtered, degraded=False)
 
 
 async def suggest_join_keys(
@@ -698,12 +390,8 @@ async def suggest_join_keys(
 __all__ = [
     "SURFACE",
     "DEFAULT_TIMEOUT_SECONDS",
-    "MAX_FORMULA_SUGGESTIONS",
     "MAX_JOIN_KEY_PAIRS",
-    "FormulaSuggestion",
     "JoinKeyPair",
-    "FormulaSuggestionsResponse",
     "JoinKeySuggestionsResponse",
-    "suggest_formula_completions",
     "suggest_join_keys",
 ]

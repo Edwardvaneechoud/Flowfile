@@ -39,21 +39,8 @@ export {
 };
 export { AiDisabledError, AI_DISABLED_DETAIL };
 
-// Settings autocomplete — non-streaming JSON wrappers around
-// /ai/autocomplete/{formula,join_keys}.
-
-export interface FormulaSuggestion {
-  insertText: string;
-  label: string;
-  description: string | null;
-  verified: boolean;
-}
-
-export interface FormulaSuggestionsResponse {
-  suggestions: FormulaSuggestion[];
-  degraded: boolean;
-  reason: string | null;
-}
+// Settings autocomplete — non-streaming JSON wrapper around
+// /ai/autocomplete/join_keys.
 
 export interface JoinKeyPair {
   leftCol: string;
@@ -68,17 +55,6 @@ export interface JoinKeySuggestionsResponse {
   reason: string | null;
 }
 
-export interface FormulaAutocompleteRequest {
-  flowId: number;
-  nodeId: number | string;
-  partialText: string;
-  intent?: string | null;
-  provider?: string;
-  model?: string | null;
-  maxSuggestions?: number;
-  timeout?: number;
-}
-
 export interface JoinKeyAutocompleteRequest {
   flowId: number;
   leftNodeId: number | string;
@@ -88,19 +64,6 @@ export interface JoinKeyAutocompleteRequest {
   model?: string | null;
   maxPairs?: number;
   timeout?: number;
-}
-
-interface PyFormulaSuggestion {
-  insert_text: string;
-  label: string;
-  description: string | null;
-  verified: boolean;
-}
-
-interface PyFormulaSuggestionsResponse {
-  suggestions: PyFormulaSuggestion[];
-  degraded: boolean;
-  reason: string | null;
 }
 
 interface PyJoinKeyPair {
@@ -115,13 +78,6 @@ interface PyJoinKeySuggestionsResponse {
   degraded: boolean;
   reason: string | null;
 }
-
-const fromPyFormulaSuggestion = (raw: PyFormulaSuggestion): FormulaSuggestion => ({
-  insertText: raw.insert_text,
-  label: raw.label,
-  description: raw.description,
-  verified: raw.verified,
-});
 
 const fromPyJoinKeyPair = (raw: PyJoinKeyPair): JoinKeyPair => ({
   leftCol: raw.left_col,
@@ -138,38 +94,6 @@ const isAiDisabledError = (error: unknown): boolean => {
     ?.response?.data?.detail;
   const status = (error as { response?: { status?: number } })?.response?.status;
   return status === 503 && typeof detail === "string" && detail === AI_DISABLED_DETAIL;
-};
-
-export const fetchFormulaSuggestions = async (
-  body: FormulaAutocompleteRequest,
-  signal?: AbortSignal,
-): Promise<FormulaSuggestionsResponse> => {
-  const payload: Record<string, unknown> = {
-    flow_id: body.flowId,
-    node_id: body.nodeId,
-    partial_text: body.partialText,
-  };
-  if (body.intent !== undefined && body.intent !== null) payload.intent = body.intent;
-  if (body.provider !== undefined) payload.provider = body.provider;
-  if (body.model !== undefined && body.model !== null) payload.model = body.model;
-  if (body.maxSuggestions !== undefined) payload.max_suggestions = body.maxSuggestions;
-  if (body.timeout !== undefined) payload.timeout = body.timeout;
-
-  try {
-    const response = await axios.post<PyFormulaSuggestionsResponse>(
-      "/ai/autocomplete/formula",
-      payload,
-      { signal },
-    );
-    return {
-      suggestions: response.data.suggestions.map(fromPyFormulaSuggestion),
-      degraded: response.data.degraded,
-      reason: response.data.reason,
-    };
-  } catch (error) {
-    if (isAiDisabledError(error)) throw new AiDisabledError();
-    throw error;
-  }
 };
 
 export const fetchJoinKeySuggestions = async (
