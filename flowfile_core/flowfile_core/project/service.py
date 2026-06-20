@@ -21,7 +21,7 @@ from flowfile_core import __version__
 from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRegistration
-from flowfile_core.fileExplorer.funcs import _is_contained
+from flowfile_core.fileExplorer.funcs import _is_contained, _local_filesystem_roots
 from flowfile_core.project import git_ops, projection, repository
 from flowfile_core.project.importer import import_project, preflight_import_caps, preflight_import_caps_worktree
 from flowfile_core.project.manifest import (
@@ -54,10 +54,17 @@ def _confine_project_root(folder_path: str, owner_id: int) -> Path:
 
     A bare name (no separator) is joined under the base; an absolute/relative path must already be
     contained in it. Roots equal to / ancestors of the shared internal roots are rejected.
-    Electron returns the resolved path unchanged."""
+    Electron is unconfined: the resolved path is allowed as long as it lands under a real
+    filesystem root (the inline normalize + startswith barrier CodeQL recognizes)."""
     base = project_root_base(owner_id)
     if base is None:
-        return Path(folder_path).expanduser().resolve()
+        resolved = os.path.realpath(os.path.expanduser(folder_path))
+        for fs_root in _local_filesystem_roots():
+            root_real = os.path.realpath(fs_root)
+            prefix = root_real if root_real.endswith(os.sep) else root_real + os.sep
+            if resolved == root_real or resolved.startswith(prefix):
+                return Path(resolved)
+        raise HTTPException(status_code=403, detail="Access denied")
     candidate = folder_path.strip()
     if candidate and os.sep not in candidate and (os.altsep is None or os.altsep not in candidate):
         root = (base / candidate).resolve()

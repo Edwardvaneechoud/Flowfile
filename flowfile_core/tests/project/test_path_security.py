@@ -182,6 +182,38 @@ class TestValidatePathElectronMode:
 
 
 # ---------------------------------------------------------------------------
+# _confine_project_root electron branch (regression for CodeQL py/path-injection #152)
+# ---------------------------------------------------------------------------
+
+
+class TestConfineProjectRootElectron:
+    """Electron branch: unconfined, but the path is normalized and kept under a real fs root.
+
+    A merge once reverted this inline normalize+startswith barrier to a bare .resolve(), so
+    CodeQL #152 reappeared. These tests pin that legitimate local paths still resolve.
+    """
+
+    def test_absolute_path_resolves(self, tmp_path, monkeypatch):
+        # Non-regression: any local absolute path is accepted and returned realpath-normalized.
+        from flowfile_core.configs import settings
+        from flowfile_core.project.service import _confine_project_root
+
+        monkeypatch.setattr(settings, "FLOWFILE_MODE", "electron")
+        target = tmp_path / "some" / "proj"
+        assert _confine_project_root(str(target), 1) == Path(os.path.realpath(str(target)))
+
+    def test_user_home_is_expanded(self, monkeypatch):
+        # Non-regression: ~ is expanded (and the barrier still permits it).
+        from flowfile_core.configs import settings
+        from flowfile_core.project.service import _confine_project_root
+
+        monkeypatch.setattr(settings, "FLOWFILE_MODE", "electron")
+        result = _confine_project_root("~/flowfile-proj", 1)
+        assert str(result) == os.path.realpath(os.path.expanduser("~/flowfile-proj"))
+        assert "~" not in str(result)
+
+
+# ---------------------------------------------------------------------------
 # H4: managed table pointer sanitization
 # ---------------------------------------------------------------------------
 
