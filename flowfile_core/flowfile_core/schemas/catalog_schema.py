@@ -795,8 +795,6 @@ class SchedulerStatusOut(BaseModel):
     is_embedded: bool | None = None
 
 
-# ==================== Notebook Schemas ====================
-
 NotebookCellType = Literal["python", "sql", "markdown"]
 
 

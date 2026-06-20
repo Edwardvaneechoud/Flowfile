@@ -1346,8 +1346,6 @@ class CatalogService:
         self._require_manage_visualization(viz_id)
         self._visualizations.delete_visualization(viz_id, user_id)
 
-    # ================== Notebooks ==========================================
-
     def list_notebooks(self, user_id: int | None = None) -> list[NotebookSummaryOut]:
         """List saved notebooks (own ∪ granted in restricted mode)."""
         notebooks = self._notebooks.list_notebooks(user_id)

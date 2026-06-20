@@ -475,10 +475,7 @@ onBeforeUnmount(stopPullPoll);
   background: var(--color-primary, #3b82f6);
 }
 
-/* On dark, a full-strength border + 15% amber/red fill turns these rows into
-   heavy, muddy blocks (saturated hues desaturate against the navy bg). Soften
-   the border and drop the fill so they read as quiet actionable cards — the
-   colored dot + Install button still carry the signal. */
+/* Dark: saturated amber/red fills go muddy on navy, so soften the border + drop the fill. */
 [data-theme="dark"] .km-image-row--missing {
   border-color: rgba(245, 158, 11, 0.5);
   background: rgba(245, 158, 11, 0.08);

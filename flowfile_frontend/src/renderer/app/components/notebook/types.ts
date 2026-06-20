@@ -1,11 +1,4 @@
-// In-memory notebook cell model for the Catalog notebook UI. The persisted /
-// wire shape (NotebookCellWire in api/notebook.api.ts) keys cells as
-// {type, source}; here we use {cellType, code} to match the rest of the
-// notebook UI, plus transient execution state that is never persisted.
-//
-// Cell types are Python + Markdown. SQL cells were removed (the catalog has a
-// dedicated SQL editor tab); a legacy persisted "sql" cell is coerced to
-// "python" on load.
+// In-memory cell shape uses {cellType, code}; the wire shape (NotebookCellWire) uses {type, source}.
 import type { CellOutput } from "../../types/node.types";
 
 export type CellType = "python" | "markdown";

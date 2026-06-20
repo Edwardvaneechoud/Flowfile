@@ -1,16 +1,4 @@
-// Notebook store — multi-notebook state + execution routing for the Catalog
-// notebook tab. Several notebooks can be open at once (a tab strip in the
-// panel); the set of open tabs + their cells are persisted to browser storage
-// so a refresh restores them.
-//
-// Execution routing by cell type (per active notebook):
-//   - python   -> KernelApi.executeCell with flow_id = -<session> (the notebook
-//                 session key; collision-free with positive flow ids) and a stable
-//                 node_id hashed from the cell uuid (so display outputs render).
-//   - markdown -> sanitiseMarkdown client-side (no backend).
-//
-// Persistence maps the in-memory {cellType, code} model to the wire {type, source}
-// format; transient outputs / exec-state / sessionFlowId are never persisted.
+// Notebook store: multi-notebook state + execution routing (python -> KernelApi, markdown -> client-side) for the Catalog notebook tab.
 import { defineStore } from "pinia";
 import { KernelApi } from "../api/kernel.api";
 import { NotebookApi } from "../api/notebook.api";
@@ -148,8 +136,6 @@ export const useNotebookStore = defineStore("notebook", {
   },
 
   actions: {
-    // -- persistence -------------------------------------------------------
-
     _snapshot() {
       return {
         openNotebooks: this.openNotebooks.map((n) => ({
@@ -197,8 +183,6 @@ export const useNotebookStore = defineStore("notebook", {
         this.loading = false;
       }
     },
-
-    // -- tab lifecycle -----------------------------------------------------
 
     newTab(): OpenNotebook {
       const tab: OpenNotebook = {
@@ -276,8 +260,6 @@ export const useNotebookStore = defineStore("notebook", {
       else this._schedulePersist();
     },
 
-    // -- persistence (server) ----------------------------------------------
-
     async save() {
       const nb = this.active;
       if (!nb || nb.persistedId === null) return; // panel handles save-as for new
@@ -335,8 +317,6 @@ export const useNotebookStore = defineStore("notebook", {
       if (open) this.closeTab(open.tabId);
       await this.loadList();
     },
-
-    // -- editing (active tab; all flip dirty) ------------------------------
 
     setName(name: string) {
       const nb = this.active;
@@ -425,8 +405,6 @@ export const useNotebookStore = defineStore("notebook", {
       return cell;
     },
 
-    // -- execution (active tab) --------------------------------------------
-
     async runCell(cellId: string) {
       const cell = this.active?.cells.find((c) => c.id === cellId);
       if (!cell) return;
@@ -461,7 +439,7 @@ export const useNotebookStore = defineStore("notebook", {
         const res = await KernelApi.executeCell(nb.kernelId, {
           node_id: cellNodeId(cell.id),
           code: cell.code,
-          flow_id: nb.sessionFlowId,
+          flow_id: nb.sessionFlowId, // negative session id: can't collide with positive flow ids
         });
         nb.executionCount += 1;
         cell.output = {

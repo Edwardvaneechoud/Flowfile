@@ -704,7 +704,7 @@ def _is_html_string(obj: Any) -> bool:
     return bool(_HTML_TAG_RE.search(obj))
 
 
-# ===== DataFrame display payload (dtype->field mapping mirrors flowfile_wasm nodes_explore) =====
+# DataFrame display payload: dtype->field mapping mirrors flowfile_wasm nodes_explore
 
 _GW_TABLE_MAX_ROWS = 10_000
 _GW_TABLE_MIME = "application/vnd.flowfile.table+json"

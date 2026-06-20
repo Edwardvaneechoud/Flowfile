@@ -244,7 +244,7 @@
           v-else-if="catalogStore.activeTab === 'sql'"
           :initial-query="sqlInitialQuery"
         />
-        <!-- Notebook (mixed Python / SQL / Markdown exploration console) -->
+        <!-- Notebook (mixed Python / Markdown exploration console) -->
         <NotebookPanel v-else-if="catalogStore.activeTab === 'notebook'" />
         <!-- Visuals (charts + dashboards) -->
         <VisualsPanel

@@ -923,12 +923,6 @@ def list_visualizations_for_table(
 
 
 # Catalog Notebooks
-#
-# The catalog's exploration console: saved, mixed-cell (Python/SQL/Markdown)
-# notebooks. These routes persist the notebook DOCUMENT only — cell execution
-# reuses the existing SQL (``/catalog/sql/execute``) and kernel
-# (``/kernels/{id}/execute_cell``) surfaces. JWT-only (no internal-token caller
-# needs notebooks), mirroring the visualization/flow CRUD routes.
 
 
 @router.get("/notebooks", response_model=list[NotebookSummaryOut])

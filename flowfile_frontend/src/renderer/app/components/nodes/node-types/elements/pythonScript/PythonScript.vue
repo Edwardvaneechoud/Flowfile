@@ -700,9 +700,7 @@ const applyGeneratedCode = (code: string) => {
   syncCellsToNode();
 };
 
-// ─── Load from a saved catalog notebook ─────────────────────────────────────
-// The code⇄visual bridge: pull a saved notebook's cells into this node. Python
-// cells map 1:1; Markdown cells become commented Python so narrative isn't lost.
+// Load a saved notebook's cells into this node: Python maps 1:1, Markdown becomes commented Python.
 
 const savedNotebooks = ref<NotebookSummary[]>([]);
 
@@ -1280,11 +1278,7 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   padding: 0 1rem;
 }
 
-/* ─── Dark mode ───────────────────────────────────────────────────────────
-   Element Plus's own dark theme isn't wired up (the app themes via
-   [data-theme], not the .dark class), so these --el-color-*-light-9 fills and
-   -dark-2 text keep their light values and read as glaring pale boxes on dark.
-   Flip them to translucent same-hue fills + light text. */
+/* App themes via [data-theme], not Element Plus's .dark class, so flip these light fills/text to dark-friendly values manually. */
 [data-theme="dark"] .kernel-memory--normal {
   color: #a4da89;
   background-color: rgba(103, 194, 58, 0.15);

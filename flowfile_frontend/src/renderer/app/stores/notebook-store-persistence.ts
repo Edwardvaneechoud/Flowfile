@@ -1,13 +1,4 @@
-// Browser-side persistence for open catalog notebooks, so a page refresh
-// doesn't lose unsaved work and re-opens the same set of notebook tabs.
-//
-// Pure helpers (no Vue/Pinia deps) so they unit-test without jsdom; `StorageLike`
-// is the injection seam. Mirrors the shape of `ai-store-persistence.ts`.
-//
-// What is persisted: each open tab's identity + cells (wire format) + name +
-// kernel + dirty flag. What is NOT persisted: execution outputs, exec-state, and
-// the ephemeral kernel `sessionFlowId` (regenerated on rehydrate). SQL cells were
-// removed, so any legacy persisted "sql" cell is coerced to "python".
+// localStorage persistence for open notebook tabs (cells in wire format); outputs, exec-state and sessionFlowId are intentionally not persisted.
 import type { NotebookCellType, NotebookCellWire } from "../api/notebook.api";
 
 export const PERSISTENCE_KEY = "flowfile.notebook.v1";

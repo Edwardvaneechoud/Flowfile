@@ -1,9 +1,4 @@
-// Notebook API Service — CRUD for catalog notebooks (the catalog's exploration
-// console). The wire format keys cells as {id, type, source, metadata}; the
-// in-memory model (see components/notebook/types.ts) uses {cellType, code}. This
-// module is the single mapping boundary between the two. Cell execution does NOT
-// go through here — SQL cells use CatalogApi.executeSqlQuery and Python cells use
-// KernelApi.executeCell.
+// Catalog notebook CRUD; maps wire cells {id, type, source, metadata} <-> in-memory {cellType, code}. Python cells execute via KernelApi, not here.
 import axios from "../services/axios.config";
 import type { AccessInfo } from "../types/sharing.types";
 

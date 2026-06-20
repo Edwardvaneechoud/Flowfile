@@ -1,9 +1,4 @@
-// Unit tests for the multi-notebook catalog store.
-//
-// The store routes Python execution to the kernel API and renders markdown via
-// the AI markdown helper; we mock both plus the notebook API so tests stay
-// offline. Pinia is set up per-test for isolation. Browser persistence no-ops in
-// the node test env (no window), so these tests exercise store logic only.
+// Unit tests for the multi-notebook catalog store (kernel/markdown/notebook APIs mocked, Pinia per-test).
 import { setActivePinia, createPinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
