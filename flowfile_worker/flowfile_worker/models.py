@@ -67,6 +67,7 @@ class PolarsScriptWrite(BaseModel):
     write_mode: str
     sheet_name: str | None = None
     delimiter: str | None = None
+    compression: str | None = None
     flowfile_flow_id: int | None = -1
     flowfile_node_id: int | str | None = -1
 

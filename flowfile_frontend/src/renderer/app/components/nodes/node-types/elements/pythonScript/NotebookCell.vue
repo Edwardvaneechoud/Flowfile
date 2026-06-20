@@ -47,29 +47,11 @@
 
 <script lang="ts" setup>
 import { computed } from "vue";
-import type { Extension } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
-import { EditorState, Prec } from "@codemirror/state";
 import { Codemirror } from "vue-codemirror";
-import { python, pythonLanguage } from "@codemirror/lang-python";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { autocompletion, acceptCompletion } from "@codemirror/autocomplete";
-import { indentMore, indentLess } from "@codemirror/commands";
 
 import type { NotebookCell } from "../../../../../types/node.types";
-import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import CellOutput from "./CellOutput.vue";
-import {
-  catalogRefChainCompletions,
-  flowfileApiCompletions,
-  globalIdentifierCompletions,
-  polarsModuleCompletions,
-  createPolarsExprCompletions,
-  createRefVariableCompletions,
-  createNamedInputCompletions,
-  createUpstreamColumnCompletions,
-  createScopeCompletions,
-} from "./flowfileCompletions";
+import { buildNotebookEditorExtensions } from "./notebookEditor";
 import type { UpstreamColumn } from "./useUpstreamColumns";
 
 interface Props {
@@ -103,96 +85,13 @@ const cellClasses = computed(() => ({
   "cell--error": props.cell.output?.error,
 }));
 
-// ─── CodeMirror Extensions ───────────────────────────────────────────────────
-
-// Dynamic completion sources read from props lazily so they pick up newly
-// connected inputs, freshly-loaded upstream schemas, and edits in prior cells
-// without rebuilding the editor.
-const namedInputCompletions = createNamedInputCompletions(() => props.inputNames);
-const columnCompletions = createUpstreamColumnCompletions(() => props.upstreamColumns);
-const scopeCompletions = createScopeCompletions(() => props.priorCellCodes);
-const refVarCompletions = createRefVariableCompletions(() => props.priorCellCodes);
-const polarsExprCompletions = createPolarsExprCompletions(() => props.priorCellCodes);
-
-// Theme for compact cell editors
-const cellEditorTheme = EditorView.theme({
-  "&": {
-    fontSize: "0.8rem",
-    maxHeight: "350px",
-  },
-  ".cm-content": {
-    minHeight: "40px",
-    padding: "0.4rem 0",
-    fontFamily: "'Fira Code', 'Monaco', 'Menlo', monospace",
-  },
-  ".cm-gutters": {
-    fontSize: "0.7rem",
-    minWidth: "2.5rem",
-  },
-  ".cm-scroller": {
-    overflow: "auto",
-  },
+const cellExtensions = buildNotebookEditorExtensions({
+  onRun: () => emit("run-cell"),
+  onRunAdvance: () => emit("run-cell-and-advance"),
+  getInputNames: () => props.inputNames,
+  getUpstreamColumns: () => props.upstreamColumns,
+  getPriorCellCodes: () => props.priorCellCodes,
 });
-
-// Notebook keymaps: Shift+Enter to run, Ctrl/Cmd+Enter to run and advance
-const notebookKeymap = keymap.of([
-  {
-    key: "Shift-Enter",
-    run: (): boolean => {
-      emit("run-cell");
-      return true; // MUST return true to prevent newline insertion
-    },
-  },
-  {
-    key: "Mod-Enter", // Ctrl+Enter on Windows/Linux, Cmd+Enter on Mac
-    run: (): boolean => {
-      emit("run-cell-and-advance");
-      return true;
-    },
-  },
-]);
-
-const tabKeymap = keymap.of([
-  {
-    key: "Tab",
-    run: (view: EditorView): boolean => {
-      if (acceptCompletion(view)) return true;
-      return indentMore(view);
-    },
-  },
-  {
-    key: "Shift-Tab",
-    run: (view: EditorView): boolean => {
-      return indentLess(view);
-    },
-  },
-]);
-
-const cellExtensions: Extension[] = [
-  python(),
-  // Register completion sources through language-data so the Python language's
-  // own keyword/builtin completions remain active (instead of `override` which
-  // would silence them).
-  pythonLanguage.data.of({ autocomplete: flowfileApiCompletions }),
-  pythonLanguage.data.of({ autocomplete: globalIdentifierCompletions }),
-  pythonLanguage.data.of({ autocomplete: catalogRefChainCompletions }),
-  pythonLanguage.data.of({ autocomplete: refVarCompletions }),
-  pythonLanguage.data.of({ autocomplete: polarsModuleCompletions }),
-  pythonLanguage.data.of({ autocomplete: polarsExprCompletions }),
-  pythonLanguage.data.of({ autocomplete: namedInputCompletions }),
-  pythonLanguage.data.of({ autocomplete: columnCompletions }),
-  pythonLanguage.data.of({ autocomplete: scopeCompletions }),
-  oneDark,
-  cellEditorTheme,
-  EditorState.tabSize.of(4),
-  autocompletion({
-    defaultKeymap: true,
-    closeOnBlur: false,
-  }),
-  bodyTooltips(),
-  Prec.highest(notebookKeymap),
-  Prec.high(tabKeymap),
-];
 </script>
 
 <style scoped>

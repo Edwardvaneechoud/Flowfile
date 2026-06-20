@@ -101,6 +101,7 @@
               @artifact-context-menu="onArtifactContextMenu($event)"
               @flow-context-menu="onFlowContextMenu($event)"
               @select-visualization="openVisualization($event)"
+              @select-notebook="openNotebook($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
               @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
               @register-flow="openRegisterFlow($event)"
@@ -243,6 +244,8 @@
           v-else-if="catalogStore.activeTab === 'sql'"
           :initial-query="sqlInitialQuery"
         />
+        <!-- Notebook (mixed Python / Markdown exploration console) -->
+        <NotebookPanel v-else-if="catalogStore.activeTab === 'notebook'" />
         <!-- Visuals (charts + dashboards) -->
         <VisualsPanel
           v-else-if="catalogStore.activeTab === 'visuals'"
@@ -497,6 +500,7 @@ import { ElCheckbox, ElLoading, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useProjectStore } from "../../stores/project-store";
+import { useNotebookStore } from "../../stores/notebook-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
@@ -520,6 +524,7 @@ import CreateScheduleModal from "./CreateScheduleModal.vue";
 import CreateSyncModal from "./CreateSyncModal.vue";
 import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
+import NotebookPanel from "./NotebookPanel.vue";
 import VisualsPanel from "./VisualsPanel.vue";
 import ApisPanel from "./ApisPanel.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";
@@ -547,6 +552,7 @@ const route = useRoute();
 
 const catalogStore = useCatalogStore();
 const projectStore = useProjectStore();
+const notebookStore = useNotebookStore();
 const flowStore = useFlowStore();
 const { recordFlow } = useRecentFlows();
 
@@ -731,22 +737,31 @@ function handleTabClick(tab: CatalogTab) {
 }
 
 function selectFlow(flowId: number) {
+  // Flow detail only renders on the catalog tab, so switch to it (the tree is
+  // visible on every tab).
   router.push({
     name: "catalog",
-    query: { tab: catalogStore.activeTab, flowId: String(flowId) },
+    query: { tab: "catalog", flowId: String(flowId) },
   });
 }
 
 function selectTable(tableId: number) {
   router.push({
     name: "catalog",
-    query: { tab: catalogStore.activeTab, tableId: String(tableId) },
+    query: { tab: "catalog", tableId: String(tableId) },
   });
 }
 
 function openVisualization(vizId: number) {
   activeVizId.value = vizId;
   vizViewerOpen.value = true;
+}
+
+function openNotebook(notebookId: number) {
+  void notebookStore.openNotebook(notebookId);
+  if (catalogStore.activeTab !== "notebook") {
+    router.push({ name: "catalog", query: { tab: "notebook" } });
+  }
 }
 
 function closeVizViewer() {
@@ -878,7 +893,7 @@ function onVizCreated() {
 function selectArtifact(artifactId: number) {
   router.push({
     name: "catalog",
-    query: { tab: catalogStore.activeTab, artifactId: String(artifactId) },
+    query: { tab: "catalog", artifactId: String(artifactId) },
   });
 }
 

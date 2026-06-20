@@ -383,6 +383,7 @@ def execute_write_method(
     sheet_name: str = None,
     delimiter: str = None,
     write_mode: str = "create",
+    compression: str = None,
     flowfile_logger: Logger = None,
 ):
     flowfile_logger.info("executing write method")
@@ -398,7 +399,14 @@ def execute_write_method(
             write_method(path, separator=delimiter, quote_style="always")
     elif data_type == "parquet":
         logger.info("Writing as parquet file")
-        write_method(path)
+        write_method(path, compression=compression) if compression else write_method(path)
+    elif data_type == "ndjson":
+        logger.info("Writing as ndjson file")
+        # check_extension=False: compressed ndjson otherwise requires a .gz/.zst suffix.
+        write_method(path, compression=compression, check_extension=False) if compression else write_method(path)
+    elif data_type in ("ipc", "avro"):
+        logger.info(f"Writing as {data_type} file")
+        write_method(path, compression=compression) if compression else write_method(path)
 
 
 def write_to_database(
@@ -486,6 +494,7 @@ def write_output(
     write_mode: str,
     sheet_name: str = None,
     delimiter: str = None,
+    compression: str = None,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -517,6 +526,7 @@ def write_output(
                 sheet_name=sheet_name,
                 delimiter=delimiter,
                 write_mode=write_mode,
+                compression=compression,
                 flowfile_logger=flowfile_logger,
             )
             number_of_records_written = (

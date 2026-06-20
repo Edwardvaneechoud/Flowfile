@@ -428,6 +428,123 @@ def read_parquet(
     )
 
 
+def _read_simple_file(
+    source,
+    file_type: str,
+    table_settings,
+    *,
+    flow_graph: FlowGraph = None,
+    description: str = None,
+    convert_to_absolute_path: bool = True,
+) -> FlowFrame:
+    """Shared reader for option-less file formats (ipc/ndjson/avro)."""
+    if isinstance(source, str) and "~" in source:
+        source = os.path.expanduser(source)
+    node_id = generate_node_id()
+
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
+
+    flow_id = flow_graph.flow_id
+
+    received_table = input_schema.ReceivedTable(
+        file_type=file_type, path=source, name=Path(source).name, table_settings=table_settings
+    )
+    if convert_to_absolute_path:
+        received_table.path = received_table.abs_file_path
+
+    read_node = input_schema.NodeRead(
+        flow_id=flow_id,
+        node_id=node_id,
+        received_file=received_table,
+        pos_x=100,
+        pos_y=100,
+        is_setup=True,
+        description=description,
+    )
+
+    flow_graph.add_read(read_node)
+
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
+    )
+
+
+def read_ipc(
+    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+) -> FlowFrame:
+    """
+    Read an Arrow IPC/Feather file into a FlowFrame.
+
+    Args:
+        source: Path to the IPC/Arrow file
+        flow_graph: if you want to add it to an existing graph
+        description: if you want to add a readable name in the frontend (advised)
+        convert_to_absolute_path: If the path needs to be set to a fixed location
+
+    Returns:
+        A FlowFrame with the IPC data
+    """
+    return _read_simple_file(
+        source,
+        "ipc",
+        input_schema.InputIpcTable(),
+        flow_graph=flow_graph,
+        description=description,
+        convert_to_absolute_path=convert_to_absolute_path,
+    )
+
+
+def read_ndjson(
+    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+) -> FlowFrame:
+    """
+    Read a newline-delimited JSON (NDJSON) file into a FlowFrame.
+
+    Args:
+        source: Path to the NDJSON file
+        flow_graph: if you want to add it to an existing graph
+        description: if you want to add a readable name in the frontend (advised)
+        convert_to_absolute_path: If the path needs to be set to a fixed location
+
+    Returns:
+        A FlowFrame with the NDJSON data
+    """
+    return _read_simple_file(
+        source,
+        "ndjson",
+        input_schema.InputNdjsonTable(),
+        flow_graph=flow_graph,
+        description=description,
+        convert_to_absolute_path=convert_to_absolute_path,
+    )
+
+
+def read_avro(
+    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+) -> FlowFrame:
+    """
+    Read an Avro file into a FlowFrame.
+
+    Args:
+        source: Path to the Avro file
+        flow_graph: if you want to add it to an existing graph
+        description: if you want to add a readable name in the frontend (advised)
+        convert_to_absolute_path: If the path needs to be set to a fixed location
+
+    Returns:
+        A FlowFrame with the Avro data
+    """
+    return _read_simple_file(
+        source,
+        "avro",
+        input_schema.InputAvroTable(),
+        flow_graph=flow_graph,
+        description=description,
+        convert_to_absolute_path=convert_to_absolute_path,
+    )
+
+
 def read_excel(
     source,
     *,
@@ -689,6 +806,42 @@ def scan_parquet(
     See read_parquet for full documentation.
     """
     return read_parquet(
+        source=source,
+        flow_graph=flow_graph,
+        description=description,
+        convert_to_absolute_path=convert_to_absolute_path,
+        **options,
+    )
+
+
+def scan_ipc(
+    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+) -> FlowFrame:
+    """
+    Scan an Arrow IPC/Feather file into a FlowFrame. Alias for read_ipc, provided
+    for compatibility with the polars API where scan_ipc returns a LazyFrame.
+
+    See read_ipc for full documentation.
+    """
+    return read_ipc(
+        source=source,
+        flow_graph=flow_graph,
+        description=description,
+        convert_to_absolute_path=convert_to_absolute_path,
+        **options,
+    )
+
+
+def scan_ndjson(
+    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+) -> FlowFrame:
+    """
+    Scan a newline-delimited JSON file into a FlowFrame. Alias for read_ndjson,
+    provided for compatibility with the polars API where scan_ndjson returns a LazyFrame.
+
+    See read_ndjson for full documentation.
+    """
+    return read_ndjson(
         source=source,
         flow_graph=flow_graph,
         description=description,

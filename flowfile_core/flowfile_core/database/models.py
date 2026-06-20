@@ -609,6 +609,40 @@ class CatalogDashboard(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class CatalogNotebook(Base):
+    """A saved notebook: the catalog's exploration console.
+
+    A notebook is a first-class catalog entity (like tables / flows / viz),
+    holding an ordered list of mixed cells (Python / SQL / Markdown) serialised
+    into ``cells_json`` — read and written as a whole document, never queried
+    per-cell, so a JSON blob (cf. ``CatalogVisualization.spec_json``) is the
+    right shape rather than a child table. ``namespace_id`` places it in the
+    catalog hierarchy. Python cells run on a kernel; ``default_kernel_id``
+    remembers the last selected kernel (plain id, no FK — a deleted kernel just
+    means "nothing pre-selected", never a cascade).
+    """
+
+    __tablename__ = "catalog_notebooks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
+
+    # JSON array of cells: [{"id": str, "type": "python"|"sql"|"markdown",
+    #                        "source": str, "metadata": {...}}]
+    cells_json = Column(Text, nullable=False, default="[]")
+
+    # Last kernel selected for Python cells (string id; no FK by design).
+    default_kernel_id = Column(String, nullable=True)
+
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("name", "namespace_id", name="uq_catalog_notebook_name_ns"),)
+
+
 class SchedulerLock(Base):
     """Advisory lock row to ensure only one scheduler instance is active.
 

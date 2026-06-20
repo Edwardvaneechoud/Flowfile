@@ -7,15 +7,18 @@ Input nodes are the starting point for any data flow. Flowfile supports reading 
 
 ## Node Details
 
-### ![Read Data](../../../assets/images/nodes/input_data.png){ width="50" height="50" } Read Data
+### ![Read Data](../../../assets/images/nodes/input_data.svg){ width="50" height="50" } Read Data
 
-The **Read Data** node allows you to load local data into your flow. It currently supports **CSV**, **Excel**, and **Parquet** file formats, each with specific configuration options.
+The **Read Data** node allows you to load local data into your flow. It supports **CSV**, **Excel**, **Parquet**, **Arrow IPC/Feather**, **NDJSON**, and **Avro** file formats, each with specific configuration options.
 
 #### **Supported Formats:**
 
-- **CSV files** (`.csv`)
+- **CSV files** (`.csv`, `.txt`)
 - **Excel files** (`.xlsx`, `.xls`)
 - **Parquet files** (`.parquet`)
+- **Arrow IPC / Feather files** (`.arrow`, `.ipc`, `.feather`)
+- **NDJSON files** (`.ndjson`, `.jsonl`)
+- **Avro files** (`.avro`)
 
 #### **Usage:**
 
@@ -61,7 +64,22 @@ When a **Parquet** file is selected, no additional setup options are required. P
 
 ---
 
-### ![Cloud Storage](../../../assets/images/nodes/cloud_storage_reader.png){ width="50" height="50" } Cloud Storage Reader
+#### Arrow IPC / Feather  
+When an **Arrow IPC/Feather** file is selected, no additional setup options are required. The Arrow IPC format stores schema and data types natively and is read lazily, so large files stream efficiently without holding the dataset in memory.
+
+---
+
+#### NDJSON  
+When a **newline-delimited JSON** file is selected, no additional setup options are required. Each line is parsed as a JSON record and the schema is inferred automatically. NDJSON is read lazily.
+
+---
+
+#### Avro  
+When an **Avro** file is selected, no additional setup options are required. Avro is a row-based binary format that embeds its own schema. Avro is read eagerly (the load runs on the compute worker, not the core service).
+
+---
+
+### ![Cloud Storage](../../../assets/images/nodes/cloud_storage_reader.svg){ width="50" height="50" } Cloud Storage Reader
 
 The **Cloud Storage Reader** node reads data directly from cloud object storage. It supports **AWS S3** (including S3-compatible services like MinIO), **Azure Data Lake Storage (ADLS)**, and **Google Cloud Storage (GCS)**.
 
@@ -96,13 +114,13 @@ The **Cloud Storage Reader** node reads data directly from cloud object storage.
 
 ---
 
-### ![Manual Input](../../../assets/images/nodes/manual_input.png){ width="50" height="50" } Manual Input
+### ![Manual Input](../../../assets/images/nodes/manual_input.svg){ width="50" height="50" } Manual Input
 
 The **Manual Input** node allows you to create data directly within Flowfile or paste data from your clipboard.
 
 ---
 
-### ![Database Reader](../../../assets/images/nodes/database_reader.png){ width="50" height="50" } Database Reader
+### ![Database Reader](../../../assets/images/nodes/database_reader.svg){ width="50" height="50" } Database Reader
 
 The **Database Reader** node loads data from database tables or custom SQL queries. It supports **PostgreSQL**, **MySQL**, and **SQLite**.
 

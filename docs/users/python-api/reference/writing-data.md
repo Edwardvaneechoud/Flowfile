@@ -47,6 +47,34 @@ df.write_parquet(
 )
 ```
 
+### Arrow IPC / Feather, NDJSON, and Avro Files
+
+```python
+# Arrow IPC / Feather (lazy sink)
+df.write_ipc("output.arrow")
+df.write_ipc("output.arrow", compression="zstd")
+
+# Newline-delimited JSON (lazy sink)
+df.write_ndjson("events.ndjson", compression="gzip")
+
+# Avro (eager write — materialised in the worker)
+df.write_avro("output.avro", compression="snappy")
+```
+
+`sink_ipc` / `sink_ndjson` aliases are available for the lazy formats.
+
+**Compression options (`compression=`):**
+
+- Parquet: `"zstd"` (default), `"snappy"`, `"gzip"`, `"lz4"`, `"brotli"`, `"uncompressed"`
+- IPC/Arrow: `"uncompressed"` (default), `"lz4"`, `"zstd"`
+- NDJSON: `"uncompressed"` (default), `"gzip"`, `"zstd"`
+- Avro: `"uncompressed"` (default), `"snappy"`, `"deflate"`
+
+!!! info "Core never holds the dataset"
+    Lazy formats (IPC, NDJSON) sink directly from the streaming plan; the eager
+    Avro write and all worker-offloaded writes materialise in the worker process,
+    never in `flowfile_core`.
+
 ## Cloud Storage Writing
 
 Flowfile extends writing capabilities with specialized cloud storage writers that integrate with secure connection management.

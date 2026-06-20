@@ -220,6 +220,12 @@ Tests live under `flowfile_wasm/tests/` (unit, integration, components; happy-do
 
 ## Code Style & Linting
 
+### Comments
+
+Keep comments minimal. Prefer self-explanatory code; add a comment only for
+non-obvious *why*. No long explanatory blocks or multi-line header comments —
+one short line at most. This applies to all languages (Python, TS/Vue, etc.).
+
 ### Python (Ruff)
 
 Config lives in the root `pyproject.toml` (`[tool.ruff]`); it is the only ruff config in the repo. Ruff is pinned via the dev group (`ruff = "^0.8.0"`).

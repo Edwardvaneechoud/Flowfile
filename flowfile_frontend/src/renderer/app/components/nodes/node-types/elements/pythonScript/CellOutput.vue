@@ -31,6 +31,36 @@
         @load="autoResizeIframe($event)"
       ></iframe>
 
+      <!-- Interactive table (flowfile_ctx.display(df)) -->
+      <div v-else-if="disp.mime_type === TABLE_MIME && tablePayloads[index]" class="display-table">
+        <NotebookDataTable
+          :columns="tablePayloads[index]!.columns"
+          :rows="tablePayloads[index]!.data"
+        />
+        <div v-if="tablePayloads[index]!.truncated" class="display-table-footer">
+          showing {{ formatCount(tablePayloads[index]!.loaded_rows) }} of
+          {{ formatCount(tablePayloads[index]!.total_rows) }} rows
+        </div>
+      </div>
+
+      <!-- Full Graphic Walker explorer (flowfile_ctx.explore(df)) -->
+      <div
+        v-else-if="disp.mime_type === EXPLORE_MIME && tablePayloads[index]"
+        class="display-explore"
+      >
+        <VueGraphicWalker
+          :data="tablePayloads[index]!.data"
+          :fields="tablePayloads[index]!.fields"
+          :appearance="appearance"
+          default-tab="vis"
+          :spec-list="[]"
+        />
+        <div v-if="tablePayloads[index]!.truncated" class="display-table-footer">
+          showing {{ formatCount(tablePayloads[index]!.loaded_rows) }} of
+          {{ formatCount(tablePayloads[index]!.total_rows) }} rows
+        </div>
+      </div>
+
       <!-- Plain text — NO v-html for security -->
       <div v-else-if="disp.mime_type === 'text/plain'" class="display-text">
         <pre>{{ disp.data }}</pre>
@@ -55,13 +85,33 @@
 </template>
 
 <script lang="ts" setup>
+import { computed, defineAsyncComponent } from "vue";
 import type { CellOutput } from "../../../../../types/node.types";
+import NotebookDataTable from "./NotebookDataTable.vue";
+import { useGraphicWalkerAppearance } from "@/composables/useGraphicWalkerAppearance";
+import { TABLE_MIME, EXPLORE_MIME, isTableMime, parseTablePayload } from "./notebookDisplay";
+
+// Lazy — GW pulls in React; load only when an explore() output appears.
+const VueGraphicWalker = defineAsyncComponent(
+  () => import("../exploreData/vueGraphicWalker/VueGraphicWalker.vue"),
+);
 
 interface Props {
   output: CellOutput;
 }
 
-defineProps<Props>();
+const props = defineProps<Props>();
+
+const appearance = useGraphicWalkerAppearance();
+
+// Parse each table/explore payload; malformed -> null (falls through to text).
+const tablePayloads = computed(() =>
+  (props.output.display_outputs ?? []).map((d) =>
+    isTableMime(d.mime_type) ? parseTablePayload(d.data) : null,
+  ),
+);
+
+const formatCount = (n: number): string => n.toLocaleString();
 
 const formatTime = (ms: number): string => {
   if (ms < 1) return "<1ms";
@@ -132,6 +182,39 @@ const autoResizeIframe = (event: Event) => {
   overflow-x: auto;
   white-space: pre-wrap;
   margin: 0;
+}
+
+/* Definite-height box; inner widget fills via flex. */
+.display-table,
+.display-explore {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--el-border-color, #dcdfe6);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--el-bg-color, #fff);
+}
+
+.display-table {
+  height: 440px;
+}
+
+.display-explore {
+  height: 560px;
+}
+
+.display-table > :first-child,
+.display-explore > :first-child {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.display-table-footer {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  color: var(--el-text-color-secondary);
+  border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
 }
 
 .output-stdout pre,

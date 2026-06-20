@@ -1269,6 +1269,9 @@ class FlowDataEngine:
             "csv": create_funcs.create_from_path_csv,
             "parquet": create_funcs.create_from_path_parquet,
             "excel": create_funcs.create_from_path_excel,
+            "ipc": create_funcs.create_from_path_ipc,
+            "ndjson": create_funcs.create_from_path_ndjson,
+            "avro": create_funcs.create_from_path_avro,
         }
 
         handler = file_type_handlers.get(received_table.file_type)
@@ -2673,6 +2676,7 @@ class FlowDataEngine:
             write_mode=output_fs.write_mode,
             sheet_name=output_fs.sheet_name,
             delimiter=output_fs.delimiter,
+            compression=output_fs.compression,
             flow_id=flow_id,
             node_id=node_id,
         )

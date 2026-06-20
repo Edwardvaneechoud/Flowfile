@@ -318,6 +318,7 @@
     "catalogRuns": "Run History",
     "catalogSchedules": "Schedules",
     "catalogSql": "SQL",
+    "catalogNotebook": "Notebook",
     "catalogVisuals": "Visuals",
     "catalogApis": "APIs",
     "dashboards": "Dashboards",

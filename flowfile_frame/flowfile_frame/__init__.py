@@ -108,13 +108,18 @@ from flowfile_frame.flow_frame_methods import (  # noqa: F401
     concat,
     from_dict,
     from_raw_data,
+    read_avro,
     read_csv,
     read_excel,
+    read_ipc,
+    read_ndjson,
     read_parquet,
     scan_csv,
     scan_csv_from_cloud_storage,
     scan_delta,
+    scan_ipc,
     scan_json_from_cloud_storage,
+    scan_ndjson,
     scan_parquet,
     scan_parquet_from_cloud_storage,
 )
@@ -156,4 +161,4 @@ DataFrame = FlowFrame  # Alias for compatibility with generated code
 try:
     __version__ = version("Flowfile")
 except PackageNotFoundError:
-    __version__ = "0.12.1"
+    __version__ = "0.12.2"

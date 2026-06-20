@@ -3,9 +3,12 @@ import os
 import polars as pl
 
 from flowfile_worker.create.models import (
+    InputAvroTable,
     InputCsvTable,
     InputExcelTable,
+    InputIpcTable,
     InputJsonTable,
+    InputNdjsonTable,
     InputParquetTable,
     ReceivedTable,
 )
@@ -136,6 +139,26 @@ def create_from_path_parquet(received_table: ReceivedTable):
     f = received_table.abs_file_path
     low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 2
     return pl.scan_parquet(source=f, low_memory=low_mem)
+
+
+def create_from_path_ipc(received_table: ReceivedTable):
+    if not isinstance(received_table.table_settings, InputIpcTable):
+        raise ValueError("Received table settings are not of type InputIpcTable")
+    return pl.scan_ipc(received_table.abs_file_path)
+
+
+def create_from_path_ndjson(received_table: ReceivedTable):
+    if not isinstance(received_table.table_settings, InputNdjsonTable):
+        raise ValueError("Received table settings are not of type InputNdjsonTable")
+    f = received_table.abs_file_path
+    low_mem = False if is_url(f) else os.path.getsize(f) / 1024 / 1000 / 1000 > 10
+    return pl.scan_ndjson(f, low_memory=low_mem)
+
+
+def create_from_path_avro(received_table: ReceivedTable):
+    if not isinstance(received_table.table_settings, InputAvroTable):
+        raise ValueError("Received table settings are not of type InputAvroTable")
+    return pl.read_avro(received_table.abs_file_path)
 
 
 def create_from_path_excel(received_table: ReceivedTable):

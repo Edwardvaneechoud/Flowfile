@@ -275,7 +275,7 @@ defineExpose({
   overflow-x: auto;
   background-color: var(--color-background-secondary);
   border-bottom: 1px solid var(--color-border-primary);
-  height: 42px;
+  height: 34px;
   padding-left: var(--spacing-1);
   scrollbar-width: thin;
 }
@@ -297,7 +297,7 @@ defineExpose({
   display: flex;
   align-items: center;
   padding: 0 var(--spacing-4);
-  height: 38px;
+  height: 30px;
   background-color: transparent;
   border-right: 1px solid var(--color-border-light);
   cursor: pointer;
@@ -305,14 +305,14 @@ defineExpose({
   max-width: 180px;
   position: relative;
   user-select: none;
-  border-radius: var(--border-radius-md) var(--border-radius-md) 0 0;
+  border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
   margin-right: 1px;
   transition: all var(--transition-fast);
 }
 
 .flow-tab.active {
   background-color: var(--color-background-primary);
-  border-top: 2px solid var(--primary-blue);
+  border-top: 2px solid var(--color-primary);
   box-shadow: var(--shadow-xs);
   z-index: 1;
 }

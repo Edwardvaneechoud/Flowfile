@@ -88,16 +88,16 @@ const props = withDefaults(
 
 const activeIndex = computed(() => {
   const name = route.name as string;
-  // Connection sub-items share the "connections" route but differ by ?tab=, so
-  // match the composite child index instead of the bare route name.
-  if (name === "connections") {
-    const tab = (route.query.tab as string) || "overview";
-    return `connections:${tab}`;
-  }
-  // Catalog sub-items likewise share the "catalog" route but differ by ?tab=.
-  if (name === "catalog") {
-    const tab = (route.query.tab as string) || "catalog";
-    return `catalog:${tab}`;
+  // Connections/Catalog sub-items share one route name but differ by ?tab=, so
+  // match the composite child index. Fall back to the parent's default child for
+  // unknown/absent tabs (e.g. catalog ?tab=dashboards) so the parent still highlights.
+  const fallbackTab: Record<string, string> = { connections: "overview", catalog: "catalog" };
+  if (name in fallbackTab) {
+    const candidate = `${name}:${(route.query.tab as string) || fallbackTab[name]}`;
+    const known = props.items
+      .find((item) => item.name === name)
+      ?.children?.some((child) => (child.index ?? child.name) === candidate);
+    return known ? candidate : `${name}:${fallbackTab[name]}`;
   }
   return name;
 });

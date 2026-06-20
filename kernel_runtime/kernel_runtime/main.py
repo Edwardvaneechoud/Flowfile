@@ -9,6 +9,7 @@ import signal
 import threading
 import time
 import warnings
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -53,6 +54,7 @@ class _DeprecatedFlowfileAlias:
     def __repr__(self):
         return f"<DeprecatedFlowfileAlias for {self._target!r}>"
 
+
 logger = logging.getLogger(__name__)
 
 artifact_store = ArtifactStore()
@@ -65,8 +67,25 @@ _namespace_access: dict[int, float] = {}  # flow_id -> last access timestamp
 _MAX_NAMESPACES = int(os.environ.get("MAX_NAMESPACES", "20"))
 
 # Display outputs from the most recent execution of each node, retrievable by
-# the frontend after a flow run completes.
-_display_output_store: dict[tuple[int, int], list[dict]] = {}
+# the frontend after a flow run completes. Bounded (LRU) so base64-image / 10k-row
+# table payloads can't accumulate across the kernel's lifetime.
+_display_output_store: OrderedDict[tuple[int, int], list[dict]] = OrderedDict()
+_MAX_DISPLAY_OUTPUTS = int(os.environ.get("MAX_DISPLAY_OUTPUTS", "200"))
+
+
+def _store_display_outputs(flow_id: int, node_id: int, payload: list[dict]) -> None:
+    """Store a node's display outputs, evicting the oldest entries past the cap."""
+    key = (flow_id, node_id)
+    _display_output_store.pop(key, None)
+    _display_output_store[key] = payload
+    while len(_display_output_store) > _MAX_DISPLAY_OUTPUTS:
+        _display_output_store.popitem(last=False)
+
+
+def _purge_display_outputs(flow_id: int) -> None:
+    """Drop all stored display outputs belonging to a flow."""
+    for key in [k for k in _display_output_store if k[0] == flow_id]:
+        del _display_output_store[key]
 
 
 def _evict_oldest_namespace() -> None:
@@ -94,6 +113,7 @@ def _clear_namespace(flow_id: int) -> None:
     """Clear the namespace for a flow (e.g., on kernel restart)."""
     _namespace_store.pop(flow_id, None)
     _namespace_access.pop(flow_id, None)
+    _purge_display_outputs(flow_id)
 
 
 # Execution cancellation.
@@ -267,10 +287,9 @@ except ImportError:
 
 
 def _maybe_wrap_last_expression(code: str) -> str:
-    """If the last statement is a bare expression, wrap it in flowfile_ctx.display().
+    """Wrap a bare last expression in flowfile_ctx._auto_display() (Jupyter-like).
 
-    This provides Jupyter-like behavior where the result of the last expression
-    is automatically displayed.
+    DataFrames show their repr there; use display()/explore() for the rich table.
     """
     try:
         tree = ast.parse(code)
@@ -282,14 +301,14 @@ def _maybe_wrap_last_expression(code: str) -> str:
     if not isinstance(last, ast.Expr):
         return code
 
-    # Don't wrap if the expression is None, a string literal, or already a call to display/print
+    # Don't wrap a None literal or an explicit print/display/explore call.
     if isinstance(last.value, ast.Constant) and last.value.value is None:
         return code
     if isinstance(last.value, ast.Call):
         func = last.value.func
-        if isinstance(func, ast.Name) and func.id in ("print", "display"):
+        if isinstance(func, ast.Name) and func.id in ("print", "display", "explore"):
             return code
-        if isinstance(func, ast.Attribute) and func.attr in ("print", "display"):
+        if isinstance(func, ast.Attribute) and func.attr in ("print", "display", "explore"):
             return code
 
     last_expr_text = ast.get_source_segment(code, last)
@@ -300,7 +319,7 @@ def _maybe_wrap_last_expression(code: str) -> str:
     prefix = "\n".join(lines[: last.lineno - 1])
     if prefix:
         prefix += "\n"
-    return prefix + f"flowfile_ctx.display({last_expr_text})\n"
+    return prefix + f"flowfile_ctx._auto_display({last_expr_text})\n"
 
 
 class ExecuteRequest(BaseModel):
@@ -438,7 +457,7 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
 
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
 
-        _display_output_store[(request.flow_id, request.node_id)] = [d.model_dump() for d in display_outputs]
+        _store_display_outputs(request.flow_id, request.node_id, [d.model_dump() for d in display_outputs])
 
         output_paths: list[str] = []
         if output_dir and Path(output_dir).exists():
@@ -474,7 +493,7 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
         )
     except Exception as exc:
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
-        _display_output_store[(request.flow_id, request.node_id)] = [d.model_dump() for d in display_outputs]
+        _store_display_outputs(request.flow_id, request.node_id, [d.model_dump() for d in display_outputs])
         elapsed = (time.perf_counter() - start) * 1000
         return ExecuteResponse(
             success=False,
@@ -512,6 +531,7 @@ async def clear_artifacts(flow_id: int | None = Query(default=None)):
     else:
         _namespace_store.clear()
         _namespace_access.clear()
+        _display_output_store.clear()
     return {"status": "cleared"}
 
 

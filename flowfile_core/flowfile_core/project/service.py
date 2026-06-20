@@ -21,7 +21,7 @@ from flowfile_core import __version__
 from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRegistration
-from flowfile_core.fileExplorer.funcs import _is_contained, _local_filesystem_roots, validate_file_path
+from flowfile_core.fileExplorer.funcs import _is_contained
 from flowfile_core.project import git_ops, projection, repository
 from flowfile_core.project.importer import import_project, preflight_import_caps, preflight_import_caps_worktree
 from flowfile_core.project.manifest import (
@@ -52,25 +52,22 @@ def project_root_base(owner_id: int) -> Path | None:
 def _confine_project_root(folder_path: str, owner_id: int) -> Path:
     """Resolve the requested folder to the owner's confined project subtree (multi-tenant only).
 
-    A bare name (or any relative path) is joined under the owner base; an absolute path must already
-    be contained in it. Roots equal to / ancestors of the shared internal roots are rejected.
-    Electron is unconfined — any local path under a filesystem root is allowed."""
-
+    A bare name (no separator) is joined under the base; an absolute/relative path must already be
+    contained in it. Roots equal to / ancestors of the shared internal roots are rejected.
+    Electron returns the resolved path unchanged."""
     base = project_root_base(owner_id)
     if base is None:
-        resolved = os.path.realpath(os.path.expanduser(folder_path))
-        for fs_root in _local_filesystem_roots():
-            root_real = os.path.realpath(fs_root)
-            prefix = root_real if root_real.endswith(os.sep) else root_real + os.sep
-            if resolved == root_real or resolved.startswith(prefix):
-                return Path(resolved)
-        raise HTTPException(status_code=403, detail="Access denied")
-    root = validate_file_path(folder_path.strip(), base)
-    if root is None:
-        raise HTTPException(status_code=403, detail="Access denied")
+        return Path(folder_path).expanduser().resolve()
+    candidate = folder_path.strip()
+    if candidate and os.sep not in candidate and (os.altsep is None or os.altsep not in candidate):
+        root = (base / candidate).resolve()
+    else:
+        root = Path(candidate).expanduser().resolve()
     for shared_root in (storage.base_directory, storage.database_directory, storage.user_data_directory):
         if _is_contained(str(root), str(shared_root)):
             raise HTTPException(status_code=403, detail="Access denied")
+    if not _is_contained(str(base), str(root)):
+        raise HTTPException(status_code=403, detail="Access denied")
     return root
 
 

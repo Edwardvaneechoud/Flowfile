@@ -50,6 +50,7 @@ class NamespaceTree(NamespaceOut):
     artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
     tables: list["CatalogTableOut"] = Field(default_factory=list)
     visualizations: list["VisualizationOut"] = Field(default_factory=list)
+    notebooks: list["NotebookSummaryOut"] = Field(default_factory=list)
 
 
 # ==================== Flow Registration Schemas ====================
@@ -792,6 +793,71 @@ class SchedulerStatusOut(BaseModel):
     started_at: datetime | None = None
     heartbeat_at: datetime | None = None
     is_embedded: bool | None = None
+
+
+NotebookCellType = Literal["python", "sql", "markdown"]
+
+
+class NotebookCellModel(BaseModel):
+    """A single notebook cell. ``source`` holds code / SQL / markdown text;
+    ``metadata`` carries per-cell extras (e.g. SQL ``max_rows``, collapsed flag).
+    Transient execution output is never persisted here — it lives client-side."""
+
+    id: str
+    type: NotebookCellType
+    source: str = ""
+    metadata: dict = Field(default_factory=dict)
+
+
+class NotebookCreate(BaseModel):
+    name: str
+    namespace_id: int | None = None
+    description: str | None = None
+    cells: list[NotebookCellModel] = Field(default_factory=list)
+    default_kernel_id: str | None = None
+
+
+class NotebookUpdate(BaseModel):
+    """Full-document PUT. Only provided fields are applied (``model_fields_set``)."""
+
+    name: str | None = None
+    namespace_id: int | None = None
+    description: str | None = None
+    cells: list[NotebookCellModel] | None = None
+    default_kernel_id: str | None = None
+
+
+class NotebookOut(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    namespace_id: int | None = None
+    cells: list[NotebookCellModel] = Field(default_factory=list)
+    default_kernel_id: str | None = None
+    owner_id: int
+    created_at: datetime
+    updated_at: datetime
+    namespace_name: str | None = None
+    access: AccessInfo | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotebookSummaryOut(BaseModel):
+    """Lightweight listing DTO — omits ``cells`` for the notebook selector."""
+
+    id: int
+    name: str
+    description: str | None = None
+    namespace_id: int | None = None
+    default_kernel_id: str | None = None
+    owner_id: int
+    created_at: datetime
+    updated_at: datetime
+    namespace_name: str | None = None
+    access: AccessInfo | None = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Rebuild forward-referenced models

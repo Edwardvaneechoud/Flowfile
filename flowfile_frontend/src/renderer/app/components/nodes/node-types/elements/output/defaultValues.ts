@@ -1,6 +1,9 @@
 import {
+  OutputAvroTable,
   OutputCsvTable,
   OutputExcelTable,
+  OutputIpcTable,
+  OutputNdjsonTable,
   OutputParquetTable,
   OutputSettings,
 } from "../../../baseNode/nodeInput";
@@ -8,6 +11,7 @@ import {
 export const createDefaultParquetSettings = (): OutputParquetTable => {
   return {
     file_type: "parquet",
+    compression: "zstd",
   };
 };
 
@@ -51,6 +55,7 @@ export function createCsvTableSettings(): OutputCsvTable {
 export function createParquetTableSettings(): OutputParquetTable {
   return {
     file_type: "parquet",
+    compression: "zstd",
   };
 }
 
@@ -58,5 +63,26 @@ export function createExcelTableSettings(): OutputExcelTable {
   return {
     file_type: "excel",
     sheet_name: "Sheet1",
+  };
+}
+
+export function createIpcTableSettings(): OutputIpcTable {
+  return {
+    file_type: "ipc",
+    compression: "uncompressed",
+  };
+}
+
+export function createNdjsonTableSettings(): OutputNdjsonTable {
+  return {
+    file_type: "ndjson",
+    compression: "uncompressed",
+  };
+}
+
+export function createAvroTableSettings(): OutputAvroTable {
+  return {
+    file_type: "avro",
+    compression: "uncompressed",
   };
 }

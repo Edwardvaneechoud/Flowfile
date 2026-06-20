@@ -49,6 +49,26 @@ df = ff.read_parquet("data.parquet")
 df = ff.read_parquet("sales_data.parquet", description="Q4 sales results")
 ```
 
+### Arrow IPC / Feather, NDJSON, and Avro Files
+
+Flowfile also reads Arrow IPC/Feather, newline-delimited JSON (NDJSON), and Avro
+files as first-class connectors:
+
+```python
+# Arrow IPC / Feather (lazy scan — like parquet)
+df = ff.read_ipc("data.arrow", description="Arrow IPC source")
+
+# Newline-delimited JSON (lazy scan)
+df = ff.read_ndjson("events.ndjson")
+
+# Avro (eager read — offloaded to the worker so core never holds the dataset)
+df = ff.read_avro("data.avro")
+```
+
+IPC and NDJSON are scanned lazily, so they expose `scan_ipc` / `scan_ndjson`
+aliases too. Avro has no lazy scan in Polars, so its read is offloaded to the
+worker.
+
 ### Scanning vs Reading
 
 Flowfile provides both `read_*` and `scan_*` functions for Polars compatibility:
@@ -57,6 +77,10 @@ Flowfile provides both `read_*` and `scan_*` functions for Polars compatibility:
 # These are identical in Flowfile
 df1 = ff.read_csv("data.csv")
 df2 = ff.scan_csv("data.csv")  # Alias for read_csv
+
+# Also available for the new lazy formats
+df3 = ff.scan_ipc("data.arrow")
+df4 = ff.scan_ndjson("events.ndjson")
 ```
 
 ## Cloud Storage Reading
