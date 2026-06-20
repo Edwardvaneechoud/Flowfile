@@ -54,13 +54,10 @@ def _confine_project_root(folder_path: str, owner_id: int) -> Path:
 
     A bare name (no separator) is joined under the base; an absolute/relative path must already be
     contained in it. Roots equal to / ancestors of the shared internal roots are rejected.
-    Electron returns the resolved path unchanged.
-
-    NOTE: keep the electron branch on ``Path(...).resolve()``. CodeQL recognizes ``Path.resolve()``
-    as the normalizer that keeps the returned ``root`` clean for the ~30 downstream filesystem sinks,
-    leaving only this line flagged (py/path-injection, dismissed as a false positive in the Code
-    Scanning UI). Swapping it for ``os.path.realpath`` + manual ``startswith`` is NOT recognized and
-    balloons the single alert into 33 downstream alerts."""
+    Electron returns the resolved path unchanged. Keep both branches on ``Path.resolve()`` — the
+    realpath + manual ``startswith`` alternative balloons CodeQL py/path-injection into ~33 downstream
+    alerts. The two ``resolve()`` calls here stay flagged (downstream is confined / electron is the
+    user's own machine); dismiss those two as false positives in the Code Scanning UI."""
     base = project_root_base(owner_id)
     if base is None:
         return Path(folder_path).expanduser().resolve()
