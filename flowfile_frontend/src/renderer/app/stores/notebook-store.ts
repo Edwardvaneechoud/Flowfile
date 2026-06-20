@@ -440,7 +440,8 @@ export const useNotebookStore = defineStore("notebook", {
       cell.execState = "idle";
     },
 
-    async runPythonCell(cell: NotebookCellModel, nb: OpenNotebook | null = this.active) {
+    async runPythonCell(cell: NotebookCellModel, nb: OpenNotebook | null = null) {
+      nb = nb ?? this.active;
       if (cell.execState === "running") return; // re-entrancy guard (also covers Shift+Enter)
       if (!nb) return;
       if (!nb.kernelId) {
