@@ -174,12 +174,14 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
     elif action == "open":
         folder = _validated_folder("Usage: flowfile project open <folder>")
         project, result = project_sync.open_project(folder, owner_id)
-        d = result.to_dict()
         print(f"Opened project '{project.name}' at {project.root}")
-        print(f"Imported: {d['imported']}")
-        n = len(d["placeholder_secrets"])
-        if n:
-            print(f"{n} secret(s) need values (set FLOWFILE_SECRET_<NAME> or update them in the app).")
+        print(
+            f"Imported: flows={result.imported_flows}, "
+            f"connections={result.imported_connections}, schedules={result.imported_schedules}"
+        )
+        missing = len(result.placeholder_secrets)
+        if missing:
+            print(f"{missing} value(s) need to be set (FLOWFILE_SECRET_<NAME> or update them in the app).")
     elif action == "save":
         if not arg:
             print('Usage: flowfile project save "<message>"', file=sys.stderr)
