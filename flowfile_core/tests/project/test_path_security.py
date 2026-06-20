@@ -187,29 +187,31 @@ class TestValidatePathElectronMode:
 
 
 class TestConfineProjectRootElectron:
-    """Electron branch: unconfined, but the path is normalized and kept under a real fs root.
+    """Electron branch: unconfined; returns ``Path(folder_path).expanduser().resolve()``.
 
-    A merge once reverted this inline normalize+startswith barrier to a bare .resolve(), so
-    CodeQL #152 reappeared. These tests pin that legitimate local paths still resolve.
+    Keep this on ``.resolve()`` — CodeQL recognizes it as the normalizer that keeps the
+    returned root clean downstream (only the line itself is flagged, a dismissed FP). The
+    ``os.path.realpath`` + manual ``startswith`` form balloons it into 33 downstream alerts.
+    These tests pin that legitimate local paths still resolve.
     """
 
     def test_absolute_path_resolves(self, tmp_path, monkeypatch):
-        # Non-regression: any local absolute path is accepted and returned realpath-normalized.
+        # Non-regression: any local absolute path is accepted and returned resolved.
         from flowfile_core.configs import settings
         from flowfile_core.project.service import _confine_project_root
 
         monkeypatch.setattr(settings, "FLOWFILE_MODE", "electron")
         target = tmp_path / "some" / "proj"
-        assert _confine_project_root(str(target), 1) == Path(os.path.realpath(str(target)))
+        assert _confine_project_root(str(target), 1) == Path(str(target)).expanduser().resolve()
 
     def test_user_home_is_expanded(self, monkeypatch):
-        # Non-regression: ~ is expanded (and the barrier still permits it).
+        # Non-regression: ~ is expanded.
         from flowfile_core.configs import settings
         from flowfile_core.project.service import _confine_project_root
 
         monkeypatch.setattr(settings, "FLOWFILE_MODE", "electron")
         result = _confine_project_root("~/flowfile-proj", 1)
-        assert str(result) == os.path.realpath(os.path.expanduser("~/flowfile-proj"))
+        assert result == Path("~/flowfile-proj").expanduser().resolve()
         assert "~" not in str(result)
 
 

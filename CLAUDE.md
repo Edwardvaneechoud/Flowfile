@@ -295,7 +295,7 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 
 ## CI/CD Workflows
 
-`.github/workflows/` holds 14 workflows (note the mix of `.yml` and `.yaml`). All path-filtered workflows also support `workflow_dispatch` (manual run).
+`.github/workflows/` holds 12 workflows (note the mix of `.yml` and `.yaml`). All path-filtered workflows also support `workflow_dispatch` (manual run). CodeQL security scanning is **not** a workflow file — it runs via GitHub Advanced Security **default setup** (configured in repo Settings → Code security), covering python/js-ts/actions/rust on a weekly schedule. (A legacy `codeql.yaml` advanced workflow was removed: it failed weekly on a missing config file and could not coexist with default setup.)
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
@@ -308,7 +308,6 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 | `flowfile-wasm-build.yml` | Push/PR to `main` (`flowfile_wasm/**`) | Build WASM version and run its test suite |
 | `docker-publish.yml` | Push to `main` (backend/frontend/worker/kernel/shared/tools paths), `release` published | Multi-arch Docker builds (amd64/arm64) → Docker Hub |
 | `documentation.yml` | Push/PR to `main` (`docs/**`, `mkdocs.yml`, `flowfile_frame/**/*.py`) | Build and deploy MkDocs site |
-| `codeql.yaml` | Weekly cron (Mon 06:00) | CodeQL security scan (Python, JS/TS) |
 | `pypi-release.yml` | Git tags `v*` | Build frontend into static, Poetry build, publish to PyPI |
 | `release.yaml` | Git tags `v*` | Build & sign Tauri desktop installers (macOS arm64/intel, Windows, Linux), publish GitHub release |
 | `npm-publish-wasm.yml` | Git tags `wasm-v*` | Publish `flowfile-editor` WASM package to npm |
