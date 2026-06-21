@@ -21,7 +21,7 @@ from flowfile_core import __version__
 from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRegistration
-from flowfile_core.fileExplorer.funcs import _is_contained
+from flowfile_core.fileExplorer.funcs import _is_contained, validate_path_under_cwd
 from flowfile_core.project import git_ops, projection, repository
 from flowfile_core.project.importer import import_project, preflight_import_caps, preflight_import_caps_worktree
 from flowfile_core.project.manifest import (
@@ -60,7 +60,8 @@ def _confine_project_root(folder_path: str, owner_id: int) -> Path:
     user's own machine); dismiss those two as false positives in the Code Scanning UI."""
     base = project_root_base(owner_id)
     if base is None:
-        return Path(folder_path).expanduser().resolve()
+        validated = validate_path_under_cwd(folder_path)
+        return Path(validated).expanduser().resolve()
     candidate = folder_path.strip()
     if candidate and os.sep not in candidate and (os.altsep is None or os.altsep not in candidate):
         root = (base / candidate).resolve()
