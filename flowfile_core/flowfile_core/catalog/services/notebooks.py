@@ -30,6 +30,14 @@ from flowfile_core.schemas.catalog_schema import (
 logger = logging.getLogger(__name__)
 
 
+def _project_sync_notebooks(user_id: int) -> None:
+    """Mirror a notebook create/update/delete into the active project's notebooks/ dir (no-op when
+    no project is active; never raises)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.notebooks_changed(user_id)
+
+
 class NotebookService:
     """Owns catalog notebooks: metadata rows + on-disk cell files."""
 
@@ -101,6 +109,7 @@ class NotebookService:
         except Exception:
             self.repo.delete_notebook(created.id)
             raise
+        _project_sync_notebooks(user_id)
         return self._notebook_to_out(created)
 
     def update_notebook(self, notebook_id: int, payload: NotebookUpdate, user_id: int) -> NotebookOut:
@@ -134,6 +143,7 @@ class NotebookService:
             else notebook_store.read_notebook_cells(updated.owner_id, updated.notebook_uuid)
         )
         self._write_file(updated, cells)
+        _project_sync_notebooks(user_id)
         return self._notebook_to_out(updated)
 
     def delete_notebook(self, notebook_id: int, user_id: int) -> None:
@@ -143,6 +153,7 @@ class NotebookService:
         owner_id, notebook_uuid = nb.owner_id, nb.notebook_uuid
         self.repo.delete_notebook(notebook_id)
         notebook_store.delete_notebook_file(owner_id, notebook_uuid)
+        _project_sync_notebooks(user_id)
 
     def _write_file(self, nb: CatalogNotebook, cells: list) -> None:
         notebook_store.write_notebook_file(

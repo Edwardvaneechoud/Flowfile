@@ -15,10 +15,12 @@ from pathlib import Path
 import yaml
 from sqlalchemy.orm import Session
 
+from flowfile_core.catalog.services import notebook_store
 from flowfile_core.catalog.services.tables import _is_managed_table_path
 from flowfile_core.database.models import (
     CatalogDashboard,
     CatalogNamespace,
+    CatalogNotebook,
     CatalogTable,
     CatalogVisualization,
     CloudStorageConnection,
@@ -30,7 +32,7 @@ from flowfile_core.database.models import (
     Secret,
 )
 from flowfile_core.project import manifest
-from flowfile_core.project.normalize import normalize_flow_data, safe_stem, unique_stem, write_yaml
+from flowfile_core.project.normalize import atomic_write, normalize_flow_data, safe_stem, unique_stem, write_yaml
 from flowfile_core.project.secrets_resolver import make_placeholder
 
 logger = logging.getLogger(__name__)
@@ -546,6 +548,56 @@ def regenerate_dashboards_manifest(db: Session, root: Path, owner_id: int) -> No
     write_yaml(manifest.dashboards_manifest_path(root), {"dashboards": entries})
 
 
+# --- notebooks ---------------------------------------------------------------
+
+
+def project_notebook(db: Session, root: Path, nb: CatalogNotebook, owner_id: int) -> Path:
+    """Write a notebook as ``notebooks/<stem>.notebook.yaml`` — one file per notebook, keyed by
+    ``notebook_uuid`` inside (like a flow). Metadata comes from the row, cells from the runtime
+    content file, and the namespace is rendered portable (``{catalog, schema}`` names). A same-named
+    notebook collides on a disambiguated ``<stem>_<uuid8>.notebook.yaml`` instead of overwriting."""
+    stem = safe_stem(nb.name)
+    target = manifest.notebooks_dir(root) / f"{stem}.notebook.yaml"
+    if target.exists():
+        existing = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+        if existing.get("notebook_uuid") not in (None, nb.notebook_uuid):
+            target = manifest.notebooks_dir(root) / f"{stem}_{nb.notebook_uuid[:8]}.notebook.yaml"
+    content = notebook_store.serialize_notebook(
+        notebook_uuid=nb.notebook_uuid,
+        name=nb.name,
+        description=nb.description,
+        namespace=_namespace_path(db, nb.namespace_id),
+        default_kernel_id=nb.default_kernel_id,
+        cells=notebook_store.read_notebook_cells(owner_id, nb.notebook_uuid),
+    )
+    atomic_write(target, content)
+    return target
+
+
+def regenerate_notebooks(db: Session, root: Path, owner_id: int) -> set[Path]:
+    """Project every one of the owner's notebooks; return the written paths. Ordered by
+    ``notebook_uuid`` so the bare-vs-suffixed filename for same-named notebooks is stable across
+    runs. Pruning of orphaned files is left to the caller."""
+    written: set[Path] = set()
+    for nb in (
+        db.query(CatalogNotebook)
+        .filter(CatalogNotebook.owner_id == owner_id)
+        .order_by(CatalogNotebook.notebook_uuid.asc())
+    ):
+        written.add(project_notebook(db, root, nb, owner_id))
+    return written
+
+
+def prune_orphan_notebooks(root: Path, written: set[Path]) -> None:
+    """Delete notebook files with no matching DB row (single-dir prune for the projection hook)."""
+    d = manifest.notebooks_dir(root)
+    if not d.exists():
+        return
+    for p in d.glob("*.notebook.yaml"):
+        if p not in written:
+            p.unlink(missing_ok=True)
+
+
 # --- full projection ---------------------------------------------------------
 
 
@@ -597,4 +649,5 @@ def project_all(db: Session, root: Path, owner_id: int) -> None:
     regenerate_kernels_manifest(db, root, owner_id)
     regenerate_visualizations_manifest(db, root, owner_id)
     regenerate_dashboards_manifest(db, root, owner_id)
+    written |= regenerate_notebooks(db, root, owner_id)
     _prune_orphan_files(root, written - {None})

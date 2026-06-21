@@ -25,13 +25,13 @@ ROOT_MANIFESTS: dict[str, str] = {
     "dashboards": "dashboards",
 }
 # Dirs whose .yaml files mirror DB rows one-for-one (pruned to the written set on full projection).
-MIRRORED_DIRS = ("flows", "connections/database", "connections/cloud", "schedules")
+MIRRORED_DIRS = ("flows", "connections/database", "connections/cloud", "schedules", "notebooks")
 # All repo-relative entries git is allowed to stage: the project manifest, .gitignore, every root
-# manifest, plus the top-level dirs holding flows/connections/schedules.
+# manifest, plus the top-level dirs holding flows/connections/schedules/notebooks.
 MANAGED_PATHS: list[str] = (
     [MANIFEST_NAME, ".gitignore"]
     + [f"{stem}.yaml" for stem in ROOT_MANIFESTS]
-    + ["flows", "connections", "schedules"]
+    + ["flows", "connections", "schedules", "notebooks"]
 )
 
 _GITIGNORE = """\
@@ -138,6 +138,10 @@ def connections_dir(root: Path, kind: str) -> Path:
 
 def schedules_dir(root: Path) -> Path:
     return root / "schedules"
+
+
+def notebooks_dir(root: Path) -> Path:
+    return root / "notebooks"
 
 
 def secrets_manifest_path(root: Path) -> Path:

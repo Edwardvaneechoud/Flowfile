@@ -234,6 +234,7 @@ def test_commit_only_stages_managed_paths(tmp_path):
             "flows/",
             "connections/",
             "schedules/",
+            "notebooks/",
         )
         managed_root_files = {
             "project.yaml",

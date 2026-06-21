@@ -79,6 +79,8 @@ def _classify_path(path: str) -> tuple[str, str]:
     name = path.split("/")[-1]
     if path.startswith("flows/") and name.endswith(".flow.yaml"):
         return "flow", name[: -len(".flow.yaml")]
+    if path.startswith("notebooks/") and name.endswith(".notebook.yaml"):
+        return "notebook", name[: -len(".notebook.yaml")]
     stem = name[: -len(".yaml")] if name.endswith(".yaml") else name
     if path.startswith("connections/database/"):
         return "database connection", stem
@@ -278,6 +280,23 @@ class ProjectSyncService:
 
     def dashboards_changed(self, user_id: int | None) -> None:
         self._project_manifest(user_id, projection.regenerate_dashboards_manifest, "dashboards-manifest")
+
+    def notebooks_changed(self, user_id: int | None) -> None:
+        """Re-project all the owner's notebook files and prune orphaned ones (one hook covers
+        create/update/delete/rename, like the manifest hooks). Notebooks are per-file (like flows),
+        so this can't use ``_project_manifest`` — it regenerates the dir then prunes. Never raises."""
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            return
+        try:
+            with git_ops.repo_lock(proj.root):
+                with get_db_context() as db:
+                    written = projection.regenerate_notebooks(db, proj.root, proj.owner_id)
+                projection.prune_orphan_notebooks(proj.root, written)
+            self._mark_projection(proj.owner_id, failed=False)
+        except Exception:
+            self._mark_projection(proj.owner_id, failed=True)
+            logger.error("Project notebooks projection failed", exc_info=True)
 
     # --- lifecycle (explicit user actions via /project router + CLI) ----------
 

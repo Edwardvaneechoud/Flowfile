@@ -72,6 +72,39 @@ def _notebook_path(owner_id: int, notebook_uuid: str) -> Path:
     return path
 
 
+def serialize_notebook(
+    *,
+    notebook_uuid: str,
+    name: str,
+    description: str | None,
+    namespace: str | dict | None,
+    default_kernel_id: str | None,
+    cells: list[NotebookCellModel],
+) -> str:
+    """Render a notebook to its canonical, deterministic YAML string (literal-block
+    source, fixed key order). ``namespace`` is passed through verbatim: the runtime
+    content file stores the leaf name (str), the projected project file stores a
+    portable ``{catalog, schema}`` dict."""
+    data = {
+        "notebook_format": NOTEBOOK_FORMAT,
+        "notebook_uuid": str(notebook_uuid),
+        "name": name,
+        "description": description,
+        "default_kernel_id": default_kernel_id,
+        "namespace": namespace,
+        "cells": [
+            {
+                "id": c.id,
+                "type": c.type,
+                "metadata": dict(sorted(c.metadata.items())),
+                "source": c.source,
+            }
+            for c in cells
+        ],
+    }
+    return _dump(data)
+
+
 def write_notebook_file(
     owner_id: int,
     notebook_uuid: str,
@@ -84,24 +117,15 @@ def write_notebook_file(
 ) -> None:
     """Atomically (over)write the notebook's content file. Deterministic: no
     timestamps, no outputs, fixed key order."""
-    data = {
-        "notebook_format": NOTEBOOK_FORMAT,
-        "notebook_uuid": str(notebook_uuid),
-        "name": name,
-        "description": description,
-        "default_kernel_id": default_kernel_id,
-        "namespace": namespace_name,
-        "cells": [
-            {
-                "id": c.id,
-                "type": c.type,
-                "metadata": dict(sorted(c.metadata.items())),
-                "source": c.source,
-            }
-            for c in cells
-        ],
-    }
-    _atomic_write(_notebook_path(owner_id, notebook_uuid), _dump(data))
+    content = serialize_notebook(
+        notebook_uuid=notebook_uuid,
+        name=name,
+        description=description,
+        namespace=namespace_name,
+        default_kernel_id=default_kernel_id,
+        cells=cells,
+    )
+    _atomic_write(_notebook_path(owner_id, notebook_uuid), content)
 
 
 def read_notebook_cells(owner_id: int, notebook_uuid: str) -> list[NotebookCellModel]:

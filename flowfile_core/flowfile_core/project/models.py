@@ -34,6 +34,7 @@ class KeptResources:
     kernel_ids: set[str]
     viz_uuids: set[str]
     dashboard_uuids: set[str]
+    notebook_uuids: set[str]
 
 
 @dataclass

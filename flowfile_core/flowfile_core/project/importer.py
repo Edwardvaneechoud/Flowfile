@@ -18,17 +18,20 @@ from pathlib import Path
 
 import yaml
 from pydantic import SecretStr, ValidationError
+from sqlalchemy.exc import IntegrityError
 
 from flowfile_core import flow_file_handler
 from flowfile_core.auth import sharing
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.catalog.delta_utils import table_exists
 from flowfile_core.catalog.exceptions import NamespaceExistsError, NamespaceNotEmptyError
+from flowfile_core.catalog.services import notebook_store
 from flowfile_core.catalog.services.tables import _is_managed_table_path
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogDashboard,
     CatalogNamespace,
+    CatalogNotebook,
     CatalogTable,
     CatalogVisualization,
     CloudStorageConnection,
@@ -56,7 +59,7 @@ from flowfile_core.project.models import KeptResources, SetupResult
 from flowfile_core.project.normalize import safe_stem, write_yaml
 from flowfile_core.project.projection import _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
 from flowfile_core.project.secrets_resolver import load_dotenv, placeholder_name, resolve
-from flowfile_core.schemas.catalog_schema import DashboardLayout
+from flowfile_core.schemas.catalog_schema import DashboardLayout, NotebookCellModel
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.schemas.input_schema import FullDatabaseConnection
 from flowfile_core.secret_manager.secret_manager import (
@@ -118,6 +121,7 @@ _MAX_ARTIFACTS = 500
 _MAX_KERNELS = 50
 _MAX_VISUALIZATIONS = 500
 _MAX_DASHBOARDS = 200
+_MAX_NOTEBOOKS = 500
 _MAX_SCHEDULES_PER_FLOW = 50
 
 
@@ -653,6 +657,79 @@ def _import_dashboards(root: Path, owner_id: int) -> set[str]:
     return kept
 
 
+def _import_notebooks(root: Path, owner_id: int) -> set[str]:
+    """Recreate the owner's notebooks from notebooks/*.notebook.yaml; return the kept notebook_uuids.
+
+    Upserts by notebook_uuid (mint a fresh one on a cross-owner collision, like visualizations). The
+    portable ``{catalog, schema}`` namespace re-resolves to a local id (namespaces import first) and
+    the cells are written back to the runtime content file so the notebook opens with its document
+    intact. A row that would collide on the global (name, namespace) uniqueness is skipped+logged so
+    import always completes."""
+    kept: set[str] = set()
+    files = sorted(manifest.notebooks_dir(root).glob("*.notebook.yaml"))
+    _assert_within_cap(files, _MAX_NOTEBOOKS, "notebooks")
+    for f in files:
+        data = _read_yaml(f)
+        name = data.get("name")
+        if not name:
+            continue
+        notebook_uuid = data.get("notebook_uuid") or str(uuid.uuid4())
+        # Mint a fresh uuid for a malformed value: notebook_store derives the content-file path via
+        # uuid.UUID(), so a non-UUID string (hand-edit / merge corruption / crafted file) would raise
+        # there and abort the whole import. Validate up front to keep import always-completing.
+        try:
+            uuid.UUID(str(notebook_uuid))
+        except (TypeError, ValueError):
+            logger.warning("Project import: notebook file %s has a malformed notebook_uuid; minting fresh", f.name)
+            notebook_uuid = str(uuid.uuid4())
+        ns = data.get("namespace") or {}
+        ns_id = (
+            _resolve_namespace(ns.get("catalog"), ns.get("schema"), owner_id, create=False)
+            if ns.get("catalog")
+            else None
+        )
+        cells: list[NotebookCellModel] = []
+        for item in data.get("cells") or []:
+            try:
+                cells.append(NotebookCellModel.model_validate(item))
+            except (TypeError, ValueError):
+                logger.warning("Project import: skipping invalid notebook cell in %s", f.name)
+        with get_db_context() as db:
+            existing = repository.owned_or_none(db, CatalogNotebook, "owner_id", owner_id, notebook_uuid=notebook_uuid)
+            taken = db.query(CatalogNotebook).filter_by(notebook_uuid=notebook_uuid).first()
+            if existing is None and taken is not None:
+                logger.warning(
+                    "Project import: notebook_uuid %s owned by another user; minting a fresh uuid", notebook_uuid
+                )
+                notebook_uuid = str(uuid.uuid4())
+            nb = existing or CatalogNotebook(notebook_uuid=notebook_uuid, owner_id=owner_id)
+            nb.name = name
+            nb.description = data.get("description")
+            nb.namespace_id = ns_id
+            nb.default_kernel_id = data.get("default_kernel_id")
+            nb.owner_id = owner_id
+            if existing is None:
+                db.add(nb)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                logger.warning("Project import: notebook %r collides on (name, namespace) uniqueness; skipping", name)
+                continue
+            ns_name = db.get(CatalogNamespace, ns_id).name if ns_id is not None else None
+        notebook_store.write_notebook_file(
+            owner_id,
+            notebook_uuid,
+            name=name,
+            description=data.get("description"),
+            namespace_name=ns_name,
+            default_kernel_id=data.get("default_kernel_id"),
+            cells=cells,
+        )
+        kept.add(notebook_uuid)
+    return kept
+
+
 def _import_flow(data: dict, owner_id: int) -> str | None:
     """Import one flow; returns the effective flow_uuid (the minted one on a cross-owner collision) or
     None when there is nothing to import."""
@@ -821,6 +898,17 @@ def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> N
             sharing.delete_grants_for_resource(db, "visualization", viz_id)
             db.query(CatalogVisualization).filter_by(id=viz_id).delete()
         db.commit()
+    # Notebooks (independent of the catalog graph). Clean grants explicitly (bulk delete bypasses the
+    # ORM after_delete backstop) and drop the on-disk content file so a pruned notebook leaves nothing.
+    with get_db_context() as db:
+        nq = db.query(CatalogNotebook.id, CatalogNotebook.notebook_uuid).filter(CatalogNotebook.owner_id == owner_id)
+        if kept.notebook_uuids:
+            nq = nq.filter(~CatalogNotebook.notebook_uuid.in_(kept.notebook_uuids))
+        for nb_id, nb_uuid in nq.all():
+            sharing.delete_grants_for_resource(db, "catalog_notebook", nb_id)
+            db.query(CatalogNotebook).filter_by(id=nb_id).delete()
+            notebook_store.delete_notebook_file(owner_id, nb_uuid)
+        db.commit()
     # Models first (soft-delete, keep the blob): a kept flow's pruned artifact just goes inactive.
     # A pruned flow's still-active artifacts are NOT touched here (delete_flow can't drop them — it
     # raises FlowHasArtifactsError); they are soft-deleted in the flow-prune branch below regardless
@@ -978,6 +1066,7 @@ def preflight_import_caps(root: Path, sha: str) -> None:
     _assert_within_cap(_under("schedules/", ".yaml"), _MAX_FLOWS, "schedules")
     _assert_within_cap(_under("connections/database/", ".yaml"), _MAX_CONNECTIONS, "database connections")
     _assert_within_cap(_under("connections/cloud/", ".yaml"), _MAX_CONNECTIONS, "cloud connections")
+    _assert_within_cap(_under("notebooks/", ".notebook.yaml"), _MAX_NOTEBOOKS, "notebooks")
 
     for path, key, cap, kind in _ROOT_MANIFEST_CAPS:
         text = git_ops.read_blob(root, sha, path)
@@ -1012,6 +1101,7 @@ def preflight_import_caps_worktree(root: Path) -> None:
     cloud_files = list(manifest.connections_dir(root, "cloud").glob("*.yaml"))
     _assert_within_cap(db_files, _MAX_CONNECTIONS, "database connections")
     _assert_within_cap(cloud_files, _MAX_CONNECTIONS, "cloud connections")
+    _assert_within_cap(list(manifest.notebooks_dir(root).glob("*.notebook.yaml")), _MAX_NOTEBOOKS, "notebooks")
     for path_fn, key, cap, kind in (
         (manifest.namespaces_manifest_path, "namespaces", _MAX_NAMESPACES, "namespaces"),
         (manifest.tables_manifest_path, "tables", _MAX_TABLES, "catalog tables"),
@@ -1088,6 +1178,7 @@ def _do_import_project_inner(root: Path, owner_id: int, prune: bool = False) -> 
     # (tiles re-link by viz_uuid).
     kept_viz_uuids = _import_visualizations(root, owner_id)
     kept_dashboard_uuids = _import_dashboards(root, owner_id)
+    kept_notebook_uuids = _import_notebooks(root, owner_id)
 
     if prune:
         _prune_removed(
@@ -1102,6 +1193,7 @@ def _do_import_project_inner(root: Path, owner_id: int, prune: bool = False) -> 
                 kernel_ids=kept_kernel_ids,
                 viz_uuids=kept_viz_uuids,
                 dashboard_uuids=kept_dashboard_uuids,
+                notebook_uuids=kept_notebook_uuids,
             ),
             result,
         )
