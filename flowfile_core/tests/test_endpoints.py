@@ -278,6 +278,13 @@ def test_get_flow():
     assert response.json()["flow_id"] == flow_id, "Flow not retrieved"
 
 
+def test_close_flow_idempotent_for_unknown_flow():
+    """Closing a flow that isn't in the user's session (e.g. a stale tab after a restore pruned it)
+    must be a no-op (200), not a 500."""
+    response = client.post("/editor/close_flow/", params={"flow_id": 999999999})
+    assert response.status_code == 200
+
+
 def test_add_node():
     flow_id = ensure_clean_flow()
     response = client.post(

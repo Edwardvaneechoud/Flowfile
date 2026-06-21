@@ -4,6 +4,7 @@ import { ElMessage } from "element-plus";
 import { defineStore } from "pinia";
 import { ProjectApi, ProjectFeatureUnavailable } from "../api/project.api";
 import type { ImportResult, ProjectInfo, ProjectVersion, ProjectVersionChange } from "../types";
+import { useFlowStore } from "./flow-store";
 
 function warnPruneErrors(res: ImportResult): void {
   if (res.prune_errors?.length) {
@@ -194,6 +195,9 @@ export const useProjectStore = defineStore("project", {
       const res = await ProjectApi.restore(sha, label);
       this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
       warnPruneErrors(res);
+      // Import no longer auto-opens flows; clear the active flow so a stale/pruned tab can't
+      // 404-loop and the canvas shows the empty state (matches the "Reopen any flows" prompt).
+      useFlowStore().setFlowId(-1);
       await this.refreshActive();
       this.loadVersions().catch(() => undefined);
     },
@@ -203,6 +207,7 @@ export const useProjectStore = defineStore("project", {
         const res = await ProjectApi.reload();
         this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
         warnPruneErrors(res);
+        useFlowStore().setFlowId(-1);
         await this.refreshActive();
         return res;
       } catch (e: any) {

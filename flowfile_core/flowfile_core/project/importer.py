@@ -763,7 +763,9 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
                 else storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
             )
         write_yaml(runtime_path, data)  # flow_uuid / catalog_name / namespace ignored by the FlowfileData loader
-        flow_file_handler.import_flow(runtime_path, user_id=owner_id)
+        # Load (with owner_id so cloud connections resolve) but don't open an editor session: project
+        # import must not auto-open flows on the canvas. The user opens a flow explicitly via /import_flow/.
+        flow_file_handler.import_flow(runtime_path, user_id=owner_id, register_session=False)
         if existing is None:
             auto_register_flow(str(runtime_path), catalog_name, owner_id)
         # Reconcile identity + display name + namespace placement to the file (keeps flow_uuid stable for
@@ -942,6 +944,9 @@ def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> N
         if kept.flow_uuids:
             fq = fq.filter(~FlowRegistration.flow_uuid.in_(kept.flow_uuids))
         for reg in fq.all():
+            # Read attributes into locals before delete_flow expires/detaches the ORM row.
+            reg_flow_path = reg.flow_path
+            reg_flow_uuid = reg.flow_uuid
             # A pruned flow must be fully removed even when this project doesn't track artifacts
             # (kept_artifact_ids is None, so the soft-delete pass above was skipped). Release the
             # flow's still-active artifacts here regardless of the toggle, otherwise delete_flow
@@ -955,9 +960,12 @@ def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> N
                 for s in service.list_schedules(registration_id=reg.id):
                     service.delete_schedule(s.id)
                 service.delete_flow(reg.id, delete_file=True)
+                # Evict from the in-memory handler too (catalog delete only touches DB+disk), so a
+                # flow open before a restore can't ghost in _flows / a user session after pruning.
+                flow_file_handler.evict_flow_by_path(reg_flow_path)
             except Exception:
-                logger.warning("Project prune: could not remove flow %s", reg.flow_uuid, exc_info=True)
-                result.prune_errors.append(f"flow:{reg.flow_uuid}")
+                logger.warning("Project prune: could not remove flow %s", reg_flow_uuid, exc_info=True)
+                result.prune_errors.append(f"flow:{reg_flow_uuid}")
     with get_db_context() as db:
         _prune_owned(
             db,

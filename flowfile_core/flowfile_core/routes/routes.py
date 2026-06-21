@@ -1031,8 +1031,11 @@ def create_flow(
 
 @router.post("/editor/close_flow/", tags=["editor"])
 def close_flow(flow_id: int, current_user=Depends(get_current_active_user)) -> None:
-    """Closes an active flow session for the current user."""
+    """Closes an active flow session for the current user. Idempotent: closing a flow that isn't in
+    the session (e.g. a stale tab after a restore pruned it) is a no-op, not a 500."""
     user_id = current_user.id if current_user else None
+    if not flow_file_handler.user_has_flow(user_id, flow_id):
+        return
     flow_file_handler.delete_flow(flow_id, user_id=user_id)
 
 

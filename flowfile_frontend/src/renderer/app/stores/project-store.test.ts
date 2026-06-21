@@ -23,11 +23,18 @@ const mocks = vi.hoisted(() => {
     setSecrets: vi.fn(),
     close: vi.fn(),
     warning: vi.fn(),
+    setFlowId: vi.fn(),
   };
 });
 
 vi.mock("element-plus", () => ({
   ElMessage: { warning: mocks.warning },
+}));
+
+// Mock the flow store: the real module pulls in the `../api` barrel (axios.config),
+// which reaches DOM globals at import time and would crash under the node env.
+vi.mock("./flow-store", () => ({
+  useFlowStore: () => ({ setFlowId: mocks.setFlowId }),
 }));
 
 vi.mock("../api/project.api", () => ({
@@ -193,6 +200,7 @@ describe("restoreVersion", () => {
     expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback");
     expect(mocks.warning).toHaveBeenCalled();
     expect(mocks.getActive).toHaveBeenCalled();
+    expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
   });
 });
 
@@ -210,6 +218,7 @@ describe("reloadFromDisk", () => {
     expect(res.imported.connections).toBe(1);
     expect(store.placeholderSecrets).toEqual(["s"]);
     expect(mocks.getActive).toHaveBeenCalled();
+    expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
   });
 
   it("hides the reload action when the route is unavailable", async () => {

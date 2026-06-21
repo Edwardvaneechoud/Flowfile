@@ -689,6 +689,73 @@ def test_no_rename_churn_after_restore(tmp_path):
         project_sync.close_project(OWNER)
 
 
+def test_import_does_not_register_editor_session(tmp_path):
+    """Project import must load flows into the registry but NOT open them in the owner's editor
+    session — otherwise every flow auto-opens on the canvas after open/restore/reload."""
+    from flowfile_core import flow_file_handler
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    flow_uuid = _make_flow_named(tmp_path, "gd_internal", "GD Catalog")
+    root = tmp_path / "project"
+    runtime_path = None
+    try:
+        project_sync.init_project(str(root), "Session Test", OWNER)
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            runtime_path = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first().flow_path
+        loaded = [
+            f for f in flow_file_handler.flowfile_flows if f.flow_settings and f.flow_settings.path == runtime_path
+        ]
+        assert loaded, "import must load the flow into the global registry"
+        flow_id = loaded[0].flow_id
+        # Loaded globally — editor/run routes call get_flow() without a user_id...
+        assert flow_file_handler.get_flow(flow_id) is not None
+        # ...but the import must NOT open an editor session (no auto-open on the canvas).
+        assert not flow_file_handler.user_has_flow(OWNER, flow_id)
+    finally:
+        if runtime_path:
+            flow_file_handler.evict_flow_by_path(runtime_path)
+        _delete_flow(flow_uuid)
+        project_sync.close_project(OWNER)
+
+
+def test_restore_evicts_pruned_open_flow_from_handler(tmp_path):
+    """A flow the user had open before a restore that prunes it must be evicted from the in-memory
+    handler, not linger as a ghost session that 404/500s the editor."""
+    from flowfile_core import flow_file_handler
+    from flowfile_core.project import git_ops
+
+    if not git_ops.git_available():
+        pytest.skip("git not available")
+    project_sync.close_project(OWNER)
+    flow_uuid = _make_flow_named(tmp_path, "ge_internal", "GE Catalog", flow_id=424242)
+    second_path = str(tmp_path / "ge_second.yaml")
+    second_uuid = None
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Evict Test", OWNER)
+        sha_v1 = git_ops.head_sha(root)
+
+        second_uuid = _make_flow_named(tmp_path, "ge_second", "GE Second", flow_id=424243)
+        project_sync.save_version(OWNER, "add second")
+
+        # Simulate the user explicitly opening the second flow (registers an editor session).
+        opened_id = flow_file_handler.import_flow(second_path, user_id=OWNER)
+        assert flow_file_handler.user_has_flow(OWNER, opened_id)
+
+        # Restore to v1 (which has no second flow) → it must be pruned AND evicted from the handler.
+        project_sync.restore_version(OWNER, sha_v1, "v1")
+        assert flow_file_handler.get_flow(opened_id) is None
+        assert not flow_file_handler.user_has_flow(OWNER, opened_id)
+    finally:
+        flow_file_handler.evict_flow_by_path(second_path)
+        _delete_flow(flow_uuid)
+        if second_uuid:
+            _delete_flow(second_uuid)
+        project_sync.close_project(OWNER)
+
+
 def test_save_version_prunes_orphan_file(tmp_path):
     project_sync.close_project(OWNER)
     flow_uuid = _make_flow_named(tmp_path, "fc_internal", "FC Catalog")
