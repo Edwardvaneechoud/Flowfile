@@ -1,6 +1,5 @@
 <template>
   <div class="app-layout">
-    <Header />
     <div class="app-layout__content">
       <div class="app-layout__sidebar-wrapper" :class="{ minimized: isCollapse }">
         <Sidebar :is-collapse="isCollapse" @toggle-collapse="toggleCollapse" />
@@ -28,7 +27,6 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
-import Header from "../components/layout/Header/AppHeader.vue";
 import Sidebar from "../components/layout/Sidebar/Sidebar.vue";
 import ChangePasswordModal from "../components/common/ChangePasswordModal/ChangePasswordModal.vue";
 import TutorialOverlay from "../components/tutorial/TutorialOverlay.vue";

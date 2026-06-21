@@ -70,6 +70,7 @@ import { PageHelpModal } from "../../common";
 import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
 import { useAuthStore } from "../../../stores/auth-store";
+import { useProjectStore } from "../../../stores/project-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../tutorial/tutorials";
 import { designerHelp } from "../../../views/DesignerView/designerHelp";
@@ -91,6 +92,7 @@ defineEmits(["toggle-collapse"]);
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const projectStore = useProjectStore();
 const tutorialStore = useTutorialStore();
 
 // Page help
@@ -123,11 +125,14 @@ watch(
 const items = computed(() => {
   const isAdmin = authStore.isAdmin;
   const isDesktopShell = authService.isInDesktopMode();
-  return NavigationRoutes.routes.filter((route) => {
-    if (route.hideInElectron && isDesktopShell) return false;
-    if (route.dockerOnly && isDesktopShell) return false;
-    return !route.requiresAdmin || isAdmin;
-  });
+  const projectDot = projectStore.isActive ? projectStore.status : undefined;
+  return NavigationRoutes.routes
+    .filter((route) => {
+      if (route.hideInElectron && isDesktopShell) return false;
+      if (route.dockerOnly && isDesktopShell) return false;
+      return !route.requiresAdmin || isAdmin;
+    })
+    .map((route) => (route.name === "project" ? { ...route, statusDot: projectDot } : route));
 });
 
 const showLogout = computed(() => !authService.isInDesktopMode());

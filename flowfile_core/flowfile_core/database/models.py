@@ -612,26 +612,25 @@ class CatalogDashboard(Base):
 class CatalogNotebook(Base):
     """A saved notebook: the catalog's exploration console.
 
-    A notebook is a first-class catalog entity (like tables / flows / viz),
-    holding an ordered list of mixed cells (Python / SQL / Markdown) serialised
-    into ``cells_json`` — read and written as a whole document, never queried
-    per-cell, so a JSON blob (cf. ``CatalogVisualization.spec_json``) is the
-    right shape rather than a child table. ``namespace_id`` places it in the
-    catalog hierarchy. Python cells run on a kernel; ``default_kernel_id``
-    remembers the last selected kernel (plain id, no FK — a deleted kernel just
-    means "nothing pre-selected", never a cascade).
+    This row is registration/metadata only. The cell content lives on disk as a
+    deterministic YAML file keyed by ``notebook_uuid`` (see
+    ``catalog/services/notebook_store.py``) so notebooks diff cleanly and fold
+    into the project git-tracking the same way flows do (a ``FlowRegistration``
+    row + its on-disk file). ``namespace_id`` places it in the catalog
+    hierarchy. Python cells run on a kernel; ``default_kernel_id`` remembers the
+    last selected kernel (plain id, no FK — a deleted kernel just means "nothing
+    pre-selected", never a cascade). The integer ``id`` stays the public handle
+    (the frontend derives the kernel session key from it) and the grant key.
     """
 
     __tablename__ = "catalog_notebooks"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Stable handle for the on-disk content file (``<owner>/<uuid>.notebook.yaml``).
+    notebook_uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
-
-    # JSON array of cells: [{"id": str, "type": "python"|"sql"|"markdown",
-    #                        "source": str, "metadata": {...}}]
-    cells_json = Column(Text, nullable=False, default="[]")
 
     # Last kernel selected for Python cells (string id; no FK by design).
     default_kernel_id = Column(String, nullable=True)
