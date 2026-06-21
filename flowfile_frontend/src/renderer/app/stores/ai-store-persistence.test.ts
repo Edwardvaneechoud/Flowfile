@@ -71,6 +71,9 @@ describe("loadPersistedAiState", () => {
         messages: sampleMessages(),
         selectedProvider: "anthropic",
         selectedModel: "claude-opus-4-7",
+        splitModels: true,
+        simpleProvider: "local",
+        simpleModel: "qwen2.5-coder-3b",
       },
       storage,
     );
@@ -81,6 +84,21 @@ describe("loadPersistedAiState", () => {
     expect(state.messages[1]).toMatchObject({ id: 2, role: "assistant", content: "Hi there!" });
     expect(state.selectedProvider).toBe("anthropic");
     expect(state.selectedModel).toBe("claude-opus-4-7");
+    expect(state.splitModels).toBe(true);
+    expect(state.simpleProvider).toBe("local");
+    expect(state.simpleModel).toBe("qwen2.5-coder-3b");
+  });
+
+  it("defaults the split-model fields to null for legacy entries without them", () => {
+    const storage = makeStorage();
+    persistAiState(
+      { messages: sampleMessages(), selectedProvider: "anthropic", selectedModel: "x" },
+      storage,
+    );
+    const state = loadPersistedAiState(storage);
+    expect(state.splitModels).toBeNull();
+    expect(state.simpleProvider).toBeNull();
+    expect(state.simpleModel).toBeNull();
   });
 
   it("treats corrupt JSON as empty (no crash) and clears the bad entry", () => {

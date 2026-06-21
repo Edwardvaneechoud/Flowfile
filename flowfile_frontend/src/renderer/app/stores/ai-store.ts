@@ -162,6 +162,17 @@ export const useAiStore = defineStore("ai", () => {
   const selectedProvider = ref<string | null>(null);
   const selectedModel = ref<string | null>(null);
 
+  // Optional two-tier model selection. When ``splitModels`` is false (default),
+  // ``selectedProvider`` / ``selectedModel`` drive *every* AI feature. When
+  // true, the *simple* surfaces (cron-from-text, join-key suggestions) run on
+  // their own ``simpleProvider`` / ``simpleModel`` instead — so a user can run
+  // simple tasks on a cheap/local model while chat & agents use a stronger one.
+  // ``null`` on a simple tier field falls back to the main provider / the
+  // provider's per-surface preset. Resolve per-surface via ``resolveSurface``.
+  const splitModels = ref<boolean>(false);
+  const simpleProvider = ref<string | null>(null);
+  const simpleModel = ref<string | null>(null);
+
   // Local model (offline llama.cpp) status. Surfaced as a synthetic
   // ``"local"`` entry in ``providers`` so the chat drawer's picker lists it
   // without it being a BYOK provider — chat + generate special-case the id
@@ -267,6 +278,15 @@ export const useAiStore = defineStore("ai", () => {
   if (_hydrated.selectedModel !== null) {
     selectedModel.value = _hydrated.selectedModel;
   }
+  if (_hydrated.simpleModel !== null && _hydrated.simpleModel !== undefined) {
+    simpleModel.value = _hydrated.simpleModel;
+  }
+  if (_hydrated.simpleProvider !== null && _hydrated.simpleProvider !== undefined) {
+    simpleProvider.value = _hydrated.simpleProvider;
+  }
+  if (_hydrated.splitModels !== null && _hydrated.splitModels !== undefined) {
+    splitModels.value = _hydrated.splitModels;
+  }
   // Seed ``mode`` from sessionStorage (per-tab, fresh on tab close);
   // fall back to the legacy ``autoPromote`` from the localStorage blob
   // when no sessionStorage value is present (migration shim).
@@ -309,6 +329,9 @@ export const useAiStore = defineStore("ai", () => {
             messages: messages.value,
             selectedProvider: selectedProvider.value,
             selectedModel: selectedModel.value,
+            splitModels: splitModels.value,
+            simpleProvider: simpleProvider.value,
+            simpleModel: simpleModel.value,
             agentModeAccepted: agentModeAccepted.value,
             selectedAgentSurface: selectedAgentSurface.value,
             verifyPlanCompletion: verifyPlanCompletion.value,
@@ -336,6 +359,9 @@ export const useAiStore = defineStore("ai", () => {
   watch(messages, queuePersist, { deep: true, flush: "sync" });
   watch(selectedProvider, queuePersist, { flush: "sync" });
   watch(selectedModel, queuePersist, { flush: "sync" });
+  watch(splitModels, queuePersist, { flush: "sync" });
+  watch(simpleProvider, queuePersist, { flush: "sync" });
+  watch(simpleModel, queuePersist, { flush: "sync" });
   watch(selectedAgentSurface, queuePersist, { flush: "sync" });
   watch(verifyPlanCompletion, queuePersist, { flush: "sync" });
   watch(streamingState, queuePersist, { flush: "sync" });
@@ -370,6 +396,9 @@ export const useAiStore = defineStore("ai", () => {
           messages: messages.value,
           selectedProvider: selectedProvider.value,
           selectedModel: selectedModel.value,
+          splitModels: splitModels.value,
+          simpleProvider: simpleProvider.value,
+          simpleModel: simpleModel.value,
           agentModeAccepted: agentModeAccepted.value,
           selectedAgentSurface: selectedAgentSurface.value,
           verifyPlanCompletion: verifyPlanCompletion.value,
@@ -388,6 +417,15 @@ export const useAiStore = defineStore("ai", () => {
       }
       if (loaded.selectedModel !== null) {
         selectedModel.value = loaded.selectedModel;
+      }
+      if (loaded.simpleModel !== null && loaded.simpleModel !== undefined) {
+        simpleModel.value = loaded.simpleModel;
+      }
+      if (loaded.simpleProvider !== null && loaded.simpleProvider !== undefined) {
+        simpleProvider.value = loaded.simpleProvider;
+      }
+      if (loaded.splitModels !== null && loaded.splitModels !== undefined) {
+        splitModels.value = loaded.splitModels;
       }
       // ``mode`` is session-global (sessionStorage), NOT per-flow, so
       // a flow switch doesn't touch it. Only ``agentModeAccepted``
@@ -546,6 +584,62 @@ export const useAiStore = defineStore("ai", () => {
           console.warn("ai-store: selectLocalModel failed", err);
         });
     }
+  };
+
+  const setSimpleModel = (model: string | null): void => {
+    simpleModel.value = model;
+  };
+
+  const setSimpleProvider = (name: string): void => {
+    simpleProvider.value = name;
+    const meta = providers.value.find((p) => p.provider === name);
+    // Default the simple model to the new provider's default so the picker
+    // opens on a valid model rather than an empty preset.
+    simpleModel.value = meta ? (meta.credential?.defaultModel ?? meta.defaultModel ?? null) : null;
+  };
+
+  const setSplitModels = (on: boolean): void => {
+    splitModels.value = on;
+    // Seed the simple tier from the main selection the first time it's enabled
+    // so toggling on is a no-op until the user actually changes it.
+    if (on && simpleProvider.value === null) {
+      simpleProvider.value = selectedProvider.value;
+      simpleModel.value = selectedModel.value;
+    }
+  };
+
+  // Surfaces driven by the *simple* tier (cheap/fast) when ``splitModels`` is
+  // on. Everything else is *complex*. Mirrors the backend surface names
+  // (``cron``, ``settings_autocomplete``); keep in lockstep with the backend
+  // ``surface_models`` keys those endpoints resolve against.
+  const _SIMPLE_SURFACES = new Set<string>(["cron", "settings_autocomplete"]);
+
+  // Resolve the (provider, model) pair that actually runs for a given AI
+  // surface — the source of truth call sites send to the backend. Simple
+  // surfaces use the simple tier only when ``splitModels`` is on (falling back
+  // to the main provider). ``null`` model → let the backend resolve the
+  // provider's per-surface preset.
+  const resolveSurface = (surface: string): { provider: string | null; model: string | null } => {
+    const useSimple = splitModels.value && _SIMPLE_SURFACES.has(surface);
+    if (useSimple) {
+      return {
+        provider: simpleProvider.value ?? selectedProvider.value,
+        model: simpleModel.value,
+      };
+    }
+    return { provider: selectedProvider.value, model: selectedModel.value };
+  };
+
+  // Resolve the concrete model id that runs for a surface (for display, e.g.
+  // a badge). Falls through to the provider's per-surface preset / default
+  // when no tier model is pinned. ``null`` → no provider / AI disabled.
+  const modelForSurface = (surface: string): string | null => {
+    const { provider, model } = resolveSurface(surface);
+    if (model) return model;
+    if (provider === null) return null;
+    const meta = providers.value.find((p) => p.provider === provider);
+    if (!meta) return null;
+    return meta.surfaces?.[surface] ?? meta.credential?.defaultModel ?? meta.defaultModel ?? null;
   };
 
   const setSelectedAgentSurface = (
@@ -1465,6 +1559,9 @@ export const useAiStore = defineStore("ai", () => {
     providersError,
     selectedProvider,
     selectedModel,
+    splitModels,
+    simpleProvider,
+    simpleModel,
     messages,
     streamingState,
     streamError,
@@ -1480,6 +1577,8 @@ export const useAiStore = defineStore("ai", () => {
     isStreaming,
     configuredProviders,
     hasConfiguredProvider,
+    modelForSurface,
+    resolveSurface,
     isLocalSelected,
     canSetupLocal,
     // actions
@@ -1493,6 +1592,9 @@ export const useAiStore = defineStore("ai", () => {
     loadProviders,
     setSelectedProvider,
     setSelectedModel,
+    setSimpleModel,
+    setSimpleProvider,
+    setSplitModels,
     selectedAgentSurface,
     setSelectedAgentSurface,
     verifyPlanCompletion,

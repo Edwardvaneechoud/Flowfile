@@ -562,10 +562,13 @@ async function generateCron() {
   aiGenerating.value = true;
   aiError.value = null;
   try {
+    // Cron-from-text is a simple surface — resolveSurface routes it to the
+    // simple tier when the user has split models on, else the main selection.
+    const { provider, model } = aiStore.resolveSurface("cron");
     const request = {
       description,
-      provider: aiStore.selectedProvider ?? undefined,
-      model: aiStore.selectedModel,
+      provider: provider ?? undefined,
+      model,
     };
     let resp = await generateCronExpression(request);
     // A cold first call can time out while the provider SDK imports; that attempt

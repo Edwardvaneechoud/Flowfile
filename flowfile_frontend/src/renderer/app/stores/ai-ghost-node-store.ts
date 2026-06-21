@@ -32,6 +32,7 @@ import {
 } from "../api/ai.api";
 import { FlowApi } from "../api/flow.api";
 import type { NodeConnection } from "../types/canvas.types";
+import { useAiStore } from "./ai-store";
 
 const isAbortError = (err: unknown): boolean => {
   if (err instanceof DOMException && err.name === "AbortError") return true;
@@ -87,8 +88,20 @@ export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
     suggestions.value = [];
     degradedReason.value = null;
 
+    // Ghost suggestions are a complex surface: fill the user's provider +
+    // model when the caller didn't pin them. Without the provider fill the
+    // backend defaults to anthropic and 409s for users on any other provider
+    // (e.g. OpenRouter-only).
+    const aiStore = useAiStore();
+    const resolved = aiStore.resolveSurface("ghost_node");
+    const enriched: SuggestNextNodeRequest = {
+      ...body,
+      provider: body.provider ?? resolved.provider ?? undefined,
+      model: body.model ?? resolved.model ?? undefined,
+    };
+
     try {
-      const result = await fetchNextNodeSuggestions(body, controller.signal);
+      const result = await fetchNextNodeSuggestions(enriched, controller.signal);
       lastError.value = null;
       aiDisabled.value = false;
       suggestions.value = result.suggestions;

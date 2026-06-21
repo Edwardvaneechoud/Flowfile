@@ -134,6 +134,104 @@
       </div>
     </div>
 
+    <!-- Models: pick the provider + model AI features run on. Optionally
+         split off a cheaper model for lightweight tasks. -->
+    <div v-if="!isDisabled && aiStore.hasConfiguredProvider" class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Models</h3>
+      </div>
+      <div class="card-content">
+        <p class="hint-text models-intro">
+          Choose the provider and model Flowfile's AI features run on. The chat drawer's picker
+          mirrors this selection.
+        </p>
+
+        <!-- Main selection — drives everything unless a split is enabled. -->
+        <div class="model-row">
+          <div class="model-field">
+            <label class="model-field__label" for="ai-main-provider">
+              {{ aiStore.splitModels ? "Complex provider" : "Provider" }}
+            </label>
+            <select
+              id="ai-main-provider"
+              class="model-select"
+              :value="aiStore.selectedProvider ?? ''"
+              @change="onMainProviderChange"
+            >
+              <option
+                v-for="p in aiStore.configuredProviders"
+                :key="p.provider"
+                :value="p.provider"
+              >
+                {{ p.provider }}
+              </option>
+            </select>
+          </div>
+          <div class="model-field">
+            <label class="model-field__label" for="ai-main-model">Model</label>
+            <select
+              id="ai-main-model"
+              class="model-select"
+              :value="aiStore.selectedModel ?? ''"
+              @change="onMainModelChange"
+            >
+              <option value="">Provider default</option>
+              <option v-for="m in mainModels" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
+        </div>
+        <p class="model-tier__hint">
+          {{
+            aiStore.splitModels
+              ? "Heavier tasks: chat, agent, next-node suggestions, command palette (⌘K), code generation."
+              : "Used by every AI feature."
+          }}
+        </p>
+
+        <!-- Split toggle. -->
+        <label class="model-split-toggle">
+          <input type="checkbox" :checked="aiStore.splitModels" @change="onSplitToggle" />
+          <span>Use a separate, cheaper model for simple tasks</span>
+        </label>
+
+        <!-- Simple tier — own provider + model, shown only when split on. -->
+        <div v-if="aiStore.splitModels" class="model-row model-row--simple">
+          <div class="model-field">
+            <label class="model-field__label" for="ai-simple-provider">Simple provider</label>
+            <select
+              id="ai-simple-provider"
+              class="model-select"
+              :value="simpleProviderName ?? ''"
+              @change="onSimpleProviderChange"
+            >
+              <option
+                v-for="p in aiStore.configuredProviders"
+                :key="p.provider"
+                :value="p.provider"
+              >
+                {{ p.provider }}
+              </option>
+            </select>
+          </div>
+          <div class="model-field">
+            <label class="model-field__label" for="ai-simple-model">Model</label>
+            <select
+              id="ai-simple-model"
+              class="model-select"
+              :value="aiStore.simpleModel ?? ''"
+              @change="onSimpleModelChange"
+            >
+              <option value="">Provider default</option>
+              <option v-for="m in simpleModels" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
+        </div>
+        <p v-if="aiStore.splitModels" class="model-tier__hint">
+          Lighter tasks: cron text→schedule and join-key suggestions.
+        </p>
+      </div>
+    </div>
+
     <!-- Local model: install an offline llama.cpp runtime + small GGUF on
          demand. Nothing downloads until the user clicks Install. -->
     <div v-if="!isDisabled" class="card mb-3">
@@ -498,6 +596,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { ElButton, ElDialog, ElMessage, ElTag } from "element-plus";
 import { useAuthStore } from "../../stores/auth-store";
+import { useAiStore } from "../../stores/ai-store";
 import {
   AiDisabledError,
   AI_DISABLED_DETAIL,
@@ -521,6 +620,63 @@ import type { LocalModelEntry, LocalModelStatus } from "./localModelApi";
 
 const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.isAdmin);
+
+// The Models card below reads/writes the ai-store tier state (the same
+// state the chat drawer and every AI feature use), while the credentials
+// list keeps its own ``providers`` ref. They both fetch GET /ai/providers.
+const aiStore = useAiStore();
+
+// Models a given provider offers: its curated list (e.g. several models
+// behind one OpenRouter key) plus its default, deduped. Resolved against
+// ``aiStore.providers`` (NOT this component's BYOK-only ``providers`` ref) so
+// the synthetic ``local`` entry — and its installed models — are included.
+const modelsForProvider = (name: string | null): string[] => {
+  if (!name) return [];
+  const meta = aiStore.providers.find((p) => p.provider === name);
+  if (!meta) return [];
+  const set = new Set<string>();
+  meta.credential?.models?.forEach((m) => set.add(m));
+  const def = meta.credential?.defaultModel ?? meta.defaultModel;
+  if (def) set.add(def);
+  return Array.from(set);
+};
+
+// Keep the currently-selected model as a valid <option> even if it isn't in
+// the provider's curated list (so the select never renders blank).
+const _withSelected = (list: string[], selected: string | null): string[] =>
+  selected && !list.includes(selected) ? [...list, selected] : list;
+
+const mainModels = computed(() =>
+  _withSelected(modelsForProvider(aiStore.selectedProvider), aiStore.selectedModel),
+);
+
+const simpleProviderName = computed(() => aiStore.simpleProvider ?? aiStore.selectedProvider);
+
+const simpleModels = computed(() =>
+  _withSelected(modelsForProvider(simpleProviderName.value), aiStore.simpleModel),
+);
+
+const onSplitToggle = (event: Event): void => {
+  aiStore.setSplitModels((event.target as HTMLInputElement).checked);
+};
+
+const onMainProviderChange = (event: Event): void => {
+  const value = (event.target as HTMLSelectElement).value;
+  if (value) aiStore.setSelectedProvider(value);
+};
+
+const onMainModelChange = (event: Event): void => {
+  aiStore.setSelectedModel((event.target as HTMLSelectElement).value || null);
+};
+
+const onSimpleProviderChange = (event: Event): void => {
+  const value = (event.target as HTMLSelectElement).value;
+  if (value) aiStore.setSimpleProvider(value);
+};
+
+const onSimpleModelChange = (event: Event): void => {
+  aiStore.setSimpleModel((event.target as HTMLSelectElement).value || null);
+};
 
 const providers = ref<AiProvider[]>([]);
 const isLoading = ref(true);
@@ -986,6 +1142,10 @@ void _ai_disabled_detail.value;
 onMounted(() => {
   void loadProviders();
   void loadLocalModel();
+  // Always refresh the ai-store provider list so the Models card renders the
+  // full, current set (incl. the synthetic ``local`` entry) even if the user
+  // lands here before opening the chat drawer or the store holds a stale state.
+  void aiStore.loadProviders();
 });
 </script>
 
@@ -1355,5 +1515,64 @@ onMounted(() => {
   100% {
     margin-left: 100%;
   }
+}
+
+.models-intro {
+  margin-top: 0;
+  margin-bottom: var(--spacing-4);
+}
+
+.model-row {
+  display: flex;
+  gap: var(--spacing-4);
+  flex-wrap: wrap;
+}
+
+.model-row--simple {
+  margin-top: var(--spacing-4);
+}
+
+.model-field {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 200px;
+  min-width: 180px;
+}
+
+.model-field__label {
+  margin-bottom: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.model-select {
+  width: 100%;
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+}
+
+.model-tier__hint {
+  margin: var(--spacing-1) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.model-split-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.model-split-toggle input {
+  cursor: pointer;
 }
 </style>

@@ -54,18 +54,21 @@ export const useAiAutocompleteStore = defineStore("aiAutocomplete", () => {
     return c;
   };
 
-  // Inject the user's chat provider / model when the caller didn't
-  // pin one. Without this, a body with no ``provider`` field falls
-  // through to the route's walk-and-pick default. ``Join.vue`` omits
-  // the field, so this fills it from the user's selection.
+  // Inject the user's provider + *simple-tier* model when the caller
+  // didn't pin one. Join-key suggestions are a simple surface, so they
+  // run on ``simpleModel`` (falling through to the provider's preset when
+  // unset). Join-key suggestions are a simple surface, so resolveSurface
+  // routes them to the simple tier when split models is on (else the main
+  // selection). ``Join.vue`` omits both, so this fills them.
   const _withDefaults = <T extends { provider?: string; model?: string | null }>(
     body: T,
   ): T => {
     const aiStore = useAiStore();
+    const resolved = aiStore.resolveSurface("settings_autocomplete");
     return {
       ...body,
-      provider: body.provider ?? aiStore.selectedProvider ?? undefined,
-      model: body.model ?? aiStore.selectedModel ?? undefined,
+      provider: body.provider ?? resolved.provider ?? undefined,
+      model: body.model ?? resolved.model ?? undefined,
     };
   };
 
