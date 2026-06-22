@@ -44,6 +44,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _project_sync_artifacts(owner_id: int) -> None:
+    """Mirror an artifact finalize/delete into the active project's models.yaml (no-op when none active)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.artifacts_changed(owner_id)
+
+
 class ArtifactService:
     """Coordinates all artifact business logic.
 
@@ -244,6 +251,7 @@ class ArtifactService:
         artifact.sha256 = sha256
         artifact.size_bytes = verified_size
         self.db.commit()
+        _project_sync_artifacts(artifact.owner_id)
 
         return FinalizeUploadResponse(
             status="ok",
@@ -492,9 +500,11 @@ class ArtifactService:
                     exc,
                 )
 
+        owner_id = artifact.owner_id
         artifact.status = "deleted"
         sharing.delete_grants_for_resource(self.db, "global_artifact", artifact_id)
         self.db.commit()
+        _project_sync_artifacts(owner_id)
 
         return 1
 
@@ -523,6 +533,7 @@ class ArtifactService:
         if not artifacts:
             raise ArtifactNotFoundError(name=name)
 
+        owner_id = artifacts[0].owner_id
         count = 0
         for artifact in artifacts:
             if artifact.storage_key:
@@ -541,6 +552,7 @@ class ArtifactService:
             count += 1
 
         self.db.commit()
+        _project_sync_artifacts(owner_id)
         return count
 
     # ------------------------------------------------------------------ #

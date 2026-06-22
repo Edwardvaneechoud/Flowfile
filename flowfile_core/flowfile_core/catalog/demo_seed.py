@@ -148,17 +148,16 @@ def _gen_sales(customers: pl.DataFrame, products: pl.DataFrame, regions: pl.Data
 
 
 def _import_demo_flow(yaml_name: str, name: str, namespace_id: int, user_id: int):
-    """Load a bundled demo flow, repoint its catalog writers, register it.
+    """Load a bundled demo flow and register it under ``namespace_id``.
 
-    Catalog *readers* resolve by full table name at load time (namespace-id
-    independent); catalog *writers* resolve their target at run time, so
-    repointing ``namespace_id`` after load is enough. Returns ``(registration_id, flow)``.
+    Both catalog *readers* and *writers* in the bundled YAML reference their catalog target by name
+    (``catalog_full_table_name`` / ``namespace_full_name``), resolved at run time — so no id repointing
+    is needed and the flow keeps writing to the right schema after the demo catalog is recreated with new
+    ids. The ``namespace_id`` argument only sets the flow's own catalog placement.
+    Returns ``(registration_id, flow)``.
     """
     flow = open_flow(DEMO_FLOWS_DIR / yaml_name, user_id=user_id)
     flow.flow_settings.execution_location = "local"
-    for node in flow.nodes:
-        if node.node_type == "catalog_writer":
-            node.setting_input.catalog_write_settings.namespace_id = namespace_id
     flow_path = storage.python_editor_flows_directory / yaml_name
     reg_id = register_python_editor_flow(
         flow, name=name, namespace_id=namespace_id, flow_path=str(flow_path), user_id=user_id

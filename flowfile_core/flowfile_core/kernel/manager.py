@@ -99,9 +99,7 @@ def _resolve_image(
     """
     if flavour == ImageFlavour.CUSTOM:
         if not custom_image:
-            raise ValueError(
-                "custom_image must be provided when image_flavour='custom'"
-            )
+            raise ValueError("custom_image must be provided when image_flavour='custom'")
         _validate_custom_image(custom_image)
         return custom_image
     registry_default = _flavour_images()[flavour]
@@ -259,9 +257,7 @@ def _load_or_create_core_instance_id() -> str:
         path.write_text(new_id)
         return new_id
     except OSError:
-        logger.warning(
-            "Could not persist core instance id; using volatile id for this run only"
-        )
+        logger.warning("Could not persist core instance id; using volatile id for this run only")
         return str(uuid.uuid4())
 
 
@@ -362,6 +358,15 @@ class KernelManager:
         self._core_instance_id = _load_or_create_core_instance_id()
         self._kernels: dict[str, KernelInfo] = {}
         self._kernel_owners: dict[str, int] = {}  # kernel_id -> user_id
+        # Serialises mutations of the in-memory kernel registry (_kernels /
+        # _kernel_owners / _scratch_flow_ids) across reconcile, restore, create,
+        # launch (port allocation) and delete so concurrent operations by
+        # different users don't clobber each other's entries, double-allocate a
+        # port, or trigger _cleanup_container on the wrong kernel (L11). RLock so
+        # reconcile's nested same-thread acquisitions are safe. Never held across
+        # the scratch-flow DB path (_scratch_flow_lock) to avoid lock-order
+        # coupling; long Docker build/start/stop I/O runs outside it.
+        self._kernels_lock = threading.RLock()
         # Cached scratch FlowRegistration ids — one per kernel. Populated on
         # create_kernel and during _restore_kernels_from_db; consulted in the
         # execute path so ``flowfile_ctx.publish_global`` / ``schema.publish_artifact``
@@ -640,7 +645,11 @@ class KernelManager:
             from flowfile_core.kernel.persistence import get_all_kernel_scratch_ids, get_all_kernels
 
             with get_db_context() as db:
-                for config, resolved_packages, user_id in get_all_kernels(db):
+                kernel_rows = list(get_all_kernels(db))
+                scratch_ids = get_all_kernel_scratch_ids(db)
+            # Guard the registry mutation against a concurrent reconcile/create/delete.
+            with self._kernels_lock:
+                for config, resolved_packages, user_id in kernel_rows:
                     if config.id in self._kernels:
                         continue
                     kernel = KernelInfo(
@@ -662,7 +671,7 @@ class KernelManager:
                 # path doesn't have to hit the DB on each call. Missing values
                 # (e.g. kernels created before this migration ran) are filled
                 # in lazily by get_scratch_flow_id.
-                for kernel_id, scratch_id in get_all_kernel_scratch_ids(db).items():
+                for kernel_id, scratch_id in scratch_ids.items():
                     if scratch_id is not None:
                         self._scratch_flow_ids[kernel_id] = scratch_id
         except Exception:
@@ -671,14 +680,89 @@ class KernelManager:
             # one-line warning).
             logger.exception("Could not restore kernels from database")
 
+    def reconcile_configs_from_db(self, owner_id: int | None = None) -> None:
+        """Sync the in-memory kernel registry with the persisted configs after a project import.
+
+        When ``owner_id`` is provided (the normal import path), only that owner's kernels are
+        reconciled: newly imported rows are added, rows pruned from the DB are removed, and no other
+        tenant's kernels are touched (L11). Without ``owner_id`` the full registry is reconciled
+        (startup / admin path). The ``_kernels_lock`` is held for the full mutation so concurrent
+        imports can't interleave partial states.
+
+        A running kernel keeps its live container — only a STOPPED kernel's cached config is
+        refreshed to match the imported definition (a running container still reflects the config it
+        was started with)."""
+        try:
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.kernel.persistence import get_all_kernels
+
+            with get_db_context() as db:
+                all_rows = {cfg.id: (cfg, resolved, uid) for cfg, resolved, uid in get_all_kernels(db)}
+        except Exception:
+            logger.warning("Could not reconcile kernels from database", exc_info=True)
+            return
+
+        with self._kernels_lock:
+            if owner_id is not None:
+                # Scope to importing owner's kernels only.
+                owner_rows = {kid: v for kid, v in all_rows.items() if v[2] == owner_id}
+                # Drop the owner's kernels that are no longer in the DB (pruned); never touch other owners.
+                for kernel_id in list(self._kernels):
+                    if self._kernel_owners.get(kernel_id) == owner_id and kernel_id not in owner_rows:
+                        self._cleanup_container(kernel_id)
+                        self._kernels.pop(kernel_id, None)
+                        self._kernel_owners.pop(kernel_id, None)
+                        self._scratch_flow_ids.pop(kernel_id, None)
+                rows = owner_rows
+            else:
+                # Full reconcile (startup): drop any kernel absent from the DB entirely.
+                for kernel_id in list(self._kernels):
+                    if kernel_id not in all_rows:
+                        self._cleanup_container(kernel_id)
+                        self._kernels.pop(kernel_id, None)
+                        self._kernel_owners.pop(kernel_id, None)
+                        self._scratch_flow_ids.pop(kernel_id, None)
+                rows = all_rows
+
+            # Add missing rows as STOPPED kernels; refresh the cached config of stopped ones.
+            for kernel_id, (config, resolved_packages, user_id) in rows.items():
+                existing = self._kernels.get(kernel_id)
+                if existing is None:
+                    self._kernels[kernel_id] = KernelInfo(
+                        id=config.id,
+                        name=config.name,
+                        state=KernelState.STOPPED,
+                        packages=config.packages,
+                        resolved_packages=resolved_packages,
+                        memory_gb=config.memory_gb,
+                        cpu_cores=config.cpu_cores,
+                        gpu=config.gpu,
+                        image_flavour=config.image_flavour,
+                        custom_image=config.custom_image,
+                    )
+                    self._kernel_owners[kernel_id] = user_id
+                elif existing.state == KernelState.STOPPED:
+                    existing.name = config.name
+                    existing.packages = config.packages
+                    existing.resolved_packages = resolved_packages
+                    existing.memory_gb = config.memory_gb
+                    existing.cpu_cores = config.cpu_cores
+                    existing.gpu = config.gpu
+                    existing.image_flavour = config.image_flavour
+                    existing.custom_image = config.custom_image
+                    self._kernel_owners[kernel_id] = user_id
+
     def _persist_kernel(self, kernel: KernelInfo, user_id: int) -> None:
-        """Save a kernel record to the database."""
+        """Save a kernel record to the database, then re-project the project's kernels manifest."""
         try:
             from flowfile_core.database.connection import get_db_context
             from flowfile_core.kernel.persistence import save_kernel
 
             with get_db_context() as db:
                 save_kernel(db, kernel, user_id)
+            from flowfile_core.project import project_sync
+
+            project_sync.kernels_changed(user_id)
         except Exception as exc:
             logger.warning("Could not persist kernel '%s': %s", kernel.id, exc)
 
@@ -958,10 +1042,7 @@ class KernelManager:
 
         # JSON exec form keeps each package as a discrete argv item — no shell
         # interpretation, no quoting bugs.
-        pip_args = (
-            ["pip", "install", "--no-cache-dir", "--constraint", "/opt/constraints.txt"]
-            + list(kernel.packages)
-        )
+        pip_args = ["pip", "install", "--no-cache-dir", "--constraint", "/opt/constraints.txt"] + list(kernel.packages)
         # Stamp Core-instance + kernel-id labels so orphan GC can find images
         # owned by this Core without relying on tag-name parsing.
         safe_kernel_id = _KERNEL_ID_TAG_RE.sub("-", kernel.id.lower())
@@ -995,14 +1076,10 @@ class KernelManager:
                     for line in (exc.build_log or [])
                     if isinstance(line, dict) and line.get("stream")
                 )[-20000:]
-                raise RuntimeError(
-                    f"Failed to bake packages into kernel image: {exc}\n{tail}"
-                ) from exc
+                raise RuntimeError(f"Failed to bake packages into kernel image: {exc}\n{tail}") from exc
         return derived_tag
 
-    def _resolve_installed_versions(
-        self, image_tag: str, package_specs: list[str]
-    ) -> list[ResolvedPackage]:
+    def _resolve_installed_versions(self, image_tag: str, package_specs: list[str]) -> list[ResolvedPackage]:
         """Run ``pip list`` inside the derived image and return the resolved
         version for each user-requested package.
 
@@ -1051,8 +1128,7 @@ class KernelManager:
                     (
                         str(p["name"])
                         for p in installed
-                        if isinstance(p, dict)
-                        and re.sub(r"[-_.]+", "-", str(p.get("name", "")).lower()) == name
+                        if isinstance(p, dict) and re.sub(r"[-_.]+", "-", str(p.get("name", "")).lower()) == name
                     ),
                     wanted[name].split("[", 1)[0],
                 )
@@ -1119,9 +1195,7 @@ class KernelManager:
             except docker.errors.ImageNotFound:
                 pass
             except docker.errors.APIError as exc:
-                logger.warning(
-                    "Could not remove orphan derived image '%s': %s", target, exc
-                )
+                logger.warning("Could not remove orphan derived image '%s': %s", target, exc)
 
     def _build_kernel_env(self, kernel_id: str, kernel: KernelInfo) -> dict[str, str]:
         """Build the environment dictionary for a kernel container.
@@ -1182,12 +1256,15 @@ class KernelManager:
         return env
 
     async def create_kernel(self, config: KernelConfig, user_id: int) -> KernelInfo:
-        if config.id in self._kernels:
-            raise ValueError(f"Kernel '{config.id}' already exists")
-
-        # In Docker-in-Docker mode we don't map host ports — kernels are
-        # reached via container name on the shared Docker network.
-        port = None if self._kernel_volume else self._allocate_port()
+        # Check-and-allocate atomically so two concurrent creates can't pass the
+        # existence check or grab the same port. The long image build runs
+        # outside the lock; the registry is re-checked before the final commit.
+        with self._kernels_lock:
+            if config.id in self._kernels:
+                raise ValueError(f"Kernel '{config.id}' already exists")
+            # In Docker-in-Docker mode we don't map host ports — kernels are
+            # reached via container name on the shared Docker network.
+            port = None if self._kernel_volume else self._allocate_port()
         # Validate image flavour and packages up-front so we fail before
         # persisting state or kicking off a long-running build.
         try:
@@ -1225,8 +1302,11 @@ class KernelManager:
                 self._resolve_installed_versions, derived_tag, config.packages
             )
 
-        self._kernels[config.id] = kernel
-        self._kernel_owners[config.id] = user_id
+        with self._kernels_lock:
+            if config.id in self._kernels:
+                raise ValueError(f"Kernel '{config.id}' already exists")
+            self._kernels[config.id] = kernel
+            self._kernel_owners[config.id] = user_id
         self._persist_kernel(kernel, user_id)
         # Auto-register a scratch FlowRegistration so artifacts published from
         # interactive cells have a valid producer. See ``_create_scratch_flow``.
@@ -1268,9 +1348,12 @@ class KernelManager:
 
         kernel.image = image
 
-        # Allocate a port if needed (local mode only, not needed for DinD)
+        # Allocate a port if needed (local mode only, not needed for DinD).
+        # Guard the read of the shared registry so two concurrent launches
+        # don't pick the same free port.
         if kernel.port is None and not self._kernel_volume:
-            kernel.port = self._allocate_port()
+            with self._kernels_lock:
+                kernel.port = self._allocate_port()
 
         kernel.state = KernelState.STARTING
         kernel.error_message = None
@@ -1327,8 +1410,10 @@ class KernelManager:
 
         kernel.image = image
 
+        # Guard the shared-registry read so concurrent launches don't collide on a port.
         if kernel.port is None and not self._kernel_volume:
-            kernel.port = self._allocate_port()
+            with self._kernels_lock:
+                kernel.port = self._allocate_port()
 
         kernel.state = KernelState.STARTING
         kernel.error_message = None
@@ -1341,9 +1426,7 @@ class KernelManager:
             self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
             kernel.state = KernelState.IDLE
             if flow_logger:
-                flow_logger.info(
-                    f"Kernel {kernel_id} is idle (container {container.short_id}, image {image})"
-                )
+                flow_logger.info(f"Kernel {kernel_id} is idle (container {container.short_id}, image {image})")
         except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
             kernel.state = KernelState.ERROR
             kernel.error_message = str(exc)
@@ -1374,8 +1457,7 @@ class KernelManager:
             KernelState.STARTING,
         ):
             raise RuntimeError(
-                f"Cannot edit kernel '{kernel_id}' while it is {kernel.state.value}. "
-                "Stop the kernel first."
+                f"Cannot edit kernel '{kernel_id}' while it is {kernel.state.value}. " "Stop the kernel first."
             )
 
         _validate_packages(packages)
@@ -1412,9 +1494,7 @@ class KernelManager:
                         )
                 raise ValueError(f"Failed to update kernel image: {exc}") from exc
 
-            kernel.resolved_packages = await asyncio.to_thread(
-                self._resolve_installed_versions, derived_tag, packages
-            )
+            kernel.resolved_packages = await asyncio.to_thread(self._resolve_installed_versions, derived_tag, packages)
 
         user_id = self._kernel_owners.get(kernel_id)
         if user_id is not None:
@@ -1424,6 +1504,7 @@ class KernelManager:
 
     async def delete_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
+        owner_id = self._kernel_owners.get(kernel_id)  # capture before the pop, for the project hook
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             await self.stop_kernel(kernel_id)
         had_packages = bool(kernel.packages)
@@ -1431,11 +1512,18 @@ class KernelManager:
         # doesn't fire as a side-effect; explicit deletion keeps the catalog
         # tidy. Tolerant of a missing row (manual removal, downgrade-then-upgrade).
         self._discard_scratch_flow(kernel_id)
-        del self._kernels[kernel_id]
-        self._kernel_owners.pop(kernel_id, None)
+        with self._kernels_lock:
+            del self._kernels[kernel_id]
+            self._kernel_owners.pop(kernel_id, None)
         self._remove_kernel_from_db(kernel_id)
         if had_packages:
             self._remove_derived_image(kernel_id)
+        # Re-project the kernels manifest (regenerated wholesale, so firing after the row is gone is
+        # correct). Owner may be None for a kernel restored before owners were tracked — the hook
+        # no-ops on None.
+        from flowfile_core.project import project_sync
+
+        project_sync.kernels_changed(owner_id)
         logger.info("Deleted kernel '%s'", kernel_id)
 
     def shutdown_all(self) -> None:

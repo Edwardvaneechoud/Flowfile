@@ -69,14 +69,18 @@ class FlowfileHandler:
         self._flows[other.flow_id] = other
         return other.flow_id
 
-    def import_flow(self, flow_path: Path | str, user_id: int | None = None) -> int:
+    def import_flow(self, flow_path: Path | str, user_id: int | None = None, register_session: bool = True) -> int:
+        """Load a flow into the registry. ``register_session=False`` loads it into ``_flows`` (still
+        passing ``user_id`` to ``open_flow`` for connection resolution) without opening an editor
+        session, so project import doesn't auto-open every flow on the canvas."""
         if isinstance(flow_path, str):
             flow_path = Path(flow_path)
         imported_flow = open_flow(flow_path, user_id=user_id)
         self._flows[imported_flow.flow_id] = imported_flow
         imported_flow.flow_settings = self.get_flow_info(imported_flow.flow_id)
         imported_flow.flow_settings.is_running = False
-        self._register_user_session(user_id, imported_flow.flow_id)
+        if register_session:
+            self._register_user_session(user_id, imported_flow.flow_id)
         return imported_flow.flow_id
 
     def register_flow(self, flow_settings: FlowSettings, user_id: int | None = None) -> FlowGraph:
@@ -111,6 +115,21 @@ class FlowfileHandler:
             if flow_id in self._flows:
                 flow = self._flows.pop(flow_id)
                 del flow
+
+    def evict_flow_by_path(self, flow_path: str) -> int | None:
+        """Force-remove a flow (matched by on-disk path) from the registry and ALL user sessions,
+        regardless of who has it open. Used by project prune so a deleted flow can't linger as a
+        ghost session. Returns the evicted flow_id or None when nothing matched."""
+        target_id = next(
+            (fid for fid, f in self._flows.items() if f.flow_settings and f.flow_settings.path == flow_path),
+            None,
+        )
+        if target_id is None:
+            return None
+        self._flows.pop(target_id, None)
+        for flow_ids in self._user_sessions.values():
+            flow_ids.discard(target_id)
+        return target_id
 
     def rekey_flow(self, old_flow_id: int, new_flow_id: int, user_id: int | None = None) -> None:
         """Replace the handler key for a flow (e.g. after Save-As).

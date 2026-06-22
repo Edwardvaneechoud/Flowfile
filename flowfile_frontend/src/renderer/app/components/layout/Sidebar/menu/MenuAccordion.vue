@@ -13,7 +13,14 @@
         :route="{ name: routeItem.name }"
         :disabled="routeItem.disabled"
       >
-        <i v-if="routeItem.meta?.icon" :class="routeItem.meta.icon"></i>
+        <span class="nav-icon">
+          <i v-if="routeItem.meta?.icon" :class="routeItem.meta.icon"></i>
+          <span
+            v-if="routeItem.statusDot"
+            class="nav-status-dot"
+            :class="`is-${routeItem.statusDot}`"
+          ></span>
+        </span>
         <template #title>
           <span>{{ t(routeItem.displayName) }}</span>
         </template>
@@ -144,6 +151,46 @@ function isItemExpanded(item: INavigationRoute): boolean {
   .el-sub-menu [class^="fa-"] {
     margin-right: 0;
   }
+}
+
+/* Icon wrapper so a status dot can anchor to the icon corner in both the
+   expanded and collapsed (rail) layouts. */
+.nav-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+}
+
+.nav-icon [class^="fa-"] {
+  margin-right: 0;
+}
+
+.el-menu--collapse .nav-icon {
+  margin-right: 0;
+}
+
+.nav-status-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  /* ring in the sidebar color so the dot stays crisp over the glyph */
+  box-shadow: 0 0 0 1.5px var(--color-background-primary);
+}
+
+.nav-status-dot.is-clean {
+  background: var(--color-success, #16a34a);
+}
+
+.nav-status-dot.is-unsaved {
+  background: var(--color-warning, #d97706);
+}
+
+.nav-status-dot.is-external {
+  background: var(--color-danger, #ef4444);
 }
 
 /* Expand/collapse affordance on the collapsed rail icon */

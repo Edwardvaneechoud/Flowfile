@@ -45,6 +45,13 @@ def _should_offload() -> bool:
     return OFFLOAD_TO_WORKER.value
 
 
+def _project_sync_tables(owner_id: int) -> None:
+    """Mirror a SQL-view create/update into the active project's tables.yaml (no-op when none active)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.tables_changed(owner_id)
+
+
 class VirtualTableService:
     """Owns virtual flow tables and query-based virtual tables."""
 
@@ -203,6 +210,7 @@ class VirtualTableService:
             column_count=len(schema_list),
         )
         table = self.repo.create_table(table)
+        _project_sync_tables(owner_id)
         return self._tables.table_to_out(table)
 
     def update_query_virtual_table(
@@ -250,6 +258,7 @@ class VirtualTableService:
         table = self.repo.update_table(table)
 
         self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
+        _project_sync_tables(table.owner_id)
 
         return self._tables.table_to_out(table)
 

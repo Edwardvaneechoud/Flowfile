@@ -1,18 +1,20 @@
 """Tests for the catalog notebook API.
 
 Covers CRUD on saved notebooks: mixed-cell (Python/SQL/Markdown) round-trip,
-full-document update, name/namespace uniqueness, the summary listing, and the
+full-document update, name/namespace uniqueness, the summary listing, the
+on-disk content file (cells live on disk, not in the DB), and the
 grant-cleanup-on-delete invariant (SQLite rowid reuse hazard).
 """
 
 import datetime
-import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.services import notebook_store
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogNamespace,
@@ -31,8 +33,18 @@ def client() -> TestClient:
     return c
 
 
+def _nb_file(notebook_id: int) -> Path:
+    """Resolve a notebook's on-disk content file from its DB row."""
+    with get_db_context() as db:
+        nb = db.get(CatalogNotebook, notebook_id)
+        return notebook_store._notebook_path(nb.owner_id, nb.notebook_uuid)
+
+
 def _cleanup():
     with get_db_context() as db:
+        # Remove on-disk content files for the (test-only) notebook rows first.
+        for nb in db.query(CatalogNotebook).all():
+            notebook_store.delete_notebook_file(nb.owner_id, nb.notebook_uuid)
         db.query(CatalogNotebook).delete()
         db.query(CatalogNamespace).delete()
         db.commit()
@@ -191,7 +203,7 @@ class TestNotebookGrantCleanup:
             db.add(ns)
             db.commit()
             db.refresh(ns)
-            nb = CatalogNotebook(name="shared", namespace_id=ns.id, cells_json="[]", owner_id=1)
+            nb = CatalogNotebook(name="shared", namespace_id=ns.id, owner_id=1)
             db.add(nb)
             db.commit()
             db.refresh(nb)
@@ -239,33 +251,67 @@ class TestNotebookValidation:
         resp = client.put(f"/catalog/notebooks/{created['id']}", json={"cells": None})
         assert resp.status_code == 422, resp.text
 
-    def test_parse_cells_degrades_gracefully_on_malformed_json(self):
-        """Seeding a corrupt cells_json must not crash the read path — GET still
-        returns the notebook with the bad cells dropped (pairs with NB-06)."""
-        from flowfile_core.catalog.services.notebooks import NotebookService
-
-        # Not valid JSON at all -> empty list, no raise.
-        assert NotebookService._parse_cells("{not json") == []
-        # Valid JSON but not a list -> empty list.
-        assert NotebookService._parse_cells('{"a": 1}') == []
-        # A list mixing one valid cell with junk -> only the valid cell survives.
-        good = {"id": "c1", "type": "markdown", "source": "# ok", "metadata": {}}
-        parsed = NotebookService._parse_cells(json.dumps([good, 42, {"missing": "type"}]))
-        assert len(parsed) == 1
-        assert parsed[0].id == "c1"
-
-    def test_get_notebook_with_malformed_cells_json(self, client):
-        """End-to-end: a notebook whose stored cells_json is corrupt still reads
-        back over HTTP, with the malformed cells silently dropped."""
-        with get_db_context() as db:
-            nb = CatalogNotebook(name="corrupt", cells_json="{not a list", owner_id=1)
-            db.add(nb)
-            db.commit()
-            db.refresh(nb)
-            nb_id = nb.id
-        resp = client.get(f"/catalog/notebooks/{nb_id}")
+    def test_get_notebook_with_missing_file(self, client):
+        """A notebook whose content file is gone still reads back over HTTP with
+        empty cells (graceful degradation, never a 500)."""
+        created = client.post("/catalog/notebooks", json={"name": "ghost", "cells": SAMPLE_CELLS}).json()
+        _nb_file(created["id"]).unlink()
+        resp = client.get(f"/catalog/notebooks/{created['id']}")
         assert resp.status_code == 200, resp.text
         assert resp.json()["cells"] == []
+
+    def test_get_notebook_with_corrupt_file(self, client):
+        """A torn / malformed content file degrades to empty cells, not a 500."""
+        created = client.post("/catalog/notebooks", json={"name": "corrupt", "cells": SAMPLE_CELLS}).json()
+        _nb_file(created["id"]).write_text(": : not yaml : :", encoding="utf-8")
+        resp = client.get(f"/catalog/notebooks/{created['id']}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cells"] == []
+
+
+class TestNotebookOnDisk:
+    def test_create_writes_content_file(self, client):
+        created = client.post("/catalog/notebooks", json={"name": "ondisk", "cells": SAMPLE_CELLS}).json()
+        path = _nb_file(created["id"])
+        assert path.is_file()
+        # Multi-line python source renders as a YAML literal block for clean diffs.
+        assert "source: |" in path.read_text(encoding="utf-8")
+
+    def test_get_reads_cells_from_file(self, client):
+        """Cells come from disk, not the DB: editing the file changes the GET."""
+        created = client.post("/catalog/notebooks", json={"name": "fileread", "cells": SAMPLE_CELLS}).json()
+        with get_db_context() as db:
+            nb = db.get(CatalogNotebook, created["id"])
+            owner_id, nb_uuid = nb.owner_id, nb.notebook_uuid
+        new_cells = [{"id": "z", "type": "sql", "source": "SELECT 99", "metadata": {}}]
+        notebook_store.write_notebook_file(
+            owner_id,
+            nb_uuid,
+            name="fileread",
+            description=None,
+            namespace_name=None,
+            default_kernel_id=None,
+            cells=[notebook_store.NotebookCellModel(**c) for c in new_cells],
+        )
+        assert client.get(f"/catalog/notebooks/{created['id']}").json()["cells"] == new_cells
+
+    def test_delete_removes_content_file(self, client):
+        created = client.post("/catalog/notebooks", json={"name": "rmfile", "cells": SAMPLE_CELLS}).json()
+        path = _nb_file(created["id"])
+        assert path.is_file()
+        assert client.delete(f"/catalog/notebooks/{created['id']}").status_code == 204
+
+    def test_rename_keeps_same_file_path(self, client):
+        """Filenames are uuid-based, so a rename never moves or duplicates the file."""
+        created = client.post("/catalog/notebooks", json={"name": "before", "cells": SAMPLE_CELLS}).json()
+        path_before = _nb_file(created["id"])
+        client.put(f"/catalog/notebooks/{created['id']}", json={"name": "after"})
+        path_after = _nb_file(created["id"])
+        assert path_before == path_after
+        assert path_after.is_file()
+        # Cells survive a metadata-only rename; embedded name is refreshed.
+        assert client.get(f"/catalog/notebooks/{created['id']}").json()["cells"] == SAMPLE_CELLS
+        assert "name: after" in path_after.read_text(encoding="utf-8")
 
 
 class TestNotebookTimestampsAndOrdering:

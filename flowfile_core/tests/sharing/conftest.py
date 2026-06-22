@@ -27,11 +27,18 @@ USERNAMES = {
 
 
 @pytest.fixture(autouse=True)
-def multi_user_mode(monkeypatch):
+def multi_user_mode(monkeypatch, tmp_path):
     """Docker mode + the env docker mode requires (JWT secret, valid Fernet master key)."""
     monkeypatch.setenv("FLOWFILE_MODE", "docker")
     monkeypatch.setenv("JWT_SECRET_KEY", "sharing-test-secret-key")
     monkeypatch.setenv("FLOWFILE_MASTER_KEY", Fernet.generate_key().decode())
+    # Docker mode resolves user-data paths under /data/user (a mounted volume in
+    # real deployments); point them at a writable temp dir so on-disk writes
+    # (e.g. notebook content files) succeed and stay isolated per test.
+    from shared.storage_config import storage
+
+    monkeypatch.setenv("FLOWFILE_USER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
 
 
 @pytest.fixture

@@ -70,6 +70,11 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/ConnectionsView/ConnectionsView.vue"),
       },
       {
+        name: "project",
+        path: "project",
+        component: () => import("../views/ProjectView/ProjectView.vue"),
+      },
+      {
         path: "databaseManager",
         redirect: { name: "connections", query: { tab: "database" } },
       },

@@ -148,6 +148,51 @@ def _complete_run_if_needed(
         print(f"Warning: Failed to update run record {run_id}: {e}", file=sys.stderr)
 
 
+def _run_project_command(action: str | None, arg: str | None) -> None:
+    """Headless project init/open/save — the proof that build-from-scratch works without the UI."""
+    from fastapi import HTTPException
+
+    from flowfile_core.auth.utils import get_local_user_id
+    from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
+    from flowfile_core.project import project_sync
+
+    def _validated_folder(usage: str) -> str:
+        if not arg:
+            print(usage, file=sys.stderr)
+            sys.exit(1)
+        try:
+            return validate_path_under_cwd(arg)
+        except HTTPException as e:
+            print(f"Invalid project path: {e.detail}", file=sys.stderr)
+            sys.exit(1)
+
+    owner_id = get_local_user_id()
+    if action == "init":
+        folder = _validated_folder("Usage: flowfile project init <folder>")
+        project = project_sync.init_project(folder, Path(folder).name, owner_id)
+        print(f"Initialized project '{project.name}' at {project.root}")
+    elif action == "open":
+        folder = _validated_folder("Usage: flowfile project open <folder>")
+        project, result = project_sync.open_project(folder, owner_id)
+        print(f"Opened project '{project.name}' at {project.root}")
+        print(
+            f"Imported: flows={result.imported_flows}, "
+            f"connections={result.imported_connections}, schedules={result.imported_schedules}"
+        )
+        missing = len(result.placeholder_secrets)
+        if missing:
+            print(f"{missing} value(s) need to be set (FLOWFILE_SECRET_<NAME> or update them in the app).")
+    elif action == "save":
+        if not arg:
+            print('Usage: flowfile project save "<message>"', file=sys.stderr)
+            sys.exit(1)
+        sha = project_sync.save_version(owner_id, arg)
+        print(f"Saved version {sha[:8] if sha else '(no changes)'}")
+    else:
+        print("Usage: flowfile project {init|open|save} <folder-or-message>", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     """
     Display information about FlowFile when run directly as a module.
@@ -156,10 +201,15 @@ def main():
 
     parser = argparse.ArgumentParser(description="FlowFile: A visual ETL tool with a Polars-like API")
     parser.add_argument(
-        "command", nargs="?", choices=["run", "seed-demo", "remove-demo"], help="Command to execute"
+        "command", nargs="?", choices=["run", "seed-demo", "remove-demo", "project"], help="Command to execute"
     )
-    parser.add_argument("component", nargs="?", choices=["ui", "core", "worker", "flow"], help="Component to run")
-    parser.add_argument("file_path", nargs="?", help="Path to flow file (for 'flow' component)")
+    parser.add_argument(
+        "component",
+        nargs="?",
+        choices=["ui", "core", "worker", "flow", "init", "open", "save"],
+        help="Component to run, or project sub-command (init/open/save)",
+    )
+    parser.add_argument("file_path", nargs="?", help="Flow file path, project folder, or version message")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
@@ -198,6 +248,8 @@ def main():
                 print("Usage: flowfile run flow <path-to-flow-file>", file=sys.stderr)
                 sys.exit(1)
             sys.exit(run_flow(args.file_path, param_overrides=args.params, run_id=args.run_id))
+    elif args.command == "project":
+        _run_project_command(args.component, args.file_path)
     elif args.command in ("seed-demo", "remove-demo"):
         from flowfile_core.catalog.demo_seed import remove_demo_catalog, seed_demo_catalog
 

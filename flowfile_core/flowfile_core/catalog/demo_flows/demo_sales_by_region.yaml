@@ -86,7 +86,8 @@ nodes:
     output_field_config: null
     catalog_write_settings:
       table_name: sales_by_region
-      namespace_id: 6
+      namespace_id: null
+      namespace_full_name: Demo.sales_analytics
       description: Revenue per region, derived from the demo sales table
       write_mode: overwrite
       merge_keys: []

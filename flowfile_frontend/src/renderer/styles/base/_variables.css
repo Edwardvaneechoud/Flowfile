@@ -16,7 +16,7 @@
   --font-size-3xl: 20px;
   --font-size-4xl: 24px;
 
-  --font-weight-normal: 400;
+  --font-weight-normal: 300;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
   --font-weight-bold: 700;
@@ -74,6 +74,7 @@
   --color-success: #10b981;
   --color-success-light: #d1fae5;
   --color-success-hover: #059669;
+  --color-success-dark: #047857;
   --color-danger: #ef4444;
   --color-danger-light: #fee2e2;
   --color-danger-hover: #dc2626;

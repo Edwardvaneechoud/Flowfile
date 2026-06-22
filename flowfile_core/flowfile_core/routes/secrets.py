@@ -25,6 +25,13 @@ router = APIRouter(dependencies=[Depends(get_current_active_user)])
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
 
 
+def _project_sync_secret(user_id: int) -> None:
+    """Refresh the project's secret manifest after a standalone-secret change (no-op when no project)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.secret_changed(user_id)
+
+
 def _shared_secret_rows(db: Session, user_id: int) -> list[Secret]:
     """Group-shared secrets as metadata-only rows: no value, not even masked ciphertext."""
     return [
@@ -99,6 +106,7 @@ async def create_secret(
         raise HTTPException(status_code=400, detail="Secret with this name already exists")
 
     stored_secret = store_secret(db, secret, user_id)
+    _project_sync_secret(user_id)
     return Secret(
         name=stored_secret.name,
         value=stored_secret.encrypted_value,
@@ -171,4 +179,5 @@ async def delete_secret(
     """
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
     delete_secret_action(db, secret_name, user_id)
+    _project_sync_secret(user_id)
     return None

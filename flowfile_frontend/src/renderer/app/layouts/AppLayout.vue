@@ -1,6 +1,5 @@
 <template>
   <div class="app-layout">
-    <Header />
     <div class="app-layout__content">
       <div class="app-layout__sidebar-wrapper" :class="{ minimized: isCollapse }">
         <Sidebar :is-collapse="isCollapse" @toggle-collapse="toggleCollapse" />
@@ -27,16 +26,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
-import Header from "../components/layout/Header/AppHeader.vue";
+import { ref, computed, watch, onMounted } from "vue";
 import Sidebar from "../components/layout/Sidebar/Sidebar.vue";
 import ChangePasswordModal from "../components/common/ChangePasswordModal/ChangePasswordModal.vue";
 import TutorialOverlay from "../components/tutorial/TutorialOverlay.vue";
 import TutorialStartButton from "../components/tutorial/TutorialStartButton.vue";
 import { useAuthStore } from "../stores/auth-store";
+import { useProjectStore } from "../stores/project-store";
 import authService from "../services/auth.service";
 
 const authStore = useAuthStore();
+const projectStore = useProjectStore();
+
+onMounted(() => {
+  // Pick up the active project (if any) so the header sync pill is correct on boot.
+  projectStore.refreshActive();
+});
 
 const isCollapse = ref(true);
 const showPasswordModal = ref(false);

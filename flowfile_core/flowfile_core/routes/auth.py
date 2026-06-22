@@ -250,6 +250,13 @@ async def delete_user(
         db.query(spec.model).filter(spec.model.id.in_(resource_ids)).delete(synchronize_session=False)
     sharing.delete_memberships_for_user(db, user_id)
 
+    # workspace_projects is not share-registered, so plain row deletion suffices.
+    # Removing these prevents a future user receiving the same rowid from inheriting
+    # an orphan is_active=True project (rowid reuse; SQLite FK enforcement is off).
+    db.query(db_models.WorkspaceProject).filter(db_models.WorkspaceProject.owner_id == user_id).delete(
+        synchronize_session=False
+    )
+
     db.delete(user)
     db.commit()
 

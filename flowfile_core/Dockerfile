@@ -46,9 +46,12 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    git \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && apt-get clean \
+    && git config --system user.email "flowfile@localhost" \
+    && git config --system user.name "Flowfile"
 
 # Copy already-stripped site-packages from builder
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages

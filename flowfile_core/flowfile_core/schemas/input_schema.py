@@ -1452,10 +1452,16 @@ class NodeApiResponse(NodeSingleInput):
 
 
 class CatalogWriteSettings(BaseModel):
-    """Settings for writing data to the catalog."""
+    """Settings for writing data to the catalog.
+
+    The target namespace is referenced name-first: ``namespace_full_name`` (``"catalog.schema"``) is
+    the portable reference that survives recreation on another machine; ``namespace_id`` is a numeric
+    fallback for flows saved before names were stored.
+    """
 
     table_name: str = ""
     namespace_id: int | None = None
+    namespace_full_name: str | None = None
     description: str | None = None
     write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite"
     merge_keys: list[str] = Field(default_factory=list)
@@ -1756,6 +1762,7 @@ class TrainModelSettings(BaseModel):
     publish_to_catalog: bool = False
     model_name: str = ""  # required when publish_to_catalog=True
     namespace_id: int | None = None
+    namespace_full_name: str | None = None  # portable "catalog.schema"; resolved name-first, id is fallback
     catalog_description: str | None = None
     catalog_tags: list[str] = Field(default_factory=list)
 
@@ -1797,6 +1804,7 @@ class ApplyModelSettings(BaseModel):
     model_name: str = ""
     model_version: int | None = None
     namespace_id: int | None = None
+    namespace_full_name: str | None = None  # portable "catalog.schema"; resolved name-first, id is fallback
 
     output_column: str = "prediction"
 

@@ -30,6 +30,8 @@ services:
       # Master key for encrypting secrets - if not set, setup screen will prompt to configure
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_SCHEDULER_ENABLED=true
+      # Git project tracking (admin-only in docker; 404s when off). See .env.example.
+      - FLOWFILE_ENABLE_PROJECTS=${FLOWFILE_ENABLE_PROJECTS:-true}
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
