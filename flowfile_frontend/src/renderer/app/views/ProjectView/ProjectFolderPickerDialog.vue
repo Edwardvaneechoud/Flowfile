@@ -96,7 +96,8 @@ const ensureRoot = async () => {
     confinedRoot.value = await ProjectApi.getRoot();
   } catch (e: any) {
     confinedRoot.value = null;
-    rootError.value = e?.response?.data?.detail || e?.message || "Could not prepare your project area.";
+    rootError.value =
+      e?.response?.data?.detail || e?.message || "Could not prepare your project area.";
   }
 };
 
