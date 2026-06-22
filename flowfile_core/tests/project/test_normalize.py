@@ -36,7 +36,13 @@ def test_deterministic_flow_id_is_stable_and_positive():
     a = deterministic_flow_id("b3f1-uuid")
     assert a == deterministic_flow_id("b3f1-uuid")
     assert a != deterministic_flow_id("other-uuid")
-    assert 0 <= a <= 0x7FFFFFFFFFFFFFFF
+    assert 0 < a <= 0x1FFFFFFFFFFFFF
+
+
+def test_deterministic_flow_id_stays_js_safe():
+    # Must never exceed Number.MAX_SAFE_INTEGER, or the frontend rounds it and loses the flow.
+    for uuid in ("b3f1-uuid", "other-uuid", "3390df79-65b2-40eb-b592-16c9191c1b17", "0", "z" * 64):
+        assert deterministic_flow_id(uuid) <= 9007199254740991
 
 
 def test_normalize_strips_volatile_fields():

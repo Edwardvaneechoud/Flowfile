@@ -61,10 +61,10 @@ def unique_stem(name: str | None) -> str:
 
 
 def deterministic_flow_id(flow_uuid: str) -> int:
-    """A stable 63-bit positive flowfile_id derived from the flow's uuid (no host/time entropy).
-    Uses the full positive int64 range so two flows don't collide and evict each other from the
-    in-memory handler on import."""
-    return int(hashlib.sha256(flow_uuid.encode()).hexdigest(), 16) & 0x7FFFFFFFFFFFFFFF
+    """A stable 53-bit positive flowfile_id derived from the flow's uuid (no host/time entropy).
+    Capped at JavaScript's Number.MAX_SAFE_INTEGER (2**53 - 1) so the frontend can round-trip
+    it losslessly; the 2**53 space still keeps distinct flows from colliding on import."""
+    return int(hashlib.sha256(flow_uuid.encode()).hexdigest(), 16) & 0x1FFFFFFFFFFFFF
 
 
 # (node type → settings key) for nodes whose target namespace must be portable across installs.
