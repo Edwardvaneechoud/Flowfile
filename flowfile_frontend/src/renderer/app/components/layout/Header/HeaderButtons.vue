@@ -290,6 +290,7 @@ import CreateDialog from "../../../features/designer/components/CreateDialog.vue
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
+import { useProjectStore } from "../../../stores/project-store";
 import { useCatalogStore } from "../../../stores/catalog-store";
 import { useRecentFlows } from "../../../composables/useRecentFlows";
 import {
@@ -307,6 +308,7 @@ import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
+const projectStore = useProjectStore();
 const catalogStore = useCatalogStore();
 const { recordFlowFromSettings, refreshCatalogRefs } = useRecentFlows();
 
@@ -454,6 +456,7 @@ const handleSaveDialogComplete = (flowId: number) => {
   } else {
     emit("flowSaved", flowId);
   }
+  projectStore.onSourceChanged();
   // A catalog save adds/updates a registration; refresh the cached listing so
   // the Catalog view and recents reflect it without a manual reload.
   catalogStore.loadAllFlows();
@@ -487,6 +490,7 @@ const openSaveModal = async () => {
     try {
       await saveFlowSilent(nodeStore.flow_id);
       emit("flowSaved", nodeStore.flow_id);
+      projectStore.onSourceChanged();
       ElMessage.success("Flow saved successfully");
       if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
         setTimeout(() => {

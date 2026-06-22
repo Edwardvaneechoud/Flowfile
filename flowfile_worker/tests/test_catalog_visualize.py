@@ -50,6 +50,26 @@ def _write_delta_table(tmp_path, name: str = "viz_test") -> str:
     return name
 
 
+def _write_constant_delta_table(tmp_path, name: str = "viz_degenerate") -> str:
+    """Delta table whose numeric column has a single distinct value.
+
+    Binning such a column used to divide by a zero-width step (step == 0 ->
+    0/0 == NaN) and crash the strict Int64 cast inside polars-gw, which the
+    worker surfaced as an error response.  polars-gw >= 0.1.3 collapses a
+    degenerate column to a single bucket instead.
+    """
+    df = pl.DataFrame(
+        {
+            "category": ["a", "a", "a", "a", "a"],
+            "value": [5, 5, 5, 5, 5],
+        }
+    )
+    target = storage.catalog_tables_directory / name
+    target.mkdir(parents=True, exist_ok=True)
+    df.write_delta(str(target))
+    return name
+
+
 def _physical_source(session_key: str, table_path: str) -> models.VizWorkerSource:
     return models.VizWorkerSource(
         kind="physical",
@@ -651,6 +671,54 @@ def test_visualize_evict_endpoint(tmp_path):
     assert r.status_code == 200
     keys = {item["session_key"] for item in viz_session_registry.stats()}
     assert "evict:1" not in keys
+
+
+@pytest.mark.worker
+def test_visualize_query_degenerate_column_bins_without_error(tmp_path):
+    """Binning a single-distinct-value column must not surface an error.
+
+    Regression for the polars-gw divide-by-zero NaN crash: a constant column
+    gave a zero-width bin step (0/0 == NaN) and the strict Int64 cast raised,
+    which the worker caught and returned as an error response (with a noisy
+    traceback) instead of a chart.  polars-gw >= 0.1.3 collapses the column to
+    a single bucket, so every binning op now succeeds.
+    """
+    _setup_storage(tmp_path)
+    table_dir = _write_constant_delta_table(tmp_path)
+    viz_session_registry.evict_all()
+    client = TestClient(main.app)
+
+    degenerate_payloads = {
+        # equal-width bin (the reported crash): step == 0 on a constant column.
+        "bin": {"workflow": [{"type": "transform", "transform": [
+            {"key": "value_bin", "expression": {"op": "bin", "params": ["value"], "as": "value_bin", "num": 10}}
+        ]}]},
+        # quantile binCount on a constant column.
+        "binCount": {"workflow": [{"type": "transform", "transform": [
+            {"key": "value_q", "expression": {"op": "binCount", "params": ["value"], "as": "value_q", "num": 4}}
+        ]}]},
+        # binBy view op with a zero bin size (0/0 -> NaN), which falls back to
+        # the default width.
+        "binBy": {"workflow": [{"type": "view", "query": [
+            {"op": "bin", "binBy": "value", "newBinCol": "value_bin", "binSize": 0}
+        ]}]},
+    }
+    for name, payload in degenerate_payloads.items():
+        r = client.post(
+            "/catalog/visualize_query",
+            json={
+                "source": {
+                    "kind": "physical",
+                    "session_key": f"test:degenerate:{name}",
+                    "table_path": table_dir,
+                },
+                "payload": payload,
+            },
+        )
+        assert r.status_code == 200, f"{name}: {r.text}"
+        body = r.json()
+        assert body["error"] is None, f"{name}: {body['error']}"
+        assert body["total_rows"] == 5, f"{name}: {body['total_rows']}"
 
 
 # Silence ruff: imported for type-only constants

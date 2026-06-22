@@ -19,6 +19,7 @@ DirectoryOptions = Literal[
     "artifact_staging_directory",
     "catalog_tables_directory",
     "catalog_virtual_results_directory",
+    "notebooks_directory",
 ]
 
 
@@ -221,6 +222,17 @@ class FlowfileStorage:
         return self.base_directory / "catalog_virtual_results"
 
     @property
+    def notebooks_directory(self) -> Path:
+        """Root for catalog notebook content files (the versioned artifact).
+
+        Cells live on disk keyed by ``notebook_uuid``; the DB row holds only
+        metadata. The per-owner ``<owner_id>/`` subdir is resolved by the
+        notebook store, not here."""
+        if _is_docker_mode():
+            return self.user_data_directory / "notebooks"
+        return self.base_directory / "notebooks"
+
+    @property
     def artifact_staging_directory(self) -> Path:
         """Directory for staging artifact uploads before finalization.
 
@@ -258,6 +270,7 @@ class FlowfileStorage:
             self.catalog_tables_directory,
             self.catalog_virtual_results_directory,
             self.template_data_directory,
+            self.notebooks_directory,
         ]
 
         for directory in internal_directories + user_directories:

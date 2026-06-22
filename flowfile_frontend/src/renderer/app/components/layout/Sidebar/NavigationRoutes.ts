@@ -16,6 +16,9 @@ export interface INavigationRoute {
   requiresAdmin?: boolean;
   hideInElectron?: boolean;
   dockerOnly?: boolean;
+  // Status-colored dot overlaid on the item's icon (e.g. project sync state).
+  // Injected at render time, not part of the static route table.
+  statusDot?: string;
 }
 
 export default {
@@ -78,6 +81,13 @@ export default {
           meta: { icon: t.icon },
         })),
       ],
+    },
+    {
+      name: "project",
+      displayName: "menu.project",
+      meta: {
+        icon: "fa-solid fa-clock-rotate-left",
+      },
     },
     {
       name: "kernelManager",

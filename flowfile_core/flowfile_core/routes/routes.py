@@ -101,18 +101,11 @@ from shared.storage_config import storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
-
-def _slugify_managed_flow_stem(name: str) -> str:
-    """Derive a filesystem-safe filename stem from a free-form flow display name.
-
-    Managed catalog flow files must match ``[A-Za-z0-9_-]+`` (enforced by
-    ``resolve_managed_flow_path``), but the name a user types is a free-form label
-    that may contain spaces, dots, or other punctuation. Collapse every run of
-    disallowed characters into a single underscore and trim leading/trailing
-    separators, so ``"market analytics"`` becomes ``"market_analytics"``. Returns
-    ``""`` when nothing usable remains, leaving the caller to reject the name.
-    """
-    return re.sub(r"[^A-Za-z0-9_\-]+", "_", name).strip("_-")
+# A flow's name is a free-form display label. Only the derived on-disk filename
+# must be filesystem-safe, so we slugify the name to this alphabet (the same
+# allowlist enforced by resolve_managed_flow_path) by replacing every run of
+# disallowed characters with a single underscore.
+_MANAGED_FLOW_STEM_DISALLOWED_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
 def get_node_model(setting_name_ref: str):
@@ -1038,8 +1031,11 @@ def create_flow(
 
 @router.post("/editor/close_flow/", tags=["editor"])
 def close_flow(flow_id: int, current_user=Depends(get_current_active_user)) -> None:
-    """Closes an active flow session for the current user."""
+    """Closes an active flow session for the current user. Idempotent: closing a flow that isn't in
+    the session (e.g. a stale tab after a restore pruned it) is a no-op, not a 500."""
     user_id = current_user.id if current_user else None
+    if not flow_file_handler.user_has_flow(user_id, flow_id):
+        return
     flow_file_handler.delete_flow(flow_id, user_id=user_id)
 
 
@@ -1542,6 +1538,7 @@ def _save_flow_impl(
         except FlowPathNamespaceCollision as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
         sync_api_compatibility(flow_file_handler.get_flow(new_flow_id))
+        _project_flow_saved(flow_path, user_id)
         return new_flow_id
 
     resolve_source_registration_id(flow)
@@ -1555,7 +1552,15 @@ def _save_flow_impl(
         except FlowPathNamespaceCollision as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
     sync_api_compatibility(flow)
+    _project_flow_saved(flow_path, current_user.id if current_user else None)
     return flow_id
+
+
+def _project_flow_saved(flow_path: str, user_id: int | None) -> None:
+    """Mirror the saved flow into the active project folder (no-op when none active)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.flow_saved(flow_path, user_id)
 
 
 @router.get("/save_flow", tags=["editor"])
@@ -1604,32 +1609,24 @@ def save_flow_to_catalog(
     each other. Returns the (possibly new) flow id so the frontend can switch to it.
     """
     display_name = flow_name.strip()
+    # Strip a managed extension the user may have typed so the display name and
+    # the on-disk filename stay in sync (``.yaml`` is appended below).
+    display_name = re.sub(r"\.(ya?ml|json)$", "", display_name, flags=re.IGNORECASE).strip()
     if not display_name:
         raise HTTPException(422, "flow_name must not be empty")
-    # The display name is a free-form label — spaces and ordinary punctuation are
-    # fine — but reject path separators / parent-traversal outright: a name is
-    # never a path, so these signal a malformed or hostile request, not a label.
-    if "/" in display_name or "\\" in display_name or ".." in display_name:
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
-    # Strip a flow extension the user may have typed so it doesn't double up with
-    # the ``.yaml`` we append below; the name is otherwise preserved for registration.
-    display_name = display_name.rsplit(".yaml", 1)[0].rsplit(".yml", 1)[0].rsplit(".json", 1)[0].strip()
-    if not display_name:
-        raise HTTPException(422, "flow_name must not be empty")
-
-    # The on-disk filename is a filesystem-safe slug of the display name. The
-    # ``{flow_id}_`` prefix already guarantees cross-flow uniqueness, so two
-    # distinct names that slugify alike never collide on disk, and
-    # ``resolve_managed_flow_path`` re-validates the slug as a final safety net.
-    stem = _slugify_managed_flow_stem(display_name)
-    if not stem:
-        raise HTTPException(status_code=422, detail="flow_name must contain at least one letter or number")
+    # The name is a free-form DISPLAY label (spaces, mixed case and punctuation
+    # are all fine) — it is stored as the registration name and used for the
+    # collision check below. Only the derived on-disk filename must be safe, so
+    # slugify a separate stem and prefix it with the flow id; path separators and
+    # ``..`` cannot survive the slug, and resolve_managed_flow_path re-validates
+    # the result against the same allowlist as a defense-in-depth backstop.
+    safe_stem = _MANAGED_FLOW_STEM_DISALLOWED_RE.sub("_", display_name).strip("_-") or "flow"
 
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
 
-    filename = f"{int(flow_id)}_{stem}.yaml"
+    filename = f"{int(flow_id)}_{safe_stem}.yaml"
     flow_path = resolve_managed_flow_path(filename)
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
@@ -1680,7 +1677,7 @@ def save_flow_to_catalog(
     user_id = current_user.id if current_user else None
 
     # Always register under the user-typed ``display_name`` rather than the
-    # filename slug (``{flow_id}_{stem}``) so the catalog picker shows exactly
+    # filename (``{flow_id}_{safe_stem}``) so the catalog picker shows exactly
     # what the user typed — and so the name-collision check above compares apples
     # to apples.
     def _register(fp: str, _n: str, uid: int | None) -> None:

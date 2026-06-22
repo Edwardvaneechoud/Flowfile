@@ -24,6 +24,13 @@ from flowfile_core.schemas.catalog_schema import FlowRunOut, FlowScheduleOut
 logger = logging.getLogger(__name__)
 
 
+def _project_sync_schedule(registration_id: int, owner_id: int) -> None:
+    """Mirror a schedule definition change into the active project folder (no-op when none active)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.schedule_changed(registration_id, owner_id)
+
+
 class ScheduleService:
     """Owns schedule CRUD, manual triggers, and the push path of table_trigger fan-out."""
 
@@ -144,6 +151,7 @@ class ScheduleService:
         if schedule_type == "table_set_trigger" and trigger_table_ids:
             self.repo.set_trigger_table_ids(schedule.id, trigger_table_ids)
 
+        _project_sync_schedule(registration_id, owner_id)
         return self._schedule_to_out(schedule)
 
     def update_schedule(
@@ -178,6 +186,7 @@ class ScheduleService:
         if description is not None:
             schedule.description = description
         schedule = self.repo.update_schedule(schedule)
+        _project_sync_schedule(schedule.registration_id, schedule.owner_id)
         return self._schedule_to_out(schedule)
 
     def delete_schedule(self, schedule_id: int) -> None:
@@ -185,7 +194,9 @@ class ScheduleService:
         schedule = self.repo.get_schedule(schedule_id)
         if schedule is None:
             raise ScheduleNotFoundError(schedule_id=schedule_id)
+        registration_id, owner_id = schedule.registration_id, schedule.owner_id
         self.repo.delete_schedule(schedule_id)
+        _project_sync_schedule(registration_id, owner_id)
 
     def get_schedule(self, schedule_id: int) -> FlowScheduleOut:
         """Get a schedule by ID."""

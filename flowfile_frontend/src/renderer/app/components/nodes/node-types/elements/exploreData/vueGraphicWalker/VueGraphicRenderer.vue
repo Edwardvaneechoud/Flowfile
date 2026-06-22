@@ -27,13 +27,7 @@ let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 let measuredSize = { w: 0, h: 0 };
 let shadowReadyObserver: MutationObserver | null = null;
 
-// Suppress two graphic-walker artefacts inside its open Shadow DOM:
-// (a) the `border-primary border-2` frame its <Resizable> wrapper draws
-// when size.mode is 'fixed', and (b) the eight `cursor: *-resize` drag
-// handles that project past the wrapper and trigger the parent
-// .overflow-auto's scrollbars. No prop disables either; outside CSS
-// can't pierce the boundary; instead we append a <style> into the
-// shadow root, which scopes to all descendants.
+// Inject a <style> into GW's shadow root to hide its resize frame + drag handles (no prop disables them).
 const SHADOW_STYLE_MARKER = "data-flowfile-gw-overrides";
 
 const findShadowRoot = (root: HTMLElement): ShadowRoot | null => {
@@ -50,11 +44,6 @@ const injectShadowOverride = (shadow: ShadowRoot): void => {
   if (shadow.querySelector(`style[${SHADOW_STYLE_MARKER}]`)) return;
   const style = document.createElement("style");
   style.setAttribute(SHADOW_STYLE_MARKER, "");
-  // The third rule mimics "remove the class" on the inner
-  // <div class="w-full h-full relative" style="overflow:hidden"> wrapper:
-  // letting it size to its content (and not clip) lets the outer
-  // `.overflow-auto` ancestor render scrollbars when the chart is larger
-  // than the tile body.
   style.textContent = `
     .border-primary.border-2 { border-width: 0 !important; }
     [style*="-resize"] { display: none !important; }
@@ -67,10 +56,7 @@ const injectShadowOverride = (shadow: ShadowRoot): void => {
   shadow.appendChild(style);
 };
 
-// GraphicRenderer's own ResizeObserver mis-measures height (its outer
-// wrapper is missing h-full), so we measure the tile ourselves and pass
-// the result as `overrideSize: { mode: 'fixed', ... }` — the library
-// treats it as a hard replacement for layout.size.
+// Measure the tile ourselves and pass overrideSize; GW's own ResizeObserver mis-measures height.
 const getReactProps = (): Record<string, any> => {
   const reactProps: Record<string, any> = {
     fields: props.fields ? toRaw(props.fields) : undefined,

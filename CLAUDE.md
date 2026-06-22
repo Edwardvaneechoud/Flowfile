@@ -295,7 +295,7 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 
 ## CI/CD Workflows
 
-`.github/workflows/` holds 14 workflows (note the mix of `.yml` and `.yaml`). All path-filtered workflows also support `workflow_dispatch` (manual run).
+`.github/workflows/` holds 12 workflows (note the mix of `.yml` and `.yaml`). All path-filtered workflows also support `workflow_dispatch` (manual run). CodeQL security scanning is **not** a workflow file — it runs via GitHub Advanced Security **default setup** (configured in repo Settings → Code security), covering python/js-ts/actions/rust on a weekly schedule. (A legacy `codeql.yaml` advanced workflow was removed: it failed weekly on a missing config file and could not coexist with default setup.)
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
@@ -308,7 +308,6 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 | `flowfile-wasm-build.yml` | Push/PR to `main` (`flowfile_wasm/**`) | Build WASM version and run its test suite |
 | `docker-publish.yml` | Push to `main` (backend/frontend/worker/kernel/shared/tools paths), `release` published | Multi-arch Docker builds (amd64/arm64) → Docker Hub |
 | `documentation.yml` | Push/PR to `main` (`docs/**`, `mkdocs.yml`, `flowfile_frame/**/*.py`) | Build and deploy MkDocs site |
-| `codeql.yaml` | Weekly cron (Mon 06:00) | CodeQL security scan (Python, JS/TS) |
 | `pypi-release.yml` | Git tags `v*` | Build frontend into static, Poetry build, publish to PyPI |
 | `release.yaml` | Git tags `v*` | Build & sign Tauri desktop installers (macOS arm64/intel, Windows, Linux), publish GitHub release |
 | `npm-publish-wasm.yml` | Git tags `wasm-v*` | Publish `flowfile-editor` WASM package to npm |
@@ -334,6 +333,7 @@ environment in local/desktop runs.
 | `FLOWFILE_STORAGE_DIR` | Internal storage path. Default `~/.flowfile` (local) / `/app/internal_storage` (docker). |
 | `FLOWFILE_USER_DATA_DIR` | User data path. Default home dir (local) / `/app/user_data` (compose). |
 | `FLOWFILE_SCHEDULER_ENABLED` | Start the embedded scheduler when truthy (`true`/`1`/`yes`); otherwise recurring flows never fire. |
+| `FLOWFILE_ENABLE_PROJECTS` | Enable the git project-tracking router in docker mode (truthy `true`/`1`/`yes`/`on`); otherwise `/project/*` 404s. Always on in electron/package mode. |
 | `FLOWFILE_KERNEL_IMAGE` / `_BASE` / `_ML` / `_LITE` | Override kernel container images; unset uses the registry default. |
 
 **AI subsystem (see `.env.example`):**
@@ -368,7 +368,7 @@ environment in local/desktop runs.
 - `flowfile_frame/flowfile_frame/expr.py` - Column expression system (~68KB, 1722 lines)
 - `flowfile_core/flowfile_core/main.py` - Core FastAPI app with all routers
 - `flowfile_worker/flowfile_worker/main.py` - Worker FastAPI app
-- `flowfile/flowfile/__main__.py` - CLI entry point (run flows, launch web UI)
+- `flowfile/flowfile/__main__.py` - CLI entry point (run flows, launch web UI, `flowfile project {init|open|save}` git project-tracking verb)
 - `flowfile_frontend/src-tauri/src/lib.rs` - Tauri shell entry (plugins, sidecar boot, menu, window lifecycle)
 - `flowfile_frontend/src-tauri/src/sidecar/mod.rs` - Python sidecar spawn + readiness probe
 - `flowfile_frontend/src-tauri/src/sidecar/shutdown.rs` - Graceful shutdown ladder (HTTP /shutdown → SIGTERM → SIGKILL)

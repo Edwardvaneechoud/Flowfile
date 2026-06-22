@@ -1,6 +1,7 @@
 import uuid
 from typing import Literal
 
+import sqlalchemy as sa
 from sqlalchemy import (
     Boolean,
     Column,
@@ -190,6 +191,35 @@ class FlowRegistration(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class WorkspaceProject(Base):
+    """A git-friendly project folder mirroring this install's flows/connections/schedules.
+
+    The folder is a deterministic, secret-free projection of the catalog DB. The DB stays
+    the runtime source of truth; this row just maps it to its on-disk project tree.
+    """
+
+    __tablename__ = "workspace_projects"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    folder_path = Column(String, nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    is_active = Column(Boolean, default=False, nullable=False)
+    # Git HEAD we last projected/imported at; differs from the live HEAD only when git
+    # changed the working tree from outside the app (pull / restore / fresh clone).
+    last_synced_head_sha = Column(String(40), nullable=True)
+    # Mirrors project.yaml's track_data_artifacts (the manifest is the source of truth): when
+    # False, catalog tables + global artifacts are excluded from the git-tracked project.
+    track_data_artifacts = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("owner_id", "folder_path", name="uq_project_owner_path"),
+        Index("ix_workspace_projects_active_owner", "owner_id", sqlite_where=sa.text("is_active = 1"), unique=True),
+    )
+
+
 class FlowRun(Base):
     """Persistent record of every flow execution, with a snapshot of the flow version."""
 
@@ -302,12 +332,8 @@ class ApiConsumerEndpoint(Base):
     __tablename__ = "api_consumer_endpoints"
 
     id = Column(Integer, primary_key=True, index=True)
-    consumer_id = Column(
-        Integer, ForeignKey("api_consumers.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    endpoint_id = Column(
-        Integer, ForeignKey("flow_api_endpoints.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    consumer_id = Column(Integer, ForeignKey("api_consumers.id", ondelete="CASCADE"), nullable=False, index=True)
+    endpoint_id = Column(Integer, ForeignKey("flow_api_endpoints.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("consumer_id", "endpoint_id", name="uq_consumer_endpoint"),)
@@ -530,6 +556,9 @@ class CatalogVisualization(Base):
     __tablename__ = "catalog_visualizations"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Stable identity for the git-backed project projection (the machine-local ``id`` doesn't
+    # round-trip). Mirrors ``FlowRegistration.flow_uuid``.
+    viz_uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     chart_type = Column(String, nullable=True)
@@ -565,6 +594,9 @@ class CatalogDashboard(Base):
     __tablename__ = "catalog_dashboards"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Stable identity for the git-backed project projection; also what a tile's portable
+    # ``viz_uuid`` reference resolves against. Mirrors ``FlowRegistration.flow_uuid``.
+    dashboard_uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     layout_json = Column(Text, nullable=False)
@@ -580,26 +612,25 @@ class CatalogDashboard(Base):
 class CatalogNotebook(Base):
     """A saved notebook: the catalog's exploration console.
 
-    A notebook is a first-class catalog entity (like tables / flows / viz),
-    holding an ordered list of mixed cells (Python / SQL / Markdown) serialised
-    into ``cells_json`` — read and written as a whole document, never queried
-    per-cell, so a JSON blob (cf. ``CatalogVisualization.spec_json``) is the
-    right shape rather than a child table. ``namespace_id`` places it in the
-    catalog hierarchy. Python cells run on a kernel; ``default_kernel_id``
-    remembers the last selected kernel (plain id, no FK — a deleted kernel just
-    means "nothing pre-selected", never a cascade).
+    This row is registration/metadata only. The cell content lives on disk as a
+    deterministic YAML file keyed by ``notebook_uuid`` (see
+    ``catalog/services/notebook_store.py``) so notebooks diff cleanly and fold
+    into the project git-tracking the same way flows do (a ``FlowRegistration``
+    row + its on-disk file). ``namespace_id`` places it in the catalog
+    hierarchy. Python cells run on a kernel; ``default_kernel_id`` remembers the
+    last selected kernel (plain id, no FK — a deleted kernel just means "nothing
+    pre-selected", never a cascade). The integer ``id`` stays the public handle
+    (the frontend derives the kernel session key from it) and the grant key.
     """
 
     __tablename__ = "catalog_notebooks"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Stable handle for the on-disk content file (``<owner>/<uuid>.notebook.yaml``).
+    notebook_uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
-
-    # JSON array of cells: [{"id": str, "type": "python"|"sql"|"markdown",
-    #                        "source": str, "metadata": {...}}]
-    cells_json = Column(Text, nullable=False, default="[]")
 
     # Last kernel selected for Python cells (string id; no FK by design).
     default_kernel_id = Column(String, nullable=True)
@@ -745,7 +776,7 @@ class AiProviderCredential(Base):
     api_base = Column(String, nullable=True)
     default_model = Column(String, nullable=True)
     # JSON-encoded list[str] of models the user has curated for this credential
-    #. Decoded at the schema layer in flowfile_core.ai.credentials. Null
+    # . Decoded at the schema layer in flowfile_core.ai.credentials. Null
     # or an empty list both mean "no curated list — fall through to the
     # resolution order".
     models = Column(Text, nullable=True)

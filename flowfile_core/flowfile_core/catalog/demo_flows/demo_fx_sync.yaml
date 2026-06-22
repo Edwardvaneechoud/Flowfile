@@ -249,7 +249,8 @@ nodes:
     output_field_config: null
     catalog_write_settings:
       table_name: fx_rates
-      namespace_id: 7
+      namespace_id: null
+      namespace_full_name: Demo.market
       description: Daily USD exchange rates for major currencies (ECB via frankfurter.app)
       write_mode: upsert
       merge_keys: [date, currency]
@@ -310,7 +311,8 @@ nodes:
     output_field_config: null
     catalog_write_settings:
       table_name: fx_sync_log
-      namespace_id: 7
+      namespace_id: null
+      namespace_full_name: Demo.market
       description: 'Daily FX sync log: currency count and rate stats per sync date'
       write_mode: upsert
       merge_keys: [date]

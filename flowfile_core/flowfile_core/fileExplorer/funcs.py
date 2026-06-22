@@ -384,6 +384,23 @@ def validate_file_path(user_path: str, allowed_base: Path) -> Path | None:
         return None
 
 
+def _is_contained(base: str, candidate: str) -> bool:
+    """True when ``candidate`` resolves to ``base`` or a path under it.
+
+    Realpaths both sides *before* the containment test, so a symlink whose target escapes the base is
+    rejected here rather than followed later (M-P2), and uses ``commonpath`` rather than a bare prefix
+    so a sibling dir sharing a name prefix (``/data/userX`` vs ``/data/user2``) cannot pass (M-P1).
+    """
+    base = os.path.realpath(base)
+    candidate = os.path.realpath(candidate)
+    if candidate == base:
+        return True
+    try:
+        return os.path.commonpath([base, candidate]) == base
+    except ValueError:  # different drives / mixed abs+rel
+        return False
+
+
 def _local_filesystem_roots() -> list[str]:
     """Return the filesystem roots a desktop (electron) user may access.
 
@@ -408,11 +425,6 @@ def validate_path_under_cwd(user_path: str) -> str:
     - Flowfile storage directory (~/.flowfile)
     - User data directory (home directory in local mode, /data/user in Docker)
 
-    Uses the exact pattern from CodeQL documentation for py/path-injection:
-    - os.path.normpath for path normalization
-    - os.path.join to combine base with user input
-    - startswith check to ensure path stays within base
-
     Args:
         user_path: The user-provided path string
 
@@ -422,38 +434,27 @@ def validate_path_under_cwd(user_path: str) -> str:
     Raises:
         HTTPException: 403 if path escapes the allowed directories
     """
+    if ".." in user_path:
+        raise HTTPException(403, "Access denied: path traversal not allowed")
+
+    expanded = os.path.expanduser(user_path)
+
     if settings.is_electron_mode():
-        # Block path traversal patterns even in Electron mode.
-        if ".." in user_path:
-            raise HTTPException(403, "Access denied: path traversal not allowed")
-        normalized_path = os.path.normpath(os.path.expanduser(user_path))
-        if not os.path.isabs(normalized_path):
-            normalized_path = os.path.normpath(os.path.join(os.getcwd(), normalized_path))
+        candidate = expanded if os.path.isabs(expanded) else os.path.join(os.getcwd(), expanded)
+        candidate_real = os.path.realpath(candidate)
         for root in _local_filesystem_roots():
-            base_path = os.path.normpath(root)
-            fullpath = os.path.normpath(os.path.join(base_path, normalized_path))
-            if fullpath.startswith(base_path):
-                return fullpath
+            base_real = os.path.realpath(root)
+            if _is_contained(base_real, candidate_real):
+                return candidate_real
         raise HTTPException(403, "Access denied")
 
-    # In Docker/package mode, enforce strict sandboxing
-    base_path = os.path.normpath(os.getcwd())
-    fullpath = os.path.normpath(os.path.join(base_path, user_path))
-    if fullpath.startswith(base_path):
-        return fullpath
-
-    # Try flowfile storage directory (~/.flowfile)
-    base_path = os.path.normpath(str(storage.base_directory))
-    fullpath = os.path.normpath(os.path.join(base_path, user_path))
-    if fullpath.startswith(base_path):
-        return fullpath
-
-    # Try user data directory (consistent with SecureFileExplorer sandbox)
-    # In local mode this is the home directory, in Docker it's /data/user
-    base_path = os.path.normpath(str(storage.user_data_directory))
-    fullpath = os.path.normpath(os.path.join(base_path, user_path))
-    if fullpath.startswith(base_path):
-        return fullpath
+    # In Docker/package mode, enforce strict sandboxing to trusted roots.
+    for base in (os.getcwd(), str(storage.base_directory), str(storage.user_data_directory)):
+        base_real = os.path.realpath(base)
+        candidate = expanded if os.path.isabs(expanded) else os.path.join(base_real, expanded)
+        candidate_real = os.path.realpath(candidate)
+        if _is_contained(base_real, candidate_real):
+            return candidate_real
 
     raise HTTPException(403, "Access denied")
 

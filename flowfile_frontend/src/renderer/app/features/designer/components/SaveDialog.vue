@@ -322,8 +322,8 @@ const catalogFilePath = computed(() => {
   // name is a free-form label, but the filename is a filesystem-safe slug of it.
   const dir = catalogFlowsDir.value || "~/.flowfile/flows";
   const raw = catalogFlowName.value.trim().replace(/\.(yaml|yml|json)$/i, "");
-  // Mirror backend _slugify_managed_flow_stem: collapse runs of characters
-  // outside [A-Za-z0-9_-] into a single underscore and trim separators.
+  // Mirror the backend slug (_MANAGED_FLOW_STEM_DISALLOWED_RE): collapse runs of
+  // characters outside [A-Za-z0-9_-] into a single underscore and trim separators.
   const slug = raw.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^[_-]+|[_-]+$/g, "") || "flow";
   const sep = dir.includes("\\") ? "\\" : "/";
   return `${dir}${sep}${props.flowId}_${slug}.yaml`;

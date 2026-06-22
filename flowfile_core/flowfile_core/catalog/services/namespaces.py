@@ -27,6 +27,14 @@ from flowfile_core.schemas.catalog_schema import (
 logger = logging.getLogger(__name__)
 
 
+def _project_sync_namespace(owner_id: int) -> None:
+    """Mirror a namespace create/update/delete into the active project's namespaces.yaml (no-op
+    when none active)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.namespace_changed(owner_id)
+
+
 def bulk_enrich_artifacts(artifacts: list[GlobalArtifact]) -> list[GlobalArtifactOut]:
     """Serialize artifacts, flagging ones whose backing blob is missing on disk
     (filesystem backend only — exists() is one cheap stat; an S3 probe per item
@@ -57,6 +65,19 @@ class NamespaceService:
         namespace = self.repo.get_namespace(namespace_id)
         return namespace.name if namespace is not None else None
 
+    def resolve_namespace_id_by_path(self, catalog_name: str | None, schema_name: str | None) -> int | None:
+        """Resolve a portable (catalog, schema) name pair to an existing namespace id (resolve-only,
+        never creates). Returns the schema id (level 1), the catalog id when no schema, or None."""
+        if not catalog_name:
+            return None
+        catalog = self.repo.get_namespace_by_name(catalog_name, None)
+        if catalog is None:
+            return None
+        if not schema_name:
+            return catalog.id
+        schema = self.repo.get_namespace_by_name(schema_name, catalog.id)
+        return schema.id if schema is not None else None
+
     def create_namespace(
         self,
         name: str,
@@ -86,7 +107,9 @@ class NamespaceService:
             description=description,
             owner_id=owner_id,
         )
-        return self.repo.create_namespace(namespace)
+        created = self.repo.create_namespace(namespace)
+        _project_sync_namespace(owner_id)
+        return created
 
     def update_namespace(
         self,
@@ -102,7 +125,9 @@ class NamespaceService:
             namespace.name = name
         if description is not None:
             namespace.description = description
-        return self.repo.update_namespace(namespace)
+        updated = self.repo.update_namespace(namespace)
+        _project_sync_namespace(updated.owner_id)
+        return updated
 
     def delete_namespace(self, namespace_id: int) -> None:
         """Delete a namespace if it has no children, flows, tables or notebooks."""
@@ -117,7 +142,9 @@ class NamespaceService:
             raise NamespaceNotEmptyError(
                 namespace_id=namespace_id, children=children, flows=flows, tables=tables, notebooks=notebooks
             )
+        owner_id = namespace.owner_id
         self.repo.delete_namespace(namespace_id)
+        _project_sync_namespace(owner_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:
         """Retrieve a single namespace by ID."""

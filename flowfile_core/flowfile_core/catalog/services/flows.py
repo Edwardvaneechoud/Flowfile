@@ -21,6 +21,21 @@ from flowfile_core.schemas.catalog_schema import (
 
 logger = logging.getLogger(__name__)
 
+
+def _project_sync_flow_deleted(flow_uuid: str, owner_id: int) -> None:
+    """Mirror a flow deletion into the active project folder (no-op when none active)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.flow_deleted(flow_uuid, owner_id)
+
+
+def _project_sync_flow_saved(flow_path: str, owner_id: int) -> None:
+    """Re-project a flow file (e.g. after a namespace move) into the active project (no-op when none)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.flow_saved(flow_path, owner_id)
+
+
 # Process-local memo of (registration_id, flow_path) tuples we've already
 # warned about. The first sighting of a missing file is genuinely useful (it
 # can flag a misconfigured volume mount), but every subsequent /catalog/flows
@@ -174,6 +189,10 @@ class FlowRegistrationService:
         flow = self.repo.get_flow(registration_id)
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
+        name_changed = name is not None and flow.name != name
+        desc_changed = description is not None and flow.description != description
+        ns_changed = namespace_id is not None and flow.namespace_id != namespace_id
+        moved_path, moved_owner = flow.flow_path, flow.owner_id
         if name is not None:
             flow.name = name
         if description is not None:
@@ -181,6 +200,8 @@ class FlowRegistrationService:
         if namespace_id is not None:
             flow.namespace_id = namespace_id
         flow = self.repo.update_flow(flow)
+        if (name_changed or desc_changed or ns_changed) and moved_path:
+            _project_sync_flow_saved(moved_path, moved_owner)
         return self.enrich_flow_registration(flow, requesting_user_id)
 
     def delete_flow(self, registration_id: int, delete_file: bool = False) -> None:
@@ -198,6 +219,7 @@ class FlowRegistrationService:
             raise FlowHasArtifactsError(registration_id, artifact_count)
 
         flow_path = flow.flow_path
+        flow_uuid, owner_id = flow.flow_uuid, flow.owner_id
         self.repo.delete_flow(registration_id)
 
         if delete_file and flow_path and self.repo.count_flows_by_path(flow_path) == 0:
@@ -207,6 +229,8 @@ class FlowRegistrationService:
                 pass
             except OSError:
                 logger.warning("Failed to delete flow file %s", flow_path, exc_info=True)
+
+        _project_sync_flow_deleted(flow_uuid, owner_id)
 
     def get_flow(self, registration_id: int, user_id: int) -> FlowRegistrationOut:
         """Get an enriched flow registration."""

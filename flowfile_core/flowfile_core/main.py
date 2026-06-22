@@ -35,6 +35,7 @@ from flowfile_core.routes.flow_api import management_router as flow_api_manageme
 from flowfile_core.routes.ga_connections import router as ga_connections_router
 from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.logs import router as logs_router
+from flowfile_core.routes.project import router as project_router
 from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.routes import router
 from flowfile_core.routes.secrets import router as secrets_router
@@ -162,6 +163,7 @@ app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(user_groups_router, prefix="/user-groups", tags=["user-groups"])
 app.include_router(shares_router, prefix="/shares", tags=["shares"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
+app.include_router(project_router, prefix="/project", tags=["project"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
 app.include_router(ga_connections_router, prefix="/ga_connections", tags=["ga_connections"])
 app.include_router(kafka_router)

@@ -53,6 +53,11 @@ FLOWFILE_ADMIN_PASSWORD=YourSecurePassword123!
 JWT_SECRET_KEY=your-secure-jwt-secret-at-least-32-chars
 ```
 
+> **Git project tracking** is admin-only in docker and is gated by `FLOWFILE_ENABLE_PROJECTS`
+> (the `/project` router 404s when off). The bundled compose files default it to `true`; set
+> `FLOWFILE_ENABLE_PROJECTS=false` to disable it. Each user's projects are confined to their own
+> `/app/user_data/projects/<owner_id>` subtree, so tenants stay isolated.
+
 #### Step 3: Start Services
 
 ```bash

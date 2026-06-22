@@ -70,6 +70,14 @@ def _should_offload() -> bool:
     return OFFLOAD_TO_WORKER.value
 
 
+def _project_sync_tables(owner_id: int) -> None:
+    """Mirror a table create/overwrite/update/delete into the active project's tables.yaml (no-op
+    when none active)."""
+    from flowfile_core.project import project_sync
+
+    project_sync.tables_changed(owner_id)
+
+
 @dataclass(frozen=True)
 class CatalogMaterializationResult:
     table_path: str
@@ -615,6 +623,7 @@ class TableService:
         table = self.repo.update_table(table)
 
         self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
+        _project_sync_tables(table.owner_id)
 
         return self.table_to_out(table)
 
@@ -650,6 +659,7 @@ class TableService:
             source_run_id=source_run_id,
         )
         table = self.repo.create_table(table)
+        _project_sync_tables(owner_id)
         return self.table_to_out(table)
 
     # ---- Delta maintenance (optimize / vacuum) --------------------------- #
@@ -829,6 +839,7 @@ class TableService:
         if namespace_id is not None:
             table.namespace_id = namespace_id
         table = self.repo.update_table(table)
+        _project_sync_tables(table.owner_id)
         return self.table_to_out(table)
 
     def delete_table(self, table_id: int, delete_file: bool = False) -> None:
@@ -843,7 +854,9 @@ class TableService:
             raise TableNotFoundError(table_id=table_id)
 
         file_path = table.file_path
+        owner_id = table.owner_id
         self.repo.delete_table(table_id)
+        _project_sync_tables(owner_id)
 
         if delete_file and file_path and _is_managed_table_path(file_path):
             try:

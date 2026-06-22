@@ -134,7 +134,6 @@ def alice_notebook(users, alice_catalog, resource_factory):
         db_models.CatalogNotebook,
         name="alice_nb",
         namespace_id=alice_catalog["schema"],
-        cells_json="[]",
         owner_id=users["alice"].id,
     )
 
@@ -232,7 +231,6 @@ def test_manage_grantee_cannot_move_notebook_into_private_namespace(
         db_models.CatalogNotebook,
         name="bob_movable_nb",
         namespace_id=public_id,
-        cells_json="[]",
         owner_id=users["bob"].id,
     )
     bob = client_for("bob")

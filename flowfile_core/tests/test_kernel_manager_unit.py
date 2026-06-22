@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import docker.errors
@@ -44,6 +45,7 @@ def _bare_manager() -> KernelManager:
         mgr._core_instance_id = "test-core-id"
         mgr._kernels = {}
         mgr._kernel_owners = {}
+        mgr._kernels_lock = threading.RLock()
         mgr._scratch_flow_ids = {}
         mgr._scratch_flow_lock = threading.Lock()
         mgr._shared_volume = "/tmp/test"
@@ -628,6 +630,155 @@ class TestStartupSequence:
         KernelManager(shared_volume_path="/tmp/x")
 
         assert called == ["restore", "reclaim", "gc"]
+
+
+# Registry-mutation concurrency (N3): _kernels_lock now guards the launch-path
+# port allocation and the create/delete registry commits, not just reconcile.
+# These tests are Docker-free — they drive the same locked critical sections the
+# manager uses, with a widened race window, and assert no corruption.
+
+
+class TestRegistryConcurrency:
+    def test_concurrent_port_allocation_yields_unique_ports(self, monkeypatch):
+        """The launch-path 'allocate port under the lock, then register' pattern
+        must never hand the same free port to two concurrent launches."""
+        mgr = _bare_manager()
+
+        # Make the availability probe slow so an unlocked allocate would let two
+        # threads observe the same 'used_ports' snapshot and pick one port twice.
+        def _slow_available(port: int) -> bool:
+            time.sleep(0.0005)
+            return True
+
+        monkeypatch.setattr(kernel_manager, "_is_port_available", _slow_available)
+
+        n = 25
+        barrier = threading.Barrier(n)
+        errors: list[Exception] = []
+
+        def _launch(idx: int) -> None:
+            barrier.wait()
+            try:
+                kid = f"k{idx}"
+                # Mirror start_kernel_sync: allocate + reserve under the lock.
+                with mgr._kernels_lock:
+                    port = mgr._allocate_port()
+                    mgr._kernels[kid] = _kernel(kid)
+                    mgr._kernels[kid].port = port
+                    mgr._kernel_owners[kid] = idx
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_launch, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        ports = [k.port for k in mgr._kernels.values()]
+        assert len(ports) == n
+        assert len(set(ports)) == n, "two launches were assigned the same port"
+
+    def test_concurrent_create_and_delete_keep_registry_consistent(self):
+        """Interleaved create-commit and delete critical sections must keep
+        _kernels and _kernel_owners in lockstep (no orphaned owner entry)."""
+        mgr = _bare_manager()
+        n = 40
+        barrier = threading.Barrier(2 * n)
+
+        def _create(idx: int) -> None:
+            barrier.wait()
+            kid = f"k{idx}"
+            with mgr._kernels_lock:
+                if kid in mgr._kernels:
+                    return
+                mgr._kernels[kid] = _kernel(kid)
+                mgr._kernel_owners[kid] = idx
+
+        def _delete(idx: int) -> None:
+            barrier.wait()
+            kid = f"k{idx}"
+            with mgr._kernels_lock:
+                mgr._kernels.pop(kid, None)
+                mgr._kernel_owners.pop(kid, None)
+
+        threads = [threading.Thread(target=_create, args=(i,)) for i in range(n)]
+        threads += [threading.Thread(target=_delete, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Whatever survived the race, every live kernel has exactly one owner and
+        # there is no owner row without a kernel.
+        assert set(mgr._kernels) == set(mgr._kernel_owners)
+
+    def test_restore_from_db_holds_lock_during_registry_mutation(self, monkeypatch):
+        """Regression guard for N3: the real _restore_kernels_from_db must mutate
+        the in-memory registry under _kernels_lock. Wrap the lock to record the
+        depth at the moment a kernel row is written and assert it was held."""
+        mgr = _bare_manager()
+
+        held_depth_at_write: list[int] = []
+
+        class _RecordingLock:
+            def __init__(self) -> None:
+                self._lock = threading.RLock()
+                self.depth = 0
+
+            def __enter__(self):
+                self.depth += 1
+                return self._lock.__enter__()
+
+            def __exit__(self, *exc):
+                self.depth -= 1
+                return self._lock.__exit__(*exc)
+
+        mgr._kernels_lock = _RecordingLock()
+
+        config = MagicMock()
+        config.id = "k1"
+        config.name = "test-k1"
+        config.packages = []
+        config.memory_gb = 1
+        config.cpu_cores = 1
+        config.gpu = False
+        config.image_flavour = ImageFlavour.BASE
+        config.custom_image = None
+
+        class _RecordingDict(dict):
+            def __setitem__(self, key, value):
+                held_depth_at_write.append(mgr._kernels_lock.depth)
+                super().__setitem__(key, value)
+
+        mgr._kernels = _RecordingDict()
+
+        import contextlib
+
+        @contextlib.contextmanager
+        def _fake_db_context():
+            yield MagicMock()
+
+        monkeypatch.setattr(
+            "flowfile_core.database.connection.get_db_context",
+            _fake_db_context,
+        )
+        monkeypatch.setattr(
+            "flowfile_core.kernel.persistence.get_all_kernels",
+            lambda db: [(config, [], 7)],
+        )
+        monkeypatch.setattr(
+            "flowfile_core.kernel.persistence.get_all_kernel_scratch_ids",
+            lambda db: {},
+        )
+
+        mgr._restore_kernels_from_db()
+
+        assert "k1" in mgr._kernels
+        assert mgr._kernel_owners["k1"] == 7
+        assert held_depth_at_write == [1], "registry was mutated without holding _kernels_lock"
+        assert mgr._kernels_lock.depth == 0
 
 
 # Container liveness + execute self-heal

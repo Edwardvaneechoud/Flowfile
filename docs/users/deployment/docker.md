@@ -93,9 +93,17 @@ volumes:
 | `JWT_SECRET_KEY` | Token signing secret | Required |
 | `FLOWFILE_MASTER_KEY` | Encryption key for secrets | Via setup wizard |
 | `FLOWFILE_SCHEDULER_ENABLED` | Auto-start the flow scheduler | `false` |
+| `FLOWFILE_ENABLE_PROJECTS` | Enable git project tracking (admin-only in docker; the `/project` router 404s when off). Accepts `true`/`1`/`yes`/`on`. | `true` in the bundled compose files |
 | `WORKER_HOST` | Worker hostname | `flowfile-worker` |
 | `CORE_HOST` | Core hostname | `flowfile-core` |
 | `FLOWFILE_KERNEL_IMAGE` | Kernel image to launch for Python-script nodes | `edwardvaneechoud/flowfile-kernel-base:0.3.0` |
+
+### Git project tracking
+
+When `FLOWFILE_ENABLE_PROJECTS` is on, Flowfile can mirror your flows, connections and schedules
+into a versioned, secret-free git folder. In docker it is **administrator-only**, and each user's
+projects are confined to their own `/app/user_data/projects/<owner_id>` area, so tenants stay
+isolated. Turn it off with `FLOWFILE_ENABLE_PROJECTS=false`.
 
 ## .env Example
 
