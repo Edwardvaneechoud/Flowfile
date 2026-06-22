@@ -2,7 +2,10 @@
   <div class="project-intro">
     <!-- Header: same pattern as the active-project view -->
     <header class="intro-header mb-3">
-      <h2 class="page-title">Project Tracking</h2>
+      <div class="intro-header__title-row">
+        <h2 class="page-title">Project Tracking</h2>
+        <span class="beta-badge">Beta</span>
+      </div>
       <p class="page-description">Store and version your complete environment.</p>
     </header>
 
@@ -114,8 +117,28 @@ const emit = defineEmits<{ (e: "create"): void; (e: "open"): void }>();
   padding: var(--spacing-5);
 }
 
+.intro-header__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
 .intro-header .page-description {
   margin-top: var(--spacing-1);
+}
+
+.beta-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--border-radius-full);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.4;
 }
 
 /* ===== Feature grid (mirrors the active view's pm-stats) ===== */

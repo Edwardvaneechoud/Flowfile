@@ -6,6 +6,7 @@
         <div class="manage-header__text">
           <div class="manage-header__title-row">
             <h2 class="page-title">Project Tracking</h2>
+            <span class="beta-badge">Beta</span>
             <span class="status-pill" :class="`status-pill--${store.status}`">
               <span class="status-pill__dot"></span>{{ statusLabel }}
             </span>
@@ -306,6 +307,20 @@ const handleClose = async () => {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--spacing-2);
+}
+
+.beta-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--border-radius-full);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.4;
 }
 
 .manage-header .page-description {
