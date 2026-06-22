@@ -6,6 +6,7 @@ export interface SetupStatus {
   mode: string;
   projects_enabled?: boolean;
   projects_confined?: boolean;
+  git_available?: boolean;
 }
 
 export interface GeneratedKey {
@@ -57,6 +58,7 @@ class SetupService {
       mode: "unknown",
       projects_enabled: false,
       projects_confined: false,
+      git_available: false,
     };
   }
 

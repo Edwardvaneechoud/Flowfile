@@ -7,6 +7,7 @@ import setupService from "../services/setup.service";
 const isMultiUser = ref(false);
 const projectsEnabled = ref(false);
 const projectsConfined = ref(false);
+const gitAvailable = ref(false);
 let resolved = false;
 
 export function useMultiUser() {
@@ -16,10 +17,12 @@ export function useMultiUser() {
       isMultiUser.value = status.mode === "docker";
       projectsEnabled.value = status.projects_enabled ?? false;
       projectsConfined.value = status.projects_confined ?? false;
+      gitAvailable.value = status.git_available ?? false;
     } catch {
       isMultiUser.value = false;
       projectsEnabled.value = false;
       projectsConfined.value = false;
+      gitAvailable.value = false;
     }
     resolved = true;
     return isMultiUser.value;
@@ -29,5 +32,5 @@ export function useMultiUser() {
     void refresh();
   }
 
-  return { isMultiUser, projectsEnabled, projectsConfined, refresh };
+  return { isMultiUser, projectsEnabled, projectsConfined, gitAvailable, refresh };
 }

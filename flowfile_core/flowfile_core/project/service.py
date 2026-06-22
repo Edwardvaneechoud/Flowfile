@@ -318,6 +318,8 @@ class ProjectSyncService:
         )
         write_manifest(root, m)
         write_gitignore(root)
+        if not git_ops.git_available():
+            logger.warning("git is unavailable; project %r is created without version tracking", name)
         git_ops.init(root)
         with git_ops.repo_lock(root):
             with get_db_context() as db:
@@ -350,6 +352,7 @@ class ProjectSyncService:
         if proj is None:
             raise NoActiveProjectError("No active project")
         with git_ops.repo_lock(proj.root):
+            git_ops.init(proj.root)  # heal a folder created while git was unavailable; no-op otherwise
             with get_db_context() as db:
                 projection.project_all(db, proj.root, proj.owner_id)
             sha = git_ops.commit_all(proj.root, message)

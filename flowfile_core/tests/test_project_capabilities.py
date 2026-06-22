@@ -38,6 +38,15 @@ async def test_health_status_project_flags(monkeypatch, mode, enable, exp_enable
         s.FLOWFILE_ENABLE_PROJECTS.set(False)
 
 
+@pytest.mark.asyncio
+async def test_health_status_reports_git_availability():
+    from flowfile_core.project import git_ops
+    from flowfile_core.routes.public import get_setup_status
+
+    status = await get_setup_status()
+    assert status.git_available == git_ops.git_available()
+
+
 def test_get_project_root_creates_confined_base(tmp_path, monkeypatch):
     from flowfile_core.routes import project as route
 

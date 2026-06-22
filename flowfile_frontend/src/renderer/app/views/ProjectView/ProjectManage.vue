@@ -24,6 +24,18 @@
       </button>
     </header>
 
+    <!-- Git not available on the server -->
+    <div v-if="!gitAvailable" class="banner banner--warning mb-3">
+      <i class="fa-solid fa-code-branch"></i>
+      <div class="banner__body">
+        <p class="banner__title">Version history is unavailable</p>
+        <p class="banner__text">
+          Git is not installed on the server, so versions can't be saved or listed. Install git on
+          the Flowfile server to enable version history.
+        </p>
+      </div>
+    </div>
+
     <!-- Files changed outside Flowfile -->
     <div v-if="store.hasExternalChanges" class="banner banner--warning mb-3">
       <i class="fa-solid fa-triangle-exclamation"></i>
@@ -188,10 +200,12 @@ import ChangeList from "./ChangeList.vue";
 import ProjectVersionHistory from "./ProjectVersionHistory.vue";
 import ProjectSettingsDialog from "./ProjectSettingsDialog.vue";
 import { useProjectStore } from "../../stores/project-store";
+import { useMultiUser } from "../../composables/useMultiUser";
 import { timeAgoShort } from "../../utils/time";
 import type { ProjectVersionChange } from "../../types";
 
 const store = useProjectStore();
+const { gitAvailable } = useMultiUser();
 const router = useRouter();
 const reloading = ref(false);
 const closing = ref(false);

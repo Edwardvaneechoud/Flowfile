@@ -23,13 +23,16 @@ describe("useMultiUser", () => {
       mode: "docker",
       projects_enabled: true,
       projects_confined: true,
+      git_available: true,
     });
     const { useMultiUser } = await import("./useMultiUser");
-    const { isMultiUser, projectsEnabled, projectsConfined, refresh } = useMultiUser();
+    const { isMultiUser, projectsEnabled, projectsConfined, gitAvailable, refresh } =
+      useMultiUser();
     await refresh();
     expect(isMultiUser.value).toBe(true);
     expect(projectsEnabled.value).toBe(true);
     expect(projectsConfined.value).toBe(true);
+    expect(gitAvailable.value).toBe(true);
   });
 
   it("treats desktop mode as enabled but not confined", async () => {
@@ -49,10 +52,12 @@ describe("useMultiUser", () => {
   it("defaults every flag to false when the status fetch fails", async () => {
     mocks.getSetupStatus.mockRejectedValue(new Error("down"));
     const { useMultiUser } = await import("./useMultiUser");
-    const { isMultiUser, projectsEnabled, projectsConfined, refresh } = useMultiUser();
+    const { isMultiUser, projectsEnabled, projectsConfined, gitAvailable, refresh } =
+      useMultiUser();
     await refresh();
     expect(isMultiUser.value).toBe(false);
     expect(projectsEnabled.value).toBe(false);
     expect(projectsConfined.value).toBe(false);
+    expect(gitAvailable.value).toBe(false);
   });
 });

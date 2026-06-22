@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from flowfile_core.auth.secrets import generate_master_key, is_master_key_configured
 from flowfile_core.configs import settings
+from flowfile_core.project.git_ops import git_available
 
 router = APIRouter()
 
@@ -18,6 +19,7 @@ class SetupStatus(BaseModel):
     mode: str
     projects_enabled: bool
     projects_confined: bool
+    git_available: bool
 
 
 class GeneratedKey(BaseModel):
@@ -48,6 +50,7 @@ async def get_setup_status():
         mode=mode,
         projects_enabled=(not settings.is_docker_mode()) or bool(settings.FLOWFILE_ENABLE_PROJECTS),
         projects_confined=not settings.is_electron_mode(),
+        git_available=git_available(),
     )
 
 
