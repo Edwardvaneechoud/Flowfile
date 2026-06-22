@@ -78,8 +78,7 @@
           <div class="card-content">
             <p class="intro-copy">
               A project turns a folder on your computer into a safe, versioned copy of your work.
-              Your flows, connections and schedules are mirrored there automatically as you go. No
-              passwords are ever stored in it.
+              Your flows, connections and schedules are mirrored there automatically as you go.
             </p>
           </div>
         </section>

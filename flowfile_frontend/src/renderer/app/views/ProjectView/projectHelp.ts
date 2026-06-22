@@ -8,7 +8,7 @@ export const projectHelp: PageHelpContent = {
       title: "What is a project?",
       icon: "fa-solid fa-circle-info",
       description:
-        "A project turns a folder on your computer into a safe, versioned copy of your work — backed by a standard Git repository. Your flows, connections and schedules are mirrored there automatically as you work, and no passwords are ever stored in it. Because it's just Git, it's ideal for syncing to GitHub or any remote.",
+        "A project turns a folder on your computer into a safe, versioned copy of your work — backed by a standard Git repository. Your flows, connections and schedules are mirrored there automatically as you work. Because it's just Git, it's ideal for syncing to GitHub or any remote.",
     },
     {
       title: "What you can do here",
