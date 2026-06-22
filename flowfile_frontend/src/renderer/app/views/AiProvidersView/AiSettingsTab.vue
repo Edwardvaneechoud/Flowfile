@@ -152,32 +152,29 @@
             <label class="model-field__label" for="ai-main-provider">
               {{ aiStore.splitModels ? "Complex provider" : "Provider" }}
             </label>
-            <select
+            <el-select
               id="ai-main-provider"
-              class="model-select"
-              :value="aiStore.selectedProvider ?? ''"
+              :model-value="aiStore.selectedProvider ?? ''"
               @change="onMainProviderChange"
             >
-              <option
+              <el-option
                 v-for="p in aiStore.configuredProviders"
                 :key="p.provider"
                 :value="p.provider"
-              >
-                {{ p.provider }}
-              </option>
-            </select>
+                :label="p.provider"
+              />
+            </el-select>
           </div>
           <div class="model-field">
             <label class="model-field__label" for="ai-main-model">Model</label>
-            <select
+            <el-select
               id="ai-main-model"
-              class="model-select"
-              :value="aiStore.selectedModel ?? ''"
+              :model-value="aiStore.selectedModel ?? ''"
               @change="onMainModelChange"
             >
-              <option value="">Provider default</option>
-              <option v-for="m in mainModels" :key="m" :value="m">{{ m }}</option>
-            </select>
+              <el-option value="" label="Provider default" />
+              <el-option v-for="m in mainModels" :key="m" :value="m" :label="m" />
+            </el-select>
           </div>
         </div>
         <p class="model-tier__hint">
@@ -189,41 +186,41 @@
         </p>
 
         <!-- Split toggle. -->
-        <label class="model-split-toggle">
-          <input type="checkbox" :checked="aiStore.splitModels" @change="onSplitToggle" />
-          <span>Use a separate, cheaper model for simple tasks</span>
-        </label>
+        <el-checkbox
+          class="model-split-toggle"
+          :model-value="aiStore.splitModels"
+          @change="onSplitToggle"
+        >
+          Use a separate, cheaper model for simple tasks
+        </el-checkbox>
 
         <!-- Simple tier — own provider + model, shown only when split on. -->
         <div v-if="aiStore.splitModels" class="model-row model-row--simple">
           <div class="model-field">
             <label class="model-field__label" for="ai-simple-provider">Simple provider</label>
-            <select
+            <el-select
               id="ai-simple-provider"
-              class="model-select"
-              :value="simpleProviderName ?? ''"
+              :model-value="simpleProviderName ?? ''"
               @change="onSimpleProviderChange"
             >
-              <option
+              <el-option
                 v-for="p in aiStore.configuredProviders"
                 :key="p.provider"
                 :value="p.provider"
-              >
-                {{ p.provider }}
-              </option>
-            </select>
+                :label="p.provider"
+              />
+            </el-select>
           </div>
           <div class="model-field">
             <label class="model-field__label" for="ai-simple-model">Model</label>
-            <select
+            <el-select
               id="ai-simple-model"
-              class="model-select"
-              :value="aiStore.simpleModel ?? ''"
+              :model-value="aiStore.simpleModel ?? ''"
               @change="onSimpleModelChange"
             >
-              <option value="">Provider default</option>
-              <option v-for="m in simpleModels" :key="m" :value="m">{{ m }}</option>
-            </select>
+              <el-option value="" label="Provider default" />
+              <el-option v-for="m in simpleModels" :key="m" :value="m" :label="m" />
+            </el-select>
           </div>
         </div>
         <p v-if="aiStore.splitModels" class="model-tier__hint">
@@ -656,26 +653,24 @@ const simpleModels = computed(() =>
   _withSelected(modelsForProvider(simpleProviderName.value), aiStore.simpleModel),
 );
 
-const onSplitToggle = (event: Event): void => {
-  aiStore.setSplitModels((event.target as HTMLInputElement).checked);
+const onSplitToggle = (checked: boolean): void => {
+  aiStore.setSplitModels(checked);
 };
 
-const onMainProviderChange = (event: Event): void => {
-  const value = (event.target as HTMLSelectElement).value;
+const onMainProviderChange = (value: string): void => {
   if (value) aiStore.setSelectedProvider(value);
 };
 
-const onMainModelChange = (event: Event): void => {
-  aiStore.setSelectedModel((event.target as HTMLSelectElement).value || null);
+const onMainModelChange = (value: string): void => {
+  aiStore.setSelectedModel(value || null);
 };
 
-const onSimpleProviderChange = (event: Event): void => {
-  const value = (event.target as HTMLSelectElement).value;
+const onSimpleProviderChange = (value: string): void => {
   if (value) aiStore.setSimpleProvider(value);
 };
 
-const onSimpleModelChange = (event: Event): void => {
-  aiStore.setSimpleModel((event.target as HTMLSelectElement).value || null);
+const onSimpleModelChange = (value: string): void => {
+  aiStore.setSimpleModel(value || null);
 };
 
 const providers = ref<AiProvider[]>([]);

@@ -94,10 +94,11 @@ export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
     // (e.g. OpenRouter-only).
     const aiStore = useAiStore();
     const resolved = aiStore.resolveSurface("ghost_node");
+    const usingCaller = body.provider !== undefined;
     const enriched: SuggestNextNodeRequest = {
       ...body,
-      provider: body.provider ?? resolved.provider ?? undefined,
-      model: body.model ?? resolved.model ?? undefined,
+      provider: (usingCaller ? body.provider : resolved.provider) ?? undefined,
+      model: (usingCaller ? body.model : resolved.model) ?? undefined,
     };
 
     try {

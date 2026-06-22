@@ -493,6 +493,15 @@ def test_route_join_keys_happy_path(authed_client: TestClient, monkeypatch: pyte
     assert body["key_pairs"][0]["left_col"] == "user_id"
 
 
+def test_route_formula_404_gone(authed_client: TestClient) -> None:
+    """The formula autocomplete endpoint was removed; POSTing to it 404s."""
+    response = authed_client.post(
+        "/ai/autocomplete/formula",
+        json={"flow_id": 1, "node_id": "L"},
+    )
+    assert response.status_code == 404
+
+
 # 5. Lazy-litellm contract
 
 

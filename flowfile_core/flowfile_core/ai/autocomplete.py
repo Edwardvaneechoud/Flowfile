@@ -103,9 +103,9 @@ class _JoinKeyLLMOutput(BaseModel):
 
 
 def _column_names_for_node(node: FlowNode) -> list[str] | None:
-    """Return the predicted upstream column names, or ``None`` if the schema is missing/empty."""
+    """Return the predicted upstream column names; ``None`` only when the schema is missing (``[]`` stays ``[]``)."""
     schema: list[FlowfileColumn] | None = node.node_schema.predicted_schema
-    if not schema:
+    if schema is None:
         return None
     return [col.column_name for col in schema]
 

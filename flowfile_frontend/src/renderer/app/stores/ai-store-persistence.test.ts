@@ -91,9 +91,14 @@ describe("loadPersistedAiState", () => {
 
   it("defaults the split-model fields to null for legacy entries without them", () => {
     const storage = makeStorage();
-    persistAiState(
-      { messages: sampleMessages(), selectedProvider: "anthropic", selectedModel: "x" },
-      storage,
+    // Legacy entry: the keys are absent entirely (persistAiState would write explicit nulls).
+    storage.setItem(
+      UNSCOPED_KEY,
+      JSON.stringify({
+        messages: sampleMessages(),
+        selectedProvider: "anthropic",
+        selectedModel: "x",
+      }),
     );
     const state = loadPersistedAiState(storage);
     expect(state.splitModels).toBeNull();
