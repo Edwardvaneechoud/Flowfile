@@ -66,6 +66,7 @@
           @flow-context-menu="$emit('flowContextMenu', $event)"
           @select-visualization="$emit('selectVisualization', $event)"
           @select-notebook="$emit('selectNotebook', $event)"
+          @delete-notebook="$emit('deleteNotebook', $event)"
           @toggle-favorite="$emit('toggleFavorite', $event)"
           @toggle-table-favorite="$emit('toggleTableFavorite', $event)"
           @register-flow="$emit('registerFlow', $event)"
@@ -280,6 +281,15 @@
         >
           <i class="fa-solid fa-book table-icon notebook-icon" title="Notebook"></i>
           <span class="table-name">{{ nb.name }}</span>
+          <div class="flow-actions" @click.stop>
+            <button
+              class="action-btn delete-btn"
+              title="Delete notebook"
+              @click="$emit('deleteNotebook', nb)"
+            >
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
         </div>
       </TreeSection>
     </div>
@@ -329,6 +339,7 @@ defineEmits([
   "flowContextMenu",
   "selectVisualization",
   "selectNotebook",
+  "deleteNotebook",
   "toggleFavorite",
   "toggleTableFavorite",
   "registerFlow",
