@@ -930,7 +930,7 @@ class FlowGraphCodeConverter:
 
         for sort_input in settings.sort_input:
             sort_cols.append(f'"{sort_input.column}"')
-            descending.append(sort_input.how == "desc")
+            descending.append(sort_input.descending)
 
         self._add_code(f"{var_name} = {input_df}.sort([{', '.join(sort_cols)}], descending={descending})")
         self._add_code("")
@@ -1007,7 +1007,7 @@ class FlowGraphCodeConverter:
         sorted_df = input_df
         if window_input.order_by:
             sort_cols = [f'"{s.column}"' for s in window_input.order_by]
-            descending = [s.how == "desc" for s in window_input.order_by]
+            descending = [s.descending for s in window_input.order_by]
             self._add_code(f"{var_name} = {input_df}.sort([{', '.join(sort_cols)}], descending={descending})")
             sorted_df = var_name
 

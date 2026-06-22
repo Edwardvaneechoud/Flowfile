@@ -949,11 +949,25 @@ class PivotInput(BaseModel):
         return pl.struct([pl.col(c) for c in self.aggregations]).alias("vals")
 
 
+def is_descending(how: str | None) -> bool:
+    """Whether a sort-direction string means descending.
+
+    Accepts both the programmatic ``"asc"``/``"desc"`` form (flowfile_frame) and the
+    visual editor's ``"Ascending"``/``"Descending"`` form (case-insensitive).
+    """
+    return (how or "").lower() in ("desc", "descending")
+
+
 class SortByInput(BaseModel):
     """Defines a single sort condition on a column, including the direction."""
 
     column: str
     how: str | None = "asc"
+
+    @property
+    def descending(self) -> bool:
+        """Resolve ``how`` to the boolean Polars expects, accepting both conventions."""
+        return is_descending(self.how)
 
 
 class RecordIdInput(BaseModel):
