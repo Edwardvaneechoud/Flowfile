@@ -1,18 +1,29 @@
 <template>
   <div class="project-manage">
-    <div class="manage-header mb-3">
+    <!-- Header -->
+    <header class="manage-header mb-3">
       <div class="manage-header__main">
-        <div class="manage-icon"><i class="fa-solid fa-folder"></i></div>
         <div class="manage-header__text">
-          <h2 class="page-title">{{ store.activeProject?.name }}</h2>
-          <p class="page-description folder-path">{{ store.activeProject?.folder_path }}</p>
+          <div class="manage-header__title-row">
+            <h2 class="page-title">Project Tracking</h2>
+            <span class="status-pill" :class="`status-pill--${store.status}`">
+              <span class="status-pill__dot"></span>{{ statusLabel }}
+            </span>
+          </div>
+          <p class="project-meta">
+            <span class="project-name">{{ store.activeProject?.name }}</span>
+            <span class="folder-path">
+              <i class="fa-solid fa-folder"></i>
+              {{ store.activeProject?.folder_path }}
+            </span>
+          </p>
         </div>
       </div>
-      <el-button class="settings-btn" @click="settingsVisible = true">
+      <button type="button" class="ghost-btn" @click="settingsVisible = true">
         <i class="fa-solid fa-gear"></i>
         <span>Settings</span>
-      </el-button>
-    </div>
+      </button>
+    </header>
 
     <!-- Files changed outside Flowfile -->
     <div v-if="store.hasExternalChanges" class="banner banner--warning mb-3">
@@ -53,17 +64,38 @@
     </div>
 
     <!-- Save a version -->
-    <div class="card mb-3">
+    <section class="card mb-3">
       <div class="card-header">
-        <h3 class="card-title">Save a version</h3>
-        <span class="status-chip" :class="`status-chip--${store.status}`">{{ statusLabel }}</span>
+        <h3 class="card-title">
+          <i class="fa-solid fa-camera card-title__icon"></i>
+          Save a version
+          <el-tooltip
+            effect="dark"
+            placement="top"
+            content="A version is a named snapshot of your whole project. Save one whenever you reach a point you might want to return to."
+          >
+            <button type="button" class="help-hint" aria-label="What is a version?">
+              <i class="fa-solid fa-circle-info"></i>
+            </button>
+          </el-tooltip>
+        </h3>
       </div>
       <div class="card-content">
-        <p v-if="store.status === 'clean'" class="clean-line">
-          <i class="fa-solid fa-circle-check"></i>
-          All changes are saved as the latest version.
-        </p>
+        <div v-if="store.status === 'clean'" class="saved-state">
+          <span class="saved-state__check"><i class="fa-solid fa-check"></i></span>
+          <div class="saved-state__text">
+            <p class="saved-state__title">All changes saved</p>
+            <p v-if="latestVersion" class="saved-state__sub">
+              Latest version: <strong>“{{ latestVersion.message }}”</strong>
+            </p>
+            <p v-else class="saved-state__sub">Your work is mirrored to the project folder.</p>
+          </div>
+        </div>
         <template v-else>
+          <p class="save-prompt">
+            <i class="fa-solid fa-pen-to-square"></i>
+            Describe what changed, then save a snapshot you can return to.
+          </p>
           <SaveVersionForm :rows="3" @saved="loadUnsaved" />
           <div v-if="unsavedChanges.length" class="unsaved-changes">
             <p class="unsaved-changes__caption">This version will include:</p>
@@ -71,25 +103,31 @@
           </div>
         </template>
       </div>
-    </div>
+    </section>
 
     <!-- Version history -->
     <ProjectVersionHistory v-if="store.versionsAvailable" />
 
     <!-- Stop using this project -->
-    <div class="card mb-3">
+    <section class="card danger-card mb-3">
       <div class="card-content close-row">
-        <div>
-          <p class="close-title">Stop using this project</p>
+        <div class="close-row__text">
+          <p class="close-title"><i class="fa-solid fa-link-slash"></i> Stop using this project</p>
           <p class="close-text">
             Your files stay on disk — Flowfile just stops tracking this folder.
           </p>
         </div>
-        <el-button v-if="store.closeAvailable" :loading="closing" @click="handleClose">
+        <el-button
+          v-if="store.closeAvailable"
+          type="danger"
+          plain
+          :loading="closing"
+          @click="handleClose"
+        >
           Stop tracking
         </el-button>
       </div>
-    </div>
+    </section>
 
     <ProjectSettingsDialog v-model="settingsVisible" />
   </div>
@@ -112,6 +150,8 @@ const reloading = ref(false);
 const closing = ref(false);
 const settingsVisible = ref(false);
 const unsavedChanges = ref<ProjectVersionChange[]>([]);
+
+const latestVersion = computed(() => store.versions[0] ?? null);
 
 const statusLabel = computed(
   () =>
@@ -191,17 +231,18 @@ const handleClose = async () => {
   margin: 0 auto;
 }
 
+/* ===== Header (matches the page-header pattern used across tabs) ===== */
 .manage-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--spacing-4, 16px);
+  gap: var(--spacing-4);
 }
 
 .manage-header__main {
   display: flex;
   align-items: center;
-  gap: var(--spacing-4, 16px);
+  gap: var(--spacing-4);
   min-width: 0;
 }
 
@@ -209,62 +250,184 @@ const handleClose = async () => {
   min-width: 0;
 }
 
-.manage-icon {
+.manage-header__title-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background-color: var(--color-accent-subtle, #eff6ff);
-  color: var(--color-accent, #2563eb);
-  font-size: var(--font-size-xl, 20px);
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
 }
 
-.settings-btn {
-  flex-shrink: 0;
-  display: inline-flex;
+.project-meta {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: var(--spacing-1) var(--spacing-2);
+  margin: var(--spacing-1) 0 0;
+}
+
+.project-name {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
 }
 
 .folder-path {
-  font-family: var(--font-family-mono, monospace);
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
   word-break: break-all;
 }
 
+.folder-path i {
+  font-size: var(--font-size-xs);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.status-pill__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status-pill--clean {
+  color: var(--color-success-dark);
+  background: var(--color-success-light);
+}
+
+.status-pill--unsaved {
+  color: var(--color-warning-dark);
+  background: var(--color-warning-light);
+}
+
+.status-pill--external {
+  color: var(--color-danger-dark);
+  background: var(--color-danger-light);
+}
+
+/* danger-dark reads as a dark red — fine on the light tint, too dark on the dark fill. */
+[data-theme="dark"] .status-pill--external {
+  color: #fca5a5;
+}
+
+.status-pill--none {
+  display: none;
+}
+
+/* ===== Settings button ===== */
+.ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  flex-shrink: 0;
+  padding: var(--spacing-2) var(--spacing-4);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-base) var(--transition-timing);
+}
+
+.ghost-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+
+.ghost-btn:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-subtle);
+}
+
+.ghost-btn i {
+  font-size: var(--font-size-md);
+}
+
+/* ===== Card title icon + inline help ===== */
+.card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.card-title__icon {
+  color: var(--color-accent);
+  font-size: var(--font-size-md);
+}
+
+.help-hint {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: help;
+  border-radius: var(--border-radius-full);
+  transition: color var(--transition-base) var(--transition-timing);
+}
+
+.help-hint:hover {
+  color: var(--color-accent);
+}
+
+.help-hint:focus-visible {
+  outline: none;
+  color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-subtle);
+}
+
+/* ===== Banners ===== */
 .banner {
   display: flex;
   align-items: flex-start;
-  gap: var(--spacing-3, 12px);
-  padding: var(--spacing-3, 12px) var(--spacing-4, 16px);
-  border-radius: var(--border-radius-md, 8px);
-  border-left: 4px solid var(--color-accent, #2563eb);
-  background: var(--color-background-muted, #f8fafc);
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  border-radius: var(--border-radius-lg);
+  border-left: 4px solid var(--color-accent);
+  background: var(--color-background-muted);
 }
 
 .banner--warning {
-  border-left-color: var(--color-warning, #d97706);
-  background: color-mix(in srgb, var(--color-warning, #d97706) 8%, transparent);
+  border-left-color: var(--color-warning);
+  background: var(--color-warning-light);
 }
 
 .banner--info {
-  border-left-color: var(--color-accent, #2563eb);
+  border-left-color: var(--color-accent);
 }
 
 .banner > i {
   margin-top: 3px;
-  font-size: var(--font-size-lg, 18px);
+  font-size: var(--font-size-2xl);
 }
 
 .banner--warning > i {
-  color: var(--color-warning, #d97706);
+  color: var(--color-warning);
 }
 
 .banner--info > i {
-  color: var(--color-accent, #2563eb);
+  color: var(--color-accent);
 }
 
 .banner__body {
@@ -274,88 +437,120 @@ const handleClose = async () => {
 
 .banner__title {
   margin: 0 0 2px;
-  font-size: var(--font-size-sm, 14px);
-  font-weight: var(--font-weight-medium, 500);
-  color: var(--color-text-primary, #0f172a);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
 }
 
 .banner__text {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.5;
-  color: var(--color-text-secondary, #475569);
+  color: var(--color-text-secondary);
 }
 
 .secret-names {
-  font-family: var(--font-family-mono, monospace);
-  color: var(--color-text-primary, #0f172a);
+  font-family: var(--font-family-mono);
+  color: var(--color-text-primary);
 }
 
-.status-chip {
-  font-size: 12px;
-  font-weight: var(--font-weight-medium, 500);
-  padding: 2px 10px;
-  border-radius: 999px;
-}
-
-.status-chip--clean {
-  color: var(--color-success, #16a34a);
-  background: color-mix(in srgb, var(--color-success, #16a34a) 12%, transparent);
-}
-
-.status-chip--unsaved {
-  color: var(--color-warning, #d97706);
-  background: color-mix(in srgb, var(--color-warning, #d97706) 14%, transparent);
-}
-
-.status-chip--external {
-  color: var(--color-danger, #ef4444);
-  background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
-}
-
-.clean-line {
+/* ===== Saved / unsaved state ===== */
+.saved-state {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0;
-  font-size: var(--font-size-sm, 14px);
-  color: var(--color-text-secondary, #475569);
+  gap: var(--spacing-3);
 }
 
-.clean-line i {
-  color: var(--color-success, #16a34a);
+.saved-state__check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+  font-size: var(--font-size-md);
+}
+
+.saved-state__title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.saved-state__sub {
+  margin: 2px 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.saved-state__sub strong {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.save-prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--spacing-3);
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+}
+
+.save-prompt i {
+  color: var(--color-accent);
 }
 
 .unsaved-changes {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border-light, #eef2f7);
+  margin-top: var(--spacing-3);
+  padding-top: var(--spacing-3);
+  border-top: 1px solid var(--color-border-light);
 }
 
 .unsaved-changes__caption {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: var(--font-weight-medium, 500);
-  color: var(--color-text-secondary, #475569);
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+/* ===== Stop tracking ===== */
+.danger-card {
+  background: var(--color-background-muted);
 }
 
 .close-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--spacing-4, 16px);
+  gap: var(--spacing-4);
+}
+
+.close-row__text {
+  min-width: 0;
 }
 
 .close-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
   margin: 0 0 2px;
-  font-size: var(--font-size-sm, 14px);
-  font-weight: var(--font-weight-medium, 500);
-  color: var(--color-text-primary, #0f172a);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.close-title i {
+  color: var(--color-text-tertiary);
 }
 
 .close-text {
   margin: 0;
-  font-size: 13px;
-  color: var(--color-text-tertiary, #94a3b8);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
 }
 </style>

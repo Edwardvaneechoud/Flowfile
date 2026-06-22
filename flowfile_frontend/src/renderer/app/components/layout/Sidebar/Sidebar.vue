@@ -79,6 +79,7 @@ import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp"
 import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
 import { kernelHelp } from "../../../views/KernelManagerView/kernelHelp";
 import { dashboardHelp } from "../../../views/DashboardsView/dashboardHelp";
+import { projectHelp } from "../../../views/ProjectView/projectHelp";
 
 defineProps({
   isCollapse: {
@@ -102,6 +103,7 @@ const helpByRoute: Record<string, PageHelpContent> = {
   designer: designerHelp,
   catalog: catalogHelp,
   connections: connectionsHelp,
+  project: projectHelp,
   templates: templatesHelp,
   kernelManager: kernelHelp,
   "dashboard-new": dashboardHelp,

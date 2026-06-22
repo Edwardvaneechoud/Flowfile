@@ -1,7 +1,20 @@
 <template>
   <div class="card mb-3">
     <div class="card-header">
-      <h3 class="card-title">History ({{ store.versions.length }})</h3>
+      <h3 class="card-title">
+        <i class="fa-solid fa-clock-rotate-left card-title__icon"></i>
+        History
+        <span class="count-badge">{{ store.versions.length }}</span>
+        <el-tooltip
+          effect="dark"
+          placement="top"
+          content="Every saved version, newest first. Expand Details to see what changed, or Restore to roll the whole project back to that point."
+        >
+          <button type="button" class="help-hint" aria-label="About version history">
+            <i class="fa-solid fa-circle-info"></i>
+          </button>
+        </el-tooltip>
+      </h3>
       <button
         type="button"
         class="overview-link"
@@ -20,27 +33,39 @@
         No versions yet. Use “Save a version” above to create your first snapshot.
       </div>
       <div v-else class="history-scroll">
-        <ul class="history-list">
-          <li v-for="(v, i) in pagedVersions" :key="v.sha" class="history-item">
-            <div class="history-row">
-              <div class="history-dot" :class="{ latest: pageStart + i === 0 }"></div>
-              <div class="history-body">
-                <p class="history-message">{{ v.message }}</p>
-                <p class="history-meta">
+        <ul class="timeline" :class="{ 'has-line': pagedVersions.length > 1 }">
+          <li
+            v-for="(v, i) in pagedVersions"
+            :key="v.sha"
+            class="tl-item"
+            :class="{ latest: pageStart + i === 0 }"
+          >
+            <div class="tl-row">
+              <div class="tl-info">
+                <p class="tl-message">{{ v.message }}</p>
+                <p class="tl-meta">
                   {{ timeAgo(v.committed_at) }}
-                  <span v-if="pageStart + i === 0" class="history-current">· current</span>
+                  <span v-if="pageStart + i === 0" class="tl-current">· current</span>
                 </p>
               </div>
-              <button type="button" class="history-details-btn" @click="toggle(v.sha)">
-                <i
-                  class="fa-solid"
-                  :class="expanded[v.sha] ? 'fa-chevron-up' : 'fa-chevron-down'"
-                ></i>
-                Details
-              </button>
-              <el-button v-if="pageStart + i !== 0" size="small" text @click="openRestore(v)">
-                Restore
-              </el-button>
+              <div class="tl-actions">
+                <button
+                  type="button"
+                  class="history-details-btn"
+                  :aria-expanded="!!expanded[v.sha]"
+                  @click="toggle(v.sha)"
+                >
+                  <i
+                    class="fa-solid"
+                    :class="expanded[v.sha] ? 'fa-chevron-up' : 'fa-chevron-down'"
+                  ></i>
+                  Details
+                </button>
+                <el-button v-if="pageStart + i !== 0" size="small" text @click="openRestore(v)">
+                  <i class="fa-solid fa-rotate-left restore-icon"></i>
+                  Restore
+                </el-button>
+              </div>
             </div>
 
             <div v-if="expanded[v.sha]" class="history-detail">
@@ -150,19 +175,77 @@ const timeAgo = (iso: string): string => {
 </script>
 
 <style scoped>
+.card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.card-title__icon {
+  color: var(--color-accent);
+  font-size: var(--font-size-md);
+}
+
+.count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--border-radius-full);
+  background: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.help-hint {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: help;
+  border-radius: var(--border-radius-full);
+  transition: color var(--transition-base) var(--transition-timing);
+}
+
+.help-hint:hover {
+  color: var(--color-accent);
+}
+
+.help-hint:focus-visible {
+  outline: none;
+  color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-subtle);
+}
+
 .overview-link {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   background: transparent;
   border: none;
-  color: var(--color-text-secondary, #475569);
-  font-size: var(--font-size-sm, 14px);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
   cursor: pointer;
 }
 
 .overview-link:hover:not(:disabled) {
-  color: var(--color-accent, #2563eb);
+  color: var(--color-accent);
+}
+
+.overview-link:focus-visible,
+.history-details-btn:focus-visible,
+.pager-btn:focus-visible {
+  outline: none;
+  color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-subtle);
+  border-radius: var(--border-radius-sm);
 }
 
 .overview-link .spin {
@@ -176,72 +259,112 @@ const timeAgo = (iso: string): string => {
 }
 
 .history-empty {
-  padding: var(--spacing-3, 12px) 0;
-  font-size: var(--font-size-sm, 14px);
-  color: var(--color-text-tertiary, #94a3b8);
+  padding: var(--spacing-3) 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text-tertiary);
 }
 
 .history-scroll {
-  max-height: 360px;
+  max-height: 380px;
   overflow-y: auto;
-  margin-right: calc(-1 * var(--spacing-2, 8px));
-  padding-right: var(--spacing-2, 8px);
+  margin-right: calc(-1 * var(--spacing-2));
+  padding-right: var(--spacing-2);
 }
 
-.history-list {
+/* ===== Timeline ===== */
+.timeline {
+  position: relative;
   list-style: none;
   margin: 0;
-  padding: 0;
+  /* small left inset so the dots + focus rings clear the scroll container's clip edge */
+  padding: 0 0 0 var(--spacing-1);
 }
 
-.history-item {
-  border-bottom: 1px solid var(--color-border-light, #eef2f7);
+/* Continuous rail behind the dots, trimmed to the first/last dot. */
+.timeline.has-line::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 18px;
+  bottom: 18px;
+  width: 2px;
+  background: var(--color-border-light);
 }
 
-.history-item:last-child {
-  border-bottom: none;
+.tl-item {
+  position: relative;
+  padding: var(--spacing-2) var(--spacing-2) var(--spacing-2) var(--spacing-6);
+  border-radius: var(--border-radius-md);
+  transition: background var(--transition-fast) var(--transition-timing);
 }
 
-.history-row {
+.tl-item:hover {
+  background: var(--color-background-muted);
+}
+
+.tl-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 14px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-background-primary);
+  border: 2px solid var(--color-border-secondary);
+  box-sizing: border-box;
+}
+
+.tl-item:hover::before {
+  background: var(--color-background-muted);
+}
+
+.tl-item.latest::before {
+  background: var(--color-success);
+  border-color: var(--color-success);
+  box-shadow: 0 0 0 3px var(--color-success-light);
+}
+
+.tl-row {
   display: flex;
   align-items: center;
-  gap: var(--spacing-3, 12px);
-  padding: var(--spacing-2, 8px) 0;
+  gap: var(--spacing-3);
 }
 
-.history-dot {
-  width: 9px;
-  height: 9px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--color-border-secondary, #cbd5e1);
-}
-
-.history-dot.latest {
-  background: var(--color-success, #16a34a);
-}
-
-.history-body {
+.tl-info {
   flex: 1;
   min-width: 0;
 }
 
-.history-message {
+.tl-message {
   margin: 0;
-  font-size: var(--font-size-sm, 14px);
-  font-weight: var(--font-weight-medium, 500);
-  color: var(--color-text-primary, #0f172a);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
   word-break: break-word;
 }
 
-.history-meta {
+.tl-meta {
   margin: 2px 0 0;
-  font-size: 12px;
-  color: var(--color-text-tertiary, #94a3b8);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
 }
 
-.history-current {
-  color: var(--color-success, #16a34a);
+.tl-current {
+  color: var(--color-success-dark);
+  font-weight: var(--font-weight-medium);
+}
+
+.tl-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  flex-shrink: 0;
+}
+
+.restore-icon {
+  margin-right: 4px;
+  font-size: var(--font-size-xs);
 }
 
 .history-details-btn {
@@ -251,40 +374,41 @@ const timeAgo = (iso: string): string => {
   flex-shrink: 0;
   background: transparent;
   border: none;
-  color: var(--color-text-secondary, #475569);
-  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
 .history-details-btn:hover {
-  color: var(--color-accent, #2563eb);
+  color: var(--color-accent);
 }
 
 .history-detail {
-  padding: 4px 0 12px 21px;
+  padding: var(--spacing-1) 0 var(--spacing-2);
 }
 
 .history-detail__empty {
   margin: 0;
-  font-size: 12px;
-  color: var(--color-text-tertiary, #94a3b8);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
 }
 
+/* ===== Pager ===== */
 .history-pager {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--spacing-3, 12px);
+  gap: var(--spacing-3);
 }
 
 .history-pager__info {
-  font-size: 12px;
-  color: var(--color-text-tertiary, #94a3b8);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
 }
 
 .history-pager__controls {
   display: flex;
-  gap: var(--spacing-2, 8px);
+  gap: var(--spacing-2);
 }
 
 .pager-btn {
@@ -293,17 +417,17 @@ const timeAgo = (iso: string): string => {
   gap: 5px;
   background: transparent;
   border: none;
-  color: var(--color-text-secondary, #475569);
-  font-size: var(--font-size-sm, 14px);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
   cursor: pointer;
 }
 
 .pager-btn:hover:not(:disabled) {
-  color: var(--color-accent, #2563eb);
+  color: var(--color-accent);
 }
 
 .pager-btn:disabled {
-  color: var(--color-border-secondary, #cbd5e1);
+  color: var(--color-border-secondary);
   cursor: default;
 }
 </style>

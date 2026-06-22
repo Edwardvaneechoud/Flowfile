@@ -3,7 +3,7 @@
     <div class="intro-header">
       <div class="intro-icon"><i class="fa-solid fa-clock-rotate-left"></i></div>
       <div>
-        <h2 class="page-title">Project</h2>
+        <h2 class="page-title">Project Tracking</h2>
         <p class="page-description">
           Keep a versioned history of your flows, connections and schedules — entirely optional.
         </p>
