@@ -39,11 +39,17 @@
         </div>
       </div>
 
+      <div v-else-if="!browserReady" class="picker-loading">
+        <div class="loading-spinner"></div>
+        <p>Preparing your project area…</p>
+      </div>
+
       <file-browser
         v-else
         mode="open"
         context="flows"
         :is-visible="modelValue"
+        :root-path="confinedRoot ?? undefined"
         allow-directory-selection
         @directory-selected="onFolderPicked"
       />
@@ -52,11 +58,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { ElMessage, ElNotification } from "element-plus";
 import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
 import { joinPath } from "../../components/common/FileBrowser/fileSystemApi";
 import { useProjectStore } from "../../stores/project-store";
+import { useMultiUser } from "../../composables/useMultiUser";
+import { ProjectApi } from "../../api/project.api";
 
 const props = defineProps<{ modelValue: boolean; mode: "create" | "open" }>();
 const emit = defineEmits<{
@@ -65,8 +73,29 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const { projectsConfined, refresh: refreshCaps } = useMultiUser();
 const pickedFolder = ref<string | null>(null);
 const projectName = ref("");
+
+// In confined modes (docker/package) the browser is locked to the user's per-owner project area.
+const confinedRoot = ref<string | null>(null);
+const browserReady = computed(() => !projectsConfined.value || !!confinedRoot.value);
+
+const ensureRoot = async () => {
+  await refreshCaps();
+  if (!projectsConfined.value || confinedRoot.value) return;
+  try {
+    confinedRoot.value = await ProjectApi.getRoot();
+  } catch {
+    confinedRoot.value = null;
+  }
+};
+
+watch(
+  () => props.modelValue,
+  (v) => v && ensureRoot(),
+  { immediate: true },
+);
 
 const title = computed(() => (props.mode === "create" ? "Create a project" : "Open a project"));
 

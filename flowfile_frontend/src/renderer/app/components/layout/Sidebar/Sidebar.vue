@@ -70,6 +70,7 @@ import { PageHelpModal } from "../../common";
 import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
 import { useAuthStore } from "../../../stores/auth-store";
+import { useMultiUser } from "../../../composables/useMultiUser";
 import { useProjectStore } from "../../../stores/project-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../tutorial/tutorials";
@@ -95,6 +96,7 @@ const route = useRoute();
 const authStore = useAuthStore();
 const projectStore = useProjectStore();
 const tutorialStore = useTutorialStore();
+const { isMultiUser } = useMultiUser();
 
 // Page help
 const showHelp = ref(false);
@@ -132,6 +134,8 @@ const items = computed(() => {
     .filter((route) => {
       if (route.hideInElectron && isDesktopShell) return false;
       if (route.dockerOnly && isDesktopShell) return false;
+      // Projects are admin-only in docker; admins keep it even when disabled (to reach the how-to page).
+      if (route.name === "project" && isMultiUser.value && !isAdmin) return false;
       return !route.requiresAdmin || isAdmin;
     })
     .map((route) => (route.name === "project" ? { ...route, statusDot: projectDot } : route));

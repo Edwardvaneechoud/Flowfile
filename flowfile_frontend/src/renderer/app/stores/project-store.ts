@@ -23,6 +23,7 @@ interface ProjectState {
   dirty: boolean; // authoritative: working tree has uncommitted changes
   hasUnsavedChanges: boolean; // optimistic: set instantly on a local save, reconciled by refresh
   placeholderSecrets: string[];
+  featureUnavailable: boolean; // /project router gated off (404)
   versions: ProjectVersion[];
   versionsAvailable: boolean; // Phase-2 capability flags — hide UI on first 404
   reloadAvailable: boolean;
@@ -41,6 +42,7 @@ export const useProjectStore = defineStore("project", {
     dirty: false,
     hasUnsavedChanges: false,
     placeholderSecrets: [],
+    featureUnavailable: false,
     versions: [],
     versionsAvailable: true,
     reloadAvailable: true,
@@ -66,6 +68,7 @@ export const useProjectStore = defineStore("project", {
     async refreshActive(): Promise<void> {
       this.loading = true;
       this.error = null;
+      this.featureUnavailable = false;
       try {
         const res = await ProjectApi.getActive();
         this.activeProject = res.project;
@@ -83,7 +86,12 @@ export const useProjectStore = defineStore("project", {
           this.versions = [];
         }
       } catch (e: any) {
-        this.error = e?.message ?? "Failed to load project status";
+        if (e instanceof ProjectFeatureUnavailable) {
+          this.featureUnavailable = true;
+          this.activeProject = null;
+        } else {
+          this.error = e?.message ?? "Failed to load project status";
+        }
       } finally {
         this.loading = false;
       }

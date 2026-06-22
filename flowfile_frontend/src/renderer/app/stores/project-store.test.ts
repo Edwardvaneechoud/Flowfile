@@ -133,6 +133,17 @@ describe("refreshActive", () => {
     expect(store.error).toBe("network down");
     expect(store.loading).toBe(false);
   });
+
+  it("marks the feature unavailable (not an error) when the router is gated off", async () => {
+    mocks.getActive.mockRejectedValue(new mocks.ProjectFeatureUnavailable());
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+    await store.refreshActive();
+    expect(store.featureUnavailable).toBe(true);
+    expect(store.activeProject).toBeNull();
+    expect(store.error).toBeNull();
+    expect(store.loading).toBe(false);
+  });
 });
 
 describe("onSourceChanged", () => {

@@ -23,6 +23,7 @@ from flowfile_core.project.importer import ImportTooLargeError
 from flowfile_core.project.models import ActiveProject, NoActiveProjectError
 from flowfile_core.project.service import project_root_base
 from flowfile_core.secret_manager.secret_manager import SecretInput, upsert_secret
+from shared.storage_config import storage
 
 
 def require_projects_enabled() -> None:
@@ -143,6 +144,10 @@ class ChangesOut(BaseModel):
     changes: list[dict]
 
 
+class ProjectRootOut(BaseModel):
+    root: str
+
+
 class OkOut(BaseModel):
     ok: bool
 
@@ -204,6 +209,17 @@ def open_project(req: OpenProjectRequest, current_user=Depends(get_current_activ
     except ValueError as e:
         raise _import_error(e) from e
     return OpenProjectOut(project=_payload(project), **result.to_dict())
+
+
+@router.get("/root", response_model=ProjectRootOut)
+def get_project_root(current_user=Depends(get_current_active_user)) -> ProjectRootOut:
+    """Absolute base dir the folder picker is rooted at: the caller's own confined project subtree
+    (created on demand) in docker/package, or the user-data root in unconfined electron."""
+    base = project_root_base(current_user.id)
+    if base is None:
+        return ProjectRootOut(root=str(storage.user_data_directory))
+    base.mkdir(parents=True, exist_ok=True)
+    return ProjectRootOut(root=str(base))
 
 
 @router.get("/active", response_model=ActiveProjectOut)

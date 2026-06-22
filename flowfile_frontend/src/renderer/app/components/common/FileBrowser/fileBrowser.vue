@@ -11,7 +11,7 @@
       <!-- Navigation and Search Section -->
       <div class="browser-toolbar">
         <div class="path-navigation">
-          <button class="nav-button" :disabled="loading" @click="navigateUpDirectory">
+          <button class="nav-button" :disabled="loading || isAtRoot" @click="navigateUpDirectory">
             <span class="material-icons">arrow_upward</span>
             <span>Up</span>
           </button>
@@ -262,6 +262,8 @@ interface Props {
   isVisible?: boolean;
   /** Context for state management - each context maintains its own path state */
   context?: FileBrowserContext;
+  /** When set, browsing is locked to this directory (start dir + no navigating above it). */
+  rootPath?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -273,6 +275,7 @@ const props = withDefaults(defineProps<Props>(), {
   showWarningOnOverwrite: true,
   isVisible: true,
   context: "flows",
+  rootPath: undefined,
 });
 
 // Emits
@@ -298,6 +301,24 @@ const newFileName = ref("");
 const fileNameError = ref("");
 const selectedFile = ref<FileInfo | null>(null);
 
+const normalizeForCompare = (p: string): string => {
+  const n = path.normalize(p);
+  return n.length > 1 && n.endsWith("/") ? n.slice(0, -1) : n;
+};
+
+const isWithinRoot = (p: string): boolean => {
+  if (!props.rootPath) return true;
+  const root = normalizeForCompare(props.rootPath);
+  const target = normalizeForCompare(p);
+  return target === root || target.startsWith(root + "/");
+};
+
+const isAtRoot = computed(
+  () =>
+    !!props.rootPath &&
+    normalizeForCompare(currentPath.value) === normalizeForCompare(props.rootPath),
+);
+
 const loadDirectoryContents = async (directoryPath: string) => {
   loading.value = true;
   error.value = null;
@@ -307,7 +328,7 @@ const loadDirectoryContents = async (directoryPath: string) => {
     });
     files.value = filesResponse;
     currentPath.value = directoryPath;
-    fileBrowserStore.setCurrentPath(props.context, directoryPath);
+    if (!props.rootPath) fileBrowserStore.setCurrentPath(props.context, directoryPath);
   } catch (err: any) {
     error.value = err.message || "Failed to load directory";
   } finally {
@@ -328,6 +349,11 @@ const loadDefaultDirectory = async () => {
 };
 
 const loadCurrentDirectory = async () => {
+  if (props.rootPath) {
+    await loadDirectoryContents(props.rootPath);
+    return;
+  }
+
   const storedPath = fileBrowserStore.getCurrentPath(props.context);
 
   if (storedPath) {
@@ -346,6 +372,7 @@ const loadCurrentDirectory = async () => {
  * On failure, stays at the current directory and shows a warning instead of an error state.
  */
 const navigateToPath = async (directoryPath: string) => {
+  if (!isWithinRoot(directoryPath)) return;
   const previousPath = currentPath.value;
   const previousFiles = [...files.value];
   await loadDirectoryContents(directoryPath);
@@ -366,8 +393,9 @@ const navigateToPath = async (directoryPath: string) => {
  * Navigate up one directory level
  */
 const navigateUpDirectory = async () => {
+  if (isAtRoot.value) return;
   const parentPath = getParentPath(currentPath.value);
-  if (parentPath && parentPath !== currentPath.value) {
+  if (parentPath && parentPath !== currentPath.value && isWithinRoot(parentPath)) {
     await navigateToPath(parentPath);
   }
 };

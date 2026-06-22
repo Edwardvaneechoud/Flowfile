@@ -45,10 +45,21 @@ export class ProjectApi {
     }
   }
 
-  /** Current active project + sync status. Never throws on "no project". */
+  /** Current active project + sync status. Throws ProjectFeatureUnavailable when gated off (404). */
   static async getActive(): Promise<ActiveProjectResult> {
-    const res = await axios.get<ActiveProjectResult>("/project/active");
-    return res.data;
+    try {
+      const res = await axios.get<ActiveProjectResult>("/project/active");
+      return res.data;
+    } catch (error: any) {
+      if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
+      throw new Error(detail(error, "Failed to load project status"));
+    }
+  }
+
+  /** Absolute base dir the folder picker should be rooted at (per-owner area in confined modes). */
+  static async getRoot(): Promise<string> {
+    const res = await axios.get<{ root: string }>("/project/root");
+    return res.data.root;
   }
 
   /** Update project settings. Returns the persisted track-data-artifacts value. */

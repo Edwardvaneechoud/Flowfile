@@ -4,6 +4,8 @@ export interface SetupStatus {
   setup_required: boolean;
   master_key_configured: boolean;
   mode: string;
+  projects_enabled?: boolean;
+  projects_confined?: boolean;
 }
 
 export interface GeneratedKey {
@@ -53,6 +55,8 @@ class SetupService {
       setup_required: true,
       master_key_configured: false,
       mode: "unknown",
+      projects_enabled: false,
+      projects_confined: false,
     };
   }
 
