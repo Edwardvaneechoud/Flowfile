@@ -2171,6 +2171,87 @@ def test_sort_operation(export_func):
 
 
 @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_sort_descending_ui_convention(export_func):
+    """Sort nodes built in the visual editor store how='Descending'/'Ascending', not 'desc'/'asc'.
+
+    Regression for the code generator emitting descending=[False] for a 'Descending'
+    sort, silently inverting the order relative to the executed graph.
+    """
+    flow = create_basic_flow()
+    data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                input_schema.MinimalFieldInfo(name="score", data_type="Integer")
+            ],
+            data=[["Alice", "Bob", "Alice", "Charlie", "Bob"], [85, 90, 85, 75, 95]]
+        )
+    )
+    flow.add_manual_input(data)
+
+    sort_node = input_schema.NodeSort(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        sort_input=[
+            transform_schema.SortByInput(column="score", how="Descending"),
+            transform_schema.SortByInput(column="name", how="Ascending")
+        ]
+    )
+    flow.add_sort(sort_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code,
+                             'sort(["score", "name"], descending=[True, False])',
+                             )
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_window_functions_descending_order_by(export_func):
+    """Window-function order_by accepts the 'Descending' direction the engine honors.
+
+    The generated ordering sort must match the executed graph rather than silently
+    falling back to ascending.
+    """
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+
+    window_node = input_schema.NodeWindowFunctions(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        window_input=transform_schema.WindowFunctionsInput(
+            partition_by=["region"],
+            order_by=[transform_schema.SortByInput(column="date", how="Descending")],
+            window_functions=[
+                transform_schema.WindowFunctionInput(
+                    column="quantity",
+                    function="cum_sum",
+                    new_column_name="qty_cum_sum",
+                ),
+            ],
+        ),
+    )
+    flow.add_window_functions(window_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+
+    # The ordering sort is emitted identically for both frameworks.
+    verify_code_contains(code, 'sort(["date"], descending=[True])')
+    verify_if_execute(code)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
 def test_sort_and_unique_operations(export_func):
     """Test sort and unique operations"""
     flow = create_basic_flow()
