@@ -3,9 +3,9 @@
 // Distinct from the autocomplete store because the lifecycle is
 // different: edge-hover ghost suggestions surface a small popover that
 // the user clicks to materialise, with cancel-on-leave semantics. The
-// autocomplete store cancels per-keystroke; this one cancels
+// autocomplete store cancels per-request; this one cancels
 // per-hover. Sharing one AbortController would mean a hover-flick
-// cancels an active formula suggestion fetch.
+// cancels an active join-key suggestion fetch.
 //
 // `materialize()` performs the three-step graph-mutation dance the
 // AI's validated suggestion implies:
@@ -32,6 +32,7 @@ import {
 } from "../api/ai.api";
 import { FlowApi } from "../api/flow.api";
 import type { NodeConnection } from "../types/canvas.types";
+import { useAiStore } from "./ai-store";
 
 const isAbortError = (err: unknown): boolean => {
   if (err instanceof DOMException && err.name === "AbortError") return true;
@@ -87,8 +88,21 @@ export const useAiGhostNodeStore = defineStore("aiGhostNode", () => {
     suggestions.value = [];
     degradedReason.value = null;
 
+    // Ghost suggestions are a complex surface: fill the user's provider +
+    // model when the caller didn't pin them. Without the provider fill the
+    // backend defaults to anthropic and 409s for users on any other provider
+    // (e.g. OpenRouter-only).
+    const aiStore = useAiStore();
+    const resolved = aiStore.resolveSurface("ghost_node");
+    const usingCaller = body.provider !== undefined;
+    const enriched: SuggestNextNodeRequest = {
+      ...body,
+      provider: (usingCaller ? body.provider : resolved.provider) ?? undefined,
+      model: (usingCaller ? body.model : resolved.model) ?? undefined,
+    };
+
     try {
-      const result = await fetchNextNodeSuggestions(body, controller.signal);
+      const result = await fetchNextNodeSuggestions(enriched, controller.signal);
       lastError.value = null;
       aiDisabled.value = false;
       suggestions.value = result.suggestions;

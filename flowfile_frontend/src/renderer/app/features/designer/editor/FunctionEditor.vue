@@ -23,26 +23,17 @@ import { autocompletion, CompletionSource, CompletionContext } from "@codemirror
 import axios from "axios";
 
 import { bodyTooltips } from "@/utils/codemirrorTooltips";
-import { createAiCompletionSource } from "./aiCompletions";
 
 interface Props {
   editorString: string;
   columns?: string[];
   // Column name → data type, used to annotate column completions.
   columnTypes?: Record<string, string>;
-  // Optional flow + node identity for the AI completion source. When
-  // either is missing, the AI source short-circuits and only the static
-  // `polarsCompletions` runs — used by the standalone editor preview where
-  // there's no flow context.
-  flowId?: number | null;
-  nodeId?: number | string | null;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   columns: () => [],
   columnTypes: () => ({}),
-  flowId: null,
-  nodeId: null,
 });
 
 const emit = defineEmits(["update-editor-string"]);
@@ -316,14 +307,6 @@ const highlightPlugin = ViewPlugin.fromClass(
   },
 );
 
-//: AI source runs in parallel with the static `polarsCompletions`.
-// The factory short-circuits when flowId / nodeId are missing, so there's
-// no penalty for embeddings that don't supply them.
-const aiCompletions: CompletionSource = createAiCompletionSource({
-  getFlowId: () => props.flowId,
-  getNodeId: () => props.nodeId,
-});
-
 const extensions: Extension[] = [
   // Syntax colors live here (not a global stylesheet) so CodeMirror scopes them
   // to this editor instance — another editor's styles can no longer repaint our
@@ -339,7 +322,7 @@ const extensions: Extension[] = [
   }),
   EditorState.tabSize.of(2),
   autocompletion({
-    override: [polarsCompletions, aiCompletions],
+    override: [polarsCompletions],
     defaultKeymap: true,
     activateOnTyping: true,
     icons: false,

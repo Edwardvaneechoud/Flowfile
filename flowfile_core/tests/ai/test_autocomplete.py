@@ -1,20 +1,10 @@
 """settings autocomplete tests.
 
-Cases (~14):
+Cases:
 
 * ``test_settings_autocomplete_surface_in_lockstep`` — six provider files
   carry the surface; ``SURFACE_TO_LEVEL`` maps it; ``SURFACE_PRESETS`` has
   it as empty frozenset; ``_check_preset_coverage`` doesn't raise at import.
-* ``test_extract_column_refs_pl_col`` — ``pl.col("X")`` literal resolves.
-* ``test_extract_column_refs_bracket`` — ``[X]`` literal resolves.
-* ``test_extract_column_refs_complex_marks_incomplete`` — ``pl.col(variable)``
-  returns ``extraction_complete=False`` so callers mark ``verified=False``.
-* ``test_suggest_formula_drops_hallucinated_columns`` — fake provider cites a
-  column not in upstream schema → that suggestion is filtered.
-* ``test_suggest_formula_marks_unverified_when_extraction_incomplete`` —
-  complex expression survives with ``verified=False``.
-* ``test_suggest_formula_degrades_when_upstream_schema_none`` — cold flow
-  returns ``degraded=True`` and no suggestions.
 * ``test_suggest_join_keys_filters_unmatched_columns`` — bogus left or right
   ref → drop. Valid pair survives sorted by confidence.
 * ``test_suggest_join_keys_degrades_when_either_schema_none`` — either side
@@ -23,9 +13,13 @@ Cases (~14):
   ``response_format={"type":"json_object"}``.
 * ``test_timeout_yields_degraded`` — provider exceeds the configured
   timeout → ``degraded=True, reason="timeout"``.
-* ``test_route_formula_404_on_missing_flow``.
-* ``test_route_formula_409_on_unconfigured_provider``.
-* ``test_route_formula_503_when_flag_off``.
+* ``test_provider_error_yields_degraded`` / ``test_parse_error_yields_degraded``
+  / ``test_markdown_fenced_json_is_unwrapped`` — shared provider-call wiring.
+* ``test_route_join_keys_404_on_missing_flow`` /
+  ``test_route_join_keys_404_on_unknown_provider`` /
+  ``test_route_join_keys_409_on_unconfigured_provider`` /
+  ``test_route_join_keys_503_when_flag_off`` /
+  ``test_route_join_keys_validation_error``.
 * ``test_route_join_keys_happy_path`` — full integration with a monkeypatched
   provider.
 * ``test_lazy_litellm_contract`` — importing ``flowfile_core.ai.autocomplete``
@@ -48,12 +42,7 @@ from fastapi.testclient import TestClient
 from flowfile_core import main
 from flowfile_core.ai import autocomplete as autocomplete_mod
 from flowfile_core.ai import autocomplete_routes
-from flowfile_core.ai.autocomplete import (
-    FormulaSuggestionsResponse,
-    _extract_column_refs,
-    suggest_formula_completions,
-    suggest_join_keys,
-)
+from flowfile_core.ai.autocomplete import suggest_join_keys
 from flowfile_core.ai.byok import ProviderNotConfiguredError
 from flowfile_core.ai.providers.base import ChatResponse, Usage
 from flowfile_core.ai.scheduler import RateLimitScheduler
@@ -150,10 +139,41 @@ class _FakeProvider:
 
 
 def _scheduler() -> RateLimitScheduler:
-    """A scheduler whose ``time_source`` is monotonic-zero-ish so RPM never
-    blocks tests. Each test gets a fresh instance."""
+    """
+    Create a rate-limit scheduler configured for testing.
+    
+    Returns:
+        RateLimitScheduler: A scheduler with a constant time source and no-op sleep,
+            preventing rate-limit enforcement from blocking test execution.
+    """
 
     return RateLimitScheduler(time_source=lambda: 0.0, sleep=lambda *_a, **_k: asyncio.sleep(0))
+
+
+def _join_payload(pairs: list[dict[str, Any]]) -> str:
+    """
+    Serialize key-pair candidates to JSON.
+    
+    Parameters:
+    	pairs (list[dict[str, Any]]): Key-pair candidate dictionaries.
+    
+    Returns:
+    	str: JSON string containing the key pairs under the "key_pairs" key.
+    """
+    return json.dumps({"key_pairs": pairs})
+
+
+def _matched_graph() -> _FakeGraph:
+    """
+    Create a test graph with two nodes whose predicted schemas each contain columns "a" and "b".
+    
+    Returns:
+    	_FakeGraph: A graph containing nodes "L" and "R" with matching overlapping schemas.
+    """
+
+    left = _make_node("L", predicted_schema=_columns("a", "b"))
+    right = _make_node("R", predicted_schema=_columns("a", "b"))
+    return _FakeGraph({"L": left, "R": right})
 
 
 # 1. Surface vocabulary lockstep
@@ -201,155 +221,7 @@ def test_settings_autocomplete_surface_in_lockstep() -> None:
     assert auto_budget[1] <= cmd_k_budget[1]
 
 
-# 2. Column reference extraction
-
-
-def test_extract_column_refs_pl_col() -> None:
-    refs, complete = _extract_column_refs('pl.col("foo") + pl.col("bar")')
-    assert refs == {"foo", "bar"}
-    assert complete is True
-
-
-def test_extract_column_refs_bracket() -> None:
-    refs, complete = _extract_column_refs("[customer_id]")
-    assert refs == {"customer_id"}
-    assert complete is True
-
-
-def test_extract_column_refs_complex_marks_incomplete() -> None:
-    # pl.col(variable) — non-literal arg: extraction can't see the col name.
-    refs, complete = _extract_column_refs("pl.col(variable)")
-    assert refs == set()
-    assert complete is False
-
-    # cs.matches(...) — column-selector function we can't statically reason
-    # about even if the inner literal is parseable.
-    refs, complete = _extract_column_refs('cs.matches(r".*_id")')
-    assert refs == set()
-    assert complete is False
-
-    # Empty input is trivially complete.
-    refs, complete = _extract_column_refs("")
-    assert refs == set()
-    assert complete is True
-
-
-# 3. Formula suggestions: filtering + degraded
-
-
-def _formula_payload(suggestions: list[dict[str, Any]]) -> str:
-    return json.dumps({"suggestions": suggestions})
-
-
-@pytest.mark.asyncio
-async def test_suggest_formula_drops_hallucinated_columns() -> None:
-    upstream = _make_node("u1", predicted_schema=_columns("a", "b", "customer_id"))
-    target = _make_node("n1", predicted_schema=None, all_inputs=[upstream])
-    graph = _FakeGraph({"n1": target, "u1": upstream})
-
-    provider = _FakeProvider(
-        content=_formula_payload(
-            [
-                {
-                    "insert_text": 'pl.col("a") + pl.col("b")',
-                    "label": "sum a+b",
-                    "description": "valid",
-                },
-                {
-                    "insert_text": 'pl.col("not_in_schema")',
-                    "label": "bad",
-                    "description": "hallucinated",
-                },
-            ]
-        )
-    )
-    response = await suggest_formula_completions(
-        graph,
-        "n1",
-        partial_text="pl.col(",
-        provider=provider,
-        scheduler=_scheduler(),
-    )
-    assert isinstance(response, FormulaSuggestionsResponse)
-    assert response.degraded is False
-    assert len(response.suggestions) == 1
-    assert response.suggestions[0].insert_text == 'pl.col("a") + pl.col("b")'
-    assert response.suggestions[0].verified is True
-
-
-@pytest.mark.asyncio
-async def test_suggest_formula_marks_unverified_when_extraction_incomplete() -> None:
-    upstream = _make_node("u1", predicted_schema=_columns("a", "b"))
-    target = _make_node("n1", predicted_schema=None, all_inputs=[upstream])
-    graph = _FakeGraph({"n1": target, "u1": upstream})
-
-    provider = _FakeProvider(
-        content=_formula_payload(
-            [
-                {
-                    "insert_text": "pl.col(dynamic_name)",
-                    "label": "dynamic",
-                    "description": "we can't statically validate",
-                },
-            ]
-        )
-    )
-    response = await suggest_formula_completions(
-        graph,
-        "n1",
-        partial_text="pl.col(dyn",
-        provider=provider,
-        scheduler=_scheduler(),
-    )
-    assert response.degraded is False
-    assert len(response.suggestions) == 1
-    # Marked unverified — frontend will render a "?" badge.
-    assert response.suggestions[0].verified is False
-
-
-@pytest.mark.asyncio
-async def test_suggest_formula_degrades_when_upstream_schema_none() -> None:
-    upstream = _make_node("u1", predicted_schema=None)
-    target = _make_node("n1", predicted_schema=None, all_inputs=[upstream])
-    graph = _FakeGraph({"n1": target, "u1": upstream})
-
-    provider = _FakeProvider(content=_formula_payload([]))
-    response = await suggest_formula_completions(
-        graph,
-        "n1",
-        partial_text="pl.col(",
-        provider=provider,
-        scheduler=_scheduler(),
-    )
-    assert response.degraded is True
-    assert response.suggestions == []
-    assert response.reason is not None
-    # We must NOT have called the LLM in degraded-mode.
-    assert provider.last_call_kwargs == {}
-
-
-@pytest.mark.asyncio
-async def test_suggest_formula_degrades_when_upstream_missing() -> None:
-    target = _make_node("n1", predicted_schema=None, all_inputs=[])
-    graph = _FakeGraph({"n1": target})
-
-    provider = _FakeProvider(content=_formula_payload([]))
-    response = await suggest_formula_completions(
-        graph,
-        "n1",
-        partial_text="pl.col(",
-        provider=provider,
-        scheduler=_scheduler(),
-    )
-    assert response.degraded is True
-    assert provider.last_call_kwargs == {}
-
-
-# 4. Join keys: filtering + degraded
-
-
-def _join_payload(pairs: list[dict[str, Any]]) -> str:
-    return json.dumps({"key_pairs": pairs})
+# 2. Join keys: filtering + degraded
 
 
 @pytest.mark.asyncio
@@ -406,20 +278,16 @@ async def test_suggest_join_keys_degrades_when_either_schema_none() -> None:
     assert provider.last_call_kwargs == {}
 
 
-# 5. Provider call wiring
+# 3. Provider call wiring
 
 
 @pytest.mark.asyncio
 async def test_response_format_threaded_through() -> None:
-    upstream = _make_node("u1", predicted_schema=_columns("a", "b"))
-    target = _make_node("n1", predicted_schema=None, all_inputs=[upstream])
-    graph = _FakeGraph({"n1": target, "u1": upstream})
-
-    provider = _FakeProvider(content=_formula_payload([]))
-    await suggest_formula_completions(
-        graph,
-        "n1",
-        partial_text="pl.col(",
+    provider = _FakeProvider(content=_join_payload([]))
+    await suggest_join_keys(
+        _matched_graph(),
+        "L",
+        "R",
         provider=provider,
         scheduler=_scheduler(),
     )
@@ -430,39 +298,28 @@ async def test_response_format_threaded_through() -> None:
 
 @pytest.mark.asyncio
 async def test_timeout_yields_degraded() -> None:
-    upstream = _make_node("u1", predicted_schema=_columns("a", "b"))
-    target = _make_node("n1", predicted_schema=None, all_inputs=[upstream])
-    graph = _FakeGraph({"n1": target, "u1": upstream})
-
     # Sleep much longer than the timeout; the wait_for guard should fire.
-    provider = _FakeProvider(
-        content=_formula_payload([]),
-        sleep_before_response=2.0,
-    )
-    response = await suggest_formula_completions(
-        graph,
-        "n1",
-        partial_text="pl.col(",
+    provider = _FakeProvider(content=_join_payload([]), sleep_before_response=2.0)
+    response = await suggest_join_keys(
+        _matched_graph(),
+        "L",
+        "R",
         provider=provider,
         scheduler=_scheduler(),
         timeout=0.05,
     )
     assert response.degraded is True
     assert response.reason == "timeout"
-    assert response.suggestions == []
+    assert response.key_pairs == []
 
 
 @pytest.mark.asyncio
 async def test_provider_error_yields_degraded() -> None:
-    upstream = _make_node("u1", predicted_schema=_columns("a", "b"))
-    target = _make_node("n1", predicted_schema=None, all_inputs=[upstream])
-    graph = _FakeGraph({"n1": target, "u1": upstream})
-
     provider = _FakeProvider(raise_exc=RuntimeError("boom"))
-    response = await suggest_formula_completions(
-        graph,
-        "n1",
-        partial_text="pl.col(",
+    response = await suggest_join_keys(
+        _matched_graph(),
+        "L",
+        "R",
         provider=provider,
         scheduler=_scheduler(),
     )
@@ -472,15 +329,11 @@ async def test_provider_error_yields_degraded() -> None:
 
 @pytest.mark.asyncio
 async def test_parse_error_yields_degraded() -> None:
-    upstream = _make_node("u1", predicted_schema=_columns("a", "b"))
-    target = _make_node("n1", predicted_schema=None, all_inputs=[upstream])
-    graph = _FakeGraph({"n1": target, "u1": upstream})
-
     provider = _FakeProvider(content="not json at all")
-    response = await suggest_formula_completions(
-        graph,
-        "n1",
-        partial_text="pl.col(",
+    response = await suggest_join_keys(
+        _matched_graph(),
+        "L",
+        "R",
         provider=provider,
         scheduler=_scheduler(),
     )
@@ -492,29 +345,34 @@ async def test_parse_error_yields_degraded() -> None:
 async def test_markdown_fenced_json_is_unwrapped() -> None:
     """Some providers wrap JSON in code fences even with ``response_format`` —
     the fallback parser should accept it."""
-    upstream = _make_node("u1", predicted_schema=_columns("a"))
-    target = _make_node("n1", predicted_schema=None, all_inputs=[upstream])
-    graph = _FakeGraph({"n1": target, "u1": upstream})
-
-    fenced = "```json\n" + _formula_payload([{"insert_text": 'pl.col("a")', "label": "a", "description": ""}]) + "\n```"
+    fenced = "```json\n" + _join_payload([{"left_col": "a", "right_col": "a", "confidence": 0.9}]) + "\n```"
     provider = _FakeProvider(content=fenced)
-    response = await suggest_formula_completions(
-        graph,
-        "n1",
-        partial_text="pl.col(",
+    response = await suggest_join_keys(
+        _matched_graph(),
+        "L",
+        "R",
         provider=provider,
         scheduler=_scheduler(),
     )
     assert response.degraded is False
-    assert len(response.suggestions) == 1
-    assert response.suggestions[0].verified is True
+    assert len(response.key_pairs) == 1
+    assert response.key_pairs[0].left_col == "a"
 
 
-# 6. Routes
+# 4. Routes
 
 
 @pytest.fixture
 def authed_client() -> Iterator[TestClient]:
+    """
+    Pytest fixture providing a TestClient with mocked authentication.
+    
+    Overrides the `get_current_active_user` dependency to always return a
+    test user, and cleans up the override after the test completes.
+    
+    Yields:
+    	TestClient: The FastAPI test client configured with mocked authentication.
+    """
     fake_user = PydanticUser(id=1, username="local_user")
     main.app.dependency_overrides[get_current_active_user] = lambda: fake_user
     try:
@@ -523,26 +381,45 @@ def authed_client() -> Iterator[TestClient]:
         main.app.dependency_overrides.pop(get_current_active_user, None)
 
 
-def test_route_formula_404_on_missing_flow(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def _join_body(**overrides: Any) -> dict[str, Any]:
+    """
+    Build a join-keys request body with customizable field values.
+    
+    Returns:
+    	dict[str, Any]: A request body dictionary for join-keys autocomplete tests with fields: flow_id, left_node_id, right_node_id, and how.
+    """
+    body: dict[str, Any] = {
+        "flow_id": 1,
+        "left_node_id": "L",
+        "right_node_id": "R",
+        "how": "inner",
+    }
+    body.update(overrides)
+    return body
+
+
+def test_route_join_keys_404_on_missing_flow(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(autocomplete_routes.flow_file_handler, "get_flow", lambda _id: None)
     response = authed_client.post(
-        "/ai/autocomplete/formula",
-        json={"flow_id": 99, "node_id": 1, "partial_text": "pl.col("},
+        "/ai/autocomplete/join_keys",
+        json=_join_body(flow_id=99),
     )
     assert response.status_code == 404
     assert "99" in response.json()["detail"]
 
 
-def test_route_formula_404_on_unknown_provider(authed_client: TestClient) -> None:
+def test_route_join_keys_404_on_unknown_provider(authed_client: TestClient) -> None:
     response = authed_client.post(
-        "/ai/autocomplete/formula",
-        json={"flow_id": 1, "node_id": 1, "partial_text": "x", "provider": "imaginary"},
+        "/ai/autocomplete/join_keys",
+        json=_join_body(provider="imaginary"),
     )
     assert response.status_code == 404
     assert "imaginary" in response.json()["detail"]
 
 
-def test_route_formula_409_on_unconfigured_provider(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_route_join_keys_409_on_unconfigured_provider(
+    authed_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         autocomplete_routes.flow_file_handler,
         "get_flow",
@@ -555,19 +432,19 @@ def test_route_formula_409_on_unconfigured_provider(authed_client: TestClient, m
     monkeypatch.setattr(autocomplete_routes, "get_configured_provider", _raise)
 
     response = authed_client.post(
-        "/ai/autocomplete/formula",
-        json={"flow_id": 1, "node_id": 1, "partial_text": "x", "provider": "anthropic"},
+        "/ai/autocomplete/join_keys",
+        json=_join_body(provider="anthropic"),
     )
     assert response.status_code == 409
 
 
-def test_route_formula_503_when_flag_off(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_route_join_keys_503_when_flag_off(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     original = core_settings.FEATURE_FLAG_AI.value
     core_settings.FEATURE_FLAG_AI.set(False)
     try:
         response = authed_client.post(
-            "/ai/autocomplete/formula",
-            json={"flow_id": 1, "node_id": 1, "partial_text": "x"},
+            "/ai/autocomplete/join_keys",
+            json=_join_body(),
         )
     finally:
         core_settings.FEATURE_FLAG_AI.set(original)
@@ -575,10 +452,10 @@ def test_route_formula_503_when_flag_off(authed_client: TestClient, monkeypatch:
     assert "AI features are disabled" in response.json()["detail"]
 
 
-def test_route_formula_validation_error(authed_client: TestClient) -> None:
+def test_route_join_keys_validation_error(authed_client: TestClient) -> None:
     response = authed_client.post(
-        "/ai/autocomplete/formula",
-        json={"flow_id": -1, "node_id": 1, "partial_text": "x"},
+        "/ai/autocomplete/join_keys",
+        json=_join_body(flow_id=-1),
     )
     assert response.status_code == 422
 
@@ -616,7 +493,16 @@ def test_route_join_keys_happy_path(authed_client: TestClient, monkeypatch: pyte
     assert body["key_pairs"][0]["left_col"] == "user_id"
 
 
-# 7. Lazy-litellm contract
+def test_route_formula_404_gone(authed_client: TestClient) -> None:
+    """The formula autocomplete endpoint was removed; POSTing to it 404s."""
+    response = authed_client.post(
+        "/ai/autocomplete/formula",
+        json={"flow_id": 1, "node_id": "L"},
+    )
+    assert response.status_code == 404
+
+
+# 5. Lazy-litellm contract
 
 
 def test_lazy_litellm_contract() -> None:

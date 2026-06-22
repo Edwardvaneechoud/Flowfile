@@ -37,6 +37,17 @@ export interface PersistedAiState {
   messages: ChatMessage[];
   selectedProvider: string | null;
   selectedModel: string | null;
+  /** When true, simple-tier surfaces (cron, join-key suggestions) run on
+   * ``simpleProvider`` / ``simpleModel`` instead of the main selection.
+   * When false, one model drives everything. Optional for backward-compat. */
+  splitModels?: boolean | null;
+  /** Simple-tier provider. `null` → fall back to the main provider.
+   * Optional for backward-compat with older persisted entries. */
+  simpleProvider?: string | null;
+  /** Simple-tier model (cron, join-key suggestions). `null` → use the
+   * provider's per-surface preset. Optional for backward-compat with
+   * older persisted entries. */
+  simpleModel?: string | null;
   /** **DEPRECATED** — replaced by the `mode` enum in the runtime
    * store. Persisted value is read on hydration ONLY for the one-shot
    * migration shim in `ai-store.ts` (legacy `false` → seed
@@ -63,6 +74,9 @@ const EMPTY_STATE: PersistedAiState = {
   messages: [],
   selectedProvider: null,
   selectedModel: null,
+  splitModels: null,
+  simpleProvider: null,
+  simpleModel: null,
   agentModeAccepted: null,
   selectedAgentSurface: null,
   verifyPlanCompletion: null,
@@ -165,6 +179,9 @@ export const loadPersistedAiState = (
     selectedProvider:
       typeof payload.selectedProvider === "string" ? payload.selectedProvider : null,
     selectedModel: typeof payload.selectedModel === "string" ? payload.selectedModel : null,
+    splitModels: typeof payload.splitModels === "boolean" ? payload.splitModels : null,
+    simpleProvider: typeof payload.simpleProvider === "string" ? payload.simpleProvider : null,
+    simpleModel: typeof payload.simpleModel === "string" ? payload.simpleModel : null,
     autoPromote: typeof payload.autoPromote === "boolean" ? payload.autoPromote : null,
     agentModeAccepted:
       typeof payload.agentModeAccepted === "boolean" ? payload.agentModeAccepted : null,
@@ -194,6 +211,9 @@ export const persistAiState = (
     messages: state.messages.slice(-MAX_PERSISTED_MESSAGES),
     selectedProvider: state.selectedProvider,
     selectedModel: state.selectedModel,
+    splitModels: state.splitModels ?? null,
+    simpleProvider: state.simpleProvider ?? null,
+    simpleModel: state.simpleModel ?? null,
     agentModeAccepted: state.agentModeAccepted ?? null,
     selectedAgentSurface: state.selectedAgentSurface ?? null,
     verifyPlanCompletion: state.verifyPlanCompletion ?? null,

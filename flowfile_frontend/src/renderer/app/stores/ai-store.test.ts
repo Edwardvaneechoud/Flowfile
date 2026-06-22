@@ -606,3 +606,102 @@ describe("useAiStore - mode default + autoPromote migration shim", () => {
     expect(store.mode).toBe("auto");
   });
 });
+
+describe("useAiStore - split model tiers (resolveSurface)", () => {
+  const _seed = (): ReturnType<typeof useAiStore> => {
+    const store = useAiStore();
+    store.providers = [
+      {
+        provider: "openrouter",
+        supportsTools: true,
+        supportsStreaming: true,
+        defaultModel: "qwen/qwen3-coder",
+        surfaces: { cron: "anthropic/claude-haiku-4.5" },
+        status: "configured",
+        credential: null,
+      },
+      {
+        provider: "local",
+        supportsTools: false,
+        supportsStreaming: true,
+        defaultModel: "qwen2.5-coder-3b",
+        surfaces: {},
+        status: "configured",
+        credential: null,
+      },
+    ];
+    store.setSelectedProvider("openrouter");
+    return store;
+  };
+
+  it("routes every surface to the main selection when split is off", () => {
+    const store = _seed();
+    store.setSelectedModel("anthropic/claude-opus-4.5");
+    expect(store.splitModels).toBe(false);
+    expect(store.resolveSurface("ghost_node")).toEqual({
+      provider: "openrouter",
+      model: "anthropic/claude-opus-4.5",
+    });
+    // cron is a simple surface but split is off → still the main selection.
+    expect(store.resolveSurface("cron")).toEqual({
+      provider: "openrouter",
+      model: "anthropic/claude-opus-4.5",
+    });
+  });
+
+  it("routes simple surfaces to the simple tier (own provider) when split is on", () => {
+    const store = _seed();
+    store.setSelectedModel("anthropic/claude-opus-4.5");
+    store.setSplitModels(true);
+    // Simple tier can be a different provider entirely (e.g. local).
+    store.setSimpleProvider("local");
+    expect(store.resolveSurface("cron")).toEqual({
+      provider: "local",
+      model: "qwen2.5-coder-3b",
+    });
+    expect(store.resolveSurface("settings_autocomplete").provider).toBe("local");
+    // Complex surfaces still use the main selection.
+    expect(store.resolveSurface("ghost_node")).toEqual({
+      provider: "openrouter",
+      model: "anthropic/claude-opus-4.5",
+    });
+  });
+
+  it("setSplitModels seeds the simple tier from the main selection", () => {
+    const store = _seed();
+    store.setSelectedModel("anthropic/claude-opus-4.5");
+    store.setSplitModels(true);
+    expect(store.simpleProvider).toBe("openrouter");
+    expect(store.simpleModel).toBe("anthropic/claude-opus-4.5");
+  });
+
+  it("setSimpleProvider defaults the simple model to that provider's default", () => {
+    const store = _seed();
+    store.setSplitModels(true);
+    store.setSimpleProvider("local");
+    expect(store.simpleModel).toBe("qwen2.5-coder-3b");
+  });
+
+  it("modelForSurface falls back to the surface preset, then provider default", () => {
+    const store = _seed();
+    store.setSelectedModel(null);
+    expect(store.modelForSurface("cron")).toBe("anthropic/claude-haiku-4.5");
+    expect(store.modelForSurface("mystery")).toBe("qwen/qwen3-coder");
+  });
+
+  it("modelForSurface returns null when no provider is selected", () => {
+    const store = useAiStore();
+    store.selectedProvider = null;
+    expect(store.modelForSurface("ghost_node")).toBeNull();
+  });
+
+  it("changing the complex provider leaves the independent simple tier intact", () => {
+    const store = _seed();
+    store.setSplitModels(true);
+    store.setSimpleProvider("local");
+    store.setSelectedProvider("openrouter");
+    // Simple tier is independent — not reset by a complex-provider change.
+    expect(store.simpleProvider).toBe("local");
+    expect(store.resolveSurface("cron").provider).toBe("local");
+  });
+});

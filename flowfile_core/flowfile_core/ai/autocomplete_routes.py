@@ -4,19 +4,17 @@ Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`. Auth via
 ``Depends(get_current_active_user)``; the feature-flag gate covers
 these through the parent ``ai_router``.
 
-Two endpoints:
+One endpoint:
 
-* ``POST /ai/autocomplete/formula`` — schema-aware completions for a
-  ``formula`` settings expression.
 * ``POST /ai/autocomplete/join_keys`` — proposed
   ``(left_col, right_col)`` pairs for a ``join`` settings panel.
 
-Both routes are non-streaming JSON — the autocomplete UX wants a
-fast synchronous result, not a stream. SSE is used by the chat and
-agent surfaces; autocomplete fires on keystrokes and a per-keystroke
-SSE handshake would burn the latency budget.
+The route is non-streaming JSON — the autocomplete UX wants a fast
+synchronous result, not a stream. SSE is used by the chat and agent
+surfaces; autocomplete fires on a button click and a per-request SSE
+handshake would burn the latency budget.
 
-The provider call paths are pure functions in
+The provider call path is a pure function in
 :mod:`flowfile_core.ai.autocomplete`; this module is the thin route
 surface that resolves the flow + BYOK provider and maps errors onto
 HTTP status codes.
@@ -31,12 +29,9 @@ from sqlalchemy.orm import Session
 from flowfile_core import flow_file_handler
 from flowfile_core.ai.autocomplete import (
     DEFAULT_TIMEOUT_SECONDS,
-    MAX_FORMULA_SUGGESTIONS,
     MAX_JOIN_KEY_PAIRS,
     SURFACE,
-    FormulaSuggestionsResponse,
     JoinKeySuggestionsResponse,
-    suggest_formula_completions,
     suggest_join_keys,
 )
 from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_provider
@@ -51,27 +46,6 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.database.connection import get_db
 
 router = APIRouter()
-
-
-class FormulaAutocompleteRequest(BaseModel):
-    """Body for ``POST /ai/autocomplete/formula``."""
-
-    flow_id: int = Field(ge=0)
-    node_id: int | str
-    partial_text: str = Field(default="", max_length=2_000)
-    intent: str | None = Field(default=None, max_length=500)
-    provider: str | None = Field(default=None, min_length=1)
-    model: str | None = None
-    max_suggestions: int = Field(
-        default=MAX_FORMULA_SUGGESTIONS,
-        ge=1,
-        le=20,
-    )
-    timeout: float = Field(
-        default=DEFAULT_TIMEOUT_SECONDS,
-        gt=0.0,
-        le=10.0,
-    )
 
 
 class JoinKeyAutocompleteRequest(BaseModel):
@@ -127,6 +101,12 @@ def _resolve_provider(
     # ``ProviderNotConfiguredError``. Replaces the historical
     # hardcoded ``"google"`` default that 409'd for users running on
     # any other configured provider.
+    """Resolve a configured provider for the user.
+
+    Raises ``HTTPException`` 404 if ``name`` is an unknown provider, or 409 if
+    no provider is configured. When ``name`` is ``None``, tries each provider
+    in registration order and returns the first one that resolves.
+    """
     if name is None:
         for candidate in PROVIDERS:
             try:
@@ -163,45 +143,6 @@ def _resolve_provider(
 
 
 @router.post(
-    "/autocomplete/formula",
-    response_model=FormulaSuggestionsResponse,
-    tags=["ai"],
-)
-async def autocomplete_formula(
-    body: FormulaAutocompleteRequest,
-    current_user=Depends(get_current_active_user),
-    db: Session = Depends(get_db),
-) -> FormulaSuggestionsResponse:
-    """Return schema-aware formula completions.
-
-    Errors:
-
-    * ``404`` — flow or provider unknown.
-    * ``409`` — provider not configured (no BYOK row, no env-var fallback).
-    * ``422`` — Pydantic validation (negative ``flow_id``, oversized
-      ``partial_text``, etc.).
-    * ``503`` — ``FEATURE_FLAG_AI`` is off (inherited from the parent router).
-
-    Soft-failures (LLM timeout, parse error, hallucinated columns,
-    unknown upstream schema) become a ``200`` with ``degraded=true`` and a
-    stable ``reason`` string — the frontend silently falls back to static
-    completions.
-    """
-    _ensure_known_provider(body.provider)
-    flow = _resolve_flow(body.flow_id)
-    provider = _resolve_provider(db, current_user.id, body.provider, model=body.model)
-    return await suggest_formula_completions(
-        flow,
-        body.node_id,
-        body.partial_text,
-        body.intent,
-        provider=provider,
-        max_suggestions=body.max_suggestions,
-        timeout=body.timeout,
-    )
-
-
-@router.post(
     "/autocomplete/join_keys",
     response_model=JoinKeySuggestionsResponse,
     tags=["ai"],
@@ -213,9 +154,16 @@ async def autocomplete_join_keys(
 ) -> JoinKeySuggestionsResponse:
     """Return proposed ``(left_col, right_col)`` join-key pairs.
 
-    Error mapping mirrors :func:`autocomplete_formula`. Pairs that cite
-    columns missing from either upstream are filtered server-side; the
-    response is always grounded against the actual upstream schemas.
+    Errors:
+
+    * ``404`` — flow or provider unknown.
+    * ``409`` — provider not configured (no BYOK row, no env-var fallback).
+    * ``422`` — Pydantic validation (negative ``flow_id``, etc.).
+    * ``503`` — ``FEATURE_FLAG_AI`` is off (inherited from the parent router).
+
+    Pairs that cite columns missing from either upstream are filtered
+    server-side; the response is always grounded against the actual
+    upstream schemas.
     """
     _ensure_known_provider(body.provider)
     flow = _resolve_flow(body.flow_id)

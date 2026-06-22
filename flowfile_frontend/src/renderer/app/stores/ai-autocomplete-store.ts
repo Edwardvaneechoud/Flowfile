@@ -1,24 +1,20 @@
-// Pinia store for the settings-autocomplete surface.
+// Pinia store for the settings-autocomplete surface (join-key suggestions).
 //
-// Distinct from the chat store because cancellation semantics differ
-// — chat cancels per-message (long-running stream); autocomplete
-// cancels per keystroke (short fast JSON). Sharing one AbortController
-// across surfaces would mean a chat send aborts an in-flight formula
-// suggestion fetch.
+// Distinct from the chat store because cancellation semantics differ —
+// chat cancels per-message (long-running stream); a join-key request is a
+// short fast JSON call. Sharing one AbortController across surfaces would
+// mean a chat send aborts an in-flight join-key suggestion fetch.
 //
-// The store doesn't cache results — autocomplete is fire-and-forget with the
-// CodeMirror dropdown owning the rendered list. We only track the single
-// in-flight controller so a fresh keystroke can cancel its predecessor.
+// The store doesn't cache results — suggestions are fire-and-forget with the
+// requesting panel owning the rendered list. We only track the single
+// in-flight controller so a fresh request can cancel its predecessor.
 
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
 import {
-  fetchFormulaSuggestions,
   fetchJoinKeySuggestions,
   AiDisabledError,
-  FormulaAutocompleteRequest,
-  FormulaSuggestionsResponse,
   JoinKeyAutocompleteRequest,
   JoinKeySuggestionsResponse,
 } from "../api/ai.api";
@@ -32,14 +28,11 @@ const isAbortError = (err: unknown): boolean => {
 };
 
 export const useAiAutocompleteStore = defineStore("aiAutocomplete", () => {
-  // The most recent in-flight controller, of any surface (formula / join).
-  // Replacing it cancels the prior request — autocomplete is only ever
-  // showing ONE list at a time, so a single shared controller is the
-  // right granularity.
+  // The most recent in-flight controller for the join-keys request.
+  // Replacing it cancels the prior request.
   const inflight = ref<AbortController | null>(null);
-  // Last error that wasn't a cancellation. Surfaced for debug; the
-  // CodeMirror source treats these as "no AI suggestions this round" and
-  // falls back silently.
+  // Last error that wasn't a cancellation. Surfaced for debug; callers
+  // treat these as "no AI suggestions this round" and fall back silently.
   const lastError = ref<unknown>(null);
   // True iff the backend last returned 503 — surface so callers can render
   // a one-time "AI disabled" badge without re-fetching.
@@ -59,47 +52,20 @@ export const useAiAutocompleteStore = defineStore("aiAutocomplete", () => {
     return c;
   };
 
-  // Inject the user's chat provider / model when the caller didn't
-  // pin one. Without this, a body with no ``provider`` field falls
-  // through to the route's default and 409s if that default isn't the
-  // user's configured provider. The caller's explicit value
-  // (``aiCompletions.ts`` passes one via ``opts.getProvider``) wins;
-  // this only fills the gap when the body omits the field
-  // (``Join.vue`` does).
+  // Inject the user's provider + simple-tier model when the caller didn't
+  // pin one. Join-key suggestions are a simple surface, so resolveSurface
+  // routes them to the simple tier when split models is on (else the main
+  // selection). ``Join.vue`` omits both, so this fills them.
   const _withDefaults = <T extends { provider?: string; model?: string | null }>(
     body: T,
   ): T => {
     const aiStore = useAiStore();
+    const resolved = aiStore.resolveSurface("settings_autocomplete");
     return {
       ...body,
-      provider: body.provider ?? aiStore.selectedProvider ?? undefined,
-      model: body.model ?? aiStore.selectedModel ?? undefined,
+      provider: body.provider ?? resolved.provider ?? undefined,
+      model: body.model ?? resolved.model ?? undefined,
     };
-  };
-
-  const getFormulaSuggestions = async (
-    body: FormulaAutocompleteRequest,
-  ): Promise<FormulaSuggestionsResponse | null> => {
-    const controller = _replaceController();
-    try {
-      const result = await fetchFormulaSuggestions(_withDefaults(body), controller.signal);
-      lastError.value = null;
-      aiDisabled.value = false;
-      return result;
-    } catch (error) {
-      if (isAbortError(error)) return null;
-      if (error instanceof AiDisabledError) {
-        aiDisabled.value = true;
-        lastError.value = null;
-        return null;
-      }
-      lastError.value = error;
-      return null;
-    } finally {
-      // Only clear if THIS controller is still the active one; a faster
-      // keystroke may have replaced it before our finally fires.
-      if (inflight.value === controller) inflight.value = null;
-    }
   };
 
   const getJoinKeySuggestions = async (
@@ -130,7 +96,6 @@ export const useAiAutocompleteStore = defineStore("aiAutocomplete", () => {
     lastError,
     aiDisabled,
     cancel,
-    getFormulaSuggestions,
     getJoinKeySuggestions,
   };
 });
