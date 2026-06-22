@@ -5,11 +5,7 @@
         <i class="fa-solid fa-clock-rotate-left card-title__icon"></i>
         History
         <span class="count-badge">{{ store.versions.length }}</span>
-        <el-tooltip
-          effect="dark"
-          placement="top"
-          content="View and restore saved versions"
-        >
+        <el-tooltip effect="dark" placement="top" content="View and restore saved versions">
           <button type="button" class="help-hint" aria-label="About version history">
             <i class="fa-solid fa-circle-info"></i>
           </button>
