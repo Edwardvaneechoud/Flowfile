@@ -66,8 +66,9 @@ def _confine_project_root(folder_path: str, owner_id: int) -> Path:
     if candidate and os.sep not in candidate and (os.altsep is None or os.altsep not in candidate):
         root = (base / candidate).resolve()
     else:
-        validated_candidate = validate_path_under_cwd(candidate)
-        root = Path(validated_candidate).expanduser().resolve()
+        root = base.joinpath(candidate).expanduser().resolve()
+        if not _is_contained(str(base), str(root)):
+            raise HTTPException(status_code=403, detail="Access denied")
     for shared_root in (storage.base_directory, storage.database_directory, storage.user_data_directory):
         if _is_contained(str(root), str(shared_root)):
             raise HTTPException(status_code=403, detail="Access denied")

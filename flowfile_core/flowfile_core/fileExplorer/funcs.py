@@ -425,11 +425,6 @@ def validate_path_under_cwd(user_path: str) -> str:
     - Flowfile storage directory (~/.flowfile)
     - User data directory (home directory in local mode, /data/user in Docker)
 
-    Uses the exact pattern from CodeQL documentation for py/path-injection:
-    - os.path.normpath for path normalization
-    - os.path.join to combine base with user input
-    - startswith check to ensure path stays within base
-
     Args:
         user_path: The user-provided path string
 
@@ -439,30 +434,27 @@ def validate_path_under_cwd(user_path: str) -> str:
     Raises:
         HTTPException: 403 if path escapes the allowed directories
     """
-    if settings.is_electron_mode():
-        # Block path traversal patterns even in Electron mode.
-        if ".." in user_path:
-            raise HTTPException(403, "Access denied: path traversal not allowed")
-        normalized_path = os.path.normpath(os.path.expanduser(user_path))
-        if not os.path.isabs(normalized_path):
-            normalized_path = os.path.normpath(os.path.join(os.getcwd(), normalized_path))
-        for root in _local_filesystem_roots():
-            base_path = os.path.normpath(root)
-            fullpath = os.path.normpath(os.path.join(base_path, normalized_path))
-            if _is_contained(base_path, fullpath):
-                return fullpath
-        raise HTTPException(403, "Access denied")
-
-    # In Docker/package mode, enforce strict sandboxing. Reject `..` lexically (mirrors the electron
-    # guard; closes I1), then realpath both sides in `_is_contained` so a sibling-prefix dir (M-P1) or
-    # a symlink whose target escapes (M-P2) is rejected rather than passing a bare startswith.
     if ".." in user_path:
         raise HTTPException(403, "Access denied: path traversal not allowed")
+
+    expanded = os.path.expanduser(user_path)
+
+    if settings.is_electron_mode():
+        candidate = expanded if os.path.isabs(expanded) else os.path.join(os.getcwd(), expanded)
+        candidate_real = os.path.realpath(candidate)
+        for root in _local_filesystem_roots():
+            base_real = os.path.realpath(root)
+            if _is_contained(base_real, candidate_real):
+                return candidate_real
+        raise HTTPException(403, "Access denied")
+
+    # In Docker/package mode, enforce strict sandboxing to trusted roots.
     for base in (os.getcwd(), str(storage.base_directory), str(storage.user_data_directory)):
-        base_path = os.path.normpath(base)
-        fullpath = os.path.normpath(os.path.join(base_path, user_path))
-        if _is_contained(base_path, fullpath):
-            return fullpath
+        base_real = os.path.realpath(base)
+        candidate = expanded if os.path.isabs(expanded) else os.path.join(base_real, expanded)
+        candidate_real = os.path.realpath(candidate)
+        if _is_contained(base_real, candidate_real):
+            return candidate_real
 
     raise HTTPException(403, "Access denied")
 
