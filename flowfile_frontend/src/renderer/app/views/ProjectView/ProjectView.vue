@@ -37,7 +37,7 @@ onMounted(async () => {
   await refresh();
   if (projectsEnabled.value) {
     await store.refreshActive();
-    if (store.isActive) store.loadVersions();
+    if (store.isActive) store.loadVersions().catch(() => undefined);
   }
   ready.value = true;
 });
@@ -48,7 +48,7 @@ const openPicker = (mode: "create" | "open") => {
 };
 
 const onPicked = () => {
-  store.loadVersions();
+  store.loadVersions().catch(() => undefined);
 };
 </script>
 

@@ -39,6 +39,12 @@
         </div>
       </div>
 
+      <div v-else-if="rootError" class="picker-loading">
+        <i class="fa-solid fa-triangle-exclamation picker-error-icon"></i>
+        <p>{{ rootError }}</p>
+        <el-button @click="ensureRoot">Try again</el-button>
+      </div>
+
       <div v-else-if="!browserReady" class="picker-loading">
         <div class="loading-spinner"></div>
         <p>Preparing your project area…</p>
@@ -79,15 +85,18 @@ const projectName = ref("");
 
 // In confined modes (docker/package) the browser is locked to the user's per-owner project area.
 const confinedRoot = ref<string | null>(null);
+const rootError = ref<string | null>(null);
 const browserReady = computed(() => !projectsConfined.value || !!confinedRoot.value);
 
 const ensureRoot = async () => {
+  rootError.value = null;
   await refreshCaps();
   if (!projectsConfined.value || confinedRoot.value) return;
   try {
     confinedRoot.value = await ProjectApi.getRoot();
-  } catch {
+  } catch (e: any) {
     confinedRoot.value = null;
+    rootError.value = e?.response?.data?.detail || e?.message || "Could not prepare your project area.";
   }
 };
 
@@ -176,6 +185,11 @@ const onClosed = () => {
   gap: 16px;
   min-height: 240px;
   color: var(--color-text-secondary, #475569);
+}
+
+.picker-error-icon {
+  font-size: 28px;
+  color: var(--color-danger, #dc2626);
 }
 
 .picker-name-step {
