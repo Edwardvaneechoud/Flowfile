@@ -37,11 +37,3 @@ const onPicked = () => {
   store.loadVersions();
 };
 </script>
-
-<style scoped>
-.project-view {
-  padding: var(--spacing-5, 24px);
-  height: 100%;
-  overflow-y: auto;
-}
-</style>

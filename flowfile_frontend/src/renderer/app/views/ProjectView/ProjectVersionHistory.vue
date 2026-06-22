@@ -8,7 +8,7 @@
         <el-tooltip
           effect="dark"
           placement="top"
-          content="Every saved version, newest first. Expand Details to see what changed, or Restore to roll the whole project back to that point."
+          content="View and restore saved versions"
         >
           <button type="button" class="help-hint" aria-label="About version history">
             <i class="fa-solid fa-circle-info"></i>
@@ -103,6 +103,7 @@ import { computed, reactive, ref, watch } from "vue";
 import ChangeList from "./ChangeList.vue";
 import RestoreDialog from "./RestoreDialog.vue";
 import { useProjectStore } from "../../stores/project-store";
+import { timeAgo } from "../../utils/time";
 import type { ProjectVersion, ProjectVersionChange } from "../../types";
 
 const PAGE_SIZE = 8;
@@ -145,32 +146,6 @@ const toggle = async (sha: string) => {
 const openRestore = (v: ProjectVersion) => {
   selectedVersion.value = v;
   dialogVisible.value = true;
-};
-
-const timeAgo = (iso: string): string => {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return iso;
-  const secs = Math.round((Date.now() - then) / 1000);
-  const units: [number, string][] = [
-    [60, "second"],
-    [60, "minute"],
-    [24, "hour"],
-    [7, "day"],
-    [4.34524, "week"],
-    [12, "month"],
-    [Number.POSITIVE_INFINITY, "year"],
-  ];
-  let value = Math.max(secs, 0);
-  let unit = "second";
-  for (const [size, name] of units) {
-    if (value < size) {
-      unit = name;
-      break;
-    }
-    value = Math.floor(value / size);
-  }
-  if (value <= 0 && unit === "second") return "just now";
-  return `${value} ${unit}${value === 1 ? "" : "s"} ago`;
 };
 </script>
 

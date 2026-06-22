@@ -10,12 +10,10 @@
               <span class="status-pill__dot"></span>{{ statusLabel }}
             </span>
           </div>
-          <p class="project-meta">
-            <span class="project-name">{{ store.activeProject?.name }}</span>
-            <span class="folder-path">
-              <i class="fa-solid fa-folder"></i>
-              {{ store.activeProject?.folder_path }}
-            </span>
+          <p class="page-description">Store and version your complete environment.</p>
+          <p class="folder-path">
+            <i class="fa-solid fa-folder"></i>
+            {{ store.activeProject?.folder_path }}
           </p>
         </div>
       </div>
@@ -63,71 +61,118 @@
       <el-button type="primary" size="small" @click="goToSecrets">Add secret values</el-button>
     </div>
 
-    <!-- Save a version -->
-    <section class="card mb-3">
-      <div class="card-header">
-        <h3 class="card-title">
-          <i class="fa-solid fa-camera card-title__icon"></i>
-          Save a version
-          <el-tooltip
-            effect="dark"
-            placement="top"
-            content="A version is a named snapshot of your whole project. Save one whenever you reach a point you might want to return to."
-          >
-            <button type="button" class="help-hint" aria-label="What is a version?">
-              <i class="fa-solid fa-circle-info"></i>
-            </button>
-          </el-tooltip>
-        </h3>
-      </div>
-      <div class="card-content">
-        <div v-if="store.status === 'clean'" class="saved-state">
-          <span class="saved-state__check"><i class="fa-solid fa-check"></i></span>
-          <div class="saved-state__text">
-            <p class="saved-state__title">All changes saved</p>
-            <p v-if="latestVersion" class="saved-state__sub">
-              Latest version: <strong>“{{ latestVersion.message }}”</strong>
-            </p>
-            <p v-else class="saved-state__sub">Your work is mirrored to the project folder.</p>
+    <!-- Stats overview -->
+    <div class="pm-stats">
+      <div class="pm-stat">
+        <div class="pm-stat__icon"><i class="fa-solid fa-clock-rotate-left"></i></div>
+        <div class="pm-stat__body">
+          <div class="pm-stat__value">{{ store.versions.length }}</div>
+          <div class="pm-stat__label">
+            {{ store.versions.length === 1 ? "Version" : "Versions" }}
           </div>
         </div>
-        <template v-else>
-          <p class="save-prompt">
-            <i class="fa-solid fa-pen-to-square"></i>
-            Describe what changed, then save a snapshot you can return to.
-          </p>
-          <SaveVersionForm :rows="3" @saved="loadUnsaved" />
-          <div v-if="unsavedChanges.length" class="unsaved-changes">
-            <p class="unsaved-changes__caption">This version will include:</p>
-            <ChangeList :changes="unsavedChanges" />
-          </div>
-        </template>
       </div>
-    </section>
 
-    <!-- Version history -->
-    <ProjectVersionHistory v-if="store.versionsAvailable" />
-
-    <!-- Stop using this project -->
-    <section class="card danger-card mb-3">
-      <div class="card-content close-row">
-        <div class="close-row__text">
-          <p class="close-title"><i class="fa-solid fa-link-slash"></i> Stop using this project</p>
-          <p class="close-text">
-            Your files stay on disk — Flowfile just stops tracking this folder.
-          </p>
+      <div class="pm-stat">
+        <div class="pm-stat__icon"><i class="fa-solid fa-clock"></i></div>
+        <div class="pm-stat__body">
+          <div class="pm-stat__value">{{ lastSavedLabel }}</div>
+          <div class="pm-stat__label">Last saved</div>
         </div>
-        <el-button
-          v-if="store.closeAvailable"
-          type="danger"
-          plain
-          :loading="closing"
-          @click="handleClose"
-        >
-          Stop tracking
-        </el-button>
       </div>
-    </section>
+
+      <div class="pm-stat">
+        <div class="pm-stat__icon"><i class="fa-solid fa-pen-to-square"></i></div>
+        <div class="pm-stat__body">
+          <div class="pm-stat__value">{{ unsavedCount }}</div>
+          <div class="pm-stat__label">Unsaved changes</div>
+        </div>
+      </div>
+
+      <div class="pm-stat">
+        <div class="pm-stat__icon"><i class="fa-solid fa-code-branch"></i></div>
+        <div class="pm-stat__body">
+          <div class="pm-stat__value">
+            {{ store.activeProject?.track_data_artifacts ? "On" : "Off" }}
+          </div>
+          <div class="pm-stat__label">Data artifacts</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Two-column body: actions (left) + history (right) -->
+    <div class="pm-grid">
+      <aside class="pm-sidebar">
+        <!-- Save a version -->
+        <section class="card mb-3">
+          <div class="card-header">
+            <h3 class="card-title">
+              <i class="fa-solid fa-camera card-title__icon"></i>
+              Save a version
+              <el-tooltip
+                effect="dark"
+                placement="top"
+                content="A version is a named snapshot of your whole project. Save one whenever you reach a point you might want to return to."
+              >
+                <button type="button" class="help-hint" aria-label="What is a version?">
+                  <i class="fa-solid fa-circle-info"></i>
+                </button>
+              </el-tooltip>
+            </h3>
+          </div>
+          <div class="card-content">
+            <div v-if="store.status === 'clean'" class="saved-state">
+              <span class="saved-state__check"><i class="fa-solid fa-check"></i></span>
+              <div class="saved-state__text">
+                <p class="saved-state__title">All changes saved</p>
+                <p v-if="latestVersion" class="saved-state__sub">
+                  Latest version: <strong>“{{ latestVersion.message }}”</strong>
+                </p>
+                <p v-else class="saved-state__sub">Your work is mirrored to the project folder.</p>
+              </div>
+            </div>
+            <template v-else>
+              <p class="save-prompt">
+                <i class="fa-solid fa-pen-to-square"></i>
+                Describe what changed, then save a snapshot you can return to.
+              </p>
+              <SaveVersionForm :rows="3" @saved="loadUnsaved" />
+              <div v-if="unsavedChanges.length" class="unsaved-changes">
+                <p class="unsaved-changes__caption">This version will include:</p>
+                <ChangeList :changes="unsavedChanges" />
+              </div>
+            </template>
+          </div>
+        </section>
+
+        <!-- Stop using this project -->
+        <section class="card danger-card mb-3">
+          <div class="card-content close-row">
+            <div class="close-row__text">
+              <p class="close-title">
+                <i class="fa-solid fa-link-slash"></i> Stop using this project
+              </p>
+              <p class="close-text">
+                Your files stay on disk — Flowfile just stops tracking this folder.
+              </p>
+            </div>
+            <el-button
+              v-if="store.closeAvailable"
+              type="danger"
+              plain
+              :loading="closing"
+              @click="handleClose"
+            >
+              Stop tracking
+            </el-button>
+          </div>
+        </section>
+      </aside>
+
+      <main class="pm-main">
+        <ProjectVersionHistory v-if="store.versionsAvailable" />
+      </main>
+    </div>
 
     <ProjectSettingsDialog v-model="settingsVisible" />
   </div>
@@ -142,6 +187,7 @@ import ChangeList from "./ChangeList.vue";
 import ProjectVersionHistory from "./ProjectVersionHistory.vue";
 import ProjectSettingsDialog from "./ProjectSettingsDialog.vue";
 import { useProjectStore } from "../../stores/project-store";
+import { timeAgoShort } from "../../utils/time";
 import type { ProjectVersionChange } from "../../types";
 
 const store = useProjectStore();
@@ -152,6 +198,10 @@ const settingsVisible = ref(false);
 const unsavedChanges = ref<ProjectVersionChange[]>([]);
 
 const latestVersion = computed(() => store.versions[0] ?? null);
+const lastSavedLabel = computed(() =>
+  latestVersion.value ? timeAgoShort(latestVersion.value.committed_at) : "—",
+);
+const unsavedCount = computed(() => (store.status === "clean" ? 0 : unsavedChanges.value.length));
 
 const statusLabel = computed(
   () =>
@@ -227,8 +277,9 @@ const handleClose = async () => {
 
 <style scoped>
 .project-manage {
-  max-width: 820px;
+  max-width: 1320px;
   margin: 0 auto;
+  padding: var(--spacing-5);
 }
 
 /* ===== Header (matches the page-header pattern used across tabs) ===== */
@@ -257,24 +308,15 @@ const handleClose = async () => {
   gap: var(--spacing-2);
 }
 
-.project-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--spacing-1) var(--spacing-2);
-  margin: var(--spacing-1) 0 0;
-}
-
-.project-name {
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-secondary);
+.manage-header .page-description {
+  margin-top: var(--spacing-1);
 }
 
 .folder-path {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
+  margin-top: var(--spacing-1);
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
   color: var(--color-text-tertiary);
@@ -359,6 +401,87 @@ const handleClose = async () => {
 
 .ghost-btn i {
   font-size: var(--font-size-md);
+}
+
+/* ===== Stats overview (mirrors the Kernel Manager km-stats grid) ===== */
+.pm-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-4);
+}
+
+.pm-stat {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition:
+    transform var(--transition-base) var(--transition-timing),
+    box-shadow var(--transition-base) var(--transition-timing);
+}
+
+.pm-stat:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.pm-stat__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-size: 16px;
+}
+
+.pm-stat__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pm-stat__value {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pm-stat__label {
+  margin-top: var(--spacing-0-5);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ===== Two-column body (mirrors the Kernel Manager km-grid) ===== */
+.pm-grid {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: var(--spacing-4);
+  align-items: flex-start;
+}
+
+@media (max-width: 900px) {
+  .pm-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pm-sidebar,
+.pm-main {
+  min-width: 0;
 }
 
 /* ===== Card title icon + inline help ===== */
@@ -527,7 +650,8 @@ const handleClose = async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--spacing-4);
+  flex-wrap: wrap;
+  gap: var(--spacing-3);
 }
 
 .close-row__text {
