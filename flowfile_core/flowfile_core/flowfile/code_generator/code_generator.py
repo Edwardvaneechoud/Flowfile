@@ -8,12 +8,40 @@ from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code, to_po
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.flowfile.code_generator.chain_fusion import NodeEmission, render_pipeline
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.schemas import input_schema, transform_schema
+
+# Operation-based labels for generated variable names; chain fusion removes most
+# of these, so the few that remain read like hand-written intermediates.
+NODE_TYPE_VAR_LABEL = {
+    "read": "source",
+    "manual_input": "source",
+    "csv_read": "source",
+    "filter": "filtered",
+    "select": "selected",
+    "join": "joined",
+    "cross_join": "joined",
+    "fuzzy_match": "fuzzy_matched",
+    "group_by": "grouped",
+    "sort": "sorted_data",
+    "record_id": "with_record_id",
+    "record_count": "record_count",
+    "formula": "with_columns",
+    "window_functions": "windowed",
+    "union": "combined",
+    "unique": "deduplicated",
+    "sample": "sampled",
+    "pivot": "pivoted",
+    "unpivot": "unpivoted",
+    "graph_solver": "graph_solved",
+    "polars_code": "custom",
+    "output": "output",
+}
 
 
 class UnsupportedNodeError(Exception):
@@ -93,6 +121,12 @@ class FlowGraphCodeConverter:
         self.last_node_var: str | None = None
         self.unsupported_nodes: list[tuple[int, str, str]] = []
         self.custom_node_classes: dict[str, str] = {}
+        # Variable names planned up front in data-flow order (node_id -> name).
+        self._planned_names: dict[int, str] = {}
+        # (node, var, start, end) line spans, in emission order, for the fusion pass.
+        self._node_spans: list[tuple[FlowNode, str, int, int]] = []
+        # Passthrough/no-op nodes (e.g. explore_data): node_id -> upstream node id.
+        self._passthrough_producer: dict[int, int] = {}
 
     def convert(self) -> str:
         """
@@ -109,8 +143,10 @@ class FlowGraphCodeConverter:
             all_nodes=[node for node in self.flow_graph.nodes if node.is_correct],
             flow_starts=self.flow_graph._flow_starts + self.flow_graph.get_implicit_starter_nodes(),
         )
+        ordered_nodes = [node for stage in stages for node in stage]
+        self._plan_variable_names(ordered_nodes)
 
-        for node in (node for stage in stages for node in stage):
+        for node in ordered_nodes:
             self._generate_node_code(node)
 
         if self.unsupported_nodes:
@@ -140,27 +176,104 @@ class FlowGraphCodeConverter:
         if isinstance(settings, input_schema.NodePromise):
             self._add_comment(f"# Skipping uninitialized node: {node.node_id}")
             return
-        node_reference = getattr(settings, "node_reference", None)
-        var_name = node_reference if node_reference else f"df_{node.node_id}"
+        var_name = self._planned_names.get(node.node_id) or f"df_{node.node_id}"
         self.node_var_mapping[node.node_id] = var_name
-        self.handle_output_node(node, var_name)
-        if node.node_template.output > 0:
-            self.last_node_var = var_name
         input_vars = self._get_input_vars(node)
 
+        start = len(self.code_lines)
         if isinstance(settings, input_schema.UserDefinedNode) or getattr(settings, "is_user_defined", False):
             self._handle_user_defined(node, var_name, input_vars)
-            return
-
-        handler = getattr(self, f"_handle_{node_type}", None)
-        if handler:
-            handler(settings, var_name, input_vars)
         else:
-            self.unsupported_nodes.append(
-                (node.node_id, node_type, f"No code generator implemented for node type '{node_type}'")
+            handler = getattr(self, f"_handle_{node_type}", None)
+            if handler:
+                handler(settings, var_name, input_vars)
+            else:
+                self.unsupported_nodes.append(
+                    (node.node_id, node_type, f"No code generator implemented for node type '{node_type}'")
+                )
+                self._add_comment(
+                    f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})"
+                )
+                self._add_comment("# This node type is not supported for code export")
+        end = len(self.code_lines)
+
+        # Output bookkeeping runs after the handler so passthrough nodes (which
+        # remap node_var_mapping to their input) record the effective variable.
+        effective_var = self.node_var_mapping[node.node_id]
+        self.handle_output_node(node, effective_var)
+        if node.node_template.output > 0:
+            self.last_node_var = effective_var
+
+        if end == start:
+            # No emitted code: a passthrough/no-op node, transparent to data flow.
+            main_inputs = node.node_inputs.main_inputs or []
+            if len(main_inputs) == 1:
+                self._passthrough_producer[node.node_id] = main_inputs[0].node_id
+        else:
+            self._node_spans.append((node, effective_var, start, end))
+
+    def _plan_variable_names(self, ordered_nodes: list[FlowNode]) -> None:
+        """Assign operation-based variable names in data-flow order.
+
+        Honours a user-set ``node_reference`` when present; otherwise names each
+        node ``{operation}_{step}`` with a global step index so the script reads
+        top-to-bottom. Chain fusion later removes the names of fused-away nodes.
+        """
+        step = 0
+        for node in ordered_nodes:
+            settings = node.setting_input
+            if isinstance(settings, input_schema.NodePromise):
+                continue
+            step += 1
+            reference = getattr(settings, "node_reference", None)
+            if reference:
+                self._planned_names[node.node_id] = reference
+            else:
+                label = NODE_TYPE_VAR_LABEL.get(node.node_type, "df")
+                self._planned_names[node.node_id] = f"{label}_{step}"
+
+    @staticmethod
+    def _raw_producer_ids(node: FlowNode) -> set[int]:
+        ids = {n.node_id for n in (node.node_inputs.main_inputs or [])}
+        if node.node_inputs.left_input:
+            ids.add(node.node_inputs.left_input.node_id)
+        if node.node_inputs.right_input:
+            ids.add(node.node_inputs.right_input.node_id)
+        return ids
+
+    def _render_body(self) -> list[str]:
+        """Render the function body, fusing linear single-use chains into pipes."""
+
+        def resolve(node_id: int) -> int:
+            seen: set[int] = set()
+            while node_id in self._passthrough_producer and node_id not in seen:
+                seen.add(node_id)
+                node_id = self._passthrough_producer[node_id]
+            return node_id
+
+        emissions: list[NodeEmission] = []
+        resolved_producers: dict[int, set[int]] = {}
+        for node, var, start, end in self._node_spans:
+            lines = self.code_lines[start:end]
+            while lines and not lines[-1].strip():
+                lines.pop()
+            if not lines:
+                continue
+            resolved = {resolve(pid) for pid in self._raw_producer_ids(node)}
+            resolved_producers[node.node_id] = resolved
+            main_producer_id = next(iter(resolved)) if len(resolved) == 1 else None
+            is_flow_output = bool(getattr(node.setting_input, "is_flow_output", False))
+            pinned = bool(getattr(node.setting_input, "node_reference", None))
+            emissions.append(
+                NodeEmission(node.node_id, var, lines, main_producer_id, len(resolved), is_flow_output, pinned)
             )
-            self._add_comment(f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})")
-            self._add_comment("# This node type is not supported for code export")
+
+        consumers: dict[int, list[int]] = {em.node_id: [] for em in emissions}
+        for em in emissions:
+            for producer_id in resolved_producers[em.node_id]:
+                if producer_id in consumers:
+                    consumers[producer_id].append(em.node_id)
+        return render_pipeline(emissions, consumers)
 
     def _resolve_upstream_var(self, downstream: FlowNode, upstream_id: int, default: str) -> str:
         """Resolve the variable name for an upstream node, honouring its output handle.
@@ -377,9 +490,10 @@ class FlowGraphCodeConverter:
             for expr in select_exprs:
                 self._add_code(f"    {expr},")
             self._add_code("])")
+            self._add_code("")
         else:
-            self._add_code(f"{var_name} = {input_df}")
-        self._add_code("")
+            # No effective projection: transparent passthrough to the input frame.
+            self.node_var_mapping[settings.node_id] = input_df
 
     def _handle_join(self, settings: input_schema.NodeJoin, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle join nodes by routing to appropriate join type handler.
@@ -1111,12 +1225,16 @@ class FlowGraphCodeConverter:
         input_df = input_vars.get("main", "df")
         record_input = settings.record_id_input
         if record_input.group_by and record_input.group_by_columns:
+            # cum_count is 1-indexed here, so the net shift is (offset - 1); only
+            # emit it when it does not cancel out (default offset=1 -> nothing).
+            delta = record_input.offset - 1
+            offset_expr = f" + {delta}" if delta > 0 else f" - {abs(delta)}" if delta < 0 else ""
             self._add_code(f"{var_name} = ({input_df}")
             self._add_code(f"    .with_columns({self.framework}.lit(1).alias('{record_input.output_column_name}'))")
             self._add_code("    .with_columns([")
             self._add_code(
                 f"    ({self.framework}.cum_count('{record_input.output_column_name}')"
-                f".over({record_input.group_by_columns}) + {record_input.offset} - 1)"
+                f".over({record_input.group_by_columns}){offset_expr})"
             )
             self._add_code(f"    .alias('{record_input.output_column_name}')")
             self._add_code("])")
@@ -1222,11 +1340,14 @@ class FlowGraphCodeConverter:
     def _handle_explore_data(
         self, settings: input_schema.NodeExploreData, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Handle explore_data nodes - these are skipped as they are interactive visualization only."""
+        """Handle explore_data nodes - interactive visualization only, so emit nothing.
+
+        Remapping to the input variable makes the node transparent: downstream
+        references and the return value resolve straight to the upstream frame, so
+        no dead ``var = input`` passthrough appears in the generated code.
+        """
         input_df = input_vars.get("main", "df")
-        self._add_comment(f"# Node {settings.node_id}: Explore Data (skipped - interactive visualization only)")
-        self._add_code(f"{var_name} = {input_df}  # Pass through unchanged")
-        self._add_code("")
+        self.node_var_mapping[settings.node_id] = input_df
 
     def _handle_external_source(
         self, settings: input_schema.NodeExternalSource, var_name: str, input_vars: dict[str, str]
@@ -1895,7 +2016,7 @@ class FlowGraphCodeConverter:
         lines.append('    """')
         lines.append("    ")
 
-        for line in self.code_lines:
+        for line in self._render_body():
             if line:
                 lines.append(f"    {line}")
             else:

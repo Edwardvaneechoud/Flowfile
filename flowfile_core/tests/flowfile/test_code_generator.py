@@ -552,7 +552,7 @@ def test_manual_input_with_select(export_func):
                              'pl.col("age")',
                              'pl.col("salary").cast(pl.Float64)'
                              )
-        assert 'pl.col("city")' not in code.split("df_2 = ")[1].split("\n")[0]
+        assert 'pl.col("city")' not in code  # keep=False column is never selected
     verify_if_execute(code)
     result = normalize_result(get_result_from_generated_code(code))
     expected_result = normalize_result(get_reference_polars_dataframe()
@@ -627,8 +627,8 @@ def test_join_operation_left(join_input_dataset, export_func):
     code = export_func(flow)
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
-                             "df_1.join(",
-                             "df_2,",
+                             "source_1.join(",
+                             "source_2,",
                              'left_on=["id"]',
                              'right_on=["id"]',
                              'how="left"'
@@ -670,8 +670,8 @@ def test_join_operation_right(join_input_dataset, export_func):
     code = export_func(flow)
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
-                             "df_1.join(",
-                             "df_2,",
+                             "source_1.join(",
+                             "source_2,",
                              'left_on=["__jk_id"]',
                              'right_on=["id_right"]',
                              'how="right"'
@@ -1246,7 +1246,7 @@ def test_formula_node_cast(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
                              "with_columns",
-                             "df_2 = df_1.with_columns(",
+                             ".with_columns([",
                              'alias("total")',
                              'cast(pl.Int64)'
                              )
@@ -1281,7 +1281,7 @@ def test_non_convertable_formula_node_cast(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
                              "with_columns",
-                             "df_2 = df_1.with_columns(",
+                             ".with_columns([",
                              'alias("total")',
                              "simple_function_to_expr"
                              )
@@ -1314,7 +1314,7 @@ def test_formula_node(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
                              "with_columns",
-                             "df_2 = df_1.with_columns(",
+                             ".with_columns([",
                              'alias("total")',
                              )
     verify_if_execute(code)
@@ -1470,7 +1470,9 @@ def test_flowframe_filter_split_native_and_fallback():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, output_handle="output-1"))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, 'filter_split(ff.col("age")', "df_2_pass", "df_2_fail", "df_3 = df_2_fail")
+    verify_code_contains(
+        code, 'filter_split(ff.col("age")', "filtered_2_pass", "filtered_2_fail", "record_count_3 = filtered_2_fail"
+    )
     assert "flowfile_formula=" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1656,9 +1658,9 @@ def test_union_multiple_dataframes(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
                              "pl.concat([",
-                             "df_1,",
-                             "df_2,",
-                             "df_3,",
+                             "source_1,",
+                             "source_2,",
+                             "source_3,",
                              "how='diagonal_relaxed'"
                              )
     verify_if_execute(code)
@@ -1690,9 +1692,9 @@ def test_custom_polars_code(export_func):
 
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
-                             "def _polars_code_2(input_df: pl.LazyFrame):",
+                             "def _polars_code_custom_2(input_df: pl.LazyFrame):",
                              "return input_df.with_columns((pl.col('age') * 2).alias('double_age'))",
-                             "df_2 = _polars_code_2(df_1)"
+                             "custom_2 = _polars_code_custom_2(source_1)"
                              )
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1822,10 +1824,10 @@ def test_custom_polars_code_multiple_inputs(export_func):
 
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
-                             "def _polars_code_3(input_df_1: pl.LazyFrame, input_df_2: pl.LazyFrame):",
+                             "def _polars_code_custom_3(input_df_1: pl.LazyFrame, input_df_2: pl.LazyFrame):",
                              "output_df = input_df_1.join(input_df_2, how='cross')",
                              "return output_df",
-                             "df_3 = _polars_code_3(df_1, df_2)"
+                             "custom_3 = _polars_code_custom_3(source_1, source_2)"
                              )
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1936,10 +1938,10 @@ def test_complex_workflow(tmp_path, export_func):
                              )
 
         verify_code_ordering(code,
-                             "df_1 = ",
-                             "df_2 = ",
-                             "df_3 = ",
-                             "df_4 = ",
+                             "scan_csv",
+                             "with_columns",
+                             "filter(",
+                             "group_by",
                              "sink_parquet"
                              )
     verify_if_execute(code)
@@ -2026,10 +2028,10 @@ def test_complex_workflow_unordered(tmp_path, export_func):
                              )
 
         verify_code_ordering(code,
-                             "df_1 = ",
-                             "df_2 = ",
-                             "df_3 = ",
-                             "df_4 = ",
+                             "scan_csv",
+                             "with_columns",
+                             "filter(",
+                             "group_by",
                              "sink_parquet"
                              )
     verify_if_execute(code)
@@ -2772,8 +2774,8 @@ def test_flow_with_disconnected_nodes(export_func):
 
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
-                             "df_1 = pl.LazyFrame(",
-                             "df_2 = pl.LazyFrame("
+                             "source_1 = pl.LazyFrame(",
+                             "source_2 = pl.LazyFrame("
                              )
 
 
@@ -2802,7 +2804,7 @@ output_df = sorted.select(['name', 'salary'])"""
 
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
-                             "def _polars_code_2(input_df: pl.LazyFrame):",
+                             "def _polars_code_custom_2(input_df: pl.LazyFrame):",
                              "filtered = input_df.filter(pl.col('age') > 25)",
                              "sorted = filtered.sort('salary', descending=True)",
                              "output_df = sorted.select(['name', 'salary'])",
@@ -2978,7 +2980,7 @@ def test_fuzzy_match_single_multiple_columns_file(fuzzy_join_left_data, export_f
 
 
 def test_explore_data_node_skipped():
-    """Test that explore_data nodes are skipped with a comment but code still generates."""
+    """Test that explore_data nodes are elided (no dead passthrough) and code still generates."""
     flow = create_basic_flow()
 
     manual_input = input_schema.NodeManualInput(
@@ -2996,8 +2998,10 @@ def test_explore_data_node_skipped():
     flow.add_explore_data(input_schema.NodeExploreData(flow_id=1, node_id=2, depending_on_id=1))
 
     code = export_flow_to_polars(flow)
-    assert "# Node 2: Explore Data (skipped - interactive visualization only)" in code
-    assert "df_2 = df_1  # Pass through unchanged" in code
+    # explore_data is interactive-only: it emits no statement and adds no dead alias.
+    assert "Pass through unchanged" not in code
+    assert "df_2" not in code
+    assert "return source_1" in code
     verify_if_execute(code)
 
 
@@ -3492,7 +3496,7 @@ def test_node_reference_mixed():
     code = export_flow_to_polars(flow)
 
     verify_code_contains(code, "custom_input = pl.LazyFrame")
-    verify_code_contains(code, "df_2 = custom_input.filter")
+    verify_code_contains(code, "filtered_2 = custom_input.filter")
     assert "df_1" not in code, "Should use custom_input instead of df_1"
     verify_if_execute(code)
 
@@ -3571,7 +3575,7 @@ def test_node_reference_in_join():
 
 
 def test_node_reference_default_when_empty():
-    """Test that empty node_reference falls back to df_{node_id}."""
+    """Test that empty node_reference falls back to an auto-generated operation name."""
     flow = create_basic_flow()
 
     manual_input = input_schema.NodeManualInput(
@@ -3591,12 +3595,12 @@ def test_node_reference_default_when_empty():
 
     code = export_flow_to_polars(flow)
 
-    verify_code_contains(code, "df_1 = pl.LazyFrame")
+    verify_code_contains(code, "source_1 = pl.LazyFrame")
     verify_if_execute(code)
 
 
 def test_node_reference_none_uses_default():
-    """Test that None node_reference uses df_{node_id}."""
+    """Test that None node_reference uses an auto-generated operation name."""
     flow = create_basic_flow()
 
     manual_input = input_schema.NodeManualInput(
@@ -3616,7 +3620,7 @@ def test_node_reference_none_uses_default():
 
     code = export_flow_to_polars(flow)
 
-    verify_code_contains(code, "df_1 = pl.LazyFrame")
+    verify_code_contains(code, "source_1 = pl.LazyFrame")
     verify_if_execute(code)
 
 
@@ -4661,7 +4665,9 @@ def test_select_with_no_columns_kept():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_polars(flow)
-    verify_code_contains(code, "df_2 = df_1")
+    # A select that keeps no columns is a transparent passthrough: no dead alias.
+    assert "Pass through" not in code
+    verify_code_contains(code, "return source_1")
     verify_if_execute(code)
 
 
@@ -6055,7 +6061,7 @@ def test_random_split_per_handle_downstream(export_func):
     )
 
     code = export_func(flow)
-    verify_code_contains(code, "df_3 = df_2_test")
+    verify_code_contains(code, "record_count_3 = df_2_test")
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
@@ -6091,7 +6097,7 @@ def test_filter_split_mode_pass_and_fail(export_func):
     )
 
     code = export_func(flow)
-    verify_code_contains(code, "df_2_pass", "df_2_fail", "df_3 = df_2_fail")
+    verify_code_contains(code, "filtered_2_pass", "filtered_2_fail", "record_count_3 = filtered_2_fail")
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
