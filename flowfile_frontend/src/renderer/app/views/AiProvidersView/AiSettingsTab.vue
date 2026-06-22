@@ -154,6 +154,8 @@
             </label>
             <el-select
               id="ai-main-provider"
+              size="default"
+              popper-class="model-select-dropdown"
               :model-value="aiStore.selectedProvider ?? ''"
               @change="onMainProviderChange"
             >
@@ -161,20 +163,30 @@
                 v-for="p in aiStore.configuredProviders"
                 :key="p.provider"
                 :value="p.provider"
-                :label="p.provider"
+                :label="providerLabel(p.provider)"
               />
             </el-select>
           </div>
           <div class="model-field">
             <label class="model-field__label" for="ai-main-model">Model</label>
+            <!-- Local runs a single loaded model — show it read-only and point
+                 to the On-device card rather than offer a duplicate picker. -->
+            <div v-if="isLocalComplex" id="ai-main-model" class="model-static">
+              <i class="fa-solid fa-microchip"></i>
+              <span>{{ localActiveModelName }}</span>
+            </div>
             <el-select
+              v-else
               id="ai-main-model"
+              size="default"
+              popper-class="model-select-dropdown"
               :model-value="aiStore.selectedModel ?? ''"
               @change="onMainModelChange"
             >
               <el-option value="" label="Provider default" />
               <el-option v-for="m in mainModels" :key="m" :value="m" :label="m" />
             </el-select>
+            <p v-if="isLocalComplex" class="model-field__sub">Chosen in On-device AI below.</p>
           </div>
         </div>
         <p class="model-tier__hint">
@@ -185,6 +197,49 @@
           }}
         </p>
 
+        <!-- Simple tier — own provider + model, shown only when split on. -->
+        <div v-if="aiStore.splitModels" class="model-row model-row--simple">
+          <div class="model-field">
+            <label class="model-field__label" for="ai-simple-provider">Simple provider</label>
+            <el-select
+              id="ai-simple-provider"
+              size="default"
+              popper-class="model-select-dropdown"
+              :model-value="simpleProviderName ?? ''"
+              @change="onSimpleProviderChange"
+            >
+              <el-option
+                v-for="p in aiStore.configuredProviders"
+                :key="p.provider"
+                :value="p.provider"
+                :label="providerLabel(p.provider)"
+              />
+            </el-select>
+          </div>
+          <div class="model-field">
+            <label class="model-field__label" for="ai-simple-model">Model</label>
+            <div v-if="isLocalSimple" id="ai-simple-model" class="model-static">
+              <i class="fa-solid fa-microchip"></i>
+              <span>{{ localActiveModelName }}</span>
+            </div>
+            <el-select
+              v-else
+              id="ai-simple-model"
+              size="default"
+              popper-class="model-select-dropdown"
+              :model-value="aiStore.simpleModel ?? ''"
+              @change="onSimpleModelChange"
+            >
+              <el-option value="" label="Provider default" />
+              <el-option v-for="m in simpleModels" :key="m" :value="m" :label="m" />
+            </el-select>
+            <p v-if="isLocalSimple" class="model-field__sub">Chosen in On-device AI below.</p>
+          </div>
+        </div>
+        <p v-if="aiStore.splitModels" class="model-tier__hint">
+          Lighter tasks: cron text→schedule and join-key suggestions.
+        </p>
+
         <!-- Split toggle. -->
         <el-checkbox
           class="model-split-toggle"
@@ -193,39 +248,6 @@
         >
           Use a separate, cheaper model for simple tasks
         </el-checkbox>
-
-        <!-- Simple tier — own provider + model, shown only when split on. -->
-        <div v-if="aiStore.splitModels" class="model-row model-row--simple">
-          <div class="model-field">
-            <label class="model-field__label" for="ai-simple-provider">Simple provider</label>
-            <el-select
-              id="ai-simple-provider"
-              :model-value="simpleProviderName ?? ''"
-              @change="onSimpleProviderChange"
-            >
-              <el-option
-                v-for="p in aiStore.configuredProviders"
-                :key="p.provider"
-                :value="p.provider"
-                :label="p.provider"
-              />
-            </el-select>
-          </div>
-          <div class="model-field">
-            <label class="model-field__label" for="ai-simple-model">Model</label>
-            <el-select
-              id="ai-simple-model"
-              :model-value="aiStore.simpleModel ?? ''"
-              @change="onSimpleModelChange"
-            >
-              <el-option value="" label="Provider default" />
-              <el-option v-for="m in simpleModels" :key="m" :value="m" :label="m" />
-            </el-select>
-          </div>
-        </div>
-        <p v-if="aiStore.splitModels" class="model-tier__hint">
-          Lighter tasks: cron text→schedule and join-key suggestions.
-        </p>
       </div>
     </div>
 
@@ -605,6 +627,8 @@ import {
 } from "./api";
 import type { AiProvider, AiProviderCredentialInput, AiProviderStatus } from "./aiProviderTypes";
 import {
+  LOCAL_PROVIDER_ID,
+  LOCAL_PROVIDER_LABEL,
   deleteLocalModel,
   fetchLocalModelStatus,
   selectLocalModel,
@@ -613,7 +637,7 @@ import {
   stopLocalModel,
   streamLocalModelInstall,
 } from "./localModelApi";
-import type { LocalModelEntry, LocalModelStatus } from "./localModelApi";
+import type { LocalModelEntry } from "./localModelApi";
 
 const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.isAdmin);
@@ -660,6 +684,21 @@ const onSplitToggle = (checked: boolean): void => {
 const onMainProviderChange = (value: string): void => {
   if (value) aiStore.setSelectedProvider(value);
 };
+
+// When a tier's provider is On-device AI, its model isn't a separate pick — it's
+// whatever the single local server has loaded (chosen in the On-device card
+// below). The model field renders that read-only instead of a dropdown. The
+// split still works: the *other* tier can point at any provider/model, since
+// local never carries a per-tier model to collide with.
+const isLocalComplex = computed(() => aiStore.selectedProvider === LOCAL_PROVIDER_ID);
+const isLocalSimple = computed(() => simpleProviderName.value === LOCAL_PROVIDER_ID);
+const localActiveModelName = computed(
+  () => aiStore.localModelStatus?.modelName ?? "the on-device model",
+);
+// Humanize the synthetic ``local`` provider's label in the picker (wire id stays
+// "local"); cloud providers show their own id verbatim.
+const providerLabel = (name: string): string =>
+  name === LOCAL_PROVIDER_ID ? LOCAL_PROVIDER_LABEL : name;
 
 const onMainModelChange = (value: string): void => {
   aiStore.setSelectedModel(value || null);
@@ -905,7 +944,10 @@ const handleCloseDeleteDialog = (done: () => void) => {
 };
 
 // --- Local model (offline llama.cpp + small GGUF) ---
-const localModel = ref<LocalModelStatus | null>(null);
+// Single source of truth: the ai-store owns local status (so the Models card
+// and this On-device card never disagree). This is a read-only mirror; every
+// mutation below routes its fresh status back through ``applyLocalModelStatus``.
+const localModel = computed(() => aiStore.localModelStatus);
 const localLoading = ref(true);
 const localBusy = ref(false);
 const localError = ref<string | null>(null);
@@ -1001,7 +1043,7 @@ const handleSetCtxSize = async () => {
   if (!Number.isFinite(want) || want === st.ctxSize) return;
   localBusy.value = true;
   try {
-    localModel.value = await setLocalCtxSize(want);
+    aiStore.applyLocalModelStatus(await setLocalCtxSize(want));
     ElMessage.success("Context window updated");
   } catch (error) {
     ElMessage.error((error as Error).message || "Failed to update context window");
@@ -1014,7 +1056,7 @@ const loadLocalModel = async () => {
   localLoading.value = true;
   localError.value = null;
   try {
-    localModel.value = await fetchLocalModelStatus();
+    aiStore.applyLocalModelStatus(await fetchLocalModelStatus());
   } catch (error) {
     if (error instanceof AiDisabledError) {
       isDisabled.value = true;
@@ -1022,7 +1064,7 @@ const loadLocalModel = async () => {
       // Most commonly: the running backend predates the local-model routes
       // (needs a restart) or is unreachable. Surface it with a Retry rather
       // than rendering an empty card.
-      localModel.value = null;
+      aiStore.applyLocalModelStatus(null);
       localError.value =
         (error as { response?: { status?: number } })?.response?.status === 404
           ? "On-device AI endpoints not found. Restart flowfile_core to pick up this feature, then Retry."
@@ -1084,7 +1126,7 @@ const handleLocalInstall = async (modelId: string) => {
 const handleLocalSelect = async (modelId: string) => {
   localBusy.value = true;
   try {
-    localModel.value = await selectLocalModel(modelId);
+    aiStore.applyLocalModelStatus(await selectLocalModel(modelId));
     ElMessage.success("Model selected");
   } catch (error) {
     ElMessage.error((error as Error).message || "Failed to select model");
@@ -1096,7 +1138,7 @@ const handleLocalSelect = async (modelId: string) => {
 const handleLocalStart = async () => {
   localBusy.value = true;
   try {
-    localModel.value = await startLocalModel();
+    aiStore.applyLocalModelStatus(await startLocalModel());
     ElMessage.success("On-device AI started");
   } catch (error) {
     ElMessage.error((error as Error).message || "Failed to start on-device AI");
@@ -1108,7 +1150,7 @@ const handleLocalStart = async () => {
 const handleLocalStop = async () => {
   localBusy.value = true;
   try {
-    localModel.value = await stopLocalModel();
+    aiStore.applyLocalModelStatus(await stopLocalModel());
     ElMessage.success("On-device AI stopped");
   } catch {
     ElMessage.error("Failed to stop on-device AI");
@@ -1120,7 +1162,7 @@ const handleLocalStop = async () => {
 const handleLocalDelete = async (modelId: string) => {
   localBusy.value = true;
   try {
-    localModel.value = await deleteLocalModel(modelId);
+    aiStore.applyLocalModelStatus(await deleteLocalModel(modelId));
     ElMessage.success("Model removed");
   } catch {
     ElMessage.error("Failed to remove model");
@@ -1530,8 +1572,9 @@ onMounted(() => {
 .model-field {
   display: flex;
   flex-direction: column;
-  flex: 1 1 200px;
+  flex: 1 1 240px;
   min-width: 180px;
+  max-width: 340px;
 }
 
 .model-field__label {
@@ -1541,17 +1584,66 @@ onMounted(() => {
   color: var(--color-text-primary);
 }
 
-.model-select {
-  width: 100%;
-  padding: var(--spacing-2) var(--spacing-3);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-  background-color: var(--color-background);
-  border: 1px solid var(--color-border);
+/* Theme Element Plus's select trigger to the app tokens (it ignores plain
+   class styles): a soft filled control that lifts to a teal focus ring. */
+.model-field :deep(.el-select__wrapper) {
+  background-color: var(--color-background-secondary);
   border-radius: var(--border-radius-md);
+  box-shadow: inset 0 0 0 1px var(--color-border-primary);
+  transition:
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.model-field :deep(.el-select__wrapper:hover) {
+  background-color: var(--color-background-primary);
+  box-shadow: inset 0 0 0 1px var(--color-border-secondary);
+}
+
+.model-field :deep(.el-select__wrapper.is-focused) {
+  background-color: var(--color-background-primary);
+  box-shadow:
+    inset 0 0 0 1px var(--color-accent),
+    0 0 0 3px var(--color-accent-subtle);
+}
+
+.model-field :deep(.el-select__placeholder:not(.is-transparent)) {
+  color: var(--color-text-primary);
+  font-weight: 300;
+}
+
+.model-field :deep(.el-select__caret) {
+  color: var(--color-text-tertiary);
 }
 
 .model-tier__hint {
+  margin: var(--spacing-1) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* Read-only model value shown when a tier's provider is On-device AI — the
+   model is whatever's loaded below, not a separate pick. Mirrors the select
+   trigger's shape so the row stays aligned with cloud tiers. */
+.model-static {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  min-height: 32px;
+  padding: var(--spacing-2) var(--spacing-3);
+  background-color: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  box-shadow: inset 0 0 0 1px var(--color-border-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.model-static i {
+  color: var(--color-accent);
+}
+
+.model-field__sub {
   margin: var(--spacing-1) 0 0;
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
@@ -1569,5 +1661,22 @@ onMounted(() => {
 
 .model-split-toggle input {
   cursor: pointer;
+}
+
+.model-split-toggle :deep(.el-checkbox__label) {
+  font-weight: 400;
+}
+</style>
+
+<!-- Select dropdowns teleport to <body>, so the popup is themed via a
+     non-scoped block keyed on popper-class. -->
+<style>
+.model-select-dropdown .el-select-dropdown__item.is-selected {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-semibold);
+}
+
+.model-select-dropdown .el-select-dropdown__item.is-hovering {
+  background-color: var(--color-accent-subtle);
 }
 </style>

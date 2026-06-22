@@ -524,6 +524,35 @@ export const useAiStore = defineStore("ai", () => {
     };
   };
 
+  // Single writer for local-model status. Keeps three things in lockstep so the
+  // Models card and the On-device card can never disagree about which local
+  // model is active: (1) ``localModelStatus``, (2) the synthetic ``local`` entry
+  // in ``providers`` (added when something is installed, dropped otherwise),
+  // (3) the selected/simple model id WHEN that tier is local — the local model
+  // is a single global runtime fact ("whatever's loaded on-device"), so any tier
+  // pointed at ``local`` mirrors it rather than carrying its own pick. Call this
+  // from every place that mutates local status (load, select, start/stop,
+  // install, delete, ctx-size) so both cards reflect the change instantly.
+  const applyLocalModelStatus = (status: LocalModelStatus | null): void => {
+    localModelStatus.value = status;
+    const withoutLocal = providers.value.filter((p) => p.provider !== LOCAL_PROVIDER_ID);
+    providers.value =
+      status && status.anyModelInstalled
+        ? [...withoutLocal, _localProviderEntry(status)]
+        : withoutLocal;
+    if (status && status.anyModelInstalled) {
+      // A tier set to ``local`` always uses the single loaded model, so keep
+      // its stored model id honest (the UI shows it read-only, but the
+      // persisted selection + chat picker read this).
+      if (selectedProvider.value === LOCAL_PROVIDER_ID) {
+        selectedModel.value = status.selectedModelId;
+      }
+      if (simpleProvider.value === LOCAL_PROVIDER_ID) {
+        simpleModel.value = status.selectedModelId;
+      }
+    }
+  };
+
   const loadProviders = async (): Promise<void> => {
     providersLoading.value = true;
     providersError.value = null;
@@ -535,16 +564,12 @@ export const useAiStore = defineStore("ai", () => {
         fetchAiProviders(),
         fetchLocalModelStatus().catch(() => null),
       ]);
-      localModelStatus.value = localStatus;
-      const combined = [...list];
-      // Surface local whenever at least one model is installed (not just the
-      // selected one) so the dropdown can offer the others.
-      if (localStatus && localStatus.anyModelInstalled) {
-        combined.push(_localProviderEntry(localStatus));
-      }
-      providers.value = combined;
+      providers.value = list;
+      // Inject/refresh the synthetic ``local`` entry through the single writer
+      // so the Models card and On-device card stay one source of truth.
+      applyLocalModelStatus(localStatus);
       if (selectedProvider.value === null) {
-        const first = combined.find(
+        const first = providers.value.find(
           (p) => p.status === "configured" || p.status === "env_fallback",
         );
         if (first) {
@@ -578,7 +603,7 @@ export const useAiStore = defineStore("ai", () => {
     if (selectedProvider.value === LOCAL_PROVIDER_ID && model) {
       void selectLocalModel(model)
         .then((status) => {
-          localModelStatus.value = status;
+          applyLocalModelStatus(status);
         })
         .catch((err) => {
           console.warn("ai-store: selectLocalModel failed", err);
@@ -1590,6 +1615,7 @@ export const useAiStore = defineStore("ai", () => {
     toggleAiDrawer,
     clearMessages,
     loadProviders,
+    applyLocalModelStatus,
     setSelectedProvider,
     setSelectedModel,
     setSimpleModel,
