@@ -29,19 +29,11 @@ interface Props {
   columns?: string[];
   // Column name → data type, used to annotate column completions.
   columnTypes?: Record<string, string>;
-  // Optional flow + node identity for the AI completion source. When
-  // either is missing, the AI source short-circuits and only the static
-  // `polarsCompletions` runs — used by the standalone editor preview where
-  // there's no flow context.
-  flowId?: number | null;
-  nodeId?: number | string | null;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   columns: () => [],
   columnTypes: () => ({}),
-  flowId: null,
-  nodeId: null,
 });
 
 const emit = defineEmits(["update-editor-string"]);

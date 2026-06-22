@@ -103,12 +103,7 @@ class _JoinKeyLLMOutput(BaseModel):
 
 
 def _column_names_for_node(node: FlowNode) -> list[str] | None:
-    """
-    Extract column names from a node's predicted schema.
-    
-    Returns:
-        A list of column names from the predicted schema, or None if the schema is missing or empty.
-    """
+    """Return the predicted upstream column names, or ``None`` if the schema is missing/empty."""
     schema: list[FlowfileColumn] | None = node.node_schema.predicted_schema
     if not schema:
         return None
@@ -148,12 +143,7 @@ Hard rules:
 
 
 def _format_columns_for_prompt(columns: list[str]) -> str:
-    """
-    Format a list of column names for inclusion in a prompt.
-    
-    Returns:
-        str: Comma-separated column names, or "(empty)" if the list is empty.
-    """
+    """Comma-join column names for the prompt, or ``"(empty)"`` when there are none."""
     if not columns:
         return "(empty)"
     return ", ".join(columns)
@@ -166,12 +156,7 @@ def _build_join_keys_messages(
     how: str,
     max_pairs: int,
 ) -> list[Message]:
-    """
-    Construct a system and user message for the join-key suggestion LLM.
-    
-    Returns:
-        A list containing the system message and user message, in that order.
-    """
+    """Build the ``[system, user]`` messages for the join-key suggestion LLM."""
     user_lines = [
         f"Left schema columns: {_format_columns_for_prompt(left_columns)}",
         f"Right schema columns: {_format_columns_for_prompt(right_columns)}",
@@ -267,13 +252,12 @@ async def suggest_join_keys(
     scheduler: RateLimitScheduler | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> JoinKeySuggestionsResponse:
-    """
-    Propose join-key pairs for a join settings panel.
-    
-    Validates that proposed pairs reference columns present in both upstream schemas.
-    Pairs whose left or right column is not found in the corresponding upstream schema
-    are dropped. Returns a degraded response if either upstream schema is unavailable
-    or nodes are missing from the flow.
+    """Propose ``(left_col, right_col)`` pairs for a join settings panel.
+
+    Pairs whose ``left_col`` ∉ left schema or ``right_col`` ∉ right schema
+    are dropped — both schemas are knowable when joins are configured. Returns
+    a ``degraded`` response when either upstream schema is unavailable or a
+    node is missing from the flow.
     """
     started = time.monotonic()
     left_node = graph.get_node(left_node_id)

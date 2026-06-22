@@ -3,9 +3,9 @@
 // Distinct from the autocomplete store because the lifecycle is
 // different: edge-hover ghost suggestions surface a small popover that
 // the user clicks to materialise, with cancel-on-leave semantics. The
-// autocomplete store cancels per-keystroke; this one cancels
+// autocomplete store cancels per-request; this one cancels
 // per-hover. Sharing one AbortController would mean a hover-flick
-// cancels an active formula suggestion fetch.
+// cancels an active join-key suggestion fetch.
 //
 // `materialize()` performs the three-step graph-mutation dance the
 // AI's validated suggestion implies:

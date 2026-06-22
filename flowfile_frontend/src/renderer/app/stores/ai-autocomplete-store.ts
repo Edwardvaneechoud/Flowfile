@@ -1,14 +1,13 @@
-// Pinia store for the settings-autocomplete surface.
+// Pinia store for the settings-autocomplete surface (join-key suggestions).
 //
-// Distinct from the chat store because cancellation semantics differ
-// — chat cancels per-message (long-running stream); autocomplete
-// cancels per keystroke (short fast JSON). Sharing one AbortController
-// across surfaces would mean a chat send aborts an in-flight formula
-// suggestion fetch.
+// Distinct from the chat store because cancellation semantics differ —
+// chat cancels per-message (long-running stream); a join-key request is a
+// short fast JSON call. Sharing one AbortController across surfaces would
+// mean a chat send aborts an in-flight join-key suggestion fetch.
 //
-// The store doesn't cache results — autocomplete is fire-and-forget with the
-// CodeMirror dropdown owning the rendered list. We only track the single
-// in-flight controller so a fresh keystroke can cancel its predecessor.
+// The store doesn't cache results — suggestions are fire-and-forget with the
+// requesting panel owning the rendered list. We only track the single
+// in-flight controller so a fresh request can cancel its predecessor.
 
 import { defineStore } from "pinia";
 import { ref } from "vue";
@@ -32,9 +31,8 @@ export const useAiAutocompleteStore = defineStore("aiAutocomplete", () => {
   // The most recent in-flight controller for the join-keys request.
   // Replacing it cancels the prior request.
   const inflight = ref<AbortController | null>(null);
-  // Last error that wasn't a cancellation. Surfaced for debug; the
-  // CodeMirror source treats these as "no AI suggestions this round" and
-  // falls back silently.
+  // Last error that wasn't a cancellation. Surfaced for debug; callers
+  // treat these as "no AI suggestions this round" and fall back silently.
   const lastError = ref<unknown>(null);
   // True iff the backend last returned 503 — surface so callers can render
   // a one-time "AI disabled" badge without re-fetching.
@@ -54,10 +52,8 @@ export const useAiAutocompleteStore = defineStore("aiAutocomplete", () => {
     return c;
   };
 
-  // Inject the user's provider + *simple-tier* model when the caller
-  // didn't pin one. Join-key suggestions are a simple surface, so they
-  // run on ``simpleModel`` (falling through to the provider's preset when
-  // unset). Join-key suggestions are a simple surface, so resolveSurface
+  // Inject the user's provider + simple-tier model when the caller didn't
+  // pin one. Join-key suggestions are a simple surface, so resolveSurface
   // routes them to the simple tier when split models is on (else the main
   // selection). ``Join.vue`` omits both, so this fills them.
   const _withDefaults = <T extends { provider?: string; model?: string | null }>(
