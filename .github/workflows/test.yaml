@@ -16,6 +16,12 @@ on:
         default: false
         type: boolean
 
+# Cancel superseded in-progress runs for the same PR. Main-branch runs are never
+# cancelled (docker-publish / release pipelines key off completed main builds).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Detect which parts of the codebase have changed
   detect-changes:
@@ -124,18 +130,9 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi --with dev
 
-      - name: Build Vue app for web
-        run: |
-          cd flowfile_frontend
-          npm install
-          npm run build:web
-
-          # Create the static directory if it doesn't exist
-          mkdir -p ../flowfile/flowfile/web/static
-
-          # Copy the built files to the Python package
-          cp -r build/renderer/* ../flowfile/flowfile/web/static/
-
+      # NOTE: backend tests do not need the built Vue UI — flowfile/web serves the
+      # static dir only if present (graceful 404 otherwise) and flowfile/tests hit
+      # the API, not static assets. Frontend build failures are caught by test-web.
       - name: Start Mock Database with Sample Data
         run: poetry run start_postgres
 
@@ -174,9 +171,7 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings $COV_ARGS
-        env:
-          COV_ARGS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '--cov --cov-append --cov-report=' || '' }}
+        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings
 
       - name: Run pytest for flowfile_worker
         if: |
@@ -184,9 +179,7 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_worker/tests --disable-warnings $COV_ARGS
-        env:
-          COV_ARGS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '--cov --cov-append --cov-report=' || '' }}
+        run: poetry run pytest flowfile_worker/tests --disable-warnings
 
       - name: Stop Mock Database
         run: poetry run stop_postgres
@@ -203,8 +196,69 @@ jobs:
       - name: Stop Mock Google Cloud Storage
         run: poetry run stop_gcs
 
+      - name: Run pytest for flowfile
+        if: |
+          needs.detect-changes.outputs.backend_flowfile == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
+        shell: pwsh
+        run: poetry run pytest flowfile/tests --disable-warnings
+
+  # Coverage job - runs core+worker WITH coverage on a dedicated runner so it
+  # stays off the functional matrix's critical path. COVERAGE_CORE=sysmon selects
+  # the PEP-669 sys.monitoring tracer (near-zero line-coverage overhead on 3.12,
+  # vs the ~2x C-tracer tax that previously doubled the 3.12 matrix job).
+  coverage:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.any_backend == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.poetry/bin" >> $GITHUB_PATH
+
+      - name: Install Dependencies
+        run: |
+          poetry install --no-interaction --no-ansi --with dev
+
+      - name: Start Mock Database with Sample Data
+        run: poetry run start_postgres
+
+      - name: Start Mock MySQL Database with Sample Data
+        run: poetry run start_mysql
+
+      - name: Start Mock S3 bucket with Sample Data
+        run: poetry run start_minio
+
+      - name: Start Mock Azure Blob Storage (Azurite)
+        run: poetry run start_azurite
+
+      - name: Start Mock Google Cloud Storage
+        run: poetry run start_gcs
+
+      - name: Run pytest with coverage (core + worker)
+        # sysmon: PEP-669 tracer. Safe because [tool.coverage.run] has no
+        # branch=true / dynamic_context (which sysmon does not support).
+        env:
+          COVERAGE_CORE: sysmon
+        run: |
+          poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --cov --cov-append --cov-report=
+          poetry run pytest flowfile_worker/tests --disable-warnings --cov --cov-append --cov-report=
+
       - name: Generate coverage report
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
           if [ -f .coverage ]; then
             echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
@@ -217,7 +271,6 @@ jobs:
           fi
 
       - name: Upload coverage artifact
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -227,22 +280,12 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
           flags: backend
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
-
-      - name: Run pytest for flowfile
-        if: |
-          needs.detect-changes.outputs.backend_flowfile == 'true' ||
-          needs.detect-changes.outputs.shared == 'true' ||
-          needs.detect-changes.outputs.test_workflow == 'true' ||
-          github.event.inputs.run_all_tests == 'true'
-        shell: pwsh
-        run: poetry run pytest flowfile/tests --disable-warnings
 
   # Windows backend tests
   backend-tests-windows:
@@ -272,19 +315,7 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi --with dev
 
-      - name: Build Vue app for web
-        shell: pwsh
-        run: |
-          cd flowfile_frontend
-          npm install
-          npm run build:web
-
-          # Create the static directory if it doesn't exist
-          New-Item -ItemType Directory -Force -Path ../flowfile/flowfile/web/static | Out-Null
-
-          # Copy the built files to the Python package
-          Copy-Item -Path build/renderer/* -Destination ../flowfile/flowfile/web/static/ -Recurse -Force
-
+      # Backend tests do not need the built Vue UI (see note in backend-tests).
       - name: Start Mock Database with Sample Data
         shell: pwsh
         run: poetry run start_postgres
@@ -530,7 +561,7 @@ jobs:
 
   # Summary job - always runs to provide status
   test-summary:
-    needs: [detect-changes, backend-tests, backend-tests-windows, kernel-tests, check-stubs, check-formula-docs, test-web, docs-test]
+    needs: [detect-changes, backend-tests, coverage, backend-tests-windows, kernel-tests, check-stubs, check-formula-docs, test-web, docs-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -551,6 +582,7 @@ jobs:
           echo ""
           echo "Job results:"
           echo "  - Backend Tests: ${{ needs.backend-tests.result }}"
+          echo "  - Coverage: ${{ needs.coverage.result }}"
           echo "  - Backend Tests (Windows): ${{ needs.backend-tests-windows.result }}"
           echo "  - Kernel Tests: ${{ needs.kernel-tests.result }}"
           echo "  - Stub Drift: ${{ needs.check-stubs.result }}"
@@ -560,6 +592,7 @@ jobs:
 
           # Fail if any non-skipped job failed
           if [[ "${{ needs.backend-tests.result }}" == "failure" ]] || \
+             [[ "${{ needs.coverage.result }}" == "failure" ]] || \
              [[ "${{ needs.backend-tests-windows.result }}" == "failure" ]] || \
              [[ "${{ needs.kernel-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.check-stubs.result }}" == "failure" ]] || \

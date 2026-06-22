@@ -102,6 +102,7 @@
               @flow-context-menu="onFlowContextMenu($event)"
               @select-visualization="openVisualization($event)"
               @select-notebook="openNotebook($event)"
+              @delete-notebook="handleDeleteNotebook($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
               @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
               @register-flow="openRegisterFlow($event)"
@@ -505,6 +506,7 @@ import { useFlowStore } from "../../stores/flow-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
 import { NodeApi } from "../../api/node.api";
+import type { NotebookSummary } from "../../api/notebook.api";
 import { EmptyState } from "../../components/common";
 import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
@@ -761,6 +763,24 @@ function openNotebook(notebookId: number) {
   void notebookStore.openNotebook(notebookId);
   if (catalogStore.activeTab !== "notebook") {
     router.push({ name: "catalog", query: { tab: "notebook" } });
+  }
+}
+
+async function handleDeleteNotebook(nb: NotebookSummary) {
+  try {
+    await ElMessageBox.confirm(
+      `Delete notebook "${nb.name}"? This cannot be undone.`,
+      "Delete notebook",
+      { confirmButtonText: "Delete", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return; // User cancelled
+  }
+  try {
+    await notebookStore.deleteNotebook(nb.id);
+    await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Failed to delete notebook");
   }
 }
 
