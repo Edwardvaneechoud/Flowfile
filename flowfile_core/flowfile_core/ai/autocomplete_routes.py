@@ -101,6 +101,21 @@ def _resolve_provider(
     # ``ProviderNotConfiguredError``. Replaces the historical
     # hardcoded ``"google"`` default that 409'd for users running on
     # any other configured provider.
+    """
+    Resolve an AI provider for the user, falling back to available providers when none is explicitly specified.
+    
+    Parameters:
+        name (str | None): Provider name to resolve. If None, attempts providers in registration order until one is successfully configured.
+        model (str | None): Optional model override for provider configuration.
+    
+    Returns:
+        A configured provider instance.
+    
+    Raises:
+        HTTPException:
+            - 404 if the specified provider name is unknown.
+            - 409 if no provider is configured.
+    """
     if name is None:
         for candidate in PROVIDERS:
             try:

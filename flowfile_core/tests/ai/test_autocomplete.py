@@ -139,19 +139,37 @@ class _FakeProvider:
 
 
 def _scheduler() -> RateLimitScheduler:
-    """A scheduler whose ``time_source`` is monotonic-zero-ish so RPM never
-    blocks tests. Each test gets a fresh instance."""
+    """
+    Create a rate-limit scheduler configured for testing.
+    
+    Returns:
+        RateLimitScheduler: A scheduler with a constant time source and no-op sleep,
+            preventing rate-limit enforcement from blocking test execution.
+    """
 
     return RateLimitScheduler(time_source=lambda: 0.0, sleep=lambda *_a, **_k: asyncio.sleep(0))
 
 
 def _join_payload(pairs: list[dict[str, Any]]) -> str:
+    """
+    Serialize key-pair candidates to JSON.
+    
+    Parameters:
+    	pairs (list[dict[str, Any]]): Key-pair candidate dictionaries.
+    
+    Returns:
+    	str: JSON string containing the key pairs under the "key_pairs" key.
+    """
     return json.dumps({"key_pairs": pairs})
 
 
 def _matched_graph() -> _FakeGraph:
-    """Two upstream nodes with overlapping schemas — the LLM call proceeds
-    (no early degrade), so it exercises the provider-call wiring."""
+    """
+    Create a test graph with two nodes whose predicted schemas each contain columns "a" and "b".
+    
+    Returns:
+    	_FakeGraph: A graph containing nodes "L" and "R" with matching overlapping schemas.
+    """
 
     left = _make_node("L", predicted_schema=_columns("a", "b"))
     right = _make_node("R", predicted_schema=_columns("a", "b"))
@@ -346,6 +364,15 @@ async def test_markdown_fenced_json_is_unwrapped() -> None:
 
 @pytest.fixture
 def authed_client() -> Iterator[TestClient]:
+    """
+    Pytest fixture providing a TestClient with mocked authentication.
+    
+    Overrides the `get_current_active_user` dependency to always return a
+    test user, and cleans up the override after the test completes.
+    
+    Yields:
+    	TestClient: The FastAPI test client configured with mocked authentication.
+    """
     fake_user = PydanticUser(id=1, username="local_user")
     main.app.dependency_overrides[get_current_active_user] = lambda: fake_user
     try:
@@ -355,6 +382,12 @@ def authed_client() -> Iterator[TestClient]:
 
 
 def _join_body(**overrides: Any) -> dict[str, Any]:
+    """
+    Build a join-keys request body with customizable field values.
+    
+    Returns:
+    	dict[str, Any]: A request body dictionary for join-keys autocomplete tests with fields: flow_id, left_node_id, right_node_id, and how.
+    """
     body: dict[str, Any] = {
         "flow_id": 1,
         "left_node_id": "L",
