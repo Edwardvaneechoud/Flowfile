@@ -6104,5 +6104,197 @@ def test_filter_split_mode_pass_and_fail(export_func):
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
+def _count_pipeline_assignments(code: str) -> int:
+    """Number of top-level assignment statements inside run_etl_pipeline()."""
+    tree = ast.parse(code)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "run_etl_pipeline")
+    return sum(isinstance(stmt, ast.Assign) for stmt in fn.body)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_fusion_linear_chain_collapses_to_single_pipe(export_func):
+    """A linear single-use chain renders as ONE piped expression and stays frame-equal."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    flow.add_filter(input_schema.NodeFilter(
+        flow_id=1, node_id=2, depending_on_id=1,
+        filter_input=transform_schema.FilterInput(advanced_filter="[age] > 26", filter_type="advanced")))
+    flow.add_formula(input_schema.NodeFormula(
+        flow_id=1, node_id=3, depending_on_id=2,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="bonus", data_type="Auto"), function="[salary] * 2")))
+    flow.add_group_by(input_schema.NodeGroupBy(
+        flow_id=1, node_id=4, depending_on_id=3,
+        groupby_input=transform_schema.GroupByInput(agg_cols=[
+            transform_schema.AggColl("city", "groupby"),
+            transform_schema.AggColl("salary", "sum", "total_salary")])))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
+
+    code = export_func(flow)
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(4).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False, check_column_order=False)
+    # The whole chain fuses into one piped statement with no throwaway df_ ladder.
+    assert _count_pipeline_assignments(code) == 1
+    assert "df_" not in code
+
+
+def test_fusion_keeps_named_boundaries_at_join():
+    """Branch/merge points stay named variables; the pipeline is correct end-to-end."""
+    flow = create_basic_flow()
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1, node_id=1, raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                     input_schema.MinimalFieldInfo(name="region", data_type="String")],
+            data=[[1, 2, 3], ["N", "S", "N"]])))
+    flow.add_filter(input_schema.NodeFilter(
+        flow_id=1, node_id=2, depending_on_id=1,
+        filter_input=transform_schema.FilterInput(advanced_filter="[id] > 1", filter_type="advanced")))
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1, node_id=3, raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                     input_schema.MinimalFieldInfo(name="amount", data_type="Integer")],
+            data=[[1, 2, 3], [10, 20, 30]])))
+    flow.add_join(input_schema.NodeJoin(
+        flow_id=1, node_id=4, depending_on_ids=[2, 3],
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap("id", "id")],
+            left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("region")],
+            right_select=[transform_schema.SelectInput("id", keep=False), transform_schema.SelectInput("amount")],
+            how="inner")))
+    flow.add_group_by(input_schema.NodeGroupBy(
+        flow_id=1, node_id=5, depending_on_id=4,
+        groupby_input=transform_schema.GroupByInput(agg_cols=[
+            transform_schema.AggColl("region", "groupby"),
+            transform_schema.AggColl("amount", "sum", "total")])))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 4, "main"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4, "right"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(4, 5))
+
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(5).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False, check_column_order=False)
+    # Both join arms + the join stay named, so it does not collapse to a single pipe.
+    assert _count_pipeline_assignments(code) >= 3
+    assert "joined" in code
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_fusion_does_not_fuse_grouped_record_id(export_func):
+    """Grouped record_id references its input.columns, so its producer must stay named."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    flow.add_record_id(input_schema.NodeRecordId(
+        flow_id=1, node_id=2, depending_on_id=1,
+        record_id_input=transform_schema.RecordIdInput(
+            output_column_name="rid", offset=1, group_by=True, group_by_columns=["city"])))
+    flow.add_group_by(input_schema.NodeGroupBy(
+        flow_id=1, node_id=3, depending_on_id=2,
+        groupby_input=transform_schema.GroupByInput(agg_cols=[
+            transform_schema.AggColl("city", "groupby"),
+            transform_schema.AggColl("rid", "max", "max_rid")])))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+    code = export_func(flow)
+    # Would raise NameError if the source were wrongly fused away (record_id reads .columns).
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False, check_column_order=False)
+    assert _count_pipeline_assignments(code) >= 2  # source kept as its own variable
+    assert "+ 1 - 1" not in code and "+ 0" not in code
+
+
+@pytest.mark.parametrize(
+    "offset,marker", [(1, None), (0, " - 1)"), (5, " + 4)")], ids=["offset1", "offset0", "offset5"]
+)
+def test_fusion_record_id_offset_folding(offset, marker):
+    """The folded `+ (offset-1)` is rendered minimally and is numerically correct."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    flow.add_record_id(input_schema.NodeRecordId(
+        flow_id=1, node_id=2, depending_on_id=1,
+        record_id_input=transform_schema.RecordIdInput(
+            output_column_name="rid", offset=offset, group_by=True, group_by_columns=["city"])))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False, check_column_order=False)
+    assert "+ 1 - 1" not in code
+    if marker is None:  # offset=1 -> no residual arithmetic on the cum_count
+        assert "+ 0" not in code
+        assert ".over(['city']))" in code
+    else:
+        assert marker in code
+
+
+def test_fusion_explore_data_elided_mid_chain():
+    """An explore_data node mid-pipeline is transparent: no dead alias, chain still fuses."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    flow.add_filter(input_schema.NodeFilter(
+        flow_id=1, node_id=2, depending_on_id=1,
+        filter_input=transform_schema.FilterInput(advanced_filter="[age] > 26", filter_type="advanced")))
+    flow.add_node_promise(input_schema.NodePromise(node_id=3, flow_id=1, node_type="explore_data"))
+    flow.add_explore_data(input_schema.NodeExploreData(flow_id=1, node_id=3, depending_on_id=2))
+    flow.add_group_by(input_schema.NodeGroupBy(
+        flow_id=1, node_id=4, depending_on_id=3,
+        groupby_input=transform_schema.GroupByInput(agg_cols=[
+            transform_schema.AggColl("city", "groupby"),
+            transform_schema.AggColl("salary", "sum", "total_salary")])))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
+
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(4).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False, check_column_order=False)
+    # explore_data emits nothing and is transparent, so the chain fuses straight through it.
+    assert "Pass through" not in code
+    assert _count_pipeline_assignments(code) == 1
+
+
+def test_fusion_node_reference_pins_variable():
+    """A user-set node_reference survives fusion as its own named statement."""
+    flow = create_basic_flow()
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1, node_id=1, node_reference="raw_data",
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="city", data_type="String"),
+                     input_schema.MinimalFieldInfo(name="salary", data_type="Integer")],
+            data=[["NYC", "LA", "NYC"], [10, 20, 30]])))
+    flow.add_filter(input_schema.NodeFilter(
+        flow_id=1, node_id=2, depending_on_id=1,
+        filter_input=transform_schema.FilterInput(advanced_filter="[salary] > 5", filter_type="advanced")))
+    flow.add_group_by(input_schema.NodeGroupBy(
+        flow_id=1, node_id=3, depending_on_id=2,
+        groupby_input=transform_schema.GroupByInput(agg_cols=[
+            transform_schema.AggColl("city", "groupby"),
+            transform_schema.AggColl("salary", "sum", "total")])))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False, check_column_order=False)
+    # The pinned source is not fused away.
+    assert "raw_data = " in code
+    assert _count_pipeline_assignments(code) >= 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
