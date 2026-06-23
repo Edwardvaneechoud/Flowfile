@@ -638,7 +638,7 @@ def test_text_json_tool_call_recovery_at_fill_settings() -> None:
     sort_input = settings.get("sort_input")
     assert isinstance(sort_input, list) and len(sort_input) == 1
     assert sort_input[0].get("column") == "amount"
-    assert sort_input[0].get("how") == "desc"
+    assert sort_input[0].get("how") == "descending"
 
 
 def test_text_json_recovery_handles_json_object_shape_at_classify() -> None:

@@ -170,7 +170,7 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "user wants 'sorted by X', 'top N by Y' (sort then 'sample'), or 'order by'. "
         "The output schema is identical — only row order changes. Don't use sort "
         "as a substitute for 'group_by' — sorting does not deduplicate or aggregate. "
-        'Example: {"sort_input": [{"column": "created_at", "how": "desc"}]}. '
+        'Example: {"sort_input": [{"column": "created_at", "how": "descending"}]}. '
         "Often paired upstream of 'sample' (top-N) or 'unique' (keep-first dedupe)."
     ),
     "record_id": (
@@ -235,7 +235,7 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "rolling needs window_size; each op needs a unique new_column_name. "
         "Example: "
         '{"window_input": {"partition_by": ["region"], '
-        '"order_by": [{"column": "date", "how": "asc"}], '
+        '"order_by": [{"column": "date", "how": "ascending"}], '
         '"window_functions": [{"column": "amount", "function": "rolling_mean", '
         '"new_column_name": "amount_7d_avg", "window_size": 7}]}}. '
         "Often paired downstream of 'sort'/'filter' and upstream of 'select'."

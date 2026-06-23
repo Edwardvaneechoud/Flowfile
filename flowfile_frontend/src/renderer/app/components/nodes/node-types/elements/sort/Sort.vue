@@ -28,13 +28,13 @@
           left: contextMenuPosition.x + 'px',
         }"
       >
-        <button v-if="!singleColumnSelected" @click="setSortSettings('Ascending', selectedColumns)">
+        <button v-if="!singleColumnSelected" @click="setSortSettings('ascending', selectedColumns)">
           Ascending
         </button>
-        <button v-if="singleColumnSelected" @click="setSortSettings('Ascending', selectedColumns)">
+        <button v-if="singleColumnSelected" @click="setSortSettings('ascending', selectedColumns)">
           Ascending
         </button>
-        <button v-if="singleColumnSelected" @click="setSortSettings('Descending', selectedColumns)">
+        <button v-if="singleColumnSelected" @click="setSortSettings('descending', selectedColumns)">
           Descending
         </button>
       </div>
@@ -62,9 +62,9 @@
                     <el-select v-model="item.how" size="small">
                       <el-option
                         v-for="aggOption in sortOptions"
-                        :key="aggOption"
-                        :label="aggOption"
-                        :value="aggOption"
+                        :key="aggOption.value"
+                        :label="aggOption.label"
+                        :value="aggOption.value"
                       />
                     </el-select>
                   </td>
@@ -112,7 +112,10 @@ const contextMenuColumn = ref<string | null>(null);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
 const nodeData = ref<null | NodeData>(null);
-const sortOptions = ["Ascending", "Descending"];
+const sortOptions = [
+  { label: "Ascending", value: "ascending" },
+  { label: "Descending", value: "descending" },
+];
 const firstSelectedIndex = ref<number | null>(null);
 
 const openRowContextMenu = (event: MouseEvent, index: number) => {

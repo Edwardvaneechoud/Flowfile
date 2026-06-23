@@ -37,8 +37,8 @@ filter — keep matching rows. Prefer advanced mode with [column] references.
 select — keep / rename columns. keep=false drops a column.
 {"select_input": [{"old_name": "id", "new_name": "user_id", "keep": true}, {"old_name": "email", "keep": false}]}
 
-sort — order rows. how is "asc" or "desc".
-{"sort_input": [{"column": "amount", "how": "desc"}]}
+sort — order rows. how is "ascending" or "descending".
+{"sort_input": [{"column": "amount", "how": "descending"}]}
 
 sample — take the first N rows.
 {"sample_size": 100}

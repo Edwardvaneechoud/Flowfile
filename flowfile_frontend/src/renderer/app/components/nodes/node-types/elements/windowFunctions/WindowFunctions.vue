@@ -69,8 +69,8 @@
                 </td>
                 <td>
                   <el-select v-model="item.how" size="small" class="full-width">
-                    <el-option label="Ascending" value="asc" />
-                    <el-option label="Descending" value="desc" />
+                    <el-option label="Ascending" value="ascending" />
+                    <el-option label="Descending" value="descending" />
                   </el-select>
                 </td>
                 <td class="action-col">
@@ -294,7 +294,7 @@ const applyAutoName = (index: number) => {
 
 const addOrderBy = () => {
   const firstCol = availableColumns.value[0]?.name ?? "";
-  windowInput.value.order_by.push({ column: firstCol, how: "asc" });
+  windowInput.value.order_by.push({ column: firstCol, how: "ascending" });
 };
 
 const removeOrderBy = (index: number) => {

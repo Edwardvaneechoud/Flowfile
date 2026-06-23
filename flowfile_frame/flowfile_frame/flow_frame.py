@@ -568,7 +568,9 @@ class FlowFrame:
             sort_inputs_for_node = []
             for i, col_name_for_native in enumerate(column_names_for_native_node):
                 sort_inputs_for_node.append(
-                    transform_schema.SortByInput(column=col_name_for_native, how="desc" if desc_values[i] else "asc")
+                    transform_schema.SortByInput(
+                        column=col_name_for_native, how="descending" if desc_values[i] else "ascending"
+                    )
                     # type: ignore
                 )
             sort_settings = input_schema.NodeSort(

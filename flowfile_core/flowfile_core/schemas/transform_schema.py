@@ -7,7 +7,7 @@ from typing import Any, Literal, NamedTuple
 import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
 from polars import selectors
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from flowfile_core.schemas.yaml_types import (
     BasicFilterYaml,
@@ -952,21 +952,31 @@ class PivotInput(BaseModel):
 def is_descending(how: str | None) -> bool:
     """Whether a sort-direction string means descending.
 
-    Accepts both the programmatic ``"asc"``/``"desc"`` form (flowfile_frame) and the
-    visual editor's ``"Ascending"``/``"Descending"`` form (case-insensitive).
+    Canonical is ``"ascending"``/``"descending"``; also accepts the legacy
+    ``"asc"``/``"desc"`` form (flowfile_frame, older flows), case-insensitively.
     """
     return (how or "").lower() in ("desc", "descending")
+
+
+SortDirection = Literal["ascending", "descending"]
 
 
 class SortByInput(BaseModel):
     """Defines a single sort condition on a column, including the direction."""
 
     column: str
-    how: str | None = "asc"
+    how: SortDirection = "ascending"
+
+    @field_validator("how", mode="before")
+    @classmethod
+    def _canonicalize_how(cls, value: object) -> str:
+        """Store one canonical direction, accepting the legacy 'asc'/'desc' and the
+        visual editor's 'Ascending'/'Descending' spellings (self-heals old flows)."""
+        return "descending" if isinstance(value, str) and is_descending(value) else "ascending"
 
     @property
     def descending(self) -> bool:
-        """Resolve ``how`` to the boolean Polars expects, accepting both conventions."""
+        """Resolve ``how`` to the boolean Polars expects; backstop for unvalidated values."""
         return is_descending(self.how)
 
 

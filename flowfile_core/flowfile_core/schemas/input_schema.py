@@ -578,7 +578,7 @@ class NodeSort(NodeSingleInput):
         """Describes the sort columns and directions."""
         if not self.sort_input:
             return ""
-        parts = [f"{s.column} {s.how or 'asc'}" for s in self.sort_input[:3]]
+        parts = [f"{s.column} {s.how}" for s in self.sort_input[:3]]
         desc = "Sort by " + ", ".join(parts)
         if len(self.sort_input) > 3:
             desc += f" (+{len(self.sort_input) - 3} more)"

@@ -72,7 +72,7 @@ const _summaryForAddNode = (nodeType: string, args: Record<string, unknown>): st
       for (const item of cols) {
         if (_isRecord(item)) {
           const nm = item.column;
-          const direction = (item.how ?? item.direction ?? "asc") as string;
+          const direction = (item.how ?? item.direction ?? "ascending") as string;
           if (typeof nm === "string" && nm) names.push(`${nm} ${direction}`);
         }
       }

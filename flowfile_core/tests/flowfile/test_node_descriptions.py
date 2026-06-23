@@ -230,7 +230,7 @@ class TestNodeSortDescription:
                 transform_schema.SortByInput(column="date", how="desc"),
             ],
         )
-        assert node.get_default_description() == "Sort by name asc, date desc"
+        assert node.get_default_description() == "Sort by name ascending, date descending"
 
     def test_sort_empty(self):
         node = input_schema.NodeSort(**BASE_KWARGS, sort_input=[])
