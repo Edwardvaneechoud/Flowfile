@@ -221,6 +221,13 @@ for _pkg in ('tokenizers', 'tiktoken'):
         print(f"WARN: could not copy metadata {{_pkg}}: {{_e}}")
 ai_hiddenimports += ['tiktoken_ext', 'tiktoken_ext.openai_public']
 
+# Flowfile's own metadata, so importlib.metadata.version("Flowfile") resolves in the frozen sidecars.
+flowfile_datas = []
+try:
+    flowfile_datas += copy_metadata('Flowfile')
+except Exception as _e:
+    print(f"WARN: could not copy metadata Flowfile: {{_e}}")
+
 # Create runtime hook file
 with open('connectorx_hook.py', 'w') as f:
     f.write(create_runtime_hook())
@@ -228,7 +235,8 @@ with open('connectorx_hook.py', 'w') as f:
 a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
     binaries=plugin_binaries + ai_binaries,
-    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + code_generator_datas + plugin_datas + litellm_datas + ai_datas,
+    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas + code_generator_datas
+        + plugin_datas + litellm_datas + ai_datas + flowfile_datas,
     hiddenimports={hidden_imports} + plugin_hiddenimports + litellm_hiddenimports + ai_hiddenimports + [
         'numpy',
         'numpy.core._dtype_ctypes',

@@ -2,14 +2,11 @@
 
 import multiprocessing
 import threading
-from importlib.metadata import PackageNotFoundError, version
 
+from shared._version import get_version
 from shared.storage_config import storage
 
-try:
-    __version__ = version("Flowfile")
-except PackageNotFoundError:
-    __version__ = "0.12.0"
+__version__ = get_version()
 multiprocessing.set_start_method("spawn", force=True)
 
 from multiprocessing import get_context
