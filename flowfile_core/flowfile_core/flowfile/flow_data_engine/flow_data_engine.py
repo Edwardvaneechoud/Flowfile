@@ -1079,7 +1079,7 @@ class FlowDataEngine:
 
         df = self.data_frame
         if settings.order_by:
-            descending = [s.how == "desc" or (s.how or "").lower() == "descending" for s in settings.order_by]
+            descending = [s.descending for s in settings.order_by]
             df = df.sort([s.column for s in settings.order_by], descending=descending)
 
         exprs = [
@@ -1101,7 +1101,7 @@ class FlowDataEngine:
         if not sorts:
             return self
 
-        descending = [s.how == "desc" or s.how.lower() == "descending" for s in sorts]
+        descending = [s.descending for s in sorts]
         df = self.data_frame.sort([sort_by.column for sort_by in sorts], descending=descending)
         return FlowDataEngine(df, number_of_records=self.number_of_records, schema=self.schema)
 
