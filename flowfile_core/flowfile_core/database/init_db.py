@@ -162,7 +162,9 @@ def update_db_info(db: Session):
         app_version = version("Flowfile")
     except PackageNotFoundError:
         app_version = "0.12.3"
-
+    except Exception as e:
+        logger.error("Failed to get package version: %s", e)
+        app_version = "0.12.3"
     row = db.query(db_models.DbInfo).filter(db_models.DbInfo.id == 1).first()
     if row:
         row.app_version = app_version
