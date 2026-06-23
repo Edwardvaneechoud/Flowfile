@@ -77,6 +77,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 )
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.parameter_resolver import apply_parameters_in_place
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
     build_rest_api_worker_settings,
     infer_schema_from_sample,
@@ -1200,6 +1201,18 @@ def fetch_rest_api_sample(
     flow = flow_file_handler.get_flow(node.flow_id)
     if flow is None:
         raise HTTPException(404, "could not find the flow")
+
+    # Resolve ${param} references (in url/headers/query/body) using the flow's
+    # parameter defaults so a parameterized request can be sampled. ``node`` is a
+    # throwaway parse of the request body, so no restoration is needed; on an
+    # undefined param apply_parameters_in_place rolls back and raises with the
+    # offending names. The editor sample path is trusted (the flow owner), so the
+    # api_runner string-safety gate does not apply here.
+    params = {p.name: p.default_value for p in flow.flow_settings.parameters}
+    try:
+        apply_parameters_in_place(node, params)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
 
     # Resolve the credential to an encrypted token (stored secret by name, or an
     # inline plaintext); the worker decrypts it. Never persist inline plaintext.

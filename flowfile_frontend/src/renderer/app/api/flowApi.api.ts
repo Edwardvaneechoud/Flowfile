@@ -37,6 +37,15 @@ export interface PublishableFlow {
   file_exists: boolean;
 }
 
+// An API-compatible flow that can be run as a sub-flow, for the Run-flow node's picker.
+// Carries the flow path (stored as the node's flow_reference); includes published flows.
+export interface RunnableFlow {
+  registration_id: number;
+  name: string;
+  flow_path: string;
+  file_exists: boolean;
+}
+
 export interface ApiTestResult {
   data: Record<string, unknown>[] | Record<string, unknown[]>;
   row_count: number;
@@ -100,6 +109,11 @@ export class FlowApiApi {
 
   static async listPublishableFlows(): Promise<PublishableFlow[]> {
     const res = await axios.get<PublishableFlow[]>("/flow-api/publishable-flows");
+    return res.data;
+  }
+
+  static async listRunnableFlows(): Promise<RunnableFlow[]> {
+    const res = await axios.get<RunnableFlow[]>("/flow-api/runnable-flows");
     return res.data;
   }
 

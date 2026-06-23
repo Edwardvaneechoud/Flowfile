@@ -331,6 +331,9 @@ class FlowFrame:
     # Create rolling groups based on a temporal or integer column.
     def rolling(self, index_column: IntoExpr, period: str | timedelta, offset: str | timedelta | None = None, closed: ClosedInterval = 'right', group_by: IntoExpr | Iterable[IntoExpr] | None = None, description: Optional[str] = None) -> LazyGroupBy: ...
 
+    # Run a saved sub-flow once per input row, mapping input columns to its ${parameters}.
+    def run_flow(self, flow_reference: str | None = None, flow_registration_id: int | None = None, parameter_mappings: dict[str, str] | list[Any] | None = None, delay_seconds: float = 0.0, max_rows: int = 1000, description: str | None = None) -> 'FlowFrame': ...
+
     # Save the graph
     def save_graph(self, file_path: str, auto_arrange: bool = True, description: Optional[str] = None) -> Any: ...
 

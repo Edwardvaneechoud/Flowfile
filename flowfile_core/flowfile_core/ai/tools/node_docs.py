@@ -545,6 +545,14 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "node — its output is the unmodified primary input. Often used to enforce "
         "side-effect ordering (write A before reading B)."
     ),
+    "run_flow": (
+        "Run a saved sub-flow once per input row, mapping input columns to the "
+        "sub-flow's ${parameters}; the per-row outputs are unioned with a "
+        "__param_value__ column. Use to fan a pipeline (e.g. a REST API call) "
+        "across a list of inputs like tickers or ids. The sub-flow must have "
+        "exactly one API Response node defining its output. Don't use for a single "
+        "static call (build the flow directly) or when no per-row iteration is needed."
+    ),
 }
 
 
@@ -1033,6 +1041,19 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "input-0 and the write node's success signal to input-1. "
         "Pitfall: this is for ordering side effects, not data — "
         "input-1's data is discarded; only its completion is observed."
+    ),
+    "run_flow": (
+        "Settings panel: pick a saved flow (it must have one API Response node), "
+        "then map each of its ${parameters} to an input column, and optionally set "
+        "a delay between runs and a max-rows cap. Worked example: 'call Finnhub for "
+        "every ticker in my table' → drag 'Run Flow' from Combine Operations, select "
+        "your quote sub-flow whose REST API url is "
+        "https://finnhub.io/api/v1/quote?symbol=${ticker}, map its 'ticker' parameter "
+        "to your 'symbol' column, set a 1-second delay to respect rate limits, and "
+        "run — you get one output row per input row plus a __param_value__ column. "
+        "Pitfall: rows run sequentially (no parallelism yet) and inputs beyond max "
+        "rows are skipped, so raise max rows for large inputs and expect longer "
+        "runtimes when a delay is set."
     ),
 }
 
