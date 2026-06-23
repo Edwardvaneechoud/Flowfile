@@ -28,7 +28,7 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from flowfile_core.database.connection import SessionLocal
+from flowfile_core.database.connection import SessionLocal, ensure_db_initialized
 from flowfile_core.database.models import AiAuditEvent
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,7 @@ def record_event(event: AuditEvent, db: Session | None = None) -> AiAuditEvent:
         db.add(row)
         db.flush()
     else:
+        ensure_db_initialized()
         with SessionLocal() as session:
             session.add(row)
             session.commit()
@@ -140,6 +141,7 @@ def update_diff_action(
 
     if db is not None:
         return _apply(db)
+    ensure_db_initialized()
     with SessionLocal() as session:
         row = _apply(session)
         if row is None:
@@ -184,6 +186,7 @@ def query_events(
 
     if db is not None:
         return _query(db)
+    ensure_db_initialized()
     with SessionLocal() as session:
         return _query(session)
 

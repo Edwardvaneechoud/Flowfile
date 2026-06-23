@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from flowfile_core.auth.password import get_password_hash
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import SessionLocal
-from flowfile_core.database.migration import run_startup_migration
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -19,12 +18,6 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 logger = logging.getLogger(__name__)
-
-# Run Alembic-based migrations (replaces the old manual run_migrations + create_all).
-# Skipped when FLOWFILE_SKIP_STARTUP_MIGRATION is set so the alembic CLI can import
-# our metadata without recursively re-entering migration machinery.
-if not os.environ.get("FLOWFILE_SKIP_STARTUP_MIGRATION"):
-    run_startup_migration()
 
 
 def create_default_local_user(db: Session):
@@ -186,5 +179,7 @@ def init_db():
 
 
 if __name__ == "__main__":
-    init_db()
+    from flowfile_core.database.connection import ensure_db_initialized
+
+    ensure_db_initialized()
     print("Local user created successfully")

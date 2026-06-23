@@ -16,7 +16,6 @@ from flowfile_core.kernel.models import (
     RecoveryMode,
     RecoveryStatus,
 )
-from flowfile_core.kernel.routes import router
 
 __all__ = [
     "KernelManager",
@@ -54,3 +53,15 @@ def get_kernel_manager() -> KernelManager:
         shared_path = str(storage.temp_directory / "kernel_shared")
         _manager = KernelManager(shared_volume_path=shared_path)
     return _manager
+
+
+def __getattr__(name: str):
+    # `router` is imported only by the FastAPI server (main.py). Loading it
+    # eagerly would pull fastapi into every importer of this package (incl.
+    # flowfile_frame via flow_graph's KernelManager/execution imports), so
+    # resolve it lazily to keep the dataframe-API import light.
+    if name == "router":
+        from flowfile_core.kernel.routes import router
+
+        return router
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

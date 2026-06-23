@@ -422,13 +422,12 @@ def _handle_delete_connection(
             staged_node_payload={"delete_connection": connection.model_dump()},
         )
 
-    from fastapi import HTTPException
-
+    from flowfile_core.exceptions import FlowfileHTTPException
     from flowfile_core.flowfile.flow_graph import delete_connection
 
     try:
         delete_connection(flow, connection)
-    except HTTPException as exc:
+    except FlowfileHTTPException as exc:
         # LLM-redundant-op tolerance: swallow only the "Connection does not
         # exist" 422 (an ``update_node_settings`` in the same diff already
         # implicitly rewired, so this delete targets a wire that's already

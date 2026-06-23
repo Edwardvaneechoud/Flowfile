@@ -17,7 +17,6 @@ from uuid import uuid1
 import fastexcel
 import polars as pl
 import yaml
-from fastapi.exceptions import HTTPException
 from pyarrow.parquet import ParquetFile
 
 from flowfile_core.auth import sharing
@@ -30,6 +29,7 @@ from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.exceptions import FlowfileHTTPException
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -348,7 +348,7 @@ def get_cloud_connection_settings(
         A FullCloudStorageConnection object with the connection details.
 
     Raises:
-        HTTPException: If the connection settings cannot be found.
+        FlowfileHTTPException: If the connection settings cannot be found.
     """
     cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
     if cloud_connection_settings is None and auth_mode in ("env_vars", transform_schema.AUTO_DATA_TYPE):
@@ -357,7 +357,7 @@ def get_cloud_connection_settings(
     elif cloud_connection_settings is None and auth_mode == "aws-cli":
         cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
     if cloud_connection_settings is None:
-        raise HTTPException(status_code=400, detail="Cloud connection settings not found")
+        raise FlowfileHTTPException(status_code=400, detail="Cloud connection settings not found")
     return cloud_connection_settings
 
 
@@ -916,14 +916,14 @@ def _resolve_database_credentials(
         database_connection = database_settings.database_connection
         encrypted_password = get_encrypted_secret(current_user_id=user_id, secret_name=database_connection.password_ref)
         if encrypted_password is None:
-            raise HTTPException(status_code=400, detail="Password not found")
+            raise FlowfileHTTPException(status_code=400, detail="Password not found")
         return database_connection, encrypted_password, None
     elif is_sqlite:
         return database_settings.database_connection, None, None
     else:
         ref_settings = get_local_database_connection(database_settings.database_connection_name, user_id)
         if ref_settings is None:
-            raise HTTPException(
+            raise FlowfileHTTPException(
                 status_code=400,
                 detail=(
                     f"Database connection '{database_settings.database_connection_name}' not found "
@@ -3901,7 +3901,7 @@ class FlowGraph:
                                     db, kafka_settings.kafka_connection_name, node_kafka_source.user_id
                                 )
                             if db_conn is None:
-                                raise HTTPException(status_code=400, detail="Kafka connection not found")
+                                raise FlowfileHTTPException(status_code=400, detail="Kafka connection not found")
                         consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
                     _read_settings["v"] = KafkaReadSettings.from_consumer_config(
                         consumer_config,
@@ -4042,7 +4042,7 @@ class FlowGraph:
             with get_db_context() as db:
                 db_conn = get_ga_connection(db, ga_settings.ga_connection_name, node_ga_reader.user_id)
                 if db_conn is None:
-                    raise HTTPException(
+                    raise FlowfileHTTPException(
                         status_code=400,
                         detail=(
                             f"Google Analytics connection '{ga_settings.ga_connection_name}' not found "
@@ -4054,7 +4054,7 @@ class FlowGraph:
                     db, ga_settings.ga_connection_name, node_ga_reader.user_id
                 )
                 if encrypted_credential is None:
-                    raise HTTPException(
+                    raise FlowfileHTTPException(
                         status_code=400,
                         detail=(
                             f"Google Analytics connection '{ga_settings.ga_connection_name}' has no stored credential"
@@ -4098,7 +4098,7 @@ class FlowGraph:
             # ``oauth_cfg`` is only fetched for the oauth auth method; guard against
             # an unknown auth_method value reaching this branch with ``None``.
             if not oauth_cfg or not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
-                raise HTTPException(
+                raise FlowfileHTTPException(
                     status_code=500,
                     detail=(
                         "Google OAuth is not configured on this instance. Open Admin → Google OAuth "
@@ -5535,9 +5535,9 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
             )
             if not n
         ]
-        raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
+        raise FlowfileHTTPException(404, f"Node(s) not found: {', '.join(missing)}")
     if _would_create_cycle(from_node, to_node):
-        raise HTTPException(
+        raise FlowfileHTTPException(
             422,
             f"Connecting node {from_node.node_id} -> {to_node.node_id} would create a cycle",
         )
@@ -5561,13 +5561,13 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
     # already removed) surfaces as an AttributeError → 500, which also drops
     # CORS headers and shows up as a CORS error in the browser.
     if from_node is None or to_node is None:
-        raise HTTPException(422, "Connection does not exist on the input node")
+        raise FlowfileHTTPException(422, "Connection does not exist on the input node")
     connection_valid = to_node.node_inputs.validate_if_input_connection_exists(
         node_input_id=from_node.node_id,
         connection_name=node_connection.input_connection.get_node_input_connection_type(),
     )
     if not connection_valid:
-        raise HTTPException(422, "Connection does not exist on the input node")
+        raise FlowfileHTTPException(422, "Connection does not exist on the input node")
     from_node.delete_lead_to_node(node_connection.input_connection.node_id)
     to_node.delete_input_node(
         node_connection.output_connection.node_id,
