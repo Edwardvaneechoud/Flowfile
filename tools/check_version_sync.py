@@ -13,8 +13,9 @@ def _section_version(path: Path, section: str) -> str | None:
     text = path.read_text(encoding="utf-8")
     pattern = r"^\[" + re.escape(section) + r"\][^\n]*\n(.*?)(?=^\[|\Z)"
     section_match = re.search(pattern, text, re.MULTILINE | re.DOTALL)
-    scope = section_match.group(1) if section_match else text
-    version_match = re.search(r"""^\s*version\s*=\s*["']([^"']+)["']""", scope, re.MULTILINE)
+    if not section_match:
+        return None
+    version_match = re.search(r"""^\s*version\s*=\s*["']([^"']+)["']""", section_match.group(1), re.MULTILINE)
     return version_match.group(1) if version_match else None
 
 

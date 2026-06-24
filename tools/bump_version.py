@@ -12,7 +12,7 @@ SEMVER = re.compile(r"^\d+\.\d+\.\d+([-+.][0-9A-Za-z.-]+)?$")
 
 def _replace_in_section(text: str, section: str, new_version: str) -> str:
     pattern = re.compile(
-        r"(^\[" + re.escape(section) + r"\][^\n]*\n.*?^version\s*=\s*)([\"'])[^\"']+\2",
+        r"(^\[" + re.escape(section) + r"\][^\n]*\n(?:(?!^\[).)*?^version\s*=\s*)([\"'])[^\"']+\2",
         re.MULTILINE | re.DOTALL,
     )
     new_text, n = pattern.subn(rf'\g<1>"{new_version}"', text, count=1)
