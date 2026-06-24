@@ -86,6 +86,10 @@ site/
 # Docker
 .dockerignore
 
+# Claude Code config / dev-squad agent definitions — never ship in an image
+.claude/
+**/.claude/
+
 # Project-specific
 flowfile_data/
 saved_flows/

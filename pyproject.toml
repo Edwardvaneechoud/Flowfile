@@ -23,6 +23,10 @@ include = [
     { path = "flowfile_core/flowfile_core/catalog/demo_flows/*.yaml", format = "sdist" },
     { path = "flowfile_core/flowfile_core/catalog/demo_flows/*.yaml", format = "wheel" }
 ]
+# Dev-squad agent definitions are repo tooling, not shippable package data — keep
+# them out of the sdist/wheel (packaging is explicit-include, so this is a guard
+# against future include globs picking them up).
+exclude = [".claude/**"]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.14"
