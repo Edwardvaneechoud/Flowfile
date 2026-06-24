@@ -165,6 +165,10 @@ def update_db_info(db: Session):
     except Exception as e:
         logger.error("Failed to get package version: %s", e)
         app_version = "0.12.3"
+    logger.info("Application version: %s", app_version)
+    if app_version is None:
+        logger.warning("Application version is None, setting to 'unknown'")
+        app_version = "0.12.3"
     row = db.query(db_models.DbInfo).filter(db_models.DbInfo.id == 1).first()
     if row:
         row.app_version = app_version
