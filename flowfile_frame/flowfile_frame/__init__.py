@@ -1,8 +1,6 @@
 # flowframe/__init__.py
 """A Polars-like API for building ETL graphs."""
 
-from importlib.metadata import PackageNotFoundError, version
-
 from pl_fuzzy_frame_match.models import FuzzyMapping  # noqa: F401
 from polars.datatypes import (  # noqa: F401
     Array,
@@ -158,7 +156,6 @@ from flowfile_frame.utils import create_flow_graph  # noqa: F401 E402
 LazyFrame = FlowFrame  # Alias for compatibility with generated code
 DataFrame = FlowFrame  # Alias for compatibility with generated code
 
-try:
-    __version__ = version("Flowfile")
-except PackageNotFoundError:
-    __version__ = "0.12.3"
+from shared._version import get_version  # noqa: E402
+
+__version__ = get_version()

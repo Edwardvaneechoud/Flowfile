@@ -16,6 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify version matches tag and is in sync
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 tools/check_version_sync.py --expect "${GITHUB_REF#refs/tags/v}"
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:

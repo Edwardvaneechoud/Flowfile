@@ -8,7 +8,6 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from functools import partial
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from time import time
 from typing import Any, Literal, NamedTuple, Union
@@ -137,6 +136,7 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
 )
 from flowfile_core.utils.arrow_reader import get_read_top_n
+from shared._version import get_version
 from shared.delta_utils import get_delta_partition_columns, get_delta_size_bytes, merge_into_delta
 from shared.delta_utils import write_delta as _write_delta
 from shared.google_analytics.models import (
@@ -152,10 +152,7 @@ from shared.kafka.consumer import infer_topic_schema, make_kafka_commit_callback
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
-try:
-    __version__ = version("Flowfile")
-except PackageNotFoundError:
-    __version__ = "0.12.0"
+__version__ = get_version()
 
 
 def represent_list_json(dumper, data):
