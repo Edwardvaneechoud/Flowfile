@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Fail if the Flowfile version is out of sync across the app's manifests.
-
-Canonical source: root pyproject.toml ``[tool.poetry]`` version. Compared against
-flowfile_frontend/package.json, src-tauri/tauri.conf.json, and src-tauri/Cargo.toml.
-Run in CI; bump everything together with tools/bump_version.py.
-"""
+"""Fail if the Flowfile version is out of sync across manifests (CI guard)."""
 
 import argparse
 import re
@@ -28,6 +23,11 @@ def _json_version(path: Path) -> str | None:
     return match.group(1) if match else None
 
 
+def _py_version(path: Path) -> str | None:
+    match = re.search(r'__version__\s*=\s*"([^"]+)"', path.read_text(encoding="utf-8"))
+    return match.group(1) if match else None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check the Flowfile version is in sync across manifests.")
     parser.add_argument("--expect", help="Also assert the canonical version equals this value (e.g. a release tag).")
@@ -36,6 +36,7 @@ def main() -> int:
     canonical = _section_version(ROOT / "pyproject.toml", "tool.poetry")
     versions = {
         "pyproject.toml": canonical,
+        "shared/_version.py": _py_version(ROOT / "shared/_version.py"),
         "flowfile_frontend/package.json": _json_version(ROOT / "flowfile_frontend/package.json"),
         "flowfile_frontend/src-tauri/tauri.conf.json": _json_version(
             ROOT / "flowfile_frontend/src-tauri/tauri.conf.json"

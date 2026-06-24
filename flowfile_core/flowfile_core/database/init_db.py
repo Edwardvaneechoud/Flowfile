@@ -157,22 +157,15 @@ def create_default_catalog_namespace(db: Session):
 
 
 def update_db_info(db: Session):
-    """Upsert the application version into the db_info table.
-
-    Version bookkeeping must never break startup, so failures are logged and swallowed.
-    """
+    """Upsert the application version into the db_info table."""
     app_version = get_version()
-    try:
-        row = db.query(db_models.DbInfo).filter(db_models.DbInfo.id == 1).first()
-        if row:
-            row.app_version = app_version
-        else:
-            db.add(db_models.DbInfo(id=1, app_version=app_version))
-        db.commit()
-        logger.info("Database info updated: app_version=%s", app_version)
-    except Exception:
-        db.rollback()
-        logger.exception("Failed to update db_info app_version; continuing startup")
+    row = db.query(db_models.DbInfo).filter(db_models.DbInfo.id == 1).first()
+    if row:
+        row.app_version = app_version
+    else:
+        db.add(db_models.DbInfo(id=1, app_version=app_version))
+    db.commit()
+    logger.info("Database info updated: app_version=%s", app_version)
 
 
 def init_db():

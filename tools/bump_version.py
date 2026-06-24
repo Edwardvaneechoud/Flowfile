@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""Bump the Flowfile app version across all of its manifests.
-
-Usage: python tools/bump_version.py X.Y.Z
-
-The root pyproject.toml ``[tool.poetry]`` version is the canonical source; this
-keeps the frontend/Tauri/Cargo mirrors in lockstep (CI enforces no drift via
-tools/check_version_sync.py). kernel_runtime and flowfile_wasm version
-independently and are intentionally not touched here.
-"""
+"""Bump the Flowfile version everywhere. Usage: python tools/bump_version.py X.Y.Z"""
 
 import re
 import sys
@@ -36,6 +28,13 @@ def _replace_first_json_version(text: str, new_version: str) -> str:
     return new_text
 
 
+def _replace_py_version(text: str, new_version: str) -> str:
+    new_text, n = re.subn(r'(__version__\s*=\s*")[^"]+(")', rf"\g<1>{new_version}\g<2>", text, count=1)
+    if n != 1:
+        raise SystemExit("Could not find a __version__ assignment")
+    return new_text
+
+
 def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
     print(f"  updated {path.relative_to(ROOT)}")
@@ -50,6 +49,9 @@ def main(argv: list[str]) -> int:
 
     pyproject = ROOT / "pyproject.toml"
     _write(pyproject, _replace_in_section(pyproject.read_text(encoding="utf-8"), "tool.poetry", new_version))
+
+    version_py = ROOT / "shared" / "_version.py"
+    _write(version_py, _replace_py_version(version_py.read_text(encoding="utf-8"), new_version))
 
     cargo = ROOT / "flowfile_frontend" / "src-tauri" / "Cargo.toml"
     _write(cargo, _replace_in_section(cargo.read_text(encoding="utf-8"), "package", new_version))
