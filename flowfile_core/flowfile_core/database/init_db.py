@@ -2,7 +2,6 @@ import logging
 import os
 import secrets
 import string
-from importlib.metadata import PackageNotFoundError, version
 
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -11,6 +10,7 @@ from flowfile_core.auth.password import get_password_hash
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import SessionLocal
 from flowfile_core.database.migration import run_startup_migration
+from shared._version import get_version
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -158,11 +158,7 @@ def create_default_catalog_namespace(db: Session):
 
 def update_db_info(db: Session):
     """Upsert the application version into the db_info table."""
-    try:
-        app_version = version("Flowfile")
-    except PackageNotFoundError:
-        app_version = "unknown"
-
+    app_version = get_version()
     row = db.query(db_models.DbInfo).filter(db_models.DbInfo.id == 1).first()
     if row:
         row.app_version = app_version

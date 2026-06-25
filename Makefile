@@ -289,5 +289,15 @@ check_formula_docs: formula_docs
 	fi
 	@echo "Formula docs are in sync."
 
+# Bump the app version everywhere (pyproject / package.json / tauri.conf.json / Cargo.toml).
+# Usage: make bump-version VERSION=X.Y.Z
+bump-version:
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make bump-version VERSION=X.Y.Z"; exit 1; fi
+	$(POETRY_RUN) python tools/bump_version.py $(VERSION)
+
+# Drift check for CI: fail if the version is out of sync across manifests.
+check-version:
+	$(POETRY_RUN) python tools/check_version_sync.py
+
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test test_coverage stubs check_stubs formula_docs check_formula_docs
+.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test test_coverage stubs check_stubs formula_docs check_formula_docs bump-version check-version

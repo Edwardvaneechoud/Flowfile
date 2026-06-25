@@ -85,6 +85,14 @@ jobs:
             test_workflow:
               - '.github/workflows/test.yaml'
 
+  # Guard against version drift across pyproject / package.json / tauri.conf.json / Cargo.toml.
+  version-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check version sync
+        run: python3 tools/check_version_sync.py
+
   # Backend tests - runs when Python code changes or test workflow changes
   backend-tests:
     needs: detect-changes

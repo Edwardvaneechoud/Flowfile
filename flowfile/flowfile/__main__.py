@@ -258,14 +258,9 @@ def main():
         else:
             print(f"Demo catalog removed: {remove_demo_catalog()}")
     else:
-        from importlib.metadata import PackageNotFoundError, version
+        from shared._version import get_version
 
-        try:
-            __version__ = version("Flowfile")
-        except PackageNotFoundError:
-            __version__ = "unknown"
-
-        print(f"FlowFile v{__version__}")
+        print(f"FlowFile v{get_version()}")
         print("A framework combining visual ETL with a Polars-like API")
         print("\nUsage:")
         print("  # Start the FlowFile web UI with integrated services")
