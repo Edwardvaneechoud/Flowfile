@@ -552,7 +552,7 @@ def test_manual_input_with_select(export_func):
                              'pl.col("age")',
                              'pl.col("salary").cast(pl.Float64)'
                              )
-        assert 'pl.col("city")' not in code.split("df_2 = ")[1].split("\n")[0]
+        assert 'pl.col("city")' not in code
     verify_if_execute(code)
     result = normalize_result(get_result_from_generated_code(code))
     expected_result = normalize_result(get_reference_polars_dataframe()
@@ -627,8 +627,8 @@ def test_join_operation_left(join_input_dataset, export_func):
     code = export_func(flow)
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
-                             "df_1.join(",
-                             "df_2,",
+                             "source_1.join(",
+                             "source_2,",
                              'left_on=["id"]',
                              'right_on=["id"]',
                              'how="left"'
@@ -670,8 +670,8 @@ def test_join_operation_right(join_input_dataset, export_func):
     code = export_func(flow)
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
-                             "df_1.join(",
-                             "df_2,",
+                             "source_1.join(",
+                             "source_2,",
                              'left_on=["__jk_id"]',
                              'right_on=["id_right"]',
                              'how="right"'
@@ -1246,7 +1246,7 @@ def test_formula_node_cast(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
                              "with_columns",
-                             "df_2 = df_1.with_columns(",
+                             "computed = (",
                              'alias("total")',
                              'cast(pl.Int64)'
                              )
@@ -1281,7 +1281,7 @@ def test_non_convertable_formula_node_cast(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
                              "with_columns",
-                             "df_2 = df_1.with_columns(",
+                             "computed = (",
                              'alias("total")',
                              "simple_function_to_expr"
                              )
@@ -1314,7 +1314,7 @@ def test_formula_node(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
                              "with_columns",
-                             "df_2 = df_1.with_columns(",
+                             "computed = (",
                              'alias("total")',
                              )
     verify_if_execute(code)
@@ -1470,7 +1470,7 @@ def test_flowframe_filter_split_native_and_fallback():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, output_handle="output-1"))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, 'filter_split(ff.col("age")', "df_2_pass", "df_2_fail", "df_3 = df_2_fail")
+    verify_code_contains(code, 'filter_split(ff.col("age")', "split_pass", "split_fail", "counted = split_fail.select(")
     assert "flowfile_formula=" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1656,9 +1656,9 @@ def test_union_multiple_dataframes(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
                              "pl.concat([",
-                             "df_1,",
-                             "df_2,",
-                             "df_3,",
+                             "source_1,",
+                             "source_2,",
+                             "source_3,",
                              "how='diagonal_relaxed'"
                              )
     verify_if_execute(code)
@@ -1692,7 +1692,7 @@ def test_custom_polars_code(export_func):
         verify_code_contains(code,
                              "def _polars_code_2(input_df: pl.LazyFrame):",
                              "return input_df.with_columns((pl.col('age') * 2).alias('double_age'))",
-                             "df_2 = _polars_code_2(df_1)"
+                             "transformed = _polars_code_2(source)"
                              )
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1825,7 +1825,7 @@ def test_custom_polars_code_multiple_inputs(export_func):
                              "def _polars_code_3(input_df_1: pl.LazyFrame, input_df_2: pl.LazyFrame):",
                              "output_df = input_df_1.join(input_df_2, how='cross')",
                              "return output_df",
-                             "df_3 = _polars_code_3(df_1, df_2)"
+                             "transformed = _polars_code_3(source_1, source_2)"
                              )
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1936,10 +1936,11 @@ def test_complex_workflow(tmp_path, export_func):
                              )
 
         verify_code_ordering(code,
-                             "df_1 = ",
-                             "df_2 = ",
-                             "df_3 = ",
-                             "df_4 = ",
+                             "grouped = (",
+                             "pl.scan_csv(",
+                             ".with_columns(",
+                             ".filter(",
+                             ".group_by(",
                              "sink_parquet"
                              )
     verify_if_execute(code)
@@ -2026,10 +2027,11 @@ def test_complex_workflow_unordered(tmp_path, export_func):
                              )
 
         verify_code_ordering(code,
-                             "df_1 = ",
-                             "df_2 = ",
-                             "df_3 = ",
-                             "df_4 = ",
+                             "grouped = (",
+                             "pl.scan_csv(",
+                             ".with_columns(",
+                             ".filter(",
+                             ".group_by(",
                              "sink_parquet"
                              )
     verify_if_execute(code)
@@ -2853,8 +2855,8 @@ def test_flow_with_disconnected_nodes(export_func):
 
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
-                             "df_1 = pl.LazyFrame(",
-                             "df_2 = pl.LazyFrame("
+                             "source_1 = pl.LazyFrame(",
+                             "source_2 = pl.LazyFrame("
                              )
 
 
@@ -3059,7 +3061,7 @@ def test_fuzzy_match_single_multiple_columns_file(fuzzy_join_left_data, export_f
 
 
 def test_explore_data_node_skipped():
-    """Test that explore_data nodes are skipped with a comment but code still generates."""
+    """explore_data is interactive-only: it is elided entirely (no dead passthrough line)."""
     flow = create_basic_flow()
 
     manual_input = input_schema.NodeManualInput(
@@ -3077,8 +3079,9 @@ def test_explore_data_node_skipped():
     flow.add_explore_data(input_schema.NodeExploreData(flow_id=1, node_id=2, depending_on_id=1))
 
     code = export_flow_to_polars(flow)
-    assert "# Node 2: Explore Data (skipped - interactive visualization only)" in code
-    assert "df_2 = df_1  # Pass through unchanged" in code
+    assert "Pass through" not in code
+    assert "Explore Data" not in code
+    assert "df_2" not in code
     verify_if_execute(code)
 
 
@@ -3573,7 +3576,7 @@ def test_node_reference_mixed():
     code = export_flow_to_polars(flow)
 
     verify_code_contains(code, "custom_input = pl.LazyFrame")
-    verify_code_contains(code, "df_2 = custom_input.filter")
+    verify_code_contains(code, "filtered = custom_input.filter")
     assert "df_1" not in code, "Should use custom_input instead of df_1"
     verify_if_execute(code)
 
@@ -3644,7 +3647,7 @@ def test_node_reference_in_join():
 
     verify_code_contains(code, "left_table = pl.LazyFrame")
     verify_code_contains(code, "right_table = pl.LazyFrame")
-    verify_code_contains(code, "joined_result = (left_table")
+    verify_code_contains(code, "joined_result = left_table")
     assert "df_1" not in code, "Should use left_table instead of df_1"
     assert "df_2" not in code, "Should use right_table instead of df_2"
     assert "df_3" not in code, "Should use joined_result instead of df_3"
@@ -3652,7 +3655,7 @@ def test_node_reference_in_join():
 
 
 def test_node_reference_default_when_empty():
-    """Test that empty node_reference falls back to df_{node_id}."""
+    """Test that empty node_reference falls back to an operation-based name."""
     flow = create_basic_flow()
 
     manual_input = input_schema.NodeManualInput(
@@ -3672,12 +3675,12 @@ def test_node_reference_default_when_empty():
 
     code = export_flow_to_polars(flow)
 
-    verify_code_contains(code, "df_1 = pl.LazyFrame")
+    verify_code_contains(code, "source = pl.LazyFrame")
     verify_if_execute(code)
 
 
 def test_node_reference_none_uses_default():
-    """Test that None node_reference uses df_{node_id}."""
+    """Test that None node_reference uses an operation-based name."""
     flow = create_basic_flow()
 
     manual_input = input_schema.NodeManualInput(
@@ -3697,7 +3700,7 @@ def test_node_reference_none_uses_default():
 
     code = export_flow_to_polars(flow)
 
-    verify_code_contains(code, "df_1 = pl.LazyFrame")
+    verify_code_contains(code, "source = pl.LazyFrame")
     verify_if_execute(code)
 
 
@@ -4742,7 +4745,8 @@ def test_select_with_no_columns_kept():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_polars(flow)
-    verify_code_contains(code, "df_2 = df_1")
+    assert "df_2" not in code  # empty select elided; source passes through
+    verify_code_contains(code, "source = pl.LazyFrame")
     verify_if_execute(code)
 
 
@@ -5688,7 +5692,7 @@ def test_train_apply_round_trip():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, ".apply_model(upstream=df_2)")
+    verify_code_contains(code, ".apply_model(upstream=trained)")
     verify_if_execute(code)
     result = normalize_result(get_result_from_generated_code(code))
     expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
@@ -5855,7 +5859,7 @@ def test_wait_for_round_trip():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 4, "right"))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, ".wait_for(df_2)")
+    verify_code_contains(code, ".wait_for(trained)")
     verify_if_execute(code)
     result = normalize_result(get_result_from_generated_code(code))
     expected = normalize_result(flow.get_node(4).get_resulting_data().data_frame)
@@ -6069,9 +6073,9 @@ def test_random_split_two_splits(export_func):
 
     code = export_func(flow)
     if export_func is export_flow_to_polars:
-        verify_code_contains(code, "df_2_train", "df_2_test", "shuffle(seed=", "slice(")
+        verify_code_contains(code, "train = ", "test = ", "shuffle(seed=", "slice(")
     else:
-        verify_code_contains(code, "df_2_train", "df_2_test", ".random_split({", "seed=42")
+        verify_code_contains(code, "train, test = ", ".random_split({", "seed=42")
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
@@ -6100,7 +6104,7 @@ def test_random_split_three_splits(export_func):
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_func(flow)
-    verify_code_contains(code, "df_2_train", "df_2_val", "df_2_test")
+    verify_code_contains(code, "train", "val", "test")
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
@@ -6136,7 +6140,7 @@ def test_random_split_per_handle_downstream(export_func):
     )
 
     code = export_func(flow)
-    verify_code_contains(code, "df_3 = df_2_test")
+    verify_code_contains(code, "counted = test")
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
@@ -6172,11 +6176,245 @@ def test_filter_split_mode_pass_and_fail(export_func):
     )
 
     code = export_func(flow)
-    verify_code_contains(code, "df_2_pass", "df_2_fail", "df_3 = df_2_fail")
+    verify_code_contains(code, "split_pass", "split_fail", "counted = split_fail.select(")
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
     assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+# ---------------------------------------------------------------------------
+# Chain fusion: shape assertions (actually fused, boundaries preserved), on top
+# of the round-trip correctness the rest of the suite already guards.
+# ---------------------------------------------------------------------------
+
+
+def _count_pipeline_assignments(code: str) -> int:
+    """Number of top-level assignment statements inside run_etl_pipeline()."""
+    tree = ast.parse(code)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "run_etl_pipeline")
+    return sum(isinstance(stmt, ast.Assign) for stmt in fn.body)
+
+
+def _basic_age_filter(node_id: int, depending_on_id: int) -> input_schema.NodeFilter:
+    return input_schema.NodeFilter(
+        flow_id=1,
+        node_id=node_id,
+        depending_on_id=depending_on_id,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(field="age", filter_type=">=", filter_value="25"),
+        ),
+    )
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_fusion_linear_chain_collapses_to_single_pipe(export_func):
+    """A linear single-use chain fuses into one piped expression with no df_N ladder."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)  # node 1
+    flow.add_filter(_basic_age_filter(2, 1))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_formula(input_schema.NodeFormula(
+        flow_id=1, node_id=3, depending_on_id=2,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="bonus", data_type="Auto"),
+            function="[salary] * 2",
+        ),
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    flow.add_sort(input_schema.NodeSort(
+        flow_id=1, node_id=4, depending_on_id=3,
+        sort_input=[transform_schema.SortByInput(column="age", how="asc")],
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
+    flow.add_group_by(input_schema.NodeGroupBy(
+        flow_id=1, node_id=5, depending_on_id=4,
+        groupby_input=transform_schema.GroupByInput(agg_cols=[
+            transform_schema.AggColl("city", "groupby"),
+            transform_schema.AggColl("salary", "sum", "total_salary"),
+        ]),
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(4, 5))
+
+    code = export_func(flow)
+    assert _count_pipeline_assignments(code) == 1
+    assert "df_" not in code, "no throwaway df_N ladder should remain"
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(5).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_fusion_keeps_named_boundaries_at_join(export_func):
+    """The join arm and the join stay named variables; the linear left run still fuses."""
+    flow = create_basic_flow()
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1, node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                     input_schema.MinimalFieldInfo(name="age", data_type="Integer")],
+            data=[[1, 2, 3], [25, 30, 35]],
+        ),
+    ))
+    flow.add_filter(_basic_age_filter(2, 1))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1, node_id=3,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                     input_schema.MinimalFieldInfo(name="city", data_type="String")],
+            data=[[1, 2, 3], ["NYC", "LA", "Chicago"]],
+        ),
+    ))
+    flow.add_join(input_schema.NodeJoin(
+        flow_id=1, node_id=4, depending_on_ids=[2, 3],
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap("id", "id")],
+            left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("age")],
+            right_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("city")],
+            how="inner",
+        ),
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 4, 'main'))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4, 'right'))
+    flow.add_group_by(input_schema.NodeGroupBy(
+        flow_id=1, node_id=5, depending_on_id=4,
+        groupby_input=transform_schema.GroupByInput(agg_cols=[
+            transform_schema.AggColl("city", "groupby"),
+            transform_schema.AggColl("id", "count", "n"),
+        ]),
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(4, 5))
+
+    code = export_func(flow)
+    # left arm (filtered) + right source + join (+ group_by) stay separate statements
+    assert _count_pipeline_assignments(code) >= 3
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code, "filtered", "joined")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(5).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_fusion_grouped_record_id_self_reference_preserved(export_func):
+    """Grouped record_id reads its input's .columns, so that input must stay named."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)  # node 1 (has 'city')
+    flow.add_filter(_basic_age_filter(2, 1))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_record_id(input_schema.NodeRecordId(
+        flow_id=1, node_id=3, depending_on_id=2,
+        record_id_input=transform_schema.RecordIdInput(
+            output_column_name="row_num", offset=1, group_by=True, group_by_columns=["city"],
+        ),
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    flow.add_group_by(input_schema.NodeGroupBy(
+        flow_id=1, node_id=4, depending_on_id=3,
+        groupby_input=transform_schema.GroupByInput(agg_cols=[
+            transform_schema.AggColl("city", "groupby"),
+            transform_schema.AggColl("row_num", "max", "max_row"),
+        ]),
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
+
+    code = export_func(flow)
+    # Frame-equality would NameError if the .columns self-reference's target were fused away.
+    assert _count_pipeline_assignments(code) >= 2
+    assert "+ 1 - 1" not in code
+    assert "+ 0" not in code
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(4).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+@pytest.mark.parametrize("offset", [1, 0, 5])
+def test_fusion_record_id_offset_folding(export_func, offset):
+    """The (offset - 1) shift is folded: offset=1 -> none, 0 -> '- 1', 5 -> '+ 4'."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    flow.add_record_id(input_schema.NodeRecordId(
+        flow_id=1, node_id=2, depending_on_id=1,
+        record_id_input=transform_schema.RecordIdInput(
+            output_column_name="row_num", offset=offset, group_by=True, group_by_columns=["city"],
+        ),
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    assert "+ 1 - 1" not in code
+    if offset == 1:
+        assert "+ 0" not in code
+        assert ".over(['city']))" in code
+    elif offset == 0:
+        assert " - 1)" in code
+    else:  # offset == 5
+        assert " + 4)" in code
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False)
+
+
+def test_fusion_explore_data_elided_mid_chain():
+    """explore_data between two transforms is elided; the chain fuses straight through it."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)  # node 1
+    flow.add_sort(input_schema.NodeSort(
+        flow_id=1, node_id=2, depending_on_id=1,
+        sort_input=[transform_schema.SortByInput(column="age", how="asc")],
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_node_promise(input_schema.NodePromise(node_id=3, flow_id=1, node_type="explore_data"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    flow.add_explore_data(input_schema.NodeExploreData(flow_id=1, node_id=3, depending_on_id=2))
+    flow.add_filter(_basic_age_filter(4, 3))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
+
+    code = export_flow_to_polars(flow)
+    assert "Pass through" not in code
+    assert _count_pipeline_assignments(code) == 1  # source.sort().filter() collapses to one pipe
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(4).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False)
+
+
+def test_fusion_node_reference_pins_variable():
+    """A node_reference keeps that node as its own named statement, unfused."""
+    flow = create_basic_flow()
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1, node_id=1, node_reference="raw",
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="city", data_type="String"),
+                     input_schema.MinimalFieldInfo(name="age", data_type="Integer")],
+            data=[["NYC", "LA", "NYC"], [25, 30, 35]],
+        ),
+    ))
+    flow.add_filter(_basic_age_filter(2, 1))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_group_by(input_schema.NodeGroupBy(
+        flow_id=1, node_id=3, depending_on_id=2,
+        groupby_input=transform_schema.GroupByInput(agg_cols=[
+            transform_schema.AggColl("city", "groupby"),
+            transform_schema.AggColl("age", "sum", "total_age"),
+        ]),
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+    code = export_flow_to_polars(flow)
+    assert "raw = " in code  # the pinned source survives fusion as its own statement
+    assert _count_pipeline_assignments(code) >= 2
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_row_order=False)
 
 
 if __name__ == "__main__":

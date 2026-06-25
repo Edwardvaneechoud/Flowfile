@@ -1,4 +1,6 @@
+import builtins
 import inspect
+import keyword
 import re
 import typing
 
@@ -8,6 +10,7 @@ from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code, to_po
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.flowfile.code_generator.chain_fusion import NodeEmission, render_pipeline
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -72,6 +75,53 @@ def _eval_in_validation_namespace(code: str):
     return eval(code, {"__builtins__": {}}, {"ff": ff_module, "pl": pl, "datetime": datetime})  # noqa: S307
 
 
+# Operation-based variable labels for the few boundary variables that survive
+# chain fusion. A bare label is used when it occurs once; a numeric suffix is
+# appended only when a label is shared by several boundaries (see _plan_boundary_names).
+NODE_TYPE_VAR_LABEL: dict[str, str] = {
+    "read": "source",
+    "csv_read": "source",
+    "excel_read": "source",
+    "manual_input": "source",
+    "catalog_reader": "source",
+    "catalog_sql_reader": "source",
+    "cloud_storage_reader": "source",
+    "database_reader": "source",
+    "rest_api_reader": "source",
+    "kafka_source": "source",
+    "external_source": "source",
+    "filter": "filtered",
+    "formula": "computed",
+    "select": "selected",
+    "dynamic_rename": "renamed",
+    "sort": "ordered",
+    "group_by": "grouped",
+    "pivot": "pivoted",
+    "pivot_no_index": "pivoted",
+    "unpivot": "unpivoted",
+    "join": "joined",
+    "cross_join": "joined",
+    "fuzzy_match": "joined",
+    "union": "combined",
+    "unique": "deduped",
+    "record_id": "with_record_id",
+    "record_count": "counted",
+    "sample": "sampled",
+    "text_to_rows": "exploded",
+    "polars_code": "transformed",
+    "graph_solver": "solved",
+    "window_functions": "windowed",
+    "train_model": "trained",
+    "apply_model": "scored",
+    "evaluate_model": "evaluation",
+    "wait_for": "ready",
+}
+
+# Generated variable names are uniquified against these so they never shadow a
+# Python builtin or keyword (e.g. a split literally named ``sorted`` or ``type``).
+_RESERVED_NAMES: frozenset[str] = frozenset(keyword.kwlist) | frozenset(dir(builtins))
+
+
 class FlowGraphCodeConverter:
     """
     Base class for converting a FlowGraph into executable Python code.
@@ -93,6 +143,10 @@ class FlowGraphCodeConverter:
         self.last_node_var: str | None = None
         self.unsupported_nodes: list[tuple[int, str, str]] = []
         self.custom_node_classes: dict[str, str] = {}
+        # (node, effective_var, start, end) per emitting node; (start, end) slices code_lines.
+        self._node_spans: list[tuple[FlowNode, str, int, int]] = []
+        # node_id -> upstream node_id for nodes that emit nothing (passthroughs).
+        self._passthrough: dict[int, int] = {}
 
     def convert(self) -> str:
         """
@@ -134,7 +188,12 @@ class FlowGraphCodeConverter:
             self.output_nodes.append((node.node_id, var_name))
 
     def _generate_node_code(self, node: FlowNode) -> None:
-        """Generate Polars code for a specific node."""
+        """Generate code for a node and record the line span it emitted.
+
+        Output bookkeeping runs *after* the handler and reads the effective var
+        from ``node_var_mapping`` so passthrough/remap handlers are honoured. A
+        handler that emits nothing is recorded as a passthrough to its input.
+        """
         node_type = node.node_type
         settings = node.setting_input
         if isinstance(settings, input_schema.NodePromise):
@@ -143,24 +202,36 @@ class FlowGraphCodeConverter:
         node_reference = getattr(settings, "node_reference", None)
         var_name = node_reference if node_reference else f"df_{node.node_id}"
         self.node_var_mapping[node.node_id] = var_name
-        self.handle_output_node(node, var_name)
-        if node.node_template.output > 0:
-            self.last_node_var = var_name
         input_vars = self._get_input_vars(node)
 
+        start = len(self.code_lines)
         if isinstance(settings, input_schema.UserDefinedNode) or getattr(settings, "is_user_defined", False):
             self._handle_user_defined(node, var_name, input_vars)
-            return
-
-        handler = getattr(self, f"_handle_{node_type}", None)
-        if handler:
-            handler(settings, var_name, input_vars)
         else:
-            self.unsupported_nodes.append(
-                (node.node_id, node_type, f"No code generator implemented for node type '{node_type}'")
-            )
-            self._add_comment(f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})")
-            self._add_comment("# This node type is not supported for code export")
+            handler = getattr(self, f"_handle_{node_type}", None)
+            if handler:
+                handler(settings, var_name, input_vars)
+            else:
+                self.unsupported_nodes.append(
+                    (node.node_id, node_type, f"No code generator implemented for node type '{node_type}'")
+                )
+                self._add_comment(
+                    f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})"
+                )
+                self._add_comment("# This node type is not supported for code export")
+        end = len(self.code_lines)
+
+        effective_var = self.node_var_mapping[node.node_id]
+        self.handle_output_node(node, effective_var)
+        if node.node_template.output > 0:
+            self.last_node_var = effective_var
+
+        if end == start:
+            main_inputs = node.node_inputs.main_inputs or []
+            if len(main_inputs) == 1:
+                self._passthrough[node.node_id] = main_inputs[0].node_id
+        else:
+            self._node_spans.append((node, effective_var, start, end))
 
     def _resolve_upstream_var(self, downstream: FlowNode, upstream_id: int, default: str) -> str:
         """Resolve the variable name for an upstream node, honouring its output handle.
@@ -335,7 +406,6 @@ class FlowGraphCodeConverter:
         self.node_handle_var_mapping[(node_id, "output-0")] = pass_var
         self.node_handle_var_mapping[(node_id, "output-1")] = fail_var
         self.node_var_mapping[node_id] = pass_var
-        self._add_code(f"{var_name} = {pass_var}")
         self._add_code("")
 
     def _handle_record_count(self, settings: input_schema.NodeRecordCount, var_name: str, input_vars: dict[str, str]):
@@ -377,9 +447,10 @@ class FlowGraphCodeConverter:
             for expr in select_exprs:
                 self._add_code(f"    {expr},")
             self._add_code("])")
+            self._add_code("")
         else:
-            self._add_code(f"{var_name} = {input_df}")
-        self._add_code("")
+            # Nothing selected -> transparent passthrough; remap and emit nothing.
+            self.node_var_mapping[settings.node_id] = input_df
 
     def _handle_join(self, settings: input_schema.NodeJoin, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle join nodes by routing to appropriate join type handler.
@@ -427,13 +498,13 @@ class FlowGraphCodeConverter:
         left_on = [jm.left_col for jm in settings.join_input.join_mapping]
         right_on = [jm.right_col for jm in settings.join_input.join_mapping]
 
-        self._add_code(f"{var_name} = ({left_df}.join(")
+        # Semi/anti joins have no post-processing, so no outer parens are needed.
+        self._add_code(f"{var_name} = {left_df}.join(")
         self._add_code(f"        {right_df},")
         self._add_code(f"        left_on={left_on},")
         self._add_code(f"        right_on={right_on},")
         self._add_code(f'        how="{settings.join_input.how}"')
         self._add_code("    )")
-        self._add_code(")")
 
     def _handle_standard_join(
         self, settings: input_schema.NodeJoin, var_name: str, left_df: str, right_df: str
@@ -756,7 +827,10 @@ class FlowGraphCodeConverter:
         Returns:
             None: Modifies internal state by adding generated code
         """
-        self._add_code(f"{var_name} = ({left_df}.join(")
+        # Wrap in parens only when a post-processing method chains onto the join;
+        # a clean join needs no outer parens.
+        has_post = settings.join_input.how == "right" or bool(after_join_drop_cols) or bool(reverse_action)
+        self._add_code(f"{var_name} = {'(' if has_post else ''}{left_df}.join(")
         self._add_code(f"        {right_df},")
         self._add_code(f"        left_on={left_on},")
         self._add_code(f"        right_on={right_on},")
@@ -778,7 +852,8 @@ class FlowGraphCodeConverter:
         if settings.join_input.how == "right":
             self._add_code(".lazy()")
 
-        self._add_code(")")
+        if has_post:
+            self._add_code(")")
 
     def _handle_group_by(self, settings: input_schema.NodeGroupBy, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle group by nodes."""
@@ -1114,9 +1189,13 @@ class FlowGraphCodeConverter:
             self._add_code(f"{var_name} = ({input_df}")
             self._add_code(f"    .with_columns({self.framework}.lit(1).alias('{record_input.output_column_name}'))")
             self._add_code("    .with_columns([")
+            # cum_count is 1-indexed, so the net shift is (offset - 1); emit it only
+            # when it does not cancel out (default offset=1 -> bare cum_count).
+            delta = record_input.offset - 1
+            offset_expr = "" if delta == 0 else (f" + {delta}" if delta > 0 else f" - {abs(delta)}")
             self._add_code(
                 f"    ({self.framework}.cum_count('{record_input.output_column_name}')"
-                f".over({record_input.group_by_columns}) + {record_input.offset} - 1)"
+                f".over({record_input.group_by_columns}){offset_expr})"
             )
             self._add_code(f"    .alias('{record_input.output_column_name}')")
             self._add_code("])")
@@ -1195,7 +1274,7 @@ class FlowGraphCodeConverter:
         is_expression = "output_df" not in code
 
         self._add_code("# Custom Polars code")
-        self._add_code(f"def _polars_code_{var_name.replace('df_', '')}({params}):")
+        self._add_code(f"def _polars_code_{settings.node_id}({params}):")
 
         if is_expression:
             self._add_code(f"    return {code}")
@@ -1214,7 +1293,7 @@ class FlowGraphCodeConverter:
 
         self._add_code("")
 
-        self._add_code(f"{var_name} = _polars_code_{var_name.replace('df_', '')}({args})")
+        self._add_code(f"{var_name} = _polars_code_{settings.node_id}({args})")
         self._add_code("")
 
     # Handlers for unsupported node types - these add nodes to the unsupported list
@@ -1222,11 +1301,13 @@ class FlowGraphCodeConverter:
     def _handle_explore_data(
         self, settings: input_schema.NodeExploreData, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Handle explore_data nodes - these are skipped as they are interactive visualization only."""
-        input_df = input_vars.get("main", "df")
-        self._add_comment(f"# Node {settings.node_id}: Explore Data (skipped - interactive visualization only)")
-        self._add_code(f"{var_name} = {input_df}  # Pass through unchanged")
-        self._add_code("")
+        """Elide explore_data (interactive-only): remap to its input and emit nothing.
+
+        Downstream references and the return resolve straight to the upstream
+        frame, so no dead ``var = input`` passthrough appears in the script —
+        matching ``--run-flow``, which already drops UI-only explore_data nodes.
+        """
+        self.node_var_mapping[settings.node_id] = input_vars.get("main", "df")
 
     def _handle_external_source(
         self, settings: input_schema.NodeExternalSource, var_name: str, input_vars: dict[str, str]
@@ -1855,6 +1936,155 @@ class FlowGraphCodeConverter:
         }
         return agg_map.get(agg, agg)
 
+    def _raw_producer_ids(self, node: FlowNode) -> list[int]:
+        """Upstream node ids feeding ``node`` (main + left + right)."""
+        ids = [inp.node_id for inp in (node.node_inputs.main_inputs or [])]
+        if node.node_inputs.left_input:
+            ids.append(node.node_inputs.left_input.node_id)
+        if node.node_inputs.right_input:
+            ids.append(node.node_inputs.right_input.node_id)
+        return ids
+
+    def _resolve_producer(self, node_id: int) -> int:
+        """Hop through elided passthrough nodes to the real producing node."""
+        seen: set[int] = set()
+        while node_id in self._passthrough and node_id not in seen:
+            seen.add(node_id)
+            node_id = self._passthrough[node_id]
+        return node_id
+
+    @staticmethod
+    def _is_flow_output(node: FlowNode) -> bool:
+        return bool(getattr(node.setting_input, "is_flow_output", False))
+
+    @staticmethod
+    def _is_filter_split(node: FlowNode) -> bool:
+        return node.node_type == "filter" and bool(getattr(node.setting_input, "split_mode", False))
+
+    def _var_label(self, node: FlowNode) -> str:
+        if self._is_filter_split(node):
+            return "split"
+        return NODE_TYPE_VAR_LABEL.get(node.node_type, "df")
+
+    def _render_body(self) -> list[str]:
+        """Fuse linear single-use chains and give the surviving boundaries clean names."""
+        emissions: list[NodeEmission] = []
+        node_by_id: dict[int, FlowNode] = {}
+        for node, effective_var, start, end in self._node_spans:
+            lines = self.code_lines[start:end]
+            while lines and lines[-1] == "":
+                lines = lines[:-1]
+            if not lines:
+                continue
+            resolved = {self._resolve_producer(pid) for pid in self._raw_producer_ids(node)}
+            num_inputs = len(resolved)
+            main_producer_id = next(iter(resolved)) if num_inputs == 1 else None
+            pinned = bool(getattr(node.setting_input, "node_reference", None))
+            emissions.append(
+                NodeEmission(
+                    node.node_id, effective_var, lines, main_producer_id,
+                    num_inputs, self._is_flow_output(node), pinned,
+                )
+            )
+            node_by_id[node.node_id] = node
+
+        consumers: dict[int, list[int]] = {em.node_id: [] for em in emissions}
+        for em in emissions:
+            node = node_by_id[em.node_id]
+            for pid in {self._resolve_producer(p) for p in self._raw_producer_ids(node)}:
+                if pid in consumers:
+                    consumers[pid].append(em.node_id)
+
+        body, survivors = render_pipeline(emissions, consumers)
+        rename = self._plan_boundary_names(emissions, survivors, node_by_id)
+        return self._apply_renames(body, rename)
+
+    @staticmethod
+    def _is_renameable(em: NodeEmission, node: FlowNode) -> bool:
+        """Renameable boundaries: single-output ``df_N`` assignments and filter splits.
+
+        Multi-output nodes (random_split, ML train/apply) bind a *derived* var
+        (``df_N_train``) with sibling outputs, so renaming only the primary would
+        break consistency — leave their tokens untouched.
+        """
+        if em.pinned:
+            return False
+        if FlowGraphCodeConverter._is_filter_split(node):
+            return True
+        return em.var_name == f"df_{em.node_id}"
+
+    def _plan_boundary_names(
+        self, emissions: list[NodeEmission], survivors: set[int], node_by_id: dict[int, FlowNode]
+    ) -> dict[str, str]:
+        """Map provisional ``df_N`` tokens to clean labels; suffix only on collision."""
+        ordered = [em for em in emissions if em.node_id in survivors]
+        renameable = [em for em in ordered if self._is_renameable(em, node_by_id[em.node_id])]
+        labels = {em.node_id: self._var_label(node_by_id[em.node_id]) for em in renameable}
+        counts: dict[str, int] = {}
+        for label in labels.values():
+            counts[label] = counts.get(label, 0) + 1
+
+        used: set[str] = {em.var_name for em in ordered if em.pinned} | set(_RESERVED_NAMES)
+        final: dict[int, str] = {}
+        seen: dict[str, int] = {}
+        for em in renameable:
+            label = labels[em.node_id]
+            if counts[label] > 1:
+                seen[label] = seen.get(label, 0) + 1
+                name = f"{label}_{seen[label]}"
+            else:
+                name = label
+            name = self._uniquify(name, used)
+            final[em.node_id] = name
+
+        rename: dict[str, str] = {}
+        for em in renameable:
+            name = final[em.node_id]
+            nid = em.node_id
+            if self._is_filter_split(node_by_id[nid]):
+                rename[f"df_{nid}_pass"] = f"{name}_pass"
+                rename[f"df_{nid}_fail"] = f"{name}_fail"
+                rename[f"_filter_{nid}_pred"] = f"{name}_pred"
+            else:
+                rename[em.var_name] = name
+
+        # random_split: name each output by its split (train/test/val), not df_N_<split>.
+        for em in ordered:
+            node = node_by_id[em.node_id]
+            if em.pinned or node.node_type != "random_split":
+                continue
+            for split in getattr(node.setting_input, "splits", []):
+                rename[f"df_{em.node_id}_{split.name}"] = self._uniquify(split.name, used)
+        return rename
+
+    @staticmethod
+    def _uniquify(name: str, used: set[str]) -> str:
+        """Return ``name`` (or a numbered variant) not already in ``used``; records it."""
+        candidate, bump = name, 2
+        while candidate in used:
+            candidate, bump = f"{name}_{bump}", bump + 1
+        used.add(candidate)
+        return candidate
+
+    def _apply_renames(self, body: list[str], rename: dict[str, str]) -> list[str]:
+        """Substitute provisional tokens with final names across body + return targets."""
+        if not rename:
+            return body
+        # `(?!=)` leaves keyword-argument names (``param=``, no surrounding spaces)
+        # untouched while still renaming assignment targets (``var = ``) and value
+        # references — e.g. a notebook call ``run(df_1=df_1.data)`` keeps its
+        # contract param ``df_1`` but renames the upstream value.
+        patterns = [(re.compile(r"\b" + re.escape(old) + r"\b(?!=)"), new) for old, new in rename.items()]
+        out = []
+        for line in body:
+            for pat, new in patterns:
+                line = pat.sub(new, line)
+            out.append(line)
+        self.output_nodes = [(nid, rename.get(var, var)) for nid, var in self.output_nodes]
+        if self.last_node_var is not None:
+            self.last_node_var = rename.get(self.last_node_var, self.last_node_var)
+        return out
+
     def add_return_code(self, lines: list[str]) -> None:
         if self.output_nodes:
             if len(self.output_nodes) == 1:
@@ -1895,7 +2125,7 @@ class FlowGraphCodeConverter:
         lines.append('    """')
         lines.append("    ")
 
-        for line in self.code_lines:
+        for line in self._render_body():
             if line:
                 lines.append(f"    {line}")
             else:
@@ -1970,8 +2200,6 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
             self.node_handle_var_mapping[(node_id, f"output-{i}")] = split_var
         default_var = f"{var_name}_{splits[0].name}"
         self.node_var_mapping[node_id] = default_var
-        # Alias the bare var_name so `last_node_var` (set by dispatch) still resolves.
-        self._add_code(f"{var_name} = {default_var}")
         self._add_code("")
 
     def _handle_catalog_reader(
@@ -2097,7 +2325,6 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         for i, sv in enumerate(split_vars):
             self.node_handle_var_mapping[(node_id, f"output-{i}")] = sv
         self.node_var_mapping[node_id] = split_vars[0]
-        self._add_code(f"{var_name} = {split_vars[0]}")
         self._add_code("")
 
     def _handle_manual_input(
@@ -2209,7 +2436,6 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self.node_handle_var_mapping[(node_id, "output-0")] = pass_var
         self.node_handle_var_mapping[(node_id, "output-1")] = fail_var
         self.node_var_mapping[node_id] = pass_var
-        self._add_code(f"{var_name} = {pass_var}")
         self._add_code("")
 
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
@@ -2281,7 +2507,8 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         # coalesce=False for outer joins (preserve both join keys for post-processing)
         coalesce = how == "right"
 
-        self._add_code(f"{var_name} = ({left_df}.join(")
+        has_post = bool(after_join_drop_cols) or bool(reverse_action)
+        self._add_code(f"{var_name} = {'(' if has_post else ''}{left_df}.join(")
         self._add_code(f"        {right_df},")
         self._add_code(f"        left_on={left_on},")
         self._add_code(f"        right_on={right_on},")
@@ -2295,7 +2522,8 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         if reverse_action:
             self._add_code(f".rename({reverse_action})")
 
-        self._add_code(")")
+        if has_post:
+            self._add_code(")")
 
     def _handle_kafka_source(
         self, settings: input_schema.NodeKafkaSource, var_name: str, input_vars: dict[str, str]
@@ -2404,7 +2632,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         is_expression = "output_df" not in code
 
         self._add_code("# Custom Polars code")
-        self._add_code(f"def _polars_code_{var_name.replace('df_', '')}({params}):")
+        self._add_code(f"def _polars_code_{settings.node_id}({params}):")
 
         if is_expression:
             self._add_code(f"    return {code}")
@@ -2422,7 +2650,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
                         self._add_code(f"    return {output_var}")
 
         self._add_code("")
-        self._add_code(f"{var_name} = _polars_code_{var_name.replace('df_', '')}({args})")
+        self._add_code(f"{var_name} = _polars_code_{settings.node_id}({args})")
         self._add_code("")
 
     def _handle_fuzzy_match(
