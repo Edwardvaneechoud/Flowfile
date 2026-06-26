@@ -19,6 +19,15 @@ from pydantic import BaseModel, Field
 from kernel_runtime import __version__, flowfile_client
 from kernel_runtime.artifact_persistence import ArtifactPersistence, RecoveryMode
 from kernel_runtime.artifact_store import ArtifactStore
+from kernel_runtime.lsp import analysis as lsp_analysis
+from kernel_runtime.lsp.models import (
+    CompleteResponse,
+    DiagnosticsResponse,
+    HoverResponse,
+    LspCapabilities,
+    LspRequest,
+    SignatureResponse,
+)
 
 
 class _DeprecatedFlowfileAlias:
@@ -114,6 +123,16 @@ def _clear_namespace(flow_id: int) -> None:
     _namespace_store.pop(flow_id, None)
     _namespace_access.pop(flow_id, None)
     _purge_display_outputs(flow_id)
+
+
+def _peek_namespace(flow_id: int) -> dict:
+    """Read-only snapshot of a flow's namespace — does NOT create it or bump the LRU.
+
+    The LSP endpoints read this so completion traffic on a never-run notebook can't
+    allocate a namespace slot (and evict a real one). The ``dict()`` copy is a single
+    GIL-atomic op, so it's safe against a concurrent ``/execute`` writing the same dict.
+    """
+    return dict(_namespace_store.get(flow_id, {}))
 
 
 # Execution cancellation.
@@ -325,7 +344,6 @@ def _maybe_wrap_last_expression(code: str) -> str:
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
-    flow_id: int  # Required - namespaces are keyed by flow_id
     input_paths: dict[str, list[str]] = {}
     output_dir: str = ""
     flow_id: int = 0
@@ -520,6 +538,63 @@ async def interrupt():
     if _raise_in_exec_thread():
         return {"status": "interrupted"}
     return {"status": "no_execution_running"}
+
+
+# Code intelligence (Jedi). Runs in a worker thread so it can't stall /execute, with
+# a hard per-request timeout; any failure/timeout degrades to an empty result.
+_LSP_TIMEOUT_S = 2.0
+
+
+@app.get("/lsp/capabilities", response_model=LspCapabilities)
+async def lsp_capabilities():
+    return lsp_analysis.capabilities(version=__version__)
+
+
+@app.post("/lsp/complete", response_model=CompleteResponse)
+async def lsp_complete(request: LspRequest):
+    live = _peek_namespace(request.flow_id)
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(lsp_analysis.complete, request.code, request.line, request.column, live),
+            timeout=_LSP_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        return CompleteResponse(items=[])
+
+
+@app.post("/lsp/hover", response_model=HoverResponse)
+async def lsp_hover(request: LspRequest):
+    live = _peek_namespace(request.flow_id)
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(lsp_analysis.hover, request.code, request.line, request.column, live),
+            timeout=_LSP_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        return HoverResponse(contents=None)
+
+
+@app.post("/lsp/signature", response_model=SignatureResponse)
+async def lsp_signature(request: LspRequest):
+    live = _peek_namespace(request.flow_id)
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(lsp_analysis.signature, request.code, request.line, request.column, live),
+            timeout=_LSP_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        return SignatureResponse(signatures=[], active_signature=0)
+
+
+@app.post("/lsp/diagnostics", response_model=DiagnosticsResponse)
+async def lsp_diagnostics(request: LspRequest):
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(lsp_analysis.diagnostics, request.code),
+            timeout=_LSP_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        return DiagnosticsResponse(diagnostics=[])
 
 
 @app.post("/clear")

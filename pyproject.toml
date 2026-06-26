@@ -135,6 +135,7 @@ markers = [
     "kernel: Integration tests requiring Docker kernel containers",
     "docker_integration: Full Docker-based E2E tests (require Docker, slow)",
     "kafka: Integration tests requiring a Kafka/Redpanda broker (Docker)",
+    "lsp: Tests for the notebook LSP (Jedi) code-intelligence surface",
 ]
 
 [tool.coverage.run]

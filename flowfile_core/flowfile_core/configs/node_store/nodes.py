@@ -87,7 +87,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Formula Editor",
             drawer_intro="Create or modify columns using custom expressions",
             laziness="lazy",
-            tags=[NodeTag.FORMULA, NodeTag.EXPRESSION, NodeTag.CALCULATE, NodeTag.MATH, NodeTag.CONCAT, NodeTag.SUM],
+            tags=[NodeTag.FORMULA, NodeTag.EXPRESSION, NodeTag.TRANSFORM,
+                  NodeTag.CALCULATE, NodeTag.MATH, NodeTag.CONCAT, NodeTag.SUM],
         ),
         NodeTemplate(
             name="Write data",
@@ -269,7 +270,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Take Sample",
             drawer_intro="Work with a subset of your data",
             laziness="lazy",
-            tags=[NodeTag.SAMPLE, NodeTag.SUBSET],
+            tags=[NodeTag.SAMPLE, NodeTag.SUBSET, NodeTag.LIMIT, NodeTag.HEAD],
         ),
         NodeTemplate(
             name="Random Split",
@@ -429,7 +430,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
             # then change to "lazy"
             laziness="conditional",
-            tags=[NodeTag.POLARS, NodeTag.CODE, NodeTag.PYTHON, NodeTag.SCRIPT, NodeTag.CUSTOM, NodeTag.DATAFRAME],
+            tags=[NodeTag.POLARS, NodeTag.CODE, NodeTag.PYTHON, NodeTag.SCRIPT, NodeTag.CUSTOM, NodeTag.DATAFRAME,
+                  NodeTag.TRANSFORM],
         ),
         NodeTemplate(
             name="SQL Query",
@@ -461,7 +463,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Python Script",
             drawer_intro="Execute Python code on an isolated kernel container",
             laziness="eager",
-            tags=[NodeTag.PYTHON, NodeTag.CODE, NodeTag.SCRIPT, NodeTag.KERNEL, NodeTag.CUSTOM],
+            tags=[NodeTag.PYTHON, NodeTag.CODE, NodeTag.SCRIPT, NodeTag.KERNEL, NodeTag.CUSTOM, NodeTag.TRANSFORM],
         ),
         NodeTemplate(
             name="Read from Database",
