@@ -443,6 +443,8 @@ class NodeTag(str, Enum):
     WHERE = "where"
     SUBSET = "subset"
     SAMPLE = "sample"
+    LIMIT = "limit"
+    HEAD = "head"
 
     # Formula / compute
     FORMULA = "formula"
@@ -450,6 +452,7 @@ class NodeTag(str, Enum):
     CALCULATE = "calculate"
     MATH = "math"
     CONCAT = "concat"
+    TRANSFORM = "transform"
 
     # Aggregation
     GROUP_BY = "group by"

@@ -99,6 +99,10 @@ const props = defineProps<{
   allowedTypes?: CellType[];
   /** Code of cells before this one, for scope/ref completions. */
   priorCellCodes?: string[];
+  /** Kernel + namespace identity for Jedi code intelligence (sessionFlowId as flow_id). */
+  kernelId?: string | null;
+  flowId?: number;
+  nodeId?: number;
 }>();
 
 const emit = defineEmits<{
@@ -117,10 +121,14 @@ const TYPE_LABELS: Record<CellType, string> = {
   markdown: "Markdown",
 };
 
-// Flow-graph completions stay empty — a catalog notebook has no graph.
+// Flow-graph completions stay empty — a catalog notebook has no graph — but Jedi code
+// intelligence works against the notebook's kernel session namespace.
 const extensions = buildNotebookEditorExtensions({
   onRun: () => emit("run"),
   getPriorCellCodes: () => props.priorCellCodes ?? [],
+  getKernelId: () => props.kernelId ?? null,
+  getFlowId: () => props.flowId ?? 0,
+  getNodeId: () => props.nodeId ?? 0,
 });
 </script>
 

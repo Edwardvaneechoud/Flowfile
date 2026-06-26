@@ -26,6 +26,13 @@ FEATURE_FLAG_AI: MutableBool = MutableBool(
     os.environ.get("FEATURE_FLAG_AI", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
+# Gates the notebook code-intelligence (Jedi) bridge to the kernel. Mutable so the admin
+# endpoint can flip it live; when off, the `/lsp/*` surfaces degrade to empty 200 (never 503)
+# so the editor silently falls back to its client-side completion sources.
+FLOWFILE_LSP_ENABLED: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_LSP_ENABLED", "1").strip().lower() in ("true", "1", "yes", "on")
+)
+
 # When True, every LLM call appends a JSONL line to `{FLOWFILE_STORAGE_DIR}/ai_prompts/{YYYY-MM-DD}.jsonl` for debugging.
 FLOWFILE_AI_LOG_PROMPTS: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_AI_LOG_PROMPTS", "0").strip().lower() in ("true", "1", "yes", "on")
