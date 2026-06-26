@@ -294,7 +294,7 @@ check_formula_docs: formula_docs
 bump-version:
 	@if [ -z "$(VERSION)" ]; then echo "Usage: make bump-version VERSION=X.Y.Z"; exit 1; fi
 	$(POETRY_RUN) python tools/bump_version.py $(VERSION)
-
+git
 # Drift check for CI: fail if the version is out of sync across manifests.
 check-version:
 	$(POETRY_RUN) python tools/check_version_sync.py

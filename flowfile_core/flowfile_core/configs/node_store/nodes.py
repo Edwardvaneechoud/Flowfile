@@ -299,7 +299,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Explore Data",
             drawer_intro="Interactive data exploration and analysis",
             laziness="eager",
-            tags=[NodeTag.EXPLORE, NodeTag.PROFILE, NodeTag.PREVIEW, NodeTag.EDA, NodeTag.STATISTICS],
+            tags=[NodeTag.EXPLORE, NodeTag.PROFILE, NodeTag.PREVIEW, NodeTag.EDA, NodeTag.STATISTICS, NodeTag.VISUALIZE,
+                  NodeTag.INSIGHT, NodeTag.BAR_CHART, NodeTag.GRAPHS],
         ),
         NodeTemplate(
             name="Pivot data",
