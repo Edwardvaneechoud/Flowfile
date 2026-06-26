@@ -16,8 +16,12 @@ from __future__ import annotations
 from typing import Final
 
 from flowfile_core.ai.providers.base import ToolSpec
+from flowfile_core.configs.node_store.nodes import get_source_node_types
 
 JSON_SCHEMA_DIALECT: Final[str] = "https://json-schema.org/draft/2020-12/schema"
+
+# Source-only node types, derived from the registry so this prose can't drift.
+_SOURCE_TYPES: Final[str] = ", ".join(get_source_node_types())
 
 
 def _schema(properties: dict, required: list[str]) -> dict:
@@ -60,9 +64,7 @@ GRAPH_OPS_TOOLS: Final[list[ToolSpec]] = [
             "input-0 (left) and input-1 (right); a 'filter' node with "
             "split_mode=true emits output-0 (matched rows) and output-1 (rejected). "
             "Don't connect a node to itself; the host rejects self-loops. Never wire "
-            "INTO a source node (read, manual_input, database_reader, "
-            "cloud_storage_reader, catalog_reader, kafka_source, "
-            "google_analytics_reader, external_source) — they have no input port and "
+            f"INTO a source node ({_SOURCE_TYPES}) — they have no input port and "
             "the host rejects it; to combine two sources, add a join/union and connect "
             "both into it. Example after 'add_filter': "
             "connect(from_node_id=read_id, to_node_id=filter_id) "

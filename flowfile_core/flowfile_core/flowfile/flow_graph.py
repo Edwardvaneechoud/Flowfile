@@ -27,6 +27,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.configs.node_store.nodes import get_source_node_types
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
@@ -5531,27 +5532,23 @@ def format_source_target_detail(node_id: int, node_type: str | None) -> str:
     yet. ``node_type`` is ``None`` when the caller only knows the id is a source.
     """
     label = f"node {node_id} ({node_type})" if node_type else f"node {node_id}"
+    sources = ", ".join(get_source_node_types())
     return (
         f"{label} is a source node and has no input port, so it cannot receive a "
-        "connection. Source nodes (read, manual_input, database_reader, "
-        "cloud_storage_reader, catalog_reader, kafka_source, google_analytics_reader, "
-        "external_source) stand alone. To combine two sources, add a join or union "
-        "node and connect both into it; otherwise pick a transformation/output node "
-        "as the connection target."
+        f"connection. Source nodes ({sources}) stand alone. To combine two sources, "
+        "add a join or union node and connect both into it; otherwise pick a "
+        "transformation/output node as the connection target."
     )
 
 
 def validate_connection(
     from_node: "FlowNode",
     to_node: "FlowNode",
-    insert_type: str,
 ) -> ConnectionValidationError | None:
     """Non-mutating topology check for a from_node -> to_node connection.
 
     Returns ``None`` when the connection is valid, else a
-    :class:`ConnectionValidationError`. ``insert_type`` is accepted for
-    forward-compatibility (future per-slot capacity checks); the current checks
-    don't branch on it.
+    :class:`ConnectionValidationError`.
     """
     if to_node.node_template is not None and to_node.node_template.input == 0:
         return ConnectionValidationError(
@@ -5587,11 +5584,7 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
             if not n
         ]
         raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
-    error = validate_connection(
-        from_node,
-        to_node,
-        node_connection.input_connection.get_node_input_connection_type(),
-    )
+    error = validate_connection(from_node, to_node)
     if error is not None:
         raise HTTPException(422, error.detail)
     to_node.add_node_connection(

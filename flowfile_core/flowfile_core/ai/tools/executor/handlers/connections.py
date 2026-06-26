@@ -11,6 +11,13 @@ from typing import Any, Final
 
 from pydantic import ValidationError
 
+from flowfile_core.configs.node_store.nodes import get_source_node_types
+from flowfile_core.flowfile.flow_graph import (
+    add_connection,
+    delete_connection,
+    format_source_target_detail,
+    validate_connection,
+)
 from flowfile_core.schemas import input_schema
 
 from .._internal import (
@@ -21,6 +28,9 @@ from .._internal import (
 )
 from ..coercions import _coerce_connection_id_to_flat, _coerce_to_int_or_none
 from ..refusals import _detect_sink_upstreams, _format_sink_upstream_refusal
+
+# Source-only node types, derived from the registry so this prose can't drift.
+_SOURCE_TYPES: Final[str] = ", ".join(get_source_node_types())
 
 _CONNECTION_FIELD_REWRITES: Final[tuple[tuple[str, str], ...]] = (
     ("input_connection.connection_class", "input_class"),
@@ -200,9 +210,7 @@ def _handle_connect(
                 f"did not explicitly ask for this connection — narrations "
                 f"like \"so the user can see the new data alongside …\" "
                 f"are rationalisations, not user intent. Source-only "
-                f"types (manual_input, read, database_reader, "
-                f"cloud_storage_reader, catalog_reader, kafka_source, "
-                f"google_analytics_reader, external_source) are stand-"
+                f"types ({_SOURCE_TYPES}) are stand-"
                 f"alone by default. If the user explicitly asked for "
                 f"this wiring (e.g. \"connect the new node to node "
                 f"{to_id}\"), restate that intent in your next assistant "
@@ -242,8 +250,6 @@ def _handle_connect(
     # the planner loop ended and can no longer self-correct. Freshly-staged source
     # targets have no live FlowNode yet, so use the ``staged_source_ids`` set
     # already computed above; live targets go through the shared validator.
-    from flowfile_core.flowfile.flow_graph import format_source_target_detail, validate_connection
-
     if to_id in staged_source_ids:
         return _reject_and_audit(
             tool_name=tool_name,
@@ -257,11 +263,7 @@ def _handle_connect(
     from_node = flow.get_node(from_id)
     to_node = flow.get_node(to_id)
     if from_node is not None and to_node is not None:
-        connection_error = validate_connection(
-            from_node,
-            to_node,
-            connection.input_connection.get_node_input_connection_type(),
-        )
+        connection_error = validate_connection(from_node, to_node)
         if connection_error is not None:
             return _reject_and_audit(
                 tool_name=tool_name,
@@ -289,8 +291,6 @@ def _handle_connect(
             executed_args=redacted_args,
             staged_node_payload={"connection": connection.model_dump()},
         )
-
-    from flowfile_core.flowfile.flow_graph import add_connection
 
     # LLM-redundant-op tolerance: if the wire is already present (e.g. an
     # ``update_node_settings`` in the same diff already implicitly rewired
@@ -462,8 +462,6 @@ def _handle_delete_connection(
         )
 
     from fastapi import HTTPException
-
-    from flowfile_core.flowfile.flow_graph import delete_connection
 
     try:
         delete_connection(flow, connection)
