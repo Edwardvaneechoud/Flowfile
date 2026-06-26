@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from importlib.metadata import PackageNotFoundError, version
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -40,14 +39,12 @@ from flowfile_core.schemas.kafka_schemas import (
     KafkaSyncCreate,
     KafkaTopicInfo,
 )
+from shared._version import get_version
 from shared.kafka.consumer import infer_topic_schema
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
-try:
-    _flowfile_version = version("Flowfile")
-except PackageNotFoundError:
-    _flowfile_version = "0.5.0"
+_flowfile_version = get_version()
 
 router = APIRouter(prefix="/kafka", tags=["kafka"])
 
