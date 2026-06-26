@@ -24,6 +24,8 @@ from flowfile_core.configs.settings import (
     WORKER_URL,
 )
 from flowfile_core.kernel import router as kernel_router
+from flowfile_core.lsp.admin_routes import router as lsp_admin_router
+from flowfile_core.lsp.routes import router as lsp_router
 from flowfile_core.ml import router as ml_router
 from flowfile_core.routes.api_consumers import router as api_consumers_router
 from flowfile_core.routes.auth import router as auth_router
@@ -169,12 +171,13 @@ app.include_router(ga_connections_router, prefix="/ga_connections", tags=["ga_co
 app.include_router(kafka_router)
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])
 app.include_router(kernel_router, tags=["kernels"])
+app.include_router(lsp_router, tags=["lsp"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
 app.include_router(ai_router, prefix="/ai", tags=["ai"])
-# AI feature-flag admin endpoint. Mounted on /system (NOT /ai) so admins
-# can flip the AI gate from the UI without first satisfying the gate they're
-# trying to flip.
+# Feature-flag admin endpoints. Mounted on /system (NOT /ai or /lsp) so admins can flip
+# a gate from the UI without first satisfying the gate they're trying to flip.
 app.include_router(ai_admin_router, prefix="/system", tags=["system"])
+app.include_router(lsp_admin_router, prefix="/system", tags=["system"])
 
 
 @app.post("/shutdown")
