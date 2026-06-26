@@ -540,7 +540,7 @@ class NodeTag(str, Enum):
     PREVIEW = "preview"
     EDA = "eda"
     STATISTICS = "statistics"
-    VISUALIZE = "vizualize"
+    VISUALIZE = "visualize"
     BAR_CHART = "bar chart"
     INSIGHT = "insight"
     GRAPHS = "graphs"

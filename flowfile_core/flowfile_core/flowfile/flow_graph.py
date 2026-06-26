@@ -5537,12 +5537,8 @@ def format_source_target_detail(node_id: int, node_type: str | None) -> str:
 
 
 def node_is_source(node: "FlowNode") -> bool:
-    """True when ``node`` is a source-only node (no input port). Prefers the
-    resolved template (``input == 0``) and falls back to the registry by
-    ``node_type`` only when the template is unresolved. Single source of truth
-    for the source-target guard, shared by :func:`validate_connection` and the
-    AI connect handler (which must check a live target even when the FROM side
-    is still staged).
+    """True when ``node`` is a source-only node (no input port), via the
+    resolved template (``input == 0``), else the registry by ``node_type``.
     """
     template = node.node_template
     if template is not None:
