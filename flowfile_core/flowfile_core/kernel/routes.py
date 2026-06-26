@@ -22,6 +22,14 @@ from flowfile_core.kernel.models import (
     KernelUpdate,
     RecoveryStatus,
 )
+from flowfile_core.lsp.feature_flag import is_lsp_enabled
+from flowfile_core.lsp.models import (
+    CompleteResponse,
+    DiagnosticsResponse,
+    HoverResponse,
+    LspRequest,
+    SignatureResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -365,6 +373,42 @@ async def get_node_artifacts(
         return await manager.get_node_artifacts(kernel_id, node_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# Code intelligence (Jedi) bridge. Editor-facing: owner-checked, but every not-ready
+# condition (flag off, no Docker, kernel missing/not-owned/idle-less, old image) degrades
+# to an empty 200 so the notebook editor silently falls back to its client-side sources.
+async def _lsp_forward(kernel_id: str, op: str, request: LspRequest, current_user) -> dict:
+    if not is_lsp_enabled():
+        return {}
+    try:
+        manager = _get_manager()
+    except HTTPException:
+        return {}  # Docker unavailable -> no kernels -> degrade
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None or manager.get_kernel_owner(kernel_id) != current_user.id:
+        return {}
+    return await manager.lsp_request(kernel_id, op, request.model_dump())
+
+
+@router.post("/{kernel_id}/lsp/complete", response_model=CompleteResponse)
+async def lsp_complete(kernel_id: str, request: LspRequest, current_user=Depends(get_current_active_user)):
+    return CompleteResponse(**(await _lsp_forward(kernel_id, "complete", request, current_user) or {}))
+
+
+@router.post("/{kernel_id}/lsp/hover", response_model=HoverResponse)
+async def lsp_hover(kernel_id: str, request: LspRequest, current_user=Depends(get_current_active_user)):
+    return HoverResponse(**(await _lsp_forward(kernel_id, "hover", request, current_user) or {}))
+
+
+@router.post("/{kernel_id}/lsp/signature", response_model=SignatureResponse)
+async def lsp_signature(kernel_id: str, request: LspRequest, current_user=Depends(get_current_active_user)):
+    return SignatureResponse(**(await _lsp_forward(kernel_id, "signature", request, current_user) or {}))
+
+
+@router.post("/{kernel_id}/lsp/diagnostics", response_model=DiagnosticsResponse)
+async def lsp_diagnostics(kernel_id: str, request: LspRequest, current_user=Depends(get_current_active_user)):
+    return DiagnosticsResponse(**(await _lsp_forward(kernel_id, "diagnostics", request, current_user) or {}))
 
 
 @router.get("/{kernel_id}/display_outputs")
