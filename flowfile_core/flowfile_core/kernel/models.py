@@ -85,7 +85,7 @@ class KernelImageStatus(BaseModel):
     """Availability of one kernel image flavour on the host."""
 
     flavour: ImageFlavour
-    image: str  # full registry tag, e.g. edwardvaneechoud/flowfile-kernel-base:0.3.3
+    image: str  # full registry tag, e.g. edwardvaneechoud/flowfile-kernel-base:0.4.0
     available: bool
     resolved_image: str | None = None
     pull_state: str | None = None

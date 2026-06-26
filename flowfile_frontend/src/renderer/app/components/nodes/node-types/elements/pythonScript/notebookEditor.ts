@@ -18,6 +18,13 @@ import {
   globalIdentifierCompletions,
   polarsModuleCompletions,
 } from "./flowfileCompletions";
+import {
+  createLspCompletionSource,
+  fallbackWhenNoLsp,
+  lspActiveFor,
+  type LspContext,
+} from "./lspCompletionSource";
+import { createLspHover } from "./lspHover";
 import type { UpstreamColumn } from "./useUpstreamColumns";
 
 export interface NotebookEditorOptions {
@@ -26,6 +33,12 @@ export interface NotebookEditorOptions {
   getInputNames?: () => string[];
   getUpstreamColumns?: () => UpstreamColumn[];
   getPriorCellCodes?: () => string[];
+  // Kernel/session identity for Jedi code intelligence. flow_id is the namespace key
+  // (node flow_id, or the notebook sessionFlowId for the Catalog notebook). When no
+  // kernel is selected the LSP sources resolve null and the static sources serve.
+  getKernelId?: () => string | null;
+  getFlowId?: () => number;
+  getNodeId?: () => number;
 }
 
 const cellEditorTheme = EditorView.theme({
@@ -37,6 +50,8 @@ const cellEditorTheme = EditorView.theme({
   },
   ".cm-gutters": { fontSize: "0.7rem", minWidth: "2.5rem" },
   ".cm-scroller": { overflow: "auto" },
+  // Taller completion dropdown (default is ~10em) so more suggestions show before scrolling.
+  ".cm-tooltip-autocomplete > ul": { maxHeight: "22rem" },
 });
 
 export function buildNotebookEditorExtensions(opts: NotebookEditorOptions): Extension[] {
@@ -44,6 +59,17 @@ export function buildNotebookEditorExtensions(opts: NotebookEditorOptions): Exte
   const getUpstreamColumns = opts.getUpstreamColumns ?? (() => []);
   const getPrior = opts.getPriorCellCodes ?? (() => []);
   const runAdvance = opts.onRunAdvance ?? opts.onRun;
+
+  // Resolved fresh per request so a live kernel selection / flow change takes effect.
+  const getLspCtx = (): LspContext => ({
+    kernelId: opts.getKernelId?.() ?? null,
+    flowId: opts.getFlowId?.() ?? 0,
+    nodeId: opts.getNodeId?.(),
+  });
+  // Static sources that Jedi subsumes run only as a fallback (no kernel / LSP off),
+  // so there's no overlap once Jedi is active.
+  const isLspActive = lspActiveFor(getLspCtx);
+  const fb = (s: Parameters<typeof fallbackWhenNoLsp>[0]) => fallbackWhenNoLsp(s, isLspActive);
 
   const runKeymap = keymap.of([
     { key: "Shift-Enter", run: () => (opts.onRun(), true) },
@@ -57,15 +83,20 @@ export function buildNotebookEditorExtensions(opts: NotebookEditorOptions): Exte
 
   return [
     python(),
-    pythonLanguage.data.of({ autocomplete: flowfileApiCompletions }),
-    pythonLanguage.data.of({ autocomplete: globalIdentifierCompletions }),
-    pythonLanguage.data.of({ autocomplete: catalogRefChainCompletions }),
-    pythonLanguage.data.of({ autocomplete: createRefVariableCompletions(getPrior) }),
-    pythonLanguage.data.of({ autocomplete: polarsModuleCompletions }),
-    pythonLanguage.data.of({ autocomplete: createPolarsExprCompletions(getPrior) }),
+    // Jedi (kernel-backed) source first; resolves null when no kernel/LSP -> fallback sources serve.
+    pythonLanguage.data.of({ autocomplete: createLspCompletionSource(getLspCtx) }),
+    createLspHover(getLspCtx),
+    // Jedi-subsumed sources: fallback only (suppressed while Jedi is active) to avoid duplicates.
+    pythonLanguage.data.of({ autocomplete: fb(flowfileApiCompletions) }),
+    pythonLanguage.data.of({ autocomplete: fb(globalIdentifierCompletions) }),
+    pythonLanguage.data.of({ autocomplete: fb(catalogRefChainCompletions) }),
+    pythonLanguage.data.of({ autocomplete: fb(createRefVariableCompletions(getPrior)) }),
+    pythonLanguage.data.of({ autocomplete: fb(polarsModuleCompletions) }),
+    pythonLanguage.data.of({ autocomplete: fb(createPolarsExprCompletions(getPrior)) }),
+    pythonLanguage.data.of({ autocomplete: fb(createScopeCompletions(getPrior)) }),
+    // String-literal content sources Jedi can't provide — always on (no overlap):
     pythonLanguage.data.of({ autocomplete: createNamedInputCompletions(getInputNames) }),
     pythonLanguage.data.of({ autocomplete: createUpstreamColumnCompletions(getUpstreamColumns) }),
-    pythonLanguage.data.of({ autocomplete: createScopeCompletions(getPrior) }),
     oneDark,
     cellEditorTheme,
     EditorState.tabSize.of(4),
