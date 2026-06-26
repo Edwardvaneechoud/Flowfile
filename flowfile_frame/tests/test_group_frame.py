@@ -274,6 +274,46 @@ class TestGroupByFrame:
             return_rate=(pl.col("returns") / pl.col("units")).mean()).collect()
         assert_frame_equal(expected_result, result, check_row_order=False)
 
+    def test_group_by_agg_unique_counts(self):
+        """Regression: bare unique_counts() must use the polars_code fallback, not the native node.
+
+        pl.unique_counts is not a top-level Polars function (expression-method only), so the
+        native group_by node raised ValueError("Could not execute the function").
+        """
+        data = {"group": ["a", "a", "a", "b", "b", "b", "b"], "value": [1, 1, 2, 3, 4, 3, 5]}
+        flow_frame = FlowFrame(data).group_by("group").agg(col("value").unique_counts())
+        assert flow_frame.get_node_settings().node_type == "polars_code"
+        result = flow_frame.collect().sort("group").with_columns(pl.col("value").list.sort())
+        expected = (
+            pl.DataFrame(data).group_by("group").agg(pl.col("value").unique_counts())
+            .sort("group").with_columns(pl.col("value").list.sort())
+        )
+        assert_frame_equal(result, expected)
+
+    def test_group_by_agg_unique_counts_named(self):
+        """Regression: named unique_counts() aggregation must also use the polars_code fallback."""
+        data = {"group": ["a", "a", "a", "b", "b", "b", "b"], "value": [1, 1, 2, 3, 4, 3, 5]}
+        flow_frame = FlowFrame(data).group_by("group").agg(counts=col("value").unique_counts())
+        assert flow_frame.get_node_settings().node_type == "polars_code"
+        result = flow_frame.collect().sort("group").with_columns(pl.col("counts").list.sort())
+        expected = (
+            pl.DataFrame(data).group_by("group").agg(counts=pl.col("value").unique_counts())
+            .sort("group").with_columns(pl.col("counts").list.sort())
+        )
+        assert_frame_equal(result, expected)
+
+    def test_group_by_agg_implode(self):
+        """Regression: bare implode() is expression-only; must use the polars_code fallback."""
+        data = {"group": ["a", "a", "b", "b", "b"], "value": [1, 2, 3, 4, 5]}
+        flow_frame = FlowFrame(data).group_by("group").agg(col("value").implode())
+        assert flow_frame.get_node_settings().node_type == "polars_code"
+        result = flow_frame.collect().sort("group").with_columns(pl.col("value").list.sort())
+        expected = (
+            pl.DataFrame(data).group_by("group").agg(pl.col("value").implode())
+            .sort("group").with_columns(pl.col("value").list.sort())
+        )
+        assert_frame_equal(result, expected)
+
     def test_group_by_multiple_columns(self, sales_data):
         """Test grouping by multiple columns."""
         result = sales_data.group_by(["region", "category"]).sum().collect()

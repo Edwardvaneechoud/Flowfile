@@ -16,6 +16,26 @@ else:
     FlowFrame = None
 
 
+# Aggregation names the native group_by node can execute (flowfile_core's AggColl.agg_func
+# resolves these via getattr(pl, agg), plus the special-cased "concat"). agg_funcs set but NOT
+# in this set (unique_counts, implode, explode, quantile, ...) exist only as Polars expression
+# methods, so they must use the polars-code fallback instead of the native node.
+_NATIVE_AGG_FUNCS: set[str] = {
+    "sum",
+    "max",
+    "mean",
+    "median",
+    "min",
+    "count",
+    "n_unique",
+    "first",
+    "last",
+    "std",
+    "var",
+    "concat",
+}
+
+
 class GroupByFrame:
     """Represents a grouped DataFrame for aggregation operations."""
 
@@ -123,6 +143,10 @@ class GroupByFrame:
                 if expr.is_complex:
                     return False
                 agg_func = getattr(expr, "agg_func", None)
+                if agg_func and agg_func not in _NATIVE_AGG_FUNCS:
+                    # expression-only aggregation (unique_counts/implode/explode/quantile) →
+                    # fall back to the polars-code path
+                    return False
                 old_name = getattr(expr, "_initial_column_name", expr.column_name) or expr.column_name
                 if agg_func:
                     agg_cols.append(
@@ -146,6 +170,9 @@ class GroupByFrame:
                 return False
             if isinstance(expr, Expr):
                 agg_func = getattr(expr, "agg_func", "first")
+                if agg_func and agg_func not in _NATIVE_AGG_FUNCS:
+                    # expression-only aggregation → fall back to the polars-code path
+                    return False
                 old_name = getattr(expr, "_initial_column_name", expr.column_name) or expr.column_name
                 agg_cols.append(transform_schema.AggColl(old_name=old_name, agg=agg_func, new_name=name))
             elif isinstance(expr, str):
