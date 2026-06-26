@@ -186,6 +186,9 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           :index="idx"
           :cell-count="store.active.cells.length"
           :prior-cell-codes="priorCodes(idx)"
+          :kernel-id="store.active.kernelId"
+          :flow-id="store.active.sessionFlowId"
+          :node-id="cellNodeId(cell.id)"
           @run="store.runCell(cell.id)"
           @update:code="(code: string) => store.setCellCode(cell.id, code)"
           @update:type="(t: CellType) => store.setCellType(cell.id, t)"
@@ -247,7 +250,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
-import { useNotebookStore } from "../../stores/notebook-store";
+import { useNotebookStore, cellNodeId } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { KernelApi } from "../../api/kernel.api";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";

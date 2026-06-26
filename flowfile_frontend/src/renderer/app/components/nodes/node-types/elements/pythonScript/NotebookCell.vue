@@ -63,12 +63,18 @@ interface Props {
   inputNames?: string[];
   upstreamColumns?: UpstreamColumn[];
   priorCellCodes?: string[];
+  kernelId?: string | null;
+  flowId?: number;
+  nodeId?: number;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   inputNames: () => [],
   upstreamColumns: () => [],
   priorCellCodes: () => [],
+  kernelId: null,
+  flowId: 0,
+  nodeId: 0,
 });
 
 const emit = defineEmits<{
@@ -91,6 +97,9 @@ const cellExtensions = buildNotebookEditorExtensions({
   getInputNames: () => props.inputNames,
   getUpstreamColumns: () => props.upstreamColumns,
   getPriorCellCodes: () => props.priorCellCodes,
+  getKernelId: () => props.kernelId,
+  getFlowId: () => props.flowId,
+  getNodeId: () => props.nodeId,
 });
 </script>
 
