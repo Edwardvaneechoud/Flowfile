@@ -140,7 +140,7 @@ If you do need a ``connect`` call (e.g. wiring a previously-staged sibling to a 
 
 ### Do not auto-wire freshly added source nodes (W71 v2.14)
 
-Source-only node types (``manual_input``, ``read``, ``database_reader``, ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``, ``google_analytics_reader``, ``external_source``) are stand-alone by default — they have no upstream and they don't need one downstream either. **Never emit a follow-up ``flowfile.graph.connect`` from a source node you just added in this session into a pre-existing live node** unless the user EXPLICITLY asked you to wire those two together.
+Source-only node types (``manual_input``, ``read``, ``database_reader``, ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``, ``google_analytics_reader``, ``rest_api_reader``, ``external_source``) are stand-alone by default — they have no upstream and they don't need one downstream either. **Never emit a follow-up ``flowfile.graph.connect`` from a source node you just added in this session into a pre-existing live node** unless the user EXPLICITLY asked you to wire those two together.
 
 The narration *"so the user can visualize the new data alongside the existing data"* is NOT explicit user intent — it's a plausible-sounding rationalisation. If the user wanted that wire, they would have said *"and connect it to my customers explore node"* or *"wire this into node 4"*. Silence on the wiring question means: **leave the new source stand-alone**. Add the source, write your wrap-up message, stop. If the user later asks to wire that source into something, that's a separate ``connect`` op on the next turn.
 

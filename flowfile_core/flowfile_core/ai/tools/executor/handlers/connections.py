@@ -11,6 +11,14 @@ from typing import Any, Final
 
 from pydantic import ValidationError
 
+from flowfile_core.configs.node_store.nodes import get_source_node_types_str
+from flowfile_core.flowfile.flow_graph import (
+    add_connection,
+    delete_connection,
+    format_source_target_detail,
+    node_is_source,
+    validate_connection,
+)
 from flowfile_core.schemas import input_schema
 
 from .._internal import (
@@ -200,9 +208,7 @@ def _handle_connect(
                 f"did not explicitly ask for this connection — narrations "
                 f"like \"so the user can see the new data alongside …\" "
                 f"are rationalisations, not user intent. Source-only "
-                f"types (manual_input, read, database_reader, "
-                f"cloud_storage_reader, catalog_reader, kafka_source, "
-                f"google_analytics_reader, external_source) are stand-"
+                f"types ({get_source_node_types_str()}) are stand-"
                 f"alone by default. If the user explicitly asked for "
                 f"this wiring (e.g. \"connect the new node to node "
                 f"{to_id}\"), restate that intent in your next assistant "
@@ -234,6 +240,46 @@ def _handle_connect(
             refusal_detail=_format_sink_upstream_refusal(flow, sink_upstreams),
         )
 
+    # Refuse wiring INTO a source-only node (read/manual_input/...) and reject
+    # live-graph cycles BEFORE staging — mirroring how ``_handle_add_node``
+    # validates settings before its own ``if mode == "stage"``. The backend
+    # ``add_connection`` enforces both, but stage mode never calls it, so without
+    # this the LLM only learns of a ``read → read`` (or cycle) at apply-time, after
+    # the planner loop ended and can no longer self-correct.
+    #
+    # The source-target check must fire whether the target is freshly-staged
+    # (no live FlowNode yet — use the ``staged_source_ids`` set above) OR a live
+    # node, and independent of whether the FROM side is live: a source has no
+    # input port either way. The cycle check, by contrast, needs both endpoints
+    # live (a staged→staged cycle is an acceptable gap, caught at apply-time by
+    # add_connection).
+    to_node = flow.get_node(to_id)
+    if to_id in staged_source_ids or (to_node is not None and node_is_source(to_node)):
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason="target_is_source",
+            refusal_detail=format_source_target_detail(
+                to_id, to_node.node_type if to_node is not None else None
+            ),
+        )
+    from_node = flow.get_node(from_id)
+    if from_node is not None and to_node is not None:
+        connection_error = validate_connection(from_node, to_node)
+        if connection_error is not None:
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow.flow_id,
+                refusal_reason=connection_error.reason,
+                refusal_detail=connection_error.detail,
+            )
+
     if mode == "stage":
         audit_row = _record_event(
             session_id=session_id,
@@ -250,8 +296,6 @@ def _handle_connect(
             executed_args=redacted_args,
             staged_node_payload={"connection": connection.model_dump()},
         )
-
-    from flowfile_core.flowfile.flow_graph import add_connection
 
     # LLM-redundant-op tolerance: if the wire is already present (e.g. an
     # ``update_node_settings`` in the same diff already implicitly rewired
@@ -423,8 +467,6 @@ def _handle_delete_connection(
         )
 
     from fastapi import HTTPException
-
-    from flowfile_core.flowfile.flow_graph import delete_connection
 
     try:
         delete_connection(flow, connection)

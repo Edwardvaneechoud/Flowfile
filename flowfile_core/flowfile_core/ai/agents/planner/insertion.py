@@ -140,8 +140,9 @@ def _resolve_insertion_context(
 
     Source-only adds (``manual_input`` / ``read`` / ``database_reader`` /
     ``cloud_storage_reader`` / ``catalog_reader`` / ``kafka_source`` /
-    ``google_analytics_reader`` / ``external_source``) bypass every tier
-    and return empty upstream / right_input — they have no input port.
+    ``google_analytics_reader`` / ``rest_api_reader`` / ``external_source``)
+    bypass every tier and return empty upstream / right_input — they have no
+    input port.
     """
     args: dict[str, Any] = tc.arguments or {}
 

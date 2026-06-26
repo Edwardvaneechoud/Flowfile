@@ -72,7 +72,7 @@ when the user wants to inspect intermediate results.
 
 Source-only nodes (``manual_input``, ``read``, ``database_reader``,
 ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``,
-``google_analytics_reader``, ``external_source``) are NOT writers
+``google_analytics_reader``, ``rest_api_reader``, ``external_source``) are NOT writers
 either — they **provide** data, they don't consume it. ``add_<source>``
 calls are always allowed and must never be refused on writer-block
 grounds. Source nodes have no input port; they stand alone by default

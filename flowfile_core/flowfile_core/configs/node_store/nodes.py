@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from flowfile_core.schemas.schemas import NodeDefault, NodeTag, NodeTemplate
 
 
@@ -297,7 +299,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Explore Data",
             drawer_intro="Interactive data exploration and analysis",
             laziness="eager",
-            tags=[NodeTag.EXPLORE, NodeTag.PROFILE, NodeTag.PREVIEW, NodeTag.EDA, NodeTag.STATISTICS],
+            tags=[NodeTag.EXPLORE, NodeTag.PROFILE, NodeTag.PREVIEW, NodeTag.EDA, NodeTag.STATISTICS, NodeTag.VISUALIZE,
+                  NodeTag.INSIGHT, NodeTag.BAR_CHART, NodeTag.GRAPHS],
         ),
         NodeTemplate(
             name="Pivot data",
@@ -727,3 +730,19 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
     )
 
     return nodes_list, node_dict, node_defaults
+
+
+@lru_cache(maxsize=1)
+def get_source_node_types() -> tuple[str, ...]:
+    """Source-only node types (no input port), compiled once at startup from the
+    registry. Single source of truth for the connection validator and AI prose;
+    excludes the dict-only ``polars_lazy_frame``.
+    """
+    templates, _, _ = get_all_standard_nodes()
+    return tuple(sorted(t.item for t in templates if t.input == 0))
+
+
+@lru_cache(maxsize=1)
+def get_source_node_types_str() -> str:
+    """Comma-joined source node types for prose mentions (single build site)."""
+    return ", ".join(get_source_node_types())
