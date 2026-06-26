@@ -99,9 +99,9 @@ class ConnectorHandlersMixin(ConverterMixinBase):
             self._add_code(f"{var_name} = ff.read_database(")
             self._add_code(f"    {self._py_str(connection_name)},")
             if db_settings.table_name:
-                self._add_code(f'    table_name="{db_settings.table_name}",')
+                self._add_code(f"    table_name={self._py_str(db_settings.table_name)},")
             if db_settings.schema_name:
-                self._add_code(f'    schema_name="{db_settings.schema_name}",')
+                self._add_code(f"    schema_name={self._py_str(db_settings.schema_name)},")
             self._add_code(f"){suffix}")
 
         self._add_code("")
@@ -135,11 +135,11 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code("ff.write_database(")
         self._add_code(f"    {input_df},")
         self._add_code(f"    {self._py_str(connection_name)},")
-        self._add_code(f'    "{db_settings.table_name}",')
+        self._add_code(f"    {self._py_str(db_settings.table_name)},")
         if db_settings.schema_name:
-            self._add_code(f'    schema_name="{db_settings.schema_name}",')
+            self._add_code(f"    schema_name={self._py_str(db_settings.schema_name)},")
         if db_settings.if_exists:
-            self._add_code(f'    if_exists="{db_settings.if_exists}",')
+            self._add_code(f"    if_exists={self._py_str(db_settings.if_exists)},")
         self._add_code(")")
         self._add_code(f"{var_name} = {input_df}")
         self._add_code("")
@@ -289,7 +289,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         suffix = ".data" if self.framework == "pl" else ""
         self._add_code(f"# Read from catalog table: {table_name}")
         self._add_code(f"{var_name} = ff.read_catalog_table(")
-        self._add_code(f'    "{table_name}",')
+        self._add_code(f"    {self._py_str(table_name)},")
         if settings.catalog_namespace_id is not None:
             self._add_code(f"    namespace_id={settings.catalog_namespace_id},")
         if settings.delta_version is not None:
@@ -299,11 +299,12 @@ class ConnectorHandlersMixin(ConverterMixinBase):
 
     def _handle_catalog_sql_reader(self, settings: input_schema.NodeCatalogReader, var_name: str) -> None:
         sql_code = settings.sql_query.replace('"""', '\\"\\"\\"')
+        suffix = ".data" if self.framework == "pl" else ""
         self._add_code("# SQL query against catalog tables")
         self._add_code(f'{var_name} = ff.read_catalog_sql("""')
         for line in sql_code.split("\n"):
             self._add_code(line)
-        self._add_code('""")')
+        self._add_code(f'"""){suffix}')
         self._add_code("")
 
     def _handle_catalog_writer(
@@ -322,10 +323,10 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code(f"# Write to catalog table: {ws.table_name}")
         self._add_code("ff.write_catalog_table(")
         self._add_code(f"    {input_df},")
-        self._add_code(f'    "{ws.table_name}",')
+        self._add_code(f"    {self._py_str(ws.table_name)},")
         if ws.namespace_id is not None:
             self._add_code(f"    namespace_id={ws.namespace_id},")
-        self._add_code(f'    write_mode="{ws.write_mode}",')
+        self._add_code(f"    write_mode={self._py_str(ws.write_mode)},")
         if ws.merge_keys:
             self._add_code(f"    merge_keys={ws.merge_keys},")
         if ws.description:

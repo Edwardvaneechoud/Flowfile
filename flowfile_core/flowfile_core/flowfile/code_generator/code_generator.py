@@ -1,7 +1,9 @@
 import ast
 import builtins
+import io
 import keyword
 import re
+import tokenize
 
 import polars as pl
 from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code
@@ -328,7 +330,7 @@ class FlowGraphCodeConverter(
         polars_schema_str = (
             f"{self.framework}.Schema(["
             + ", ".join(
-                f'("{flowfile_column.column_name}", {self.framework}.{flowfile_column.data_type})'
+                f"({self._py_str(flowfile_column.column_name)}, {self.framework}.{flowfile_column.data_type})"
                 for flowfile_column in flowfile_schema
             )
             + "])"
@@ -341,7 +343,7 @@ class FlowGraphCodeConverter(
         if is_valid_pl_schema:
             return polars_schema_str
         else:
-            return "[" + ", ".join([f'"{c.name}"' for c in flowfile_schema]) + "]"
+            return "[" + ", ".join([self._py_str(c.name) for c in flowfile_schema]) + "]"
 
     @staticmethod
     def _validate_pl_schema(pl_schema_str: str) -> bool:
@@ -365,6 +367,20 @@ class FlowGraphCodeConverter(
         self._add_code(f"{var_name} = {self.framework}.LazyFrame({data}, schema={schema}, strict=False)")
         self._add_code("")
 
+    def _column_dtype(self, node_id: int, field: str) -> str | None:
+        """Predicted Polars dtype string (e.g. ``"Boolean"``) of ``field`` on ``node_id``'s
+        output schema, or None when unavailable. Filter is schema-preserving, so the filter
+        node's own predicted schema carries the input column dtypes."""
+        try:
+            node = self.flow_graph.get_node(node_id)
+            schema = node.get_predicted_schema() if node is not None else None
+        except Exception:
+            return None
+        for col in schema or []:
+            if col.column_name == field:
+                return col.data_type
+        return None
+
     def _handle_filter(self, settings: input_schema.NodeFilter, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle filter nodes."""
         input_df = input_vars.get("main", "df")
@@ -378,12 +394,13 @@ class FlowGraphCodeConverter(
                 "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
             )
             self._add_code(f"{var_name} = {input_df}.filter(")
-            self._add_code(f'simple_function_to_expr("{settings.filter_input.advanced_filter}")')
+            self._add_code(f"simple_function_to_expr({self._py_str(settings.filter_input.advanced_filter)})")
             self._add_code(")")
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
-                filter_expr = self._create_basic_filter_expr(basic)
+                field_dtype = self._column_dtype(settings.node_id, basic.field)
+                filter_expr = self._create_basic_filter_expr(basic, field_dtype)
                 self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
             else:
                 self._add_code(f"{var_name} = {input_df}  # No filter applied")
@@ -402,11 +419,13 @@ class FlowGraphCodeConverter(
             self.imports.add(
                 "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
             )
-            self._add_code(f'{pred_var} = simple_function_to_expr("{settings.filter_input.advanced_filter}")')
+            adv = self._py_str(settings.filter_input.advanced_filter)
+            self._add_code(f"{pred_var} = simple_function_to_expr({adv})")
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
-                self._add_code(f"{pred_var} = {self._create_basic_filter_expr(basic)}")
+                field_dtype = self._column_dtype(settings.node_id, basic.field)
+                self._add_code(f"{pred_var} = {self._create_basic_filter_expr(basic, field_dtype)}")
             else:
                 # No predicate -> pass keeps everything, fail is empty.
                 self._add_code(f"{pred_var} = {self.framework}.lit(True)")
@@ -429,9 +448,9 @@ class FlowGraphCodeConverter(
         to_col_name = settings.graph_solver_input.col_to
         output_col_name = settings.graph_solver_input.output_column_name
         self._add_code(
-            f'{var_name} = {input_df}.with_columns(graph_solver({self.framework}.col("{from_col_name}"), '
-            f'{self.framework}.col("{to_col_name}"))'
-            f'.alias("{output_col_name}"))'
+            f"{var_name} = {input_df}.with_columns(graph_solver({self.framework}.col({self._py_str(from_col_name)}), "
+            f"{self.framework}.col({self._py_str(to_col_name)}))"
+            f".alias({self._py_str(output_col_name)}))"
         )
         self._add_code("")
         self.imports.add("from polars_grouper import graph_solver")
@@ -442,10 +461,11 @@ class FlowGraphCodeConverter(
         select_exprs = []
         for select_input in settings.select_input:
             if select_input.keep and select_input.is_available:
+                col = f"{self.framework}.col({self._py_str(select_input.old_name)})"
                 if select_input.old_name != select_input.new_name:
-                    expr = f'{self.framework}.col("{select_input.old_name}").alias("{select_input.new_name}")'
+                    expr = f"{col}.alias({self._py_str(select_input.new_name)})"
                 else:
-                    expr = f'{self.framework}.col("{select_input.old_name}")'
+                    expr = col
 
                 if (select_input.data_type_change or select_input.is_altered) and select_input.data_type:
                     polars_dtype = self._get_polars_dtype(select_input.data_type)
@@ -711,9 +731,27 @@ class FlowGraphCodeConverter(
         return candidate
 
     def _apply_renames(self, body: list[str], rename: dict[str, str]) -> list[str]:
-        """Substitute provisional tokens with final names across body + return targets."""
+        """Substitute provisional tokens with final names across body + return targets.
+
+        Renames only identifier (NAME) tokens, never identifiers inside string or
+        comment tokens, so a column literal like ``pl.col("df_2")`` survives intact.
+        Falls back to the legacy regex when the body is not tokenizable, so behaviour
+        degrades (less precise) rather than breaking.
+        """
         if not rename:
             return body
+        out = self._rename_tokens(body, rename)
+        if out is None:
+            out = self._rename_regex(body, rename)
+        self.output_nodes = [(nid, rename.get(var, var)) for nid, var in self.output_nodes]
+        if self.last_node_var is not None:
+            self.last_node_var = rename.get(self.last_node_var, self.last_node_var)
+        return out
+
+    @staticmethod
+    def _rename_regex(body: list[str], rename: dict[str, str]) -> list[str]:
+        """Legacy fallback: regex substitution over whole lines (used only when the
+        body cannot be tokenized)."""
         # `(?!=)` leaves keyword-argument names (``param=``, no surrounding spaces)
         # untouched while still renaming assignment targets (``var = ``) and value
         # references — e.g. a notebook call ``run(df_1=df_1.data)`` keeps its
@@ -724,9 +762,48 @@ class FlowGraphCodeConverter(
             for pat, new in patterns:
                 line = pat.sub(new, line)
             out.append(line)
-        self.output_nodes = [(nid, rename.get(var, var)) for nid, var in self.output_nodes]
-        if self.last_node_var is not None:
-            self.last_node_var = rename.get(self.last_node_var, self.last_node_var)
+        return out
+
+    @staticmethod
+    def _rename_tokens(body: list[str], rename: dict[str, str]) -> list[str] | None:
+        """Rename NAME tokens only, leaving string/comment tokens untouched.
+
+        Returns the rewritten body (same element structure as the input), or None
+        when the joined body cannot be tokenized so the caller can fall back.
+        """
+        source = "\n".join(body)
+        try:
+            tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+        except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+            return None
+        physical = source.split("\n")
+        edits: dict[int, list[tuple[int, int, str]]] = {}
+        for tok in tokens:
+            if tok.type != tokenize.NAME:
+                continue
+            new = rename.get(tok.string)
+            if new is None:
+                continue
+            (srow, scol), (_erow, ecol) = tok.start, tok.end  # NAME tokens never span lines
+            line = physical[srow - 1]
+            # Replicate the legacy `(?!=)`: skip ``param=`` (kwarg/contract names) while
+            # still renaming assignment targets (``var = ``) and value references.
+            if ecol < len(line) and line[ecol] == "=":
+                continue
+            edits.setdefault(srow - 1, []).append((scol, ecol, new))
+        for idx, line_edits in edits.items():
+            line = physical[idx]
+            for scol, ecol, new in sorted(line_edits, reverse=True):  # right-to-left keeps cols valid
+                line = line[:scol] + new + line[ecol:]
+            physical[idx] = line
+        # Re-group physical lines back into the original body element structure
+        # (some elements carry embedded newlines, e.g. the fuzzy-join emit).
+        out: list[str] = []
+        pos = 0
+        for element in body:
+            span = element.count("\n") + 1
+            out.append("\n".join(physical[pos : pos + span]))
+            pos += span
         return out
 
     def add_return_code(self, lines: list[str]) -> None:
@@ -1047,7 +1124,8 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
-                filter_expr = self._create_basic_filter_expr(basic)
+                field_dtype = self._column_dtype(settings.node_id, basic.field)
+                filter_expr = self._create_basic_filter_expr(basic, field_dtype)
                 self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
             else:
                 self._add_code(f"{var_name} = {input_df}  # No filter applied")
@@ -1070,7 +1148,8 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
-                filter_expr = self._create_basic_filter_expr(basic)
+                field_dtype = self._column_dtype(settings.node_id, basic.field)
+                filter_expr = self._create_basic_filter_expr(basic, field_dtype)
                 self._add_code(f"{pass_var}, {fail_var} = {input_df}.filter_split({filter_expr})")
             else:
                 # No predicate -> mirror polars-variant fallback (pass keeps all, fail empty).

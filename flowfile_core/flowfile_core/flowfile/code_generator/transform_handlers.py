@@ -23,7 +23,9 @@ class TransformHandlersMixin(ConverterMixinBase):
                 group_cols.append(agg_col.old_name)
             else:
                 agg_func = self._get_agg_function(agg_col.agg)
-                expr = f'{self.framework}.col("{agg_col.old_name}").{agg_func}().alias("{agg_col.new_name}")'
+                old = self._py_str(agg_col.old_name)
+                new = self._py_str(agg_col.new_name)
+                expr = f"{self.framework}.col({old}).{agg_func}().alias({new})"
                 agg_exprs.append(expr)
 
         self._add_code(f"{var_name} = {input_df}.group_by({group_cols}).agg([")
@@ -55,7 +57,7 @@ class TransformHandlersMixin(ConverterMixinBase):
         # (b) post-process the expression to replace `pl.` with `{self.framework}.`, or
         # (c) make to_polars_code() accept a framework prefix parameter.
         if can_convert_to_pl_code:
-            expr_str = f'({pl_code}).alias("{col_name}")'
+            expr_str = f"({pl_code}).alias({self._py_str(col_name)})"
             if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
                 output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
                 if output_type[:3] != f"{self.framework}.":
@@ -68,7 +70,7 @@ class TransformHandlersMixin(ConverterMixinBase):
                 "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
             )
             self._add_code(f"{var_name} = {input_df}.with_columns([")
-            self._add_code(f'simple_function_to_expr({repr(formula)}).alias("{col_name}")')
+            self._add_code(f"simple_function_to_expr({formula!r}).alias({self._py_str(col_name)})")
             if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
                 output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
                 if output_type[:3] != f"{self.framework}.":
@@ -82,9 +84,9 @@ class TransformHandlersMixin(ConverterMixinBase):
         self._add_code(f"{var_name} = ({input_df}.collect()")
         self._add_code(f'    .with_columns({self.framework}.lit(1).alias("_temp_index_"))')
         self._add_code("    .pivot(")
-        self._add_code(f'        values="{pivot_input.value_col}",')
+        self._add_code(f"        values={self._py_str(pivot_input.value_col)},")
         self._add_code('        index=["_temp_index_"],')
-        self._add_code(f'        on="{pivot_input.pivot_column}",')
+        self._add_code(f"        on={self._py_str(pivot_input.pivot_column)},")
         self._add_code(f'        aggregate_function="{agg_func}"')
         self._add_code("    )")
         self._add_code('    .drop("_temp_index_")')
@@ -105,9 +107,9 @@ class TransformHandlersMixin(ConverterMixinBase):
             self._handle_pivot_no_index(settings, var_name, input_df, agg_func)
         else:
             self._add_code(f"{var_name} = {input_df}.collect().pivot(")
-            self._add_code(f"    values='{pivot_input.value_col}',")
+            self._add_code(f"    values={self._py_str(pivot_input.value_col)},")
             self._add_code(f"    index={pivot_input.index_columns},")
-            self._add_code(f"    on='{pivot_input.pivot_column}',")
+            self._add_code(f"    on={self._py_str(pivot_input.pivot_column)},")
 
             self._add_code(f"    aggregate_function='{agg_func}'")
             self._add_code(").lazy()")
@@ -160,7 +162,7 @@ class TransformHandlersMixin(ConverterMixinBase):
         descending = []
 
         for sort_input in settings.sort_input:
-            sort_cols.append(f'"{sort_input.column}"')
+            sort_cols.append(self._py_str(sort_input.column))
             descending.append(sort_input.descending)
 
         self._add_code(f"{var_name} = {input_df}.sort([{', '.join(sort_cols)}], descending={descending})")
@@ -193,17 +195,17 @@ class TransformHandlersMixin(ConverterMixinBase):
                 kwargs += ", min_samples=1"
             elif w.min_periods is not None:
                 kwargs += f", min_samples={w.min_periods}"
-            base = f'{fw}.col("{w.column}").{func}({kwargs})'
+            base = f"{fw}.col({self._py_str(w.column)}).{func}({kwargs})"
             if behavior == "fill_zero":
                 base = f"{base}.fill_null(0)"
-            return f'{over(base)}.alias("{w.new_column_name}")'
+            return f"{over(base)}.alias({self._py_str(w.new_column_name)})"
         if func.startswith("cum_"):
-            base = f'{fw}.col("{w.column}").{func}()'
-            return f'{over(base)}.alias("{w.new_column_name}")'
+            base = f"{fw}.col({self._py_str(w.column)}).{func}()"
+            return f"{over(base)}.alias({self._py_str(w.new_column_name)})"
         if func == "rank":
             method = w.rank_method or "ordinal"
-            base = f'{fw}.col("{w.column}").rank(method="{method}")'
-            return f'{over(base)}.alias("{w.new_column_name}")'
+            base = f"{fw}.col({self._py_str(w.column)}).rank(method={self._py_str(method)})"
+            return f"{over(base)}.alias({self._py_str(w.new_column_name)})"
         if func == "tile":
             # Tile uses only Expr methods (cum_count, when/then/otherwise) and the
             # framework-level ``len()`` so it works in both pl and ff codegen.
@@ -211,7 +213,7 @@ class TransformHandlersMixin(ConverterMixinBase):
                 raise ValueError("tile requires at least one order_by column")
             order_col = order_by[0].column
             n = int(w.number_of_groups)
-            pos = over(f'{fw}.col("{order_col}").cum_count()') + " - 1"  # 0..N-1 per group
+            pos = over(f"{fw}.col({self._py_str(order_col)}).cum_count()") + " - 1"  # 0..N-1 per group
             group_len = over(f"{fw}.len()")
             big = f"(({group_len}) + {n} - 1) // {n}"
             threshold = f"(({group_len}) % {n}) * ({big})"
@@ -225,7 +227,7 @@ class TransformHandlersMixin(ConverterMixinBase):
                 f".otherwise((({pos}) - ({threshold})) // ({small}) + (({group_len}) % {n}) + 1)"
                 f".cast({fw}.Int64)"
             )
-            return f'{expr}.alias("{w.new_column_name}")'
+            return f"{expr}.alias({self._py_str(w.new_column_name)})"
         raise ValueError(f"Unsupported window function: {func!r}")
 
     def _handle_window_functions(
@@ -237,7 +239,7 @@ class TransformHandlersMixin(ConverterMixinBase):
 
         sorted_df = input_df
         if window_input.order_by:
-            sort_cols = [f'"{s.column}"' for s in window_input.order_by]
+            sort_cols = [self._py_str(s.column) for s in window_input.order_by]
             descending = [s.descending for s in window_input.order_by]
             self._add_code(f"{var_name} = {input_df}.sort([{', '.join(sort_cols)}], descending={descending})")
             sorted_df = var_name
@@ -327,14 +329,16 @@ class TransformHandlersMixin(ConverterMixinBase):
         input_df = input_vars.get("main", "df")
         text_input = settings.text_to_rows_input
 
-        split_expr = f'{self.framework}.col("{text_input.column_to_split}").str.split("{text_input.split_fixed_value}")'
+        split_col = self._py_str(text_input.column_to_split)
+        split_sep = self._py_str(text_input.split_fixed_value)
+        split_expr = f"{self.framework}.col({split_col}).str.split({split_sep})"
         if text_input.output_column_name and text_input.output_column_name != text_input.column_to_split:
-            split_expr = f'{split_expr}.alias("{text_input.output_column_name}")'
+            split_expr = f"{split_expr}.alias({self._py_str(text_input.output_column_name)})"
             explode_col = text_input.output_column_name
         else:
             explode_col = text_input.column_to_split
 
-        self._add_code(f"{var_name} = {input_df}.with_columns({split_expr}).explode('{explode_col}')")
+        self._add_code(f"{var_name} = {input_df}.with_columns({split_expr}).explode({self._py_str(explode_col)})")
         self._add_code("")
 
     # .with_columns(
@@ -346,28 +350,24 @@ class TransformHandlersMixin(ConverterMixinBase):
         """Handle record ID nodes."""
         input_df = input_vars.get("main", "df")
         record_input = settings.record_id_input
+        out_lit = self._py_str(record_input.output_column_name)
         if record_input.group_by and record_input.group_by_columns:
             self._add_code(f"{var_name} = ({input_df}")
-            self._add_code(f"    .with_columns({self.framework}.lit(1).alias('{record_input.output_column_name}'))")
+            self._add_code(f"    .with_columns({self.framework}.lit(1).alias({out_lit}))")
             self._add_code("    .with_columns([")
             # cum_count is 1-indexed, so the net shift is (offset - 1); emit it only
             # when it does not cancel out (default offset=1 -> bare cum_count).
             delta = record_input.offset - 1
             offset_expr = "" if delta == 0 else (f" + {delta}" if delta > 0 else f" - {abs(delta)}")
             self._add_code(
-                f"    ({self.framework}.cum_count('{record_input.output_column_name}')"
-                f".over({record_input.group_by_columns}){offset_expr})"
+                f"    ({self.framework}.cum_count({out_lit}).over({record_input.group_by_columns}){offset_expr})"
             )
-            self._add_code(f"    .alias('{record_input.output_column_name}')")
+            self._add_code(f"    .alias({out_lit})")
             self._add_code("])")
-            out_col = record_input.output_column_name
-            self._add_code(f".select(['{out_col}'] + [col for col in {input_df}.columns if col != '{out_col}'])")
+            self._add_code(f".select([{out_lit}] + [col for col in {input_df}.columns if col != {out_lit}])")
             self._add_code(")")
         else:
-            self._add_code(
-                f"{var_name} = {input_df}.with_row_count("
-                f"name='{record_input.output_column_name}', offset={record_input.offset})"
-            )
+            self._add_code(f"{var_name} = {input_df}.with_row_count(name={out_lit}, offset={record_input.offset})")
         self._add_code("")
 
     def _handle_cross_join(

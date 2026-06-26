@@ -64,18 +64,28 @@ class JoinHandlersMixin(ConverterMixinBase):
             for column in join_input_manager.left_select.renames
             if not column.keep and not column.join_key
         ]
+        # Write transforms to a node-local temp so a fanned-out upstream frame isn't rebound.
+        left_tmp = f"_join_{settings.node_id}_left"
         if left_renames:
-            self._add_code(f"{left_df} = {left_df}.rename({left_renames})")
+            self._add_code(f"{left_tmp} = {left_df}.rename({left_renames})")
+            left_df = left_tmp
         if left_drop_columns:
-            self._add_code(f"{left_df} = {left_df}.drop({left_drop_columns})")
+            self._add_code(f"{left_tmp} = {left_df}.drop({left_drop_columns})")
+            left_df = left_tmp
 
-        # Semi/anti joins have no post-processing, so no outer parens are needed.
-        self._add_code(f"{var_name} = {left_df}.join(")
+        # Mirror FlowDataEngine.join: drop the left join-key columns the user marked not-keep.
+        after_join_drop_cols = [k.new_name for k in join_input_manager.left_select.join_key_selects if not k.keep]
+        has_post = bool(after_join_drop_cols)
+        self._add_code(f"{var_name} = {'(' if has_post else ''}{left_df}.join(")
         self._add_code(f"        {right_df},")
         self._add_code(f"        left_on={left_on},")
         self._add_code(f"        right_on={right_on},")
         self._add_code(f'        how="{settings.join_input.how}"')
         self._add_code("    )")
+        if after_join_drop_cols:
+            self._add_code(f".drop([{', '.join(self._py_str(c) for c in after_join_drop_cols)}])")
+        if has_post:
+            self._add_code(")")
 
     def _handle_standard_join(
         self, settings: input_schema.NodeJoin, var_name: str, left_df: str, right_df: str
@@ -106,9 +116,13 @@ class JoinHandlersMixin(ConverterMixinBase):
         join_input_manager.auto_rename()
         left_on, right_on = self._get_join_keys(join_input_manager)
 
-        left_df, right_df = self._apply_pre_join_transformations(join_input_manager, left_df, right_df)
-        left_on, right_on, reverse_action, after_join_drop_cols = self._handle_join_key_transformations(
-            join_input_manager, left_df, right_df, left_on, right_on
+        left_df, right_df = self._apply_pre_join_transformations(
+            join_input_manager, left_df, right_df, settings.node_id
+        )
+        left_df, right_df, left_on, right_on, reverse_action, after_join_drop_cols = (
+            self._handle_join_key_transformations(
+                join_input_manager, left_df, right_df, left_on, right_on, settings.node_id
+            )
         )
         self._execute_join_with_post_processing(
             settings, var_name, left_df, right_df, left_on, right_on, after_join_drop_cols, reverse_action
@@ -138,7 +152,7 @@ class JoinHandlersMixin(ConverterMixinBase):
         return left_on, right_on
 
     def _apply_pre_join_transformations(
-        self, settings: transform_schema.JoinInputManager, left_df: str, right_df: str
+        self, settings: transform_schema.JoinInputManager, left_df: str, right_df: str, node_id: int
     ) -> tuple[str, str]:
         """Apply column renames and drops before the join operation.
 
@@ -147,14 +161,18 @@ class JoinHandlersMixin(ConverterMixinBase):
         - Dropping columns marked as not to keep (except join keys)
         - Special handling for right/outer joins where join keys may need preservation
 
+        Transforms are written to node-local temps (``_join_<node_id>_left/right``) and the
+        returned names point at those temps, so a fanned-out upstream frame referenced by a
+        sibling branch is never rebound.
+
         Args:
             settings: NodeJoin settings containing column rename/drop specifications
             left_df: Variable name of the left DataFrame
             right_df: Variable name of the right DataFrame
+            node_id: Join node id, used to name the node-local temp variables
 
         Returns:
-            Tuple[str, str]: The same DataFrame variable names (left_df, right_df)
-                Note: DataFrames are modified via generated code, not new variables
+            Tuple[str, str]: The (possibly rebound) left/right DataFrame variable names
         """
         right_renames = {
             column.old_name: column.new_name
@@ -178,14 +196,20 @@ class JoinHandlersMixin(ConverterMixinBase):
             column.old_name for column in settings.right_select.renames if not column.keep and not column.join_key
         ]
 
+        left_tmp = f"_join_{node_id}_left"
+        right_tmp = f"_join_{node_id}_right"
         if right_renames:
-            self._add_code(f"{right_df} = {right_df}.rename({right_renames})")
+            self._add_code(f"{right_tmp} = {right_df}.rename({right_renames})")
+            right_df = right_tmp
         if left_renames:
-            self._add_code(f"{left_df} = {left_df}.rename({left_renames})")
+            self._add_code(f"{left_tmp} = {left_df}.rename({left_renames})")
+            left_df = left_tmp
         if left_drop_columns:
-            self._add_code(f"{left_df} = {left_df}.drop({left_drop_columns})")
+            self._add_code(f"{left_tmp} = {left_df}.drop({left_drop_columns})")
+            left_df = left_tmp
         if right_drop_columns:
-            self._add_code(f"{right_df} = {right_df}.drop({right_drop_columns})")
+            self._add_code(f"{right_tmp} = {right_df}.drop({right_drop_columns})")
+            right_df = right_tmp
 
         return left_df, right_df
 
@@ -196,11 +220,14 @@ class JoinHandlersMixin(ConverterMixinBase):
         right_df: str,
         left_on: list[str],
         right_on: list[str],
-    ) -> tuple[list[str], list[str], dict | None, list[str]]:
+        node_id: int,
+    ) -> tuple[str, str, list[str], list[str], dict | None, list[str]]:
         """Route to appropriate join-specific key transformation handler.
 
         Different join types require different strategies for handling join keys
-        to avoid conflicts and preserve necessary columns.
+        to avoid conflicts and preserve necessary columns. Each sub-handler writes its
+        key-duplication step to a node-local temp and returns the rebound df name, so a
+        shared upstream frame is never reassigned.
 
         Args:
             settings: NodeJoin settings containing join configuration
@@ -208,9 +235,12 @@ class JoinHandlersMixin(ConverterMixinBase):
             right_df: Variable name of the right DataFrame
             left_on: List of left DataFrame column names to join on
             right_on: List of right DataFrame column names to join on
+            node_id: Join node id, used to name the node-local temp variables
 
         Returns:
             Tuple containing:
+                - left_df: Potentially rebound left DataFrame variable name
+                - right_df: Potentially rebound right DataFrame variable name
                 - left_on: Potentially modified list of left join columns
                 - right_on: Potentially modified list of right join columns
                 - reverse_action: Dictionary for renaming columns after join (or None)
@@ -219,17 +249,29 @@ class JoinHandlersMixin(ConverterMixinBase):
         join_type = settings.how
 
         if join_type in ("left", "inner"):
-            return self._handle_left_inner_join_keys(settings, right_df, left_on, right_on)
+            right_df, left_on, right_on, reverse_action, after_join_drop_cols = self._handle_left_inner_join_keys(
+                settings, right_df, left_on, right_on, node_id
+            )
         elif join_type == "right":
-            return self._handle_right_join_keys(settings, left_df, left_on, right_on)
+            left_df, left_on, right_on, reverse_action, after_join_drop_cols = self._handle_right_join_keys(
+                settings, left_df, left_on, right_on, node_id
+            )
         elif join_type == "outer":
-            return self._handle_outer_join_keys(settings, right_df, left_on, right_on)
+            right_df, left_on, right_on, reverse_action, after_join_drop_cols = self._handle_outer_join_keys(
+                settings, right_df, left_on, right_on, node_id
+            )
         else:
-            return left_on, right_on, None, []
+            reverse_action, after_join_drop_cols = None, []
+        return left_df, right_df, left_on, right_on, reverse_action, after_join_drop_cols
 
     def _handle_left_inner_join_keys(
-        self, settings: transform_schema.JoinInputManager, right_df: str, left_on: list[str], right_on: list[str]
-    ) -> tuple[list[str], list[str], dict, list[str]]:
+        self,
+        settings: transform_schema.JoinInputManager,
+        right_df: str,
+        left_on: list[str],
+        right_on: list[str],
+        node_id: int,
+    ) -> tuple[str, list[str], list[str], dict, list[str]]:
         """Handle key transformations for left and inner joins.
 
         For left/inner joins:
@@ -242,15 +284,16 @@ class JoinHandlersMixin(ConverterMixinBase):
             right_df: Variable name of the right DataFrame
             left_on: List of left DataFrame column names to join on
             right_on: List of right DataFrame column names to join on
+            node_id: Join node id, used to name the node-local temp variable
 
         Returns:
             Tuple containing:
+                - right_df: Potentially rebound right DataFrame variable name
                 - left_on: Unchanged left join columns
                 - right_on: Unchanged right join columns
                 - reverse_action: Mapping to rename __DROP__ columns after join
                 - after_join_drop_cols: Left join keys marked for dropping
         """
-        [jk.new_name for jk in settings.left_select.join_key_selects if jk.keep]
         join_key_duplication_command = [
             f"{self.framework}.col({self._py_str(rjk.old_name)})"
             f".alias({self._py_str('__DROP__' + rjk.new_name + '__DROP__')})"
@@ -265,15 +308,22 @@ class JoinHandlersMixin(ConverterMixinBase):
         }
 
         if join_key_duplication_command:
-            self._add_code(f"{right_df} = {right_df}.with_columns([{', '.join(join_key_duplication_command)}])")
+            right_tmp = f"_join_{node_id}_right"
+            self._add_code(f"{right_tmp} = {right_df}.with_columns([{', '.join(join_key_duplication_command)}])")
+            right_df = right_tmp
 
         after_join_drop_cols = [k.new_name for k in settings.left_select.join_key_selects if not k.keep]
 
-        return left_on, right_on, reverse_action, after_join_drop_cols
+        return right_df, left_on, right_on, reverse_action, after_join_drop_cols
 
     def _handle_right_join_keys(
-        self, settings: transform_schema.JoinInputManager, left_df: str, left_on: list[str], right_on: list[str]
-    ) -> tuple[list[str], list[str], None, list[str]]:
+        self,
+        settings: transform_schema.JoinInputManager,
+        left_df: str,
+        left_on: list[str],
+        right_on: list[str],
+        node_id: int,
+    ) -> tuple[str, list[str], list[str], None, list[str]]:
         """Handle key transformations for right joins.
 
         For right joins:
@@ -286,9 +336,11 @@ class JoinHandlersMixin(ConverterMixinBase):
             left_df: Variable name of the left DataFrame
             left_on: List of left DataFrame column names to join on
             right_on: List of right DataFrame column names to join on
+            node_id: Join node id, used to name the node-local temp variable
 
         Returns:
             Tuple containing:
+                - left_df: Potentially rebound left DataFrame variable name
                 - left_on: Modified left join columns with __jk_ prefix where needed
                 - right_on: Unchanged right join columns
                 - reverse_action: None (no post-join renaming needed)
@@ -306,7 +358,9 @@ class JoinHandlersMixin(ConverterMixinBase):
                 left_on[position] = f"__jk_{left_on_select.new_name}"
 
         if join_key_duplication_command:
-            self._add_code(f"{left_df} = {left_df}.with_columns([{', '.join(join_key_duplication_command)}])")
+            left_tmp = f"_join_{node_id}_left"
+            self._add_code(f"{left_tmp} = {left_df}.with_columns([{', '.join(join_key_duplication_command)}])")
+            left_df = left_tmp
 
         left_join_keys_keep = {jk.new_name for jk in settings.left_select.join_key_selects if jk.keep}
         after_join_drop_cols_right = [
@@ -315,11 +369,16 @@ class JoinHandlersMixin(ConverterMixinBase):
             if not jk.keep
         ]
         after_join_drop_cols = list(dict.fromkeys(after_join_drop_cols_right))
-        return left_on, right_on, None, after_join_drop_cols
+        return left_df, left_on, right_on, None, after_join_drop_cols
 
     def _handle_outer_join_keys(
-        self, settings: transform_schema.JoinInputManager, right_df: str, left_on: list[str], right_on: list[str]
-    ) -> tuple[list[str], list[str], dict, list[str]]:
+        self,
+        settings: transform_schema.JoinInputManager,
+        right_df: str,
+        left_on: list[str],
+        right_on: list[str],
+        node_id: int,
+    ) -> tuple[str, list[str], list[str], dict, list[str]]:
         """Handle key transformations for outer joins.
 
         For outer joins:
@@ -332,9 +391,11 @@ class JoinHandlersMixin(ConverterMixinBase):
             right_df: Variable name of the right DataFrame
             left_on: List of left DataFrame column names to join on
             right_on: List of right DataFrame column names to join on
+            node_id: Join node id, used to name the node-local temp variable
 
         Returns:
             Tuple containing:
+                - right_df: Potentially rebound right DataFrame variable name
                 - left_on: Unchanged left join columns
                 - right_on: Modified right join columns with __jk_ prefix where needed
                 - reverse_action: Mapping to remove __jk_ prefix after join
@@ -354,7 +415,9 @@ class JoinHandlersMixin(ConverterMixinBase):
                 right_on[position] = f"__jk_{right_on_select.new_name}"
 
         if join_key_rename_command:
-            self._add_code(f"{right_df} = {right_df}.rename({join_key_rename_command})")
+            right_tmp = f"_join_{node_id}_right"
+            self._add_code(f"{right_tmp} = {right_df}.rename({join_key_rename_command})")
+            right_df = right_tmp
 
         reverse_action = {f"__jk_{rjk.new_name}": rjk.new_name for rjk in join_keys_to_keep_and_rename}
 
@@ -366,7 +429,7 @@ class JoinHandlersMixin(ConverterMixinBase):
         ]
         after_join_drop_cols = after_join_drop_cols_left + after_join_drop_cols_right
 
-        return left_on, right_on, reverse_action, after_join_drop_cols
+        return right_df, left_on, right_on, reverse_action, after_join_drop_cols
 
     def _execute_join_with_post_processing(
         self,

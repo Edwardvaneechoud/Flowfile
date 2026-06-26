@@ -28,13 +28,16 @@ class ExpressionHelpersMixin(ConverterMixinBase):
 
         return re.sub(pattern, replace_expr, expr)
 
-    def _create_basic_filter_expr(self, basic: transform_schema.BasicFilter) -> str:
+    def _create_basic_filter_expr(self, basic: transform_schema.BasicFilter, field_dtype: str | None = None) -> str:
         """Create Polars expression from basic filter.
 
-        Generates proper Polars code for all supported filter operators.
+        Generates proper Polars code for all supported filter operators. When the column
+        dtype is known to be Boolean, comparison values render as Python bool literals
+        (``True``/``False``) instead of strings, matching the runtime filter semantics.
 
         Args:
             basic: The BasicFilter configuration.
+            field_dtype: Predicted column dtype string (e.g. ``"Boolean"``), or None.
 
         Returns:
             A string containing valid Polars filter expression code.
@@ -44,8 +47,18 @@ class ExpressionHelpersMixin(ConverterMixinBase):
         col = f"{self.framework}.col({self._py_str(basic.field)})"
         value = basic.value
         value2 = basic.value2
+        is_boolean = field_dtype == "Boolean"
 
-        # Determine if value is numeric (for proper quoting)
+        def render(v: str) -> str:
+            """Render a comparison value: bool literal for boolean columns, a bare number
+            for numeric strings, otherwise an escaped string literal."""
+            if is_boolean:
+                return "True" if v.strip().lower() in ("true", "1") else "False"
+            if v and v.replace(".", "", 1).replace("-", "", 1).isnumeric():
+                return v
+            return self._py_str(v)
+
+        # Determine if value is numeric (for proper quoting in the BETWEEN branch)
         is_numeric = value.replace(".", "", 1).replace("-", "", 1).isnumeric() if value else False
 
         try:
@@ -54,34 +67,22 @@ class ExpressionHelpersMixin(ConverterMixinBase):
             operator = FilterOperator.from_symbol(str(basic.operator))
 
         if operator == FilterOperator.EQUALS:
-            if is_numeric:
-                return f"{col} == {value}"
-            return f"{col} == {self._py_str(value)}"
+            return f"{col} == {render(value)}"
 
         elif operator == FilterOperator.NOT_EQUALS:
-            if is_numeric:
-                return f"{col} != {value}"
-            return f"{col} != {self._py_str(value)}"
+            return f"{col} != {render(value)}"
 
         elif operator == FilterOperator.GREATER_THAN:
-            if is_numeric:
-                return f"{col} > {value}"
-            return f"{col} > {self._py_str(value)}"
+            return f"{col} > {render(value)}"
 
         elif operator == FilterOperator.GREATER_THAN_OR_EQUALS:
-            if is_numeric:
-                return f"{col} >= {value}"
-            return f"{col} >= {self._py_str(value)}"
+            return f"{col} >= {render(value)}"
 
         elif operator == FilterOperator.LESS_THAN:
-            if is_numeric:
-                return f"{col} < {value}"
-            return f"{col} < {self._py_str(value)}"
+            return f"{col} < {render(value)}"
 
         elif operator == FilterOperator.LESS_THAN_OR_EQUALS:
-            if is_numeric:
-                return f"{col} <= {value}"
-            return f"{col} <= {self._py_str(value)}"
+            return f"{col} <= {render(value)}"
 
         elif operator == FilterOperator.CONTAINS:
             return f"{col}.str.contains({self._py_str(value)})"

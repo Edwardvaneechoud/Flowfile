@@ -184,7 +184,7 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
         if len(input_vars) == 0:
             input_args = ""
         elif len(input_vars) == 1:
-            input_df = list(input_vars.values())[0]
+            input_df = next(iter(input_vars.values()))
             input_args = f"{input_df}.collect()" if needs_collect else input_df
         else:
             arg_list = []

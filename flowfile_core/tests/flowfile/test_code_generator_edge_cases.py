@@ -21,6 +21,7 @@ import pytest
 from polars.testing import assert_frame_equal
 
 from flowfile_core.flowfile.code_generator.code_generator import (
+    export_flow_to_flowframe,
     export_flow_to_polars,
     FlowGraphToPolarsConverter,
     UnsupportedNodeError,
@@ -1097,6 +1098,211 @@ class TestFilterOperatorSpaceVariants:
         for symbol in invalid_symbols:
             with pytest.raises(ValueError, match="Unknown filter operator symbol"):
                 FilterOperator.from_symbol(symbol)
+
+
+class TestApplyRenamesPreservesStringLiterals:
+    """_apply_renames must rename variable tokens but never identifiers inside string/comment tokens."""
+
+    def _converter(self) -> FlowGraphToPolarsConverter:
+        conv = FlowGraphToPolarsConverter(create_basic_flow())
+        conv.output_nodes = []
+        conv.last_node_var = None
+        return conv
+
+    def test_string_literal_not_rewritten(self):
+        """A column literal that happens to match a provisional var name is left intact."""
+        conv = self._converter()
+        body = [
+            'df_2 = source.filter(pl.col("df_2") > 1)',
+            'out = df_2.select(["df_2"])',
+        ]
+        result = conv._apply_renames(body, {"df_2": "filtered"})
+        joined = "\n".join(result)
+        assert "filtered = source.filter(" in joined
+        assert "out = filtered.select(" in joined
+        # the string literals are NOT rewritten
+        assert 'pl.col("df_2")' in joined
+        assert '["df_2"]' in joined
+
+    def test_kwarg_param_name_preserved(self):
+        """A kwarg/contract param name (``df_1=``) stays, only the value reference renames."""
+        conv = self._converter()
+        result = conv._apply_renames(["result = run(df_1=df_1.data)"], {"df_1": "source"})
+        assert result[0] == "result = run(df_1=source.data)"
+
+    def test_multiline_string_literal_preserved(self):
+        """Identifiers inside a multi-line triple-quoted string (e.g. SQL) are untouched."""
+        conv = self._converter()
+        body = [
+            'df_3 = read("""',
+            "SELECT df_3 FROM t",
+            '""")',
+            "out = df_3.head()",
+        ]
+        result = conv._apply_renames(body, {"df_3": "queried"})
+        joined = "\n".join(result)
+        assert "queried = read(" in joined
+        assert "out = queried.head()" in joined
+        assert "SELECT df_3 FROM t" in joined  # SQL identifier inside the string literal
+
+
+class TestJoinDoesNotClobberSharedUpstream:
+    """A join that renames/drops columns must not rebind a shared upstream variable."""
+
+    def test_shared_right_input_survives_join_drop(self):
+        flow = create_basic_flow()
+        flow.add_manual_input(input_schema.NodeManualInput(
+            flow_id=1, node_id=1, raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                ],
+                data=[[1, 2, 3], ["Alice", "Bob", "Charlie"]])))
+        flow.add_manual_input(input_schema.NodeManualInput(
+            flow_id=1, node_id=2, raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name="city", data_type="String"),
+                ],
+                data=[[1, 2, 4], ["NYC", "LA", "Chicago"]])))
+        # node 3: inner join that DROPS the right 'city' column (mutates the right side).
+        flow.add_join(input_schema.NodeJoin(
+            flow_id=1, node_id=3, depending_on_ids=[1, 2],
+            join_input=transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("id", "id")],
+                left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("name")],
+                right_select=[
+                    transform_schema.SelectInput("id"),
+                    transform_schema.SelectInput("city", keep=False),
+                ],
+                how="inner")))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3, "main"))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
+        # node 4: sibling select on the SAME right input that still needs 'city'.
+        flow.add_select(input_schema.NodeSelect(
+            flow_id=1, node_id=4, depending_on_id=2,
+            select_input=[
+                transform_schema.SelectInput("id", keep=True),
+                transform_schema.SelectInput("city", keep=True),
+            ]))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 4, "main"))
+
+        code = export_flow_to_polars(flow)
+        # The shared upstream var must never be reassigned in place (would drop 'city'
+        # before the sibling select reads it).
+        assert "source_2 = source_2" not in code
+        # And the whole script (join branch + sibling branch) executes cleanly.
+        verify_code_executes(code)
+
+
+class TestSemiAntiJoinDropsHiddenKeys:
+    """Semi/anti joins must drop left join-key columns marked keep=False, mirroring the runtime."""
+
+    @pytest.mark.parametrize("how", ["semi", "anti"])
+    def test_left_join_key_keep_false_is_dropped(self, how):
+        flow = create_basic_flow()
+        flow.add_manual_input(input_schema.NodeManualInput(
+            flow_id=1, node_id=1, raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                ],
+                data=[[1, 2, 3], ["Alice", "Bob", "Charlie"]])))
+        flow.add_manual_input(input_schema.NodeManualInput(
+            flow_id=1, node_id=2, raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name="city", data_type="String"),
+                ],
+                data=[[1, 2, 4], ["NYC", "LA", "Chicago"]])))
+        flow.add_join(input_schema.NodeJoin(
+            flow_id=1, node_id=3, depending_on_ids=[1, 2],
+            join_input=transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("id", "id")],
+                left_select=[
+                    transform_schema.SelectInput("id", keep=False),
+                    transform_schema.SelectInput("name"),
+                ],
+                right_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("city")],
+                how=how)))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3, "main"))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
+
+        code = export_flow_to_polars(flow)
+        verify_code_executes(code)
+        result = get_result_from_generated_code(code)
+        cols = result.collect().columns if hasattr(result, "collect") else result.columns
+        assert "id" not in cols  # the keep=False join key is dropped post-join
+        assert "name" in cols
+        assert_flow_result_matches_generated(flow, output_node_id=3, code=code)
+
+
+class TestBooleanFilterTypedLiteral:
+    """Basic filters on a Boolean column must emit typed bool literals, matching the runtime."""
+
+    def _flow(self) -> FlowGraph:
+        flow = create_basic_flow()
+        flow.add_manual_input(input_schema.NodeManualInput(
+            flow_id=1, node_id=1, raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="flag", data_type="Boolean"),
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                ],
+                data=[[True, False, True], [1, 2, 3]])))
+        return flow
+
+    @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe],
+                             ids=["polars", "flowframe"])
+    @pytest.mark.parametrize("value,literal", [("true", "True"), ("false", "False")])
+    def test_boolean_equals_emits_typed_literal(self, value, literal, export_func):
+        flow = self._flow()
+        flow.add_filter(input_schema.NodeFilter(
+            flow_id=1, node_id=2, depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                filter_type="basic",
+                basic_filter=transform_schema.BasicFilter(field="flag", operator="=", value=value))))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        code = export_func(flow)
+        assert f"== {literal}" in code
+        assert f'== "{value}"' not in code  # not a string comparison
+        assert_flow_result_matches_generated(flow, output_node_id=2, code=code)
+
+
+class TestSpecialCharacterColumnNames:
+    """Columns containing quotes/backslashes must be escaped, never break generated code."""
+
+    def test_quotes_and_backslash_through_group_by_and_sort(self):
+        weird = 'Revenue "Q1"'
+        weird_path = r"path\to\col"
+        agg_out = 'Total "Q1"'
+        flow = create_basic_flow()
+        flow.add_manual_input(input_schema.NodeManualInput(
+            flow_id=1, node_id=1, raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name=weird, data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name=weird_path, data_type="String"),
+                    input_schema.MinimalFieldInfo(name="grp", data_type="String"),
+                ],
+                data=[[10, 20, 30], ["a", "b", "c"], ["x", "x", "y"]])))
+        flow.add_group_by(input_schema.NodeGroupBy(
+            flow_id=1, node_id=2, depending_on_id=1,
+            groupby_input=transform_schema.GroupByInput(agg_cols=[
+                transform_schema.AggColl("grp", "groupby"),
+                transform_schema.AggColl(weird, "sum", agg_out),
+            ])))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        flow.add_sort(input_schema.NodeSort(
+            flow_id=1, node_id=3, depending_on_id=2,
+            sort_input=[transform_schema.SortByInput(column=agg_out, how="asc")]))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+        code = export_flow_to_polars(flow)
+        verify_code_executes(code)
+        result = get_result_from_generated_code(code)
+        cols = result.collect().columns if hasattr(result, "collect") else result.columns
+        assert agg_out in cols
+        assert "grp" in cols
 
 
 if __name__ == "__main__":

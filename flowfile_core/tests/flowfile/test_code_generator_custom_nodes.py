@@ -20,6 +20,26 @@ from flowfile_core.flowfile.node_designer import (
 from flowfile_core.schemas import input_schema, schemas
 
 
+@pytest.fixture(autouse=True)
+def _restore_custom_node_registry():
+    """Snapshot the global node registries and restore them after each test so a
+    custom node registered via add_to_custom_node_store never leaks into sibling
+    tests (which mutates CUSTOM_NODE_STORE plus node_dict and nodes_list)."""
+    from flowfile_core.configs import node_store as node_store_mod
+
+    saved_store = dict(node_store_mod.CUSTOM_NODE_STORE)
+    saved_dict = dict(node_store_mod.node_dict)
+    saved_list = list(node_store_mod.nodes_list)
+    try:
+        yield
+    finally:
+        node_store_mod.CUSTOM_NODE_STORE.clear()
+        node_store_mod.CUSTOM_NODE_STORE.update(saved_store)
+        node_store_mod.node_dict.clear()
+        node_store_mod.node_dict.update(saved_dict)
+        node_store_mod.nodes_list[:] = saved_list
+
+
 def create_flowfile_handler() -> FlowfileHandler:
     handler = FlowfileHandler()
     return handler

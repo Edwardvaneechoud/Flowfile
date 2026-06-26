@@ -628,7 +628,7 @@ def test_join_operation_left(join_input_dataset, export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
                              "source_1.join(",
-                             "source_2,",
+                             "_join_3_right,",
                              'left_on=["id"]',
                              'right_on=["id"]',
                              'how="left"'
@@ -670,8 +670,8 @@ def test_join_operation_right(join_input_dataset, export_func):
     code = export_func(flow)
     if export_func is export_flow_to_polars:
         verify_code_contains(code,
-                             "source_1.join(",
-                             "source_2,",
+                             "_join_3_left.join(",
+                             "_join_3_right,",
                              'left_on=["__jk_id"]',
                              'right_on=["id_right"]',
                              'how="right"'
