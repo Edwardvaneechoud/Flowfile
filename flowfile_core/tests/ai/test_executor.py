@@ -1931,6 +1931,36 @@ def test_connect_refuses_wiring_into_staged_source(call_kwargs: dict[str, Any]) 
     assert "5" in (result.refusal_detail or "")
 
 
+def test_connect_refuses_staged_nonsource_into_live_source(call_kwargs: dict[str, Any]) -> None:
+    """Gap guard: a freshly-staged NON-source FROM node (no live FlowNode yet, and
+    NOT in ``staged_source_node_ids_at_stage``) wired INTO a pre-existing LIVE
+    source node must still be refused with ``target_is_source``. Because the FROM
+    side is staged, the live→live ``validate_connection`` never runs; and because
+    the TO id is live it isn't in ``staged_source_ids`` — so neither pre-existing
+    branch fired, yet a source TO has no input port and must be rejected.
+    """
+    flow = _flow_with_orders_and_filter()  # node 1 = manual_input (LIVE source), node 2 = filter
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 5, "to_node_id": 1},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        audit_meta={
+            "live_node_ids_at_stage": [1, 2],
+            "staged_node_ids_at_stage": [5],
+            "staged_source_node_ids_at_stage": [],  # 5 is a staged NON-source
+        },
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "target_is_source"
+    assert "source node" in (result.refusal_detail or "")
+    assert "1" in (result.refusal_detail or "")
+    assert flow.get_node(1).node_inputs.main_inputs in (None, [])
+
+
 def test_connect_allows_staged_non_source_to_live(call_kwargs: dict[str, Any]) -> None:
     """only staged SOURCE nodes are guarded. A staged
     non-source (e.g. ``add_filter``) wired into a pre-existing live

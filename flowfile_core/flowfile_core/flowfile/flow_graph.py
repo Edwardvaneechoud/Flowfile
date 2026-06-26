@@ -5536,18 +5536,26 @@ def format_source_target_detail(node_id: int, node_type: str | None) -> str:
     )
 
 
+def node_is_source(node: "FlowNode") -> bool:
+    """True when ``node`` is a source-only node (no input port). Prefers the
+    resolved template (``input == 0``) and falls back to the registry by
+    ``node_type`` only when the template is unresolved. Single source of truth
+    for the source-target guard, shared by :func:`validate_connection` and the
+    AI connect handler (which must check a live target even when the FROM side
+    is still staged).
+    """
+    template = node.node_template
+    if template is not None:
+        return template.input == 0
+    return node.node_type in get_source_node_types()
+
+
 def validate_connection(
     from_node: "FlowNode",
     to_node: "FlowNode",
 ) -> ConnectionValidationError | None:
     """Non-mutating topology check for from_node -> to_node; None when valid."""
-    template = to_node.node_template
-    target_is_source = (
-        template.input == 0
-        if template is not None
-        else to_node.node_type in get_source_node_types()
-    )
-    if target_is_source:
+    if node_is_source(to_node):
         return ConnectionValidationError(
             "target_is_source",
             format_source_target_detail(to_node.node_id, to_node.node_type),

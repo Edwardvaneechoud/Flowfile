@@ -16,6 +16,7 @@ from flowfile_core.flowfile.flow_graph import (
     add_connection,
     delete_connection,
     format_source_target_detail,
+    node_is_source,
     validate_connection,
 )
 from flowfile_core.schemas import input_schema
@@ -244,10 +245,16 @@ def _handle_connect(
     # validates settings before its own ``if mode == "stage"``. The backend
     # ``add_connection`` enforces both, but stage mode never calls it, so without
     # this the LLM only learns of a ``read → read`` (or cycle) at apply-time, after
-    # the planner loop ended and can no longer self-correct. Freshly-staged source
-    # targets have no live FlowNode yet, so use the ``staged_source_ids`` set
-    # already computed above; live targets go through the shared validator.
-    if to_id in staged_source_ids:
+    # the planner loop ended and can no longer self-correct.
+    #
+    # The source-target check must fire whether the target is freshly-staged
+    # (no live FlowNode yet — use the ``staged_source_ids`` set above) OR a live
+    # node, and independent of whether the FROM side is live: a source has no
+    # input port either way. The cycle check, by contrast, needs both endpoints
+    # live (a staged→staged cycle is an acceptable gap, caught at apply-time by
+    # add_connection).
+    to_node = flow.get_node(to_id)
+    if to_id in staged_source_ids or (to_node is not None and node_is_source(to_node)):
         return _reject_and_audit(
             tool_name=tool_name,
             tool_args=redacted_args,
@@ -255,11 +262,11 @@ def _handle_connect(
             user_id=user_id,
             flow_id=flow.flow_id,
             refusal_reason="target_is_source",
-            refusal_detail=format_source_target_detail(to_id, None),
+            refusal_detail=format_source_target_detail(
+                to_id, to_node.node_type if to_node is not None else None
+            ),
         )
-    # Live→live only; a staged→staged cycle is caught at apply-time by add_connection (acceptable gap).
     from_node = flow.get_node(from_id)
-    to_node = flow.get_node(to_id)
     if from_node is not None and to_node is not None:
         connection_error = validate_connection(from_node, to_node)
         if connection_error is not None:
