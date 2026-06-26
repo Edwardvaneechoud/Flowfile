@@ -1,13 +1,20 @@
-import inspect
+import ast
+import builtins
+import io
+import keyword
 import re
-import typing
+import tokenize
 
 import polars as pl
-from pl_fuzzy_frame_match.models import FuzzyMapping
-from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code, to_polars_code
+from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code
 
 from flowfile_core.configs import logger
-from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.flowfile.code_generator.chain_fusion import NodeEmission, render_pipeline
+from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHandlersMixin
+from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
+from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
+from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
+from flowfile_core.flowfile.code_generator.transform_handlers import TransformHandlersMixin
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -72,9 +79,65 @@ def _eval_in_validation_namespace(code: str):
     return eval(code, {"__builtins__": {}}, {"ff": ff_module, "pl": pl, "datetime": datetime})  # noqa: S307
 
 
-class FlowGraphCodeConverter:
+# Operation-based variable labels for the few boundary variables that survive
+# chain fusion. A bare label is used when it occurs once; a numeric suffix is
+# appended only when a label is shared by several boundaries (see _plan_boundary_names).
+NODE_TYPE_VAR_LABEL: dict[str, str] = {
+    "read": "source",
+    "csv_read": "source",
+    "excel_read": "source",
+    "manual_input": "source",
+    "catalog_reader": "source",
+    "catalog_sql_reader": "source",
+    "cloud_storage_reader": "source",
+    "database_reader": "source",
+    "rest_api_reader": "source",
+    "kafka_source": "source",
+    "external_source": "source",
+    "filter": "filtered",
+    "formula": "computed",
+    "select": "selected",
+    "dynamic_rename": "renamed",
+    "sort": "ordered",
+    "group_by": "grouped",
+    "pivot": "pivoted",
+    "pivot_no_index": "pivoted",
+    "unpivot": "unpivoted",
+    "join": "joined",
+    "cross_join": "joined",
+    "fuzzy_match": "joined",
+    "union": "combined",
+    "unique": "deduped",
+    "record_id": "with_record_id",
+    "record_count": "counted",
+    "sample": "sampled",
+    "text_to_rows": "exploded",
+    "polars_code": "transformed",
+    "graph_solver": "solved",
+    "window_functions": "windowed",
+    "train_model": "trained",
+    "apply_model": "scored",
+    "evaluate_model": "evaluation",
+    "wait_for": "ready",
+}
+
+# Generated variable names are uniquified against these so they never shadow a
+# Python builtin or keyword (e.g. a split literally named ``sorted`` or ``type``).
+_RESERVED_NAMES: frozenset[str] = frozenset(keyword.kwlist) | frozenset(dir(builtins))
+
+
+class FlowGraphCodeConverter(
+    JoinHandlersMixin,
+    TransformHandlersMixin,
+    ConnectorHandlersMixin,
+    CustomNodeHandlersMixin,
+    ExpressionHelpersMixin,
+):
     """
     Base class for converting a FlowGraph into executable Python code.
+
+    Node-type handlers live in the mixins above; this class owns orchestration
+    (dispatch, chain fusion, boundary naming, final code assembly).
 
     Subclasses set `framework` to control whether code targets Polars or FlowFrame.
     """
@@ -93,6 +156,10 @@ class FlowGraphCodeConverter:
         self.last_node_var: str | None = None
         self.unsupported_nodes: list[tuple[int, str, str]] = []
         self.custom_node_classes: dict[str, str] = {}
+        # (node, effective_var, start, end) per emitting node; (start, end) slices code_lines.
+        self._node_spans: list[tuple[FlowNode, str, int, int]] = []
+        # node_id -> upstream node_id for nodes that emit nothing (passthroughs).
+        self._passthrough: dict[int, int] = {}
 
     def convert(self) -> str:
         """
@@ -134,7 +201,12 @@ class FlowGraphCodeConverter:
             self.output_nodes.append((node.node_id, var_name))
 
     def _generate_node_code(self, node: FlowNode) -> None:
-        """Generate Polars code for a specific node."""
+        """Generate code for a node and record the line span it emitted.
+
+        Output bookkeeping runs *after* the handler and reads the effective var
+        from ``node_var_mapping`` so passthrough/remap handlers are honoured. A
+        handler that emits nothing is recorded as a passthrough to its input.
+        """
         node_type = node.node_type
         settings = node.setting_input
         if isinstance(settings, input_schema.NodePromise):
@@ -143,24 +215,36 @@ class FlowGraphCodeConverter:
         node_reference = getattr(settings, "node_reference", None)
         var_name = node_reference if node_reference else f"df_{node.node_id}"
         self.node_var_mapping[node.node_id] = var_name
-        self.handle_output_node(node, var_name)
-        if node.node_template.output > 0:
-            self.last_node_var = var_name
         input_vars = self._get_input_vars(node)
 
+        start = len(self.code_lines)
         if isinstance(settings, input_schema.UserDefinedNode) or getattr(settings, "is_user_defined", False):
             self._handle_user_defined(node, var_name, input_vars)
-            return
-
-        handler = getattr(self, f"_handle_{node_type}", None)
-        if handler:
-            handler(settings, var_name, input_vars)
         else:
-            self.unsupported_nodes.append(
-                (node.node_id, node_type, f"No code generator implemented for node type '{node_type}'")
-            )
-            self._add_comment(f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})")
-            self._add_comment("# This node type is not supported for code export")
+            handler = getattr(self, f"_handle_{node_type}", None)
+            if handler:
+                handler(settings, var_name, input_vars)
+            else:
+                self.unsupported_nodes.append(
+                    (node.node_id, node_type, f"No code generator implemented for node type '{node_type}'")
+                )
+                self._add_comment(
+                    f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})"
+                )
+                self._add_comment("# This node type is not supported for code export")
+        end = len(self.code_lines)
+
+        effective_var = self.node_var_mapping[node.node_id]
+        self.handle_output_node(node, effective_var)
+        if node.node_template.output > 0:
+            self.last_node_var = effective_var
+
+        if end == start:
+            main_inputs = node.node_inputs.main_inputs or []
+            if len(main_inputs) == 1:
+                self._passthrough[node.node_id] = main_inputs[0].node_id
+        else:
+            self._node_spans.append((node, effective_var, start, end))
 
     def _resolve_upstream_var(self, downstream: FlowNode, upstream_id: int, default: str) -> str:
         """Resolve the variable name for an upstream node, honouring its output handle.
@@ -246,7 +330,7 @@ class FlowGraphCodeConverter:
         polars_schema_str = (
             f"{self.framework}.Schema(["
             + ", ".join(
-                f'("{flowfile_column.column_name}", {self.framework}.{flowfile_column.data_type})'
+                f"({self._py_str(flowfile_column.column_name)}, {self.framework}.{flowfile_column.data_type})"
                 for flowfile_column in flowfile_schema
             )
             + "])"
@@ -259,7 +343,7 @@ class FlowGraphCodeConverter:
         if is_valid_pl_schema:
             return polars_schema_str
         else:
-            return "[" + ", ".join([f'"{c.name}"' for c in flowfile_schema]) + "]"
+            return "[" + ", ".join([self._py_str(c.name) for c in flowfile_schema]) + "]"
 
     @staticmethod
     def _validate_pl_schema(pl_schema_str: str) -> bool:
@@ -283,6 +367,20 @@ class FlowGraphCodeConverter:
         self._add_code(f"{var_name} = {self.framework}.LazyFrame({data}, schema={schema}, strict=False)")
         self._add_code("")
 
+    def _column_dtype(self, node_id: int, field: str) -> str | None:
+        """Predicted Polars dtype string (e.g. ``"Boolean"``) of ``field`` on ``node_id``'s
+        output schema, or None when unavailable. Filter is schema-preserving, so the filter
+        node's own predicted schema carries the input column dtypes."""
+        try:
+            node = self.flow_graph.get_node(node_id)
+            schema = node.get_predicted_schema() if node is not None else None
+        except Exception:
+            return None
+        for col in schema or []:
+            if col.column_name == field:
+                return col.data_type
+        return None
+
     def _handle_filter(self, settings: input_schema.NodeFilter, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle filter nodes."""
         input_df = input_vars.get("main", "df")
@@ -296,12 +394,13 @@ class FlowGraphCodeConverter:
                 "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
             )
             self._add_code(f"{var_name} = {input_df}.filter(")
-            self._add_code(f'simple_function_to_expr("{settings.filter_input.advanced_filter}")')
+            self._add_code(f"simple_function_to_expr({self._py_str(settings.filter_input.advanced_filter)})")
             self._add_code(")")
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
-                filter_expr = self._create_basic_filter_expr(basic)
+                field_dtype = self._column_dtype(settings.node_id, basic.field)
+                filter_expr = self._create_basic_filter_expr(basic, field_dtype)
                 self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
             else:
                 self._add_code(f"{var_name} = {input_df}  # No filter applied")
@@ -320,11 +419,13 @@ class FlowGraphCodeConverter:
             self.imports.add(
                 "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
             )
-            self._add_code(f'{pred_var} = simple_function_to_expr("{settings.filter_input.advanced_filter}")')
+            adv = self._py_str(settings.filter_input.advanced_filter)
+            self._add_code(f"{pred_var} = simple_function_to_expr({adv})")
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
-                self._add_code(f"{pred_var} = {self._create_basic_filter_expr(basic)}")
+                field_dtype = self._column_dtype(settings.node_id, basic.field)
+                self._add_code(f"{pred_var} = {self._create_basic_filter_expr(basic, field_dtype)}")
             else:
                 # No predicate -> pass keeps everything, fail is empty.
                 self._add_code(f"{pred_var} = {self.framework}.lit(True)")
@@ -335,7 +436,6 @@ class FlowGraphCodeConverter:
         self.node_handle_var_mapping[(node_id, "output-0")] = pass_var
         self.node_handle_var_mapping[(node_id, "output-1")] = fail_var
         self.node_var_mapping[node_id] = pass_var
-        self._add_code(f"{var_name} = {pass_var}")
         self._add_code("")
 
     def _handle_record_count(self, settings: input_schema.NodeRecordCount, var_name: str, input_vars: dict[str, str]):
@@ -348,9 +448,9 @@ class FlowGraphCodeConverter:
         to_col_name = settings.graph_solver_input.col_to
         output_col_name = settings.graph_solver_input.output_column_name
         self._add_code(
-            f'{var_name} = {input_df}.with_columns(graph_solver({self.framework}.col("{from_col_name}"), '
-            f'{self.framework}.col("{to_col_name}"))'
-            f'.alias("{output_col_name}"))'
+            f"{var_name} = {input_df}.with_columns(graph_solver({self.framework}.col({self._py_str(from_col_name)}), "
+            f"{self.framework}.col({self._py_str(to_col_name)}))"
+            f".alias({self._py_str(output_col_name)}))"
         )
         self._add_code("")
         self.imports.add("from polars_grouper import graph_solver")
@@ -361,10 +461,11 @@ class FlowGraphCodeConverter:
         select_exprs = []
         for select_input in settings.select_input:
             if select_input.keep and select_input.is_available:
+                col = f"{self.framework}.col({self._py_str(select_input.old_name)})"
                 if select_input.old_name != select_input.new_name:
-                    expr = f'{self.framework}.col("{select_input.old_name}").alias("{select_input.new_name}")'
+                    expr = f"{col}.alias({self._py_str(select_input.new_name)})"
                 else:
-                    expr = f'{self.framework}.col("{select_input.old_name}")'
+                    expr = col
 
                 if (select_input.data_type_change or select_input.is_altered) and select_input.data_type:
                     polars_dtype = self._get_polars_dtype(select_input.data_type)
@@ -377,768 +478,10 @@ class FlowGraphCodeConverter:
             for expr in select_exprs:
                 self._add_code(f"    {expr},")
             self._add_code("])")
-        else:
-            self._add_code(f"{var_name} = {input_df}")
-        self._add_code("")
-
-    def _handle_join(self, settings: input_schema.NodeJoin, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle join nodes by routing to appropriate join type handler.
-
-        This is the main entry point for processing join operations. It determines
-        the type of join and delegates to the appropriate handler method.
-
-        Args:
-            settings: NodeJoin settings containing join configuration
-            var_name: Name of the variable to store the joined DataFrame
-            input_vars: Dictionary mapping input names to DataFrame variable names
-
-        Returns:
-            None: Modifies internal state by adding generated code
-        """
-        left_df = input_vars.get("main", input_vars.get("main_0", "df_left"))
-        right_df = input_vars.get("right", input_vars.get("main_1", "df_right"))
-        if left_df == right_df:
-            right_df = "df_right"
-            self._add_code(f"{right_df} = {left_df}")
-
-        if settings.join_input.how in ("semi", "anti"):
-            self._handle_semi_anti_join(settings, var_name, left_df, right_df)
-        else:
-            self._handle_standard_join(settings, var_name, left_df, right_df)
-
-    def _handle_semi_anti_join(
-        self, settings: input_schema.NodeJoin, var_name: str, left_df: str, right_df: str
-    ) -> None:
-        """Handle semi and anti joins which only return rows from the left DataFrame.
-
-        Semi joins return rows from left DataFrame that have matches in right.
-        Anti joins return rows from left DataFrame that have no matches in right.
-        These joins are simpler as they don't require column management from right DataFrame.
-
-        Args:
-            settings: NodeJoin settings containing join configuration
-            var_name: Name of the variable to store the result
-            left_df: Variable name of the left DataFrame
-            right_df: Variable name of the right DataFrame
-
-        Returns:
-            None: Modifies internal state by adding generated code
-        """
-        left_on = [jm.left_col for jm in settings.join_input.join_mapping]
-        right_on = [jm.right_col for jm in settings.join_input.join_mapping]
-
-        self._add_code(f"{var_name} = ({left_df}.join(")
-        self._add_code(f"        {right_df},")
-        self._add_code(f"        left_on={left_on},")
-        self._add_code(f"        right_on={right_on},")
-        self._add_code(f'        how="{settings.join_input.how}"')
-        self._add_code("    )")
-        self._add_code(")")
-
-    def _handle_standard_join(
-        self, settings: input_schema.NodeJoin, var_name: str, left_df: str, right_df: str
-    ) -> None:
-        """Handle standard joins (left, right, inner, outer) with full column management.
-
-        Standard joins may include columns from both DataFrames and require careful
-        management of column names, duplicates, and transformations. This method
-        orchestrates the complete join process including pre/post transformations.
-
-        Process:
-        1. Auto-rename columns to avoid conflicts
-        2. Extract join keys
-        3. Apply pre-join transformations (renames, drops)
-        4. Handle join-specific key transformations
-        5. Execute join with post-processing
-
-        Args:
-            settings: NodeJoin settings containing join configuration
-            var_name: Name of the variable to store the result
-            left_df: Variable name of the left DataFrame
-            right_df: Variable name of the right DataFrame
-
-        Returns:
-            None: Modifies internal state by adding generated code
-        """
-        join_input_manager = transform_schema.JoinInputManager(settings.join_input)
-        join_input_manager.auto_rename()
-        left_on, right_on = self._get_join_keys(join_input_manager)
-
-        left_df, right_df = self._apply_pre_join_transformations(join_input_manager, left_df, right_df)
-        left_on, right_on, reverse_action, after_join_drop_cols = self._handle_join_key_transformations(
-            join_input_manager, left_df, right_df, left_on, right_on
-        )
-        self._execute_join_with_post_processing(
-            settings, var_name, left_df, right_df, left_on, right_on, after_join_drop_cols, reverse_action
-        )
-
-    @staticmethod
-    def _get_join_keys(settings: transform_schema.JoinInputManager) -> tuple[list[str], list[str]]:
-        """Extract join keys based on join type.
-
-        Different join types require different handling of join keys:
-        - For outer/right joins: Uses renamed column names for right DataFrame
-        - For other joins: Uses original column names from join mapping
-
-        Args:
-            settings: NodeJoin settings containing join configuration
-
-        Returns:
-            Tuple[List[str], List[str]]: Lists of (left_on, right_on) column names
-        """
-        left_on = [jm.left_col for jm in settings.get_names_for_table_rename()]
-
-        if settings.how in ("outer", "right"):
-            right_on = [jm.right_col for jm in settings.get_names_for_table_rename()]
-        else:
-            right_on = [jm.right_col for jm in settings.join_mapping]
-
-        return left_on, right_on
-
-    def _apply_pre_join_transformations(
-        self, settings: transform_schema.JoinInputManager, left_df: str, right_df: str
-    ) -> tuple[str, str]:
-        """Apply column renames and drops before the join operation.
-
-        Pre-join transformations prepare DataFrames by:
-        - Renaming columns according to user specifications
-        - Dropping columns marked as not to keep (except join keys)
-        - Special handling for right/outer joins where join keys may need preservation
-
-        Args:
-            settings: NodeJoin settings containing column rename/drop specifications
-            left_df: Variable name of the left DataFrame
-            right_df: Variable name of the right DataFrame
-
-        Returns:
-            Tuple[str, str]: The same DataFrame variable names (left_df, right_df)
-                Note: DataFrames are modified via generated code, not new variables
-        """
-        right_renames = {
-            column.old_name: column.new_name
-            for column in settings.right_select.renames
-            if column.old_name != column.new_name and not column.join_key or settings.how in ("outer", "right")
-        }
-
-        left_renames = {
-            column.old_name: column.new_name
-            for column in settings.left_select.renames
-            if column.old_name != column.new_name
-        }
-
-        left_drop_columns = [
-            column.old_name for column in settings.left_select.renames if not column.keep and not column.join_key
-        ]
-
-        right_drop_columns = [
-            column.old_name for column in settings.right_select.renames if not column.keep and not column.join_key
-        ]
-
-        if right_renames:
-            self._add_code(f"{right_df} = {right_df}.rename({right_renames})")
-        if left_renames:
-            self._add_code(f"{left_df} = {left_df}.rename({left_renames})")
-        if left_drop_columns:
-            self._add_code(f"{left_df} = {left_df}.drop({left_drop_columns})")
-        if right_drop_columns:
-            self._add_code(f"{right_df} = {right_df}.drop({right_drop_columns})")
-
-        return left_df, right_df
-
-    def _handle_join_key_transformations(
-        self,
-        settings: transform_schema.JoinInputManager,
-        left_df: str,
-        right_df: str,
-        left_on: list[str],
-        right_on: list[str],
-    ) -> tuple[list[str], list[str], dict | None, list[str]]:
-        """Route to appropriate join-specific key transformation handler.
-
-        Different join types require different strategies for handling join keys
-        to avoid conflicts and preserve necessary columns.
-
-        Args:
-            settings: NodeJoin settings containing join configuration
-            left_df: Variable name of the left DataFrame
-            right_df: Variable name of the right DataFrame
-            left_on: List of left DataFrame column names to join on
-            right_on: List of right DataFrame column names to join on
-
-        Returns:
-            Tuple containing:
-                - left_on: Potentially modified list of left join columns
-                - right_on: Potentially modified list of right join columns
-                - reverse_action: Dictionary for renaming columns after join (or None)
-                - after_join_drop_cols: List of columns to drop after join
-        """
-        join_type = settings.how
-
-        if join_type in ("left", "inner"):
-            return self._handle_left_inner_join_keys(settings, right_df, left_on, right_on)
-        elif join_type == "right":
-            return self._handle_right_join_keys(settings, left_df, left_on, right_on)
-        elif join_type == "outer":
-            return self._handle_outer_join_keys(settings, right_df, left_on, right_on)
-        else:
-            return left_on, right_on, None, []
-
-    def _handle_left_inner_join_keys(
-        self, settings: transform_schema.JoinInputManager, right_df: str, left_on: list[str], right_on: list[str]
-    ) -> tuple[list[str], list[str], dict, list[str]]:
-        """Handle key transformations for left and inner joins.
-
-        For left/inner joins:
-        - Join keys from left DataFrame are preserved
-        - Right DataFrame join keys are temporarily renamed with __DROP__ prefix
-        - After join, these temporary columns can be renamed back if needed
-
-        Args:
-            settings: NodeJoin settings containing join configuration
-            right_df: Variable name of the right DataFrame
-            left_on: List of left DataFrame column names to join on
-            right_on: List of right DataFrame column names to join on
-
-        Returns:
-            Tuple containing:
-                - left_on: Unchanged left join columns
-                - right_on: Unchanged right join columns
-                - reverse_action: Mapping to rename __DROP__ columns after join
-                - after_join_drop_cols: Left join keys marked for dropping
-        """
-        [jk.new_name for jk in settings.left_select.join_key_selects if jk.keep]
-        join_key_duplication_command = [
-            f'{self.framework}.col("{rjk.old_name}").alias("__DROP__{rjk.new_name}__DROP__")'
-            for rjk in settings.right_select.join_key_selects
-            if rjk.keep
-        ]
-
-        reverse_action = {
-            f"__DROP__{rjk.new_name}__DROP__": rjk.new_name
-            for rjk in settings.right_select.join_key_selects
-            if rjk.keep
-        }
-
-        if join_key_duplication_command:
-            self._add_code(f"{right_df} = {right_df}.with_columns([{', '.join(join_key_duplication_command)}])")
-
-        after_join_drop_cols = [k.new_name for k in settings.left_select.join_key_selects if not k.keep]
-
-        return left_on, right_on, reverse_action, after_join_drop_cols
-
-    def _handle_right_join_keys(
-        self, settings: transform_schema.JoinInputManager, left_df: str, left_on: list[str], right_on: list[str]
-    ) -> tuple[list[str], list[str], None, list[str]]:
-        """Handle key transformations for right joins.
-
-        For right joins:
-        - Join keys from right DataFrame are preserved
-        - Left DataFrame join keys are prefixed with __jk_ to avoid conflicts
-        - Polars appends "_right" suffix to conflicting column names
-
-        Args:
-            settings: NodeJoin settings containing join configuration
-            left_df: Variable name of the left DataFrame
-            left_on: List of left DataFrame column names to join on
-            right_on: List of right DataFrame column names to join on
-
-        Returns:
-            Tuple containing:
-                - left_on: Modified left join columns with __jk_ prefix where needed
-                - right_on: Unchanged right join columns
-                - reverse_action: None (no post-join renaming needed)
-                - after_join_drop_cols: Right join keys marked for dropping
-        """
-        join_key_duplication_command = [
-            f'{self.framework}.col("{ljk.new_name}").alias("__jk_{ljk.new_name}")'
-            for ljk in settings.left_select.join_key_selects
-            if ljk.keep
-        ]
-
-        for position, left_on_key in enumerate(left_on):
-            left_on_select = settings.left_select.get_select_input_on_new_name(left_on_key)
-            if left_on_select and left_on_select.keep:
-                left_on[position] = f"__jk_{left_on_select.new_name}"
-
-        if join_key_duplication_command:
-            self._add_code(f"{left_df} = {left_df}.with_columns([{', '.join(join_key_duplication_command)}])")
-
-        left_join_keys_keep = {jk.new_name for jk in settings.left_select.join_key_selects if jk.keep}
-        after_join_drop_cols_right = [
-            jk.new_name if jk.new_name not in left_join_keys_keep else jk.new_name + "_right"
-            for jk in settings.right_select.join_key_selects
-            if not jk.keep
-        ]
-        after_join_drop_cols = list(set(after_join_drop_cols_right))
-        return left_on, right_on, None, after_join_drop_cols
-
-    def _handle_outer_join_keys(
-        self, settings: transform_schema.JoinInputManager, right_df: str, left_on: list[str], right_on: list[str]
-    ) -> tuple[list[str], list[str], dict, list[str]]:
-        """Handle key transformations for outer joins.
-
-        For outer joins:
-        - Both left and right join keys may need to be preserved
-        - Right DataFrame join keys are prefixed with __jk_ when they conflict
-        - Post-join renaming reverses the __jk_ prefix
-
-        Args:
-            settings: NodeJoin settings containing join configuration
-            right_df: Variable name of the right DataFrame
-            left_on: List of left DataFrame column names to join on
-            right_on: List of right DataFrame column names to join on
-
-        Returns:
-            Tuple containing:
-                - left_on: Unchanged left join columns
-                - right_on: Modified right join columns with __jk_ prefix where needed
-                - reverse_action: Mapping to remove __jk_ prefix after join
-                - after_join_drop_cols: Combined list of columns to drop from both sides
-        """
-        left_join_keys = {jk.new_name for jk in settings.left_select.join_key_selects}
-
-        join_keys_to_keep_and_rename = [
-            rjk for rjk in settings.right_select.join_key_selects if rjk.keep and rjk.new_name in left_join_keys
-        ]
-
-        join_key_rename_command = {rjk.new_name: f"__jk_{rjk.new_name}" for rjk in join_keys_to_keep_and_rename}
-
-        for position, right_on_key in enumerate(right_on):
-            right_on_select = settings.right_select.get_select_input_on_new_name(right_on_key)
-            if right_on_select and right_on_select.keep and right_on_select.new_name in left_join_keys:
-                right_on[position] = f"__jk_{right_on_select.new_name}"
-
-        if join_key_rename_command:
-            self._add_code(f"{right_df} = {right_df}.rename({join_key_rename_command})")
-
-        reverse_action = {f"__jk_{rjk.new_name}": rjk.new_name for rjk in join_keys_to_keep_and_rename}
-
-        after_join_drop_cols_left = [jk.new_name for jk in settings.left_select.join_key_selects if not jk.keep]
-        after_join_drop_cols_right = [
-            jk.new_name if jk.new_name not in left_join_keys else jk.new_name + "_right"
-            for jk in settings.right_select.join_key_selects
-            if not jk.keep
-        ]
-        after_join_drop_cols = after_join_drop_cols_left + after_join_drop_cols_right
-
-        return left_on, right_on, reverse_action, after_join_drop_cols
-
-    def _execute_join_with_post_processing(
-        self,
-        settings: input_schema.NodeJoin,
-        var_name: str,
-        left_df: str,
-        right_df: str,
-        left_on: list[str],
-        right_on: list[str],
-        after_join_drop_cols: list[str],
-        reverse_action: dict | None,
-    ) -> None:
-        """Execute the join operation and apply post-processing steps.
-
-        Generates the actual join code with any necessary post-processing:
-        1. Executes the join operation
-        2. For right joins: Collects to eager mode (Polars requirement)
-        3. Drops unnecessary columns
-        4. Renames temporary columns back to final names
-        5. For right joins: Converts back to lazy mode
-
-        Args:
-            settings: NodeJoin settings containing join configuration
-            var_name: Name of the variable to store the result
-            left_df: Variable name of the left DataFrame
-            right_df: Variable name of the right DataFrame
-            left_on: List of left DataFrame column names to join on
-            right_on: List of right DataFrame column names to join on
-            after_join_drop_cols: List of columns to drop after join
-            reverse_action: Dictionary for renaming columns after join (or None)
-
-        Returns:
-            None: Modifies internal state by adding generated code
-        """
-        self._add_code(f"{var_name} = ({left_df}.join(")
-        self._add_code(f"        {right_df},")
-        self._add_code(f"        left_on={left_on},")
-        self._add_code(f"        right_on={right_on},")
-        self._add_code(f'        how="{settings.join_input.how}"')
-        self._add_code("    )")
-
-        # TODO(FlowFrame): The .collect().lazy() pattern for right joins returns a
-        # pl.LazyFrame, breaking the FlowFrame chain. The FlowFrame converter may
-        # need to override join handling or use framework-aware collect/lazy.
-        if settings.join_input.how == "right":
-            self._add_code(".collect()")  # Right join needs to be collected first cause of issue with rename
-
-        if after_join_drop_cols:
-            self._add_code(f".drop({after_join_drop_cols})")
-
-        if reverse_action:
-            self._add_code(f".rename({reverse_action})")
-
-        if settings.join_input.how == "right":
-            self._add_code(".lazy()")
-
-        self._add_code(")")
-
-    def _handle_group_by(self, settings: input_schema.NodeGroupBy, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle group by nodes."""
-        input_df = input_vars.get("main", "df")
-
-        group_cols = []
-        agg_exprs = []
-
-        for agg_col in settings.groupby_input.agg_cols:
-            if agg_col.agg == "groupby":
-                group_cols.append(agg_col.old_name)
-            else:
-                agg_func = self._get_agg_function(agg_col.agg)
-                expr = f'{self.framework}.col("{agg_col.old_name}").{agg_func}().alias("{agg_col.new_name}")'
-                agg_exprs.append(expr)
-
-        self._add_code(f"{var_name} = {input_df}.group_by({group_cols}).agg([")
-        for expr in agg_exprs:
-            self._add_code(f"    {expr},")
-        self._add_code("])")
-        self._add_code("")
-
-    def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle formula/expression nodes."""
-        input_df = input_vars.get("main", "df")
-        formula = settings.function.function
-        col_name = settings.function.field.name
-        can_convert_to_pl_code: bool = False
-        pl_code: str | None = None
-        try:
-            pl_code = to_polars_code(formula)
-            if pl_code:
-                can_convert_to_pl_code = True
-        except PolarsCodeGenError:
-            can_convert_to_pl_code = False
-        except Exception as e:
-            logger.debug(f"Unhandled conversion of the formula to polars expression falling back to expression {e}")
-            can_convert_to_pl_code = False
-
-        # TODO(FlowFrame): to_polars_code() generates pl.col/pl.lit expressions that require
-        # `import polars as pl`. When framework == "ff", either:
-        # (a) add `import polars as pl` to FlowFrame converter imports, or
-        # (b) post-process the expression to replace `pl.` with `{self.framework}.`, or
-        # (c) make to_polars_code() accept a framework prefix parameter.
-        if can_convert_to_pl_code:
-            expr_str = f'({pl_code}).alias("{col_name}")'
-            if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
-                output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
-                if output_type[:3] != f"{self.framework}.":
-                    output_type = f"{self.framework}." + output_type
-                expr_str += f".cast({output_type})"
-            self._add_code(f"{var_name} = {input_df}.with_columns([{expr_str}])")
             self._add_code("")
         else:
-            self.imports.add(
-                "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
-            )
-            self._add_code(f"{var_name} = {input_df}.with_columns([")
-            self._add_code(f'simple_function_to_expr({repr(formula)}).alias("{col_name}")')
-            if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
-                output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
-                if output_type[:3] != f"{self.framework}.":
-                    output_type = f"{self.framework}." + output_type
-                self._add_code(f"    .cast({output_type})")
-            self._add_code("])")
-            self._add_code("")
-
-    def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
-        pivot_input = settings.pivot_input
-        self._add_code(f"{var_name} = ({input_df}.collect()")
-        self._add_code(f'    .with_columns({self.framework}.lit(1).alias("_temp_index_"))')
-        self._add_code("    .pivot(")
-        self._add_code(f'        values="{pivot_input.value_col}",')
-        self._add_code('        index=["_temp_index_"],')
-        self._add_code(f'        on="{pivot_input.pivot_column}",')
-        self._add_code(f'        aggregate_function="{agg_func}"')
-        self._add_code("    )")
-        self._add_code('    .drop("_temp_index_")')
-        self._add_code(").lazy()")
-        self._add_code("")
-
-    def _handle_pivot(self, settings: input_schema.NodePivot, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle pivot nodes."""
-        input_df = input_vars.get("main", "df")
-        pivot_input = settings.pivot_input
-        if len(pivot_input.aggregations) > 1:
-            logger.error("Multiple aggregations are not convertable to polars code. " "Taking the first value")
-        if len(pivot_input.aggregations) > 0:
-            agg_func = pivot_input.aggregations[0]
-        else:
-            agg_func = "first"
-        if len(settings.pivot_input.index_columns) == 0:
-            self._handle_pivot_no_index(settings, var_name, input_df, agg_func)
-        else:
-            self._add_code(f"{var_name} = {input_df}.collect().pivot(")
-            self._add_code(f"    values='{pivot_input.value_col}',")
-            self._add_code(f"    index={pivot_input.index_columns},")
-            self._add_code(f"    on='{pivot_input.pivot_column}',")
-
-            self._add_code(f"    aggregate_function='{agg_func}'")
-            self._add_code(").lazy()")
-            self._add_code("")
-
-    def _handle_unpivot(self, settings: input_schema.NodeUnpivot, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle unpivot nodes."""
-        input_df = input_vars.get("main", "df")
-        unpivot_input = settings.unpivot_input
-
-        self._add_code(f"{var_name} = {input_df}.unpivot(")
-
-        if unpivot_input.index_columns:
-            self._add_code(f"    index={unpivot_input.index_columns},")
-
-        if unpivot_input.value_columns:
-            self._add_code(f"    on={unpivot_input.value_columns},")
-
-        self._add_code("    variable_name='variable',")
-        self._add_code("    value_name='value'")
-        self._add_code(")")
-        self._add_code("")
-
-    def _handle_union(self, settings: input_schema.NodeUnion, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle union nodes."""
-        dfs = []
-        if "main" in input_vars:
-            dfs.append(input_vars["main"])
-        else:
-            for key, df_var in input_vars.items():
-                if key.startswith("main"):
-                    dfs.append(df_var)
-
-        if settings.union_input.mode == "relaxed":
-            how = "diagonal_relaxed"
-        else:
-            how = "diagonal"
-
-        self._add_code(f"{var_name} = {self.framework}.concat([")
-        for df in dfs:
-            self._add_code(f"    {df},")
-        self._add_code(f"], how='{how}')")
-        self._add_code("")
-
-    def _handle_sort(self, settings: input_schema.NodeSort, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle sort nodes."""
-        input_df = input_vars.get("main", "df")
-
-        sort_cols = []
-        descending = []
-
-        for sort_input in settings.sort_input:
-            sort_cols.append(f'"{sort_input.column}"')
-            descending.append(sort_input.descending)
-
-        self._add_code(f"{var_name} = {input_df}.sort([{', '.join(sort_cols)}], descending={descending})")
-        self._add_code("")
-
-    def _handle_sample(self, settings: input_schema.NodeSample, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle sample nodes."""
-        input_df = input_vars.get("main", "df")
-        self._add_code(f"{var_name} = {input_df}.head(n={settings.sample_size})")
-        self._add_code("")
-
-    def _build_window_expr_code(
-        self,
-        w: "transform_schema.WindowFunctionInput",
-        partition_by: list[str],
-        order_by: list["transform_schema.SortByInput"] | None = None,
-    ) -> str:
-        """Builds a Polars expression string for a single window-function op."""
-        fw = self.framework
-        partition_repr = repr(partition_by) if partition_by else None
-
-        def over(expr: str) -> str:
-            return f"{expr}.over({partition_repr})" if partition_by else expr
-
-        func = w.function
-        if func.startswith("rolling_"):
-            behavior = w.edge_behavior or "require_full"
-            kwargs = f"window_size={w.window_size}"
-            if behavior in ("partial", "fill_zero"):
-                kwargs += ", min_samples=1"
-            elif w.min_periods is not None:
-                kwargs += f", min_samples={w.min_periods}"
-            base = f'{fw}.col("{w.column}").{func}({kwargs})'
-            if behavior == "fill_zero":
-                base = f"{base}.fill_null(0)"
-            return f'{over(base)}.alias("{w.new_column_name}")'
-        if func.startswith("cum_"):
-            base = f'{fw}.col("{w.column}").{func}()'
-            return f'{over(base)}.alias("{w.new_column_name}")'
-        if func == "rank":
-            method = w.rank_method or "ordinal"
-            base = f'{fw}.col("{w.column}").rank(method="{method}")'
-            return f'{over(base)}.alias("{w.new_column_name}")'
-        if func == "tile":
-            # Tile uses only Expr methods (cum_count, when/then/otherwise) and the
-            # framework-level ``len()`` so it works in both pl and ff codegen.
-            if not order_by:
-                raise ValueError("tile requires at least one order_by column")
-            order_col = order_by[0].column
-            n = int(w.number_of_groups)
-            pos = over(f'{fw}.col("{order_col}").cum_count()') + " - 1"  # 0..N-1 per group
-            group_len = over(f"{fw}.len()")
-            big = f"(({group_len}) + {n} - 1) // {n}"
-            threshold = f"(({group_len}) % {n}) * ({big})"
-            small = (
-                f"{fw}.when((({group_len}) // {n}) < 1).then(1)"
-                f".otherwise(({group_len}) // {n})"
-            )
-            expr = (
-                f"{fw}.when(({pos}) < ({threshold}))"
-                f".then(({pos}) // ({big}) + 1)"
-                f".otherwise((({pos}) - ({threshold})) // ({small}) + (({group_len}) % {n}) + 1)"
-                f".cast({fw}.Int64)"
-            )
-            return f'{expr}.alias("{w.new_column_name}")'
-        raise ValueError(f"Unsupported window function: {func!r}")
-
-    def _handle_window_functions(
-        self, settings: input_schema.NodeWindowFunctions, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle window function nodes (rolling, cumulative, rank, tile)."""
-        input_df = input_vars.get("main", "df")
-        window_input = settings.window_input
-
-        sorted_df = input_df
-        if window_input.order_by:
-            sort_cols = [f'"{s.column}"' for s in window_input.order_by]
-            descending = [s.descending for s in window_input.order_by]
-            self._add_code(f"{var_name} = {input_df}.sort([{', '.join(sort_cols)}], descending={descending})")
-            sorted_df = var_name
-
-        exprs = [
-            self._build_window_expr_code(w, window_input.partition_by, window_input.order_by)
-            for w in window_input.window_functions
-        ]
-        self._add_code(f"{var_name} = {sorted_df}.with_columns([")
-        for expr in exprs:
-            self._add_code(f"    {expr},")
-        self._add_code("])")
-        self._add_code("")
-
-    @staticmethod
-    def _transform_fuzzy_mappings_to_string(fuzzy_mappings: list[FuzzyMapping], prefix: str = "") -> str:
-        # TODO(FlowFrame): FuzzyMapping fields containing Polars Expr objects
-        # (e.g. threshold_expr) are serialized via repr, producing invalid code like
-        # `pl.lit(<Expr ['len()'] at 0x...>)`. Need to convert Expr objects to their
-        # code string representation.
-        output_str = "["
-        for i, fuzzy_mapping in enumerate(fuzzy_mappings):
-            output_str += (
-                f"{prefix}FuzzyMapping(left_col='{fuzzy_mapping.left_col}',"
-                f" right_col='{fuzzy_mapping.right_col}', "
-                f"threshold_score={fuzzy_mapping.threshold_score}, "
-                f"fuzzy_type='{fuzzy_mapping.fuzzy_type}')"
-            )
-            if i < len(fuzzy_mappings) - 1:
-                output_str += ",\n"
-        output_str += "]"
-        return output_str
-
-    def _handle_fuzzy_match(
-        self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle fuzzy match nodes."""
-        self.imports.add("from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs")
-        fuzzy_match_handler = transform_schema.FuzzyMatchInputManager(settings.join_input)
-        left_df = input_vars.get("main", input_vars.get("main_0", "df_left"))
-        right_df = input_vars.get("right", input_vars.get("main_1", "df_right"))
-
-        if left_df == right_df:
-            right_df = "df_right"
-            self._add_code(f"{right_df} = {left_df}")
-
-        if fuzzy_match_handler.left_select.has_drop_cols():
-            left_drop_cols = [c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]
-            self._add_code(f"{left_df} = {left_df}.drop({left_drop_cols})")
-        if fuzzy_match_handler.right_select.has_drop_cols():
-            right_drop_cols = [c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]
-            self._add_code(f"{right_df} = {right_df}.drop({right_drop_cols})")
-
-        fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(fuzzy_match_handler.join_mapping)
-        self._add_code(
-            f"{var_name} = fuzzy_match_dfs(\n"
-            f"       left_df={left_df}, right_df={right_df},\n"
-            f"       fuzzy_maps={fuzzy_join_mapping_settings}\n"
-            f"       ).lazy()"
-        )
-
-    def _handle_unique(self, settings: input_schema.NodeUnique, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle unique/distinct nodes."""
-        input_df = input_vars.get("main", "df")
-
-        if settings.unique_input.columns:
-            self._add_code(
-                f"{var_name} = {input_df}.unique("
-                f"subset={settings.unique_input.columns}, keep='{settings.unique_input.strategy}')"
-            )
-        else:
-            self._add_code(f"{var_name} = {input_df}.unique(keep='{settings.unique_input.strategy}')")
-        self._add_code("")
-
-    def _handle_text_to_rows(
-        self, settings: input_schema.NodeTextToRows, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle text to rows (explode) nodes."""
-        # TODO(FlowFrame): Verify that {self.framework}.col() expressions work correctly
-        # when the input DataFrame may have been converted to pl.LazyFrame (e.g., after
-        # pivot .collect().lazy() or right join .collect().lazy() chains).
-        input_df = input_vars.get("main", "df")
-        text_input = settings.text_to_rows_input
-
-        split_expr = f'{self.framework}.col("{text_input.column_to_split}").str.split("{text_input.split_fixed_value}")'
-        if text_input.output_column_name and text_input.output_column_name != text_input.column_to_split:
-            split_expr = f'{split_expr}.alias("{text_input.output_column_name}")'
-            explode_col = text_input.output_column_name
-        else:
-            explode_col = text_input.column_to_split
-
-        self._add_code(f"{var_name} = {input_df}.with_columns({split_expr}).explode('{explode_col}')")
-        self._add_code("")
-
-    # .with_columns(
-    #     (pl.cum_count(record_id_settings.output_column_name)
-    #      .over(record_id_settings.group_by_columns) + record_id_settings.offset - 1)
-    #     .alias(record_id_settings.output_column_name)
-    # )
-    def _handle_record_id(self, settings: input_schema.NodeRecordId, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle record ID nodes."""
-        input_df = input_vars.get("main", "df")
-        record_input = settings.record_id_input
-        if record_input.group_by and record_input.group_by_columns:
-            self._add_code(f"{var_name} = ({input_df}")
-            self._add_code(f"    .with_columns({self.framework}.lit(1).alias('{record_input.output_column_name}'))")
-            self._add_code("    .with_columns([")
-            self._add_code(
-                f"    ({self.framework}.cum_count('{record_input.output_column_name}')"
-                f".over({record_input.group_by_columns}) + {record_input.offset} - 1)"
-            )
-            self._add_code(f"    .alias('{record_input.output_column_name}')")
-            self._add_code("])")
-            out_col = record_input.output_column_name
-            self._add_code(f".select(['{out_col}'] + [col for col in {input_df}.columns if col != '{out_col}'])")
-            self._add_code(")")
-        else:
-            self._add_code(
-                f"{var_name} = {input_df}.with_row_count("
-                f"name='{record_input.output_column_name}', offset={record_input.offset})"
-            )
-        self._add_code("")
-
-    def _handle_cross_join(
-        self, settings: input_schema.NodeCrossJoin, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle cross join nodes."""
-        left_df = input_vars.get("main", input_vars.get("main_0", "df_left"))
-        right_df = input_vars.get("right", input_vars.get("main_1", "df_right"))
-
-        self._add_code(f"{var_name} = {left_df}.join({right_df}, how='cross')")
-        self._add_code("")
+            # Nothing selected -> transparent passthrough; remap and emit nothing.
+            self.node_var_mapping[settings.node_id] = input_df
 
     def _handle_output(self, settings: input_schema.NodeOutput, var_name: str, input_vars: dict[str, str]) -> None:
         input_df = input_vars.get("main", "df")
@@ -1195,7 +538,7 @@ class FlowGraphCodeConverter:
         is_expression = "output_df" not in code
 
         self._add_code("# Custom Polars code")
-        self._add_code(f"def _polars_code_{var_name.replace('df_', '')}({params}):")
+        self._add_code(f"def _polars_code_{settings.node_id}({params}):")
 
         if is_expression:
             self._add_code(f"    return {code}")
@@ -1214,7 +557,7 @@ class FlowGraphCodeConverter:
 
         self._add_code("")
 
-        self._add_code(f"{var_name} = _polars_code_{var_name.replace('df_', '')}({args})")
+        self._add_code(f"{var_name} = _polars_code_{settings.node_id}({args})")
         self._add_code("")
 
     # Handlers for unsupported node types - these add nodes to the unsupported list
@@ -1222,482 +565,13 @@ class FlowGraphCodeConverter:
     def _handle_explore_data(
         self, settings: input_schema.NodeExploreData, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Handle explore_data nodes - these are skipped as they are interactive visualization only."""
-        input_df = input_vars.get("main", "df")
-        self._add_comment(f"# Node {settings.node_id}: Explore Data (skipped - interactive visualization only)")
-        self._add_code(f"{var_name} = {input_df}  # Pass through unchanged")
-        self._add_code("")
+        """Elide explore_data (interactive-only): remap to its input and emit nothing.
 
-    def _handle_external_source(
-        self, settings: input_schema.NodeExternalSource, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle external_source nodes - these are not supported for code generation."""
-        self.unsupported_nodes.append(
-            (
-                settings.node_id,
-                "external_source",
-                "External Source nodes use dynamic data sources that cannot be included in generated code",
-            )
-        )
-        self._add_comment(f"# Node {settings.node_id}: External Source - Not supported for code export")
-        self._add_comment("# (External data sources require runtime configuration)")
-
-    def _handle_cloud_storage_reader(
-        self, settings: input_schema.NodeCloudStorageReader, var_name: str, input_vars: dict[str, str]
-    ):
-        """Cloud storage nodes are not supported for standalone Polars code. Use FlowFrame export."""
-        self.unsupported_nodes.append(
-            (
-                settings.node_id,
-                "cloud_storage_reader",
-                "Cloud Storage Reader is not supported by Polars code generation. "
-                "Please use FlowFrame code generation instead.",
-            )
-        )
-
-    def _handle_cloud_storage_writer(
-        self, settings: input_schema.NodeCloudStorageWriter, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Cloud storage nodes are not supported for standalone Polars code. Use FlowFrame export."""
-        self.unsupported_nodes.append(
-            (
-                settings.node_id,
-                "cloud_storage_writer",
-                "Cloud Storage Writer is not supported by Polars code generation. "
-                "Please use FlowFrame code generation instead.",
-            )
-        )
-
-    def _handle_kafka_source(
-        self, settings: input_schema.NodeKafkaSource, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Kafka source nodes are not supported for standalone Polars code. Use FlowFrame export."""
-        self.unsupported_nodes.append(
-            (
-                settings.node_id,
-                "kafka_source",
-                "Kafka Source is not supported by Polars code generation. "
-                "Please use FlowFrame code generation instead.",
-            )
-        )
-
-    def _handle_database_reader(
-        self, settings: input_schema.NodeDatabaseReader, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        self.imports.add("import flowfile as ff")
-        db_settings = settings.database_settings
-
-        if db_settings.connection_mode != "reference":
-            self.unsupported_nodes.append(
-                (
-                    settings.node_id,
-                    "database_reader",
-                    "Database Reader nodes with inline connections cannot be exported. "
-                    "Please use a named connection (reference mode) instead.",
-                )
-            )
-            return
-
-        if not db_settings.database_connection_name:
-            self.unsupported_nodes.append(
-                (settings.node_id, "database_reader", "Database Reader node is missing a connection name")
-            )
-            return
-
-        connection_name = db_settings.database_connection_name
-        suffix = ".data" if self.framework == "pl" else ""
-
-        if db_settings.query_mode == "query" and db_settings.query:
-            self._add_code(f"{var_name} = ff.read_database(")
-            self._add_code(f'    "{connection_name}",')
-            self._add_code('    query="""')
-            for line in db_settings.query.split("\n"):
-                self._add_code(f"        {line}")
-            self._add_code('    """,')
-            self._add_code(f"){suffix}")
-        else:
-            self._add_code(f"{var_name} = ff.read_database(")
-            self._add_code(f'    "{connection_name}",')
-            if db_settings.table_name:
-                self._add_code(f'    table_name="{db_settings.table_name}",')
-            if db_settings.schema_name:
-                self._add_code(f'    schema_name="{db_settings.schema_name}",')
-            self._add_code(f"){suffix}")
-
-        self._add_code("")
-
-    def _handle_database_writer(
-        self, settings: input_schema.NodeDatabaseWriter, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        self.imports.add("import flowfile as ff")
-        db_settings = settings.database_write_settings
-
-        if db_settings.connection_mode != "reference":
-            self.unsupported_nodes.append(
-                (
-                    settings.node_id,
-                    "database_writer",
-                    "Database Writer nodes with inline connections cannot be exported. "
-                    "Please use a named connection (reference mode) instead.",
-                )
-            )
-            return
-
-        if not db_settings.database_connection_name:
-            self.unsupported_nodes.append(
-                (settings.node_id, "database_writer", "Database Writer node is missing a connection name")
-            )
-            return
-
-        connection_name = db_settings.database_connection_name
-        input_df = input_vars.get("main", "df")
-
-        self._add_code("ff.write_database(")
-        self._add_code(f"    {input_df},")
-        self._add_code(f'    "{connection_name}",')
-        self._add_code(f'    "{db_settings.table_name}",')
-        if db_settings.schema_name:
-            self._add_code(f'    schema_name="{db_settings.schema_name}",')
-        if db_settings.if_exists:
-            self._add_code(f'    if_exists="{db_settings.if_exists}",')
-        self._add_code(")")
-        self._add_code(f"{var_name} = {input_df}")
-        self._add_code("")
-
-    def _handle_rest_api_reader(
-        self, settings: input_schema.NodeRestApiReader, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        self.imports.add("import flowfile as ff")
-        s = settings.rest_api_settings
-        suffix = ".data" if self.framework == "pl" else ""
-
-        self._add_code(f"# Read from REST API: {s.method} {s.url}")
-        self._add_code(f"{var_name} = ff.read_api(")
-        self._add_code(f"    {s.url!r},")
-        if s.method != "GET":
-            self._add_code(f'    method="{s.method}",')
-        if s.headers:
-            self._add_code(f"    headers={s.headers!r},")
-        if s.query_params:
-            self._add_code(f"    params={s.query_params!r},")
-        if s.json_body is not None:
-            self._add_code(f"    json_body={s.json_body!r},")
-        auth_arg = self._build_rest_api_auth_arg(s.auth)
-        if auth_arg:
-            self._add_code(f"    auth={auth_arg},")
-        pagination_arg = self._build_rest_api_pagination_arg(s.pagination)
-        if pagination_arg:
-            self._add_code(f"    pagination={pagination_arg},")
-        if s.record_path:
-            self._add_code(f"    record_path={s.record_path!r},")
-        if s.timeout_seconds != 30.0:
-            self._add_code(f"    timeout_seconds={s.timeout_seconds},")
-        if s.max_retries != 3:
-            self._add_code(f"    max_retries={s.max_retries},")
-        self._add_code(f"){suffix}")
-        self._add_code("")
-
-    @staticmethod
-    def _build_rest_api_auth_arg(auth: input_schema.RestApiAuthSettings | None) -> str | None:
-        """Build the ``auth=`` dict literal for ``read_api``, or None when no auth.
-
-        The inline plaintext ``secret`` is never emitted: it is not persisted and
-        would leak a credential into the generated script. Code references the
-        stored ``secret_name`` instead, mirroring the database reader's reliance
-        on a named connection.
+        Downstream references and the return resolve straight to the upstream
+        frame, so no dead ``var = input`` passthrough appears in the script —
+        matching ``--run-flow``, which already drops UI-only explore_data nodes.
         """
-        if auth is None or auth.auth_type == "none":
-            return None
-        auth_dict: dict[str, typing.Any] = {"auth_type": auth.auth_type}
-        if auth.auth_type == "api_key":
-            if auth.api_key_name != "X-API-Key":
-                auth_dict["api_key_name"] = auth.api_key_name
-            if auth.api_key_location != "header":
-                auth_dict["api_key_location"] = auth.api_key_location
-        elif auth.auth_type == "basic" and auth.basic_username:
-            auth_dict["basic_username"] = auth.basic_username
-        if auth.secret_name:
-            auth_dict["secret_name"] = auth.secret_name
-        return repr(auth_dict)
-
-    @staticmethod
-    def _build_rest_api_pagination_arg(
-        pagination: input_schema.RestApiPaginationSettings | None,
-    ) -> str | None:
-        """Build the ``pagination=`` dict literal for ``read_api``, or None when unpaginated."""
-        if pagination is None or pagination.pagination_type == "none":
-            return None
-        p: dict[str, typing.Any] = {"pagination_type": pagination.pagination_type}
-        if pagination.pagination_type == "offset":
-            if pagination.offset_param != "offset":
-                p["offset_param"] = pagination.offset_param
-            if pagination.limit_param != "limit":
-                p["limit_param"] = pagination.limit_param
-            if pagination.page_size != 100:
-                p["page_size"] = pagination.page_size
-        elif pagination.pagination_type == "page":
-            if pagination.page_param != "page":
-                p["page_param"] = pagination.page_param
-            if pagination.start_page != 1:
-                p["start_page"] = pagination.start_page
-            if pagination.page_size != 100:
-                p["page_size"] = pagination.page_size
-        elif pagination.pagination_type == "cursor":
-            if pagination.cursor_param != "cursor":
-                p["cursor_param"] = pagination.cursor_param
-            if pagination.cursor_location != "body":
-                p["cursor_location"] = pagination.cursor_location
-            if pagination.cursor_response_path:
-                p["cursor_response_path"] = pagination.cursor_response_path
-            if pagination.initial_cursor:
-                p["initial_cursor"] = pagination.initial_cursor
-        if pagination.max_pages != 1000:
-            p["max_pages"] = pagination.max_pages
-        if pagination.max_records is not None:
-            p["max_records"] = pagination.max_records
-        if pagination.page_delay_seconds:
-            p["page_delay_seconds"] = pagination.page_delay_seconds
-        return repr(p)
-
-    def _handle_catalog_reader(
-        self, settings: input_schema.NodeCatalogReader, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        self.imports.add("import flowfile as ff")
-
-        if settings.sql_query:
-            self._handle_catalog_sql_reader(settings, var_name)
-            return
-
-        table_name = settings.catalog_table_name
-        table_id = settings.catalog_table_id
-
-        if not table_name and not table_id:
-            self.unsupported_nodes.append(
-                (settings.node_id, "catalog_reader", "Catalog Reader node has no table name or ID configured")
-            )
-            return
-
-        label = table_name or f"id={table_id}"
-        suffix = ".data" if self.framework == "pl" else ""
-        self._add_code(f"# Read from catalog table: {label}")
-        self._add_code(f"{var_name} = ff.read_catalog_table(")
-        if table_name:
-            self._add_code(f'    "{table_name}",')
-        if settings.catalog_namespace_id is not None:
-            self._add_code(f"    namespace_id={settings.catalog_namespace_id},")
-        if settings.delta_version is not None:
-            self._add_code(f"    delta_version={settings.delta_version},")
-        self._add_code(f"){suffix}")
-        self._add_code("")
-
-    def _handle_catalog_sql_reader(self, settings: input_schema.NodeCatalogReader, var_name: str) -> None:
-        sql_code = settings.sql_query.replace('"""', '\\"\\"\\"')
-        self._add_code("# SQL query against catalog tables")
-        self._add_code(f'{var_name} = ff.read_catalog_sql("""')
-        for line in sql_code.split("\n"):
-            self._add_code(line)
-        self._add_code('""")')
-        self._add_code("")
-
-    def _handle_catalog_writer(
-        self, settings: input_schema.NodeCatalogWriter, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        self.imports.add("import flowfile as ff")
-        ws = settings.catalog_write_settings
-        input_df = input_vars.get("main", "df")
-
-        if not ws.table_name:
-            self.unsupported_nodes.append(
-                (settings.node_id, "catalog_writer", "Catalog Writer node has no table name configured")
-            )
-            return
-
-        self._add_code(f"# Write to catalog table: {ws.table_name}")
-        self._add_code("ff.write_catalog_table(")
-        self._add_code(f"    {input_df},")
-        self._add_code(f'    "{ws.table_name}",')
-        if ws.namespace_id is not None:
-            self._add_code(f"    namespace_id={ws.namespace_id},")
-        self._add_code(f'    write_mode="{ws.write_mode}",')
-        if ws.merge_keys:
-            self._add_code(f"    merge_keys={ws.merge_keys},")
-        if ws.description:
-            self._add_code(f'    description="{ws.description}",')
-        self._add_code(")")
-        self._add_code(f"{var_name} = {input_df}")
-        self._add_code("")
-
-    def _check_process_method_signature(self, custom_node_class: type) -> tuple[bool, bool]:
-        """
-        Check the process method signature to determine if collect/lazy is needed.
-
-        Returns:
-            Tuple of (needs_collect, needs_lazy):
-            - needs_collect: True if inputs need to be collected to DataFrame before passing to process()
-            - needs_lazy: True if output needs to be converted to LazyFrame after process()
-        """
-        needs_collect = True
-        needs_lazy = True
-
-        process_method = getattr(custom_node_class, "process", None)
-        if process_method is None:
-            return needs_collect, needs_lazy
-
-        try:
-            type_hints = typing.get_type_hints(process_method)
-
-            return_type = type_hints.get("return")
-            if return_type is not None:
-                return_type_str = str(return_type)
-                if "LazyFrame" in return_type_str:
-                    needs_lazy = False
-
-            sig = inspect.signature(process_method)
-            params = list(sig.parameters.values())
-            for param in params[1:]:
-                if param.annotation != inspect.Parameter.empty:
-                    param_type_str = str(param.annotation)
-                    if "LazyFrame" in param_type_str:
-                        needs_collect = False
-                        break
-                if param.name in type_hints:
-                    hint_str = str(type_hints[param.name])
-                    if "LazyFrame" in hint_str:
-                        needs_collect = False
-                        break
-        except Exception as e:
-            # If we can't determine types, use defaults (collect + lazy)
-            logger.debug(f"Could not determine process method signature: {e}")
-
-        return needs_collect, needs_lazy
-
-    def _read_custom_node_source_file(self, custom_node_class: type) -> str | None:
-        """
-        Read the entire source file where a custom node class is defined.
-        This includes all class definitions in that file (settings schemas, etc.).
-
-        Returns:
-            The complete source code from the file, or None if not readable.
-        """
-        try:
-            source_file = inspect.getfile(custom_node_class)
-            with open(source_file) as f:
-                return f.read()
-        except (OSError, TypeError):
-            return None
-
-    def _handle_user_defined(self, node: FlowNode, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle user-defined custom nodes by including their class definition and calling process()."""
-        custom_node_class = self._lookup_custom_node_class(node)
-        if custom_node_class is None:
-            return
-        if not self._register_custom_node_source(node, custom_node_class):
-            return
-        self._emit_user_defined_call(node, custom_node_class, var_name, input_vars)
-
-    def _lookup_custom_node_class(self, node: FlowNode) -> type | None:
-        """Resolve a user-defined node's class from the registry, recording unsupported on miss."""
-        node_type = node.node_type
-        custom_node_class = CUSTOM_NODE_STORE.get(node_type)
-        if custom_node_class is None:
-            self.unsupported_nodes.append(
-                (node.node_id, node_type, f"User-defined node type '{node_type}' not found in the custom node registry")
-            )
-            self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Not found in registry")
-        return custom_node_class
-
-    def _register_custom_node_source(self, node: FlowNode, custom_node_class: type) -> bool:
-        """Capture the custom node's class source for inlining into the generated script.
-
-        Returns False (after recording the node as unsupported) when the
-        source cannot be retrieved.
-        """
-        node_type = node.node_type
-        class_name = custom_node_class.__name__
-        if class_name not in self.custom_node_classes:
-            file_source = self._read_custom_node_source_file(custom_node_class)
-            if file_source:
-                # Remove import lines from the file since we handle imports separately
-                lines = file_source.split("\n")
-                non_import_lines = []
-                in_multiline_import = False
-                for line in lines:
-                    stripped = line.strip()
-                    if stripped.startswith("import ") or stripped.startswith("from "):
-                        if "(" in stripped and ")" not in stripped:
-                            in_multiline_import = True
-                        continue
-                    if in_multiline_import:
-                        if ")" in stripped:
-                            in_multiline_import = False
-                        continue
-                    # Skip comments at the very start (like "# Auto-generated custom node")
-                    if stripped.startswith("#") and not non_import_lines:
-                        continue
-                    non_import_lines.append(line)
-                while non_import_lines and not non_import_lines[0].strip():
-                    non_import_lines.pop(0)
-                self.custom_node_classes[class_name] = "\n".join(non_import_lines)
-            else:
-                try:
-                    self.custom_node_classes[class_name] = inspect.getsource(custom_node_class)
-                except (OSError, TypeError) as e:
-                    self.unsupported_nodes.append(
-                        (node.node_id, node_type, f"Could not retrieve source code for user-defined node: {e}")
-                    )
-                    self._add_comment(
-                        f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable"
-                    )
-                    return False
-
-            self.imports.add(
-                "from flowfile_core.flowfile.node_designer import ("
-                "CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, "
-                "IncomingColumns, ColumnSelector, NumericInput, TextInput, "
-                "ColumnActionInput, SliderInput, ToggleSwitch)"
-            )
-        return True
-
-    def _emit_user_defined_call(
-        self, node: FlowNode, custom_node_class: type, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Emit the instantiation, settings population, and process() call for a custom node."""
-        settings = node.setting_input
-        class_name = custom_node_class.__name__
-        settings_dict = getattr(settings, "settings", {}) or {}
-
-        needs_collect, needs_lazy = self._check_process_method_signature(custom_node_class)
-
-        _node_name_field = custom_node_class.model_fields.get("node_name", type("", (), {"default": node.node_type}))
-        self._add_code(f"# User-defined node: {_node_name_field.default}")
-        self._add_code(f"_custom_node_{node.node_id} = {class_name}()")
-
-        if settings_dict:
-            self._add_code(f"_custom_node_{node.node_id}_settings = {repr(settings_dict)}")
-            self._add_code(f"if _custom_node_{node.node_id}.settings_schema:")
-            node_var = f"_custom_node_{node.node_id}"
-            self._add_code(f"    {node_var}.settings_schema.populate_values({node_var}_settings)")
-
-        if len(input_vars) == 0:
-            input_args = ""
-        elif len(input_vars) == 1:
-            input_df = list(input_vars.values())[0]
-            input_args = f"{input_df}.collect()" if needs_collect else input_df
-        else:
-            arg_list = []
-            for key in sorted(input_vars.keys()):
-                if key.startswith("main"):
-                    if needs_collect:
-                        arg_list.append(f"{input_vars[key]}.collect()")
-                    else:
-                        arg_list.append(input_vars[key])
-            input_args = ", ".join(arg_list)
-
-        if needs_lazy:
-            self._add_code(f"{var_name} = _custom_node_{node.node_id}.process({input_args}).lazy()")
-        else:
-            self._add_code(f"{var_name} = _custom_node_{node.node_id}.process({input_args})")
-        self._add_code("")
+        self.node_var_mapping[settings.node_id] = input_vars.get("main", "df")
 
     # Helper methods
 
@@ -1709,151 +583,228 @@ class FlowGraphCodeConverter:
         """Add a comment line."""
         self.code_lines.append(comment)
 
-    def _parse_filter_expression(self, expr: str) -> str:
-        """Parse Flowfile filter expression to Polars expression."""
-        import re
+    def _raw_producer_ids(self, node: FlowNode) -> list[int]:
+        """Upstream node ids feeding ``node`` (main + left + right)."""
+        ids = [inp.node_id for inp in (node.node_inputs.main_inputs or [])]
+        if node.node_inputs.left_input:
+            ids.append(node.node_inputs.left_input.node_id)
+        if node.node_inputs.right_input:
+            ids.append(node.node_inputs.right_input.node_id)
+        return ids
 
-        # Pattern: [column_name]operator"value" or [column_name]operatorvalue
-        pattern = r'\[([^\]]+)\]([><=!]+)"?([^"]*)"?'
+    def _resolve_producer(self, node_id: int) -> int:
+        """Hop through elided passthrough nodes to the real producing node."""
+        seen: set[int] = set()
+        while node_id in self._passthrough and node_id not in seen:
+            seen.add(node_id)
+            node_id = self._passthrough[node_id]
+        return node_id
 
-        def replace_expr(match):
-            col, op, val = match.groups()
+    @staticmethod
+    def _is_flow_output(node: FlowNode) -> bool:
+        return bool(getattr(node.setting_input, "is_flow_output", False))
 
-            op_map = {"=": "==", "!=": "!=", ">": ">", "<": "<", ">=": ">=", "<=": "<="}
+    @staticmethod
+    def _is_filter_split(node: FlowNode) -> bool:
+        return node.node_type == "filter" and bool(getattr(node.setting_input, "split_mode", False))
 
-            polars_op = op_map.get(op, op)
+    def _var_label(self, node: FlowNode) -> str:
+        if self._is_filter_split(node):
+            return "split"
+        return NODE_TYPE_VAR_LABEL.get(node.node_type, "df")
 
-            try:
-                float(val)
-                return f'{self.framework}.col("{col}") {polars_op} {val}'
-            except ValueError:
-                return f'{self.framework}.col("{col}") {polars_op} "{val}"'
+    def _render_body(self) -> list[str]:
+        """Fuse linear single-use chains and give the surviving boundaries clean names."""
+        emissions: list[NodeEmission] = []
+        node_by_id: dict[int, FlowNode] = {}
+        for node, effective_var, start, end in self._node_spans:
+            lines = self.code_lines[start:end]
+            while lines and lines[-1] == "":
+                lines = lines[:-1]
+            if not lines:
+                continue
+            resolved = {self._resolve_producer(pid) for pid in self._raw_producer_ids(node)}
+            num_inputs = len(resolved)
+            main_producer_id = next(iter(resolved)) if num_inputs == 1 else None
+            pinned = bool(getattr(node.setting_input, "node_reference", None))
+            emissions.append(
+                NodeEmission(
+                    node.node_id, effective_var, lines, main_producer_id,
+                    num_inputs, self._is_flow_output(node), pinned,
+                )
+            )
+            node_by_id[node.node_id] = node
 
-        return re.sub(pattern, replace_expr, expr)
+        consumers: dict[int, list[int]] = {em.node_id: [] for em in emissions}
+        for em in emissions:
+            node = node_by_id[em.node_id]
+            for pid in {self._resolve_producer(p) for p in self._raw_producer_ids(node)}:
+                if pid in consumers:
+                    consumers[pid].append(em.node_id)
 
-    def _create_basic_filter_expr(self, basic: transform_schema.BasicFilter) -> str:
-        """Create Polars expression from basic filter.
+        body, survivors = render_pipeline(emissions, consumers)
+        rename = self._plan_boundary_names(emissions, survivors, node_by_id)
+        return self._apply_renames(body, rename)
 
-        Generates proper Polars code for all supported filter operators.
+    @staticmethod
+    def _is_renameable(em: NodeEmission, node: FlowNode) -> bool:
+        """Renameable boundaries: single-output ``df_N`` assignments and filter splits.
 
-        Args:
-            basic: The BasicFilter configuration.
-
-        Returns:
-            A string containing valid Polars filter expression code.
+        Multi-output nodes (random_split, ML train/apply) bind a *derived* var
+        (``df_N_train``) with sibling outputs, so renaming only the primary would
+        break consistency — leave their tokens untouched.
         """
-        from flowfile_core.schemas.transform_schema import FilterOperator
+        if em.pinned:
+            return False
+        if FlowGraphCodeConverter._is_filter_split(node):
+            return True
+        return em.var_name == f"df_{em.node_id}"
 
-        col = f'{self.framework}.col("{basic.field}")'
-        value = basic.value
-        value2 = basic.value2
+    def _plan_boundary_names(
+        self, emissions: list[NodeEmission], survivors: set[int], node_by_id: dict[int, FlowNode]
+    ) -> dict[str, str]:
+        """Map provisional ``df_N`` tokens to clean labels; suffix only on collision."""
+        ordered = [em for em in emissions if em.node_id in survivors]
+        renameable = [em for em in ordered if self._is_renameable(em, node_by_id[em.node_id])]
+        labels = {em.node_id: self._var_label(node_by_id[em.node_id]) for em in renameable}
+        counts: dict[str, int] = {}
+        for label in labels.values():
+            counts[label] = counts.get(label, 0) + 1
 
-        # Determine if value is numeric (for proper quoting)
-        is_numeric = value.replace(".", "", 1).replace("-", "", 1).isnumeric() if value else False
+        used: set[str] = {em.var_name for em in ordered if em.pinned} | set(_RESERVED_NAMES) | self._imported_names()
+        final: dict[int, str] = {}
+        seen: dict[str, int] = {}
+        for em in renameable:
+            label = labels[em.node_id]
+            if counts[label] > 1:
+                seen[label] = seen.get(label, 0) + 1
+                name = f"{label}_{seen[label]}"
+            else:
+                name = label
+            name = self._uniquify(name, used)
+            final[em.node_id] = name
 
+        rename: dict[str, str] = {}
+        for em in renameable:
+            name = final[em.node_id]
+            nid = em.node_id
+            if self._is_filter_split(node_by_id[nid]):
+                rename[f"df_{nid}_pass"] = f"{name}_pass"
+                rename[f"df_{nid}_fail"] = f"{name}_fail"
+                rename[f"_filter_{nid}_pred"] = f"{name}_pred"
+            else:
+                rename[em.var_name] = name
+
+        # random_split: name each output by its split (train/test/val), not df_N_<split>.
+        for em in ordered:
+            node = node_by_id[em.node_id]
+            if em.pinned or node.node_type != "random_split":
+                continue
+            for split in getattr(node.setting_input, "splits", []):
+                rename[f"df_{em.node_id}_{split.name}"] = self._uniquify(split.name, used)
+        return rename
+
+    def _imported_names(self) -> set[str]:
+        """Names bound by ``self.imports`` so generated vars never shadow an import alias."""
+        names: set[str] = set()
+        for statement in self.imports:
+            try:
+                tree = ast.parse(statement)
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        names.add(alias.asname or alias.name.split(".")[0])
+                elif isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        names.add(alias.asname or alias.name)
+        return names
+
+    @staticmethod
+    def _uniquify(name: str, used: set[str]) -> str:
+        """Return ``name`` (or a numbered variant) not already in ``used``; records it."""
+        candidate, bump = name, 2
+        while candidate in used:
+            candidate, bump = f"{name}_{bump}", bump + 1
+        used.add(candidate)
+        return candidate
+
+    def _apply_renames(self, body: list[str], rename: dict[str, str]) -> list[str]:
+        """Substitute provisional tokens with final names across body + return targets.
+
+        Renames only identifier (NAME) tokens, never identifiers inside string or
+        comment tokens, so a column literal like ``pl.col("df_2")`` survives intact.
+        Falls back to the legacy regex when the body is not tokenizable, so behaviour
+        degrades (less precise) rather than breaking.
+        """
+        if not rename:
+            return body
+        out = self._rename_tokens(body, rename)
+        if out is None:
+            out = self._rename_regex(body, rename)
+        self.output_nodes = [(nid, rename.get(var, var)) for nid, var in self.output_nodes]
+        if self.last_node_var is not None:
+            self.last_node_var = rename.get(self.last_node_var, self.last_node_var)
+        return out
+
+    @staticmethod
+    def _rename_regex(body: list[str], rename: dict[str, str]) -> list[str]:
+        """Legacy fallback: regex substitution over whole lines (used only when the
+        body cannot be tokenized)."""
+        # `(?!=)` leaves keyword-argument names (``param=``, no surrounding spaces)
+        # untouched while still renaming assignment targets (``var = ``) and value
+        # references — e.g. a notebook call ``run(df_1=df_1.data)`` keeps its
+        # contract param ``df_1`` but renames the upstream value.
+        patterns = [(re.compile(r"\b" + re.escape(old) + r"\b(?!=)"), new) for old, new in rename.items()]
+        out = []
+        for line in body:
+            for pat, new in patterns:
+                line = pat.sub(new, line)
+            out.append(line)
+        return out
+
+    @staticmethod
+    def _rename_tokens(body: list[str], rename: dict[str, str]) -> list[str] | None:
+        """Rename NAME tokens only, leaving string/comment tokens untouched.
+
+        Returns the rewritten body (same element structure as the input), or None
+        when the joined body cannot be tokenized so the caller can fall back.
+        """
+        source = "\n".join(body)
         try:
-            operator = basic.get_operator()
-        except (ValueError, AttributeError):
-            operator = FilterOperator.from_symbol(str(basic.operator))
-
-        if operator == FilterOperator.EQUALS:
-            if is_numeric:
-                return f"{col} == {value}"
-            return f'{col} == "{value}"'
-
-        elif operator == FilterOperator.NOT_EQUALS:
-            if is_numeric:
-                return f"{col} != {value}"
-            return f'{col} != "{value}"'
-
-        elif operator == FilterOperator.GREATER_THAN:
-            if is_numeric:
-                return f"{col} > {value}"
-            return f'{col} > "{value}"'
-
-        elif operator == FilterOperator.GREATER_THAN_OR_EQUALS:
-            if is_numeric:
-                return f"{col} >= {value}"
-            return f'{col} >= "{value}"'
-
-        elif operator == FilterOperator.LESS_THAN:
-            if is_numeric:
-                return f"{col} < {value}"
-            return f'{col} < "{value}"'
-
-        elif operator == FilterOperator.LESS_THAN_OR_EQUALS:
-            if is_numeric:
-                return f"{col} <= {value}"
-            return f'{col} <= "{value}"'
-
-        elif operator == FilterOperator.CONTAINS:
-            return f'{col}.str.contains("{value}")'
-
-        elif operator == FilterOperator.NOT_CONTAINS:
-            return f'{col}.str.contains("{value}").not_()'
-
-        elif operator == FilterOperator.STARTS_WITH:
-            return f'{col}.str.starts_with("{value}")'
-
-        elif operator == FilterOperator.ENDS_WITH:
-            return f'{col}.str.ends_with("{value}")'
-
-        elif operator == FilterOperator.IS_NULL:
-            return f"{col}.is_null()"
-
-        elif operator == FilterOperator.IS_NOT_NULL:
-            return f"{col}.is_not_null()"
-
-        elif operator == FilterOperator.IN:
-            values = [v.strip() for v in value.split(",")]
-            if all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
-                values_str = ", ".join(values)
-            else:
-                values_str = ", ".join(f'"{v}"' for v in values)
-            return f"{col}.is_in([{values_str}])"
-
-        elif operator == FilterOperator.NOT_IN:
-            values = [v.strip() for v in value.split(",")]
-            if all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
-                values_str = ", ".join(values)
-            else:
-                values_str = ", ".join(f'"{v}"' for v in values)
-            return f"{col}.is_in([{values_str}]).not_()"
-
-        elif operator == FilterOperator.BETWEEN:
-            if value2 is None:
-                return f"{col}  # BETWEEN requires two values"
-            if is_numeric and value2.replace(".", "", 1).replace("-", "", 1).isnumeric():
-                return f"({col} >= {value}) & ({col} <= {value2})"
-            return f'({col} >= "{value}") & ({col} <= "{value2}")'
-
-        return col
-
-    def _get_polars_dtype(self, dtype_str: str) -> str:
-        fw = self.framework
-        dtype_map = {
-            "String": f"{fw}.Utf8",
-            "Integer": f"{fw}.Int64",
-            "Double": f"{fw}.Float64",
-            "Boolean": f"{fw}.Boolean",
-            "Date": f"{fw}.Date",
-            "Datetime": f"{fw}.Datetime",
-            "Float32": f"{fw}.Float32",
-            "Float64": f"{fw}.Float64",
-            "Int32": f"{fw}.Int32",
-            "Int64": f"{fw}.Int64",
-            "Utf8": f"{fw}.Utf8",
-        }
-        return dtype_map.get(dtype_str, f"{fw}.Utf8")
-
-    def _get_agg_function(self, agg: str) -> str:
-        """Get Polars aggregation function name."""
-        agg_map = {
-            "avg": "mean",
-            "average": "mean",
-            "concat": "str.concat",
-        }
-        return agg_map.get(agg, agg)
+            tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+        except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+            return None
+        physical = source.split("\n")
+        edits: dict[int, list[tuple[int, int, str]]] = {}
+        for tok in tokens:
+            if tok.type != tokenize.NAME:
+                continue
+            new = rename.get(tok.string)
+            if new is None:
+                continue
+            (srow, scol), (_erow, ecol) = tok.start, tok.end  # NAME tokens never span lines
+            line = physical[srow - 1]
+            # Replicate the legacy `(?!=)`: skip ``param=`` (kwarg/contract names) while
+            # still renaming assignment targets (``var = ``) and value references.
+            if ecol < len(line) and line[ecol] == "=":
+                continue
+            edits.setdefault(srow - 1, []).append((scol, ecol, new))
+        for idx, line_edits in edits.items():
+            line = physical[idx]
+            for scol, ecol, new in sorted(line_edits, reverse=True):  # right-to-left keeps cols valid
+                line = line[:scol] + new + line[ecol:]
+            physical[idx] = line
+        # Re-group physical lines back into the original body element structure
+        # (some elements carry embedded newlines, e.g. the fuzzy-join emit).
+        out: list[str] = []
+        pos = 0
+        for element in body:
+            span = element.count("\n") + 1
+            out.append("\n".join(physical[pos : pos + span]))
+            pos += span
+        return out
 
     def add_return_code(self, lines: list[str]) -> None:
         if self.output_nodes:
@@ -1895,7 +846,7 @@ class FlowGraphCodeConverter:
         lines.append('    """')
         lines.append("    ")
 
-        for line in self.code_lines:
+        for line in self._render_body():
             if line:
                 lines.append(f"    {line}")
             else:
@@ -1970,8 +921,6 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
             self.node_handle_var_mapping[(node_id, f"output-{i}")] = split_var
         default_var = f"{var_name}_{splits[0].name}"
         self.node_var_mapping[node_id] = default_var
-        # Alias the bare var_name so `last_node_var` (set by dispatch) still resolves.
-        self._add_code(f"{var_name} = {default_var}")
         self._add_code("")
 
     def _handle_catalog_reader(
@@ -2097,7 +1046,6 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         for i, sv in enumerate(split_vars):
             self.node_handle_var_mapping[(node_id, f"output-{i}")] = sv
         self.node_var_mapping[node_id] = split_vars[0]
-        self._add_code(f"{var_name} = {split_vars[0]}")
         self._add_code("")
 
     def _handle_manual_input(
@@ -2176,7 +1124,8 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
-                filter_expr = self._create_basic_filter_expr(basic)
+                field_dtype = self._column_dtype(settings.node_id, basic.field)
+                filter_expr = self._create_basic_filter_expr(basic, field_dtype)
                 self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
             else:
                 self._add_code(f"{var_name} = {input_df}  # No filter applied")
@@ -2199,7 +1148,8 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
-                filter_expr = self._create_basic_filter_expr(basic)
+                field_dtype = self._column_dtype(settings.node_id, basic.field)
+                filter_expr = self._create_basic_filter_expr(basic, field_dtype)
                 self._add_code(f"{pass_var}, {fail_var} = {input_df}.filter_split({filter_expr})")
             else:
                 # No predicate -> mirror polars-variant fallback (pass keeps all, fail empty).
@@ -2209,7 +1159,6 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self.node_handle_var_mapping[(node_id, "output-0")] = pass_var
         self.node_handle_var_mapping[(node_id, "output-1")] = fail_var
         self.node_var_mapping[node_id] = pass_var
-        self._add_code(f"{var_name} = {pass_var}")
         self._add_code("")
 
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
@@ -2281,7 +1230,8 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         # coalesce=False for outer joins (preserve both join keys for post-processing)
         coalesce = how == "right"
 
-        self._add_code(f"{var_name} = ({left_df}.join(")
+        has_post = bool(after_join_drop_cols) or bool(reverse_action)
+        self._add_code(f"{var_name} = {'(' if has_post else ''}{left_df}.join(")
         self._add_code(f"        {right_df},")
         self._add_code(f"        left_on={left_on},")
         self._add_code(f"        right_on={right_on},")
@@ -2295,7 +1245,8 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         if reverse_action:
             self._add_code(f".rename({reverse_action})")
 
-        self._add_code(")")
+        if has_post:
+            self._add_code(")")
 
     def _handle_kafka_source(
         self, settings: input_schema.NodeKafkaSource, var_name: str, input_vars: dict[str, str]
@@ -2404,7 +1355,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         is_expression = "output_df" not in code
 
         self._add_code("# Custom Polars code")
-        self._add_code(f"def _polars_code_{var_name.replace('df_', '')}({params}):")
+        self._add_code(f"def _polars_code_{settings.node_id}({params}):")
 
         if is_expression:
             self._add_code(f"    return {code}")
@@ -2422,7 +1373,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
                         self._add_code(f"    return {output_var}")
 
         self._add_code("")
-        self._add_code(f"{var_name} = _polars_code_{var_name.replace('df_', '')}({args})")
+        self._add_code(f"{var_name} = _polars_code_{settings.node_id}({args})")
         self._add_code("")
 
     def _handle_fuzzy_match(
@@ -2437,12 +1388,17 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             right_df = "df_right"
             self._add_code(f"{right_df} = {left_df}")
 
+        # Drop into node-local temps so a fanned-out upstream frame isn't rebound.
         if fuzzy_match_handler.left_select.has_drop_cols():
             left_drop_cols = [c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]
-            self._add_code(f"{left_df} = {left_df}.drop({left_drop_cols})")
+            fuzzy_left = f"_fuzzy_left_{settings.node_id}"
+            self._add_code(f"{fuzzy_left} = {left_df}.drop({left_drop_cols})")
+            left_df = fuzzy_left
         if fuzzy_match_handler.right_select.has_drop_cols():
             right_drop_cols = [c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]
-            self._add_code(f"{right_df} = {right_df}.drop({right_drop_cols})")
+            fuzzy_right = f"_fuzzy_right_{settings.node_id}"
+            self._add_code(f"{fuzzy_right} = {right_df}.drop({right_drop_cols})")
+            right_df = fuzzy_right
 
         fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(
             fuzzy_match_handler.join_mapping, prefix="ff."

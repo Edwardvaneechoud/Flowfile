@@ -20,6 +20,26 @@ from flowfile_core.flowfile.node_designer import (
 from flowfile_core.schemas import input_schema, schemas
 
 
+@pytest.fixture(autouse=True)
+def _restore_custom_node_registry():
+    """Snapshot the global node registries and restore them after each test so a
+    custom node registered via add_to_custom_node_store never leaks into sibling
+    tests (which mutates CUSTOM_NODE_STORE plus node_dict and nodes_list)."""
+    from flowfile_core.configs import node_store as node_store_mod
+
+    saved_store = dict(node_store_mod.CUSTOM_NODE_STORE)
+    saved_dict = dict(node_store_mod.node_dict)
+    saved_list = list(node_store_mod.nodes_list)
+    try:
+        yield
+    finally:
+        node_store_mod.CUSTOM_NODE_STORE.clear()
+        node_store_mod.CUSTOM_NODE_STORE.update(saved_store)
+        node_store_mod.node_dict.clear()
+        node_store_mod.node_dict.update(saved_dict)
+        node_store_mod.nodes_list[:] = saved_list
+
+
 def create_flowfile_handler() -> FlowfileHandler:
     handler = FlowfileHandler()
     return handler
@@ -195,6 +215,61 @@ class TestProcessMethodSignatureDetection:
         # Should need collect and lazy for DataFrame-based process
         assert needs_collect is True, "Should need collect for DataFrame input"
         assert needs_lazy is True, "Should need lazy for DataFrame output"
+
+
+def test_custom_node_preserves_non_polars_imports(tmp_path):
+    """A custom node's own runtime imports (e.g. ``import math``) survive into the export."""
+    import importlib
+    import sys
+
+    module_source = '''
+import math
+
+import polars as pl
+
+from flowfile_core.flowfile.node_designer import CustomNodeBase, NodeSettings, Section, TextInput
+
+
+class MathSettings(NodeSettings):
+    config: Section = Section(
+        title="Configuration",
+        column_name=TextInput(label="Column", default="pi"),
+    )
+
+
+class MathNode(CustomNodeBase):
+    node_name: str = "Math Node"
+    node_category: str = "Transform"
+    title: str = "Math Node"
+    intro: str = "Adds a pi column"
+    number_of_inputs: int = 1
+    number_of_outputs: int = 1
+    settings_schema: MathSettings = MathSettings()
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        lf = inputs[0]
+        col_name = self.settings_schema.config.column_name.value
+        return lf.with_columns(pl.lit(math.pi).alias(col_name))
+'''
+    module_path = tmp_path / "math_custom_node_mod.py"
+    module_path.write_text(module_source)
+    sys.path.insert(0, str(tmp_path))
+    try:
+        mod = importlib.import_module("math_custom_node_mod")
+        add_to_custom_node_store(mod.MathNode)
+
+        graph = create_graph()
+        add_manual_input(graph, [{"Column 1": 1}], node_id=1)
+        settings = {"config": {"column_name": "pi"}}
+        add_custom_node_to_graph(graph, mod.MathNode, node_id=2, settings=settings)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        code = export_flow_to_polars(graph)
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("math_custom_node_mod", None)
+
+    assert "import math" in code
 
 
 if __name__ == "__main__":

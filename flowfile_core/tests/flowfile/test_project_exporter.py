@@ -332,7 +332,7 @@ def test_notebook_multi_output_feeds_downstream_nodes():
     pipeline = get_file(manifest, "pipeline.py")
     assert 'df_2_rejected = ff.FlowFrame(_nb_2_outputs["rejected"])' in pipeline
     # The downstream filter must consume the output-1 variable
-    assert "df_3 = df_2_rejected.filter" in pipeline
+    assert "filtered = df_2_rejected.filter" in pipeline
 
 
 def test_notebook_zero_inputs():
