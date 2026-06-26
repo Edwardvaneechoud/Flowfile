@@ -16,6 +16,23 @@ else:
     FlowFrame = None
 
 
+# Agg names the native group_by node runs via getattr(pl, agg); others fall back to polars-code.
+_NATIVE_AGG_FUNCS: set[str] = {
+    "sum",
+    "max",
+    "mean",
+    "median",
+    "min",
+    "count",
+    "n_unique",
+    "first",
+    "last",
+    "std",
+    "var",
+    "concat",
+}
+
+
 class GroupByFrame:
     """Represents a grouped DataFrame for aggregation operations."""
 
@@ -123,6 +140,9 @@ class GroupByFrame:
                 if expr.is_complex:
                     return False
                 agg_func = getattr(expr, "agg_func", None)
+                if agg_func and agg_func not in _NATIVE_AGG_FUNCS:
+                    # expression-only aggregation → fall back to the polars-code path
+                    return False
                 old_name = getattr(expr, "_initial_column_name", expr.column_name) or expr.column_name
                 if agg_func:
                     agg_cols.append(
@@ -142,10 +162,13 @@ class GroupByFrame:
     def _process_named_agg_expressions(agg_cols: list[transform_schema.AggColl], named_agg_exprs: dict) -> bool:
         """Process named aggregation expressions for schema conversion."""
         for name, expr in named_agg_exprs.items():
-            if expr.is_complex:
-                return False
             if isinstance(expr, Expr):
+                if expr.is_complex:
+                    return False
                 agg_func = getattr(expr, "agg_func", "first")
+                if agg_func and agg_func not in _NATIVE_AGG_FUNCS:
+                    # expression-only aggregation → fall back to the polars-code path
+                    return False
                 old_name = getattr(expr, "_initial_column_name", expr.column_name) or expr.column_name
                 agg_cols.append(transform_schema.AggColl(old_name=old_name, agg=agg_func, new_name=name))
             elif isinstance(expr, str):
