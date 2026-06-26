@@ -16,10 +16,8 @@ else:
     FlowFrame = None
 
 
-# Aggregation names the native group_by node can execute (flowfile_core's AggColl.agg_func
-# resolves these via getattr(pl, agg), plus the special-cased "concat"). agg_funcs set but NOT
-# in this set (unique_counts, implode, explode, quantile, ...) exist only as Polars expression
-# methods, so they must use the polars-code fallback instead of the native node.
+# Agg names the native group_by node runs via getattr(pl, agg) (plus special-cased "concat"); any
+# other agg_func (unique_counts, implode, explode, quantile, ...) must use the polars-code fallback.
 _NATIVE_AGG_FUNCS: set[str] = {
     "sum",
     "max",
@@ -166,9 +164,9 @@ class GroupByFrame:
     def _process_named_agg_expressions(agg_cols: list[transform_schema.AggColl], named_agg_exprs: dict) -> bool:
         """Process named aggregation expressions for schema conversion."""
         for name, expr in named_agg_exprs.items():
-            if expr.is_complex:
-                return False
             if isinstance(expr, Expr):
+                if expr.is_complex:
+                    return False
                 agg_func = getattr(expr, "agg_func", "first")
                 if agg_func and agg_func not in _NATIVE_AGG_FUNCS:
                     # expression-only aggregation → fall back to the polars-code path

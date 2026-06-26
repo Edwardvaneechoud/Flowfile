@@ -314,6 +314,42 @@ class TestGroupByFrame:
         )
         assert_frame_equal(result, expected)
 
+    def test_group_by_agg_quantile(self):
+        """Regression: quantile() (required q arg) is expression-only; must use the polars_code fallback."""
+        data = {"group": ["a", "a", "a", "b", "b", "b", "b"], "value": [1, 1, 2, 3, 4, 3, 5]}
+        flow_frame = FlowFrame(data).group_by("group").agg(col("value").quantile(0.5))
+        assert flow_frame.get_node_settings().node_type == "polars_code"
+        result = flow_frame.collect().sort("group")
+        expected = pl.DataFrame(data).group_by("group").agg(pl.col("value").quantile(0.5)).sort("group")
+        assert_frame_equal(result, expected)
+
+    def test_group_by_agg_explode(self):
+        """Regression: bare explode() is expression-only; must use the polars_code fallback."""
+        data = {"group": ["a", "a", "a", "b", "b", "b", "b"], "value": [1, 1, 2, 3, 4, 3, 5]}
+        flow_frame = FlowFrame(data).group_by("group").agg(col("value").explode())
+        assert flow_frame.get_node_settings().node_type == "polars_code"
+        result = flow_frame.collect().sort("group").with_columns(pl.col("value").list.sort())
+        expected = (
+            pl.DataFrame(data).group_by("group").agg(pl.col("value").explode())
+            .sort("group").with_columns(pl.col("value").list.sort())
+        )
+        assert_frame_equal(result, expected)
+
+    def test_group_by_agg_named_string(self):
+        """Regression: a named string aggregation (agg(name="col")) must not raise.
+
+        is_complex was read before the isinstance(Expr) guard, so a plain-string value raised
+        AttributeError; it now resolves to a 'first' aggregation on that column.
+        """
+        data = {"group": ["a", "a", "b"], "value": [10, 20, 30]}
+        flow_frame = FlowFrame(data).group_by("group").agg(first_val="value")
+        result = flow_frame.collect().sort("group")
+        expected = (
+            pl.DataFrame(data).group_by("group")
+            .agg(pl.col("value").first().alias("first_val")).sort("group")
+        )
+        assert_frame_equal(result, expected)
+
     def test_group_by_multiple_columns(self, sales_data):
         """Test grouping by multiple columns."""
         result = sales_data.group_by(["region", "category"]).sum().collect()
