@@ -41,7 +41,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
         """
         from flowfile_core.schemas.transform_schema import FilterOperator
 
-        col = f'{self.framework}.col("{basic.field}")'
+        col = f"{self.framework}.col({self._py_str(basic.field)})"
         value = basic.value
         value2 = basic.value2
 
@@ -56,44 +56,44 @@ class ExpressionHelpersMixin(ConverterMixinBase):
         if operator == FilterOperator.EQUALS:
             if is_numeric:
                 return f"{col} == {value}"
-            return f'{col} == "{value}"'
+            return f"{col} == {self._py_str(value)}"
 
         elif operator == FilterOperator.NOT_EQUALS:
             if is_numeric:
                 return f"{col} != {value}"
-            return f'{col} != "{value}"'
+            return f"{col} != {self._py_str(value)}"
 
         elif operator == FilterOperator.GREATER_THAN:
             if is_numeric:
                 return f"{col} > {value}"
-            return f'{col} > "{value}"'
+            return f"{col} > {self._py_str(value)}"
 
         elif operator == FilterOperator.GREATER_THAN_OR_EQUALS:
             if is_numeric:
                 return f"{col} >= {value}"
-            return f'{col} >= "{value}"'
+            return f"{col} >= {self._py_str(value)}"
 
         elif operator == FilterOperator.LESS_THAN:
             if is_numeric:
                 return f"{col} < {value}"
-            return f'{col} < "{value}"'
+            return f"{col} < {self._py_str(value)}"
 
         elif operator == FilterOperator.LESS_THAN_OR_EQUALS:
             if is_numeric:
                 return f"{col} <= {value}"
-            return f'{col} <= "{value}"'
+            return f"{col} <= {self._py_str(value)}"
 
         elif operator == FilterOperator.CONTAINS:
-            return f'{col}.str.contains("{value}")'
+            return f"{col}.str.contains({self._py_str(value)})"
 
         elif operator == FilterOperator.NOT_CONTAINS:
-            return f'{col}.str.contains("{value}").not_()'
+            return f"{col}.str.contains({self._py_str(value)}).not_()"
 
         elif operator == FilterOperator.STARTS_WITH:
-            return f'{col}.str.starts_with("{value}")'
+            return f"{col}.str.starts_with({self._py_str(value)})"
 
         elif operator == FilterOperator.ENDS_WITH:
-            return f'{col}.str.ends_with("{value}")'
+            return f"{col}.str.ends_with({self._py_str(value)})"
 
         elif operator == FilterOperator.IS_NULL:
             return f"{col}.is_null()"
@@ -106,7 +106,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
             if all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
                 values_str = ", ".join(values)
             else:
-                values_str = ", ".join(f'"{v}"' for v in values)
+                values_str = ", ".join(self._py_str(v) for v in values)
             return f"{col}.is_in([{values_str}])"
 
         elif operator == FilterOperator.NOT_IN:
@@ -114,7 +114,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
             if all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
                 values_str = ", ".join(values)
             else:
-                values_str = ", ".join(f'"{v}"' for v in values)
+                values_str = ", ".join(self._py_str(v) for v in values)
             return f"{col}.is_in([{values_str}]).not_()"
 
         elif operator == FilterOperator.BETWEEN:
@@ -122,7 +122,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
                 return f"{col}  # BETWEEN requires two values"
             if is_numeric and value2.replace(".", "", 1).replace("-", "", 1).isnumeric():
                 return f"({col} >= {value}) & ({col} <= {value2})"
-            return f'({col} >= "{value}") & ({col} <= "{value2}")'
+            return f"({col} >= {self._py_str(value)}) & ({col} <= {self._py_str(value2)})"
 
         return col
 

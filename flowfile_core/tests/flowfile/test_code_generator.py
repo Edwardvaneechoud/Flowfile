@@ -6417,5 +6417,182 @@ def test_fusion_node_reference_pins_variable():
     assert_frame_equal(result, expected, check_row_order=False)
 
 
+# ---------------------------------------------------------------------------
+# Code-generator review regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_reader_id_only_is_unsupported():
+    """An ID-only catalog reader cannot map to ff.read_catalog_table (needs a name)."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    catalog_reader = input_schema.NodeCatalogReader(flow_id=1, node_id=1, catalog_table_id=42)
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_catalog_reader(catalog_reader, "df_1", {})
+
+    assert converter.code_lines == []
+    assert len(converter.unsupported_nodes) == 1
+    assert "table id only" in converter.unsupported_nodes[0][2].lower()
+
+
+def test_catalog_sql_reader_flowframe_emits_valid_call():
+    """Catalog SQL reads are FlowFrame-only; the FlowFrame target emits a valid read_catalog_sql.
+
+    The Polars converter marks catalog readers unsupported, so the SQL path only
+    runs under FlowFrame (no .data suffix), and embedded triple-quotes are escaped.
+    """
+    from flowfile_core.flowfile.code_generator.code_generator import (
+        FlowGraphToFlowFrameConverter,
+        FlowGraphToPolarsConverter,
+    )
+
+    flow = create_basic_flow()
+    catalog_reader = input_schema.NodeCatalogReader(flow_id=1, node_id=1, sql_query='SELECT """x""" FROM t')
+
+    ff_conv = FlowGraphToFlowFrameConverter(flow)
+    ff_conv._handle_catalog_reader(catalog_reader, "df_1", {})
+    ff_code = "\n".join(ff_conv.code_lines)
+    assert "ff.read_catalog_sql(" in ff_code
+    assert ".data" not in ff_code
+    ast.parse(ff_code)
+
+    pl_conv = FlowGraphToPolarsConverter(flow)
+    pl_conv._handle_catalog_reader(catalog_reader, "df_1", {})
+    assert pl_conv.code_lines == []
+    assert len(pl_conv.unsupported_nodes) == 1
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+@pytest.mark.parametrize("how", ["semi", "anti"])
+def test_semi_anti_join_applies_left_select(join_input_large_dataset, how, export_func):
+    """Semi/anti joins must honor the left-side rename + drop, matching the runtime."""
+    flow = create_basic_flow()
+    left_data, right_data = join_input_large_dataset
+    flow.add_manual_input(left_data)
+    flow.add_manual_input(right_data)
+
+    join_node = input_schema.NodeJoin(
+        flow_id=1,
+        node_id=3,
+        depending_on_ids=[1, 2],
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap("ID", "ID")],
+            left_select=[
+                transform_schema.SelectInput("ID"),
+                transform_schema.SelectInput("Name", "left_name"),
+                transform_schema.SelectInput("Address", keep=False),
+                transform_schema.SelectInput("Zipcode"),
+            ],
+            right_select=[
+                transform_schema.SelectInput("ID"),
+                transform_schema.SelectInput("Name"),
+                transform_schema.SelectInput("City"),
+            ],
+            how=how,
+        ),
+    )
+    flow.add_join(join_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3, "main"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
+
+    code = export_func(flow)
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_column_order=False, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+@pytest.mark.parametrize("how", ["inner", "left", "right", "outer"])
+def test_join_renamed_unkept_non_join_key_does_not_crash(join_input_large_dataset, how, export_func):
+    """A non-join-key column renamed AND keep=False must not rename-then-drop crash."""
+    flow = create_basic_flow()
+    left_data, right_data = join_input_large_dataset
+    flow.add_manual_input(left_data)
+    flow.add_manual_input(right_data)
+
+    join_node = input_schema.NodeJoin(
+        flow_id=1,
+        node_id=3,
+        depending_on_ids=[1, 2],
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap("ID", "ID")],
+            left_select=[
+                transform_schema.SelectInput("ID"),
+                transform_schema.SelectInput("Name"),
+                transform_schema.SelectInput("Address", "addr", keep=False),
+                transform_schema.SelectInput("Zipcode"),
+            ],
+            right_select=[
+                transform_schema.SelectInput("ID"),
+                transform_schema.SelectInput("Name", "r_name", keep=False),
+                transform_schema.SelectInput("City"),
+            ],
+            how=how,
+        ),
+    )
+    flow.add_join(join_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3, "main"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
+
+    code = export_func(flow)
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_column_order=False, check_row_order=False)
+
+
+def test_random_split_named_pl_does_not_shadow_import():
+    """A split literally named ``pl`` must be uniquified so it can't shadow ``import polars as pl``."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    flow.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            splits=[
+                input_schema.RandomSplitGroup(name="pl", percentage=50.0),
+                input_schema.RandomSplitGroup(name="rest", percentage=50.0),
+            ],
+            seed=1,
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    # Wire a record_count onto the "pl" split: its emitted pl.len() would break if "pl" shadowed the import.
+    flow.add_record_count(input_schema.NodeRecordCount(flow_id=1, node_id=3, depending_on_id=2))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, output_handle="output-0"))
+
+    code = export_flow_to_polars(flow)
+    assert "import polars as pl" in code
+    assert "\npl = " not in code  # the split was renamed, not bound to the import alias
+    verify_if_execute(code)
+
+
+def test_rest_api_reader_redacts_sensitive_headers():
+    """A token placed directly in a header/param is redacted, not emitted verbatim."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+    reader = _make_rest_api_reader(
+        url="https://api.example.com/users",
+        headers={"Authorization": "Bearer secret-token-123", "Accept": "application/json"},
+        query_params={"api_key": "leak-me-please", "lang": "en"},
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_rest_api_reader(reader, "df_1", {})
+
+    code = "\n".join(converter.code_lines)
+    assert "secret-token-123" not in code
+    assert "leak-me-please" not in code
+    assert "redacted" in code
+    verify_code_contains(code, "Accept", "application/json", "lang", "en")
+    ast.parse(code)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

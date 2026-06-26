@@ -284,12 +284,17 @@ class TransformHandlersMixin(ConverterMixinBase):
             right_df = "df_right"
             self._add_code(f"{right_df} = {left_df}")
 
+        # Drop into node-local temps so a fanned-out upstream frame isn't rebound.
         if fuzzy_match_handler.left_select.has_drop_cols():
             left_drop_cols = [c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]
-            self._add_code(f"{left_df} = {left_df}.drop({left_drop_cols})")
+            fuzzy_left = f"_fuzzy_left_{settings.node_id}"
+            self._add_code(f"{fuzzy_left} = {left_df}.drop({left_drop_cols})")
+            left_df = fuzzy_left
         if fuzzy_match_handler.right_select.has_drop_cols():
             right_drop_cols = [c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]
-            self._add_code(f"{right_df} = {right_df}.drop({right_drop_cols})")
+            fuzzy_right = f"_fuzzy_right_{settings.node_id}"
+            self._add_code(f"{fuzzy_right} = {right_df}.drop({right_drop_cols})")
+            right_df = fuzzy_right
 
         fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(fuzzy_match_handler.join_mapping)
         self._add_code(

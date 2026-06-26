@@ -87,16 +87,17 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         suffix = ".data" if self.framework == "pl" else ""
 
         if db_settings.query_mode == "query" and db_settings.query:
+            query = db_settings.query.replace('"""', '\\"\\"\\"')
             self._add_code(f"{var_name} = ff.read_database(")
-            self._add_code(f'    "{connection_name}",')
+            self._add_code(f"    {self._py_str(connection_name)},")
             self._add_code('    query="""')
-            for line in db_settings.query.split("\n"):
+            for line in query.split("\n"):
                 self._add_code(f"        {line}")
             self._add_code('    """,')
             self._add_code(f"){suffix}")
         else:
             self._add_code(f"{var_name} = ff.read_database(")
-            self._add_code(f'    "{connection_name}",')
+            self._add_code(f"    {self._py_str(connection_name)},")
             if db_settings.table_name:
                 self._add_code(f'    table_name="{db_settings.table_name}",')
             if db_settings.schema_name:
@@ -133,7 +134,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
 
         self._add_code("ff.write_database(")
         self._add_code(f"    {input_df},")
-        self._add_code(f'    "{connection_name}",')
+        self._add_code(f"    {self._py_str(connection_name)},")
         self._add_code(f'    "{db_settings.table_name}",')
         if db_settings.schema_name:
             self._add_code(f'    schema_name="{db_settings.schema_name}",')
@@ -142,6 +143,32 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code(")")
         self._add_code(f"{var_name} = {input_df}")
         self._add_code("")
+
+    _SENSITIVE_KEYS = frozenset(
+        {
+            "authorization",
+            "x-api-key",
+            "api-key",
+            "apikey",
+            "api_key",
+            "token",
+            "access_token",
+            "refresh_token",
+            "cookie",
+            "password",
+            "secret",
+        }
+    )
+
+    @classmethod
+    def _redact_sensitive(cls, mapping: dict) -> dict:
+        """Mask values of well-known credential keys so a token placed directly in
+        a header/param never lands verbatim in generated code."""
+        placeholder = "<redacted: provide via env/secret>"
+        return {
+            key: (placeholder if isinstance(key, str) and key.lower() in cls._SENSITIVE_KEYS else val)
+            for key, val in mapping.items()
+        }
 
     def _handle_rest_api_reader(
         self, settings: input_schema.NodeRestApiReader, var_name: str, input_vars: dict[str, str]
@@ -156,9 +183,9 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         if s.method != "GET":
             self._add_code(f'    method="{s.method}",')
         if s.headers:
-            self._add_code(f"    headers={s.headers!r},")
+            self._add_code(f"    headers={self._redact_sensitive(s.headers)!r},")
         if s.query_params:
-            self._add_code(f"    params={s.query_params!r},")
+            self._add_code(f"    params={self._redact_sensitive(s.query_params)!r},")
         if s.json_body is not None:
             self._add_code(f"    json_body={s.json_body!r},")
         auth_arg = self._build_rest_api_auth_arg(s.auth)
@@ -250,18 +277,19 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         table_name = settings.catalog_table_name
         table_id = settings.catalog_table_id
 
-        if not table_name and not table_id:
-            self.unsupported_nodes.append(
-                (settings.node_id, "catalog_reader", "Catalog Reader node has no table name or ID configured")
+        if not table_name:
+            reason = (
+                "Catalog Reader configured by table ID only; code export requires a table name"
+                if table_id
+                else "Catalog Reader node has no table name or ID configured"
             )
+            self.unsupported_nodes.append((settings.node_id, "catalog_reader", reason))
             return
 
-        label = table_name or f"id={table_id}"
         suffix = ".data" if self.framework == "pl" else ""
-        self._add_code(f"# Read from catalog table: {label}")
+        self._add_code(f"# Read from catalog table: {table_name}")
         self._add_code(f"{var_name} = ff.read_catalog_table(")
-        if table_name:
-            self._add_code(f'    "{table_name}",')
+        self._add_code(f'    "{table_name}",')
         if settings.catalog_namespace_id is not None:
             self._add_code(f"    namespace_id={settings.catalog_namespace_id},")
         if settings.delta_version is not None:
@@ -301,7 +329,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         if ws.merge_keys:
             self._add_code(f"    merge_keys={ws.merge_keys},")
         if ws.description:
-            self._add_code(f'    description="{ws.description}",')
+            self._add_code(f"    description={self._py_str(ws.description)},")
         self._add_code(")")
         self._add_code(f"{var_name} = {input_df}")
         self._add_code("")

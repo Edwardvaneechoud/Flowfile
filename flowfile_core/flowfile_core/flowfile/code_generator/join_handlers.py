@@ -48,8 +48,26 @@ class JoinHandlersMixin(ConverterMixinBase):
         Returns:
             None: Modifies internal state by adding generated code
         """
-        left_on = [jm.left_col for jm in settings.join_input.join_mapping]
-        right_on = [jm.right_col for jm in settings.join_input.join_mapping]
+        join_input_manager = transform_schema.JoinInputManager(settings.join_input)
+        join_input_manager.auto_rename()
+        left_on, right_on = self._get_join_keys(join_input_manager)
+
+        # Semi/anti joins only return left columns, so apply the left-side
+        # select/drop/rename (the right side is suppressed) to mirror FlowDataEngine.join.
+        left_renames = {
+            column.old_name: column.new_name
+            for column in join_input_manager.left_select.renames
+            if column.old_name != column.new_name and (column.keep or column.join_key)
+        }
+        left_drop_columns = [
+            column.old_name
+            for column in join_input_manager.left_select.renames
+            if not column.keep and not column.join_key
+        ]
+        if left_renames:
+            self._add_code(f"{left_df} = {left_df}.rename({left_renames})")
+        if left_drop_columns:
+            self._add_code(f"{left_df} = {left_df}.drop({left_drop_columns})")
 
         # Semi/anti joins have no post-processing, so no outer parens are needed.
         self._add_code(f"{var_name} = {left_df}.join(")
@@ -141,13 +159,15 @@ class JoinHandlersMixin(ConverterMixinBase):
         right_renames = {
             column.old_name: column.new_name
             for column in settings.right_select.renames
-            if column.old_name != column.new_name and not column.join_key or settings.how in ("outer", "right")
+            if column.old_name != column.new_name
+            and (column.keep or column.join_key)
+            and (not column.join_key or settings.how in ("outer", "right"))
         }
 
         left_renames = {
             column.old_name: column.new_name
             for column in settings.left_select.renames
-            if column.old_name != column.new_name
+            if column.old_name != column.new_name and (column.keep or column.join_key)
         }
 
         left_drop_columns = [
@@ -232,7 +252,8 @@ class JoinHandlersMixin(ConverterMixinBase):
         """
         [jk.new_name for jk in settings.left_select.join_key_selects if jk.keep]
         join_key_duplication_command = [
-            f'{self.framework}.col("{rjk.old_name}").alias("__DROP__{rjk.new_name}__DROP__")'
+            f"{self.framework}.col({self._py_str(rjk.old_name)})"
+            f".alias({self._py_str('__DROP__' + rjk.new_name + '__DROP__')})"
             for rjk in settings.right_select.join_key_selects
             if rjk.keep
         ]
@@ -274,7 +295,7 @@ class JoinHandlersMixin(ConverterMixinBase):
                 - after_join_drop_cols: Right join keys marked for dropping
         """
         join_key_duplication_command = [
-            f'{self.framework}.col("{ljk.new_name}").alias("__jk_{ljk.new_name}")'
+            f"{self.framework}.col({self._py_str(ljk.new_name)}).alias({self._py_str('__jk_' + ljk.new_name)})"
             for ljk in settings.left_select.join_key_selects
             if ljk.keep
         ]
@@ -293,7 +314,7 @@ class JoinHandlersMixin(ConverterMixinBase):
             for jk in settings.right_select.join_key_selects
             if not jk.keep
         ]
-        after_join_drop_cols = list(set(after_join_drop_cols_right))
+        after_join_drop_cols = list(dict.fromkeys(after_join_drop_cols_right))
         return left_on, right_on, None, after_join_drop_cols
 
     def _handle_outer_join_keys(

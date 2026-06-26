@@ -1,3 +1,4 @@
+import ast
 import builtins
 import keyword
 import re
@@ -650,7 +651,7 @@ class FlowGraphCodeConverter(
         for label in labels.values():
             counts[label] = counts.get(label, 0) + 1
 
-        used: set[str] = {em.var_name for em in ordered if em.pinned} | set(_RESERVED_NAMES)
+        used: set[str] = {em.var_name for em in ordered if em.pinned} | set(_RESERVED_NAMES) | self._imported_names()
         final: dict[int, str] = {}
         seen: dict[str, int] = {}
         for em in renameable:
@@ -682,6 +683,23 @@ class FlowGraphCodeConverter(
             for split in getattr(node.setting_input, "splits", []):
                 rename[f"df_{em.node_id}_{split.name}"] = self._uniquify(split.name, used)
         return rename
+
+    def _imported_names(self) -> set[str]:
+        """Names bound by ``self.imports`` so generated vars never shadow an import alias."""
+        names: set[str] = set()
+        for statement in self.imports:
+            try:
+                tree = ast.parse(statement)
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        names.add(alias.asname or alias.name.split(".")[0])
+                elif isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        names.add(alias.asname or alias.name)
+        return names
 
     @staticmethod
     def _uniquify(name: str, used: set[str]) -> str:

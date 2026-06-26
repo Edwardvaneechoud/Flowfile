@@ -89,6 +89,16 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
             self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Not found in registry")
         return custom_node_class
 
+    def _register_node_import(self, statement: str) -> None:
+        """Carry a custom node's own import into the generated script.
+
+        The node_designer import is skipped here because it is re-added in a
+        canonical multi-symbol form by the caller.
+        """
+        if "node_designer" in statement:
+            return
+        self.imports.add(statement.strip())
+
     def _register_custom_node_source(self, node: FlowNode, custom_node_class: type) -> bool:
         """Capture the custom node's class source for inlining into the generated script.
 
@@ -100,19 +110,29 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
         if class_name not in self.custom_node_classes:
             file_source = self._read_custom_node_source_file(custom_node_class)
             if file_source:
-                # Remove import lines from the file since we handle imports separately
+                # Lift import lines out of the inlined source (imports are emitted
+                # separately at the top) but preserve the node's own runtime imports
+                # so its process() body still resolves. The node_designer import is
+                # re-added canonically below, so it is dropped here.
                 lines = file_source.split("\n")
                 non_import_lines = []
+                import_buffer: list[str] = []
                 in_multiline_import = False
                 for line in lines:
                     stripped = line.strip()
+                    if in_multiline_import:
+                        import_buffer.append(line)
+                        if ")" in stripped:
+                            in_multiline_import = False
+                            self._register_node_import("\n".join(import_buffer))
+                            import_buffer = []
+                        continue
                     if stripped.startswith("import ") or stripped.startswith("from "):
                         if "(" in stripped and ")" not in stripped:
                             in_multiline_import = True
-                        continue
-                    if in_multiline_import:
-                        if ")" in stripped:
-                            in_multiline_import = False
+                            import_buffer = [line]
+                            continue
+                        self._register_node_import(line)
                         continue
                     # Skip comments at the very start (like "# Auto-generated custom node")
                     if stripped.startswith("#") and not non_import_lines:
