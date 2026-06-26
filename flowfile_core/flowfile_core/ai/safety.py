@@ -416,6 +416,8 @@ RefusalReason = Literal[
     "self_loop_connection",
     "settings_validation",
     "upstream_is_sink",
+    "target_is_source",
+    "would_create_cycle",
     "join_wire_invalid",
     "unrequested_wire_to_live",
     "writer_blocked",

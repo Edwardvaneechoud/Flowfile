@@ -404,6 +404,56 @@ def test_connect_accepts_flat_shape(call_kwargs: dict[str, Any]) -> None:
     assert [n.node_id for n in target_inputs] == [1]
 
 
+def test_connect_rejects_wiring_into_live_source_node(call_kwargs: dict[str, Any]) -> None:
+    """Wiring INTO a live source node (node 1 = manual_input) must be refused at
+    stage time with ``target_is_source`` so the planner can self-correct, instead
+    of staging a dangling edge that only fails at apply-time."""
+    flow = _flow_with_orders_and_filter()  # node 1 = manual_input (source), node 2 = filter
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 2, "to_node_id": 1},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "target_is_source"
+    assert "source node" in (result.refusal_detail or "")
+    assert "1" in (result.refusal_detail or "")
+    assert flow.get_node(1).node_inputs.main_inputs in (None, [])
+
+
+def test_connect_rejects_cycle_at_stage_time(call_kwargs: dict[str, Any]) -> None:
+    """Cycles among live nodes are now caught at stage time (not only at apply),
+    so the planner gets immediate feedback. Target is a transform, so the cycle
+    check — not the source-target check — is what rejects it."""
+    flow = _flow_with_orders_and_filter()  # node 1 = source, node 2 = filter (unwired)
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=flow.flow_id,
+            node_id=3,
+            depending_on_id=2,
+            filter_input=transform_schema.FilterInput(filter_type="advanced", advanced_filter="[region]=='US'"),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 3, "to_node_id": 2},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "would_create_cycle"
+    assert "would create a cycle" in (result.refusal_detail or "")
+
+
 def test_connect_flat_shape_with_explicit_classes(call_kwargs: dict[str, Any]) -> None:
     """``input_class`` / ``output_class`` from the flat shape must round-trip
     into the staged ``NodeConnection`` payload — i.e. they actually reach the
@@ -1853,11 +1903,13 @@ def test_connect_allows_live_to_live_without_audit_meta(
     assert result.refusal_reason is None
 
 
-def test_connect_allows_live_to_staged_source(call_kwargs: dict[str, Any]) -> None:
-    """wiring a pre-existing live upstream into a freshly-
-    staged source node id is allowed. Pins the asymmetry of the rule:
-    the refusal triggers only when ``from_id`` is a same-session-staged
-    SOURCE node going INTO a live downstream — not the reverse.
+def test_connect_refuses_wiring_into_staged_source(call_kwargs: dict[str, Any]) -> None:
+    """Wiring ANY upstream into a freshly-staged source node is refused with
+    ``target_is_source``: a source has no input port, so this is invalid topology
+    regardless of where the edge comes from (the ``read -> read`` build-from-scratch
+    bug, where the target source was added earlier in the same diff). This is a
+    distinct guard from ``unrequested_wire_to_live`` (which is about a staged source
+    as the FROM side); here node 5 is the source TO side.
     """
     flow = _flow_with_orders_and_filter()
     result = execute_tool_call(
@@ -1874,8 +1926,9 @@ def test_connect_allows_live_to_staged_source(call_kwargs: dict[str, Any]) -> No
         },
         **call_kwargs,
     )
-    assert result.status == "staged", result.refusal_detail
-    assert result.refusal_reason is None
+    assert result.status == "rejected"
+    assert result.refusal_reason == "target_is_source"
+    assert "5" in (result.refusal_detail or "")
 
 
 def test_connect_allows_staged_non_source_to_live(call_kwargs: dict[str, Any]) -> None:

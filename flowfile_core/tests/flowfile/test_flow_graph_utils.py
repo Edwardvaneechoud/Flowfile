@@ -485,3 +485,38 @@ def test_add_connection_allows_valid_downstream_edge():
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
     # Sanity: the topological ordering still works.
     graph.run_graph()
+
+
+def test_add_connection_rejects_wiring_into_source_node():
+    """A source node (manual_input, node_template.input == 0) has no input port,
+    so wiring INTO it must be refused with a 422 — not silently accepted."""
+    graph = create_graph(flow_id=1)
+    add_manual_input(graph, [{"name": "john"}], node_id=1)
+    add_manual_input(graph, [{"name": "jane"}], node_id=2)  # second source
+    with pytest.raises(HTTPException) as exc:
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    assert exc.value.status_code == 422
+    assert "source node" in exc.value.detail
+    # The refused edge must not have been wired onto the source node.
+    assert graph.get_node(2).node_inputs.main_inputs in (None, [])
+
+
+def test_add_connection_into_transform_succeeds():
+    """Wiring a source into a real transform still works (regression guard)."""
+    graph = create_graph(flow_id=1)
+    add_manual_input(graph, [{"name": "john", "age": 30}], node_id=1)
+    add_node_promise_on_type(graph, "filter", 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    assert [n.node_id for n in graph.get_node(2).node_inputs.main_inputs] == [1]
+
+
+def test_add_connection_cycle_into_transform_keeps_message():
+    """Cycle detection still fires (with its verbatim message) when the target is a
+    non-source node — guards the validate_connection refactor."""
+    graph = _build_chain_for_cycle_tests()  # 1(source) -> 2 -> 3
+    # 3 -> 2 closes a cycle; node 2 is a record_id transform, not a source, so the
+    # source-target check passes and the cycle check is what rejects it.
+    with pytest.raises(HTTPException) as exc:
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 2))
+    assert exc.value.status_code == 422
+    assert "would create a cycle" in exc.value.detail

@@ -234,6 +234,45 @@ def _handle_connect(
             refusal_detail=_format_sink_upstream_refusal(flow, sink_upstreams),
         )
 
+    # Refuse wiring INTO a source-only node (read/manual_input/...) and reject
+    # live-graph cycles BEFORE staging — mirroring how ``_handle_add_node``
+    # validates settings before its own ``if mode == "stage"``. The backend
+    # ``add_connection`` enforces both, but stage mode never calls it, so without
+    # this the LLM only learns of a ``read → read`` (or cycle) at apply-time, after
+    # the planner loop ended and can no longer self-correct. Freshly-staged source
+    # targets have no live FlowNode yet, so use the ``staged_source_ids`` set
+    # already computed above; live targets go through the shared validator.
+    from flowfile_core.flowfile.flow_graph import format_source_target_detail, validate_connection
+
+    if to_id in staged_source_ids:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason="target_is_source",
+            refusal_detail=format_source_target_detail(to_id, None),
+        )
+    from_node = flow.get_node(from_id)
+    to_node = flow.get_node(to_id)
+    if from_node is not None and to_node is not None:
+        connection_error = validate_connection(
+            from_node,
+            to_node,
+            connection.input_connection.get_node_input_connection_type(),
+        )
+        if connection_error is not None:
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow.flow_id,
+                refusal_reason=connection_error.reason,
+                refusal_detail=connection_error.detail,
+            )
+
     if mode == "stage":
         audit_row = _record_event(
             session_id=session_id,

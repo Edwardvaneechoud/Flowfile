@@ -5512,6 +5512,60 @@ def _would_create_cycle(from_node: "FlowNode", to_node: "FlowNode") -> bool:
     return False
 
 
+class ConnectionValidationError(NamedTuple):
+    """A rejected connection: a refusal_reason code + an actionable detail message.
+
+    Shared by ``add_connection`` (raised as an HTTPException) and the AI connect
+    handler (surfaced to the LLM as a refusal), so both speak the same language.
+    """
+
+    reason: str
+    detail: str
+
+
+def format_source_target_detail(node_id: int, node_type: str | None) -> str:
+    """Build the refusal message for wiring INTO a source-only node.
+
+    Lives here (not in the AI layer) so it stays the single source of truth: the
+    AI handler also calls it for freshly-staged targets that have no live FlowNode
+    yet. ``node_type`` is ``None`` when the caller only knows the id is a source.
+    """
+    label = f"node {node_id} ({node_type})" if node_type else f"node {node_id}"
+    return (
+        f"{label} is a source node and has no input port, so it cannot receive a "
+        "connection. Source nodes (read, manual_input, database_reader, "
+        "cloud_storage_reader, catalog_reader, kafka_source, google_analytics_reader, "
+        "external_source) stand alone. To combine two sources, add a join or union "
+        "node and connect both into it; otherwise pick a transformation/output node "
+        "as the connection target."
+    )
+
+
+def validate_connection(
+    from_node: "FlowNode",
+    to_node: "FlowNode",
+    insert_type: str,
+) -> ConnectionValidationError | None:
+    """Non-mutating topology check for a from_node -> to_node connection.
+
+    Returns ``None`` when the connection is valid, else a
+    :class:`ConnectionValidationError`. ``insert_type`` is accepted for
+    forward-compatibility (future per-slot capacity checks); the current checks
+    don't branch on it.
+    """
+    if to_node.node_template is not None and to_node.node_template.input == 0:
+        return ConnectionValidationError(
+            "target_is_source",
+            format_source_target_detail(to_node.node_id, to_node.node_type),
+        )
+    if _would_create_cycle(from_node, to_node):
+        return ConnectionValidationError(
+            "would_create_cycle",
+            f"Connecting node {from_node.node_id} -> {to_node.node_id} would create a cycle",
+        )
+    return None
+
+
 def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection) -> None:
     """Adds a connection between two nodes in the flow graph.
 
@@ -5533,11 +5587,13 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
             if not n
         ]
         raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
-    if _would_create_cycle(from_node, to_node):
-        raise HTTPException(
-            422,
-            f"Connecting node {from_node.node_id} -> {to_node.node_id} would create a cycle",
-        )
+    error = validate_connection(
+        from_node,
+        to_node,
+        node_connection.input_connection.get_node_input_connection_type(),
+    )
+    if error is not None:
+        raise HTTPException(422, error.detail)
     to_node.add_node_connection(
         from_node,
         node_connection.input_connection.get_node_input_connection_type(),

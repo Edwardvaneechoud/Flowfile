@@ -59,8 +59,13 @@ GRAPH_OPS_TOOLS: Final[list[ToolSpec]] = [
             "when the node has multiple inputs / outputs: 'add_join' takes "
             "input-0 (left) and input-1 (right); a 'filter' node with "
             "split_mode=true emits output-0 (matched rows) and output-1 (rejected). "
-            "Don't connect a node to itself; the host rejects self-loops. Example "
-            "after 'add_filter': connect(from_node_id=read_id, to_node_id=filter_id) "
+            "Don't connect a node to itself; the host rejects self-loops. Never wire "
+            "INTO a source node (read, manual_input, database_reader, "
+            "cloud_storage_reader, catalog_reader, kafka_source, "
+            "google_analytics_reader, external_source) — they have no input port and "
+            "the host rejects it; to combine two sources, add a join/union and connect "
+            "both into it. Example after 'add_filter': "
+            "connect(from_node_id=read_id, to_node_id=filter_id) "
             "to give the filter its source rows."
         ),
         parameters=_schema(
