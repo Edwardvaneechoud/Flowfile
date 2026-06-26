@@ -52,14 +52,15 @@ function buildHintPanel(view: EditorView): Panel {
 
 export function createNoKernelHint(getCtx: () => LspContext): Extension {
   // Per-editor so the closure captures this cell's kernel context; caps loads once (cached).
-  const caps = { enabled: true };
+  // `ready` gates the hint until the probe resolves, so it never flashes before we know.
+  const caps = { enabled: true, ready: false };
 
   const hintField = StateField.define<boolean>({
     create: () => false,
     update(value, tr) {
       for (const e of tr.effects) if (e.is(setHintVisible)) return e.value;
       // Recompute only on typing, so it never pops up on focus / empty cells.
-      if (tr.docChanged) return caps.enabled && !getCtx().kernelId && !isDismissed();
+      if (tr.docChanged) return caps.ready && caps.enabled && !getCtx().kernelId && !isDismissed();
       return value;
     },
     provide: (f) => showPanel.from(f, (on) => (on ? buildHintPanel : null)),
@@ -74,6 +75,9 @@ export function createNoKernelHint(getCtx: () => LspContext): Extension {
           })
           .catch(() => {
             // Probe failed — stay optimistic (the hint is harmless if LSP is actually off).
+          })
+          .finally(() => {
+            caps.ready = true;
           });
       }
     },

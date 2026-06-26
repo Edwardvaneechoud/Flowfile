@@ -344,7 +344,6 @@ def _maybe_wrap_last_expression(code: str) -> str:
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
-    flow_id: int  # Required - namespaces are keyed by flow_id
     input_paths: dict[str, list[str]] = {}
     output_dir: str = ""
     flow_id: int = 0

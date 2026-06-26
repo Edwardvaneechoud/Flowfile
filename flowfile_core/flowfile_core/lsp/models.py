@@ -20,7 +20,6 @@ class CompletionItem(BaseModel):
     type: str = ""
     detail: str = ""
     documentation: str = ""
-    insert_text: str | None = None
 
 
 class CompleteResponse(BaseModel):

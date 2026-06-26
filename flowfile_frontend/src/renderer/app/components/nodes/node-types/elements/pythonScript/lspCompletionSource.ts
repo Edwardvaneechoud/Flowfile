@@ -45,9 +45,6 @@ function boostFor(label: string): number {
   return 0;
 }
 
-// One in-flight request across editors: a new keystroke aborts the previous fetch.
-let _inflight: AbortController | null = null;
-
 /** True when Jedi is the active completion engine: a kernel is selected and LSP is enabled. */
 export function lspActiveFor(getCtx: () => LspContext): () => Promise<boolean> {
   return async () => {
@@ -69,6 +66,8 @@ export function fallbackWhenNoLsp(
 }
 
 export function createLspCompletionSource(getCtx: () => LspContext) {
+  // Per-editor: a new keystroke in this cell aborts only this cell's previous fetch.
+  let inflight: AbortController | null = null;
   return async (context: CompletionContext): Promise<CompletionResult | null> => {
     const ctx = getCtx();
     if (!ctx.kernelId) return null;
@@ -90,9 +89,9 @@ export function createLspCompletionSource(getCtx: () => LspContext) {
       node_id: ctx.nodeId ?? null,
     };
 
-    if (_inflight) _inflight.abort();
-    _inflight = new AbortController();
-    const res = await LspApi.complete(ctx.kernelId, payload, _inflight.signal);
+    if (inflight) inflight.abort();
+    inflight = new AbortController();
+    const res = await LspApi.complete(ctx.kernelId, payload, inflight.signal);
     if (context.aborted || !res.items.length) return null;
 
     const options: Completion[] = res.items.map((it: LspCompletionItem) => ({

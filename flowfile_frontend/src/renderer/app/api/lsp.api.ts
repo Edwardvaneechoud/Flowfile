@@ -17,7 +17,6 @@ export interface LspCompletionItem {
   type: string;
   detail: string;
   documentation: string;
-  insert_text: string | null;
 }
 export interface LspCompleteResponse {
   items: LspCompletionItem[];

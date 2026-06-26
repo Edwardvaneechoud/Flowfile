@@ -88,14 +88,12 @@ def complete(code: str, line: int, column: int, live: dict | None) -> CompleteRe
         logger.debug("jedi.complete failed: %s", exc)
         return CompleteResponse(items=items)
     for comp in completions[:_MAX_COMPLETIONS]:
-        suffix = _safe(lambda c=comp: c.complete)
         items.append(
             CompletionItem(
                 label=comp.name,
                 type=_safe(lambda c=comp: c.type) or "",
                 detail=_safe(lambda c=comp: c.description) or "",
                 documentation=_truncate(_safe(lambda c=comp: c.docstring(raw=True))),
-                insert_text=suffix or None,
             )
         )
     return CompleteResponse(items=items)

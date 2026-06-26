@@ -23,7 +23,6 @@ class CompletionItem(BaseModel):
     type: str = ""  # jedi completion type: function/instance/module/keyword/class/...
     detail: str = ""  # short signature / description
     documentation: str = ""  # docstring (truncated)
-    insert_text: str | None = None  # text to append after the trigger, if it differs
 
 
 class CompleteResponse(BaseModel):

@@ -65,8 +65,8 @@ describe("createLspCompletionSource", () => {
   it("maps items to CodeMirror completions after a dot, replacing from the cursor", async () => {
     mockComplete.mockResolvedValue({
       items: [
-        { label: "select", type: "function", detail: "select(...)", documentation: "doc", insert_text: "select" },
-        { label: "filter", type: "method", detail: "", documentation: "", insert_text: null },
+        { label: "select", type: "function", detail: "select(...)", documentation: "doc" },
+        { label: "filter", type: "method", detail: "", documentation: "" },
       ],
     });
     const result = await source()(ctxFor("df.", 3));
@@ -78,7 +78,7 @@ describe("createLspCompletionSource", () => {
   });
 
   it("sends 1-based line / 0-based column and the full cell code", async () => {
-    mockComplete.mockResolvedValue({ items: [{ label: "x", type: "instance", detail: "", documentation: "", insert_text: null }] });
+    mockComplete.mockResolvedValue({ items: [{ label: "x", type: "instance", detail: "", documentation: "" }] });
     await source({ flowId: -99 })(ctxFor("import polars as pl\npl.", 23));
     expect(mockComplete).toHaveBeenCalledTimes(1);
     const [kernelId, payload] = mockComplete.mock.calls[0];
@@ -90,7 +90,7 @@ describe("createLspCompletionSource", () => {
   });
 
   it("sets from to the start of the in-progress word", async () => {
-    mockComplete.mockResolvedValue({ items: [{ label: "select", type: "function", detail: "", documentation: "", insert_text: "ect" }] });
+    mockComplete.mockResolvedValue({ items: [{ label: "select", type: "function", detail: "", documentation: "" }] });
     const result = await source()(ctxFor("df.sel", 6));
     expect(result!.from).toBe(3); // start of "sel"
   });
@@ -98,9 +98,9 @@ describe("createLspCompletionSource", () => {
   it("boosts public names above _private above __dunder__", async () => {
     mockComplete.mockResolvedValue({
       items: [
-        { label: "__repr__", type: "function", detail: "", documentation: "", insert_text: null },
-        { label: "_internal", type: "instance", detail: "", documentation: "", insert_text: null },
-        { label: "catalog", type: "property", detail: "", documentation: "", insert_text: null },
+        { label: "__repr__", type: "function", detail: "", documentation: "" },
+        { label: "_internal", type: "instance", detail: "", documentation: "" },
+        { label: "catalog", type: "property", detail: "", documentation: "" },
       ],
     });
     const result = await source()(ctxFor("schema.", 7));
