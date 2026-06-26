@@ -11,7 +11,7 @@ from typing import Any, Final
 
 from pydantic import ValidationError
 
-from flowfile_core.configs.node_store.nodes import get_source_node_types
+from flowfile_core.configs.node_store.nodes import get_source_node_types_str
 from flowfile_core.flowfile.flow_graph import (
     add_connection,
     delete_connection,
@@ -28,9 +28,6 @@ from .._internal import (
 )
 from ..coercions import _coerce_connection_id_to_flat, _coerce_to_int_or_none
 from ..refusals import _detect_sink_upstreams, _format_sink_upstream_refusal
-
-# Source-only node types, derived from the registry so this prose can't drift.
-_SOURCE_TYPES: Final[str] = ", ".join(get_source_node_types())
 
 _CONNECTION_FIELD_REWRITES: Final[tuple[tuple[str, str], ...]] = (
     ("input_connection.connection_class", "input_class"),
@@ -210,7 +207,7 @@ def _handle_connect(
                 f"did not explicitly ask for this connection — narrations "
                 f"like \"so the user can see the new data alongside …\" "
                 f"are rationalisations, not user intent. Source-only "
-                f"types ({_SOURCE_TYPES}) are stand-"
+                f"types ({get_source_node_types_str()}) are stand-"
                 f"alone by default. If the user explicitly asked for "
                 f"this wiring (e.g. \"connect the new node to node "
                 f"{to_id}\"), restate that intent in your next assistant "
@@ -260,6 +257,7 @@ def _handle_connect(
             refusal_reason="target_is_source",
             refusal_detail=format_source_target_detail(to_id, None),
         )
+    # Live→live only; a staged→staged cycle is caught at apply-time by add_connection (acceptable gap).
     from_node = flow.get_node(from_id)
     to_node = flow.get_node(to_id)
     if from_node is not None and to_node is not None:

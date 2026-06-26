@@ -27,7 +27,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
-from flowfile_core.configs.node_store.nodes import get_source_node_types
+from flowfile_core.configs.node_store.nodes import get_source_node_types, get_source_node_types_str
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
@@ -5514,25 +5514,20 @@ def _would_create_cycle(from_node: "FlowNode", to_node: "FlowNode") -> bool:
 
 
 class ConnectionValidationError(NamedTuple):
-    """A rejected connection: a refusal_reason code + an actionable detail message.
-
-    Shared by ``add_connection`` (raised as an HTTPException) and the AI connect
-    handler (surfaced to the LLM as a refusal), so both speak the same language.
-    """
+    """Rejected connection (reason code + detail), shared by ``add_connection`` and
+    the AI connect handler so both speak the same language."""
 
     reason: str
     detail: str
 
 
 def format_source_target_detail(node_id: int, node_type: str | None) -> str:
-    """Build the refusal message for wiring INTO a source-only node.
-
-    Lives here (not in the AI layer) so it stays the single source of truth: the
-    AI handler also calls it for freshly-staged targets that have no live FlowNode
-    yet. ``node_type`` is ``None`` when the caller only knows the id is a source.
+    """Refusal message for wiring INTO a source node. Lives here (not the AI layer)
+    so it stays the single source of truth (the AI handler also calls it for
+    freshly-staged targets); ``node_type`` is ``None`` when only the id is known.
     """
     label = f"node {node_id} ({node_type})" if node_type else f"node {node_id}"
-    sources = ", ".join(get_source_node_types())
+    sources = get_source_node_types_str()
     return (
         f"{label} is a source node and has no input port, so it cannot receive a "
         f"connection. Source nodes ({sources}) stand alone. To combine two sources, "
@@ -5545,12 +5540,14 @@ def validate_connection(
     from_node: "FlowNode",
     to_node: "FlowNode",
 ) -> ConnectionValidationError | None:
-    """Non-mutating topology check for a from_node -> to_node connection.
-
-    Returns ``None`` when the connection is valid, else a
-    :class:`ConnectionValidationError`.
-    """
-    if to_node.node_template is not None and to_node.node_template.input == 0:
+    """Non-mutating topology check for from_node -> to_node; None when valid."""
+    template = to_node.node_template
+    target_is_source = (
+        template.input == 0
+        if template is not None
+        else to_node.node_type in get_source_node_types()
+    )
+    if target_is_source:
         return ConnectionValidationError(
             "target_is_source",
             format_source_target_detail(to_node.node_id, to_node.node_type),

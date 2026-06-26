@@ -731,12 +731,15 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
 
 @lru_cache(maxsize=1)
 def get_source_node_types() -> tuple[str, ...]:
-    """Stable identifiers of source-only nodes (no input port), from the registry.
-
-    The single source of truth for "which node types stand alone" — used by the
-    connection validator and every AI prose mention. Reads the standard-node list
-    (so the internal ``polars_lazy_frame``, which lives only in the dict, is
-    excluded) and auto-updates when a source node is added to the registry.
+    """Source-only node types (no input port), compiled once at startup from the
+    registry. Single source of truth for the connection validator and AI prose;
+    excludes the dict-only ``polars_lazy_frame``.
     """
     templates, _, _ = get_all_standard_nodes()
     return tuple(sorted(t.item for t in templates if t.input == 0))
+
+
+@lru_cache(maxsize=1)
+def get_source_node_types_str() -> str:
+    """Comma-joined source node types for prose mentions (single build site)."""
+    return ", ".join(get_source_node_types())

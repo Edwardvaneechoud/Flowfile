@@ -14,6 +14,8 @@ from flowfile_core.ai.tools.classification import _NODE_CLASS_MAP
 from flowfile_core.configs.node_store.nodes import get_source_node_types
 from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
 
+# Pinned on purpose: a new source node means updating this set, the registry, and
+# the prompt .md files that inline the list (see test_prompt_files_mention_every_source_type).
 EXPECTED_SOURCE_TYPES = {
     "catalog_reader",
     "cloud_storage_reader",

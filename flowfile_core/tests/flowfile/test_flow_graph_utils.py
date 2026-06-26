@@ -3,7 +3,7 @@ import pytest
 
 from fastapi import HTTPException
 
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, validate_connection
 from flowfile_core.flowfile.flow_graph_utils import _create_node_id_mapping, _validate_input, combine_flow_graphs
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
@@ -499,6 +499,19 @@ def test_add_connection_rejects_wiring_into_source_node():
     assert "source node" in exc.value.detail
     # The refused edge must not have been wired onto the source node.
     assert graph.get_node(2).node_inputs.main_inputs in (None, [])
+
+
+def test_validate_connection_source_target_without_template():
+    """The source-target guard falls back to the registry when node_template is
+    None (an unresolved/unconfigured node), so it can't be bypassed."""
+    graph = create_graph(flow_id=1)
+    add_manual_input(graph, [{"name": "john"}], node_id=1)
+    add_manual_input(graph, [{"name": "jane"}], node_id=2)
+    to_node = graph.get_node(2)
+    to_node.node_template = None  # simulate an unresolved promise node
+    error = validate_connection(graph.get_node(1), to_node)
+    assert error is not None
+    assert error.reason == "target_is_source"
 
 
 def test_add_connection_into_transform_succeeds():
