@@ -48,7 +48,7 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
                     if "LazyFrame" in hint_str:
                         needs_collect = False
                         break
-        except Exception as e:
+        except (NameError, AttributeError, ValueError, TypeError) as e:
             # If we can't determine types, use defaults (collect + lazy)
             logger.debug(f"Could not determine process method signature: {e}")
 
