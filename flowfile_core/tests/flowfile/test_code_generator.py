@@ -6572,6 +6572,97 @@ def test_random_split_named_pl_does_not_shadow_import():
     verify_if_execute(code)
 
 
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+@pytest.mark.parametrize("special_value", ['say "hi"', "C:\\temp", "back\\slash"])
+def test_basic_filter_value_with_special_chars_is_escaped(export_func, special_value):
+    """A filter value with a quote/backslash must be escaped: a quote would be a
+    SyntaxError, an unescaped backslash a silent mismatch (``\\t`` -> tab)."""
+    flow = create_basic_flow()
+    flow.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name="label", data_type="String"),
+                ],
+                data=[[1, 2, 3], ["plain", special_value, "other"]],
+            ),
+        )
+    )
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                mode="basic",
+                basic_filter=transform_schema.BasicFilter(
+                    field="label",
+                    operator=transform_schema.FilterOperator.EQUALS,
+                    value=special_value,
+                ),
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    ast.parse(code)  # an unescaped quote in the value would make this raise
+    result = normalize_result(get_result_from_generated_code(code))
+    assert result["label"].to_list() == [special_value]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_fuzzy_match_left_drop_uses_node_local_temp(fuzzy_join_left_data, export_func):
+    """A fuzzy-match left drop goes into a node-local temp instead of rebinding the
+    upstream frame, so a fanned-out sibling consumer keeps the original columns."""
+    flow = create_basic_flow(1)
+    flow.add_manual_input(fuzzy_join_left_data)
+    flow.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=2,
+            raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                    input_schema.MinimalFieldInfo(name="city", data_type="String"),
+                ],
+                data=[["Edward", "Charles"], ["Amsterdam", "London"]],
+            ),
+        )
+    )
+    settings = input_schema.NodeFuzzyMatch(
+        flow_id=1,
+        node_id=3,
+        description="",
+        auto_generate_selection=True,
+        join_input=transform_schema.FuzzyMatchInput(
+            join_mapping=[FuzzyMapping("name", threshold_score=75.0)],
+            left_select=[
+                transform_schema.SelectInput(old_name="id", keep=True),
+                transform_schema.SelectInput(old_name="name", keep=True),
+                transform_schema.SelectInput(old_name="address", keep=False),
+            ],
+            right_select=[
+                transform_schema.SelectInput(old_name="name", keep=True),
+                transform_schema.SelectInput(old_name="city", keep=True),
+            ],
+        ),
+    )
+    flow.add_fuzzy_match(settings)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3, input_type="main"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, input_type="right"))
+
+    code = export_func(flow)
+    assert "_fuzzy_left_3" in code  # the drop lands in a temp, not a rebind of the input var
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected, check_dtypes=False, check_row_order=False, check_column_order=False)
+
+
 def test_rest_api_reader_redacts_sensitive_headers():
     """A token placed directly in a header/param is redacted, not emitted verbatim."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
