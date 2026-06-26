@@ -35,9 +35,9 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.3"
-_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.3"
-_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.3.3"
+_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.4.0"
+_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.4.0"
+_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.4.0"
 
 _KERNEL_DOWN_MSG = (
     "Kernel is not running — its container was stopped or removed (often after a "
@@ -1823,6 +1823,30 @@ class KernelManager:
             response = await client.get(url)
             response.raise_for_status()
             return response.json()
+
+    async def lsp_request(self, kernel_id: str, op: str, payload: dict) -> dict:
+        """Forward a code-intelligence request to the kernel's ``/lsp/{op}`` engine.
+
+        Editor-facing, so it must never raise and never start a stopped kernel
+        (typing must not spin containers): a missing/idle-less kernel, an old image
+        without the endpoint (404), or any transport error all degrade to ``{}`` and
+        the caller serves an empty result. Short timeout — completion is latency-bound.
+        """
+        try:
+            kernel = self._get_kernel_or_raise(kernel_id)
+        except (KeyError, RuntimeError):  # _get_kernel_or_raise raises KeyError when the id is gone
+            return {}
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            return {}
+        url = f"{self._kernel_url(kernel)}/lsp/{op}"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                return response.json()
+        except (httpx.HTTPError, OSError) as exc:
+            logger.debug("kernel lsp/%s failed: %s", op, exc)
+            return {}
 
     async def get_display_outputs(self, kernel_id: str, flow_id: int, node_id: int) -> list[dict]:
         """Retrieve stored display outputs from the last execution of a node."""
