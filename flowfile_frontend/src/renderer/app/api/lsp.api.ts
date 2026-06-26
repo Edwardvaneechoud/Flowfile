@@ -35,6 +35,18 @@ export interface LspSignatureResponse {
   signatures: LspSignatureInfo[];
   active_signature: number;
 }
+export interface LspDiagnostic {
+  line: number; // 1-based
+  column: number; // 0-based
+  end_line: number;
+  end_column: number;
+  message: string;
+  severity: string; // error | warning
+  source: string; // jedi | pyflakes
+}
+export interface LspDiagnosticsResponse {
+  diagnostics: LspDiagnostic[];
+}
 export interface LspCapabilities {
   enabled: boolean;
   version: string;
@@ -44,6 +56,7 @@ export interface LspCapabilities {
 const EMPTY_COMPLETE: LspCompleteResponse = { items: [] };
 const EMPTY_HOVER: LspHoverResponse = { contents: null };
 const EMPTY_SIGNATURE: LspSignatureResponse = { signatures: [], active_signature: 0 };
+const EMPTY_DIAGNOSTICS: LspDiagnosticsResponse = { diagnostics: [] };
 const DISABLED: LspCapabilities = { enabled: false, version: "", features: [] };
 
 let _capabilities: Promise<LspCapabilities> | null = null;
@@ -113,6 +126,23 @@ export class LspApi {
       return r.data ?? EMPTY_SIGNATURE;
     } catch {
       return EMPTY_SIGNATURE;
+    }
+  }
+
+  static async diagnostics(
+    kernelId: string,
+    req: LspRequestPayload,
+    signal?: AbortSignal,
+  ): Promise<LspDiagnosticsResponse> {
+    try {
+      const r = await axios.post<LspDiagnosticsResponse>(
+        `/kernels/${encodeURIComponent(kernelId)}/lsp/diagnostics`,
+        req,
+        { signal },
+      );
+      return r.data ?? EMPTY_DIAGNOSTICS;
+    } catch {
+      return EMPTY_DIAGNOSTICS;
     }
   }
 }

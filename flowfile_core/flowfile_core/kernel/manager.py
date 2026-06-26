@@ -1834,7 +1834,7 @@ class KernelManager:
         """
         try:
             kernel = self._get_kernel_or_raise(kernel_id)
-        except RuntimeError:
+        except (KeyError, RuntimeError):  # _get_kernel_or_raise raises KeyError when the id is gone
             return {}
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             return {}

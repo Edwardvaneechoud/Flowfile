@@ -68,3 +68,25 @@ def test_bridge_hover_and_signature_degrade(client: TestClient):
     assert hov.status_code == 200 and hov.json() == {"contents": None}
     sig = client.post("/kernels/no-such-kernel/lsp/signature", json=_complete_payload())
     assert sig.status_code == 200 and sig.json() == {"signatures": [], "active_signature": 0}
+
+
+def test_bridge_diagnostics_degrades(client: TestClient):
+    settings.FLOWFILE_LSP_ENABLED.set(True)
+    resp = client.post("/kernels/no-such-kernel/lsp/diagnostics", json=_complete_payload())
+    assert resp.status_code == 200
+    assert resp.json() == {"diagnostics": []}
+
+
+def test_admin_flag_get_and_set(client: TestClient):
+    # Electron-mode local_user is admin, so the /system route is reachable with the test token.
+    assert client.get("/system/feature_flags/lsp").json()["enabled"] is True
+
+    off = client.post("/system/feature_flags/lsp", json={"enabled": False})
+    assert off.status_code == 200
+    assert off.json() == {"enabled": False, "persisted": False}
+    # The live flip is visible to the kernel-independent capabilities probe.
+    assert client.get("/lsp/capabilities").json()["enabled"] is False
+
+    on = client.post("/system/feature_flags/lsp", json={"enabled": True})
+    assert on.json()["enabled"] is True
+    assert client.get("/lsp/capabilities").json()["enabled"] is True
