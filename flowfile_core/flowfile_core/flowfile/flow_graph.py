@@ -23,6 +23,7 @@ from flowfile_core.auth import sharing
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import check_source_versions_current, delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_catalog_storage
 from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
@@ -460,7 +461,7 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
                         t.id,
                         t.source_table_versions,
                     )
-                elif t.file_path and is_delta_table(Path(t.file_path)):
+                elif t.file_path and (_is_cloud_uri(t.file_path) or is_delta_table(Path(t.file_path))):
                     table_paths[t.name] = t.file_path
 
     except Exception:
@@ -569,7 +570,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
 
 def _write_catalog_delta_local(
     df: FlowDataEngine,
-    dest_path: Path,
+    dest_path: str | Path,
     delta_mode: str,
     merge_keys: list[str] | None,
     partition_by: list[str] | None = None,
@@ -632,14 +633,24 @@ def _effective_namespace_id(svc: CatalogService, settings) -> int | None:
 
 def _register_catalog_table(
     existing,
-    dest_path: Path,
+    dest_path: str | Path,
     settings: input_schema.CatalogWriteSettings,
     source_registration_id: int | None,
     user_id: int,
     meta_kwargs: TableWriteMetadata,
+    storage_options: dict[str, str] | None = None,
+    is_cloud: bool = False,
 ) -> None:
-    """Register or update the catalog table entry, cleaning up orphaned storage on failure for new tables."""
-    partition_columns = get_delta_partition_columns(dest_path) if is_delta_table(dest_path) else []
+    """Register or update the catalog table entry, cleaning up orphaned storage on failure for new tables.
+
+    For cloud targets *dest_path* is an object-storage URI: local-only probes
+    (``is_delta_table``, ``Path.exists``) are skipped and partition columns are read
+    via *storage_options*. Cloud orphans are not auto-cleaned (v1 default).
+    """
+    if is_cloud:
+        partition_columns = get_delta_partition_columns(dest_path, storage_options=storage_options)
+    else:
+        partition_columns = get_delta_partition_columns(dest_path) if is_delta_table(dest_path) else []
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -667,9 +678,9 @@ def _register_catalog_table(
                     **meta_kwargs,
                 )
     except Exception:
-        if existing is None and dest_path.exists():
+        if existing is None and not is_cloud and Path(dest_path).exists():
             try:
-                delete_table_storage(dest_path)
+                delete_table_storage(Path(dest_path))
             except OSError:
                 logger.warning("Failed to clean up orphan table %s", dest_path, exc_info=True)
         raise
@@ -843,9 +854,13 @@ def _handle_physical_table_write(
 ) -> FlowDataEngine:
     """Handle physical-mode catalog write: materialize data as a Delta table and register it."""
     settings = node_catalog_writer.catalog_write_settings
+    user_id = node_catalog_writer.user_id or 1
 
-    catalog_dir = storage.catalog_tables_directory
-    catalog_dir.mkdir(parents=True, exist_ok=True)
+    # Resolve the storage backend (local filesystem by default, object storage when configured).
+    # namespace_id is the per-schema hook; it is ignored in v1.
+    target = resolve_catalog_storage(user_id)
+    if not target.is_cloud:
+        Path(target.base).mkdir(parents=True, exist_ok=True)
 
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
@@ -854,24 +869,29 @@ def _handle_physical_table_write(
             table_name=settings.table_name,
             namespace_id=_effective_namespace_id(svc, settings),
             write_mode=settings.write_mode,
-            catalog_dir=catalog_dir,
+            target=target,
         )
+
+    storage_payload = target.to_worker_payload()
+    storage_options = target.storage_options if target.is_cloud else None
 
     if delta_mode in ("upsert", "update", "delete"):
         op_type = "merge_delta"
         op_kwargs = {
-            "output_path": str(dest_path),
+            "output_path": dest_path,
             "merge_mode": delta_mode,
             "merge_keys": settings.merge_keys,
             "partition_by": settings.partition_by,
         }
     else:
         op_type = "write_delta"
-        op_kwargs = {"output_path": str(dest_path), "mode": delta_mode, "partition_by": settings.partition_by}
+        op_kwargs = {"output_path": dest_path, "mode": delta_mode, "partition_by": settings.partition_by}
+    if storage_payload is not None:
+        op_kwargs["storage"] = storage_payload
 
-    if graph.flow_settings.execution_location == "local":
-        meta_kwargs = _write_catalog_delta_local(df, dest_path, delta_mode, settings.merge_keys, settings.partition_by)
-    else:
+    # Cloud writes must offload to the worker: core never collects a full LazyFrame, and the
+    # local merge path collects. The worker owns dataset memory and writes via storage_options.
+    if target.is_cloud or graph.flow_settings.execution_location != "local":
         meta_kwargs = _write_catalog_delta_remote(
             flow_id=graph.flow_id,
             node=graph.get_node(node_catalog_writer.node_id),
@@ -880,6 +900,8 @@ def _handle_physical_table_write(
             op_kwargs=op_kwargs,
             table_name=settings.table_name,
         )
+    else:
+        meta_kwargs = _write_catalog_delta_local(df, dest_path, delta_mode, settings.merge_keys, settings.partition_by)
 
     if meta_kwargs is None:
         return df
@@ -889,8 +911,10 @@ def _handle_physical_table_write(
         dest_path=dest_path,
         settings=settings,
         source_registration_id=graph._flow_settings.source_registration_id,
-        user_id=node_catalog_writer.user_id or 1,
+        user_id=user_id,
         meta_kwargs=meta_kwargs,
+        storage_options=storage_options,
+        is_cloud=target.is_cloud,
     )
     return df
 
@@ -1892,9 +1916,7 @@ class FlowGraph:
                 artifact_names=result.artifacts_deleted,
             )
 
-        primary_result = read_kernel_outputs(
-            output_dir=output_dir, output_names=output_names, result=result, node=node
-        )
+        primary_result = read_kernel_outputs(output_dir=output_dir, output_names=output_names, result=result, node=node)
 
         if primary_result is not None:
             return primary_result
@@ -3019,9 +3041,7 @@ class FlowGraph:
                 out_type = w.output_type or transform_schema.get_window_output_type(w.function, src_type)
                 if out_type is None:
                     out_type = src_type or "Float64"
-                output_schema.append(
-                    FlowfileColumn.from_input(data_type=out_type, column_name=w.new_column_name)
-                )
+                output_schema.append(FlowfileColumn.from_input(data_type=out_type, column_name=w.new_column_name))
             return output_schema
 
         node.schema_callback = schema_callback
@@ -3507,9 +3527,15 @@ class FlowGraph:
         def _func() -> FlowDataEngine:
             if not table_paths and not virtual_tables:
                 raise ValueError("No catalog tables available to query")
+            cloud_opts = None
+            if any(_is_cloud_uri(p) for p in table_paths.values()):
+                cloud_opts = resolve_catalog_storage(node_catalog_reader.user_id or 1).storage_options or None
             ctx = pl.SQLContext()
             for name, path in table_paths.items():
-                ctx.register(name, pl.scan_delta(path))
+                if _is_cloud_uri(path):
+                    ctx.register(name, pl.scan_delta(path, storage_options=cloud_opts))
+                else:
+                    ctx.register(name, pl.scan_delta(path))
             for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
                 ctx.register(
                     name,
@@ -3597,10 +3623,14 @@ class FlowGraph:
 
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
+            scan_kwargs = {}
+            if delta_version is not None:
+                scan_kwargs["version"] = delta_version
+            if _is_cloud_uri(resolved_path):
+                # Cloud catalog table: scan directly (stays lazy ⇒ no collect in core).
+                storage_options = resolve_catalog_storage(_user_id or 1).storage_options or None
+                return FlowDataEngine(pl.scan_delta(resolved_path, storage_options=storage_options, **scan_kwargs))
             if is_delta_table(resolved_path):
-                scan_kwargs = {}
-                if delta_version is not None:
-                    scan_kwargs["version"] = delta_version
                 return FlowDataEngine(pl.scan_delta(resolved_path, **scan_kwargs))
             return FlowDataEngine(pl.scan_parquet(resolved_path))
 

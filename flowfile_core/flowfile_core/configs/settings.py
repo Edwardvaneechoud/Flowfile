@@ -51,6 +51,23 @@ FLOWFILE_ENABLE_PROJECTS: MutableBool = MutableBool(
 )
 
 
+def get_catalog_storage_uri() -> str | None:
+    """Object-storage root for catalog table data, e.g. ``s3://bucket/catalog``.
+
+    Read per call (not cached at import) so it is honored when set at runtime / in tests.
+    ``None`` ⇒ catalog tables materialize on the local filesystem exactly as before.
+    """
+    return os.environ.get("FLOWFILE_CATALOG_STORAGE_URI") or None
+
+
+def get_catalog_storage_connection() -> str | None:
+    """Name of the ``CloudStorageConnection`` supplying credentials for the catalog backend.
+
+    Only consulted when ``get_catalog_storage_uri()`` is set; required in that case.
+    """
+    return os.environ.get("FLOWFILE_CATALOG_STORAGE_CONNECTION") or None
+
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Flowfile Backend Server")

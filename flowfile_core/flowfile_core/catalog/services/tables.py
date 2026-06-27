@@ -31,6 +31,12 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
+from flowfile_core.catalog.storage_backend import (
+    CatalogStorageTarget,
+    _is_cloud_uri,
+    join_catalog_uri,
+    resolve_catalog_storage,
+)
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
 from flowfile_core.database.models import CatalogNamespace, CatalogTable, TableFavorite
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
@@ -54,13 +60,26 @@ def _is_managed_table_path(file_path: str) -> bool:
     """True when the storage path lives under Flowfile's managed catalog dir.
 
     External/user-registered paths (registered by pointing at an existing file
-    outside the managed dir) return False and must never be deleted.
+    outside the managed dir) return False and must never be deleted. Object-storage
+    URIs are never "managed" locally ⇒ cloud tables are not auto-deleted (v1 default).
     """
+    if _is_cloud_uri(file_path):
+        return False
     try:
         Path(file_path).resolve().relative_to(storage.catalog_tables_directory.resolve())
         return True
     except (ValueError, OSError):
         return False
+
+
+def _catalog_table_dir_name(path_or_uri: str) -> str:
+    """Last path segment (the table directory name) of a local path or object-storage URI.
+
+    Avoids ``Path(...).name`` on URIs, where ``Path`` would corrupt the ``scheme://`` prefix.
+    """
+    if _is_cloud_uri(path_or_uri):
+        return path_or_uri.rstrip("/").rsplit("/", 1)[-1]
+    return Path(path_or_uri).name
 
 
 def _should_offload() -> bool:
@@ -196,14 +215,24 @@ class TableService:
     # ---- Metadata helpers ------------------------------------------------ #
 
     @staticmethod
-    def _read_table_metadata(table_path: str, storage_format: str) -> tuple[list[dict[str, str]], int, int, int]:
-        """Read schema, row_count, column_count, size_bytes from a table."""
-        if _should_offload():
+    def _read_table_metadata(
+        table_path: str, storage_format: str, storage: dict | None = None
+    ) -> tuple[list[dict[str, str]], int, int, int]:
+        """Read schema, row_count, column_count, size_bytes from a table.
+
+        When *storage* (a worker ``CatalogStorageInterface`` payload) is set, the table
+        lives in object storage and the read is always offloaded to the worker with no
+        local fallback.
+        """
+        is_cloud = storage is not None
+        if is_cloud or _should_offload():
             try:
-                data = trigger_read_table_metadata(Path(table_path).name)
+                data = trigger_read_table_metadata(_catalog_table_dir_name(table_path), storage=storage)
                 schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
                 return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
             except (RuntimeError, OSError, ValueError, KeyError):
+                if is_cloud:
+                    raise
                 logger.warning("Worker metadata read failed, falling back to local read", exc_info=True)
 
         path = Path(table_path)
@@ -426,6 +455,7 @@ class TableService:
         self,
         source_file_path: str,
         table_name: str | None = None,
+        storage: dict | None = None,
     ) -> CatalogMaterializationResult:
         # Lazy module lookup so monkeypatches on ``catalog.service.trigger_catalog_materialize``
         # — used by tests — flow through.
@@ -434,6 +464,7 @@ class TableService:
         response = _service_module.trigger_catalog_materialize(
             source_file_path=source_file_path,
             table_name=table_name,
+            storage=storage,
         )
         if response.ok:
             data = response.json()
@@ -481,9 +512,11 @@ class TableService:
         """Register a new table by materializing it as a Delta table."""
         self.validate_table_registration(name, namespace_id)
 
+        target = resolve_catalog_storage(owner_id, namespace_id=namespace_id)
         materialized = self._materialize_table_with_worker(
             source_file_path=file_path,
             table_name=name,
+            storage=target.to_worker_payload(),
         )
 
         return self._create_table_record_from_metadata(
@@ -586,26 +619,29 @@ class TableService:
             raise TableNotFoundError(table_id=table_id)
 
         resolved_path_str = table_path or parquet_path
-        dest_path = Path(resolved_path_str)
+        is_cloud = _is_cloud_uri(resolved_path_str)
 
         if storage_format is None:
-            storage_format = "delta" if is_delta_table(dest_path) else "parquet"
+            storage_format = "delta" if (is_cloud or is_delta_table(Path(resolved_path_str))) else "parquet"
 
         if schema is not None and row_count is not None and size_bytes is not None:
             schema_list = schema
             if column_count is None:
                 column_count = len(schema_list)
         else:
-            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(str(dest_path), storage_format)
+            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(
+                resolved_path_str, storage_format
+            )
 
-        old_path = Path(table.file_path)
-        if old_path != dest_path and old_path.exists():
-            try:
-                delete_table_storage(old_path)
-            except OSError:
-                logger.warning("Failed to delete old table storage %s", old_path, exc_info=True)
+        if not is_cloud:
+            old_path = Path(table.file_path)
+            if old_path != Path(resolved_path_str) and old_path.exists():
+                try:
+                    delete_table_storage(old_path)
+                except OSError:
+                    logger.warning("Failed to delete old table storage %s", old_path, exc_info=True)
 
-        table.file_path = str(dest_path)
+        table.file_path = resolved_path_str
         table.storage_format = storage_format
         table.schema_json = json.dumps(schema_list)
         table.row_count = row_count
@@ -664,14 +700,23 @@ class TableService:
 
     # ---- Delta maintenance (optimize / vacuum) --------------------------- #
 
-    def _require_delta_table_path(self, table: CatalogTable) -> Path:
-        """Guard: ensure *table* is a physical on-disk Delta table, else raise ``ValueError``."""
+    def _require_delta_table_path(self, table: CatalogTable) -> str:
+        """Guard: ensure *table* is a physical Delta table, else raise ``ValueError``.
+
+        Returns the local path or object-storage URI. Cloud tables can't be cheaply
+        probed for the ``_delta_log`` locally, so a cloud ``storage_format == "delta"``
+        table is accepted on trust.
+        """
         if getattr(table, "table_type", "physical") == "virtual" or not table.file_path:
             raise ValueError(f"Table '{table.name}' is virtual and has no Delta storage to maintain")
+        if _is_cloud_uri(table.file_path):
+            if table.storage_format != "delta":
+                raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be optimized or vacuumed")
+            return table.file_path
         path = Path(table.file_path)
         if table.storage_format != "delta" or is_legacy_parquet(path) or not is_delta_table(path):
             raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be optimized or vacuumed")
-        return path
+        return str(path)
 
     def _update_table_size(self, table: CatalogTable, size_bytes: int | None) -> None:
         """Persist a recomputed size after a maintenance op."""
@@ -689,6 +734,7 @@ class TableService:
         if table is None:
             raise TableNotFoundError(table_id=table_id)
         data_path = self._require_delta_table_path(table)
+        is_cloud = _is_cloud_uri(data_path)
 
         if z_order_columns:
             valid = {c.name for c in self._parse_schema_columns(table)}
@@ -696,14 +742,27 @@ class TableService:
             if missing:
                 raise ValueError(f"z_order_columns not in table schema: {missing}")
 
+        target = resolve_catalog_storage(table.owner_id) if is_cloud else None
+        storage_options = target.storage_options if target else None
+
         if _should_offload():
-            result = trigger_optimize_catalog_table(data_path.name, z_order_columns)
+            result = trigger_optimize_catalog_table(
+                _catalog_table_dir_name(data_path),
+                z_order_columns,
+                storage=target.to_worker_payload() if target else None,
+            )
             metrics, size_bytes = result.get("metrics", {}), result.get("size_bytes")
         else:
-            from shared.delta_utils import optimize_delta
+            from shared.delta_utils import get_delta_size_bytes, optimize_delta
 
-            metrics = optimize_delta(str(data_path), z_order_columns=z_order_columns or None)
-            size_bytes = get_delta_table_size_bytes(data_path)
+            metrics = optimize_delta(
+                data_path, z_order_columns=z_order_columns or None, storage_options=storage_options
+            )
+            size_bytes = (
+                get_delta_size_bytes(data_path, storage_options=storage_options)
+                if is_cloud
+                else get_delta_table_size_bytes(Path(data_path))
+            )
 
         self._update_table_size(table, size_bytes)
         return OptimizeTableResponse(metrics=metrics, size_bytes=size_bytes)
@@ -719,15 +778,30 @@ class TableService:
         if table is None:
             raise TableNotFoundError(table_id=table_id)
         data_path = self._require_delta_table_path(table)
+        is_cloud = _is_cloud_uri(data_path)
+
+        target = resolve_catalog_storage(table.owner_id) if is_cloud else None
+        storage_options = target.storage_options if target else None
 
         if _should_offload():
-            result = trigger_vacuum_catalog_table(data_path.name, retention_hours, dry_run)
+            result = trigger_vacuum_catalog_table(
+                _catalog_table_dir_name(data_path),
+                retention_hours,
+                dry_run,
+                storage=target.to_worker_payload() if target else None,
+            )
             files, size_bytes = result.get("files_removed", []), result.get("size_bytes")
         else:
-            from shared.delta_utils import vacuum_delta
+            from shared.delta_utils import get_delta_size_bytes, vacuum_delta
 
-            files = vacuum_delta(str(data_path), retention_hours=retention_hours, dry_run=dry_run)
-            size_bytes = get_delta_table_size_bytes(data_path)
+            files = vacuum_delta(
+                data_path, retention_hours=retention_hours, dry_run=dry_run, storage_options=storage_options
+            )
+            size_bytes = (
+                get_delta_size_bytes(data_path, storage_options=storage_options)
+                if is_cloud
+                else get_delta_table_size_bytes(Path(data_path))
+            )
 
         if not dry_run:
             self._update_table_size(table, size_bytes)
@@ -745,24 +819,33 @@ class TableService:
         table_name: str,
         namespace_id: int | None,
         write_mode: str,
-        catalog_dir: Path,
-    ) -> tuple[CatalogTable | None, Path, str]:
-        """Resolve the destination path and Delta write mode for a catalog write."""
+        target: CatalogStorageTarget,
+    ) -> tuple[CatalogTable | None, str, str]:
+        """Resolve the destination (local path or object-storage URI) and Delta write mode.
+
+        Returns the destination as a ``str``: a filesystem path for local targets, an
+        ``s3://``-style URI for cloud targets.
+        """
         existing = self.repo.get_table_by_name(table_name, namespace_id)
 
         if existing is not None:
             if write_mode == "error":
                 raise TableExistsError(name=table_name, namespace_id=namespace_id)
 
-            old_path = Path(existing.file_path)
-            if is_delta_table(old_path):
+            old_path = existing.file_path
+            if target.is_cloud:
+                # Cloud delta tables reuse their stored URI (assume delta; no local probe).
                 return existing, old_path, write_mode
 
-            new_dir = old_path.parent / old_path.stem
-            return existing, new_dir, write_mode
+            old_path_p = Path(old_path)
+            if is_delta_table(old_path_p):
+                return existing, str(old_path_p), write_mode
+
+            new_dir = old_path_p.parent / old_path_p.stem
+            return existing, str(new_dir), write_mode
 
         dir_name = f"{table_name}_{uuid4().hex[:8]}"
-        return None, catalog_dir / dir_name, write_mode
+        return None, join_catalog_uri(target.base, dir_name), write_mode
 
     def resolve_table_file_path(
         self,
