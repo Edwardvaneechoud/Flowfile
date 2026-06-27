@@ -25,6 +25,7 @@ from flowfile_core import main
 from flowfile_core.catalog import CatalogService, TableExistsError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.service import _parse_delta_history
+from flowfile_core.catalog.storage_backend import CatalogStorageTarget
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogNamespace,
@@ -403,7 +404,7 @@ class TestResolveWriteDestination:
                 table_name="brand_new",
                 namespace_id=schema_id,
                 write_mode="overwrite",
-                catalog_dir=tmp_path,
+                target=CatalogStorageTarget(is_cloud=False, base=str(tmp_path)),
             )
         assert existing is None
         assert delta_mode == "overwrite"
@@ -434,7 +435,7 @@ class TestResolveWriteDestination:
                     table_name="exist_table",
                     namespace_id=schema_id,
                     write_mode="error",
-                    catalog_dir=tmp_path,
+                    target=CatalogStorageTarget(is_cloud=False, base=str(tmp_path)),
                 )
 
     def test_existing_delta_table_overwrite_returns_same_path(self, tmp_path):
@@ -461,10 +462,10 @@ class TestResolveWriteDestination:
                 table_name="delta_ow_table",
                 namespace_id=schema_id,
                 write_mode="overwrite",
-                catalog_dir=tmp_path,
+                target=CatalogStorageTarget(is_cloud=False, base=str(tmp_path)),
             )
         assert existing is not None
-        assert dest_path == delta_dir
+        assert dest_path == str(delta_dir)
         assert delta_mode == "overwrite"
 
     def test_existing_legacy_parquet_overwrite(self, tmp_path):
@@ -495,14 +496,14 @@ class TestResolveWriteDestination:
                 table_name="legacy_table",
                 namespace_id=schema_id,
                 write_mode="overwrite",
-                catalog_dir=tmp_path,
+                target=CatalogStorageTarget(is_cloud=False, base=str(tmp_path)),
             )
         assert existing is not None
         assert delta_mode == "overwrite"
         # Old parquet must still exist (deleted only after new write succeeds)
         assert pq_file.exists()
         # New path should be a directory at the same stem
-        assert dest_path == tmp_path / "legacy"
+        assert dest_path == str(tmp_path / "legacy")
 
     def test_existing_delta_table_append(self, tmp_path):
         _, schema_id = _make_namespace()
@@ -528,10 +529,10 @@ class TestResolveWriteDestination:
                 table_name="delta_append_table",
                 namespace_id=schema_id,
                 write_mode="append",
-                catalog_dir=tmp_path,
+                target=CatalogStorageTarget(is_cloud=False, base=str(tmp_path)),
             )
         assert existing is not None
-        assert dest_path == delta_dir
+        assert dest_path == str(delta_dir)
         assert delta_mode == "append"
 
     def test_existing_delta_table_upsert(self, tmp_path):
@@ -558,10 +559,10 @@ class TestResolveWriteDestination:
                 table_name="delta_upsert_table",
                 namespace_id=schema_id,
                 write_mode="upsert",
-                catalog_dir=tmp_path,
+                target=CatalogStorageTarget(is_cloud=False, base=str(tmp_path)),
             )
         assert existing is not None
-        assert dest_path == delta_dir
+        assert dest_path == str(delta_dir)
         assert delta_mode == "upsert"
 
     def test_new_table_with_merge_mode(self, tmp_path):
@@ -573,7 +574,7 @@ class TestResolveWriteDestination:
                 table_name="new_upsert",
                 namespace_id=schema_id,
                 write_mode="upsert",
-                catalog_dir=tmp_path,
+                target=CatalogStorageTarget(is_cloud=False, base=str(tmp_path)),
             )
         assert existing is None
         assert delta_mode == "upsert"
