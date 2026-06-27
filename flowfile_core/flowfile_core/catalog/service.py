@@ -29,6 +29,7 @@ from flowfile_core.catalog.repository import CatalogRepository
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.access import AccessResolver
+    from flowfile_core.catalog.storage_backend import CatalogStorageTarget
 from flowfile_core.catalog.serializers import (
     VizEnrichment,
     format_pyarrow_preview,
@@ -519,12 +520,7 @@ class CatalogService:
             node.children = [c for c in (_prune(child) for child in node.children) if c is not None]
             self._stamp_access([node], "catalog_namespace", details["catalog_namespace"])
             has_items = bool(
-                node.flows
-                or node.tables
-                or node.visualizations
-                or node.notebooks
-                or node.artifacts
-                or node.children
+                node.flows or node.tables or node.visualizations or node.notebooks or node.artifacts or node.children
             )
             if node.id in visible_ns:
                 return node
@@ -905,10 +901,10 @@ class CatalogService:
         table_name: str,
         namespace_id: int | None,
         write_mode: str,
-        catalog_dir: Path,
-    ) -> tuple[CatalogTable | None, Path, str]:
-        """Resolve the destination path and Delta write mode for a catalog write."""
-        return self._tables.resolve_write_destination(table_name, namespace_id, write_mode, catalog_dir)
+        target: CatalogStorageTarget,
+    ) -> tuple[CatalogTable | None, str, str]:
+        """Resolve the destination (local path or object-storage URI) and Delta write mode."""
+        return self._tables.resolve_write_destination(table_name, namespace_id, write_mode, target)
 
     def resolve_table_file_path(
         self,
