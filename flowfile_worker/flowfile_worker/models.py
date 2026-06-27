@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 from pl_fuzzy_frame_match import FuzzyMapping
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
 
-from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
+from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings, FullCloudStorageConnection
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
 
@@ -191,9 +191,22 @@ class ColumnSchema(BaseModel):
     dtype: str
 
 
+class CatalogStorageInterface(BaseModel):
+    """Object-storage backend for a catalog operation.
+
+    ``base_uri`` is the catalog root in object storage (e.g. ``s3://bucket/catalog``);
+    ``connection`` carries owner-encrypted secrets the worker decrypts itself via
+    ``connection.get_storage_options()``. ``None`` on a request ⇒ local filesystem.
+    """
+
+    base_uri: str
+    connection: FullCloudStorageConnection
+
+
 class CatalogMaterializeRequest(BaseModel):
     source_file_path: str
     table_name: str | None = None
+    storage: CatalogStorageInterface | None = None
 
 
 class CatalogMaterializeResponse(BaseModel):
@@ -207,6 +220,7 @@ class CatalogMaterializeResponse(BaseModel):
 class CatalogOptimizeRequest(BaseModel):
     table_path: str  # Bare table directory name (no path separators)
     z_order_columns: list[str] | None = None
+    storage: CatalogStorageInterface | None = None
 
 
 class CatalogOptimizeResponse(BaseModel):
@@ -218,6 +232,7 @@ class CatalogVacuumRequest(BaseModel):
     table_path: str  # Bare table directory name (no path separators)
     retention_hours: int = 168
     dry_run: bool = True
+    storage: CatalogStorageInterface | None = None
 
 
 class CatalogVacuumResponse(BaseModel):
@@ -228,6 +243,7 @@ class CatalogVacuumResponse(BaseModel):
 
 class TableMetadataRequest(BaseModel):
     table_path: str  # Bare table directory name (no path separators)
+    storage: CatalogStorageInterface | None = None
 
 
 class TableMetadataResponse(BaseModel):
@@ -240,6 +256,7 @@ class TableMetadataResponse(BaseModel):
 class DeltaHistoryRequest(BaseModel):
     table_path: str  # Bare table directory name (no path separators)
     limit: int | None = None
+    storage: CatalogStorageInterface | None = None
 
 
 class DeltaHistoryResponse(BaseModel):
@@ -251,6 +268,7 @@ class DeltaVersionPreviewRequest(BaseModel):
     table_path: str  # Bare table directory name (no path separators)
     version: int
     n_rows: int = 100
+    storage: CatalogStorageInterface | None = None
 
 
 class DeltaVersionPreviewResponse(BaseModel):
@@ -266,6 +284,7 @@ class SqlQueryRequest(BaseModel):
     tables: dict[str, str]  # mapping of logical table name -> directory name
     max_rows: int = 10_000
     virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename under catalog_virtual_results
+    storage: CatalogStorageInterface | None = None
 
 
 class SqlQueryResponse(BaseModel):

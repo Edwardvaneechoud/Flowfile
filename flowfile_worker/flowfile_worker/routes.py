@@ -27,6 +27,7 @@ from flowfile_worker.spawner import (
     start_process,
     start_train_model_process,
 )
+from shared.delta_utils import validate_catalog_uri
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
@@ -34,6 +35,24 @@ router = APIRouter()
 
 # Re-use the single validation helper from funcs (backed by shared.delta_utils).
 _validate_catalog_path = funcs._validate_catalog_path
+
+
+def _resolve_catalog_route(
+    table_path: str, storage_iface: "models.CatalogStorageInterface | None"
+) -> tuple[str, str | None, dict | None]:
+    """Guard the bare table name and resolve a catalog route's storage target.
+
+    Returns ``(resolved_target, base_uri, storage_options)``: a local path + ``None``
+    when *storage_iface* is ``None`` (today's behavior), or an object-storage URI plus
+    the decrypted ``storage_options`` otherwise. Raises ``ValueError`` on a bad name.
+    """
+    if storage_iface is None:
+        return str(_validate_catalog_path(table_path)), None, None
+    return (
+        validate_catalog_uri(table_path, storage_iface.base_uri),
+        storage_iface.base_uri,
+        storage_iface.connection.get_storage_options(),
+    )
 
 
 def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:
@@ -491,11 +510,15 @@ def resolve_virtual_table(payload: models.ResolveVirtualTableRequest) -> models.
 def catalog_sql_query(payload: models.SqlQueryRequest) -> models.SqlQueryResponse:
     """Execute a SQL query against catalog tables (physical + virtual)."""
     try:
+        base_uri = payload.storage.base_uri if payload.storage is not None else None
+        storage_options = payload.storage.connection.get_storage_options() if payload.storage is not None else None
         result = funcs.execute_sql_query(
             payload.query,
             payload.tables,
             payload.max_rows,
             virtual_refs=payload.virtual_refs,
+            base_uri=base_uri,
+            storage_options=storage_options,
         )
         return models.SqlQueryResponse(**result)
     except ValueError as e:
@@ -516,16 +539,20 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
             detail={"error_type": "unsupported_file_type", "message": f"Unsupported file type: {ext}"},
         )
 
-    dest_dir = storage.catalog_tables_directory
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
     # Generate a directory name for the Delta table (not a .parquet filename)
     if payload.table_name:
         dir_name = f"{payload.table_name}_{uuid.uuid4().hex[:8]}"
     else:
         dir_name = f"catalog_{uuid.uuid4().hex}"
 
-    dest_path = str(dest_dir / dir_name)
+    if payload.storage is not None:
+        dest_path = validate_catalog_uri(dir_name, payload.storage.base_uri)
+        storage_options = payload.storage.connection.get_storage_options()
+    else:
+        dest_dir = storage.catalog_tables_directory
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = str(dest_dir / dir_name)
+        storage_options = None
 
     progress = mp_context.Value("i", 0)
     error_message = mp_context.Array("c", 1024)
@@ -539,6 +566,7 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
             "progress": progress,
             "error_message": error_message,
             "queue": queue,
+            "storage_options": storage_options,
         },
     )
     p.start()
@@ -595,7 +623,7 @@ def _drain_then_join(p, queue) -> dict | None:
 def optimize_catalog_table(payload: models.CatalogOptimizeRequest) -> models.CatalogOptimizeResponse:
     """Compact (and optionally Z-order) a Delta catalog table in a spawned subprocess."""
     try:
-        resolved_path = str(_validate_catalog_path(payload.table_path))
+        resolved_path, _, storage_options = _resolve_catalog_route(payload.table_path, payload.storage)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -610,6 +638,7 @@ def optimize_catalog_table(payload: models.CatalogOptimizeRequest) -> models.Cat
             "progress": progress,
             "error_message": error_message,
             "queue": queue,
+            "storage_options": storage_options,
         },
     )
     p.start()
@@ -625,9 +654,7 @@ def optimize_catalog_table(payload: models.CatalogOptimizeRequest) -> models.Cat
                 status_code=500,
                 detail={"error_type": "optimize_failure", "message": err or "subprocess returned no result"},
             )
-        return models.CatalogOptimizeResponse(
-            metrics=result.get("metrics", {}), size_bytes=result.get("size_bytes")
-        )
+        return models.CatalogOptimizeResponse(metrics=result.get("metrics", {}), size_bytes=result.get("size_bytes"))
     finally:
         del p, progress, error_message, queue
         gc.collect()
@@ -637,7 +664,7 @@ def optimize_catalog_table(payload: models.CatalogOptimizeRequest) -> models.Cat
 def vacuum_catalog_table(payload: models.CatalogVacuumRequest) -> models.CatalogVacuumResponse:
     """Vacuum tombstoned files from a Delta catalog table in a spawned subprocess."""
     try:
-        resolved_path = str(_validate_catalog_path(payload.table_path))
+        resolved_path, _, storage_options = _resolve_catalog_route(payload.table_path, payload.storage)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -653,6 +680,7 @@ def vacuum_catalog_table(payload: models.CatalogVacuumRequest) -> models.Catalog
             "progress": progress,
             "error_message": error_message,
             "queue": queue,
+            "storage_options": storage_options,
         },
     )
     p.start()
@@ -685,8 +713,8 @@ def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMet
     This offloads metadata reading from the core process to the worker.
     """
     try:
-        _validate_catalog_path(payload.table_path)
-        result = funcs.read_table_metadata(payload.table_path)
+        _, base_uri, storage_options = _resolve_catalog_route(payload.table_path, payload.storage)
+        result = funcs.read_table_metadata(payload.table_path, base_uri=base_uri, storage_options=storage_options)
         column_schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
         return models.TableMetadataResponse(
             column_schema=column_schema,
@@ -705,8 +733,10 @@ def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMet
 def get_delta_history(payload: models.DeltaHistoryRequest) -> models.DeltaHistoryResponse:
     """Read version history from a Delta table."""
     try:
-        _validate_catalog_path(payload.table_path)
-        return funcs.get_delta_history(payload.table_path, payload.limit)
+        _, base_uri, storage_options = _resolve_catalog_route(payload.table_path, payload.storage)
+        return funcs.get_delta_history(
+            payload.table_path, payload.limit, base_uri=base_uri, storage_options=storage_options
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -718,8 +748,10 @@ def get_delta_history(payload: models.DeltaHistoryRequest) -> models.DeltaHistor
 def get_delta_version_preview(payload: models.DeltaVersionPreviewRequest) -> models.DeltaVersionPreviewResponse:
     """Preview data from a Delta table at a specific version."""
     try:
-        _validate_catalog_path(payload.table_path)
-        return funcs.read_delta_version_preview(payload.table_path, payload.version, payload.n_rows)
+        _, base_uri, storage_options = _resolve_catalog_route(payload.table_path, payload.storage)
+        return funcs.read_delta_version_preview(
+            payload.table_path, payload.version, payload.n_rows, base_uri=base_uri, storage_options=storage_options
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -922,9 +954,7 @@ async def memory_usage(task_id: str):
 
 
 @router.post("/train_ml_model")
-async def train_ml_model(
-    polars_script: models.TrainModelInput, background_tasks: BackgroundTasks
-) -> models.Status:
+async def train_ml_model(polars_script: models.TrainModelInput, background_tasks: BackgroundTasks) -> models.Status:
     """Fit a regression model and write its serialised bytes to ``staging_path``.
 
     Core has already called ``ArtifactService.prepare_upload`` and reserved the
@@ -967,9 +997,7 @@ async def train_ml_model(
 
 
 @router.post("/apply_ml_model")
-async def apply_ml_model(
-    polars_script: models.ApplyModelInput, background_tasks: BackgroundTasks
-) -> models.Status:
+async def apply_ml_model(polars_script: models.ApplyModelInput, background_tasks: BackgroundTasks) -> models.Status:
     """Score input data using a previously trained model artifact."""
     logger.info("Starting apply_ml_model task: model_path=%s", polars_script.model_path)
     try:
