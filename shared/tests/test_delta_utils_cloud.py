@@ -1,8 +1,10 @@
 """Object-storage (S3/MinIO) coverage for the shared Delta helpers.
 
-The S3 round-trips are gated on Docker (MinIO via ``managed_minio``). The
-``validate_catalog_uri`` guards and the ``storage_options=None`` regression run
-everywhere — the latter is the byte-for-byte "unset config == today" guard.
+The S3 round-trips connect to the MinIO mock the test job already started (via
+``poetry run start_minio``); they must NOT manage that container's lifecycle —
+tearing it down here would break every other MinIO-dependent test in the job.
+The ``validate_catalog_uri`` guards and the ``storage_options=None`` regression
+run everywhere (the latter is the byte-for-byte "unset config == today" guard).
 """
 
 import polars as pl
@@ -17,15 +19,29 @@ from shared.delta_utils import (
 )
 
 try:
-    from test_utils.s3.fixtures import get_minio_client, is_docker_available, managed_minio
+    from test_utils.s3.fixtures import get_minio_client, is_docker_available
 except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
     import os
     import sys
 
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
-    from test_utils.s3.fixtures import get_minio_client, is_docker_available, managed_minio
+    from test_utils.s3.fixtures import get_minio_client, is_docker_available
 
-requires_docker = pytest.mark.skipif(not is_docker_available(), reason="Docker required for MinIO")
+_BUCKET = "flowfile-test"
+
+
+def _minio_available() -> bool:
+    """True only when the shared MinIO mock is reachable (never starts/stops it)."""
+    if not is_docker_available():
+        return False
+    try:
+        get_minio_client().list_buckets()
+        return True
+    except Exception:
+        return False
+
+
+requires_minio = pytest.mark.skipif(not _minio_available(), reason="MinIO mock S3 not available")
 
 
 def _minio_storage_options() -> dict:
@@ -38,6 +54,14 @@ def _minio_storage_options() -> dict:
         endpoint_url="http://localhost:9000",
         aws_allow_unsafe_html=True,
     )
+
+
+def _ensure_bucket() -> None:
+    client = get_minio_client()
+    try:
+        client.create_bucket(Bucket=_BUCKET)
+    except Exception:
+        pass  # already exists
 
 
 # ---- Docker-free guards / regression --------------------------------------- #
@@ -68,52 +92,39 @@ def test_merge_local_regression(tmp_path):
     assert res["v"].to_list() == ["a", "B", "c"]
 
 
-# ---- S3 round-trips (Docker) ----------------------------------------------- #
+# ---- S3 round-trips (against the already-running MinIO mock) ---------------- #
 
 
-@requires_docker
+@requires_minio
 def test_write_and_size_roundtrip_s3():
-    with managed_minio():
-        opts = _minio_storage_options()
-        uri = "s3://flowfile-test/du_write"
-        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
-        assert write_delta(df, uri, mode="overwrite", storage_options=opts) is True
-        assert get_delta_size_bytes(uri, storage_options=opts) > 0
-        assert pl.scan_delta(uri, storage_options=opts).collect().height == 3
-        client = get_minio_client()
-        listed = client.list_objects_v2(Bucket="flowfile-test", Prefix="du_write/_delta_log/")
-        assert listed.get("KeyCount", 0) > 0
+    _ensure_bucket()
+    opts = _minio_storage_options()
+    uri = f"s3://{_BUCKET}/du_cloud_write"
+    df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    assert write_delta(df, uri, mode="overwrite", storage_options=opts) is True
+    assert get_delta_size_bytes(uri, storage_options=opts) > 0
+    assert pl.scan_delta(uri, storage_options=opts).collect().height == 3
+    listed = get_minio_client().list_objects_v2(Bucket=_BUCKET, Prefix="du_cloud_write/_delta_log/")
+    assert listed.get("KeyCount", 0) > 0
 
 
-@requires_docker
+@requires_minio
 def test_merge_upsert_update_delete_s3():
-    with managed_minio():
-        opts = _minio_storage_options()
-        uri = "s3://flowfile-test/du_merge"
-        merge_into_delta(
-            pl.DataFrame({"id": [1, 2], "v": ["a", "b"]}),
-            uri,
-            merge_mode="upsert",
-            merge_keys=["id"],
-            storage_options=opts,
-        )
-        # upsert: update id=2, insert id=3
-        merge_into_delta(
-            pl.DataFrame({"id": [2, 3], "v": ["B", "c"]}),
-            uri,
-            merge_mode="upsert",
-            merge_keys=["id"],
-            storage_options=opts,
-        )
-        res = pl.scan_delta(uri, storage_options=opts).collect().sort("id")
-        assert res["v"].to_list() == ["a", "B", "c"]
-        # delete id=1
-        merge_into_delta(
-            pl.DataFrame({"id": [1]}),
-            uri,
-            merge_mode="delete",
-            merge_keys=["id"],
-            storage_options=opts,
-        )
-        remaining = pl.scan_delta(uri, storage_options=opts).collect()
-        assert sorted(remaining["id"].to_list()) == [2, 3]
+    _ensure_bucket()
+    opts = _minio_storage_options()
+    uri = f"s3://{_BUCKET}/du_cloud_merge"
+    merge_into_delta(
+        pl.DataFrame({"id": [1, 2], "v": ["a", "b"]}), uri, merge_mode="upsert", merge_keys=["id"], storage_options=opts
+    )
+    # upsert: update id=2, insert id=3
+    merge_into_delta(
+        pl.DataFrame({"id": [2, 3], "v": ["B", "c"]}), uri, merge_mode="upsert", merge_keys=["id"], storage_options=opts
+    )
+    res = pl.scan_delta(uri, storage_options=opts).collect().sort("id")
+    assert res["v"].to_list() == ["a", "B", "c"]
+    # delete id=1
+    merge_into_delta(
+        pl.DataFrame({"id": [1]}), uri, merge_mode="delete", merge_keys=["id"], storage_options=opts
+    )
+    remaining = pl.scan_delta(uri, storage_options=opts).collect()
+    assert sorted(remaining["id"].to_list()) == [2, 3]
