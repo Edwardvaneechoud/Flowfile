@@ -929,8 +929,12 @@ class TableService:
         """Delete a catalog table; optionally delete its materialized storage.
 
         Storage is only removed when ``delete_file`` is set AND the path is
-        Flowfile-managed (under the catalog tables dir) — external/user-owned
+        Flowfile-managed (under the local catalog tables dir) — external/user-owned
         files are never touched. Virtual tables have no file to delete.
+
+        v1 limitation: object-storage (``s3://`` …) tables are NOT auto-deleted even
+        with ``delete_file=True`` — the catalog row is removed but the Delta objects are
+        left in the bucket (callers wanting cleanup must remove them out-of-band).
         """
         table = self.repo.get_table(table_id)
         if table is None:

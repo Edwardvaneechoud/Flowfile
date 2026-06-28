@@ -887,7 +887,7 @@ def _handle_physical_table_write(
         op_type = "write_delta"
         op_kwargs = {"output_path": dest_path, "mode": delta_mode, "partition_by": settings.partition_by}
     if storage_payload is not None:
-        op_kwargs["storage"] = storage_payload
+        op_kwargs["storage_payload"] = storage_payload
 
     # Cloud writes must offload to the worker: core never collects a full LazyFrame, and the
     # local merge path collects. The worker owns dataset memory and writes via storage_options.
@@ -3524,12 +3524,15 @@ class FlowGraph:
         table_paths = resolved.table_paths
         virtual_tables = resolved.virtual_tables
 
+        # Resolve cloud storage options once at wiring time (shared by all cloud tables in
+        # the query under the single v1 backend); skipped entirely when none are cloud.
+        cloud_opts = None
+        if any(_is_cloud_uri(p) for p in table_paths.values()):
+            cloud_opts = resolve_catalog_storage(node_catalog_reader.user_id or 1).storage_options or None
+
         def _func() -> FlowDataEngine:
             if not table_paths and not virtual_tables:
                 raise ValueError("No catalog tables available to query")
-            cloud_opts = None
-            if any(_is_cloud_uri(p) for p in table_paths.values()):
-                cloud_opts = resolve_catalog_storage(node_catalog_reader.user_id or 1).storage_options or None
             ctx = pl.SQLContext()
             for name, path in table_paths.items():
                 if _is_cloud_uri(path):
@@ -3603,6 +3606,12 @@ class FlowGraph:
         _authorized = info.authorized
         _user_id = node_catalog_reader.user_id
 
+        # Resolve cloud storage options once at wiring time (the credentials don't change
+        # between executions); local tables don't touch the DB.
+        _reader_storage_options = None
+        if resolved_path and _is_cloud_uri(resolved_path):
+            _reader_storage_options = resolve_catalog_storage(_user_id or 1).storage_options or None
+
         def _func() -> FlowDataEngine:
             if not _authorized:
                 raise PermissionError(
@@ -3628,8 +3637,9 @@ class FlowGraph:
                 scan_kwargs["version"] = delta_version
             if _is_cloud_uri(resolved_path):
                 # Cloud catalog table: scan directly (stays lazy ⇒ no collect in core).
-                storage_options = resolve_catalog_storage(_user_id or 1).storage_options or None
-                return FlowDataEngine(pl.scan_delta(resolved_path, storage_options=storage_options, **scan_kwargs))
+                return FlowDataEngine(
+                    pl.scan_delta(resolved_path, storage_options=_reader_storage_options, **scan_kwargs)
+                )
             if is_delta_table(resolved_path):
                 return FlowDataEngine(pl.scan_delta(resolved_path, **scan_kwargs))
             return FlowDataEngine(pl.scan_parquet(resolved_path))

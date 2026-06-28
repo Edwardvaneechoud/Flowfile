@@ -38,8 +38,11 @@ def _stored_connection():
         try:
             store_cloud_connection(db, _make_minio_connection(), user_id=1)
             db.commit()
-        except ValueError:
-            # A prior test in the same DB session already stored it; reuse it.
+        except ValueError as e:
+            # Only tolerate the "already exists" collision when a prior test in the same
+            # DB session stored it; any other validation error is a real failure.
+            if "already exists" not in str(e):
+                raise
             db.rollback()
 
 
