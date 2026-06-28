@@ -53,10 +53,11 @@ def _catalog_payload() -> dict:
     """Build a ``CatalogStorageInterface`` payload exactly as core sends it to the worker.
 
     ``aws_secret_access_key`` is an owner-encrypted ``$ffsec$…`` token (built here via
-    ``encrypt_secret``, mirroring core's worker-interface), so the test exercises the
-    real HKDF decrypt inside ``_resolve_storage_options`` rather than passing plaintext.
+    ``encrypt_secret`` with a user_id, mirroring core's worker-interface), so the test
+    exercises the real per-user HKDF decrypt inside ``_resolve_storage_options`` rather
+    than passing plaintext.
     """
-    encrypted_secret = encrypt_secret("minioadmin")
+    encrypted_secret = encrypt_secret("minioadmin", user_id=1)
     assert encrypted_secret.startswith("$ffsec$")
     return {
         "base_uri": _BASE_URI,
