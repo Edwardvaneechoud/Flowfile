@@ -614,7 +614,7 @@ def write_delta(
     output_path: str,
     mode: str = "overwrite",
     partition_by: list[str] | None = None,
-    storage: dict | None = None,
+    storage_payload: dict | None = None,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -624,16 +624,16 @@ def write_delta(
     a Delta table at *output_path*.  Metadata (schema, row_count, size_bytes)
     is returned via the queue so the core never needs to read the table.
 
-    *storage* (a serialized ``CatalogStorageInterface``) routes the write to object
-    storage; ``None`` writes to the local filesystem. *output_path* is already the
-    fully-resolved destination (local path or ``s3://`` URI).
+    *storage_payload* (a serialized ``CatalogStorageInterface``) routes the write to
+    object storage; ``None`` writes to the local filesystem. *output_path* is already
+    the fully-resolved destination (local path or ``s3://`` URI).
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting write_delta operation to: {output_path}")
     try:
         from shared.delta_utils import write_delta as _write_delta
 
-        storage_options = _resolve_storage_options(storage)
+        storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
         wrote = _write_delta(df, output_path, mode=mode, partition_by=partition_by, storage_options=storage_options)
@@ -679,7 +679,7 @@ def merge_delta(
     merge_mode: str = "upsert",
     merge_keys: list[str] | None = None,
     partition_by: list[str] | None = None,
-    storage: dict | None = None,
+    storage_payload: dict | None = None,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -690,15 +690,15 @@ def merge_delta(
     - update: update only matched rows (no inserts)
     - delete: remove matched rows from target
 
-    *storage* (a serialized ``CatalogStorageInterface``) routes the merge to object
-    storage; ``None`` merges into a local-filesystem table.
+    *storage_payload* (a serialized ``CatalogStorageInterface``) routes the merge to
+    object storage; ``None`` merges into a local-filesystem table.
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting merge_delta ({merge_mode}) to: {output_path}")
     try:
         from shared.delta_utils import merge_into_delta
 
-        storage_options = _resolve_storage_options(storage)
+        storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
         wrote = merge_into_delta(

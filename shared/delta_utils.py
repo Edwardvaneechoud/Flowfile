@@ -75,24 +75,45 @@ def get_delta_size_bytes(path: str | Path, storage_options: dict[str, str] | Non
         return sum(f.stat().st_size for f in Path(path).rglob("*.parquet"))
 
 
+def _open_delta_or_none(output_path: str, storage_options: dict[str, str] | None):
+    """Open the Delta table at *output_path*, or return ``None`` if it doesn't exist.
+
+    Only a genuine "table not found" yields ``None``. Any other failure (bad
+    credentials, network/DNS error, S3 timeout) propagates — a transient error must
+    never be mistaken for a missing table, which would silently create or overwrite.
+    """
+    from deltalake import DeltaTable
+    from deltalake.exceptions import TableNotFoundError
+
+    if storage_options is None:
+        import os
+
+        if not (os.path.isdir(output_path) and os.path.isdir(os.path.join(output_path, "_delta_log"))):
+            return None
+        try:
+            return DeltaTable(str(output_path))
+        except TableNotFoundError:
+            return None
+
+    try:
+        return DeltaTable(str(output_path), storage_options=storage_options)
+    except TableNotFoundError:
+        return None
+
+
 def _delta_table_exists(output_path: str, storage_options: dict[str, str] | None) -> bool:
     """Return ``True`` if a Delta table exists at *output_path* (local or object storage).
 
     Locally this is a cheap ``_delta_log`` directory probe; for object storage it
-    attempts to open the table, treating any failure as "does not exist".
+    attempts to open the table. A genuine "not found" returns ``False``; any other
+    error (auth / network / credentials) propagates rather than masquerading as missing.
     """
     if storage_options is None:
         import os
 
         return os.path.isdir(output_path) and os.path.isdir(os.path.join(output_path, "_delta_log"))
 
-    from deltalake import DeltaTable
-
-    try:
-        DeltaTable(str(output_path), storage_options=storage_options)
-        return True
-    except Exception:
-        return False
+    return _open_delta_or_none(output_path, storage_options) is not None
 
 
 # Catalog path validation
@@ -145,15 +166,15 @@ def write_delta(
         os.makedirs(output_path, exist_ok=True)
 
     # Skip no-op append: empty data with unchanged schema on existing table
-    if mode == "append" and _delta_table_exists(output_path, storage_options):
-        from deltalake import DeltaTable
-
-        existing_cols = {f.name for f in DeltaTable(str(output_path), storage_options=storage_options).schema().fields}
-        incoming_cols = _frame_column_names(df)
-        if incoming_cols == existing_cols:
-            row_count = df.select(pl_.len()).collect().item() if isinstance(df, pl_.LazyFrame) else df.height
-            if row_count == 0:
-                return False
+    if mode == "append":
+        existing_dt = _open_delta_or_none(output_path, storage_options)
+        if existing_dt is not None:
+            existing_cols = {f.name for f in existing_dt.schema().fields}
+            incoming_cols = _frame_column_names(df)
+            if incoming_cols == existing_cols:
+                row_count = df.select(pl_.len()).collect().item() if isinstance(df, pl_.LazyFrame) else df.height
+                if row_count == 0:
+                    return False
 
     delta_write_options: dict[str, object] = {}
     if mode == "overwrite":
@@ -200,12 +221,13 @@ def merge_into_delta(
 
     from deltalake import DeltaTable
 
-    table_exists = _delta_table_exists(output_path, storage_options)
+    # Open the target once (re-used below) rather than probing then re-opening.
+    dt = _open_delta_or_none(output_path, storage_options)
+    table_exists = dt is not None
 
     # Skip no-op update: empty data with unchanged schema on existing table
     if merge_mode == "update" and df.height == 0 and table_exists:
-        existing_cols = {f.name for f in DeltaTable(str(output_path), storage_options=storage_options).schema().fields}
-        if set(df.columns) == existing_cols:
+        if set(df.columns) == {f.name for f in dt.schema().fields}:
             return False
 
     create_kwargs: dict[str, object] = {}
@@ -228,8 +250,6 @@ def merge_into_delta(
             logger.warning("Ignoring partition_by on merge into existing table: Delta partitioning is immutable")
         if not merge_keys:
             raise ValueError("merge_keys is required for merge operations on existing tables")
-
-        dt = DeltaTable(str(output_path), storage_options=storage_options)
 
         # Schema evolution: add new source columns to the target before merging
         if merge_mode in ("upsert", "update"):
