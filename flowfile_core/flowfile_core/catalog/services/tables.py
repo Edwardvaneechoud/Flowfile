@@ -21,6 +21,7 @@ from flowfile_core.catalog.delta_utils import (
 )
 from flowfile_core.catalog.exceptions import (
     AmbiguousTableError,
+    InvalidNamespaceStorageError,
     NamespaceNotFoundError,
     TableExistsError,
     TableFavoriteNotFoundError,
@@ -622,6 +623,8 @@ class TableService:
             raise TableNotFoundError(table_id=table_id)
 
         resolved_path_str = table_path or parquet_path
+        if resolved_path_str is None:
+            raise ValueError("overwrite_table_data requires either table_path or parquet_path")
         is_cloud = _is_cloud_uri(resolved_path_str)
 
         if storage_format is None:
@@ -912,6 +915,23 @@ class TableService:
             return self.bulk_enrich_tables(tables, user_id)
         return [self.table_to_out(t) for t in tables]
 
+    def _reject_invalid_reparent(self, table: CatalogTable, new_namespace_id: int) -> None:
+        """A physical table can't be reparented into a catalog on different storage — its bytes are not
+        moved (one namespace <-> one storage). The table's file_path must already live under the
+        destination catalog's resolved storage; otherwise migrate the data instead of flipping the FK."""
+        if not table.file_path or table.table_type != "physical":
+            return
+        dest = resolve_for_namespace(new_namespace_id)
+        if dest.is_cloud:
+            in_dest = table.file_path.startswith(dest.base.rstrip("/"))
+        else:
+            in_dest = not _is_cloud_uri(table.file_path)
+        if not in_dest:
+            raise InvalidNamespaceStorageError(
+                f"Cannot move table '{table.name}' into a catalog backed by different storage; its data "
+                "is not relocated. Re-create the table in the target catalog instead."
+            )
+
     def update_table(
         self,
         table_id: int,
@@ -927,7 +947,8 @@ class TableService:
             table.name = name
         if description is not None:
             table.description = description
-        if namespace_id is not None:
+        if namespace_id is not None and namespace_id != table.namespace_id:
+            self._reject_invalid_reparent(table, namespace_id)
             table.namespace_id = namespace_id
         table = self.repo.update_table(table)
         _project_sync_tables(table.owner_id)

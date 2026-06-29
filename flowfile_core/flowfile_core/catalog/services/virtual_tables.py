@@ -23,6 +23,7 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.tables import TableService
+from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace
 from flowfile_core.catalog.text_utils import (
     is_table_reference,
     rewrite_qualified_references,
@@ -355,6 +356,9 @@ class VirtualTableService:
                     identifier=t.name,
                 )
             return None
+        if t.file_path and _is_cloud_uri(t.file_path):
+            target = resolve_for_namespace(t.namespace_id)
+            return pl.scan_delta(t.file_path, storage_options=target.storage_options or None)
         if t.file_path and is_delta_table(Path(t.file_path)):
             return pl.scan_delta(t.file_path)
         return None
@@ -443,6 +447,10 @@ class VirtualTableService:
         ``accessible_table_ids`` (set in multi-user mode) restricts the registered
         tables to the ones the requesting user may read, so SQL cannot reach a
         table the user cannot see.
+
+        Object-storage Delta tables are excluded from the worker-offloaded ``/catalog/sql_query``
+        path: ``trigger_sql_query`` has no per-table cloud-storage contract yet. Cloud catalog SQL
+        runs through the flow_graph catalog-SQL node, which embeds per-namespace storage in the plan.
         """
         tables = self.repo.list_tables()
         if accessible_table_ids is not None:

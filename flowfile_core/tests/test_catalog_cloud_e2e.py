@@ -84,7 +84,8 @@ def test_worker_payload_carries_encrypted_secret(_cloud_catalog_id):
     conn = payload["connection"]
     assert conn["aws_access_key_id"] == "minioadmin"
     secret = conn["aws_secret_access_key"]
-    assert secret.startswith("$ffsec$")
+    # Owner-keyed for the worker (owner_id=1 embedded), never plaintext.
+    assert secret.startswith("$ffsec$1$1$")
     assert "minioadmin" not in secret
 
 

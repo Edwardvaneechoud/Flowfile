@@ -165,8 +165,8 @@ def test_worker_payload_owner_encrypted():
     assert payload is not None
     assert payload["base_uri"] == _CATALOG_URI
     secret = payload["connection"]["aws_secret_access_key"]
-    # Owner-keyed for the worker, never plaintext.
-    assert secret.startswith("$ffsec$")
+    # Owner-keyed for the worker (owner_id=1 embedded), never plaintext.
+    assert secret.startswith("$ffsec$1$1$")
     assert "minioadmin" not in secret
 
 

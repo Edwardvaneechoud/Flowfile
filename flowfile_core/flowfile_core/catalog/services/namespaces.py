@@ -108,6 +108,27 @@ class NamespaceService:
         schema = self.repo.get_namespace_by_name(schema_name, catalog.id)
         return schema.id if schema is not None else None
 
+    def _env_default_storage(self, owner_id: int) -> tuple[str | None, str | None]:
+        """Resolve the optional creation-time storage default from the environment, best-effort.
+
+        Returns ``(None, None)`` (⇒ local) when unset or when the configured connection is not usable
+        for *owner_id*, so a misconfigured env default never blocks catalog creation."""
+        env_uri = settings.get_catalog_storage_uri()
+        env_conn = settings.get_catalog_storage_connection()
+        if not env_uri:
+            return None, None
+        try:
+            _validate_namespace_storage(owner_id, env_uri, env_conn)
+        except InvalidNamespaceStorageError:
+            logger.warning(
+                "FLOWFILE_CATALOG_STORAGE_* default not applied: connection %r is not usable for user %s; "
+                "the new catalog uses local storage.",
+                env_conn,
+                owner_id,
+            )
+            return None, None
+        return env_uri, env_conn
+
     def create_namespace(
         self,
         name: str,
@@ -136,15 +157,18 @@ class NamespaceService:
         if existing is not None:
             raise NamespaceExistsError(name=name, parent_id=parent_id)
 
-        if (storage_uri is not None or storage_connection_name is not None) and level != 0:
-            raise InvalidNamespaceStorageError("Per-catalog storage can only be set on a catalog (level-0 namespace).")
-        if level == 0 and storage_uri is None and storage_connection_name is None:
-            # Headless/docker convenience: snapshot the env default onto the new catalog (one-time copy,
-            # never a live override — honors the one-namespace<->one-storage invariant).
-            storage_uri = settings.get_catalog_storage_uri()
-            storage_connection_name = settings.get_catalog_storage_connection()
-        if storage_uri is not None or storage_connection_name is not None:
+        explicit_storage = storage_uri is not None or storage_connection_name is not None
+        if explicit_storage:
+            if level != 0:
+                raise InvalidNamespaceStorageError(
+                    "Per-catalog storage can only be set on a catalog (level-0 namespace)."
+                )
             _validate_namespace_storage(owner_id, storage_uri, storage_connection_name)
+        elif level == 0:
+            # Headless/docker convenience: snapshot the env default onto the new catalog (one-time copy,
+            # never a live override). Best-effort — an unusable env connection falls back to local rather
+            # than blocking catalog creation.
+            storage_uri, storage_connection_name = self._env_default_storage(owner_id)
 
         namespace = CatalogNamespace(
             name=name,
@@ -190,6 +214,9 @@ class NamespaceService:
                 if storage_connection_name is STORAGE_UNSET
                 else storage_connection_name
             )
+            if not new_uri:
+                # A connection without a URI is meaningless: clearing the URI clears both in lockstep.
+                new_conn = None
             if (new_uri, new_conn) != (namespace.storage_uri, namespace.storage_connection_name):
                 existing_tables = self.repo.count_physical_tables_under_namespace(namespace_id)
                 if existing_tables > 0:

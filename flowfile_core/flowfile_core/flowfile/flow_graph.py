@@ -399,7 +399,7 @@ class CatalogSqlTables(NamedTuple):
     table_paths: dict[str, str]
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]]
     # Each physical table's own namespace_id, for per-catalog storage resolution (mixed backends).
-    table_namespaces: dict[str, int | None] = {}
+    table_namespaces: dict[str, int | None]
 
 
 def ml_flow_model_path(flow_id: int, train_node_id: int | str) -> Path:
@@ -474,9 +474,7 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
             node_id,
             exc_info=True,
         )
-    return CatalogSqlTables(
-        table_paths=table_paths, virtual_tables=virtual_tables, table_namespaces=table_namespaces
-    )
+    return CatalogSqlTables(table_paths=table_paths, virtual_tables=virtual_tables, table_namespaces=table_namespaces)
 
 
 class CatalogTableInfo(NamedTuple):
@@ -3546,9 +3544,9 @@ class FlowGraph:
         virtual_tables = resolved.virtual_tables
         table_namespaces = resolved.table_namespaces
 
-        # Resolve cloud storage options per catalog at wiring time (credentials don't change between
-        # executions). A SQL query can join tables from different catalogs, each with its own storage;
-        # memoize by namespace_id so each distinct catalog decrypts exactly once.
+        # Resolve cloud storage options per source namespace at wiring time (credentials don't change
+        # between executions). A SQL query can join tables from different catalogs, each with its own
+        # storage; memoize by the table's namespace_id so each distinct source namespace decrypts once.
         storage_options_by_name: dict[str, dict | None] = {}
         _opts_by_namespace: dict[int | None, dict | None] = {}
         for _name, _path in table_paths.items():

@@ -210,6 +210,14 @@ class CatalogService:
         if self._restricted and namespace_id is not None and namespace_id not in self.access.writable_namespace_ids():
             raise NotAuthorizedError(self.access.user_id or -1, "create items in this namespace")
 
+    def _require_namespace_owner(self, namespace_id: int, action: str) -> None:
+        """Owner-only (or admin) gate. ``_restricted`` is False for admins / electron / internal."""
+        if not self._restricted:
+            return
+        ns = self.repo.get_namespace(namespace_id)
+        if ns is None or ns.owner_id != self.access.user_id:
+            raise NotAuthorizedError(self.access.user_id or -1, f"{action} this catalog")
+
     def _require_use_run(self, run_id: int) -> None:
         """A run is accessible to its actor or to anyone who can use its flow."""
         if not self._restricted:
@@ -449,6 +457,10 @@ class CatalogService:
     ) -> CatalogNamespace:
         """Update a namespace's name/description and (catalog-level only) its per-catalog storage."""
         self._require_manage("catalog_namespace", namespace_id)
+        if storage_uri is not STORAGE_UNSET or storage_connection_name is not STORAGE_UNSET:
+            # Storage aims the owner's credentialed writes at a location; only the owner (or admin) may
+            # change it, even with a manage grant (anti-repoint).
+            self._require_namespace_owner(namespace_id, "change storage for")
         return self._namespaces.update_namespace(
             namespace_id,
             name,
