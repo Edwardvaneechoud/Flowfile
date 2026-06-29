@@ -1,11 +1,12 @@
 """Resolve where catalog table data lives — local filesystem or object storage.
 
-This is the single seam for catalog storage resolution. v1 reads one instance-wide
-object-storage target from env config (``FLOWFILE_CATALOG_STORAGE_URI`` +
-``FLOWFILE_CATALOG_STORAGE_CONNECTION``); when unset the catalog behaves exactly as
-before (local filesystem). Per-namespace / per-table resolution is an additive change
-to ``resolve_catalog_storage`` only — the ``namespace_id`` hook is accepted now and
-ignored in v1, and no call site changes when it is wired up.
+This is the single seam for catalog storage resolution. Storage is resolved **per catalog**:
+each level-0 catalog namespace may carry ``storage_uri`` + ``storage_connection_name`` columns,
+and every schema/table beneath it inherits them (one namespace <-> one storage). An unset
+``storage_uri`` (or ``namespace_id is None``) ⇒ the local filesystem, byte-for-byte as before.
+Credentials resolve as the catalog owner. ``FLOWFILE_CATALOG_STORAGE_URI`` /
+``FLOWFILE_CATALOG_STORAGE_CONNECTION`` survive only as an optional creation-time default
+snapshotted onto a new catalog, never a live override.
 """
 
 from __future__ import annotations
@@ -13,7 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from flowfile_core.configs import settings
+from sqlalchemy.orm import Session
+
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection_schema
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
@@ -65,38 +67,61 @@ class CatalogStorageTarget:
         return {"base_uri": self.base, "connection": self.worker_interface.model_dump()}
 
 
-def resolve_catalog_storage(user_id: int, *, namespace_id: int | None = None) -> CatalogStorageTarget:
-    """Resolve the catalog storage backend for *user_id*.
+def _local_target() -> CatalogStorageTarget:
+    """The default local-filesystem target, rooted at the catalog tables directory."""
+    return CatalogStorageTarget(is_cloud=False, base=str(storage.catalog_tables_directory))
 
-    Unset config ⇒ a local target rooted at ``storage.catalog_tables_directory`` (today's
-    behavior, byte-for-byte). When ``FLOWFILE_CATALOG_STORAGE_URI`` is set, the named
-    ``CloudStorageConnection`` supplies credentials; a missing URI-companion connection,
-    or a connection name that does not resolve for the user, raises ``ValueError``.
 
-    *namespace_id* is accepted for the future per-schema backend and ignored in v1.
-    """
-    uri = settings.get_catalog_storage_uri()
-    if not uri:
-        return CatalogStorageTarget(is_cloud=False, base=str(storage.catalog_tables_directory))
+def _resolve_in_session(db: Session, namespace_id: int) -> CatalogStorageTarget:
+    """Resolve the storage target for *namespace_id* using an open session."""
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 
-    connection_name = settings.get_catalog_storage_connection()
+    root = SQLAlchemyCatalogRepository(db).get_root_namespace(namespace_id)
+    if root is None or not root.storage_uri:
+        return _local_target()
+
+    connection_name = root.storage_connection_name
     if not connection_name:
         raise ValueError(
-            "FLOWFILE_CATALOG_STORAGE_URI is set but FLOWFILE_CATALOG_STORAGE_CONNECTION is not; "
-            "a cloud connection name is required to resolve catalog storage credentials."
+            f"Catalog '{root.name}' has storage_uri set but no storage_connection_name; "
+            "a cloud connection is required to resolve catalog storage credentials."
         )
-
-    with get_db_context() as db:
-        conn = get_cloud_connection_schema(db, connection_name, user_id)
+    owner_id = root.owner_id
+    conn = get_cloud_connection_schema(db, connection_name, owner_id)
     if conn is None:
         raise ValueError(
-            f"Catalog storage connection '{connection_name}' was not found or is not accessible " f"for user {user_id}."
+            f"Catalog storage connection '{connection_name}' was not found or is not accessible "
+            f"for the catalog owner (user {owner_id})."
         )
-
     return CatalogStorageTarget(
         is_cloud=True,
-        base=uri.rstrip("/"),
+        base=str(root.storage_uri).rstrip("/"),
         storage_options=CloudStorageReader.get_storage_options(conn),
         connection_name=connection_name,
-        worker_interface=conn.get_worker_interface(user_id),
+        worker_interface=conn.get_worker_interface(owner_id),
     )
+
+
+def resolve_for_namespace(namespace_id: int | None, *, db: Session | None = None) -> CatalogStorageTarget:
+    """Resolve catalog storage for a namespace, inheriting from its level-0 root catalog.
+
+    The root catalog's ``storage_uri``/``storage_connection_name`` columns decide the backend; an unset
+    ``storage_uri`` (or ``namespace_id is None``) ⇒ the local filesystem, byte-for-byte as before.
+    Credentials always resolve as the **catalog owner** (owner-keyed secrets), never the calling user,
+    so an authorized writer uses the catalog's connection. Pass *db* to reuse the caller's session.
+    """
+    if namespace_id is None:
+        return _local_target()
+    if db is not None:
+        return _resolve_in_session(db, namespace_id)
+    with get_db_context() as own_db:
+        return _resolve_in_session(own_db, namespace_id)
+
+
+def resolve_catalog_storage(user_id: int, *, namespace_id: int | None = None) -> CatalogStorageTarget:
+    """Backward-compatible shim around :func:`resolve_for_namespace`.
+
+    *user_id* is retained for call-compatibility but ignored — per-catalog credentials always resolve
+    as the catalog owner. New code should call :func:`resolve_for_namespace` directly.
+    """
+    return resolve_for_namespace(namespace_id)

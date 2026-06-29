@@ -164,6 +164,10 @@ class CatalogNamespace(Base):
     # Visible to every user as a tree container in multi-user mode (set on the seeded
     # system namespaces); contents stay per-user filtered. See auth/sharing.py.
     is_public = Column(Boolean, nullable=False, default=False, server_default="0")
+    # Per-catalog object storage (level-0 only; schemas/tables inherit); immutable once a physical
+    # table exists beneath the catalog. NULL ⇒ local filesystem.
+    storage_uri = Column(String, nullable=True)
+    storage_connection_name = Column(String, nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 

@@ -6,14 +6,18 @@ import logging
 from collections.abc import Callable
 
 from flowfile_core.catalog.exceptions import (
+    InvalidNamespaceStorageError,
     NamespaceExistsError,
     NamespaceNotEmptyError,
     NamespaceNotFoundError,
+    NamespaceStorageLockedError,
     NestingLimitError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.serializers import artifact_to_out
+from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.catalog.validators import reject_dot_in_name
+from flowfile_core.configs import settings
 from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact
 from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
@@ -25,6 +29,32 @@ from flowfile_core.schemas.catalog_schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Sentinel distinguishing "storage field omitted" from "explicitly set to None" on update.
+STORAGE_UNSET: object = object()
+
+
+def _validate_namespace_storage(owner_id: int, storage_uri: str | None, storage_connection_name: str | None) -> None:
+    """Validate per-catalog storage: a cloud URI plus a connection that resolves for the catalog owner."""
+    if not storage_uri:
+        if storage_connection_name:
+            raise InvalidNamespaceStorageError("storage_connection_name requires storage_uri to be set.")
+        return
+    if not _is_cloud_uri(storage_uri):
+        raise InvalidNamespaceStorageError(
+            f"storage_uri must be an object-storage URI (s3://, gs://, abfss://, ...): {storage_uri!r}"
+        )
+    if not storage_connection_name:
+        raise InvalidNamespaceStorageError("storage_uri requires a storage_connection_name.")
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection_schema
+
+    with get_db_context() as db:
+        conn = get_cloud_connection_schema(db, storage_connection_name, owner_id)
+    if conn is None:
+        raise InvalidNamespaceStorageError(
+            f"Cloud connection {storage_connection_name!r} was not found or is not accessible for the catalog owner."
+        )
 
 
 def _project_sync_namespace(owner_id: int) -> None:
@@ -84,8 +114,14 @@ class NamespaceService:
         owner_id: int,
         parent_id: int | None = None,
         description: str | None = None,
+        storage_uri: str | None = None,
+        storage_connection_name: str | None = None,
     ) -> CatalogNamespace:
-        """Create a catalog (level 0) or schema (level 1) namespace."""
+        """Create a catalog (level 0) or schema (level 1) namespace.
+
+        ``storage_uri`` / ``storage_connection_name`` configure per-catalog object storage and are
+        only valid on a level-0 catalog; schemas inherit their root catalog's storage.
+        """
         reject_dot_in_name(name, "Namespace")
         level = 0
         if parent_id is not None:
@@ -100,12 +136,24 @@ class NamespaceService:
         if existing is not None:
             raise NamespaceExistsError(name=name, parent_id=parent_id)
 
+        if (storage_uri is not None or storage_connection_name is not None) and level != 0:
+            raise InvalidNamespaceStorageError("Per-catalog storage can only be set on a catalog (level-0 namespace).")
+        if level == 0 and storage_uri is None and storage_connection_name is None:
+            # Headless/docker convenience: snapshot the env default onto the new catalog (one-time copy,
+            # never a live override — honors the one-namespace<->one-storage invariant).
+            storage_uri = settings.get_catalog_storage_uri()
+            storage_connection_name = settings.get_catalog_storage_connection()
+        if storage_uri is not None or storage_connection_name is not None:
+            _validate_namespace_storage(owner_id, storage_uri, storage_connection_name)
+
         namespace = CatalogNamespace(
             name=name,
             parent_id=parent_id,
             level=level,
             description=description,
             owner_id=owner_id,
+            storage_uri=storage_uri,
+            storage_connection_name=storage_connection_name,
         )
         created = self.repo.create_namespace(namespace)
         _project_sync_namespace(owner_id)
@@ -116,8 +164,13 @@ class NamespaceService:
         namespace_id: int,
         name: str | None = None,
         description: str | None = None,
+        storage_uri: str | None | object = STORAGE_UNSET,
+        storage_connection_name: str | None | object = STORAGE_UNSET,
     ) -> CatalogNamespace:
-        """Update a namespace's name and/or description."""
+        """Update a namespace's name/description, and (catalog-level only) its per-catalog storage.
+
+        Storage is immutable once the catalog — or any schema beneath it — holds a physical table.
+        """
         namespace = self.repo.get_namespace(namespace_id)
         if namespace is None:
             raise NamespaceNotFoundError(namespace_id=namespace_id)
@@ -125,6 +178,26 @@ class NamespaceService:
             namespace.name = name
         if description is not None:
             namespace.description = description
+
+        if storage_uri is not STORAGE_UNSET or storage_connection_name is not STORAGE_UNSET:
+            if namespace.level != 0:
+                raise InvalidNamespaceStorageError(
+                    "Per-catalog storage can only be set on a catalog (level-0 namespace)."
+                )
+            new_uri = namespace.storage_uri if storage_uri is STORAGE_UNSET else storage_uri
+            new_conn = (
+                namespace.storage_connection_name
+                if storage_connection_name is STORAGE_UNSET
+                else storage_connection_name
+            )
+            if (new_uri, new_conn) != (namespace.storage_uri, namespace.storage_connection_name):
+                existing_tables = self.repo.count_physical_tables_under_namespace(namespace_id)
+                if existing_tables > 0:
+                    raise NamespaceStorageLockedError(namespace_id=namespace_id, tables=existing_tables)
+                _validate_namespace_storage(namespace.owner_id, new_uri, new_conn)
+                namespace.storage_uri = new_uri
+                namespace.storage_connection_name = new_conn
+
         updated = self.repo.update_namespace(namespace)
         _project_sync_namespace(updated.owner_id)
         return updated
@@ -152,6 +225,20 @@ class NamespaceService:
         if namespace is None:
             raise NamespaceNotFoundError(namespace_id=namespace_id)
         return namespace
+
+    def get_root_namespace(self, namespace_id: int) -> CatalogNamespace | None:
+        """Return the level-0 catalog at the top of *namespace_id*'s parent chain."""
+        return self.repo.get_root_namespace(namespace_id)
+
+    def get_effective_storage(self, namespace_id: int | None) -> tuple[str, str | None, int] | None:
+        """Resolve (storage_uri, storage_connection_name, owner_id) inherited from the root catalog,
+        or None when the root sets no storage (⇒ local filesystem)."""
+        if namespace_id is None:
+            return None
+        root = self.repo.get_root_namespace(namespace_id)
+        if root is None or not root.storage_uri:
+            return None
+        return (root.storage_uri, root.storage_connection_name, root.owner_id)
 
     def list_namespaces(self, parent_id: int | None = None) -> list[CatalogNamespace]:
         """List namespaces, optionally filtered by parent."""
@@ -232,6 +319,8 @@ class NamespaceService:
                         owner_id=schema.owner_id,
                         created_at=schema.created_at,
                         updated_at=schema.updated_at,
+                        storage_uri=schema.storage_uri,
+                        storage_connection_name=schema.storage_connection_name,
                         children=[],
                         flows=flow_outs,
                         artifacts=namespace_artifact_map.get(schema.id, []),
@@ -252,6 +341,8 @@ class NamespaceService:
                     owner_id=cat.owner_id,
                     created_at=cat.created_at,
                     updated_at=cat.updated_at,
+                    storage_uri=cat.storage_uri,
+                    storage_connection_name=cat.storage_connection_name,
                     children=children,
                     flows=root_flow_outs,
                     artifacts=namespace_artifact_map.get(cat.id, []),

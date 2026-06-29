@@ -30,9 +30,11 @@ from flowfile_core.catalog import (
     FlowHasArtifactsError,
     FlowNotFoundError,
     FollowNotFoundError,
+    InvalidNamespaceStorageError,
     NamespaceExistsError,
     NamespaceNotEmptyError,
     NamespaceNotFoundError,
+    NamespaceStorageLockedError,
     NestingLimitError,
     NoSnapshotError,
     NotAuthorizedError,
@@ -150,6 +152,8 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     NamespaceExistsError: (409, "Namespace with this name already exists at this level"),
     NestingLimitError: (422, "Cannot nest deeper than catalog -> schema"),
     NamespaceNotEmptyError: (422, "Cannot delete namespace with children or flows"),
+    NamespaceStorageLockedError: (409, None),
+    InvalidNamespaceStorageError: (422, None),
     NotAuthorizedError: (403, None),
     FlowNotFoundError: (404, "Flow not found"),
     FlowHasArtifactsError: (409, None),
@@ -258,6 +262,8 @@ def create_namespace(
         owner_id=current_user.id,
         parent_id=body.parent_id,
         description=body.description,
+        storage_uri=body.storage_uri,
+        storage_connection_name=body.storage_connection_name,
     )
 
 
@@ -268,10 +274,18 @@ def update_namespace(
     body: NamespaceUpdate,
     service: CatalogService = Depends(get_catalog_service),
 ):
+    # Only forward storage fields the client actually sent, so the service distinguishes
+    # "omitted" (no change) from an explicit clear/set.
+    storage_kwargs = {}
+    if "storage_uri" in body.model_fields_set:
+        storage_kwargs["storage_uri"] = body.storage_uri
+    if "storage_connection_name" in body.model_fields_set:
+        storage_kwargs["storage_connection_name"] = body.storage_connection_name
     return service.update_namespace(
         namespace_id=namespace_id,
         name=body.name,
         description=body.description,
+        **storage_kwargs,
     )
 
 

@@ -19,11 +19,16 @@ class NamespaceCreate(BaseModel):
     name: str
     parent_id: int | None = None
     description: str | None = None
+    # Per-catalog object storage (level-0 only); points the catalog's table data at object storage.
+    storage_uri: str | None = None
+    storage_connection_name: str | None = None
 
 
 class NamespaceUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    storage_uri: str | None = None
+    storage_connection_name: str | None = None
 
 
 class NamespaceOut(BaseModel):
@@ -35,6 +40,9 @@ class NamespaceOut(BaseModel):
     owner_id: int
     created_at: datetime
     updated_at: datetime
+    # Per-catalog object storage (level-0 only; schemas inherit); None ⇒ local filesystem.
+    storage_uri: str | None = None
+    storage_connection_name: str | None = None
     # How the requesting user accesses this resource (multi-user mode); None when
     # unrestricted (admin / electron / internal) — the frontend shows no badge then.
     access: AccessInfo | None = None

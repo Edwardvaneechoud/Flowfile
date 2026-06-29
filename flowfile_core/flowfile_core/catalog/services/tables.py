@@ -35,7 +35,7 @@ from flowfile_core.catalog.storage_backend import (
     CatalogStorageTarget,
     _is_cloud_uri,
     join_catalog_uri,
-    resolve_catalog_storage,
+    resolve_for_namespace,
 )
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
 from flowfile_core.database.models import CatalogNamespace, CatalogTable, TableFavorite
@@ -512,7 +512,7 @@ class TableService:
         """Register a new table by materializing it as a Delta table."""
         self.validate_table_registration(name, namespace_id)
 
-        target = resolve_catalog_storage(owner_id, namespace_id=namespace_id)
+        target = resolve_for_namespace(namespace_id)
         materialized = self._materialize_table_with_worker(
             source_file_path=file_path,
             table_name=name,
@@ -558,7 +558,10 @@ class TableService:
             if column_count is None:
                 column_count = len(schema_list)
         else:
-            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(table_path, storage_format)
+            target = resolve_for_namespace(namespace_id)
+            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(
+                table_path, storage_format, storage=target.to_worker_payload()
+            )
 
         return self._create_table_record_from_metadata(
             name=name,
@@ -629,8 +632,9 @@ class TableService:
             if column_count is None:
                 column_count = len(schema_list)
         else:
+            target = resolve_for_namespace(table.namespace_id)
             schema_list, row_count, column_count, size_bytes = self._read_table_metadata(
-                resolved_path_str, storage_format
+                resolved_path_str, storage_format, storage=target.to_worker_payload()
             )
 
         if not is_cloud:
@@ -742,7 +746,7 @@ class TableService:
             if missing:
                 raise ValueError(f"z_order_columns not in table schema: {missing}")
 
-        target = resolve_catalog_storage(table.owner_id) if is_cloud else None
+        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
         storage_options = target.storage_options if target else None
 
         if _should_offload():
@@ -780,7 +784,7 @@ class TableService:
         data_path = self._require_delta_table_path(table)
         is_cloud = _is_cloud_uri(data_path)
 
-        target = resolve_catalog_storage(table.owner_id) if is_cloud else None
+        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
         storage_options = target.storage_options if target else None
 
         if _should_offload():

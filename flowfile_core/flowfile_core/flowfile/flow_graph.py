@@ -23,7 +23,7 @@ from flowfile_core.auth import sharing
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import check_source_versions_current, delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_catalog_storage
+from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace
 from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
@@ -398,6 +398,8 @@ class CatalogSqlTables(NamedTuple):
 
     table_paths: dict[str, str]
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]]
+    # Each physical table's own namespace_id, for per-catalog storage resolution (mixed backends).
+    table_namespaces: dict[str, int | None] = {}
 
 
 def ml_flow_model_path(flow_id: int, train_node_id: int | str) -> Path:
@@ -438,6 +440,7 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
     """
     table_paths: dict[str, str] = {}
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]] = {}
+    table_namespaces: dict[str, int | None] = {}
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -463,6 +466,7 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
                     )
                 elif t.file_path and (_is_cloud_uri(t.file_path) or is_delta_table(Path(t.file_path))):
                     table_paths[t.name] = t.file_path
+                    table_namespaces[t.name] = t.namespace_id
 
     except Exception:
         logger.warning(
@@ -470,7 +474,9 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
             node_id,
             exc_info=True,
         )
-    return CatalogSqlTables(table_paths=table_paths, virtual_tables=virtual_tables)
+    return CatalogSqlTables(
+        table_paths=table_paths, virtual_tables=virtual_tables, table_namespaces=table_namespaces
+    )
 
 
 class CatalogTableInfo(NamedTuple):
@@ -549,6 +555,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                 else:
                     file_path = table_record.file_path
             else:
+                resolved_namespace_id = node_catalog_reader.catalog_namespace_id
                 file_path = svc.resolve_table_file_path(
                     table_id=node_catalog_reader.catalog_table_id,
                     table_name=node_catalog_reader.catalog_table_name,
@@ -856,32 +863,32 @@ def _handle_physical_table_write(
     settings = node_catalog_writer.catalog_write_settings
     user_id = node_catalog_writer.user_id or 1
 
-    # Resolve the storage backend (local filesystem by default, object storage when configured).
-    # namespace_id is the per-schema hook; it is ignored in v1.
-    target = resolve_catalog_storage(user_id)
-    if not target.is_cloud:
-        Path(target.base).mkdir(parents=True, exist_ok=True)
-
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
         svc = CatalogService(repo)
+        # Resolve the target namespace first, then its per-catalog storage backend (local filesystem by
+        # default, object storage when the catalog configures it); creds resolve as the catalog owner.
+        namespace_id = _effective_namespace_id(svc, settings)
+        target = resolve_for_namespace(namespace_id, db=db)
+        if not target.is_cloud:
+            Path(target.base).mkdir(parents=True, exist_ok=True)
         existing, dest_path, delta_mode = svc.resolve_write_destination(
             table_name=settings.table_name,
-            namespace_id=_effective_namespace_id(svc, settings),
+            namespace_id=namespace_id,
             write_mode=settings.write_mode,
             target=target,
         )
 
-    # Forward-only: the effective backend follows the *destination* (an existing table keeps its
-    # own location), not the global config — which only steers brand-new tables. A new table's
-    # dest already reflects the config, so this is consistent for both.
+    # Forward-only: the effective backend follows the *destination* (an existing table keeps its own
+    # location), not the catalog's current config — which only steers brand-new tables. A new table's
+    # dest already reflects the catalog's storage, so this is consistent for both.
     dest_is_cloud = _is_cloud_uri(dest_path)
     if dest_is_cloud:
         if not target.is_cloud:
             raise ValueError(
-                f"Catalog table '{settings.table_name}' lives in object storage ({dest_path}) but "
-                "FLOWFILE_CATALOG_STORAGE_URI / FLOWFILE_CATALOG_STORAGE_CONNECTION are not configured; "
-                "set them to write to it."
+                f"Catalog table '{settings.table_name}' lives in object storage ({dest_path}) but its "
+                "catalog is not configured for object storage; set the catalog's storage_uri / "
+                "storage_connection_name to write to it."
             )
         storage_payload = target.to_worker_payload()
         storage_options = target.storage_options
@@ -3537,12 +3544,20 @@ class FlowGraph:
         resolved = _resolve_catalog_sql_tables(node_catalog_reader.node_id, node_catalog_reader.user_id)
         table_paths = resolved.table_paths
         virtual_tables = resolved.virtual_tables
+        table_namespaces = resolved.table_namespaces
 
-        # Resolve cloud storage options once at wiring time (shared by all cloud tables in
-        # the query under the single v1 backend); skipped entirely when none are cloud.
-        cloud_opts = None
-        if any(_is_cloud_uri(p) for p in table_paths.values()):
-            cloud_opts = resolve_catalog_storage(node_catalog_reader.user_id or 1).storage_options or None
+        # Resolve cloud storage options per catalog at wiring time (credentials don't change between
+        # executions). A SQL query can join tables from different catalogs, each with its own storage;
+        # memoize by namespace_id so each distinct catalog decrypts exactly once.
+        storage_options_by_name: dict[str, dict | None] = {}
+        _opts_by_namespace: dict[int | None, dict | None] = {}
+        for _name, _path in table_paths.items():
+            if not _is_cloud_uri(_path):
+                continue
+            _ns = table_namespaces.get(_name)
+            if _ns not in _opts_by_namespace:
+                _opts_by_namespace[_ns] = resolve_for_namespace(_ns).storage_options or None
+            storage_options_by_name[_name] = _opts_by_namespace[_ns]
 
         def _func() -> FlowDataEngine:
             if not table_paths and not virtual_tables:
@@ -3550,7 +3565,7 @@ class FlowGraph:
             ctx = pl.SQLContext()
             for name, path in table_paths.items():
                 if _is_cloud_uri(path):
-                    ctx.register(name, pl.scan_delta(path, storage_options=cloud_opts))
+                    ctx.register(name, pl.scan_delta(path, storage_options=storage_options_by_name.get(name)))
                 else:
                     ctx.register(name, pl.scan_delta(path))
             for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
@@ -3624,7 +3639,8 @@ class FlowGraph:
         # between executions); local tables don't touch the DB.
         _reader_storage_options = None
         if resolved_path and _is_cloud_uri(resolved_path):
-            _reader_storage_options = resolve_catalog_storage(_user_id or 1).storage_options or None
+            _reader_namespace_id = info.namespace_id or node_catalog_reader.catalog_namespace_id
+            _reader_storage_options = resolve_for_namespace(_reader_namespace_id).storage_options or None
 
         def _func() -> FlowDataEngine:
             if not _authorized:

@@ -36,7 +36,7 @@ from flowfile_core.catalog.serializers import (
 )
 from flowfile_core.catalog.services.engagement import FlowEngagementService
 from flowfile_core.catalog.services.flows import FlowRegistrationService
-from flowfile_core.catalog.services.namespaces import NamespaceService
+from flowfile_core.catalog.services.namespaces import STORAGE_UNSET, NamespaceService
 from flowfile_core.catalog.services.notebooks import NotebookService
 from flowfile_core.catalog.services.previews import TablePreviewService
 from flowfile_core.catalog.services.runs import FlowRunService
@@ -425,20 +425,37 @@ class CatalogService:
         owner_id: int,
         parent_id: int | None = None,
         description: str | None = None,
+        storage_uri: str | None = None,
+        storage_connection_name: str | None = None,
     ) -> CatalogNamespace:
         """Create a catalog (level 0) or schema (level 1) namespace."""
         self._require_namespace_writable(parent_id)
-        return self._namespaces.create_namespace(name, owner_id, parent_id, description)
+        return self._namespaces.create_namespace(
+            name,
+            owner_id,
+            parent_id,
+            description,
+            storage_uri=storage_uri,
+            storage_connection_name=storage_connection_name,
+        )
 
     def update_namespace(
         self,
         namespace_id: int,
         name: str | None = None,
         description: str | None = None,
+        storage_uri: str | None | object = STORAGE_UNSET,
+        storage_connection_name: str | None | object = STORAGE_UNSET,
     ) -> CatalogNamespace:
-        """Update a namespace's name and/or description."""
+        """Update a namespace's name/description and (catalog-level only) its per-catalog storage."""
         self._require_manage("catalog_namespace", namespace_id)
-        return self._namespaces.update_namespace(namespace_id, name, description)
+        return self._namespaces.update_namespace(
+            namespace_id,
+            name,
+            description,
+            storage_uri=storage_uri,
+            storage_connection_name=storage_connection_name,
+        )
 
     def delete_namespace(self, namespace_id: int) -> None:
         """Delete a namespace if it has no children, flows or tables."""
