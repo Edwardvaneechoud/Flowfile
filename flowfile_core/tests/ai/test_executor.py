@@ -425,6 +425,59 @@ def test_connect_rejects_wiring_into_live_source_node(call_kwargs: dict[str, Any
     assert flow.get_node(1).node_inputs.main_inputs in (None, [])
 
 
+def test_connect_rejects_missing_target_at_stage_time(call_kwargs: dict[str, Any]) -> None:
+    """Connecting INTO a node that exists nowhere — not live, not staged this
+    session — must be refused at stage time with ``target_not_found`` instead
+    of silently staging a dangling edge. This is the join dogfood: the planner
+    narrates a join node (id 4) it never added, then wires the sources into
+    that phantom id. The refusal steers toward ADDING the join first."""
+    flow = _flow_with_orders_and_filter()  # live nodes: 1 (source), 2 (filter)
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 4},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        audit_meta={
+            "live_node_ids_at_stage": [1, 2],
+            "staged_node_ids_at_stage": [],
+            "staged_source_node_ids_at_stage": [],
+        },
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "target_not_found"
+    detail = result.refusal_detail or ""
+    assert "4" in detail
+    assert "does not exist" in detail
+    assert "join" in detail
+
+
+def test_connect_allows_target_staged_earlier_this_session(call_kwargs: dict[str, Any]) -> None:
+    """The ``target_not_found`` guard must NOT fire when the target is a node
+    the agent staged earlier this session (no live FlowNode yet, but present in
+    ``staged_node_ids_at_stage``) — e.g. wiring a sibling into a freshly-staged
+    join's input. Pins that the guard is scoped to genuinely-missing ids."""
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 7},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        audit_meta={
+            "live_node_ids_at_stage": [1, 2],
+            "staged_node_ids_at_stage": [7],  # 7 = a join staged earlier this session
+            "staged_source_node_ids_at_stage": [],
+        },
+        **call_kwargs,
+    )
+    assert result.status == "staged", result.refusal_detail
+    assert result.refusal_reason is None
+
+
 def test_connect_rejects_cycle_at_stage_time(call_kwargs: dict[str, Any]) -> None:
     """Cycles among live nodes are now caught at stage time (not only at apply),
     so the planner gets immediate feedback. Target is a transform, so the cycle

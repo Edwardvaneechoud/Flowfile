@@ -2193,3 +2193,159 @@ def test_connect_from_staged_non_source_to_live_is_allowed_end_to_end() -> None:
         f"non-source staged upstream must NOT trip the refusal; "
         f"got rejections {[r.payload for r in unrequested_rejections]}"
     )
+
+
+# connect → add-join pivot (escape the single_stage_op trap) #
+
+
+def test_connect_into_missing_target_pivots_back_to_classify() -> None:
+    """The join dogfood: the model classifies ``connect`` and wires the
+    sources into a join node it never created (``connect 1 → 4``). The host
+    rejects with ``target_not_found`` and — instead of leaving the agent
+    trapped at single_stage_op retrying the same doomed wire — resets the
+    state machine to ``classify`` so it can pivot to ADDING the join, with a
+    steering host note injected."""
+    flow = _make_flow()  # node 1 = manual_input source
+    sess = _make_session(flow)
+    sess.user_prompt = "join the customer and order data on customer_id"
+    provider = _ScriptedProvider(
+        [
+            # Round 1 — classify picks the (doomed) connect.
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-classify-1",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "connect", "rationale": "combine the data"},
+                    )
+                ]
+            ),
+            # Round 2 — single_stage_op: connect into a node that was never
+            # created → target_not_found → pivot.
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-connect-1",
+                        name="flowfile.graph.connect",
+                        arguments={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 4},
+                    )
+                ],
+                content="Wiring the sources into the join.",
+                finish_reason="tool_calls",
+            ),
+            # Round 3 — back at classify after the pivot; the agent ends the
+            # turn (the add-join path itself is covered by the add tests).
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-classify-2",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "other", "rationale": "all set"},
+                    )
+                ]
+            ),
+            _Step(content="Done.", finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+
+    # The connect was rejected as target_not_found.
+    rejections = [e for e in events if e.event == "tool_call_rejected"]
+    assert any(
+        r.payload.get("reason") == "target_not_found" for r in rejections
+    ), f"expected a target_not_found rejection; got {[r.payload.get('reason') for r in rejections]}"
+
+    # The pivot reset the stage back to classify (not stuck at single_stage_op).
+    pivots = [
+        e for e in events
+        if e.event == "stage_advanced"
+        and e.payload.get("op_kind_meta") == "connect_join_pivot"
+    ]
+    assert len(pivots) == 1, f"expected exactly one connect_join_pivot; got {pivots}"
+    assert pivots[0].payload["from"] == "single_stage_op"
+    assert pivots[0].payload["to"] == "classify"
+
+    # An info event explained the pivot.
+    assert any(
+        e.event == "info" and "pivot" in (e.payload.get("message") or "")
+        for e in events
+    ), "expected an info event describing the pivot"
+
+    # A steering host note was injected, telling the agent to ADD a join.
+    steer_notes = [
+        m for m in sess.messages
+        if m.role == "user"
+        and isinstance(m.content, str)
+        and "NOTE FROM HOST" in m.content
+        and "join" in m.content
+    ]
+    assert steer_notes, "expected a join-pivot steer note in the conversation"
+    assert 'op_kind="add"' in steer_notes[-1].content
+
+    # Nothing got staged (the doomed connect produced no diff entry).
+    assert sess.staged_results == []
+
+
+def test_connect_into_live_source_pivots_back_to_classify() -> None:
+    """Same pivot, triggered by ``target_is_source`` instead of
+    ``target_not_found``: the model tries to wire one source into another
+    (``connect 1 → 2`` where both are sources). The host pivots to classify
+    so the agent can add a join instead of looping on the rejected connect."""
+    flow = _make_flow()  # node 1 = manual_input source
+    _add_orders(flow, node_id=2)  # node 2 = second manual_input source
+    sess = _make_session(flow)
+    sess.user_prompt = "combine these two datasets"
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-classify-1",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "connect", "rationale": "combine"},
+                    )
+                ]
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-connect-1",
+                        name="flowfile.graph.connect",
+                        arguments={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 2},
+                    )
+                ],
+                content="Connecting the two sources.",
+                finish_reason="tool_calls",
+            ),
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t-classify-2",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "other", "rationale": "all set"},
+                    )
+                ]
+            ),
+            _Step(content="Done.", finish_reason="stop"),
+        ]
+    )
+
+    events = asyncio.run(
+        _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    )
+
+    assert any(
+        e.event == "tool_call_rejected" and e.payload.get("reason") == "target_is_source"
+        for e in events
+    )
+    pivots = [
+        e for e in events
+        if e.event == "stage_advanced"
+        and e.payload.get("op_kind_meta") == "connect_join_pivot"
+    ]
+    assert len(pivots) == 1
+    assert pivots[0].payload["from"] == "single_stage_op"
+    assert pivots[0].payload["to"] == "classify"

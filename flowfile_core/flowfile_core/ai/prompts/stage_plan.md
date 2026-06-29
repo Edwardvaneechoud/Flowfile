@@ -132,6 +132,44 @@ denominator and the per-city numerators.
   dangling and the dedup has no effect.
 ```
 
+## Worked example — combining / joining multiple sources
+
+For *"join the customer, order, and support ticket data on
+customer_id"* over three stand-alone sources ``read#1`` (customers),
+``read#2`` (orders), ``read#3`` (support tickets):
+
+```
+## Current state
+
+Three stand-alone source nodes — customers (read#1), orders (read#2),
+and support tickets (read#3) — share a customer_id key but are not
+wired to anything yet.
+
+## Proposed changes
+
+1. join — combine customers (read#1) and orders (read#2) on
+   customer_id.
+   *Why*: links each customer to their orders. This new join node takes
+   read#1 and read#2 as its left and right inputs.
+2. join — combine the result of step 1 with support tickets (read#3) on
+   customer_id.
+   *Why*: adds support-ticket context. The second join takes the first
+   join's output as its left input and read#3 as its right input.
+
+## Edge cases / caveats
+
+- Each join is a NEW node you ADD — you do NOT connect the sources
+  together (sources have no input port). The join node IS the combine
+  step and wires its own inputs automatically.
+- N sources need N−1 joins, chained: each join combines the running
+  result with the next source.
+- Using left joins preserves all customer rows; switch to inner if you
+  only want customers that have matching orders / tickets.
+```
+
+This is a multi-step **`add`** plan (two joins), not a `connect` plan —
+``classify`` will route each step to ``op_kind="add"``.
+
 ## When the plan is short
 
 If the user asked for a single transformation (e.g. *"sort by
