@@ -579,6 +579,64 @@ class TestResolveWriteDestination:
         assert existing is None
         assert delta_mode == "upsert"
 
+    def test_existing_local_table_stays_local_under_cloud_target(self, tmp_path):
+        """Forward-only: overwriting an existing LOCAL table keeps it local even when the
+        global config now points at object storage — the table is not relocated."""
+        _, schema_id = _make_namespace()
+        delta_dir = tmp_path / "stays_local"
+        delta_dir.mkdir()
+        (delta_dir / "_delta_log").mkdir()
+        with get_db_context() as db:
+            db.add(
+                CatalogTable(
+                    name="stays_local_tbl",
+                    namespace_id=schema_id,
+                    owner_id=1,
+                    file_path=str(delta_dir),
+                    storage_format="delta",
+                )
+            )
+            db.commit()
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            existing, dest_path, delta_mode = svc.resolve_write_destination(
+                table_name="stays_local_tbl",
+                namespace_id=schema_id,
+                write_mode="overwrite",
+                target=CatalogStorageTarget(is_cloud=True, base="s3://bucket/catalog"),
+            )
+        assert existing is not None
+        assert dest_path == str(delta_dir)  # local, not relocated to s3://
+
+    def test_existing_cloud_table_uri_preserved_under_local_target(self):
+        """An existing object-storage table reuses its s3:// URI verbatim (no Path() mangling)
+        even when the global config is local/unset."""
+        _, schema_id = _make_namespace()
+        uri = "s3://bucket/catalog/cloud_tbl_abc123"
+        with get_db_context() as db:
+            db.add(
+                CatalogTable(
+                    name="cloud_tbl",
+                    namespace_id=schema_id,
+                    owner_id=1,
+                    file_path=uri,
+                    storage_format="delta",
+                )
+            )
+            db.commit()
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            existing, dest_path, delta_mode = svc.resolve_write_destination(
+                table_name="cloud_tbl",
+                namespace_id=schema_id,
+                write_mode="overwrite",
+                target=CatalogStorageTarget(is_cloud=False, base="/tmp/local_catalog"),
+            )
+        assert existing is not None
+        assert dest_path == uri  # URI preserved, not corrupted to "s3:/bucket/..."
+
 
 # resolve_table_file_path
 
