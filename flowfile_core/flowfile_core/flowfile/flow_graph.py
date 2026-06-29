@@ -872,8 +872,22 @@ def _handle_physical_table_write(
             target=target,
         )
 
-    storage_payload = target.to_worker_payload()
-    storage_options = target.storage_options if target.is_cloud else None
+    # Forward-only: the effective backend follows the *destination* (an existing table keeps its
+    # own location), not the global config — which only steers brand-new tables. A new table's
+    # dest already reflects the config, so this is consistent for both.
+    dest_is_cloud = _is_cloud_uri(dest_path)
+    if dest_is_cloud:
+        if not target.is_cloud:
+            raise ValueError(
+                f"Catalog table '{settings.table_name}' lives in object storage ({dest_path}) but "
+                "FLOWFILE_CATALOG_STORAGE_URI / FLOWFILE_CATALOG_STORAGE_CONNECTION are not configured; "
+                "set them to write to it."
+            )
+        storage_payload = target.to_worker_payload()
+        storage_options = target.storage_options
+    else:
+        storage_payload = None
+        storage_options = None
 
     if delta_mode in ("upsert", "update", "delete"):
         op_type = "merge_delta"
@@ -891,7 +905,7 @@ def _handle_physical_table_write(
 
     # Cloud writes must offload to the worker: core never collects a full LazyFrame, and the
     # local merge path collects. The worker owns dataset memory and writes via storage_options.
-    if target.is_cloud or graph.flow_settings.execution_location != "local":
+    if dest_is_cloud or graph.flow_settings.execution_location != "local":
         meta_kwargs = _write_catalog_delta_remote(
             flow_id=graph.flow_id,
             node=graph.get_node(node_catalog_writer.node_id),
@@ -914,7 +928,7 @@ def _handle_physical_table_write(
         user_id=user_id,
         meta_kwargs=meta_kwargs,
         storage_options=storage_options,
-        is_cloud=target.is_cloud,
+        is_cloud=dest_is_cloud,
     )
     return df
 

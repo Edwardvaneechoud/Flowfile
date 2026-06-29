@@ -825,6 +825,10 @@ class TableService:
 
         Returns the destination as a ``str``: a filesystem path for local targets, an
         ``s3://``-style URI for cloud targets.
+
+        Forward-only: an **existing** table always writes back to its own stored
+        location (keyed off its ``file_path``), regardless of the current global
+        config — the config (*target*) only chooses where a **new** table is created.
         """
         existing = self.repo.get_table_by_name(table_name, namespace_id)
 
@@ -833,8 +837,8 @@ class TableService:
                 raise TableExistsError(name=table_name, namespace_id=namespace_id)
 
             old_path = existing.file_path
-            if target.is_cloud:
-                # Cloud delta tables reuse their stored URI (assume delta; no local probe).
+            if _is_cloud_uri(old_path):
+                # Existing object-storage table: reuse its URI (assume delta; no local probe).
                 return existing, old_path, write_mode
 
             old_path_p = Path(old_path)
