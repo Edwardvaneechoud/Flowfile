@@ -158,6 +158,12 @@ Worked example (the case this rule was added for):
 
 If you want to add a downstream consumer of your new source (e.g. an ``explore_data`` over the new manual_input), do so by adding the consumer **as a NEW node** with ``upstream_node_ids=[<your_new_source_id>]`` — that wiring goes through the ``add_*`` auto-wire path (no separate ``connect``), which is fine and not refused.
 
+### Combining / joining sources is an `add`, not a `connect`
+
+To combine/join/merge two upstreams, **add a `join` / `cross_join` / `fuzzy_match`** (``upstream_node_ids`` = left/main input + ``right_input_node_id`` = right input) or a **`union`** (all inputs in ``upstream_node_ids``). That node IS the combine step and wires its inputs automatically when added.
+
+**Never `connect` two sources** — a source target is rejected (``target_is_source``), and there is no join node to wire into until you add one (don't invent ids like *"connect 1 → 4"* — ``target_not_found``). To combine N sources, add N−1 joins, chaining each join's output into the next.
+
 ## Modification discipline (W47)
 
 To change a setting on an *existing* node (e.g. *"show only top 5 rows in node 9"*, *"change the join key to customer_id"*), call ``flowfile.graph.update_node_settings`` with ``node_id`` set to the existing node's id and ``settings`` set to the **full** settings object for that node's type. Do NOT emit ``flowfile.graph.add_<type>`` against an id that already exists — that path is for new nodes only.

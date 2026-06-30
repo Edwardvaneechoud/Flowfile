@@ -16,16 +16,20 @@ single op_kind that best describes what the user wants to do next.
    node's settings? → **modify**.
 2. Does the user reference an EXISTING node AND want it removed? →
    **delete**.
-3. Does the user want to wire two EXISTING nodes together? →
+3. Does the user want to **combine / join / merge / union** two or more
+   nodes (especially sources)? → **add** a `join` or `union` node — NOT
+   `connect`. See *"Combining data is `add`"* below.
+4. Does the user want to wire two EXISTING nodes together, the TARGET
+   being a transformation/output node with a free input port? →
    **connect**.
-4. Does the user want to remove an existing connection? →
+5. Does the user want to remove an existing connection? →
    **disconnect**.
-5. **Everything else that produces work on the canvas is `add`.** This
+6. **Everything else that produces work on the canvas is `add`.** This
    includes: any *new* node, any creation, AND follow-ups like
    *"implement it"*, *"apply this"*, *"do it"*, *"build that"*,
    *"go ahead"*, *"yes"* when those phrases follow a chat-mode
    suggestion of new nodes.
-6. Pure question / explanation / something that can't be safely
+7. Pure question / explanation / something that can't be safely
    satisfied by a graph mutation → **other**.
 
 ## Default bias
@@ -37,6 +41,21 @@ existing node. The chat assistant's prior turn (visible in your
 context) almost always proposes new nodes — when the user replies
 *"yes"* / *"implement it"* / *"go ahead"*, they want those nodes
 **added**, not modifications to existing ones.
+
+## Combining data is `add`, never `connect`
+
+**combine / join / merge / union** two or more datasets → **`add`** a
+`join` node (match on keys) or `union` node (stack same-schema rows).
+That node IS the combine step; it takes the two nodes as inputs and wires
+them automatically.
+
+You can NOT `connect` two sources (sources have no input port), and there
+is no join node to connect into until you add one — never invent a target
+id like *"connect node 1 → node 4"* when node 4 was never created. To
+combine N sources, add N−1 joins.
+
+Example — *"join customers, orders, support on customer_id"* (read#1/2/3):
+`add` join (read#1 + read#2) → `add` join (result + read#3) → `other`.
 
 ## Op kinds (reference)
 
@@ -53,8 +72,10 @@ context) almost always proposes new nodes — when the user replies
   Advances to a single-stage `update_node_settings` call.
 * **delete** — the user wants to remove a node from the canvas.
   Advances to a single-stage `delete_node` call.
-* **connect** — the user wants to wire two existing nodes together.
-  Advances to a single-stage `connect` call.
+* **connect** — wire two existing nodes together, where the TARGET is a
+  transformation/output node with a free input port. NOT for combining
+  sources — a `join` / `union` `add` does that (see above). Advances to a
+  single-stage `connect` call.
 * **disconnect** — the user wants to remove a connection between two
   existing nodes. Advances to a single-stage `delete_connection` call.
 * **other** — the user is asking a question, requesting an explanation,

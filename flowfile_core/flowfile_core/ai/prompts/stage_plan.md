@@ -132,6 +132,33 @@ denominator and the per-city numerators.
   dangling and the dedup has no effect.
 ```
 
+## Worked example — combining / joining multiple sources
+
+*"join customers, orders, support on customer_id"* over three
+stand-alone sources read#1, read#2, read#3 → a multi-step **`add`** plan
+(N sources need N−1 joins), NOT a `connect` plan:
+
+```
+## Current state
+
+Three stand-alone sources (read#1, read#2, read#3) share a customer_id
+key but aren't wired to anything.
+
+## Proposed changes
+
+1. join — combine read#1 + read#2 on customer_id.
+   *Why*: links each customer to their orders.
+2. join — combine step 1's output + read#3 on customer_id.
+   *Why*: adds support-ticket context.
+
+## Edge cases / caveats
+
+- Each join is a NEW node you ADD (its inputs wire automatically); you
+  do NOT connect the sources — sources have no input port.
+- Left joins keep all customer rows; use inner to drop customers with no
+  match.
+```
+
 ## When the plan is short
 
 If the user asked for a single transformation (e.g. *"sort by
