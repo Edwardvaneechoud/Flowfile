@@ -783,7 +783,8 @@ def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
                 if any(_is_cloud_uri(path) for path in resolved.table_paths.values()):
                     return True
             except Exception:
-                logger.warning("Could not resolve catalog SQL sources for cloud check", exc_info=True)
+                logger.warning("Could not resolve catalog SQL sources; treating as cloud", exc_info=True)
+                return True
             continue
         table_id = getattr(setting, "catalog_table_id", None)
         if table_id and table_id not in seen:
