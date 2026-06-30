@@ -1,12 +1,9 @@
 """Resolve where catalog table data lives — local filesystem or object storage.
 
-This is the single seam for catalog storage resolution. Storage is resolved **per catalog**:
-each level-0 catalog namespace may carry ``storage_uri`` + ``storage_connection_name`` columns,
-and every schema/table beneath it inherits them (one namespace <-> one storage). An unset
-``storage_uri`` (or ``namespace_id is None``) ⇒ the local filesystem, byte-for-byte as before.
-Credentials resolve as the catalog owner. ``FLOWFILE_CATALOG_STORAGE_URI`` /
-``FLOWFILE_CATALOG_STORAGE_CONNECTION`` survive only as an optional creation-time default
-snapshotted onto a new catalog, never a live override.
+Storage is resolved per catalog: a level-0 namespace carries ``storage_uri`` +
+``storage_connection_name``, and every schema/table beneath it inherits them. An unset
+``storage_uri`` (or ``namespace_id is None``) ⇒ local filesystem. Credentials resolve as the
+catalog owner.
 """
 
 from __future__ import annotations
@@ -34,10 +31,8 @@ def _is_cloud_uri(value: str) -> bool:
 def serialized_frame_uses_cloud(blob: bytes | None) -> bool:
     """Return ``True`` when a serialized Polars LazyFrame embeds an object-storage scan.
 
-    Polars serializes a scan's ``storage_options`` inline, so a cloud scan in the plan means
-    the blob also carries that source's decrypted credentials. Such a blob must never be
-    deserialized/replayed — the producer flow is re-run instead, resolving credentials fresh.
-    Gates the optimized virtual-table cache on both the write and read paths.
+    Polars serializes ``storage_options`` inline, so a cloud scan means the blob carries the
+    source's decrypted credentials; such a blob must never be replayed (re-run the producer instead).
     """
     if not blob:
         return False
@@ -69,9 +64,8 @@ def _catalog_table_dir_name(path_or_uri: str) -> str:
 class CatalogStorageTarget:
     """Where a catalog table's bytes live, plus the credentials to reach them.
 
-    ``storage_options`` are decrypted, for core's own in-process lazy reads (reader /
-    SQL nodes). ``worker_interface`` carries the same connection with owner-encrypted
-    secrets for the core→worker hand-off (the worker decrypts independently).
+    ``storage_options`` are decrypted for core's own in-process reads; ``worker_interface``
+    keeps the connection owner-encrypted for the core→worker hand-off.
     """
 
     is_cloud: bool
@@ -129,10 +123,8 @@ def _resolve_in_session(db: Session, namespace_id: int) -> CatalogStorageTarget:
 def resolve_for_namespace(namespace_id: int | None, *, db: Session | None = None) -> CatalogStorageTarget:
     """Resolve catalog storage for a namespace, inheriting from its level-0 root catalog.
 
-    The root catalog's ``storage_uri``/``storage_connection_name`` columns decide the backend; an unset
-    ``storage_uri`` (or ``namespace_id is None``) ⇒ the local filesystem, byte-for-byte as before.
-    Credentials always resolve as the **catalog owner** (owner-keyed secrets), never the calling user,
-    so an authorized writer uses the catalog's connection. Pass *db* to reuse the caller's session.
+    Credentials always resolve as the catalog owner, never the calling user. Pass *db* to
+    reuse the caller's session.
     """
     if namespace_id is None:
         return _local_target()
@@ -143,9 +135,5 @@ def resolve_for_namespace(namespace_id: int | None, *, db: Session | None = None
 
 
 def resolve_catalog_storage(_user_id: int, *, namespace_id: int | None = None) -> CatalogStorageTarget:
-    """Backward-compatible shim around :func:`resolve_for_namespace`.
-
-    *_user_id* is retained for call-compatibility but ignored — per-catalog credentials always resolve
-    as the catalog owner. New code should call :func:`resolve_for_namespace` directly.
-    """
+    """Shim around :func:`resolve_for_namespace`; *_user_id* is ignored (credentials resolve as the owner)."""
     return resolve_for_namespace(namespace_id)

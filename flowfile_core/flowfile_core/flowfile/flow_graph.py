@@ -403,7 +403,7 @@ class CatalogSqlTables(NamedTuple):
 
     table_paths: dict[str, str]
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]]
-    # Each physical table's own namespace_id, for per-catalog storage resolution (mixed backends).
+    # Each physical table's namespace_id, for per-catalog storage resolution.
     table_namespaces: dict[str, int | None]
 
 
@@ -667,9 +667,8 @@ def _register_catalog_table(
 ) -> None:
     """Register or update the catalog table entry, cleaning up orphaned storage on failure for new tables.
 
-    For cloud targets *dest_path* is an object-storage URI: local-only probes
-    (``is_delta_table``, ``Path.exists``) are skipped and partition columns are read
-    via *storage_options*. Cloud orphans are not auto-cleaned (v1 default).
+    For cloud targets *dest_path* is an object-storage URI; local-only probes are skipped
+    and cloud orphans are not auto-cleaned.
     """
     if is_cloud:
         partition_columns = get_delta_partition_columns(dest_path, storage_options=storage_options)
@@ -777,13 +776,8 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
 def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
     """Return ``True`` when any catalog source feeding this flow lives in object storage.
 
-    A virtual table built over an object-storage source must not cache a serialized
-    LazyFrame: the plan embeds the source's decrypted cloud credentials (frozen, stale on
-    rotation, and a secret-at-rest leak). Such tables re-run the producer flow on read
-    instead, re-resolving credentials fresh. Cloud-backed *virtual* sources are already
-    excluded upstream (they are non-optimized, which blocks laziness ⇒ no serialize), so
-    only physical cloud reads — directly or via a catalog SQL reader — need detecting here.
-    Detection is DB-only (no object-storage I/O) so it can run before the explain/serialize.
+    Such a flow can't cache a serialized plan: it would freeze the source's decrypted cloud
+    credentials. Detection is DB-only (no object-storage I/O).
     """
     physical_ids: list[int] = []
     seen: set[int] = set()
@@ -857,8 +851,6 @@ def _handle_virtual_table_write(
 
     writer_node = graph.get_node(node_catalog_writer.node_id)
     is_lazy, _reasons = writer_node.check_upstream_laziness()
-    # A plan over object-storage sources can't be cached: serializing it would freeze the
-    # source's decrypted cloud credentials into the DB. Re-run the producer flow on read instead.
     optimize = is_lazy and not _virtual_sources_use_cloud(graph)
     if optimize:
         if graph.execution_mode != "performance":
@@ -931,8 +923,6 @@ def _handle_physical_table_write(
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
         svc = CatalogService(repo)
-        # Resolve the target namespace first, then its per-catalog storage backend (local filesystem by
-        # default, object storage when the catalog configures it); creds resolve as the catalog owner.
         namespace_id = _effective_namespace_id(svc, settings)
         target = resolve_for_namespace(namespace_id, db=db)
         if not target.is_cloud:
@@ -944,9 +934,7 @@ def _handle_physical_table_write(
             target=target,
         )
 
-    # Forward-only: the effective backend follows the *destination* (an existing table keeps its own
-    # location), not the catalog's current config — which only steers brand-new tables. A new table's
-    # dest already reflects the catalog's storage, so this is consistent for both.
+    # Forward-only: an existing table keeps its own location; the catalog config only steers new tables.
     dest_is_cloud = _is_cloud_uri(dest_path)
     if dest_is_cloud:
         if not target.is_cloud:
@@ -975,11 +963,8 @@ def _handle_physical_table_write(
     if storage_payload is not None:
         op_kwargs["storage_payload"] = storage_payload
 
-    # The write follows execution_location, like every other writer node (cloud_storage_writer,
-    # database_writer, output): remote execution offloads to the worker, a local run writes
-    # in-process. A cloud destination only decides whether storage_options are threaded through —
-    # it never forces the worker, so a local run (the CLI/scheduler force "local", which have no
-    # worker) writes object storage in-core, the same way cloud reads already resolve storage_options.
+    # The write follows execution_location like every other writer node; a cloud destination only
+    # decides whether storage_options are threaded through, it never forces the worker.
     if graph.flow_settings.execution_location != "local":
         meta_kwargs = _write_catalog_delta_remote(
             flow_id=graph.flow_id,
@@ -3616,9 +3601,8 @@ class FlowGraph:
         virtual_tables = resolved.virtual_tables
         table_namespaces = resolved.table_namespaces
 
-        # Resolve cloud storage options per source namespace at wiring time (credentials don't change
-        # between executions). A SQL query can join tables from different catalogs, each with its own
-        # storage; memoize by the table's namespace_id so each distinct source namespace decrypts once.
+        # Resolve cloud storage options per source namespace at wiring time, memoized by namespace_id
+        # (a SQL query can join tables from different catalogs, each with its own storage).
         storage_options_by_name: dict[str, dict | None] = {}
         _opts_by_namespace: dict[int | None, dict | None] = {}
         for _name, _path in table_paths.items():
@@ -3705,8 +3689,7 @@ class FlowGraph:
         _authorized = info.authorized
         _user_id = node_catalog_reader.user_id
 
-        # Resolve cloud storage options once at wiring time (the credentials don't change
-        # between executions); local tables don't touch the DB.
+        # Resolve cloud storage options once at wiring time; local tables don't touch the DB.
         _reader_storage_options = None
         if resolved_path and _is_cloud_uri(resolved_path):
             _reader_namespace_id = info.namespace_id or node_catalog_reader.catalog_namespace_id

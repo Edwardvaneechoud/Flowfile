@@ -34,9 +34,8 @@ def open_catalog_table(
 ) -> pl.LazyFrame:
     """Open a materialised catalog table by bare directory name.
 
-    Local by default. When *base_uri* is set the table lives in object storage:
-    the bare name is joined onto *base_uri* (same traversal guards) and scanned
-    with *storage_options*.
+    Local by default; when *base_uri* is set the name is joined onto it (same guards) and
+    scanned from object storage with *storage_options*.
     """
     if base_uri is not None:
         return pl.scan_delta(validate_catalog_uri(name, base_uri), storage_options=storage_options)

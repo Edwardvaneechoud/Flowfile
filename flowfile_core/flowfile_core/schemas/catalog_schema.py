@@ -19,7 +19,7 @@ class NamespaceCreate(BaseModel):
     name: str
     parent_id: int | None = None
     description: str | None = None
-    # Per-catalog object storage (level-0 only); points the catalog's table data at object storage.
+    # Per-catalog object storage (level-0 only).
     storage_uri: str | None = None
     storage_connection_name: str | None = None
 
@@ -305,8 +305,7 @@ class CatalogTableOut(BaseModel):
     description: str | None = None
     owner_id: int
     file_exists: bool = True
-    # True when the table's data lives in object storage; the UI gates preview/history behind an
-    # explicit action so opening the table doesn't auto-connect to the bucket.
+    # True when the table's data lives in object storage (the UI gates preview/history behind an explicit action).
     is_remote_storage: bool = False
     is_favorite: bool = False
     schema_columns: list[ColumnSchema] = Field(default_factory=list)

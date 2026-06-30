@@ -63,7 +63,7 @@ def _is_managed_table_path(file_path: str) -> bool:
 
     External/user-registered paths (registered by pointing at an existing file
     outside the managed dir) return False and must never be deleted. Object-storage
-    URIs are never "managed" locally ⇒ cloud tables are not auto-deleted (v1 default).
+    URIs are never managed locally, so cloud tables are not auto-deleted.
     """
     if _is_cloud_uri(file_path):
         return False
@@ -113,8 +113,7 @@ class TableService:
         self._namespaces = namespaces
         self._flows = flows
         self._schedules = schedules
-        # Per-request cache: object-storage connection availability by namespace_id, so a tree/list load
-        # resolves each catalog's connection once instead of per table.
+        # Per-request cache of cloud connection availability by namespace_id (resolved once per catalog).
         self._cloud_conn_cache: dict[int | None, bool] = {}
 
     # ---- Validation + resolution ----------------------------------------- #
@@ -215,9 +214,8 @@ class TableService:
     ) -> tuple[list[dict[str, str]], int, int, int]:
         """Read schema, row_count, column_count, size_bytes from a table.
 
-        When *storage* (a worker ``CatalogStorageInterface`` payload) is set, the table
-        lives in object storage and the read is always offloaded to the worker with no
-        local fallback.
+        When *storage* is set the table is in object storage; the read offloads to the
+        worker with no local fallback.
         """
         is_cloud = storage is not None
         if is_cloud or _should_offload():
@@ -276,9 +274,7 @@ class TableService:
         return reg.name if reg else None
 
     def _cloud_storage_connection_available(self, namespace_id: int | None) -> bool:
-        """True when the catalog's object-storage connection still resolves (no per-table data probe).
-
-        Memoized per request — tables in the same catalog share one connection."""
+        """True when the catalog's object-storage connection still resolves (memoized per request, no data probe)."""
         if namespace_id in self._cloud_conn_cache:
             return self._cloud_conn_cache[namespace_id]
         try:
@@ -297,9 +293,7 @@ class TableService:
         if not table.file_path:
             file_exists = False
         elif _is_cloud_uri(table.file_path):
-            # Object-storage tables: skip the per-table data probe (a network round-trip each); the data is
-            # materialized on write, so the only thing that makes it unreadable is a missing storage
-            # connection — check that (cached per request).
+            # Object-storage tables: skip the per-table data probe; just check the storage connection.
             file_exists = self._cloud_storage_connection_available(table.namespace_id)
         else:
             file_exists = table_exists(table.file_path)
@@ -728,9 +722,8 @@ class TableService:
     def _require_delta_table_path(self, table: CatalogTable) -> str:
         """Guard: ensure *table* is a physical Delta table, else raise ``ValueError``.
 
-        Returns the local path or object-storage URI. Cloud tables can't be cheaply
-        probed for the ``_delta_log`` locally, so a cloud ``storage_format == "delta"``
-        table is accepted on trust.
+        Returns the local path or object-storage URI; a cloud delta table is accepted on
+        trust (no local ``_delta_log`` probe).
         """
         if getattr(table, "table_type", "physical") == "virtual" or not table.file_path:
             raise ValueError(f"Table '{table.name}' is virtual and has no Delta storage to maintain")
@@ -848,12 +841,8 @@ class TableService:
     ) -> tuple[CatalogTable | None, str, str]:
         """Resolve the destination (local path or object-storage URI) and Delta write mode.
 
-        Returns the destination as a ``str``: a filesystem path for local targets, an
-        ``s3://``-style URI for cloud targets.
-
-        Forward-only: an **existing** table always writes back to its own stored
-        location (keyed off its ``file_path``), regardless of the current global
-        config — the config (*target*) only chooses where a **new** table is created.
+        Forward-only: an existing table writes back to its own stored location; *target*
+        only chooses where a new table is created.
         """
         existing = self.repo.get_table_by_name(table_name, namespace_id)
 
@@ -863,7 +852,7 @@ class TableService:
 
             old_path = existing.file_path
             if _is_cloud_uri(old_path):
-                # Existing object-storage table: reuse its URI (assume delta; no local probe).
+                # Existing object-storage table: reuse its URI (assume delta).
                 return existing, old_path, write_mode
 
             old_path_p = Path(old_path)
@@ -934,9 +923,7 @@ class TableService:
         return [self.table_to_out(t) for t in tables]
 
     def _reject_invalid_reparent(self, table: CatalogTable, new_namespace_id: int) -> None:
-        """A physical table can't be reparented into a catalog on different storage — its bytes are not
-        moved (one namespace <-> one storage). The table's file_path must already live under the
-        destination catalog's resolved storage; otherwise migrate the data instead of flipping the FK."""
+        """Reject reparenting a physical table into a catalog on different storage — its bytes aren't moved."""
         if not table.file_path or table.table_type != "physical":
             return
         dest = resolve_for_namespace(new_namespace_id)
@@ -977,11 +964,8 @@ class TableService:
 
         Storage is only removed when ``delete_file`` is set AND the path is
         Flowfile-managed (under the local catalog tables dir) — external/user-owned
-        files are never touched. Virtual tables have no file to delete.
-
-        v1 limitation: object-storage (``s3://`` …) tables are NOT auto-deleted even
-        with ``delete_file=True`` — the catalog row is removed but the Delta objects are
-        left in the bucket (callers wanting cleanup must remove them out-of-band).
+        files are never touched. Virtual tables have no file to delete. Object-storage
+        tables are not auto-deleted: the row is removed but the Delta objects remain.
         """
         table = self.repo.get_table(table_id)
         if table is None:

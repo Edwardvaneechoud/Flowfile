@@ -202,8 +202,7 @@ class TablePreviewService:
     ) -> CatalogTablePreview:
         """Read a Delta table preview (latest version) via the worker (or locally).
 
-        ``total_rows`` (the catalog's stored row count) stays authoritative when known — a
-        page-bounded read never sees the whole table.
+        ``total_rows`` stays authoritative when known (a page-bounded read never sees the whole table).
         """
         storage_payload = target.to_worker_payload() if target else None
         storage_options = (target.storage_options or None) if target else None

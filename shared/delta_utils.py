@@ -56,9 +56,8 @@ def get_delta_size_bytes(path: str | Path, storage_options: dict[str, str] | Non
     Uses the Delta log metadata rather than filesystem scanning, which
     correctly excludes tombstoned files from previous versions.
 
-    Falls back to filesystem scanning if the delta log can't be read (local only;
-    when *storage_options* is set the table lives in object storage, so an
-    unreadable log yields ``0`` rather than a local filesystem scan).
+    Falls back to filesystem scanning if the delta log can't be read (local only; an
+    unreadable object-storage log yields ``0``).
     """
     from deltalake import DeltaTable
 
@@ -78,9 +77,8 @@ def get_delta_size_bytes(path: str | Path, storage_options: dict[str, str] | Non
 def _open_delta_or_none(output_path: str, storage_options: dict[str, str] | None):
     """Open the Delta table at *output_path*, or return ``None`` if it doesn't exist.
 
-    Only a genuine "table not found" yields ``None``. Any other failure (bad
-    credentials, network/DNS error, S3 timeout) propagates — a transient error must
-    never be mistaken for a missing table, which would silently create or overwrite.
+    Only a genuine "table not found" yields ``None``; any other failure (auth, network) propagates,
+    so a transient error is never mistaken for a missing table (which would silently overwrite).
     """
     from deltalake import DeltaTable
     from deltalake.exceptions import TableNotFoundError
@@ -104,9 +102,8 @@ def _open_delta_or_none(output_path: str, storage_options: dict[str, str] | None
 def _delta_table_exists(output_path: str, storage_options: dict[str, str] | None) -> bool:
     """Return ``True`` if a Delta table exists at *output_path* (local or object storage).
 
-    Locally this is a cheap ``_delta_log`` directory probe; for object storage it
-    attempts to open the table. A genuine "not found" returns ``False``; any other
-    error (auth / network / credentials) propagates rather than masquerading as missing.
+    Locally a cheap ``_delta_log`` probe; for object storage it opens the table. Only a genuine
+    "not found" returns ``False`` — any other error propagates rather than masquerading as missing.
     """
     if storage_options is None:
         import os
@@ -153,10 +150,8 @@ def write_delta(
     table is created and, on writes to an existing table, Delta enforces that it
     matches the table's existing partitioning (raising on a mismatch).
 
-    When *storage_options* is set, *output_path* is an object-storage URI
-    (``s3://...``) and the write targets that backend; the same ``schema_mode`` /
-    ``partition_by`` semantics apply.  When ``None`` the behavior is identical to
-    a local filesystem write.
+    When *storage_options* is set, *output_path* is an object-storage URI and the write
+    targets that backend; ``None`` is a local filesystem write.
     """
     import os
 
@@ -210,10 +205,8 @@ def merge_into_delta(
     Handles table creation when the target doesn't exist yet and supports
     three merge modes: ``upsert``, ``update``, and ``delete``.
 
-    When *storage_options* is set, *output_path* is an object-storage URI and the
-    merge runs against that backend; existence is probed by opening the table
-    rather than via local filesystem checks. ``None`` is identical to today's
-    local behavior.
+    When *storage_options* is set, *output_path* is an object-storage URI and existence is
+    probed by opening the table rather than via local filesystem checks.
 
     Returns ``True`` if data was written, ``False`` if the write was a no-op.
     """
@@ -363,9 +356,7 @@ def _guard_bare_table_name(table_name: str) -> None:
 def validate_catalog_uri(table_name: str, base_uri: str) -> str:
     """Validate *table_name* and join it onto an object-storage *base_uri*.
 
-    The cloud analogue of :func:`validate_catalog_path`: applies the same
-    bare-name guards (no separators, no ``..``, no null bytes) while producing a
-    URI (e.g. ``s3://bucket/prefix/table``) instead of resolving a local path.
+    The cloud analogue of :func:`validate_catalog_path`: same bare-name guards, producing a URI.
     """
     _guard_bare_table_name(table_name)
     return base_uri.rstrip("/") + "/" + table_name

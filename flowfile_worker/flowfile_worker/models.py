@@ -194,9 +194,8 @@ class ColumnSchema(BaseModel):
 class CatalogStorageInterface(BaseModel):
     """Object-storage backend for a catalog operation.
 
-    ``base_uri`` is the catalog root in object storage (e.g. ``s3://bucket/catalog``);
-    ``connection`` carries owner-encrypted secrets the worker decrypts itself via
-    ``connection.get_storage_options()``. ``None`` on a request ⇒ local filesystem.
+    ``base_uri`` is the catalog root (e.g. ``s3://bucket/catalog``); ``connection`` carries
+    owner-encrypted secrets the worker decrypts itself. Absent on a request ⇒ local filesystem.
     """
 
     base_uri: str

@@ -42,9 +42,8 @@ def _resolve_catalog_route(
 ) -> tuple[str, str | None, dict | None]:
     """Guard the bare table name and resolve a catalog route's storage target.
 
-    Returns ``(resolved_target, base_uri, storage_options)``: a local path + ``None``
-    when *storage_iface* is ``None`` (today's behavior), or an object-storage URI plus
-    the decrypted ``storage_options`` otherwise. Raises ``ValueError`` on a bad name.
+    Returns ``(resolved_target, base_uri, storage_options)``: a local path + ``None`` when
+    *storage_iface* is ``None``, else an object-storage URI plus decrypted ``storage_options``.
     """
     if storage_iface is None:
         return str(_validate_catalog_path(table_path)), None, None

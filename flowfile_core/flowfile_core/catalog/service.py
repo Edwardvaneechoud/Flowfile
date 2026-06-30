@@ -458,8 +458,7 @@ class CatalogService:
         """Update a namespace's name/description and (catalog-level only) its per-catalog storage."""
         self._require_manage("catalog_namespace", namespace_id)
         if storage_uri is not STORAGE_UNSET or storage_connection_name is not STORAGE_UNSET:
-            # Storage aims the owner's credentialed writes at a location; only the owner (or admin) may
-            # change it, even with a manage grant (anti-repoint).
+            # Only the owner (or admin) may change storage, even with a manage grant (anti-repoint).
             self._require_namespace_owner(namespace_id, "change storage for")
         return self._namespaces.update_namespace(
             namespace_id,

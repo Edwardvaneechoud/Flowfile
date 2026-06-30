@@ -274,8 +274,7 @@ def update_namespace(
     body: NamespaceUpdate,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    # Only forward storage fields the client actually sent, so the service distinguishes
-    # "omitted" (no change) from an explicit clear/set.
+    # Only forward storage fields the client actually sent (omitted ⇒ no change).
     storage_kwargs = {}
     if "storage_uri" in body.model_fields_set:
         storage_kwargs["storage_uri"] = body.storage_uri

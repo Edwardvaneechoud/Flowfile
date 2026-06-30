@@ -130,8 +130,8 @@ class NamespaceService:
     def _env_default_storage(self, owner_id: int) -> tuple[str | None, str | None]:
         """Resolve the optional creation-time storage default from the environment, best-effort.
 
-        Returns ``(None, None)`` (⇒ local) when unset or when the configured connection is not usable
-        for *owner_id*, so a misconfigured env default never blocks catalog creation."""
+        Returns ``(None, None)`` (⇒ local) when unset or the connection isn't usable for *owner_id*.
+        """
         env_uri = settings.get_catalog_storage_uri()
         env_conn = settings.get_catalog_storage_connection()
         if not env_uri:
@@ -159,8 +159,8 @@ class NamespaceService:
     ) -> CatalogNamespace:
         """Create a catalog (level 0) or schema (level 1) namespace.
 
-        ``storage_uri`` / ``storage_connection_name`` configure per-catalog object storage and are
-        only valid on a level-0 catalog; schemas inherit their root catalog's storage.
+        Per-catalog object storage (``storage_uri`` / ``storage_connection_name``) is only valid
+        on a level-0 catalog; schemas inherit it.
         """
         reject_dot_in_name(name, "Namespace")
         level = 0
@@ -184,9 +184,7 @@ class NamespaceService:
                 )
             _validate_namespace_storage(owner_id, storage_uri, storage_connection_name)
         elif level == 0:
-            # Headless/docker convenience: snapshot the env default onto the new catalog (one-time copy,
-            # never a live override). Best-effort — an unusable env connection falls back to local rather
-            # than blocking catalog creation.
+            # Snapshot the env-default storage onto the new catalog (one-time copy, never a live override).
             storage_uri, storage_connection_name = self._env_default_storage(owner_id)
 
         namespace = CatalogNamespace(
@@ -234,7 +232,7 @@ class NamespaceService:
                 else storage_connection_name
             )
             if not new_uri:
-                # A connection without a URI is meaningless: clearing the URI clears both in lockstep.
+                # Clearing the URI clears the connection too.
                 new_conn = None
             if (new_uri, new_conn) != (namespace.storage_uri, namespace.storage_connection_name):
                 existing_tables = self.repo.count_physical_tables_under_namespace(namespace_id)

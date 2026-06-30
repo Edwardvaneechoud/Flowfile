@@ -442,8 +442,8 @@ class VirtualTableService:
     def resolve_all_delta_tables(self) -> dict[str, str]:
         """Return a mapping of logical table name -> directory name for LOCAL Delta catalog tables.
 
-        Object-storage tables are excluded (the dir-name + local-root model can't address them), mirroring
-        the worker SQL path in resolve_all_queryable_tables."""
+        Object-storage tables are excluded — the dir-name + local-root model can't address them.
+        """
         tables = self.repo.list_tables()
         return {
             table.name: Path(table.file_path).name
@@ -460,9 +460,8 @@ class VirtualTableService:
         tables to the ones the requesting user may read, so SQL cannot reach a
         table the user cannot see.
 
-        Object-storage Delta tables are excluded from the worker-offloaded ``/catalog/sql_query``
-        path: ``trigger_sql_query`` has no per-table cloud-storage contract yet. Cloud catalog SQL
-        runs through the flow_graph catalog-SQL node, which embeds per-namespace storage in the plan.
+        Object-storage tables are excluded from this worker-offloaded SQL path; cloud catalog SQL
+        runs through the flow_graph catalog-SQL node instead.
         """
         tables = self.repo.list_tables()
         if accessible_table_ids is not None:

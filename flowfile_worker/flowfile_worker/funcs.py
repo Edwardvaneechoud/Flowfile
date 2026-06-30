@@ -41,10 +41,9 @@ def _resolve_catalog_target(table_name: str, base_uri: str | None) -> str:
 
 
 def _resolve_storage_options(storage_payload: dict | None) -> dict | None:
-    """Decrypt object-storage options from a serialized ``CatalogStorageInterface``.
+    """Decrypt object-storage options from a serialized ``CatalogStorageInterface`` (``None`` for local).
 
-    Returns ``None`` for local writes. The connection's secrets are owner-encrypted
-    (``$ffsec$1$...``) and decrypted here, worker-side, never crossing the wire in plaintext.
+    The connection's owner-encrypted secrets are decrypted here, worker-side.
     """
     if not storage_payload:
         return None
@@ -624,8 +623,7 @@ def write_delta(
     a Delta table at *output_path*.  Metadata (schema, row_count, size_bytes)
     is returned via the queue so the core never needs to read the table.
 
-    *storage_payload* (a serialized ``CatalogStorageInterface``) routes the write to
-    object storage; ``None`` writes to the local filesystem. *output_path* is already
+    *storage_payload* routes the write to object storage (``None`` ⇒ local); *output_path* is
     the fully-resolved destination (local path or ``s3://`` URI).
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
@@ -690,8 +688,7 @@ def merge_delta(
     - update: update only matched rows (no inserts)
     - delete: remove matched rows from target
 
-    *storage_payload* (a serialized ``CatalogStorageInterface``) routes the merge to
-    object storage; ``None`` merges into a local-filesystem table.
+    *storage_payload* routes the merge to object storage (``None`` ⇒ local-filesystem table).
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting merge_delta ({merge_mode}) to: {output_path}")
@@ -754,8 +751,8 @@ def materialize_catalog_table_task(
 ):
     """Subprocess task: reads a source file and materializes it as a Delta table, returning metadata via queue.
 
-    *dest_path* is the fully-resolved destination (local path or ``s3://`` URI); the
-    route decrypts *storage_options* and passes them in for the object-storage case.
+    *dest_path* is the fully-resolved destination (local path or ``s3://`` URI); *storage_options*
+    is set for the object-storage case.
     """
     try:
         from shared.delta_utils import write_delta as _write_delta
@@ -807,9 +804,8 @@ def optimize_catalog_table_task(
 ):
     """Subprocess task: compact (and optionally Z-order) a Delta catalog table.
 
-    *table_path* is the absolute, already-validated table directory or object-storage
-    URI (the route resolves it in the parent process so this works regardless of the
-    child's storage configuration). *storage_options* is set for the object-storage case.
+    *table_path* is the already-validated table directory or object-storage URI (resolved by the
+    route in the parent process); *storage_options* is set for the object-storage case.
     """
     try:
         from shared.delta_utils import optimize_delta
