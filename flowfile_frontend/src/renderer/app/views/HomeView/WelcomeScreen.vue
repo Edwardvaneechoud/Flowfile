@@ -55,6 +55,43 @@
         </div>
       </section>
 
+      <section v-if="openFlows.length" aria-label="Open flows">
+        <h2 class="welcome-section-title">Open flows</h2>
+        <ul class="recent-list">
+          <li v-for="flow in openFlows" :key="flow.flow_id">
+            <el-tooltip placement="top" :show-after="400" :hide-after="0">
+              <template #content>
+                <div>{{ flow.display_name || flow.name }}</div>
+                <div v-if="flow.path">{{ flow.path }}</div>
+                <div v-if="flow.has_unsaved_changes" class="tooltip-dirty-line">
+                  ● Unsaved changes
+                </div>
+              </template>
+              <div
+                class="recent-row"
+                role="button"
+                tabindex="0"
+                @click="emit('open-session', flow.flow_id)"
+                @keydown.enter="emit('open-session', flow.flow_id)"
+                @keydown.space.prevent="emit('open-session', flow.flow_id)"
+              >
+                <span class="material-icons recent-icon open-icon">account_tree</span>
+                <span class="recent-name">{{ flow.display_name || flow.name }}</span>
+                <span v-if="flow.is_running" class="open-running" aria-label="Running">
+                  <span class="running-dot"></span>Running
+                </span>
+                <span
+                  v-if="flow.has_unsaved_changes"
+                  class="dirty-dot"
+                  aria-label="Unsaved changes"
+                  title="Unsaved changes"
+                ></span>
+              </div>
+            </el-tooltip>
+          </li>
+        </ul>
+      </section>
+
       <section aria-label="Recent flows">
         <h2 class="welcome-section-title">Recent flows</h2>
         <ul v-if="recentFlows.length" class="recent-list">
@@ -209,9 +246,10 @@ import { useRouter } from "vue-router";
 import { MODIFIER_LABEL } from "../../utils/shortcuts";
 import { desktop, isDesktop } from "../../../lib/desktop";
 import type { RecentFlow } from "../../composables/useRecentFlows";
+import type { FlowSettings } from "../../types";
 import AboutDialog from "./AboutDialog.vue";
 
-defineProps<{ recentFlows: RecentFlow[] }>();
+defineProps<{ recentFlows: RecentFlow[]; openFlows: FlowSettings[] }>();
 
 const emit = defineEmits<{
   (e: "create"): void;
@@ -219,6 +257,7 @@ const emit = defineEmits<{
   (e: "open"): void;
   (e: "browse-templates"): void;
   (e: "open-recent", path: string): void;
+  (e: "open-session", flowId: number): void;
   (e: "remove-recent", path: string): void;
   (e: "start-tutorial"): void;
 }>();
@@ -628,6 +667,47 @@ function relativeTime(timestamp: number): string {
   color: var(--color-text-muted);
   border: 1px dashed var(--color-border-light);
   border-radius: var(--border-radius-md);
+}
+
+/* Open flows — live sessions; reuse .recent-row layout with distinct accents. */
+.open-icon {
+  color: var(--color-accent);
+}
+
+.dirty-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--color-primary, #1976d2);
+  pointer-events: none;
+}
+
+.open-running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  color: var(--color-success, #2e7d32);
+}
+
+.running-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--color-success, #2e7d32);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 /* Explore: 6 tiles — 2 rows of 3 on desktop, 3 rows of 2 on medium. */
