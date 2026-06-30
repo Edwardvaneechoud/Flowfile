@@ -32,7 +32,7 @@ const loadNodeData = async (nodeId: number) => {
   data.value = [];
   fields.value = [];
   chartList.value = [];
-  windowStore.setFullScreen("nodeSettings", true);
+  windowStore.setFullScreen("rightDrawer", true);
 
   try {
     const fetchedNodeData = await fetchGraphicWalkerData(nodeStore.flow_id, nodeId);
@@ -115,7 +115,7 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
 
 const pushNodeData = async () => {
   errorMessage.value = null;
-  windowStore.setFullScreen("nodeSettings", false);
+  windowStore.setFullScreen("rightDrawer", false);
   const currentSpec = await getCurrentSpec();
 
   if (currentSpec === null) {

@@ -9,7 +9,7 @@ import { test, expect, APIRequestContext } from "@playwright/test";
  *  - Double-click on a panel's resize bar toggles fullscreen.
  *  - Double-click on the empty canvas pane hides all right-side and bottom
  *    panels (left palette stays visible).
- *  - localStorage uses the v2 storage key prefix.
+ *  - localStorage uses the v3 storage key prefix.
  *
  * Prerequisites (web mode):
  *   1. Backend: `poetry run flowfile_core` (port 63578)
@@ -101,19 +101,19 @@ test.describe("Canvas Overlay Behaviour", () => {
     }
   });
 
-  test("storage uses v2 key prefix and purges legacy keys", async ({ page }) => {
+  test("storage uses v3 key prefix and purges legacy keys", async ({ page }) => {
     await navigateWithAuth(page, authToken, BASE_URL);
     await page.waitForSelector("main", { timeout: 10000 });
 
-    // The store purges legacy keys at init. Confirm no non-v2 key written by
-    // the application itself remains — there should be no
-    // `overlayPositionAndSize_<id>` keys missing the `.v2_` infix.
-    const realLegacyKeys = await page.evaluate(() => {
+    // The store purges older-version keys at init. Every panel-position key the
+    // app writes must carry the current `.v3_` infix — no legacy underscore keys
+    // and no stale `.v2_` keys remain.
+    const staleKeys = await page.evaluate(() => {
       return Object.keys(localStorage).filter(
-        (k) => k.startsWith("overlayPositionAndSize_") && !k.includes(".v2_"),
+        (k) => k.startsWith("overlayPositionAndSize") && !k.includes(".v3_"),
       );
     });
-    expect(realLegacyKeys).toEqual([]);
+    expect(staleKeys).toEqual([]);
   });
 
   test("draggable panel CSS uses position: absolute and lives under <main>", async ({ page }) => {

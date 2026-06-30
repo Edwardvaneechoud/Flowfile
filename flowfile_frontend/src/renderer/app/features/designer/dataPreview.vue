@@ -6,142 +6,155 @@
 
   <!-- Table Container -->
   <div v-show="!isLoading" class="table-container">
-    <!-- Tab Bar (only when artifacts exist for the node) -->
-    <div v-if="nodeArtifacts" class="preview-tabs">
-      <button
-        class="preview-tab"
-        :class="{ active: activeTab === 'data' }"
-        @click="activeTab = 'data'"
-      >
-        Data
-      </button>
-      <button
-        class="preview-tab"
-        :class="{ active: activeTab === 'artifacts' }"
-        @click="activeTab = 'artifacts'"
-      >
-        Artifacts
-        <span class="dp-tab-badge">{{
-          nodeArtifacts.published_count + nodeArtifacts.consumed_count + nodeArtifacts.deleted_count
-        }}</span>
-      </button>
+    <!-- Placeholder when no step is selected -->
+    <div v-if="currentNodeId == null" class="dp-empty">
+      <span class="material-icons dp-empty-icon">ads_click</span>
+      <p>Select a step to observe the data</p>
     </div>
-
-    <!-- Data Tab Content -->
-    <div v-show="activeTab === 'data'" class="dp-tab-content">
-      <!-- Output selector for multi-output nodes -->
-      <div v-if="hasMultipleOutputs" class="output-selector">
-        <span class="output-selector__label">Output:</span>
+    <template v-else>
+      <!-- Tab Bar (only when artifacts exist for the node) -->
+      <div v-if="nodeArtifacts" class="preview-tabs">
         <button
-          v-for="output in nodeOutputs"
-          :key="output.id"
-          class="output-selector__button"
-          :class="{ active: output.id === selectedOutputHandle }"
-          :title="output.title"
-          @click="selectOutput(output.id)"
+          class="preview-tab"
+          :class="{ active: activeTab === 'data' }"
+          @click="activeTab = 'data'"
         >
-          <span class="output-selector__letter">{{ output.label || output.id }}</span>
-          <span v-if="output.title" class="output-selector__name">{{ output.title }}</span>
+          Data
+        </button>
+        <button
+          class="preview-tab"
+          :class="{ active: activeTab === 'artifacts' }"
+          @click="activeTab = 'artifacts'"
+        >
+          Artifacts
+          <span class="dp-tab-badge">{{
+            nodeArtifacts.published_count +
+            nodeArtifacts.consumed_count +
+            nodeArtifacts.deleted_count
+          }}</span>
         </button>
       </div>
 
-      <!-- AG Grid -->
-      <ag-grid-vue
-        ref="gridComponentRef"
-        :default-col-def="defaultColDef"
-        :column-defs="columnDefs"
-        :suppress-field-dot-notation="true"
-        class="ag-theme-balham"
-        :row-data="rowData"
-        :style="{ width: '100%', height: gridHeightComputed }"
-        :overlay-no-rows-template="overlayNoRowsTemplate"
-        row-selection="multiple"
-        :rows-multi-select-with-click="true"
-        @grid-ready="onGridReady"
-      />
+      <!-- Data Tab Content -->
+      <div v-show="activeTab === 'data'" class="dp-tab-content">
+        <!-- Output selector for multi-output nodes -->
+        <div v-if="hasMultipleOutputs" class="output-selector">
+          <span class="output-selector__label">Output:</span>
+          <button
+            v-for="output in nodeOutputs"
+            :key="output.id"
+            class="output-selector__button"
+            :class="{ active: output.id === selectedOutputHandle }"
+            :title="output.title"
+            @click="selectOutput(output.id)"
+          >
+            <span class="output-selector__letter">{{ output.label || output.id }}</span>
+            <span v-if="output.title" class="output-selector__name">{{ output.title }}</span>
+          </button>
+        </div>
 
-      <div v-if="showFetchButton" class="fetch-data-section">
-        <p>Step has not stored any data yet. Click here to trigger a run for this node</p>
-        <button class="fetch-data-button" :disabled="nodeStore.isRunning" @click="handleFetchData">
-          <span v-if="!nodeStore.isRunning">Fetch Data</span>
-          <span v-else>Fetching...</span>
-        </button>
-      </div>
-    </div>
+        <!-- AG Grid -->
+        <ag-grid-vue
+          ref="gridComponentRef"
+          :default-col-def="defaultColDef"
+          :column-defs="columnDefs"
+          :suppress-field-dot-notation="true"
+          class="ag-theme-balham"
+          :row-data="rowData"
+          :style="{ width: '100%', height: gridHeightComputed }"
+          :overlay-no-rows-template="overlayNoRowsTemplate"
+          row-selection="multiple"
+          :rows-multi-select-with-click="true"
+          @grid-ready="onGridReady"
+        />
 
-    <!-- Artifacts Tab Content -->
-    <div v-if="activeTab === 'artifacts' && nodeArtifacts" class="dp-tab-content artifacts-panel">
-      <div v-if="nodeArtifacts.kernel_id" class="artifact-section-meta">
-        Kernel: <code>{{ nodeArtifacts.kernel_id }}</code>
-      </div>
-
-      <div v-if="nodeArtifacts.published.length > 0" class="artifact-section">
-        <div class="artifact-section-header">Published</div>
-        <table class="artifact-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Module</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="art in nodeArtifacts.published" :key="art.name">
-              <td class="artifact-name">{{ art.name }}</td>
-              <td>{{ art.type_name || "-" }}</td>
-              <td class="artifact-module">{{ art.module || "-" }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-if="showFetchButton" class="fetch-data-section">
+          <p>Step has not stored any data yet. Click here to trigger a run for this node</p>
+          <button
+            class="fetch-data-button"
+            :disabled="nodeStore.isRunning"
+            @click="handleFetchData"
+          >
+            <span v-if="!nodeStore.isRunning">Fetch Data</span>
+            <span v-else>Fetching...</span>
+          </button>
+        </div>
       </div>
 
-      <div v-if="nodeArtifacts.consumed.length > 0" class="artifact-section">
-        <div class="artifact-section-header">Consumed</div>
-        <table class="artifact-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Source Node</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="art in nodeArtifacts.consumed" :key="art.name">
-              <td class="artifact-name">{{ art.name }}</td>
-              <td>{{ art.type_name || "-" }}</td>
-              <td>{{ art.source_node_id != null ? `Node ${art.source_node_id}` : "-" }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <!-- Artifacts Tab Content -->
+      <div v-if="activeTab === 'artifacts' && nodeArtifacts" class="dp-tab-content artifacts-panel">
+        <div v-if="nodeArtifacts.kernel_id" class="artifact-section-meta">
+          Kernel: <code>{{ nodeArtifacts.kernel_id }}</code>
+        </div>
 
-      <div v-if="nodeArtifacts.deleted.length > 0" class="artifact-section">
-        <div class="artifact-section-header">Deleted</div>
-        <table class="artifact-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="name in nodeArtifacts.deleted" :key="name">
-              <td class="artifact-name artifact-deleted">{{ name }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+        <div v-if="nodeArtifacts.published.length > 0" class="artifact-section">
+          <div class="artifact-section-header">Published</div>
+          <table class="artifact-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Module</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="art in nodeArtifacts.published" :key="art.name">
+                <td class="artifact-name">{{ art.name }}</td>
+                <td>{{ art.type_name || "-" }}</td>
+                <td class="artifact-module">{{ art.module || "-" }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-      <div
-        v-if="
-          nodeArtifacts.published.length === 0 &&
-          nodeArtifacts.consumed.length === 0 &&
-          nodeArtifacts.deleted.length === 0
-        "
-        class="artifact-empty"
-      >
-        No artifacts recorded for this node.
+        <div v-if="nodeArtifacts.consumed.length > 0" class="artifact-section">
+          <div class="artifact-section-header">Consumed</div>
+          <table class="artifact-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Source Node</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="art in nodeArtifacts.consumed" :key="art.name">
+                <td class="artifact-name">{{ art.name }}</td>
+                <td>{{ art.type_name || "-" }}</td>
+                <td>{{ art.source_node_id != null ? `Node ${art.source_node_id}` : "-" }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="nodeArtifacts.deleted.length > 0" class="artifact-section">
+          <div class="artifact-section-header">Deleted</div>
+          <table class="artifact-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="name in nodeArtifacts.deleted" :key="name">
+                <td class="artifact-name artifact-deleted">{{ name }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div
+          v-if="
+            nodeArtifacts.published.length === 0 &&
+            nodeArtifacts.consumed.length === 0 &&
+            nodeArtifacts.deleted.length === 0
+          "
+          class="artifact-empty"
+        >
+          No artifacts recorded for this node.
+        </div>
       </div>
-    </div>
+    </template>
   </div>
 </template>
 
@@ -150,6 +163,7 @@
 //   - DataTabs.vue, OutputSelector.vue, ArtifactsPanel.vue
 //   - useTableData composable: AG Grid setup + refresh
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
+import debounce from "lodash/debounce";
 import { TableExample } from "../../components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -209,12 +223,22 @@ interface Props {
   showFileStats?: boolean;
   hideTitle?: boolean;
   flowId?: number;
+  // The node to preview (null ⇒ "select a step" placeholder). Reactive: the
+  // dock just binds this; no imperative downloadData() call from the host.
+  nodeId?: number | null;
+  // Bump to force a re-fetch of the same node (e.g. re-clicking an empty node).
+  refreshToken?: number;
+  // Only fetch while the Data tab is actually shown (the host gates this).
+  active?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showFileStats: false,
   hideTitle: true,
   flowId: undefined,
+  nodeId: null,
+  refreshToken: 0,
+  active: true,
 });
 
 // Use the flow execution composable with persistent polling for node fetches.
@@ -414,6 +438,24 @@ function removeData() {
   currentNodeId.value = null;
 }
 
+// Reactive entry point: the host binds :node-id / :refresh-token / :active and we
+// load (or clear) accordingly. Debounced so rapid node clicks coalesce into one
+// fetch; gated on `active` so we don't fetch while another tab (e.g. Logs) is shown.
+const debouncedDownload = debounce((id: number) => downloadData(id), 150);
+watch(
+  () => [props.nodeId, props.refreshToken, props.active] as const,
+  () => {
+    if (props.nodeId == null) {
+      debouncedDownload.cancel();
+      removeData();
+      return;
+    }
+    if (props.active) debouncedDownload(props.nodeId);
+    else debouncedDownload.cancel();
+  },
+  { immediate: true },
+);
+
 const windowKeyHandler = async (e: KeyboardEvent) => {
   const mod = e.ctrlKey || e.metaKey;
   if (!mod) return;
@@ -467,9 +509,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener("resize", calculateGridHeight);
   window.removeEventListener("keydown", windowKeyHandler);
+  debouncedDownload.cancel();
 });
-
-defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 </script>
 
 <style>
@@ -511,6 +552,28 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   height: 100%;
   width: 100%;
   position: relative;
+}
+
+/* Placeholder shown when no step is selected. */
+.dp-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+}
+
+.dp-empty-icon {
+  font-size: 30px;
+  opacity: 0.55;
+}
+
+.dp-empty p {
+  margin: 0;
+  font-size: 13px;
 }
 
 /* Fetch Data Section Styles */

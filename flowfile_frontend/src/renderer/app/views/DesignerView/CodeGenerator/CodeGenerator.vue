@@ -57,13 +57,15 @@
         </button>
       </div>
     </div>
-    <ProjectExport v-if="codeMode === 'project'" />
-    <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
+    <template v-if="active">
+      <ProjectExport v-if="codeMode === 'project'" />
+      <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
+    </template>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, watch } from "vue";
+import { ref, watch } from "vue";
 import axios from "axios";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
@@ -71,6 +73,11 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
 import ProjectExport from "./ProjectExport.vue";
 import { useNodeStore } from "../../../stores/column-store";
+import { useEditorStore } from "../../../stores/editor-store";
+
+// `active` = this is the visible tab. CodeMirror must not be created while its
+// pane is display:none, so the editor renders (and code fetches) only when active.
+const props = defineProps<{ active?: boolean }>();
 
 type CodeMode = "flowframe" | "polars" | "project";
 
@@ -78,6 +85,7 @@ const code = ref("");
 const loading = ref(false);
 const codeMode = ref<CodeMode>("flowframe");
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const lastLoadedFlowId = ref<number | null>(null);
 
 const extensions = [
@@ -126,29 +134,25 @@ const setMode = (mode: CodeMode) => {
   }
 };
 
+// Fetch when the tab becomes visible (active) for a flow we haven't loaded yet.
 watch(
-  () => nodeStore.showCodeGenerator,
-  (isShowing) => {
-    if (isShowing && nodeStore.flow_id > 0) {
+  () => [props.active, nodeStore.flow_id] as const,
+  ([active, flowId]) => {
+    if (active && flowId > 0 && flowId !== lastLoadedFlowId.value) {
       fetchCode();
     }
   },
+  { immediate: true },
 );
 
+// A graph edit invalidates the cached code; drop the cache so the next time the
+// Code tab opens it re-fetches (rather than regenerating on every hidden edit).
 watch(
-  () => nodeStore.flow_id,
-  (newFlowId) => {
-    if (nodeStore.showCodeGenerator && newFlowId !== lastLoadedFlowId.value && newFlowId > 0) {
-      fetchCode();
-    }
+  () => editorStore.graphVersion,
+  () => {
+    lastLoadedFlowId.value = null;
   },
 );
-
-onMounted(() => {
-  if (nodeStore.showCodeGenerator && nodeStore.flow_id > 0) {
-    fetchCode();
-  }
-});
 
 const refreshCode = () => {
   if (nodeStore.flow_id > 0) {
@@ -171,9 +175,11 @@ const exportCode = () => {
 
 <style scoped>
 .code-container {
-  max-width: 1200px;
-  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   padding: 20px;
+  box-sizing: border-box;
 }
 
 .code-header {
@@ -181,6 +187,13 @@ const exportCode = () => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  flex-shrink: 0;
+}
+
+/* The disabled CodeMirror viewer fills the remaining tab height and scrolls. */
+.code-container :deep(.cm-editor) {
+  flex: 1;
+  min-height: 0;
 }
 
 .code-header h4 {

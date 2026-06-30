@@ -1,11 +1,13 @@
 <template>
   <welcome-screen
     :recent-flows="recentFlows"
+    :open-flows="openFlows"
     @create="handleQuickCreate"
     @create-at-location="createDialogVisible = true"
     @open="openDialogVisible = true"
     @browse-templates="browseTemplates"
     @open-recent="handleOpenRecent"
+    @open-session="handleOpenSession"
     @remove-recent="handleRemoveRecent"
     @start-tutorial="handleStartTutorial"
   />
@@ -22,6 +24,8 @@ import WelcomeScreen from "./WelcomeScreen.vue";
 import OpenDialog from "../../features/designer/components/OpenDialog.vue";
 import CreateDialog from "../../features/designer/components/CreateDialog.vue";
 import { createFlow, getFlowSettings } from "../../components/nodes/nodeLogic";
+import { FlowApi } from "../../api";
+import type { FlowSettings } from "../../types";
 import { useNodeStore } from "../../stores/column-store";
 import { useRecentFlows } from "../../composables/useRecentFlows";
 import { useFlowOpener } from "../../composables/useFlowOpener";
@@ -37,6 +41,16 @@ const { openFlow } = useFlowOpener();
 
 const openDialogVisible = ref(false);
 const createDialogVisible = ref(false);
+const openFlows = ref<FlowSettings[]>([]);
+
+const loadOpenFlows = async () => {
+  try {
+    openFlows.value = await FlowApi.getAllFlows();
+  } catch (error) {
+    console.warn("Failed to load open flows:", error);
+    openFlows.value = [];
+  }
+};
 
 // The designer Canvas (which owns Cmd+N / Cmd+O) isn't mounted here, so without
 // this the WebView's native Cmd+O opens the OS file dialog. Honor the shortcut
@@ -65,11 +79,16 @@ const handleKeyDown = (event: KeyboardEvent) => {
 
 onMounted(() => {
   refreshCatalogRefs();
+  void loadOpenFlows();
   window.addEventListener("keydown", handleKeyDown);
+  // Refresh open sessions when the user tabs back (a run may have finished or a
+  // flow closed elsewhere). HomeView itself re-mounts on each nav (no keep-alive).
+  window.addEventListener("focus", loadOpenFlows);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleKeyDown);
+  window.removeEventListener("focus", loadOpenFlows);
 });
 
 const goToDesigner = () => router.push({ name: "designer" });
@@ -120,6 +139,13 @@ const handleOpenFromDialog = async (payload: {
 const handleOpenRecent = async (flowPath: string) => {
   const flowId = await openFlow(flowPath);
   if (flowId !== null) goToDesigner();
+};
+
+// Already-open session: just activate it (setFlowId triggers the Canvas watcher
+// which loads the flow). Never importFlow here — that would spawn a duplicate.
+const handleOpenSession = (flowId: number) => {
+  nodeStore.setFlowId(flowId);
+  goToDesigner();
 };
 
 // Non-destructive: only clears the localStorage entry, never the file.

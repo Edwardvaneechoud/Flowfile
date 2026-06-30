@@ -44,13 +44,12 @@ import {
   markHoveredEdge,
   detectEdgeUnderPointer,
 } from "../../composables/useDragAndDrop";
-import CodeGenerator from "./CodeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
 import { useAiStore } from "../../stores/ai-store";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFlowStore, FLOW_ID_STORAGE_KEY } from "../../stores/flow-store";
-import NodeSettingsDrawer from "./NodeSettingsDrawer.vue";
+import { useDrawerStore } from "../../stores/drawer-store";
 import {
   getFlowData,
   deleteConnection,
@@ -65,11 +64,9 @@ import { desktop, isDesktop } from "../../../lib/desktop";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
 import { useItemStore } from "../../components/common/DraggableItem/stateStore";
-import DataPreview from "../../features/designer/dataPreview.vue";
-import FlowResults from "../../features/designer/editor/results.vue";
-import LogViewer from "./LogViewer/LogViewer.vue";
+import TabbedDrawer from "./TabbedDrawer.vue";
+import { drawers } from "./drawerRegistry";
 import ContextMenu from "./ContextMenu.vue";
-import AiAssistant from "../../features/ai/AiAssistant.vue";
 import AiCommandPalette from "../../features/ai/AiCommandPalette.vue";
 import AiGhostNode from "../../features/ai/AiGhostNode.vue";
 import { useGhostNodeSuggestions } from "../../features/ai/useGhostNodeSuggestions";
@@ -102,6 +99,7 @@ const availableHeight = ref(window.innerHeight - 50);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const flowStore = useFlowStore();
+const drawerStore = useDrawerStore();
 const aiStore = useAiStore();
 const rawCustomNode = markRaw(CustomNode);
 const rawGroupNode = markRaw(GroupNode);
@@ -246,7 +244,6 @@ async function onNodeDragStop({ node }: { node: Node }) {
 const nodes = ref<Node[]>([]);
 const edges = ref([]);
 const instance = useVueFlow();
-const showTablePreview = ref(false);
 const mainContainerRef = ref<HTMLElement | null>(null);
 const {
   onDrop,
@@ -260,13 +257,9 @@ const {
   insertNodeOnEdge,
 } = useDragAndDrop();
 const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
-const dataPreview = ref<InstanceType<typeof DataPreview>>();
-// 25 / 75 split of the canvas height between the bottom table preview and the
-// right-side node settings drawer. Initial-only — DraggableItem reads these
-// once on mount and the user manages further sizing via resize handles.
+// Initial height for the bottom dock (25% of the canvas). DraggableItem reads it
+// once on mount; the user resizes from there.
 const tablePreviewHeight = computed(() => Math.max(120, Math.floor(availableHeight.value * 0.25)));
-const nodeSettingsHeight = computed(() => Math.max(200, Math.floor(availableHeight.value * 0.75)));
-const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
@@ -316,7 +309,7 @@ interface EdgeChange {
 }
 
 const handleCanvasClick = (event: any | PointerEvent) => {
-  showTablePreview.value = false;
+  drawerStore.clearPreview();
   nodeStore.nodeId = -1;
   editorStore.activeDrawerComponent = null;
   nodeStore.hideLogViewer();
@@ -360,22 +353,8 @@ const handleMainDblClick = (event: MouseEvent) => {
   }
   // Hide every floating overlay (right-side + bottom). Left palette stays.
   editorStore.hideAllPanels();
-  showTablePreview.value = false;
   nodeStore.nodeId = -1;
   window.getSelection()?.removeAllRanges();
-};
-
-const handleNodeSettingsClose = (event: any | PointerEvent) => {
-  nodeStore.nodeId = -1;
-  editorStore.activeDrawerComponent = null;
-  clickedPosition.value = {
-    x: event.x,
-    y: event.y,
-  };
-};
-
-const toggleShowTablePreview = () => {
-  showTablePreview.value = !showTablePreview.value;
 };
 
 function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
@@ -421,16 +400,6 @@ const loadFlow = async () => {
 };
 
 const reloadCurrentFlow = () => loadFlow();
-
-const selectNodeExternally = (nodeId: number) => {
-  showTablePreview.value = true;
-
-  setNodeTableView(nodeId);
-  nextTick().then(() => {
-    setNodeTableView(nodeId);
-  });
-  fitView({ nodes: [nodeId.toString()] });
-};
 
 /**
  * Compute the label for an edge based on its source node.
@@ -604,10 +573,6 @@ async function onConnect(params: Connection & { label?: string }) {
   }
 }
 
-const NodeIsSelected = (nodeId: string) => {
-  return selectedNodeIdInTable.value === +nodeId;
-};
-
 // Open + front a node's Settings drawer. Settings only ever opens by setting
 // nodeStore.nodeId, which the per-node nodeButton watcher turns into openDrawer.
 const openNodeSettings = async (nodeId: number) => {
@@ -616,7 +581,8 @@ const openNodeSettings = async (nodeId: number) => {
     // Already the selected node and the drawer is open — just front it. (Don't
     // re-trigger the watcher; that would reload settings, e.g. the second click
     // of a double-click.)
-    itemStore.bringToFront("nodeSettings");
+    itemStore.bringToFront("rightDrawer");
+    drawerStore.setActiveTab("rightDrawer", "settings");
     return;
   }
   if (nodeStore.nodeId === nodeId) {
@@ -627,34 +593,26 @@ const openNodeSettings = async (nodeId: number) => {
     await nextTick();
   }
   nodeStore.nodeId = nodeId;
-  await nextTick(); // drawer mounts (v-if nodeStore.isDrawerOpen) before fronting
-  itemStore.bringToFront("nodeSettings");
+  await nextTick(); // settings tab mounts before fronting
+  itemStore.bringToFront("rightDrawer");
+  drawerStore.setActiveTab("rightDrawer", "settings");
 };
 
-// Open + front the bottom Data/Table preview for a node, loading data if needed.
+// Open + front the bottom Data preview for a node. The dock's Data tab reacts to
+// drawerStore.previewNodeId; re-selecting the same node bumps a refresh token.
 const openNodeData = (nodeId: number) => {
   if (isGroupNodeId(String(nodeId))) return;
-  showTablePreview.value = true;
-  nextTick().then(() => {
-    itemStore.bringToFront("tablePreview");
-    const needsLoad =
-      !NodeIsSelected(String(nodeId)) ||
-      (dataPreview.value &&
-        dataPreview.value.dataLength == 0 &&
-        dataPreview.value.columnLength == 0);
-    if (needsLoad) setNodeTableView(nodeId);
-    selectedNodeIdInTable.value = nodeId;
-  });
+  drawerStore.setPreviewNode(nodeId);
+  nextTick().then(() => itemStore.bringToFront("bottomDock"));
 };
 
 const nodeClick = (mouseEvent: any) => {
-  // Single click: Settings only — never touches the table.
-  openNodeSettings(parseInt(mouseEvent.node.id));
-};
-
-const setNodeTableView = (nodeId: number) => {
-  if (dataPreview.value) {
-    dataPreview.value.downloadData(nodeId);
+  // Single click opens Settings only. The bottom dock is opened by double-click
+  // (handleMainDblClick), not here; if it's already open we follow the selection.
+  const rawId = String(mouseEvent.node.id);
+  openNodeSettings(parseInt(rawId));
+  if (!isGroupNodeId(rawId) && drawerStore.previewNodeId !== null) {
+    drawerStore.setPreviewNode(parseInt(rawId));
   }
 };
 
@@ -1029,11 +987,6 @@ const handleResetLayoutGraph = async () => {
   saveViewportToSession();
 };
 
-const hideLogViewer = () => {
-  editorStore.hideLogViewerForThisRun = true;
-  nodeStore.hideLogViewer();
-};
-
 // Shared editable-context check: when focus is in a text field / code editor or
 // there's a text selection, native copy/paste must win — only the bare canvas
 // gets node copy/paste.
@@ -1296,21 +1249,6 @@ onMounted(async () => {
     },
   );
 
-  // Bring the AI assistant DraggableItem to the front when the drawer
-  // opens. Replaces the previous `#aiAssistant.overlay { z-index: 245
-  // !important }` CSS hack — that rule clobbered stateStore's
-  // bring-to-front semantics for every other panel. nextTick gives
-  // DraggableItem.onMounted time to register itself with itemStore
-  // before we ask it to bump its zIndex.
-  watch(
-    () => editorStore.isAiOpen,
-    (open) => {
-      if (open) {
-        nextTick().then(() => itemStore.bringToFront("aiAssistant"));
-      }
-    },
-  );
-
   // External-mutation signal — the backend mutated the live flow without
   // going through the in-canvas mutation paths. Triggered today by
   // `useAiDiffStore.accept()` after the apply_diff lands; future
@@ -1419,89 +1357,18 @@ defineExpose({
         :show-left="true"
         :initial-width="230"
         initial-position="left"
+        height-behaviour="scale"
         title="Data actions"
         :allow-free-move="true"
       >
         <NodeList @dragstart="onDragStart" />
       </draggable-item>
-      <draggable-item
-        v-if="nodeStore.isShowingLogViewer"
-        id="logViewer"
-        :show-bottom="true"
-        title="Log overview"
-        :allow-full-screen="true"
-        initial-position="bottom"
-        :initial-left="180"
-        :on-minize="hideLogViewer"
-        group="bottomPanels"
-        :sync-dimensions="true"
-      >
-        <LogViewer />
-      </draggable-item>
-      <draggable-item
-        v-if="nodeStore.showFlowResult"
-        id="flowresults"
-        :show-right="true"
-        title="flow results"
-        initial-position="right"
-        :initial-width="400"
-        :allow-full-screen="true"
-        group="rightPanels"
-      >
-        <FlowResults :on-click="selectNodeExternally" />
-      </draggable-item>
-      <draggable-item
-        v-if="showTablePreview"
-        id="tablePreview"
-        :show-bottom="true"
-        :allow-full-screen="true"
-        title="Table Preview"
-        initial-position="bottom"
-        :on-minize="toggleShowTablePreview"
-        :initial-height="tablePreviewHeight"
-        :initial-left="180"
-        group="bottomPanels"
-        :sync-dimensions="true"
-      >
-        <data-preview ref="dataPreview"> text </data-preview>
-      </draggable-item>
-      <draggable-item
-        v-if="nodeStore.isDrawerOpen"
-        id="nodeSettings"
-        :show-right="true"
-        initial-position="right"
-        :initial-width="600"
-        :initial-height="nodeSettingsHeight"
-        title="Node Settings"
-        :on-minize="handleNodeSettingsClose"
-        :allow-full-screen="true"
-      >
-        <NodeSettingsDrawer />
-      </draggable-item>
-      <draggable-item
-        v-if="nodeStore.showCodeGenerator"
-        id="generatedCode"
-        :show-left="true"
-        :initial-width="800"
-        initial-position="right"
-        :allow-free-move="true"
-        :allow-full-screen="true"
-        :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
-      >
-        <CodeGenerator />
-      </draggable-item>
-      <draggable-item
-        v-if="editorStore.isAiOpen"
-        id="aiAssistant"
-        :show-right="true"
-        initial-position="right"
-        :initial-width="600"
-        title="AI Assistant"
-        :on-minize="editorStore.closeAiDrawer"
-        :allow-full-screen="true"
-      >
-        <AiAssistant />
-      </draggable-item>
+      <TabbedDrawer
+        v-for="d in drawers"
+        :key="d.id"
+        :def="d"
+        :height-override="d.id === 'bottomDock' ? tablePreviewHeight : undefined"
+      />
       <AiCommandPalette />
       <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
     </main>

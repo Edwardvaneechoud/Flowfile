@@ -90,12 +90,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, defineProps } from "vue";
+import { ref, computed, watch } from "vue";
 import { format } from "date-fns";
 import { InfoFilled } from "@element-plus/icons-vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useAiStore } from "../../../stores/ai-store";
 import { useEditorStore } from "../../../stores/editor-store";
+import { useDrawerStore } from "../../../stores/drawer-store";
 
 interface RunNode {
   node_id: number;
@@ -104,21 +105,10 @@ interface RunNode {
   success?: boolean;
 }
 
-const props = defineProps({
-  tableViewer: {
-    type: Object,
-    required: false,
-    default: null,
-  },
-  onClick: {
-    type: Function,
-    required: true,
-  },
-});
-
 const nodeStore = useNodeStore();
 const aiStore = useAiStore();
 const editorStore = useEditorStore();
+const drawerStore = useDrawerStore();
 const runInformation = computed(() => nodeStore.currentRunResult);
 const selectedNode = ref<Element | null>(null);
 
@@ -210,11 +200,7 @@ const navigateToNode = (nodeId: string) => {
 
   const elementId = `#${nodeId}`;
   const nodeComponent = document.querySelector(elementId);
-  console.log(nodeComponent, "nodeComponent");
-  if (props.onClick) {
-    props.onClick(nodeId.slice(5));
-    //props.tableViewer.downloadData(nodeId.slice(5))
-  }
+  drawerStore.selectNodeForPreview(Number(nodeId.slice(5)));
   if (nodeComponent) {
     if (!nodeComponent.classList.contains("selected")) {
       nodeComponent.classList.add("selected");

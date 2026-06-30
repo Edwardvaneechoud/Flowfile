@@ -105,15 +105,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
-import {
-  fetchKafkaConnections,
-  fetchKafkaTopics,
-  createKafkaSync,
-} from "../KafkaConnectionView/api";
-import type {
-  KafkaConnectionOut,
-  KafkaTopicInfo,
-} from "../KafkaConnectionView/KafkaConnectionTypes";
+import { fetchKafkaConnections, fetchKafkaTopics, createKafkaSync } from "./api";
+import type { KafkaConnectionOut, KafkaTopicInfo } from "./KafkaConnectionTypes";
 import { ElMessage } from "element-plus";
 
 const props = defineProps<{
@@ -175,7 +168,10 @@ watch(
       writeMode.value = "append";
       includeExisting.value = true;
       availableTopics.value = [];
-      await loadConnections();
+      await Promise.all([
+        loadConnections(),
+        catalogStore.tree.length === 0 ? catalogStore.loadTree() : Promise.resolve(),
+      ]);
     }
   },
 );
