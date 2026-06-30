@@ -3,21 +3,26 @@ import { ref, computed } from "vue";
 import { Z_INDEX } from "./zIndex";
 
 // Bump when the localStorage shape or coordinate system changes — old keys are
-// purged on next load. Last bump: panels moved inside <main>, so saved
-// positions from the viewport-anchored era are off by the header's height.
-const STORAGE_VERSION = 2;
+// purged on next load. Last bump: right-side panels merged into one tabbed
+// `rightDrawer`, so the old per-panel ids (nodeSettings/aiAssistant/...) are gone.
+const STORAGE_VERSION = 3;
 const itemStorageKey = (id: string) => `overlayPositionAndSize.v${STORAGE_VERSION}_${id}`;
 const groupsStorageKey = `overlayGroups.v${STORAGE_VERSION}`;
 
 const purgeLegacyKeys = () => {
   try {
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith("overlayPositionAndSize_") && !key.includes(`.v${STORAGE_VERSION}_`)) {
+      // Drop any panel-position / group key from an older version (underscore
+      // pre-v2 legacy AND dotted `.v2_` etc.) — keep only the current version.
+      if (
+        key.startsWith("overlayPositionAndSize") &&
+        !key.includes(`.v${STORAGE_VERSION}_`)
+      ) {
         localStorage.removeItem(key);
       }
-    }
-    if (localStorage.getItem("overlayGroups") !== null) {
-      localStorage.removeItem("overlayGroups");
+      if (key.startsWith("overlayGroups") && key !== groupsStorageKey) {
+        localStorage.removeItem(key);
+      }
     }
   } catch {
     // localStorage can throw in private mode / quota exhaustion — ignore.

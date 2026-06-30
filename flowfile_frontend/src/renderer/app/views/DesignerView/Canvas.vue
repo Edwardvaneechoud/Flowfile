@@ -44,13 +44,12 @@ import {
   markHoveredEdge,
   detectEdgeUnderPointer,
 } from "../../composables/useDragAndDrop";
-import CodeGenerator from "./CodeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
 import { useAiStore } from "../../stores/ai-store";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFlowStore, FLOW_ID_STORAGE_KEY } from "../../stores/flow-store";
-import NodeSettingsDrawer from "./NodeSettingsDrawer.vue";
+import { useDrawerStore } from "../../stores/drawer-store";
 import {
   getFlowData,
   deleteConnection,
@@ -65,11 +64,9 @@ import { desktop, isDesktop } from "../../../lib/desktop";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
 import { useItemStore } from "../../components/common/DraggableItem/stateStore";
-import DataPreview from "../../features/designer/dataPreview.vue";
-import FlowResults from "../../features/designer/editor/results.vue";
-import LogViewer from "./LogViewer/LogViewer.vue";
+import TabbedDrawer from "./TabbedDrawer.vue";
+import { drawers } from "./drawerRegistry";
 import ContextMenu from "./ContextMenu.vue";
-import AiAssistant from "../../features/ai/AiAssistant.vue";
 import AiCommandPalette from "../../features/ai/AiCommandPalette.vue";
 import AiGhostNode from "../../features/ai/AiGhostNode.vue";
 import { useGhostNodeSuggestions } from "../../features/ai/useGhostNodeSuggestions";
@@ -102,6 +99,7 @@ const availableHeight = ref(window.innerHeight - 50);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const flowStore = useFlowStore();
+const drawerStore = useDrawerStore();
 const aiStore = useAiStore();
 const rawCustomNode = markRaw(CustomNode);
 const rawGroupNode = markRaw(GroupNode);
@@ -246,7 +244,6 @@ async function onNodeDragStop({ node }: { node: Node }) {
 const nodes = ref<Node[]>([]);
 const edges = ref([]);
 const instance = useVueFlow();
-const showTablePreview = ref(false);
 const mainContainerRef = ref<HTMLElement | null>(null);
 const {
   onDrop,
@@ -260,13 +257,9 @@ const {
   insertNodeOnEdge,
 } = useDragAndDrop();
 const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
-const dataPreview = ref<InstanceType<typeof DataPreview>>();
-// 25 / 75 split of the canvas height between the bottom table preview and the
-// right-side node settings drawer. Initial-only — DraggableItem reads these
-// once on mount and the user manages further sizing via resize handles.
+// Initial height for the bottom dock (25% of the canvas). DraggableItem reads it
+// once on mount; the user resizes from there.
 const tablePreviewHeight = computed(() => Math.max(120, Math.floor(availableHeight.value * 0.25)));
-const nodeSettingsHeight = computed(() => Math.max(200, Math.floor(availableHeight.value * 0.75)));
-const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
@@ -316,7 +309,7 @@ interface EdgeChange {
 }
 
 const handleCanvasClick = (event: any | PointerEvent) => {
-  showTablePreview.value = false;
+  drawerStore.clearPreview();
   nodeStore.nodeId = -1;
   editorStore.activeDrawerComponent = null;
   nodeStore.hideLogViewer();
@@ -360,29 +353,8 @@ const handleMainDblClick = (event: MouseEvent) => {
   }
   // Hide every floating overlay (right-side + bottom). Left palette stays.
   editorStore.hideAllPanels();
-  showTablePreview.value = false;
   nodeStore.nodeId = -1;
   window.getSelection()?.removeAllRanges();
-};
-
-const handleNodeSettingsClose = (event: any | PointerEvent) => {
-  nodeStore.nodeId = -1;
-  editorStore.activeDrawerComponent = null;
-  clickedPosition.value = {
-    x: event.x,
-    y: event.y,
-  };
-};
-
-// Merged bottom dock: Data (table preview) and Logs share one panel, switched
-// via a small tab strip. `showTablePreview` and `editorStore.isShowingLogViewer`
-// remain the two independent source booleans; this tracks the active tab.
-const bottomActiveTab = ref<"data" | "logs">("data");
-
-const closeBottomDock = () => {
-  showTablePreview.value = false;
-  editorStore.hideLogViewerForThisRun = true;
-  editorStore.hideLogViewer();
 };
 
 function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
@@ -428,16 +400,6 @@ const loadFlow = async () => {
 };
 
 const reloadCurrentFlow = () => loadFlow();
-
-const selectNodeExternally = (nodeId: number) => {
-  showTablePreview.value = true;
-
-  setNodeTableView(nodeId);
-  nextTick().then(() => {
-    setNodeTableView(nodeId);
-  });
-  fitView({ nodes: [nodeId.toString()] });
-};
 
 /**
  * Compute the label for an edge based on its source node.
@@ -611,10 +573,6 @@ async function onConnect(params: Connection & { label?: string }) {
   }
 }
 
-const NodeIsSelected = (nodeId: string) => {
-  return selectedNodeIdInTable.value === +nodeId;
-};
-
 // Open + front a node's Settings drawer. Settings only ever opens by setting
 // nodeStore.nodeId, which the per-node nodeButton watcher turns into openDrawer.
 const openNodeSettings = async (nodeId: number) => {
@@ -623,7 +581,8 @@ const openNodeSettings = async (nodeId: number) => {
     // Already the selected node and the drawer is open — just front it. (Don't
     // re-trigger the watcher; that would reload settings, e.g. the second click
     // of a double-click.)
-    itemStore.bringToFront("nodeSettings");
+    itemStore.bringToFront("rightDrawer");
+    drawerStore.setActiveTab("rightDrawer", "settings");
     return;
   }
   if (nodeStore.nodeId === nodeId) {
@@ -634,24 +593,17 @@ const openNodeSettings = async (nodeId: number) => {
     await nextTick();
   }
   nodeStore.nodeId = nodeId;
-  await nextTick(); // drawer mounts (v-if nodeStore.isDrawerOpen) before fronting
-  itemStore.bringToFront("nodeSettings");
+  await nextTick(); // settings tab mounts before fronting
+  itemStore.bringToFront("rightDrawer");
+  drawerStore.setActiveTab("rightDrawer", "settings");
 };
 
-// Open + front the bottom Data/Table preview for a node, loading data if needed.
+// Open + front the bottom Data preview for a node. The dock's Data tab reacts to
+// drawerStore.previewNodeId; re-selecting the same node bumps a refresh token.
 const openNodeData = (nodeId: number) => {
   if (isGroupNodeId(String(nodeId))) return;
-  showTablePreview.value = true;
-  nextTick().then(() => {
-    itemStore.bringToFront("bottomDock");
-    const needsLoad =
-      !NodeIsSelected(String(nodeId)) ||
-      (dataPreview.value &&
-        dataPreview.value.dataLength == 0 &&
-        dataPreview.value.columnLength == 0);
-    if (needsLoad) setNodeTableView(nodeId);
-    selectedNodeIdInTable.value = nodeId;
-  });
+  drawerStore.setPreviewNode(nodeId);
+  nextTick().then(() => itemStore.bringToFront("bottomDock"));
 };
 
 const nodeClick = (mouseEvent: any) => {
@@ -660,12 +612,6 @@ const nodeClick = (mouseEvent: any) => {
   const rawId = String(mouseEvent.node.id);
   openNodeSettings(parseInt(rawId));
   if (!isGroupNodeId(rawId)) openNodeData(parseInt(rawId));
-};
-
-const setNodeTableView = (nodeId: number) => {
-  if (dataPreview.value) {
-    dataPreview.value.downloadData(nodeId);
-  }
 };
 
 // The per-node right-click menu (NodeWrapper) can't reach Canvas-local refs, so
@@ -677,24 +623,6 @@ watch(
 watch(
   () => editorStore.nodeDataOpenRequest.token,
   () => openNodeData(editorStore.nodeDataOpenRequest.nodeId),
-);
-
-// Bottom dock tab focus: surface a source when it turns on. The Data tab is
-// always present (it shows a "select a step" placeholder when nothing is loaded),
-// so when Logs closes we fall back to Data. Logs auto-activate on run only when
-// the user's "show logs during execution" preference flips it on.
-watch(
-  () => showTablePreview.value,
-  (now, prev) => {
-    if (now && !prev) bottomActiveTab.value = "data";
-  },
-);
-watch(
-  () => editorStore.isShowingLogViewer,
-  (now, prev) => {
-    if (now && !prev) bottomActiveTab.value = "logs";
-    else if (!now && bottomActiveTab.value === "logs") bottomActiveTab.value = "data";
-  },
 );
 
 const handleNodeChange = async (nodeChangesEvent: any) => {
@@ -1319,21 +1247,6 @@ onMounted(async () => {
     },
   );
 
-  // Bring the AI assistant DraggableItem to the front when the drawer
-  // opens. Replaces the previous `#aiAssistant.overlay { z-index: 245
-  // !important }` CSS hack — that rule clobbered stateStore's
-  // bring-to-front semantics for every other panel. nextTick gives
-  // DraggableItem.onMounted time to register itself with itemStore
-  // before we ask it to bump its zIndex.
-  watch(
-    () => editorStore.isAiOpen,
-    (open) => {
-      if (open) {
-        nextTick().then(() => itemStore.bringToFront("aiAssistant"));
-      }
-    },
-  );
-
   // External-mutation signal — the backend mutated the live flow without
   // going through the in-canvas mutation paths. Triggered today by
   // `useAiDiffStore.accept()` after the apply_diff lands; future
@@ -1447,105 +1360,12 @@ defineExpose({
       >
         <NodeList @dragstart="onDragStart" />
       </draggable-item>
-      <draggable-item
-        v-if="nodeStore.showFlowResult"
-        id="flowresults"
-        :show-right="true"
-        title="flow results"
-        initial-position="right"
-        :initial-width="400"
-        :allow-full-screen="true"
-        group="rightPanels"
-      >
-        <FlowResults :on-click="selectNodeExternally" />
-      </draggable-item>
-      <draggable-item
-        v-if="showTablePreview || editorStore.isShowingLogViewer"
-        id="bottomDock"
-        :show-bottom="true"
-        :allow-full-screen="true"
-        :title="bottomActiveTab === 'logs' ? 'Logs' : 'Data preview'"
-        initial-position="bottom"
-        :on-minize="closeBottomDock"
-        :initial-height="tablePreviewHeight"
-        :initial-left="180"
-      >
-        <div class="bottom-dock">
-          <div class="bottom-dock-tabs">
-            <button
-              class="preview-tab"
-              :class="{ active: bottomActiveTab === 'data' }"
-              @click="bottomActiveTab = 'data'"
-            >
-              Data
-            </button>
-            <button
-              v-if="editorStore.isShowingLogViewer"
-              class="preview-tab"
-              :class="{ active: bottomActiveTab === 'logs' }"
-              @click="bottomActiveTab = 'logs'"
-            >
-              Logs
-            </button>
-          </div>
-          <div class="bottom-dock-body">
-            <!-- Wrapper divs are required: DataPreview/LogViewer must keep their
-                 state across tab switches (v-show, not v-if), but DataPreview has
-                 a multi-root template so v-show can't bind to it directly. -->
-            <div v-show="bottomActiveTab === 'data'" class="bottom-dock-pane">
-              <data-preview v-if="showTablePreview" ref="dataPreview" />
-              <div v-else class="bottom-dock-empty">
-                <span class="material-icons bottom-dock-empty-icon">ads_click</span>
-                <p>Select a step to observe the data</p>
-              </div>
-            </div>
-            <div
-              v-if="editorStore.isShowingLogViewer"
-              v-show="bottomActiveTab === 'logs'"
-              class="bottom-dock-pane"
-            >
-              <LogViewer />
-            </div>
-          </div>
-        </div>
-      </draggable-item>
-      <draggable-item
-        v-if="nodeStore.isDrawerOpen"
-        id="nodeSettings"
-        :show-right="true"
-        initial-position="right"
-        :initial-width="600"
-        :initial-height="nodeSettingsHeight"
-        title="Node Settings"
-        :on-minize="handleNodeSettingsClose"
-        :allow-full-screen="true"
-      >
-        <NodeSettingsDrawer />
-      </draggable-item>
-      <draggable-item
-        v-if="nodeStore.showCodeGenerator"
-        id="generatedCode"
-        :show-left="true"
-        :initial-width="800"
-        initial-position="right"
-        :allow-free-move="true"
-        :allow-full-screen="true"
-        :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
-      >
-        <CodeGenerator />
-      </draggable-item>
-      <draggable-item
-        v-if="editorStore.isAiOpen"
-        id="aiAssistant"
-        :show-right="true"
-        initial-position="right"
-        :initial-width="600"
-        title="AI Assistant"
-        :on-minize="editorStore.closeAiDrawer"
-        :allow-full-screen="true"
-      >
-        <AiAssistant />
-      </draggable-item>
+      <TabbedDrawer
+        v-for="d in drawers"
+        :key="d.id"
+        :def="d"
+        :height-override="d.id === 'bottomDock' ? tablePreviewHeight : undefined"
+      />
       <AiCommandPalette />
       <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
     </main>
@@ -1698,72 +1518,5 @@ main {
   flex-grow: 1;
   position: relative;
   overflow: hidden;
-}
-
-/* Merged bottom dock (Data preview + Logs). Reuses the global .preview-tab
-   styling from dataPreview.vue as a minimal, VS Code-like tab strip. */
-.bottom-dock {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  width: 100%;
-}
-
-.bottom-dock-tabs {
-  display: flex;
-  gap: 0;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--color-border-primary);
-  background: var(--color-background-secondary);
-}
-
-.bottom-dock-tabs .preview-tab {
-  padding: 5px 14px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.bottom-dock-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Each pane fills the body; the inactive one is hidden via v-show (display:none).
-   The wrapper is what v-show toggles, so component state survives the switch. */
-.bottom-dock-pane {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.bottom-dock-pane > * {
-  flex: 1;
-  min-height: 0;
-}
-
-/* Placeholder shown in the Data tab when no step is selected. */
-.bottom-dock-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: var(--color-background-primary);
-  color: var(--color-text-tertiary, var(--color-text-secondary));
-}
-
-.bottom-dock-empty-icon {
-  font-size: 30px;
-  opacity: 0.55;
-}
-
-.bottom-dock-empty p {
-  margin: 0;
-  font-size: 13px;
 }
 </style>

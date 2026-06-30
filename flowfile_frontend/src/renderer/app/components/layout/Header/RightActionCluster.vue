@@ -46,7 +46,7 @@ const toggleResults = (): void => {
   editorStore.isShowingLogViewer = editorStore.showFlowResult;
   if (editorStore.isShowingLogViewer) {
     draggableItemStore.bringToFront("bottomDock");
-    draggableItemStore.bringToFront("flowresults");
+    draggableItemStore.bringToFront("rightDrawer");
   }
 };
 

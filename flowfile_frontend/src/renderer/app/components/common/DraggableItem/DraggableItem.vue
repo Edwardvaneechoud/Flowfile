@@ -81,11 +81,20 @@
       >
         <span class="icon">❐</span>
       </button>
-      <slot name="header-title">
-        <span class="group-badge" @mousedown="startMove">
-          {{ title }}
-        </span>
-      </slot>
+      <div v-if="tabs.length" class="dragitem-tabs" @mousedown.stop>
+        <button
+          v-for="t in tabs"
+          :key="t.id"
+          class="dragitem-tab"
+          :class="{ active: t.id === activeTab }"
+          @click="emit('update:activeTab', t.id)"
+        >
+          {{ t.label }}
+        </button>
+      </div>
+      <div v-else-if="title" class="dragitem-tabs" @mousedown="startMove">
+        <span class="dragitem-tab dragitem-tab--static active">{{ title }}</span>
+      </div>
     </div>
 
     <div class="content" @click="registerClick">
@@ -212,7 +221,19 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  // Tab strip rendered in the header. Empty ⇒ the `title` shows as a single
+  // static tab (so every panel header looks the same).
+  tabs: {
+    type: Array as () => { id: string; label: string }[],
+    default: () => [],
+  },
+  activeTab: {
+    type: String,
+    default: "",
+  },
 });
+
+const emit = defineEmits(["update:activeTab"]);
 
 const itemStore = useItemStore();
 const itemState = ref(
@@ -706,8 +727,14 @@ const applyStickyPosition = () => {
     case "free":
     default: {
       if (prevContainerWidth.value > 0 && prevContainerHeight.value > 0) {
-        const wasRightAligned = itemState.value.left > prevContainerWidth.value / 2;
-        const wasBottomAligned = itemState.value.top > prevContainerHeight.value / 2;
+        // Use the panel's CENTER, not its top-left corner, to decide alignment.
+        // A wide panel docked right (left ≈ half the canvas) would otherwise fail
+        // the `left > width/2` test and stop following the right edge as the
+        // canvas grows — leaving it stranded "in the middle".
+        const wasRightAligned =
+          itemState.value.left + itemState.value.width / 2 > prevContainerWidth.value / 2;
+        const wasBottomAligned =
+          itemState.value.top + effHeight / 2 > prevContainerHeight.value / 2;
 
         if (wasRightAligned) {
           const distanceFromRight =
@@ -1014,6 +1041,46 @@ onBeforeUnmount(() => {
   margin-right: 4px;
   cursor: pointer;
   transition: background-color 0.2s;
+  user-select: none;
+}
+
+/* VS Code-style tab strip in the header. `align-self: stretch` + negative
+   vertical margin makes the tabs fill the 35px header so the active underline
+   meets the header's bottom border. Used for both multi-tab and single-title. */
+.dragitem-tabs {
+  display: flex;
+  align-self: stretch;
+  margin: -4px 0 -4px 4px;
+}
+.dragitem-tab {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+button.dragitem-tab:hover {
+  color: var(--color-text-primary);
+  background: var(--color-background-hover);
+}
+.dragitem-tab.active {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-accent);
+}
+.dragitem-tab--static {
+  cursor: move;
   user-select: none;
 }
 .title-text {

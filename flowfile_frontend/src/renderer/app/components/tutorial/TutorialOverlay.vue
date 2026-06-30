@@ -147,7 +147,7 @@ function checkForNodeSettings() {
   if (!tutorialStore.isActive) return;
 
   const currentStepId = tutorialStore.currentStep?.id;
-  const nodeSettings = document.querySelector("#nodeSettings");
+  const nodeSettings = document.querySelector("#rightDrawer");
   const nodeSettingsIsVisible = nodeSettings !== null;
 
   if (

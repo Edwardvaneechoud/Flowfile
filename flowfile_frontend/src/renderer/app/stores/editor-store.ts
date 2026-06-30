@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import { ref, shallowRef } from "vue";
 import type { Component } from "vue";
 import type { NodeTitleInfo } from "../types";
+import { useDrawerStore } from "./drawer-store";
 
 export const useEditorStore = defineStore("editor", {
   state: () => ({
@@ -222,6 +223,7 @@ export const useEditorStore = defineStore("editor", {
       this.isShowingLogViewer = false;
       this.tableVisible = false;
       this.isAiOpen = false;
+      useDrawerStore().clearPreview();
     },
   },
 });

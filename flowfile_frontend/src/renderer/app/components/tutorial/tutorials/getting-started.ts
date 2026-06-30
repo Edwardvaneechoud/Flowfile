@@ -144,10 +144,10 @@ export const gettingStartedTutorial: Tutorial = {
         </div>
         <p style="font-size: 12px; color: var(--color-text-secondary);">Or manually add columns (country, product, revenue) and rows. Make sure to change the data type of revenue to "integer".</p>
       `,
-      target: "#nodeSettings",
+      target: "#rightDrawer",
       position: "left",
       action: "observe",
-      waitForElement: "#nodeSettings",
+      waitForElement: "#rightDrawer",
       showNextButton: true,
       highlightPadding: 4,
       onExit: () => {
