@@ -85,7 +85,7 @@ const onMinimize = () => props.def.onMinimize?.(ctx);
     :allow-full-screen="def.allowFullScreen ?? true"
     :tabs="tabDefs"
     :active-tab="activeTabId"
-    :on-minize="onMinimize"
+    :on-minimize="onMinimize"
     @update:active-tab="activeTabId = $event"
   >
     <div class="tabbed-drawer-body">

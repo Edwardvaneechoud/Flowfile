@@ -45,8 +45,10 @@ export const drawers: DrawerDef[] = [
         id: "code",
         label: "Code",
         component: markRaw(CodeGenerator),
-        // Always available as a tab; focuses on Ctrl+G. `active` lets it defer
-        // CodeMirror creation until visible (it breaks if built while hidden).
+        // visibleWhen is always-true, so this tab never "appears" and the
+        // auto-focus watcher can't focus it — focusWhen is what grabs Ctrl+G
+        // focus (don't remove it). `active` defers CodeMirror creation until
+        // visible (it breaks if built while hidden).
         visibleWhen: () => true,
         focusWhen: ({ editor }) => editor.showCodeGenerator,
         props: ({ drawer }) => ({ active: drawer.activeTab["rightDrawer"] === "code" }),
@@ -89,6 +91,9 @@ export const drawers: DrawerDef[] = [
         props: ({ drawer }) => ({
           nodeId: drawer.previewNodeId,
           refreshToken: drawer.previewRefreshToken,
+          // Gate the fetch to when the Data tab is actually shown (mirrors the
+          // Code tab's `active`). undefined activeTab => default first tab "data".
+          active: (drawer.activeTab["bottomDock"] ?? "data") === "data",
         }),
       },
       {

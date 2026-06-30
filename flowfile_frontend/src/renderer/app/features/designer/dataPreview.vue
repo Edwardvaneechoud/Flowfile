@@ -163,6 +163,7 @@
 //   - DataTabs.vue, OutputSelector.vue, ArtifactsPanel.vue
 //   - useTableData composable: AG Grid setup + refresh
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
+import debounce from "lodash/debounce";
 import { TableExample } from "../../components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -227,6 +228,8 @@ interface Props {
   nodeId?: number | null;
   // Bump to force a re-fetch of the same node (e.g. re-clicking an empty node).
   refreshToken?: number;
+  // Only fetch while the Data tab is actually shown (the host gates this).
+  active?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -235,6 +238,7 @@ const props = withDefaults(defineProps<Props>(), {
   flowId: undefined,
   nodeId: null,
   refreshToken: 0,
+  active: true,
 });
 
 // Use the flow execution composable with persistent polling for node fetches.
@@ -434,13 +438,19 @@ function removeData() {
   currentNodeId.value = null;
 }
 
-// Reactive entry point: the host binds :node-id / :refresh-token and we load (or
-// clear) accordingly. immediate so the first mount loads without an imperative call.
+// Reactive entry point: the host binds :node-id / :refresh-token / :active and we
+// load (or clear) accordingly. Debounced so rapid node clicks coalesce into one
+// fetch; gated on `active` so we don't fetch while another tab (e.g. Logs) is shown.
+const debouncedDownload = debounce((id: number) => downloadData(id), 150);
 watch(
-  () => [props.nodeId, props.refreshToken] as const,
+  () => [props.nodeId, props.refreshToken, props.active] as const,
   () => {
-    if (props.nodeId == null) removeData();
-    else downloadData(props.nodeId);
+    if (props.nodeId == null) {
+      debouncedDownload.cancel();
+      removeData();
+      return;
+    }
+    if (props.active) debouncedDownload(props.nodeId);
   },
   { immediate: true },
 );
@@ -498,9 +508,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener("resize", calculateGridHeight);
   window.removeEventListener("keydown", windowKeyHandler);
+  debouncedDownload.cancel();
 });
-
-defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 </script>
 
 <style>

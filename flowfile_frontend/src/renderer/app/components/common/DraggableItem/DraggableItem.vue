@@ -201,7 +201,7 @@ const props = defineProps({
     type: String,
     default: "",
   },
-  onMinize: {
+  onMinimize: {
     type: Function,
     default: null,
   },
@@ -359,8 +359,8 @@ const loadPositionAndSize = () => {
 };
 
 const toggleMinimize = () => {
-  if (!isMinimized.value && props.onMinize) {
-    props.onMinize();
+  if (!isMinimized.value && props.onMinimize) {
+    props.onMinimize();
   }
   isMinimized.value = !isMinimized.value;
 };
