@@ -14,7 +14,7 @@ from pathlib import Path
 
 import polars as pl
 
-from shared.delta_utils import validate_catalog_path
+from shared.delta_utils import validate_catalog_path, validate_catalog_uri
 from shared.storage_config import storage
 
 
@@ -26,8 +26,19 @@ def _virtual_results_path(name: str) -> Path:
     return validate_catalog_path(name, storage.catalog_virtual_results_directory)
 
 
-def open_catalog_table(name: str) -> pl.LazyFrame:
-    """Open a materialised catalog table by bare directory name."""
+def open_catalog_table(
+    name: str,
+    *,
+    base_uri: str | None = None,
+    storage_options: dict[str, str] | None = None,
+) -> pl.LazyFrame:
+    """Open a materialised catalog table by bare directory name.
+
+    Local by default; when *base_uri* is set the name is joined onto it (same guards) and
+    scanned from object storage with *storage_options*.
+    """
+    if base_uri is not None:
+        return pl.scan_delta(validate_catalog_uri(name, base_uri), storage_options=storage_options)
     return pl.scan_delta(str(_catalog_path(name)))
 
 

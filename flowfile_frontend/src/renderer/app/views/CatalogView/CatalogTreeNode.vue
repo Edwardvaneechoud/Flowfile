@@ -1,9 +1,14 @@
 <template>
   <div class="tree-node">
-    <div class="tree-row" :class="{ expanded }" @click="toggle">
+    <div
+      class="tree-row"
+      :class="{ expanded, selected: node.level === 0 && node.id === selectedNamespaceId }"
+      @click="onRowClick"
+    >
       <i
         :class="expanded ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'"
         class="chevron"
+        @click.stop="toggle"
       ></i>
       <i
         :class="node.level === 0 ? 'fa-solid fa-box-archive' : 'fa-solid fa-layer-group'"
@@ -11,6 +16,11 @@
       ></i>
       <span class="ns-name">{{ node.name }}</span>
       <SharedBadge :access="node.access" />
+      <CatalogStorageBadge
+        v-if="node.level === 0"
+        :storage-uri="node.storage_uri"
+        :connection-name="node.storage_connection_name"
+      />
       <span v-if="totalFlows > 0" class="ns-count">{{ totalFlows }}</span>
       <div class="tree-actions" @click.stop>
         <button
@@ -303,6 +313,7 @@ import type { GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import CatalogStorageBadge from "./CatalogStorageBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const { isMultiUser, isOwned } = useResourceSharing();
@@ -321,19 +332,22 @@ const props = withDefaults(
     selectedFlowId: number | null;
     selectedArtifactId: number | null;
     selectedTableId: number | null;
+    selectedNamespaceId?: number | null;
     searchQuery?: string;
     showUnavailable?: boolean;
   }>(),
   {
+    selectedNamespaceId: null,
     searchQuery: "",
     showUnavailable: false,
   },
 );
 
-defineEmits([
+const emit = defineEmits([
   "selectFlow",
   "selectArtifact",
   "selectTable",
+  "selectNamespace",
   "tableContextMenu",
   "artifactContextMenu",
   "flowContextMenu",
@@ -444,6 +458,13 @@ const toggle = () => {
   expanded.value = !expanded.value;
 };
 
+// Catalog (level 0): row click opens its settings panel; the chevron toggles expand.
+// Schema (level 1): row click keeps the toggle behavior.
+const onRowClick = () => {
+  if (props.node.level === 0) emit("selectNamespace", props.node.id);
+  else toggle();
+};
+
 // Sections inside system namespaces stay collapsed by default; the default
 // schema and user-created namespaces open fully uncollapsed.
 const sectionsDefaultExpanded = computed(() => !SYSTEM_NAMESPACE_NAMES.has(props.node.name));
@@ -541,6 +562,10 @@ const totalFlows = computed(() => {
 
 .tree-row:hover {
   background: var(--color-background-hover);
+}
+
+.tree-row.selected {
+  background: var(--color-primary-light, rgba(59, 130, 246, 0.1));
 }
 
 .chevron {

@@ -275,11 +275,14 @@ def trigger_write_output(
 def trigger_catalog_materialize(
     source_file_path: str,
     table_name: str | None = None,
+    storage: dict | None = None,
 ):
     payload = {
         "source_file_path": source_file_path,
         "table_name": table_name,
     }
+    if storage is not None:
+        payload["storage"] = storage
     response = requests.post(f"{WORKER_URL}/catalog/materialize", json=payload)
     return response
 
@@ -313,17 +316,21 @@ def trigger_sql_query(
     tables: dict[str, str],
     max_rows: int = 10_000,
     virtual_refs: dict[str, str] | None = None,
+    storage: dict | None = None,
 ) -> dict:
     """Ask the worker to execute a SQL query against catalog tables.
 
     *tables* is a mapping of logical table name -> directory name.
     *virtual_refs* is an optional mapping of virtual table name -> bare IPC
     filename under the worker's catalog_virtual_results directory.
+    *storage* (when set) routes the physical-table scans to object storage.
     Returns the parsed JSON response dict.
     """
     payload: dict = {"query": query, "tables": tables, "max_rows": max_rows}
     if virtual_refs:
         payload["virtual_refs"] = virtual_refs
+    if storage is not None:
+        payload["storage"] = storage
     response = requests.post(f"{WORKER_URL}/catalog/sql_query", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker SQL query execution failed: {response.text}")
@@ -441,15 +448,17 @@ def trigger_visualize_evict(session_key: str) -> None:
         raise RuntimeError(f"Worker visualize_evict failed: {response.text}")
 
 
-def trigger_read_table_metadata(table_name: str) -> dict:
+def trigger_read_table_metadata(table_name: str, storage: dict | None = None) -> dict:
     """Ask the worker to read table metadata (schema, row_count, size_bytes).
 
     *table_name* is the bare directory name inside the catalog tables
-    directory (no path separators).
+    directory (no path separators). *storage* (when set) reads from object storage.
 
     Returns the parsed JSON dict on success, raises on failure.
     """
     payload = {"table_path": table_name}
+    if storage is not None:
+        payload["storage"] = storage
     response = requests.post(f"{WORKER_URL}/catalog/table_metadata", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker table metadata read failed: {response.text}")
@@ -459,12 +468,16 @@ def trigger_read_table_metadata(table_name: str) -> dict:
 def trigger_delta_history(
     table_name: str,
     limit: int | None = None,
+    storage: dict | None = None,
 ) -> DeltaTableHistory:
     """Ask the worker to read Delta table version history.
 
     *table_name* is the bare directory name inside the catalog tables directory.
+    *storage* (when set) reads from object storage.
     """
     payload = {"table_path": table_name, "limit": limit}
+    if storage is not None:
+        payload["storage"] = storage
     response = requests.post(f"{WORKER_URL}/catalog/delta_history", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta history read failed: {response.text}")
@@ -475,27 +488,54 @@ def trigger_delta_version_preview(
     table_name: str,
     version: int,
     n_rows: int = 100,
+    storage: dict | None = None,
 ) -> CatalogTablePreview:
     """Ask the worker to preview a Delta table at a specific version.
 
     *table_name* is the bare directory name inside the catalog tables directory.
+    *storage* (when set) reads from object storage.
     """
     payload = {"table_path": table_name, "version": version, "n_rows": n_rows}
+    if storage is not None:
+        payload["storage"] = storage
     response = requests.post(f"{WORKER_URL}/catalog/delta_version_preview", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta version preview failed: {response.text}")
     return CatalogTablePreview.model_validate(response.json())
 
 
+def trigger_delta_preview(
+    table_name: str,
+    n_rows: int = 100,
+    storage: dict | None = None,
+) -> CatalogTablePreview:
+    """Ask the worker to preview a Delta table (latest version).
+
+    *table_name* is the bare directory name inside the catalog tables directory.
+    *storage* (when set) reads from object storage.
+    """
+    payload = {"table_path": table_name, "n_rows": n_rows}
+    if storage is not None:
+        payload["storage"] = storage
+    response = requests.post(f"{WORKER_URL}/catalog/delta_preview", json=payload)
+    if not response.ok:
+        raise RuntimeError(f"Worker delta preview failed: {response.text}")
+    return CatalogTablePreview.model_validate(response.json())
+
+
 def trigger_optimize_catalog_table(
     table_name: str,
     z_order_columns: list[str] | None = None,
+    storage: dict | None = None,
 ) -> dict:
     """Ask the worker to optimize (compact / Z-order) a Delta catalog table.
 
     *table_name* is the bare directory name inside the catalog tables directory.
+    *storage* (when set) optimizes the table in object storage.
     """
     payload = {"table_path": table_name, "z_order_columns": z_order_columns}
+    if storage is not None:
+        payload["storage"] = storage
     response = requests.post(f"{WORKER_URL}/catalog/optimize", json=payload, timeout=600)
     if not response.ok:
         raise RuntimeError(f"Worker optimize failed: {response.text}")
@@ -506,12 +546,16 @@ def trigger_vacuum_catalog_table(
     table_name: str,
     retention_hours: int = 168,
     dry_run: bool = True,
+    storage: dict | None = None,
 ) -> dict:
     """Ask the worker to vacuum tombstoned files from a Delta catalog table.
 
     *table_name* is the bare directory name inside the catalog tables directory.
+    *storage* (when set) vacuums the table in object storage.
     """
     payload = {"table_path": table_name, "retention_hours": retention_hours, "dry_run": dry_run}
+    if storage is not None:
+        payload["storage"] = storage
     response = requests.post(f"{WORKER_URL}/catalog/vacuum", json=payload, timeout=600)
     if not response.ok:
         raise RuntimeError(f"Worker vacuum failed: {response.text}")

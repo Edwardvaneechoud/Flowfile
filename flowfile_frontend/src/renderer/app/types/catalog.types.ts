@@ -14,6 +14,9 @@ export interface CatalogNamespace {
   owner_id: number;
   created_at: string;
   updated_at: string;
+  // Per-catalog object storage (level 0 only; schemas inherit). null ⇒ local filesystem.
+  storage_uri?: string | null;
+  storage_connection_name?: string | null;
   access?: AccessInfo | null;
 }
 
@@ -59,6 +62,9 @@ export interface NamespaceCreate {
   name: string;
   parent_id?: number | null;
   description?: string | null;
+  // Object storage for a new catalog (level 0 only); set both together or neither.
+  storage_uri?: string | null;
+  storage_connection_name?: string | null;
 }
 
 export interface NamespaceUpdate {
@@ -189,6 +195,8 @@ export interface CatalogTable {
   description: string | null;
   owner_id: number;
   file_exists: boolean;
+  // True when the table's data lives in object storage; preview/history load on demand.
+  is_remote_storage: boolean;
   is_favorite: boolean;
   schema_columns: ColumnSchema[];
   row_count: number | null;

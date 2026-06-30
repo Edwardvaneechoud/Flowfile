@@ -29,13 +29,14 @@ from flowfile_core.catalog.repository import CatalogRepository
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.access import AccessResolver
+    from flowfile_core.catalog.storage_backend import CatalogStorageTarget
 from flowfile_core.catalog.serializers import (
     VizEnrichment,
     format_pyarrow_preview,
 )
 from flowfile_core.catalog.services.engagement import FlowEngagementService
 from flowfile_core.catalog.services.flows import FlowRegistrationService
-from flowfile_core.catalog.services.namespaces import NamespaceService
+from flowfile_core.catalog.services.namespaces import STORAGE_UNSET, NamespaceService
 from flowfile_core.catalog.services.notebooks import NotebookService
 from flowfile_core.catalog.services.previews import TablePreviewService
 from flowfile_core.catalog.services.runs import FlowRunService
@@ -208,6 +209,14 @@ class CatalogService:
         public, owned, or manage-granted. A use-level grant is read-only."""
         if self._restricted and namespace_id is not None and namespace_id not in self.access.writable_namespace_ids():
             raise NotAuthorizedError(self.access.user_id or -1, "create items in this namespace")
+
+    def _require_namespace_owner(self, namespace_id: int, action: str) -> None:
+        """Owner-only (or admin) gate. ``_restricted`` is False for admins / electron / internal."""
+        if not self._restricted:
+            return
+        ns = self.repo.get_namespace(namespace_id)
+        if ns is None or ns.owner_id != self.access.user_id:
+            raise NotAuthorizedError(self.access.user_id or -1, f"{action} this catalog")
 
     def _require_use_run(self, run_id: int) -> None:
         """A run is accessible to its actor or to anyone who can use its flow."""
@@ -424,20 +433,40 @@ class CatalogService:
         owner_id: int,
         parent_id: int | None = None,
         description: str | None = None,
+        storage_uri: str | None = None,
+        storage_connection_name: str | None = None,
     ) -> CatalogNamespace:
         """Create a catalog (level 0) or schema (level 1) namespace."""
         self._require_namespace_writable(parent_id)
-        return self._namespaces.create_namespace(name, owner_id, parent_id, description)
+        return self._namespaces.create_namespace(
+            name,
+            owner_id,
+            parent_id,
+            description,
+            storage_uri=storage_uri,
+            storage_connection_name=storage_connection_name,
+        )
 
     def update_namespace(
         self,
         namespace_id: int,
         name: str | None = None,
         description: str | None = None,
+        storage_uri: str | None | object = STORAGE_UNSET,
+        storage_connection_name: str | None | object = STORAGE_UNSET,
     ) -> CatalogNamespace:
-        """Update a namespace's name and/or description."""
+        """Update a namespace's name/description and (catalog-level only) its per-catalog storage."""
         self._require_manage("catalog_namespace", namespace_id)
-        return self._namespaces.update_namespace(namespace_id, name, description)
+        if storage_uri is not STORAGE_UNSET or storage_connection_name is not STORAGE_UNSET:
+            # Only the owner (or admin) may change storage, even with a manage grant (anti-repoint).
+            self._require_namespace_owner(namespace_id, "change storage for")
+        return self._namespaces.update_namespace(
+            namespace_id,
+            name,
+            description,
+            storage_uri=storage_uri,
+            storage_connection_name=storage_connection_name,
+        )
 
     def delete_namespace(self, namespace_id: int) -> None:
         """Delete a namespace if it has no children, flows or tables."""
@@ -519,12 +548,7 @@ class CatalogService:
             node.children = [c for c in (_prune(child) for child in node.children) if c is not None]
             self._stamp_access([node], "catalog_namespace", details["catalog_namespace"])
             has_items = bool(
-                node.flows
-                or node.tables
-                or node.visualizations
-                or node.notebooks
-                or node.artifacts
-                or node.children
+                node.flows or node.tables or node.visualizations or node.notebooks or node.artifacts or node.children
             )
             if node.id in visible_ns:
                 return node
@@ -905,10 +929,10 @@ class CatalogService:
         table_name: str,
         namespace_id: int | None,
         write_mode: str,
-        catalog_dir: Path,
-    ) -> tuple[CatalogTable | None, Path, str]:
-        """Resolve the destination path and Delta write mode for a catalog write."""
-        return self._tables.resolve_write_destination(table_name, namespace_id, write_mode, catalog_dir)
+        target: CatalogStorageTarget,
+    ) -> tuple[CatalogTable | None, str, str]:
+        """Resolve the destination (local path or object-storage URI) and Delta write mode."""
+        return self._tables.resolve_write_destination(table_name, namespace_id, write_mode, target)
 
     def resolve_table_file_path(
         self,
@@ -1277,7 +1301,8 @@ class CatalogService:
     # ------------------------------------------------------------------ #
 
     def resolve_all_delta_tables(self) -> dict[str, str]:
-        """Return a mapping of logical table name → directory name for all Delta catalog tables."""
+        """Return a mapping of logical table name → directory name for LOCAL Delta catalog tables
+        (object-storage tables are excluded)."""
         return self._virtual_tables.resolve_all_delta_tables()
 
     def resolve_all_queryable_tables(self) -> tuple[dict[str, str], dict[str, int]]:

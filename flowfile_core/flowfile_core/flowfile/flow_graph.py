@@ -23,6 +23,7 @@ from flowfile_core.auth import sharing
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import check_source_versions_current, delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
 from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
@@ -382,7 +383,12 @@ def _resolve_virtual_table(
     grants are enforced during flow execution, not just on the API path. ``None``
     means an internal/unscoped run (scheduler, CLI, electron) → unrestricted.
     """
-    if is_optimized and serialized_lf and check_source_versions_current(source_table_versions):
+    if (
+        is_optimized
+        and serialized_lf
+        and not serialized_frame_uses_cloud(serialized_lf)
+        and check_source_versions_current(source_table_versions)
+    ):
         return pl.LazyFrame.deserialize(_io.BytesIO(serialized_lf))
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
@@ -397,6 +403,8 @@ class CatalogSqlTables(NamedTuple):
 
     table_paths: dict[str, str]
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]]
+    # Each physical table's namespace_id, for per-catalog storage resolution.
+    table_namespaces: dict[str, int | None]
 
 
 def ml_flow_model_path(flow_id: int, train_node_id: int | str) -> Path:
@@ -437,6 +445,7 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
     """
     table_paths: dict[str, str] = {}
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]] = {}
+    table_namespaces: dict[str, int | None] = {}
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -460,8 +469,9 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
                         t.id,
                         t.source_table_versions,
                     )
-                elif t.file_path and is_delta_table(Path(t.file_path)):
+                elif t.file_path and (_is_cloud_uri(t.file_path) or is_delta_table(Path(t.file_path))):
                     table_paths[t.name] = t.file_path
+                    table_namespaces[t.name] = t.namespace_id
 
     except Exception:
         logger.warning(
@@ -469,7 +479,7 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
             node_id,
             exc_info=True,
         )
-    return CatalogSqlTables(table_paths=table_paths, virtual_tables=virtual_tables)
+    return CatalogSqlTables(table_paths=table_paths, virtual_tables=virtual_tables, table_namespaces=table_namespaces)
 
 
 class CatalogTableInfo(NamedTuple):
@@ -548,6 +558,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                 else:
                     file_path = table_record.file_path
             else:
+                resolved_namespace_id = node_catalog_reader.catalog_namespace_id
                 file_path = svc.resolve_table_file_path(
                     table_id=node_catalog_reader.catalog_table_id,
                     table_name=node_catalog_reader.catalog_table_name,
@@ -569,26 +580,40 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
 
 def _write_catalog_delta_local(
     df: FlowDataEngine,
-    dest_path: Path,
+    dest_path: str | Path,
     delta_mode: str,
     merge_keys: list[str] | None,
     partition_by: list[str] | None = None,
+    storage_options: dict[str, str] | None = None,
 ) -> TableWriteMetadata | None:
-    """Write a Delta table locally. Returns metadata dict, or ``None`` when the write was skipped."""
+    """Write a Delta table in-process. Returns metadata dict, or ``None`` when the write was skipped.
+
+    *storage_options* (passed verbatim, ``None`` ⇒ local filesystem) routes the write to object
+    storage so standalone CLI/scheduler runs — which have no worker to offload to — can still write
+    cloud catalog tables. An empty dict means ambient credentials, so it must reach the delta calls
+    as-is (the downstream helpers branch on ``is None``, not truthiness).
+    """
     dest = str(dest_path)
     if delta_mode in ("upsert", "update", "delete"):
         wrote = merge_into_delta(
-            df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=merge_keys, partition_by=partition_by
+            df.data_frame.collect(),
+            dest,
+            merge_mode=delta_mode,
+            merge_keys=merge_keys,
+            partition_by=partition_by,
+            storage_options=storage_options,
         )
     else:
-        wrote = _write_delta(df.data_frame, dest, mode=delta_mode, partition_by=partition_by)
+        wrote = _write_delta(
+            df.data_frame, dest, mode=delta_mode, partition_by=partition_by, storage_options=storage_options
+        )
     if not wrote:
         return None
     return {
         "schema": [{"name": c.column_name, "dtype": c.data_type} for c in df.schema],
         "row_count": df.count(),
         "column_count": df.number_of_fields,
-        "size_bytes": get_delta_size_bytes(dest_path),
+        "size_bytes": get_delta_size_bytes(dest_path, storage_options=storage_options),
     }
 
 
@@ -632,14 +657,23 @@ def _effective_namespace_id(svc: CatalogService, settings) -> int | None:
 
 def _register_catalog_table(
     existing,
-    dest_path: Path,
+    dest_path: str | Path,
     settings: input_schema.CatalogWriteSettings,
     source_registration_id: int | None,
     user_id: int,
     meta_kwargs: TableWriteMetadata,
+    storage_options: dict[str, str] | None = None,
+    is_cloud: bool = False,
 ) -> None:
-    """Register or update the catalog table entry, cleaning up orphaned storage on failure for new tables."""
-    partition_columns = get_delta_partition_columns(dest_path) if is_delta_table(dest_path) else []
+    """Register or update the catalog table entry, cleaning up orphaned storage on failure for new tables.
+
+    For cloud targets *dest_path* is an object-storage URI; local-only probes are skipped
+    and cloud orphans are not auto-cleaned.
+    """
+    if is_cloud:
+        partition_columns = get_delta_partition_columns(dest_path, storage_options=storage_options)
+    else:
+        partition_columns = get_delta_partition_columns(dest_path) if is_delta_table(dest_path) else []
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -667,9 +701,9 @@ def _register_catalog_table(
                     **meta_kwargs,
                 )
     except Exception:
-        if existing is None and dest_path.exists():
+        if existing is None and not is_cloud and Path(dest_path).exists():
             try:
-                delete_table_storage(dest_path)
+                delete_table_storage(Path(dest_path))
             except OSError:
                 logger.warning("Failed to clean up orphan table %s", dest_path, exc_info=True)
         raise
@@ -739,6 +773,47 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
     return json.dumps([v.model_dump() for v in versions])
 
 
+def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
+    """Return ``True`` when any catalog source feeding this flow lives in object storage.
+
+    Such a flow can't cache a serialized plan: it would freeze the source's decrypted cloud
+    credentials. Detection is DB-only (no object-storage I/O).
+    """
+    physical_ids: list[int] = []
+    seen: set[int] = set()
+    for node in graph.nodes:
+        if node.node_type != "catalog_reader":
+            continue
+        setting = node.setting_input
+        if getattr(setting, "sql_query", None):
+            try:
+                resolved = _resolve_catalog_sql_tables(setting.node_id, getattr(setting, "user_id", None))
+                if any(_is_cloud_uri(path) for path in resolved.table_paths.values()):
+                    return True
+            except Exception:
+                logger.warning("Could not resolve catalog SQL sources; treating as cloud", exc_info=True)
+                return True
+            continue
+        table_id = getattr(setting, "catalog_table_id", None)
+        if table_id and table_id not in seen:
+            seen.add(table_id)
+            physical_ids.append(table_id)
+
+    if not physical_ids:
+        return False
+    try:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            for table_id in physical_ids:
+                record = repo.get_table(table_id)
+                if record is not None and record.file_path and _is_cloud_uri(record.file_path):
+                    return True
+    except Exception:
+        logger.warning("Could not determine catalog cloud sources; treating as cloud", exc_info=True)
+        return True
+    return False
+
+
 def _handle_virtual_table_write(
     graph: "FlowGraph",
     node_catalog_writer: input_schema.NodeCatalogWriter,
@@ -777,7 +852,8 @@ def _handle_virtual_table_write(
 
     writer_node = graph.get_node(node_catalog_writer.node_id)
     is_lazy, _reasons = writer_node.check_upstream_laziness()
-    if is_lazy:
+    optimize = is_lazy and not _virtual_sources_use_cloud(graph)
+    if optimize:
         if graph.execution_mode != "performance":
             graph.execution_mode = "performance"
             graph.reset()
@@ -812,7 +888,7 @@ def _handle_virtual_table_write(
                 producer_registration_id=reg_id,
                 description=settings.description,
                 serialized_lazy_frame=serialized_lf,
-                is_optimized=is_lazy,
+                is_optimized=optimize,
                 schema_json=schema_json,
                 polars_plan=polars_plan,
                 source_table_versions=source_table_versions,
@@ -825,7 +901,7 @@ def _handle_virtual_table_write(
                 namespace_id=ns_id,
                 description=settings.description,
                 serialized_lazy_frame=serialized_lf,
-                is_optimized=is_lazy,
+                is_optimized=optimize,
                 schema_json=schema_json,
                 polars_plan=polars_plan,
                 source_table_versions=source_table_versions,
@@ -843,35 +919,54 @@ def _handle_physical_table_write(
 ) -> FlowDataEngine:
     """Handle physical-mode catalog write: materialize data as a Delta table and register it."""
     settings = node_catalog_writer.catalog_write_settings
-
-    catalog_dir = storage.catalog_tables_directory
-    catalog_dir.mkdir(parents=True, exist_ok=True)
+    user_id = node_catalog_writer.user_id or 1
 
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
         svc = CatalogService(repo)
+        namespace_id = _effective_namespace_id(svc, settings)
+        target = resolve_for_namespace(namespace_id, db=db)
+        if not target.is_cloud:
+            Path(target.base).mkdir(parents=True, exist_ok=True)
         existing, dest_path, delta_mode = svc.resolve_write_destination(
             table_name=settings.table_name,
-            namespace_id=_effective_namespace_id(svc, settings),
+            namespace_id=namespace_id,
             write_mode=settings.write_mode,
-            catalog_dir=catalog_dir,
+            target=target,
         )
+
+    # Forward-only: an existing table keeps its own location; the catalog config only steers new tables.
+    dest_is_cloud = _is_cloud_uri(dest_path)
+    if dest_is_cloud:
+        if not target.is_cloud:
+            raise ValueError(
+                f"Catalog table '{settings.table_name}' lives in object storage ({dest_path}) but its "
+                "catalog is not configured for object storage; set the catalog's storage_uri / "
+                "storage_connection_name to write to it."
+            )
+        storage_payload = target.to_worker_payload()
+        storage_options = target.storage_options
+    else:
+        storage_payload = None
+        storage_options = None
 
     if delta_mode in ("upsert", "update", "delete"):
         op_type = "merge_delta"
         op_kwargs = {
-            "output_path": str(dest_path),
+            "output_path": dest_path,
             "merge_mode": delta_mode,
             "merge_keys": settings.merge_keys,
             "partition_by": settings.partition_by,
         }
     else:
         op_type = "write_delta"
-        op_kwargs = {"output_path": str(dest_path), "mode": delta_mode, "partition_by": settings.partition_by}
+        op_kwargs = {"output_path": dest_path, "mode": delta_mode, "partition_by": settings.partition_by}
+    if storage_payload is not None:
+        op_kwargs["storage_payload"] = storage_payload
 
-    if graph.flow_settings.execution_location == "local":
-        meta_kwargs = _write_catalog_delta_local(df, dest_path, delta_mode, settings.merge_keys, settings.partition_by)
-    else:
+    # The write follows execution_location like every other writer node; a cloud destination only
+    # decides whether storage_options are threaded through, it never forces the worker.
+    if graph.flow_settings.execution_location != "local":
         meta_kwargs = _write_catalog_delta_remote(
             flow_id=graph.flow_id,
             node=graph.get_node(node_catalog_writer.node_id),
@@ -879,6 +974,10 @@ def _handle_physical_table_write(
             op_type=op_type,
             op_kwargs=op_kwargs,
             table_name=settings.table_name,
+        )
+    else:
+        meta_kwargs = _write_catalog_delta_local(
+            df, dest_path, delta_mode, settings.merge_keys, settings.partition_by, storage_options=storage_options
         )
 
     if meta_kwargs is None:
@@ -889,8 +988,10 @@ def _handle_physical_table_write(
         dest_path=dest_path,
         settings=settings,
         source_registration_id=graph._flow_settings.source_registration_id,
-        user_id=node_catalog_writer.user_id or 1,
+        user_id=user_id,
         meta_kwargs=meta_kwargs,
+        storage_options=storage_options,
+        is_cloud=dest_is_cloud,
     )
     return df
 
@@ -1892,9 +1993,7 @@ class FlowGraph:
                 artifact_names=result.artifacts_deleted,
             )
 
-        primary_result = read_kernel_outputs(
-            output_dir=output_dir, output_names=output_names, result=result, node=node
-        )
+        primary_result = read_kernel_outputs(output_dir=output_dir, output_names=output_names, result=result, node=node)
 
         if primary_result is not None:
             return primary_result
@@ -3019,9 +3118,7 @@ class FlowGraph:
                 out_type = w.output_type or transform_schema.get_window_output_type(w.function, src_type)
                 if out_type is None:
                     out_type = src_type or "Float64"
-                output_schema.append(
-                    FlowfileColumn.from_input(data_type=out_type, column_name=w.new_column_name)
-                )
+                output_schema.append(FlowfileColumn.from_input(data_type=out_type, column_name=w.new_column_name))
             return output_schema
 
         node.schema_callback = schema_callback
@@ -3503,13 +3600,29 @@ class FlowGraph:
         resolved = _resolve_catalog_sql_tables(node_catalog_reader.node_id, node_catalog_reader.user_id)
         table_paths = resolved.table_paths
         virtual_tables = resolved.virtual_tables
+        table_namespaces = resolved.table_namespaces
+
+        # Resolve cloud storage options per source namespace at wiring time, memoized by namespace_id
+        # (a SQL query can join tables from different catalogs, each with its own storage).
+        storage_options_by_name: dict[str, dict | None] = {}
+        _opts_by_namespace: dict[int | None, dict | None] = {}
+        for _name, _path in table_paths.items():
+            if not _is_cloud_uri(_path):
+                continue
+            _ns = table_namespaces.get(_name)
+            if _ns not in _opts_by_namespace:
+                _opts_by_namespace[_ns] = resolve_for_namespace(_ns).storage_options or None
+            storage_options_by_name[_name] = _opts_by_namespace[_ns]
 
         def _func() -> FlowDataEngine:
             if not table_paths and not virtual_tables:
                 raise ValueError("No catalog tables available to query")
             ctx = pl.SQLContext()
             for name, path in table_paths.items():
-                ctx.register(name, pl.scan_delta(path))
+                if _is_cloud_uri(path):
+                    ctx.register(name, pl.scan_delta(path, storage_options=storage_options_by_name.get(name)))
+                else:
+                    ctx.register(name, pl.scan_delta(path))
             for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
                 ctx.register(
                     name,
@@ -3577,6 +3690,12 @@ class FlowGraph:
         _authorized = info.authorized
         _user_id = node_catalog_reader.user_id
 
+        # Resolve cloud storage options once at wiring time; local tables don't touch the DB.
+        _reader_storage_options = None
+        if resolved_path and _is_cloud_uri(resolved_path):
+            _reader_namespace_id = info.namespace_id or node_catalog_reader.catalog_namespace_id
+            _reader_storage_options = resolve_for_namespace(_reader_namespace_id).storage_options or None
+
         def _func() -> FlowDataEngine:
             if not _authorized:
                 raise PermissionError(
@@ -3597,10 +3716,15 @@ class FlowGraph:
 
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
+            scan_kwargs = {}
+            if delta_version is not None:
+                scan_kwargs["version"] = delta_version
+            if _is_cloud_uri(resolved_path):
+                # Cloud catalog table: scan directly (stays lazy ⇒ no collect in core).
+                return FlowDataEngine(
+                    pl.scan_delta(resolved_path, storage_options=_reader_storage_options, **scan_kwargs)
+                )
             if is_delta_table(resolved_path):
-                scan_kwargs = {}
-                if delta_version is not None:
-                    scan_kwargs["version"] = delta_version
                 return FlowDataEngine(pl.scan_delta(resolved_path, **scan_kwargs))
             return FlowDataEngine(pl.scan_parquet(resolved_path))
 

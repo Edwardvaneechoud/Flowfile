@@ -194,9 +194,29 @@
     </div>
 
     <!-- Version History (physical tables only) -->
-    <div v-if="table.table_type !== 'virtual' && hasHistory" class="section">
-      <h3>Version History</h3>
-      <div class="version-table-wrapper">
+    <div v-if="showVersionHistory" class="section">
+      <div class="section-header">
+        <h3>Version History</h3>
+        <div class="section-header-actions">
+          <span
+            v-if="historyStale"
+            class="history-stale-hint"
+            title="Cached more than 5 minutes ago — refresh to fetch the latest"
+            >may be stale</span
+          >
+          <el-button
+            v-if="hasHistory"
+            text
+            size="small"
+            :loading="loadingTableHistory"
+            title="Fetch latest version history"
+            @click="emit('refreshHistory')"
+          >
+            <i v-if="!loadingTableHistory" class="fa-solid fa-rotate-right"></i>
+          </el-button>
+        </div>
+      </div>
+      <div v-if="hasHistory" class="version-table-wrapper">
         <table class="styled-table version-table">
           <thead>
             <tr>
@@ -248,6 +268,7 @@
           </tbody>
         </table>
       </div>
+      <div v-else class="loading-state">Loading version history…</div>
     </div>
 
     <!-- Read by Flows Modal -->
@@ -335,6 +356,9 @@
         This is a virtual table, no data preview available. Use the SQL editor or a flow to view the
         data.
       </div>
+      <div v-else-if="table.is_remote_storage && !preview" class="empty-state">
+        <el-button size="small" type="primary" @click="emit('loadPreview')">Load preview</el-button>
+      </div>
       <div v-else class="empty-state">No data to preview.</div>
     </div>
 
@@ -366,6 +390,8 @@ const props = defineProps<{
   preview: CatalogTablePreview | null;
   loadingPreview: boolean;
   tableHistory: DeltaTableHistory | null;
+  loadingTableHistory: boolean;
+  tableHistoryStale: boolean;
   selectedVersion: number | null;
 }>();
 
@@ -377,9 +403,18 @@ const emit = defineEmits([
   "selectVersion",
   "queryTable",
   "recoverFromRun",
+  "loadPreview",
+  "refreshHistory",
 ]);
 
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
+
+// Show the Version History section when there's history (cached or freshly loaded) or while it loads.
+const showVersionHistory = computed(
+  () => props.table.table_type !== "virtual" && (!!hasHistory.value || props.loadingTableHistory),
+);
+
+const historyStale = computed(() => !!hasHistory.value && props.tableHistoryStale);
 
 const isViewingHistorical = computed(
   () =>
@@ -711,6 +746,19 @@ function formatCell(value: any): string {
 }
 
 /* ========== Version History ========== */
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-stale-hint {
+  font-size: 0.7rem;
+  font-style: italic;
+  color: var(--color-text-secondary, #9ca3af);
+  opacity: 0.7;
+}
+
 .version-table-wrapper {
   max-height: 240px;
   overflow-y: auto;
