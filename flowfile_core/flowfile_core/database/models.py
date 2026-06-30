@@ -521,7 +521,10 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     # Virtual Table fields (NULL for physical tables)
     table_type = Column(String, nullable=False, default="physical", server_default="physical")
     producer_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
-    serialized_lazy_frame = Column(LargeBinary, nullable=True)  #  TODO Should be hashed
+    # Cached plan for optimized virtual tables. Only local, secret-free plans are stored here:
+    # object-storage sources are excluded at write time (a serialized cloud scan embeds decrypted
+    # credentials), and any cloud-tainted blob is refused on read (serialized_frame_uses_cloud).
+    serialized_lazy_frame = Column(LargeBinary, nullable=True)
     is_optimized = Column(Boolean, nullable=True, default=False)
     sql_query = Column(Text, nullable=True)  # SQL definition for query-based virtual tables
     polars_plan = Column(Text, nullable=True)  # Polars explain() plan for optimized virtual tables

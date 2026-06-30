@@ -23,11 +23,25 @@ from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnecti
 from shared.storage_config import storage
 
 _CLOUD_URI_SCHEMES = ("s3://", "s3a://", "az://", "abfs://", "abfss://", "adl://", "gs://", "gcs://")
+_CLOUD_URI_SCHEME_BYTES = tuple(s.encode() for s in _CLOUD_URI_SCHEMES)
 
 
 def _is_cloud_uri(value: str) -> bool:
     """Return ``True`` when *value* is an object-storage URI rather than a local path."""
     return value.startswith(_CLOUD_URI_SCHEMES)
+
+
+def serialized_frame_uses_cloud(blob: bytes | None) -> bool:
+    """Return ``True`` when a serialized Polars LazyFrame embeds an object-storage scan.
+
+    Polars serializes a scan's ``storage_options`` inline, so a cloud scan in the plan means
+    the blob also carries that source's decrypted credentials. Such a blob must never be
+    deserialized/replayed — the producer flow is re-run instead, resolving credentials fresh.
+    Gates the optimized virtual-table cache on both the write and read paths.
+    """
+    if not blob:
+        return False
+    return any(scheme in blob for scheme in _CLOUD_URI_SCHEME_BYTES)
 
 
 def join_catalog_uri(base: str, dir_name: str) -> str:

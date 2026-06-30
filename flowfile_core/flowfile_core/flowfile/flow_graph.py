@@ -23,7 +23,7 @@ from flowfile_core.auth import sharing
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import check_source_versions_current, delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace
+from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
 from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
@@ -383,7 +383,12 @@ def _resolve_virtual_table(
     grants are enforced during flow execution, not just on the API path. ``None``
     means an internal/unscoped run (scheduler, CLI, electron) → unrestricted.
     """
-    if is_optimized and serialized_lf and check_source_versions_current(source_table_versions):
+    if (
+        is_optimized
+        and serialized_lf
+        and not serialized_frame_uses_cloud(serialized_lf)
+        and check_source_versions_current(source_table_versions)
+    ):
         return pl.LazyFrame.deserialize(_io.BytesIO(serialized_lf))
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
@@ -755,6 +760,50 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
     return json.dumps([v.model_dump() for v in versions])
 
 
+def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
+    """Return ``True`` when any catalog source feeding this flow lives in object storage.
+
+    A virtual table built over an object-storage source must not cache a serialized
+    LazyFrame: the plan embeds the source's decrypted cloud credentials (frozen, stale on
+    rotation, and a secret-at-rest leak). Such tables re-run the producer flow on read
+    instead, re-resolving credentials fresh. Cloud-backed *virtual* sources are already
+    excluded upstream (they are non-optimized, which blocks laziness ⇒ no serialize), so
+    only physical cloud reads — directly or via a catalog SQL reader — need detecting here.
+    Detection is DB-only (no object-storage I/O) so it can run before the explain/serialize.
+    """
+    physical_ids: list[int] = []
+    seen: set[int] = set()
+    for node in graph.nodes:
+        if node.node_type != "catalog_reader":
+            continue
+        setting = node.setting_input
+        if getattr(setting, "sql_query", None):
+            try:
+                resolved = _resolve_catalog_sql_tables(setting.node_id, getattr(setting, "user_id", None))
+                if any(_is_cloud_uri(path) for path in resolved.table_paths.values()):
+                    return True
+            except Exception:
+                logger.warning("Could not resolve catalog SQL sources for cloud check", exc_info=True)
+            continue
+        table_id = getattr(setting, "catalog_table_id", None)
+        if table_id and table_id not in seen:
+            seen.add(table_id)
+            physical_ids.append(table_id)
+
+    if not physical_ids:
+        return False
+    try:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            for table_id in physical_ids:
+                record = repo.get_table(table_id)
+                if record is not None and record.file_path and _is_cloud_uri(record.file_path):
+                    return True
+    except Exception:
+        logger.warning("Could not determine catalog cloud sources", exc_info=True)
+    return False
+
+
 def _handle_virtual_table_write(
     graph: "FlowGraph",
     node_catalog_writer: input_schema.NodeCatalogWriter,
@@ -793,7 +842,10 @@ def _handle_virtual_table_write(
 
     writer_node = graph.get_node(node_catalog_writer.node_id)
     is_lazy, _reasons = writer_node.check_upstream_laziness()
-    if is_lazy:
+    # A plan over object-storage sources can't be cached: serializing it would freeze the
+    # source's decrypted cloud credentials into the DB. Re-run the producer flow on read instead.
+    optimize = is_lazy and not _virtual_sources_use_cloud(graph)
+    if optimize:
         if graph.execution_mode != "performance":
             graph.execution_mode = "performance"
             graph.reset()
@@ -828,7 +880,7 @@ def _handle_virtual_table_write(
                 producer_registration_id=reg_id,
                 description=settings.description,
                 serialized_lazy_frame=serialized_lf,
-                is_optimized=is_lazy,
+                is_optimized=optimize,
                 schema_json=schema_json,
                 polars_plan=polars_plan,
                 source_table_versions=source_table_versions,
@@ -841,7 +893,7 @@ def _handle_virtual_table_write(
                 namespace_id=ns_id,
                 description=settings.description,
                 serialized_lazy_frame=serialized_lf,
-                is_optimized=is_lazy,
+                is_optimized=optimize,
                 schema_json=schema_json,
                 polars_plan=polars_plan,
                 source_table_versions=source_table_versions,

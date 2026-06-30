@@ -23,7 +23,7 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.tables import TableService
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace
+from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
 from flowfile_core.catalog.text_utils import (
     is_table_reference,
     rewrite_qualified_references,
@@ -347,7 +347,12 @@ class VirtualTableService:
                     kind="nested query virtual table",
                     identifier=t.name,
                 )
-            if t.is_optimized and t.serialized_lazy_frame and check_source_versions_current(t.source_table_versions):
+            if (
+                t.is_optimized
+                and t.serialized_lazy_frame
+                and not serialized_frame_uses_cloud(t.serialized_lazy_frame)
+                and check_source_versions_current(t.source_table_versions)
+            ):
                 return pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame))
             if t.producer_registration_id:
                 return resolve_or_log(
@@ -388,7 +393,11 @@ class VirtualTableService:
         if table.sql_query:
             return self.resolve_query_virtual_table(table_id, user_id=user_id)
 
-        if table.is_optimized and table.serialized_lazy_frame:
+        if (
+            table.is_optimized
+            and table.serialized_lazy_frame
+            and not serialized_frame_uses_cloud(table.serialized_lazy_frame)
+        ):
             if check_source_versions_current(table.source_table_versions):
                 return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
             logger.info(
