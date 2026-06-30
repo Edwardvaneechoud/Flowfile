@@ -809,7 +809,8 @@ def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
                 if record is not None and record.file_path and _is_cloud_uri(record.file_path):
                     return True
     except Exception:
-        logger.warning("Could not determine catalog cloud sources", exc_info=True)
+        logger.warning("Could not determine catalog cloud sources; treating as cloud", exc_info=True)
+        return True
     return False
 
 
