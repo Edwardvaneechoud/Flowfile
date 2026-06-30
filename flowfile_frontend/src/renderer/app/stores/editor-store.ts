@@ -3,7 +3,6 @@ import { defineStore } from "pinia";
 import { ref, shallowRef } from "vue";
 import type { Component } from "vue";
 import type { NodeTitleInfo } from "../types";
-import { useDrawerStore } from "./drawer-store";
 
 export const useEditorStore = defineStore("editor", {
   state: () => ({
@@ -223,7 +222,19 @@ export const useEditorStore = defineStore("editor", {
       this.isShowingLogViewer = false;
       this.tableVisible = false;
       this.isAiOpen = false;
-      useDrawerStore().clearPreview();
+      // Lazy import closes the flow→editor→drawer→flow module cycle (no
+      // eval-time edge); drawer-store is already loaded once any panel is open.
+      import("./drawer-store")
+        .then(({ useDrawerStore }) => {
+          try {
+            useDrawerStore().clearPreview();
+          } catch {
+            /* store unavailable in test contexts */
+          }
+        })
+        .catch(() => {
+          /* dynamic-import resolution failed; non-fatal */
+        });
     },
   },
 });

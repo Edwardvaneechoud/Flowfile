@@ -1082,6 +1082,7 @@ button.dragitem-tab:hover {
 .dragitem-tab--static {
   cursor: move;
   user-select: none;
+  font-size: 10px;
 }
 .title-text {
   flex-grow: 1;

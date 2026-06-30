@@ -73,6 +73,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
 import ProjectExport from "./ProjectExport.vue";
 import { useNodeStore } from "../../../stores/column-store";
+import { useEditorStore } from "../../../stores/editor-store";
 
 // `active` = this is the visible tab. CodeMirror must not be created while its
 // pane is display:none, so the editor renders (and code fetches) only when active.
@@ -84,6 +85,7 @@ const code = ref("");
 const loading = ref(false);
 const codeMode = ref<CodeMode>("flowframe");
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const lastLoadedFlowId = ref<number | null>(null);
 
 const extensions = [
@@ -141,6 +143,15 @@ watch(
     }
   },
   { immediate: true },
+);
+
+// A graph edit invalidates the cached code; drop the cache so the next time the
+// Code tab opens it re-fetches (rather than regenerating on every hidden edit).
+watch(
+  () => editorStore.graphVersion,
+  () => {
+    lastLoadedFlowId.value = null;
+  },
 );
 
 const refreshCode = () => {

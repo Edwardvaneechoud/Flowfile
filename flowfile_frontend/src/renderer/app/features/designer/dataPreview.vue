@@ -451,6 +451,7 @@ watch(
       return;
     }
     if (props.active) debouncedDownload(props.nodeId);
+    else debouncedDownload.cancel();
   },
   { immediate: true },
 );
