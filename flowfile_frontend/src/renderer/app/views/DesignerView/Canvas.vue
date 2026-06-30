@@ -607,11 +607,13 @@ const openNodeData = (nodeId: number) => {
 };
 
 const nodeClick = (mouseEvent: any) => {
-  // Single click selects the node: open Settings and load its data into the
-  // bottom Data/Logs dock so the inspector follows the selection.
+  // Single click opens Settings only. The bottom dock is opened by double-click
+  // (handleMainDblClick), not here; if it's already open we follow the selection.
   const rawId = String(mouseEvent.node.id);
   openNodeSettings(parseInt(rawId));
-  if (!isGroupNodeId(rawId)) openNodeData(parseInt(rawId));
+  if (!isGroupNodeId(rawId) && drawerStore.previewNodeId !== null) {
+    drawerStore.setPreviewNode(parseInt(rawId));
+  }
 };
 
 // The per-node right-click menu (NodeWrapper) can't reach Canvas-local refs, so
