@@ -43,6 +43,11 @@ const getCanvasBounds = (): { width: number; height: number } => {
   return { width: window.innerWidth, height: window.innerHeight };
 };
 
+// How an axis reacts to a container (canvas) resize: "scale" preserves the
+// dimension's fraction of the container, "fill" stretches to the container,
+// "fixed" keeps the absolute px (clamp-only).
+export type AxisBehaviour = "scale" | "fixed" | "fill";
+
 export interface ItemLayout {
   width: number;
   height: number;

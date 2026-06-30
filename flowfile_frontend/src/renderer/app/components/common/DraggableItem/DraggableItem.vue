@@ -136,6 +136,7 @@
 //   - useGroupSync composable: group dimension sync (~lines 285-316)
 import {
   ref,
+  computed,
   onMounted,
   onBeforeUnmount,
   defineExpose,
@@ -145,7 +146,7 @@ import {
   watch,
 } from "vue";
 import { useItemStore } from "./stateStore";
-import type { ItemLayout } from "./stateStore";
+import type { ItemLayout, AxisBehaviour } from "./stateStore";
 
 const props = defineProps({
   id: {
@@ -182,6 +183,17 @@ const props = defineProps({
   },
   initialWidth: {
     type: Number,
+    default: null,
+  },
+  // How each axis reacts to a canvas resize. Unset ⇒ resolved from
+  // initialWidth/initialHeight (fixed if given, else fill) to match legacy
+  // fullWidth/fullHeight behaviour.
+  widthBehaviour: {
+    type: String as () => AxisBehaviour,
+    default: null,
+  },
+  heightBehaviour: {
+    type: String as () => AxisBehaviour,
     default: null,
   },
 
@@ -246,6 +258,16 @@ const itemState = ref(
     syncDimensions: props.syncDimensions,
     zIndex: 100,
   },
+);
+
+// Resolved per-axis resize behaviour. An unset prop falls back to the legacy
+// flag (fullWidth === !initialWidth), so unconfigured consumers keep today's
+// behaviour and "fill" is the exact equivalent of the old fullWidth/fullHeight.
+const resolvedWidthBehaviour = computed<AxisBehaviour>(
+  () => props.widthBehaviour ?? (props.initialWidth ? "fixed" : "fill"),
+);
+const resolvedHeightBehaviour = computed<AxisBehaviour>(
+  () => props.heightBehaviour ?? (props.initialHeight ? "fixed" : "fill"),
 );
 
 const isDragging = ref(false);
@@ -622,7 +644,7 @@ const moveToRight = () => {
   itemState.value.left = c.width - itemState.value.width;
   itemState.value.top = 0;
   itemState.value.stickynessPosition = "right";
-  if (itemState.value.fullHeight) {
+  if (resolvedHeightBehaviour.value === "fill") {
     itemState.value.height = c.height;
   }
   savePositionAndSize();
@@ -633,7 +655,7 @@ const moveToBottom = () => {
   itemState.value.left = props.initialLeft || 0;
   itemState.value.top = c.height - (itemState.value.height + (props.initialTop || 0));
   itemState.value.stickynessPosition = "bottom";
-  if (itemState.value.fullWidth) {
+  if (resolvedWidthBehaviour.value === "fill") {
     itemState.value.width = c.width - (props.initialLeft || 0);
   }
   savePositionAndSize();
@@ -644,7 +666,7 @@ const moveToLeft = () => {
   itemState.value.left = 0;
   itemState.value.top = 0;
   itemState.value.stickynessPosition = "left";
-  if (itemState.value.fullHeight) {
+  if (resolvedHeightBehaviour.value === "fill") {
     itemState.value.height = c.height;
   }
   savePositionAndSize();
@@ -655,7 +677,7 @@ const moveToTop = () => {
   itemState.value.left = 0;
   itemState.value.top = 0;
   itemState.value.stickynessPosition = "top";
-  if (itemState.value.fullWidth) {
+  if (resolvedWidthBehaviour.value === "fill") {
     itemState.value.width = c.width;
   }
   savePositionAndSize();
@@ -680,6 +702,29 @@ const applyStickyPosition = () => {
     return;
   }
 
+  const wB = resolvedWidthBehaviour.value;
+  const hB = resolvedHeightBehaviour.value;
+
+  // "scale" keeps a constant gap to the container edge: the panel grows/shrinks
+  // by the same amount the container does, so its offset from full size stays
+  // fixed (700px in a 1000px canvas → 1700px in a 2000px canvas). Done before
+  // the effHeight capture (so position math sees the new height) and before the
+  // shrink-clamp (which then only caps the upper bound). The additive deltas
+  // telescope to (cEnd − cStart) regardless of how many ResizeObserver fires a
+  // single drag produces.
+  if (wB === "scale" && prevContainerWidth.value > 0) {
+    itemState.value.width = Math.max(
+      100,
+      itemState.value.width + (c.width - prevContainerWidth.value),
+    );
+  }
+  if (hB === "scale" && prevContainerHeight.value > 0) {
+    itemState.value.height = Math.max(
+      100,
+      itemState.value.height + (c.height - prevContainerHeight.value),
+    );
+  }
+
   // A minimized panel renders as a ~35px header (CSS overrides its size), so its
   // stored height is the pre-collapse value — use the rendered height for the
   // vertical position math instead.
@@ -695,7 +740,7 @@ const applyStickyPosition = () => {
     case "top":
       itemState.value.left = props.initialLeft || 0;
       itemState.value.top = 0;
-      if (itemState.value.fullWidth) {
+      if (wB === "fill") {
         itemState.value.width = c.width - (props.initialLeft || 0);
       }
       break;
@@ -703,7 +748,7 @@ const applyStickyPosition = () => {
     case "bottom":
       itemState.value.left = props.initialLeft || 0;
       itemState.value.top = Math.max(0, c.height - effHeight - (props.initialTop || 0));
-      if (itemState.value.fullWidth) {
+      if (wB === "fill") {
         itemState.value.width = c.width - (props.initialLeft || 0);
       }
       break;
@@ -711,7 +756,7 @@ const applyStickyPosition = () => {
     case "left":
       itemState.value.left = 0;
       itemState.value.top = props.initialTop || 0;
-      if (itemState.value.fullHeight) {
+      if (hB === "fill") {
         itemState.value.height = c.height - (props.initialTop || 0);
       }
       break;
@@ -719,7 +764,7 @@ const applyStickyPosition = () => {
     case "right":
       itemState.value.left = Math.max(0, c.width - itemState.value.width);
       itemState.value.top = props.initialTop || 0;
-      if (itemState.value.fullHeight) {
+      if (hB === "fill") {
         itemState.value.height = c.height - (props.initialTop || 0);
       }
       break;

@@ -1,4 +1,5 @@
 import type { Component } from "vue";
+import type { AxisBehaviour } from "../components/common/DraggableItem/stateStore";
 import type { useEditorStore } from "../stores/editor-store";
 import type { useNodeStore } from "../stores/column-store";
 import type { useFlowStore } from "../stores/flow-store";
@@ -37,6 +38,8 @@ export interface DrawerDef {
   initialWidth?: number;
   initialHeight?: number;
   initialLeft?: number;
+  widthBehaviour?: AxisBehaviour;
+  heightBehaviour?: AxisBehaviour;
   allowFullScreen?: boolean;
   tabs: DrawerTabDef[];
   // Default drawer visibility = "≥1 tab visible". Override when a tab is a

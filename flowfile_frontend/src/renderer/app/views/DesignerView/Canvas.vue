@@ -1355,6 +1355,7 @@ defineExpose({
         :show-left="true"
         :initial-width="230"
         initial-position="left"
+        height-behaviour="scale"
         title="Data actions"
         :allow-free-move="true"
       >

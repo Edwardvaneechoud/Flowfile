@@ -14,6 +14,9 @@ export const drawers: DrawerDef[] = [
     id: "rightDrawer",
     side: "right",
     initialWidth: 600,
+    // Width stays fixed; height keeps its gap to the canvas edge instead of
+    // snapping to full height on resize.
+    heightBehaviour: "scale",
     allowFullScreen: true,
     // Opens for settings / results / code; Code is then always a tab (its own
     // visibleWhen is always-true), so it can't be the thing that opens it.
@@ -59,6 +62,7 @@ export const drawers: DrawerDef[] = [
     id: "aiDrawer",
     side: "right",
     initialWidth: 600,
+    heightBehaviour: "scale",
     allowFullScreen: true,
     onMinimize: ({ editor }) => editor.closeAiDrawer(),
     tabs: [
@@ -74,6 +78,9 @@ export const drawers: DrawerDef[] = [
     id: "bottomDock",
     side: "bottom",
     initialLeft: 180,
+    // Bottom dock keeps its fraction of the canvas width as the canvas resizes;
+    // height stays fixed px (it gets a numeric initialHeight via heightOverride).
+    widthBehaviour: "scale",
     allowFullScreen: true,
     // Opens for a data preview or logs; Data is a permanent home tab (placeholder).
     visibleWhen: ({ drawer, editor }) => drawer.previewNodeId !== null || editor.isShowingLogViewer,
