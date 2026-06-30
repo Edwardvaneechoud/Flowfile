@@ -185,9 +185,7 @@ const props = defineProps({
     type: Number,
     default: null,
   },
-  // How each axis reacts to a canvas resize. Unset ⇒ resolved from
-  // initialWidth/initialHeight (fixed if given, else fill) to match legacy
-  // fullWidth/fullHeight behaviour.
+  // Per-axis resize response (see AxisBehaviour).
   widthBehaviour: {
     type: String as () => AxisBehaviour,
     default: null,
@@ -260,9 +258,7 @@ const itemState = ref(
   },
 );
 
-// Resolved per-axis resize behaviour. An unset prop falls back to the legacy
-// flag (fullWidth === !initialWidth), so unconfigured consumers keep today's
-// behaviour and "fill" is the exact equivalent of the old fullWidth/fullHeight.
+// Unset ⇒ legacy rule: "fill" when no initial size was given, else "fixed".
 const resolvedWidthBehaviour = computed<AxisBehaviour>(
   () => props.widthBehaviour ?? (props.initialWidth ? "fixed" : "fill"),
 );
@@ -705,13 +701,8 @@ const applyStickyPosition = () => {
   const wB = resolvedWidthBehaviour.value;
   const hB = resolvedHeightBehaviour.value;
 
-  // "scale" keeps a constant gap to the container edge: the panel grows/shrinks
-  // by the same amount the container does, so its offset from full size stays
-  // fixed (700px in a 1000px canvas → 1700px in a 2000px canvas). Done before
-  // the effHeight capture (so position math sees the new height) and before the
-  // shrink-clamp (which then only caps the upper bound). The additive deltas
-  // telescope to (cEnd − cStart) regardless of how many ResizeObserver fires a
-  // single drag produces.
+  // "scale": absorb the container delta to keep a constant gap to the edge.
+  // Runs before effHeight/shrink-clamp so the position math sees the new size.
   if (wB === "scale" && prevContainerWidth.value > 0) {
     itemState.value.width = Math.max(
       100,
@@ -781,13 +772,14 @@ const applyStickyPosition = () => {
         const wasBottomAligned =
           itemState.value.top + effHeight / 2 > prevContainerHeight.value / 2;
 
-        if (wasRightAligned) {
+        // Don't re-anchor a "scale" axis — the scale step already tracked it.
+        if (wasRightAligned && wB !== "scale") {
           const distanceFromRight =
             prevContainerWidth.value - itemState.value.left - itemState.value.width;
           itemState.value.left = Math.max(0, c.width - itemState.value.width - distanceFromRight);
         }
 
-        if (wasBottomAligned) {
+        if (wasBottomAligned && hB !== "scale") {
           const distanceFromBottom = prevContainerHeight.value - itemState.value.top - effHeight;
           itemState.value.top = Math.max(0, c.height - effHeight - distanceFromBottom);
         }

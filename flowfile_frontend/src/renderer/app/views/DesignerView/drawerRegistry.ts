@@ -14,8 +14,7 @@ export const drawers: DrawerDef[] = [
     id: "rightDrawer",
     side: "right",
     initialWidth: 600,
-    // Width stays fixed; height keeps its gap to the canvas edge instead of
-    // snapping to full height on resize.
+    // Fixed width; height tracks the canvas (keeps its gap) instead of filling.
     heightBehaviour: "scale",
     allowFullScreen: true,
     // Opens for settings / results / code; Code is then always a tab (its own
@@ -78,8 +77,7 @@ export const drawers: DrawerDef[] = [
     id: "bottomDock",
     side: "bottom",
     initialLeft: 180,
-    // Bottom dock keeps its fraction of the canvas width as the canvas resizes;
-    // height stays fixed px (it gets a numeric initialHeight via heightOverride).
+    // Width tracks the canvas (keeps its gap); height stays fixed px.
     widthBehaviour: "scale",
     allowFullScreen: true,
     // Opens for a data preview or logs; Data is a permanent home tab (placeholder).
