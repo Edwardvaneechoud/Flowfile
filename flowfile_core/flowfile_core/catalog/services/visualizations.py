@@ -30,6 +30,7 @@ from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.sql import SqlService
 from flowfile_core.catalog.services.tables import TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
+from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.catalog.text_utils import (
     hash_source_versions,
     is_table_reference,
@@ -73,6 +74,7 @@ def _project_sync_dashboards(user_id: int) -> None:
     from flowfile_core.project import project_sync
 
     project_sync.dashboards_changed(user_id)
+
 
 # polars-gw workflow that returns rows un-aggregated (raw select-all).
 _GW_RAW_SELECT_ALL_PAYLOAD: dict = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
@@ -433,6 +435,12 @@ class VisualizationService:
             if table.table_type != "virtual":
                 if not table.file_path:
                     raise ValueError(f"Table {table.id} has no file_path")
+                if _is_cloud_uri(table.file_path):
+                    raise ValueError(
+                        "Visualizing object-storage (cloud) catalog tables is not yet supported; the "
+                        "visualization worker has no per-table storage credentials. Copy the table into a "
+                        "local catalog to visualize it."
+                    )
                 return {
                     "kind": "physical",
                     "session_key": self._session_key_for_table(table.id),

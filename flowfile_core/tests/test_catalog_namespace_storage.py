@@ -176,6 +176,17 @@ def test_unknown_connection_rejected():
         )
 
 
+def test_storage_uri_scheme_must_match_connection_provider():
+    _ensure_connection()  # stores an s3 connection named _CONNECTION_NAME
+    with get_db_context() as db, pytest.raises(InvalidNamespaceStorageError):
+        _svc(db).create_namespace(
+            f"bad_{uuid.uuid4().hex[:6]}",
+            owner_id=1,
+            storage_uri="gs://flowfile-test/x",  # gcs scheme paired with an s3 connection
+            storage_connection_name=_CONNECTION_NAME,
+        )
+
+
 # ---- Immutability invariant ------------------------------------------------ #
 
 
@@ -441,6 +452,22 @@ def test_update_route_omit_preserves_storage_explicit_null_clears(authed_client)
     assert r3.status_code == 200, r3.text
     assert r3.json()["storage_uri"] is None
     assert r3.json()["storage_connection_name"] is None
+
+
+# ---- Cloud tables are refused (with a clear error) by the viz worker path --- #
+
+
+def test_cloud_table_visualization_raises_clear_error():
+    from flowfile_core.schemas.catalog_schema import VizSourceDescriptor
+
+    _ensure_connection()
+    cat_id = _create_catalog(storage_uri="s3://flowfile-test/viz", storage_connection_name=_CONNECTION_NAME)
+    table_id = _add_physical_table(cat_id, "s3://flowfile-test/viz/t_cloud")
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        source = VizSourceDescriptor(source_type="table", table_id=table_id)
+        with pytest.raises(ValueError, match="object-storage"):
+            svc._visualizations._resolve_source_for_worker(source, user_id=None)
 
 
 # ---- Real S3 round-trip (against the already-running MinIO mock) ------------ #

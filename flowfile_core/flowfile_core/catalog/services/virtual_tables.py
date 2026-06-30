@@ -431,7 +431,10 @@ class VirtualTableService:
     # ---- Discovery ------------------------------------------------------- #
 
     def resolve_all_delta_tables(self) -> dict[str, str]:
-        """Return a mapping of logical table name -> directory name for all Delta catalog tables."""
+        """Return a mapping of logical table name -> directory name for LOCAL Delta catalog tables.
+
+        Object-storage tables are excluded (the dir-name + local-root model can't address them), mirroring
+        the worker SQL path in resolve_all_queryable_tables."""
         tables = self.repo.list_tables()
         return {
             table.name: Path(table.file_path).name

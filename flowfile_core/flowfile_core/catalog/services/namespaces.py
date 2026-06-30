@@ -33,6 +33,18 @@ logger = logging.getLogger(__name__)
 # Sentinel distinguishing "storage field omitted" from "explicitly set to None" on update.
 STORAGE_UNSET: object = object()
 
+# Object-storage URI scheme -> the cloud connection's provider (``storage_type``) it must pair with.
+_STORAGE_SCHEME_PROVIDER = {
+    "s3": "s3",
+    "s3a": "s3",
+    "gs": "gcs",
+    "gcs": "gcs",
+    "az": "adls",
+    "abfs": "adls",
+    "abfss": "adls",
+    "adl": "adls",
+}
+
 
 def _validate_namespace_storage(owner_id: int, storage_uri: str | None, storage_connection_name: str | None) -> None:
     """Validate per-catalog storage: a cloud URI plus a connection that resolves for the catalog owner."""
@@ -54,6 +66,14 @@ def _validate_namespace_storage(owner_id: int, storage_uri: str | None, storage_
     if conn is None:
         raise InvalidNamespaceStorageError(
             f"Cloud connection {storage_connection_name!r} was not found or is not accessible for the catalog owner."
+        )
+    provider = getattr(conn, "storage_type", None)
+    provider = getattr(provider, "value", provider)  # CloudStorageType enum -> its string value
+    expected_provider = _STORAGE_SCHEME_PROVIDER.get(storage_uri.split("://", 1)[0].lower())
+    if expected_provider is not None and provider != expected_provider:
+        raise InvalidNamespaceStorageError(
+            f"storage_uri {storage_uri!r} does not match connection {storage_connection_name!r} "
+            f"(provider {provider!r})."
         )
 
 

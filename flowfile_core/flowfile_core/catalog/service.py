@@ -1302,7 +1302,8 @@ class CatalogService:
     # ------------------------------------------------------------------ #
 
     def resolve_all_delta_tables(self) -> dict[str, str]:
-        """Return a mapping of logical table name → directory name for all Delta catalog tables."""
+        """Return a mapping of logical table name → directory name for LOCAL Delta catalog tables
+        (object-storage tables are excluded)."""
         return self._virtual_tables.resolve_all_delta_tables()
 
     def resolve_all_queryable_tables(self) -> tuple[dict[str, str], dict[str, int]]:
