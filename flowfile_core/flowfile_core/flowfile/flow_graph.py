@@ -584,22 +584,36 @@ def _write_catalog_delta_local(
     delta_mode: str,
     merge_keys: list[str] | None,
     partition_by: list[str] | None = None,
+    storage_options: dict[str, str] | None = None,
 ) -> TableWriteMetadata | None:
-    """Write a Delta table locally. Returns metadata dict, or ``None`` when the write was skipped."""
+    """Write a Delta table in-process. Returns metadata dict, or ``None`` when the write was skipped.
+
+    *storage_options* (passed verbatim, ``None`` ⇒ local filesystem) routes the write to object
+    storage so standalone CLI/scheduler runs — which have no worker to offload to — can still write
+    cloud catalog tables. An empty dict means ambient credentials, so it must reach the delta calls
+    as-is (the downstream helpers branch on ``is None``, not truthiness).
+    """
     dest = str(dest_path)
     if delta_mode in ("upsert", "update", "delete"):
         wrote = merge_into_delta(
-            df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=merge_keys, partition_by=partition_by
+            df.data_frame.collect(),
+            dest,
+            merge_mode=delta_mode,
+            merge_keys=merge_keys,
+            partition_by=partition_by,
+            storage_options=storage_options,
         )
     else:
-        wrote = _write_delta(df.data_frame, dest, mode=delta_mode, partition_by=partition_by)
+        wrote = _write_delta(
+            df.data_frame, dest, mode=delta_mode, partition_by=partition_by, storage_options=storage_options
+        )
     if not wrote:
         return None
     return {
         "schema": [{"name": c.column_name, "dtype": c.data_type} for c in df.schema],
         "row_count": df.count(),
         "column_count": df.number_of_fields,
-        "size_bytes": get_delta_size_bytes(dest_path),
+        "size_bytes": get_delta_size_bytes(dest_path, storage_options=storage_options),
     }
 
 
@@ -961,9 +975,12 @@ def _handle_physical_table_write(
     if storage_payload is not None:
         op_kwargs["storage_payload"] = storage_payload
 
-    # Cloud writes must offload to the worker: core never collects a full LazyFrame, and the
-    # local merge path collects. The worker owns dataset memory and writes via storage_options.
-    if dest_is_cloud or graph.flow_settings.execution_location != "local":
+    # The write follows execution_location, like every other writer node (cloud_storage_writer,
+    # database_writer, output): remote execution offloads to the worker, a local run writes
+    # in-process. A cloud destination only decides whether storage_options are threaded through —
+    # it never forces the worker, so a local run (the CLI/scheduler force "local", which have no
+    # worker) writes object storage in-core, the same way cloud reads already resolve storage_options.
+    if graph.flow_settings.execution_location != "local":
         meta_kwargs = _write_catalog_delta_remote(
             flow_id=graph.flow_id,
             node=graph.get_node(node_catalog_writer.node_id),
@@ -973,7 +990,9 @@ def _handle_physical_table_write(
             table_name=settings.table_name,
         )
     else:
-        meta_kwargs = _write_catalog_delta_local(df, dest_path, delta_mode, settings.merge_keys, settings.partition_by)
+        meta_kwargs = _write_catalog_delta_local(
+            df, dest_path, delta_mode, settings.merge_keys, settings.partition_by, storage_options=storage_options
+        )
 
     if meta_kwargs is None:
         return df
