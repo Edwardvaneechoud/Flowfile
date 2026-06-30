@@ -134,6 +134,8 @@ docker compose up -d
 
 ## Testing
 
+**Favor real integration tests over mocking.** The backing services (postgres, mysql, s3/MinIO, gcs, azurite, kafka) are available via `test_utils/` Docker fixtures, so exercise the real thing — mock only when a dependency is genuinely unavailable or non-deterministic. Real tests are easy to wire up here and catch contract drift that mocks hide.
+
 ### Python Tests (pytest)
 
 ```bash

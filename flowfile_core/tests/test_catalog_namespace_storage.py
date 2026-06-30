@@ -500,3 +500,65 @@ def test_schema_inherits_catalog_object_storage_roundtrip():
     key_prefix = dest.replace(f"s3://{_BUCKET}/", "") + "/_delta_log/"
     listed = get_minio_client().list_objects_v2(Bucket=_BUCKET, Prefix=key_prefix)
     assert listed.get("KeyCount", 0) > 0
+
+
+@requires_minio
+def test_cloud_physical_read_path_existence_preview_version_history(monkeypatch):
+    """Existence, preview, versioned preview, and history all read a real object-storage table.
+
+    Forces the in-process reader so the test deterministically exercises core's storage_options
+    threading against real MinIO, independent of the worker."""
+    monkeypatch.setattr("flowfile_core.catalog.services.previews._should_offload", lambda: False)
+    _ensure_connection()
+    try:
+        get_minio_client().create_bucket(Bucket=_BUCKET)
+    except Exception:
+        pass
+
+    import polars as pl
+    from shared.delta_utils import write_delta
+
+    prefix = f"s3://{_BUCKET}/readpath_{uuid.uuid4().hex[:8]}"
+    cat_id = _create_catalog(storage_uri=prefix, storage_connection_name=_CONNECTION_NAME)
+    target = resolve_for_namespace(cat_id)
+    dest = join_catalog_uri(target.base, f"t_{uuid.uuid4().hex[:6]}")
+    write_delta(pl.DataFrame({"a": [1, 2, 3]}), dest, mode="overwrite", storage_options=target.storage_options)
+    write_delta(pl.DataFrame({"a": [1, 2, 3, 4, 5]}), dest, mode="overwrite", storage_options=target.storage_options)
+
+    table_id = _add_physical_table(cat_id, dest)
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        # existence: a cloud table with a resolvable connection reports present (no data probe)
+        assert svc.get_table(table_id).file_exists is True
+        # latest preview reads real rows from S3
+        latest = svc.get_table_preview(table_id, limit=10)
+        assert len(latest.rows) == 5
+        # versioned preview reads the older version from S3
+        v0 = svc.get_table_preview(table_id, limit=10, version=0)
+        assert len(v0.rows) == 3
+        # history reflects both commits
+        hist = svc.get_table_history(table_id)
+        assert hist.current_version >= 1
+        assert len(hist.history) >= 2
+
+
+def test_cloud_table_file_exists_false_when_connection_missing():
+    """A cloud table whose catalog's storage connection no longer resolves reports file_exists=False
+    (existence reflects connection availability, not a data probe)."""
+    with get_db_context() as db:
+        ns = db_models.CatalogNamespace(
+            name=f"gone_{uuid.uuid4().hex[:8]}",
+            parent_id=None,
+            level=0,
+            owner_id=1,
+            storage_uri="s3://flowfile-test/gone",
+            storage_connection_name="connection-was-deleted",
+        )
+        db.add(ns)
+        db.commit()
+        db.refresh(ns)
+        cat_id = ns.id
+    table_id = _add_physical_table(cat_id, "s3://flowfile-test/gone/t_x")
+    with get_db_context() as db:
+        out = CatalogService(SQLAlchemyCatalogRepository(db)).get_table(table_id)
+        assert out.file_exists is False

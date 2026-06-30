@@ -305,6 +305,9 @@ class CatalogTableOut(BaseModel):
     description: str | None = None
     owner_id: int
     file_exists: bool = True
+    # True when the table's data lives in object storage; the UI gates preview/history behind an
+    # explicit action so opening the table doesn't auto-connect to the bucket.
+    is_remote_storage: bool = False
     is_favorite: bool = False
     schema_columns: list[ColumnSchema] = Field(default_factory=list)
     row_count: int | None = None

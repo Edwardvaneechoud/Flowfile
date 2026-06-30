@@ -122,6 +122,9 @@ class TableService:
         self._namespaces = namespaces
         self._flows = flows
         self._schedules = schedules
+        # Per-request cache: object-storage connection availability by namespace_id, so a tree/list load
+        # resolves each catalog's connection once instead of per table.
+        self._cloud_conn_cache: dict[int | None, bool] = {}
 
     # ---- Validation + resolution ----------------------------------------- #
 
@@ -281,12 +284,34 @@ class TableService:
         reg = self.repo.get_flow(registration_id)
         return reg.name if reg else None
 
+    def _cloud_storage_connection_available(self, namespace_id: int | None) -> bool:
+        """True when the catalog's object-storage connection still resolves (no per-table data probe).
+
+        Memoized per request — tables in the same catalog share one connection."""
+        if namespace_id in self._cloud_conn_cache:
+            return self._cloud_conn_cache[namespace_id]
+        try:
+            available = resolve_for_namespace(namespace_id).is_cloud
+        except Exception:
+            logger.debug("Catalog cloud storage connection unavailable for namespace %s", namespace_id, exc_info=True)
+            available = False
+        self._cloud_conn_cache[namespace_id] = available
+        return available
+
     def _check_file_exists(self, table: CatalogTable) -> bool:
         """Determine whether the backing data for a table is available."""
         is_virtual = getattr(table, "table_type", "physical") == "virtual"
         if is_virtual:
             return True
-        file_exists = table_exists(table.file_path) if table.file_path else False
+        if not table.file_path:
+            file_exists = False
+        elif _is_cloud_uri(table.file_path):
+            # Object-storage tables: skip the per-table data probe (a network round-trip each); the data is
+            # materialized on write, so the only thing that makes it unreadable is a missing storage
+            # connection — check that (cached per request).
+            file_exists = self._cloud_storage_connection_available(table.namespace_id)
+        else:
+            file_exists = table_exists(table.file_path)
         if not file_exists:
             logger.warning(
                 "Catalog table %s (id=%d) references missing file: %s",
@@ -366,6 +391,7 @@ class TableService:
             description=table.description,
             owner_id=table.owner_id,
             file_exists=file_exists_flag,
+            is_remote_storage=_is_cloud_uri(table.file_path or ""),
             is_favorite=is_favorite,
             schema_columns=columns,
             row_count=table.row_count,
@@ -426,6 +452,7 @@ class TableService:
                     description=table.description,
                     owner_id=table.owner_id,
                     file_exists=file_exists_flag,
+                    is_remote_storage=_is_cloud_uri(table.file_path or ""),
                     is_favorite=table.id in favorite_ids,
                     schema_columns=columns,
                     row_count=table.row_count,

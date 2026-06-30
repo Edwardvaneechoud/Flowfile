@@ -43,12 +43,15 @@ interface CatalogState {
   selectedArtifact: GlobalArtifact | null;
   flowArtifacts: GlobalArtifact[];
   loadingArtifacts: boolean;
+  selectedNamespaceId: number | null;
+  selectedNamespace: NamespaceTree | null;
   selectedTableId: number | null;
   selectedTable: CatalogTable | null;
   tablePreview: CatalogTablePreview | null;
   loadingTablePreview: boolean;
   tableHistory: DeltaTableHistory | null;
   loadingTableHistory: boolean;
+  tableHistoryStale: boolean;
   selectedVersion: number | null;
   allTables: CatalogTable[];
   schedules: FlowSchedule[];
@@ -74,6 +77,39 @@ interface CatalogState {
   loadingVisualizationLibrary: boolean;
 }
 
+// Version history is cached in sessionStorage so a recently-loaded table shows its versions
+// automatically on reopen (even after a reload) without re-reading object storage. Entries older than
+// HISTORY_STALE_MS are still shown, but flagged as possibly stale (the refresh icon re-fetches).
+const HISTORY_CACHE_KEY = "flowfile.catalog.tableHistory";
+const HISTORY_STALE_MS = 5 * 60 * 1000;
+
+type HistoryCacheEntry = { ts: number; history: DeltaTableHistory };
+
+function readHistoryCache(): Record<string, HistoryCacheEntry> {
+  try {
+    const raw = sessionStorage.getItem(HISTORY_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, HistoryCacheEntry>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function readCachedHistory(tableId: number): { history: DeltaTableHistory; stale: boolean } | null {
+  const entry = readHistoryCache()[String(tableId)];
+  if (!entry) return null;
+  return { history: entry.history, stale: Date.now() - entry.ts > HISTORY_STALE_MS };
+}
+
+function writeCachedHistory(tableId: number, history: DeltaTableHistory): void {
+  try {
+    const cache = readHistoryCache();
+    cache[String(tableId)] = { ts: Date.now(), history };
+    sessionStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // ignore quota / serialization / unavailable sessionStorage
+  }
+}
+
 export const useCatalogStore = defineStore("catalog", {
   state: (): CatalogState => ({
     tree: [],
@@ -97,12 +133,15 @@ export const useCatalogStore = defineStore("catalog", {
     selectedArtifact: null,
     flowArtifacts: [],
     loadingArtifacts: false,
+    selectedNamespaceId: null,
+    selectedNamespace: null,
     selectedTableId: null,
     selectedTable: null,
     tablePreview: null,
     loadingTablePreview: false,
     tableHistory: null,
     loadingTableHistory: false,
+    tableHistoryStale: false,
     selectedVersion: null,
     allTables: [],
     schedules: [],
@@ -371,14 +410,25 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedRunDetail = null;
       this.selectedArtifactId = null;
       this.selectedArtifact = null;
+      this.clearNamespaceSelection();
       this.tablePreview = null;
-      this.tableHistory = null;
+      // Show recently-loaded version history automatically from the sessionStorage cache (flagged
+      // stale after 5 min). Only the data preview stays gated for object-storage tables.
+      const cachedHistory = tableId !== null ? readCachedHistory(tableId) : null;
+      this.tableHistory = cachedHistory?.history ?? null;
+      this.tableHistoryStale = cachedHistory?.stale ?? false;
       this.selectedVersion = null;
 
       if (tableId !== null) {
         this.selectedTable = this.findTableInTree(tableId) ?? null;
-        if (this.selectedTable?.table_type !== "virtual") {
+        const isPhysical = this.selectedTable?.table_type !== "virtual";
+        const isRemote = !!this.selectedTable?.is_remote_storage;
+        // Data preview: local auto-loads; object storage loads on demand (a button).
+        if (isPhysical && !isRemote) {
           this.loadTablePreview(tableId);
+        }
+        // Version history auto-loads only when nothing is cached for this table.
+        if (isPhysical && !this.tableHistory) {
           this.loadTableHistory(tableId);
         }
       } else {
@@ -391,6 +441,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedTable = null;
       this.tablePreview = null;
       this.tableHistory = null;
+      this.tableHistoryStale = false;
       this.selectedVersion = null;
     },
 
@@ -409,10 +460,28 @@ export const useCatalogStore = defineStore("catalog", {
       this.loadingTableHistory = true;
       try {
         this.tableHistory = await CatalogApi.getTableHistory(tableId);
+        this.tableHistoryStale = false;
+        if (this.tableHistory) {
+          writeCachedHistory(tableId, this.tableHistory);
+        }
       } catch {
         this.tableHistory = null;
       } finally {
         this.loadingTableHistory = false;
+      }
+    },
+
+    /** On-demand preview load (preview only; version history auto-loads + caches separately). */
+    async loadSelectedPreview() {
+      if (this.selectedTableId !== null) {
+        await this.loadTablePreview(this.selectedTableId);
+      }
+    },
+
+    /** Re-fetch version history for the selected table (refresh icon), updating the cache. */
+    async refreshTableHistory() {
+      if (this.selectedTableId !== null) {
+        await this.loadTableHistory(this.selectedTableId);
       }
     },
 
@@ -485,6 +554,28 @@ export const useCatalogStore = defineStore("catalog", {
       return null;
     },
 
+    // -- Namespace (catalog) detail actions --
+
+    findNamespaceInTree(namespaceId: number): NamespaceTree | null {
+      return this.tree.find((c) => c.id === namespaceId) ?? null;
+    },
+
+    selectNamespace(namespaceId: number) {
+      this.selectedNamespaceId = namespaceId;
+      this.selectedNamespace = this.findNamespaceInTree(namespaceId);
+      this.selectedFlowId = null;
+      this.selectedRunId = null;
+      this.selectedRunDetail = null;
+      this.clearTableSelection();
+      this.clearArtifactSelection();
+      this.clearScheduleSelection();
+    },
+
+    clearNamespaceSelection() {
+      this.selectedNamespaceId = null;
+      this.selectedNamespace = null;
+    },
+
     // -- Schedule actions --
 
     async loadSchedules() {
@@ -512,6 +603,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedRunDetail = null;
       this.clearTableSelection();
       this.clearArtifactSelection();
+      this.clearNamespaceSelection();
       this.scheduleRunsPage = 1;
       await Promise.all([this.loadScheduleDetail(scheduleId), this.loadScheduleRuns(scheduleId)]);
     },
@@ -622,6 +714,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedRunDetail = null;
       this.clearTableSelection();
       this.clearScheduleSelection();
+      this.clearNamespaceSelection();
       if (flowId !== null) {
         this.runsPage = 1;
         this.loadRuns(flowId);
@@ -639,6 +732,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedArtifact = null;
       this.clearTableSelection();
       this.clearScheduleSelection();
+      this.clearNamespaceSelection();
       if (tab === "favorites") this.loadFavorites();
       else if (tab === "following") this.loadFollowing();
       else if (tab === "runs") this.loadRuns();
