@@ -114,6 +114,30 @@ def _format_connection_validation_error(exc: ValidationError) -> str:
     return detail
 
 
+def format_missing_connection_target_detail(node_id: int) -> str:
+    """Refusal message for ``connect`` whose target exists nowhere — not in
+    the live graph and not among the nodes staged earlier this session.
+
+    The classic failure mode (see the join dogfood): the planner narrates a
+    join node it never added (*"connect node 1 → node 4"* where node 4 was
+    never created) and tries to wire the sources into that phantom id. The
+    message steers toward ADDING the join/union node first — that node *is*
+    the combine step, and it wires its own inputs.
+    """
+    return (
+        f"connect: node {node_id} does not exist — it is neither in the live "
+        f"graph nor among the nodes you staged earlier this session, so it "
+        f"cannot receive a connection. You cannot wire data into a node that "
+        f"has not been created yet. If you are combining or joining data "
+        f"sources, the join (or union) node IS the combine step: ADD it as a "
+        f"NEW node with the two nodes as its inputs "
+        f"(``upstream_node_ids`` + ``right_input_node_id`` for a join) — its "
+        f"input wiring is created automatically, so do NOT invent a target "
+        f"id and connect into it. Otherwise, target an existing node id from "
+        f"the live graph."
+    )
+
+
 def _handle_connect(
     tool_name: str,
     tool_args: dict[str, Any],
@@ -266,6 +290,27 @@ def _handle_connect(
                 to_id, to_node.node_type if to_node is not None else None
             ),
         )
+
+    # Refuse ``connect`` whose target exists nowhere — not live, not staged
+    # this session. The dogfood failure: the planner narrates a join node it
+    # never added (``connect 1 → 4`` where node 4 was never created) and
+    # wires the sources into that phantom id. Without this guard, stage mode
+    # silently stages a dangling edge that only blows up at apply_diff, and
+    # apply mode surfaces a raw ``404 Node not found`` the LLM reads as "I
+    # can't create nodes" (then gives up). Reject early, after the
+    # source-target check (so a staged-source target still reports
+    # ``target_is_source``), with an actionable steer toward ADDING the join.
+    if to_node is None and to_id not in staged_ids:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason="target_not_found",
+            refusal_detail=format_missing_connection_target_detail(to_id),
+        )
+
     from_node = flow.get_node(from_id)
     if from_node is not None and to_node is not None:
         connection_error = validate_connection(from_node, to_node)

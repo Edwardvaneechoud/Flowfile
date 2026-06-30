@@ -123,6 +123,73 @@ def _should_force_other_after_source_add(
     if any(kw in user_text for kw in _WIRING_INTENT_KEYWORDS):
         return False
     return True
+
+
+# A rejected ``connect`` at ``single_stage_op`` whose reason is one of these
+# means the target can NEVER receive a connection — it is a source node (no
+# input port) or it does not exist (a join node the planner narrated but
+# never added). The state machine exposes only the ``connect`` tool at
+# ``single_stage_op``, so without intervention the LLM is trapped retrying
+# the same doomed wire until the per-step retry budget is exhausted (see the
+# join dogfood: *"Routing to connect operation"* → reject → reject → "I
+# can't create nodes"). On these reasons we reset to ``classify`` so the
+# agent can pivot to ADDING a join/union node — the real "combine sources"
+# op. Other connect rejections (id-shape validation, cycles) are correctable
+# by retrying ``connect`` with fixed args, so they stay on the retry path.
+_CONNECT_PIVOT_REASONS: frozenset[str] = frozenset({"target_is_source", "target_not_found"})
+
+# Cap on how many times a single run may auto-pivot connect→classify. A
+# healthy run makes progress (stages a join) between pivots, so this is only
+# a backstop against a model that never stops re-picking ``connect``; past
+# the cap the rejection falls through to the normal retry budget, and
+# ``max_steps`` is the ultimate ceiling.
+_MAX_CONNECT_JOIN_PIVOTS: int = 6
+
+
+def _should_pivot_connect_to_add_join(
+    session: sessions.AgentSession,
+    tool_name: str,
+    refusal_reason: str | None,
+) -> bool:
+    """True when a rejected ``connect`` should reset the staged/live state
+    machine back to ``classify`` so the agent can pivot to ADDING a join.
+
+    Fires only inside the staged/live state machine, only at
+    ``single_stage_op`` (where ``connect`` is the lone exposed tool), and
+    only for the reasons in :data:`_CONNECT_PIVOT_REASONS`.
+    """
+    if session.surface not in _STAGED_STATE_MACHINE_SURFACES:
+        return False
+    if session.stage != "single_stage_op":
+        return False
+    if tool_name != "flowfile.graph.connect":
+        return False
+    return refusal_reason in _CONNECT_PIVOT_REASONS
+
+
+def _build_join_pivot_steer(
+    tool_args: dict[str, Any],
+    refusal_reason: str | None,
+) -> str:
+    """Short host note injected after a connect→add-join pivot. Kept terse
+    on purpose — it is re-injected on every pivot, so verbose prose would
+    eat the context budget of small models."""
+    to_id = tool_args.get("to_node_id")
+    target = f"node {to_id}" if to_id is not None else "the target"
+    why = (
+        f"{target} is a source (no input port)"
+        if refusal_reason == "target_is_source"
+        else f"{target} does not exist"
+    )
+    return (
+        f"NOTE FROM HOST: connect rejected — {why}. To combine/join sources you "
+        f'ADD a node, not connect them. Next: classify_intent op_kind="add", '
+        f"then pick join (match on keys) or union (stack rows) — its inputs wire "
+        f'automatically. If every join already exists, classify_intent op_kind='
+        f'"other" and write your wrap-up.'
+    )
+
+
 _PICK_UPSTREAM_NAME = PICK_UPSTREAM_TOOL_NAME
 
 
@@ -378,6 +445,9 @@ async def _run_planner_loop(
     # Set when a tool call is rejected this step; routes prose-only
     # follow-ups through the retry budget instead of breaking silently.
     step_had_rejection = False
+    # Counts connect→add-join pivots so a pathological re-pick-connect loop
+    # can't spin past the cap (see ``_MAX_CONNECT_JOIN_PIVOTS``).
+    connect_join_pivots = 0
 
     if not session.messages:
         session.messages = _build_initial_messages(flow, session)
@@ -906,6 +976,57 @@ async def _run_planner_loop(
                         "arg_summary": arg_summary,
                     },
                 )
+                # Escape the single_stage_op connect trap: a connect whose
+                # target is a source / does not exist can only be "fixed" by
+                # ADDING a join — but single_stage_op exposes no add tool.
+                # Reset to classify with a steer so the agent can pivot.
+                if (
+                    connect_join_pivots < _MAX_CONNECT_JOIN_PIVOTS
+                    and _should_pivot_connect_to_add_join(
+                        session, tc.name, result.refusal_reason
+                    )
+                ):
+                    connect_join_pivots += 1
+                    prev_stage = session.stage
+                    sessions.reset_stage_state(session)
+                    session.messages.append(
+                        Message(
+                            role="user",
+                            content=_build_join_pivot_steer(
+                                tc.arguments or {}, result.refusal_reason
+                            ),
+                        )
+                    )
+                    # The pivot IS forward progress (the state machine
+                    # advanced and the agent is unblocked) — mark it so the
+                    # round doesn't burn the retry budget or emit a spurious
+                    # ``retry`` event.
+                    any_succeeded_this_round = True
+                    _log_stage_transition(
+                        session,
+                        from_stage=prev_stage,
+                        to_stage=session.stage,
+                        tool_name=tc.name,
+                    )
+                    yield PlannerEvent(
+                        event="stage_advanced",
+                        payload={
+                            "from": prev_stage,
+                            "to": session.stage,
+                            "session_id": session.session_id,
+                            "op_kind_meta": "connect_join_pivot",
+                        },
+                    )
+                    yield PlannerEvent(
+                        event="info",
+                        payload={
+                            "message": (
+                                "connect targeted a source/missing node; "
+                                "pivoting to add a join node"
+                            ),
+                            "session_id": session.session_id,
+                        },
+                    )
                 continue
 
             # ``agent_live`` post-apply observation. The node is

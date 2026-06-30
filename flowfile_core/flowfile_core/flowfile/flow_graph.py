@@ -5655,8 +5655,10 @@ def format_source_target_detail(node_id: int, node_type: str | None) -> str:
     return (
         f"{label} is a source node and has no input port, so it cannot receive a "
         f"connection. Source nodes ({sources}) stand alone. To combine two sources, "
-        "add a join or union node and connect both into it; otherwise pick a "
-        "transformation/output node as the connection target."
+        "ADD a join or union node with both sources as its inputs (the join/union "
+        "node is the combine step and wires its own inputs — do not connect the "
+        "sources directly); otherwise pick a transformation/output node as the "
+        "connection target."
     )
 
 
