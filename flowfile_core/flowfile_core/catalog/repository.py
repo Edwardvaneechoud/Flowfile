@@ -67,6 +67,10 @@ class CatalogRepository(Protocol):
 
     def count_children(self, namespace_id: int) -> int: ...
 
+    def get_root_namespace(self, namespace_id: int) -> CatalogNamespace | None: ...
+
+    def count_physical_tables_under_namespace(self, namespace_id: int) -> int: ...
+
     # -- Flow registration operations ----------------------------------------
 
     def get_flow(self, registration_id: int) -> FlowRegistration | None: ...
@@ -388,6 +392,26 @@ class SQLAlchemyCatalogRepository:
 
     def count_children(self, namespace_id: int) -> int:
         return self._db.query(CatalogNamespace).filter_by(parent_id=namespace_id).count()
+
+    def get_root_namespace(self, namespace_id: int) -> CatalogNamespace | None:
+        """Walk parent links to the level-0 catalog (returns the row itself when already a root)."""
+        ns = self._db.get(CatalogNamespace, namespace_id)
+        seen: set[int] = set()
+        while ns is not None and ns.parent_id is not None and ns.id not in seen:
+            seen.add(ns.id)
+            ns = self._db.get(CatalogNamespace, ns.parent_id)
+        return ns
+
+    def count_physical_tables_under_namespace(self, namespace_id: int) -> int:
+        """Count physical tables in a catalog and its child schemas (storage-immutability check)."""
+        # Catalog hierarchy is capped at depth 1 (catalog -> schema); grandchildren are not possible.
+        child_ids = [r[0] for r in self._db.query(CatalogNamespace.id).filter_by(parent_id=namespace_id).all()]
+        ids = [namespace_id, *child_ids]
+        return (
+            self._db.query(CatalogTable)
+            .filter(CatalogTable.namespace_id.in_(ids), CatalogTable.table_type == "physical")
+            .count()
+        )
 
     # -- Flow registration operations ----------------------------------------
 

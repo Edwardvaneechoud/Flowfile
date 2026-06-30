@@ -19,10 +19,17 @@ from flowfile_core.catalog.serializers import format_pyarrow_preview
 from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.tables import TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
+from flowfile_core.catalog.storage_backend import (
+    CatalogStorageTarget,
+    _catalog_table_dir_name,
+    _is_cloud_uri,
+    resolve_for_namespace,
+)
 from flowfile_core.catalog.text_utils import hash_source_versions, parse_delta_history
 from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_delta_history,
+    trigger_delta_preview,
     trigger_delta_version_preview,
     trigger_resolve_virtual_table,
 )
@@ -148,12 +155,18 @@ class TablePreviewService:
         if not table.file_path:
             return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
 
+        if _is_cloud_uri(table.file_path):
+            target = resolve_for_namespace(table.namespace_id)
+            if version is not None:
+                return self._get_delta_version_preview(table.file_path, version, limit, target=target)
+            return self._get_delta_preview(table.file_path, limit, total_rows=table.row_count, target=target)
+
         data_path = Path(table.file_path)
         if not table_exists(data_path):
             return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
 
         if version is not None and is_delta_table(data_path):
-            return self._get_delta_version_preview(data_path, version, limit)
+            return self._get_delta_version_preview(str(data_path), version, limit)
 
         if is_delta_table(data_path):
             pa_table = read_delta_preview(str(data_path), n_rows=limit)
@@ -161,19 +174,47 @@ class TablePreviewService:
             pa_table = read_top_n(str(data_path), n=limit)
         return format_pyarrow_preview(pa_table, total_rows=table.row_count)
 
-    def _get_delta_version_preview(self, data_path: Path, version: int, limit: int) -> CatalogTablePreview:
+    def _get_delta_version_preview(
+        self, table_path: str, version: int, limit: int, target: CatalogStorageTarget | None = None
+    ) -> CatalogTablePreview:
         """Read a Delta table preview at a specific version via the worker (or locally)."""
-        table_path = str(data_path)
+        storage_payload = target.to_worker_payload() if target else None
+        storage_options = (target.storage_options or None) if target else None
         if _should_offload():
             try:
-                return trigger_delta_version_preview(data_path.name, version, limit)
+                return trigger_delta_version_preview(
+                    _catalog_table_dir_name(table_path), version, limit, storage=storage_payload
+                )
             except (RuntimeError, OSError, ValueError, KeyError):
                 logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
 
-        delta_table = DeltaTable(table_path, version=version)
+        delta_table = DeltaTable(table_path, version=version, storage_options=storage_options)
         dataset = delta_table.to_pyarrow_dataset()
         pa_table = dataset.head(limit)
         return format_pyarrow_preview(pa_table)
+
+    def _get_delta_preview(
+        self,
+        table_path: str,
+        limit: int,
+        total_rows: int | None = None,
+        target: CatalogStorageTarget | None = None,
+    ) -> CatalogTablePreview:
+        """Read a Delta table preview (latest version) via the worker (or locally).
+
+        ``total_rows`` stays authoritative when known (a page-bounded read never sees the whole table).
+        """
+        storage_payload = target.to_worker_payload() if target else None
+        storage_options = (target.storage_options or None) if target else None
+        if _should_offload():
+            try:
+                preview = trigger_delta_preview(_catalog_table_dir_name(table_path), limit, storage=storage_payload)
+                return preview.model_copy(update={"total_rows": total_rows}) if total_rows is not None else preview
+            except (RuntimeError, OSError, ValueError, KeyError):
+                logger.warning("Worker delta preview failed, falling back to local", exc_info=True)
+
+        pa_table = pl.scan_delta(table_path, storage_options=storage_options).head(limit).collect().to_arrow()
+        return format_pyarrow_preview(pa_table, total_rows=total_rows)
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table."""
@@ -184,18 +225,21 @@ class TablePreviewService:
         if not table.file_path:
             return DeltaTableHistory(current_version=0, history=[])
 
-        data_path = Path(table.file_path)
-        if not is_delta_table(data_path):
+        is_cloud = _is_cloud_uri(table.file_path)
+        if not is_cloud and not is_delta_table(Path(table.file_path)):
             return DeltaTableHistory(current_version=0, history=[])
 
-        table_path = str(data_path)
+        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
+        table_path = table.file_path
+        storage_payload = target.to_worker_payload() if target else None
+        storage_options = (target.storage_options or None) if target else None
         if _should_offload():
             try:
-                return trigger_delta_history(data_path.name, limit)
+                return trigger_delta_history(_catalog_table_dir_name(table_path), limit, storage=storage_payload)
             except (RuntimeError, OSError, ValueError, KeyError):
                 logger.warning("Worker delta history read failed, falling back to local", exc_info=True)
 
-        delta_table = DeltaTable(table_path, without_files=True)
+        delta_table = DeltaTable(table_path, without_files=True, storage_options=storage_options)
         raw_history = delta_table.history(limit)
         current_version = delta_table.version()
         history = parse_delta_history(raw_history)

@@ -50,24 +50,67 @@ def format_delta_timestamp(ts: object) -> str | None:
 # Delta table size
 
 
-def get_delta_size_bytes(path: str | Path) -> int:
+def get_delta_size_bytes(path: str | Path, storage_options: dict[str, str] | None = None) -> int:
     """Sum the sizes of active data files from the Delta transaction log.
 
     Uses the Delta log metadata rather than filesystem scanning, which
     correctly excludes tombstoned files from previous versions.
 
-    Falls back to filesystem scanning if the delta log can't be read.
+    Falls back to filesystem scanning if the delta log can't be read (local only; an
+    unreadable object-storage log yields ``0``).
     """
     from deltalake import DeltaTable
 
     try:
-        dt = DeltaTable(str(path))
+        dt = DeltaTable(str(path), storage_options=storage_options)
         add_actions = dt.get_add_actions(flatten=True)
         size_col = add_actions.column("size_bytes")
         return sum(v for v in size_col.to_pylist() if v is not None)
     except Exception:
+        if storage_options is not None:
+            logger.warning("Failed to read size from delta log for %s", path, exc_info=True)
+            return 0
         logger.warning("Failed to read size from delta log, falling back to filesystem scan", exc_info=True)
         return sum(f.stat().st_size for f in Path(path).rglob("*.parquet"))
+
+
+def _open_delta_or_none(output_path: str, storage_options: dict[str, str] | None):
+    """Open the Delta table at *output_path*, or return ``None`` if it doesn't exist.
+
+    Only a genuine "table not found" yields ``None``; any other failure (auth, network) propagates,
+    so a transient error is never mistaken for a missing table (which would silently overwrite).
+    """
+    from deltalake import DeltaTable
+    from deltalake.exceptions import TableNotFoundError
+
+    if storage_options is None:
+        import os
+
+        if not (os.path.isdir(output_path) and os.path.isdir(os.path.join(output_path, "_delta_log"))):
+            return None
+        try:
+            return DeltaTable(str(output_path))
+        except TableNotFoundError:
+            return None
+
+    try:
+        return DeltaTable(str(output_path), storage_options=storage_options)
+    except TableNotFoundError:
+        return None
+
+
+def _delta_table_exists(output_path: str, storage_options: dict[str, str] | None) -> bool:
+    """Return ``True`` if a Delta table exists at *output_path* (local or object storage).
+
+    Locally a cheap ``_delta_log`` probe; for object storage it opens the table. Only a genuine
+    "not found" returns ``False`` — any other error propagates rather than masquerading as missing.
+    """
+    if storage_options is None:
+        import os
+
+        return os.path.isdir(output_path) and os.path.isdir(os.path.join(output_path, "_delta_log"))
+
+    return _open_delta_or_none(output_path, storage_options) is not None
 
 
 # Catalog path validation
@@ -94,6 +137,7 @@ def write_delta(
     output_path: str,
     mode: str = "overwrite",
     partition_by: list[str] | None = None,
+    storage_options: dict[str, str] | None = None,
 ) -> bool:
     """Write a Polars DataFrame or LazyFrame to a Delta table.
 
@@ -105,23 +149,27 @@ def write_delta(
     is passed through to Delta for every mode: it defines partitioning when the
     table is created and, on writes to an existing table, Delta enforces that it
     matches the table's existing partitioning (raising on a mismatch).
+
+    When *storage_options* is set, *output_path* is an object-storage URI and the write
+    targets that backend; ``None`` is a local filesystem write.
     """
     import os
 
     import polars as pl_
 
-    os.makedirs(output_path, exist_ok=True)
+    if storage_options is None:
+        os.makedirs(output_path, exist_ok=True)
 
     # Skip no-op append: empty data with unchanged schema on existing table
-    if mode == "append" and os.path.isdir(os.path.join(output_path, "_delta_log")):
-        from deltalake import DeltaTable
-
-        existing_cols = {f.name for f in DeltaTable(output_path).schema().fields}
-        incoming_cols = _frame_column_names(df)
-        if incoming_cols == existing_cols:
-            row_count = df.select(pl_.len()).collect().item() if isinstance(df, pl_.LazyFrame) else df.height
-            if row_count == 0:
-                return False
+    if mode == "append":
+        existing_dt = _open_delta_or_none(output_path, storage_options)
+        if existing_dt is not None:
+            existing_cols = {f.name for f in existing_dt.schema().fields}
+            incoming_cols = _frame_column_names(df)
+            if incoming_cols == existing_cols:
+                row_count = df.select(pl_.len()).collect().item() if isinstance(df, pl_.LazyFrame) else df.height
+                if row_count == 0:
+                    return False
 
     delta_write_options: dict[str, object] = {}
     if mode == "overwrite":
@@ -133,10 +181,14 @@ def write_delta(
         _validate_partition_columns(df, partition_by)
         delta_write_options["partition_by"] = partition_by
 
+    write_kwargs: dict[str, object] = {"mode": mode, "delta_write_options": delta_write_options}
+    if storage_options is not None:
+        write_kwargs["storage_options"] = storage_options
+
     if isinstance(df, pl_.LazyFrame):
-        df.sink_delta(output_path, mode=mode, delta_write_options=delta_write_options)
+        df.sink_delta(output_path, **write_kwargs)
     else:
-        df.write_delta(output_path, mode=mode, delta_write_options=delta_write_options)
+        df.write_delta(output_path, **write_kwargs)
     return True
 
 
@@ -146,11 +198,15 @@ def merge_into_delta(
     merge_mode: str = "upsert",
     merge_keys: list[str] | None = None,
     partition_by: list[str] | None = None,
+    storage_options: dict[str, str] | None = None,
 ) -> bool:
     """Merge a Polars DataFrame into a Delta table.
 
     Handles table creation when the target doesn't exist yet and supports
     three merge modes: ``upsert``, ``update``, and ``delete``.
+
+    When *storage_options* is set, *output_path* is an object-storage URI and existence is
+    probed by opening the table rather than via local filesystem checks.
 
     Returns ``True`` if data was written, ``False`` if the write was a no-op.
     """
@@ -158,39 +214,45 @@ def merge_into_delta(
 
     from deltalake import DeltaTable
 
-    table_exists = os.path.isdir(output_path) and os.path.isdir(os.path.join(output_path, "_delta_log"))
+    # Open the target once (re-used below) rather than probing then re-opening.
+    dt = _open_delta_or_none(output_path, storage_options)
+    table_exists = dt is not None
 
     # Skip no-op update: empty data with unchanged schema on existing table
     if merge_mode == "update" and df.height == 0 and table_exists:
-        existing_cols = {f.name for f in DeltaTable(output_path).schema().fields}
-        if set(df.columns) == existing_cols:
+        if set(df.columns) == {f.name for f in dt.schema().fields}:
             return False
 
+    create_kwargs: dict[str, object] = {}
+    if storage_options is not None:
+        create_kwargs["storage_options"] = storage_options
+
     if not table_exists:
-        os.makedirs(output_path, exist_ok=True)
+        if storage_options is None:
+            os.makedirs(output_path, exist_ok=True)
         create_opts: dict[str, object] = {}
         if partition_by:
             _validate_partition_columns(df, partition_by)
             create_opts["partition_by"] = partition_by
         if merge_mode in ("delete", "update"):
-            df.clear().write_delta(output_path, mode="error", delta_write_options=create_opts)
+            df.clear().write_delta(output_path, mode="error", delta_write_options=create_opts, **create_kwargs)
         else:
-            df.write_delta(output_path, mode="error", delta_write_options=create_opts)
+            df.write_delta(output_path, mode="error", delta_write_options=create_opts, **create_kwargs)
     else:
         if partition_by:
             logger.warning("Ignoring partition_by on merge into existing table: Delta partitioning is immutable")
         if not merge_keys:
             raise ValueError("merge_keys is required for merge operations on existing tables")
 
-        dt = DeltaTable(output_path)
-
         # Schema evolution: add new source columns to the target before merging
         if merge_mode in ("upsert", "update"):
             target_col_names = {field.name for field in dt.schema().fields}
             new_cols = [c for c in df.columns if c not in target_col_names]
             if new_cols:
-                df.clear().write_delta(output_path, mode="append", delta_write_options={"schema_mode": "merge"})
-                dt = DeltaTable(output_path)
+                df.clear().write_delta(
+                    output_path, mode="append", delta_write_options={"schema_mode": "merge"}, **create_kwargs
+                )
+                dt = DeltaTable(str(output_path), storage_options=storage_options)
 
         predicate = " AND ".join(f'target."{k}" = source."{k}"' for k in merge_keys)
         source_arrow = df.to_arrow()
@@ -275,6 +337,12 @@ def validate_catalog_path(table_name: str, catalog_dir: Path) -> Path:
 
     Raises ``ValueError`` when the input is invalid.
     """
+    _guard_bare_table_name(table_name)
+    return catalog_dir.resolve() / table_name
+
+
+def _guard_bare_table_name(table_name: str) -> None:
+    """Raise ``ValueError`` unless *table_name* is a simple, separator-free name."""
     if not table_name:
         raise ValueError("table_name must not be empty")
     if "\x00" in table_name:
@@ -284,4 +352,11 @@ def validate_catalog_path(table_name: str, catalog_dir: Path) -> Path:
     if ".." in table_name:
         raise ValueError("table_name must not contain '..'")
 
-    return catalog_dir.resolve() / table_name
+
+def validate_catalog_uri(table_name: str, base_uri: str) -> str:
+    """Validate *table_name* and join it onto an object-storage *base_uri*.
+
+    The cloud analogue of :func:`validate_catalog_path`: same bare-name guards, producing a URI.
+    """
+    _guard_bare_table_name(table_name)
+    return base_uri.rstrip("/") + "/" + table_name

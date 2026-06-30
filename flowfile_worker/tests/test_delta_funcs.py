@@ -494,6 +494,33 @@ class TestWorkerRoutes:
         data = resp.json()
         assert len(data["rows"]) == 1
 
+    def test_delta_preview(self, worker_client, versioned_delta):
+        resp = worker_client.post(
+            "/catalog/delta_preview",
+            json={"table_path": "versioned", "n_rows": 100},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "version" not in data  # non-versioned response shape
+        assert data["columns"] == ["v"]
+        assert len(data["rows"]) == 2  # latest version (the overwrite)
+
+    def test_delta_preview_n_rows(self, worker_client, versioned_delta):
+        resp = worker_client.post(
+            "/catalog/delta_preview",
+            json={"table_path": "versioned", "n_rows": 1},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["rows"]) == 1  # page is bounded
+
+    def test_delta_preview_path_traversal(self, worker_client):
+        resp = worker_client.post(
+            "/catalog/delta_preview",
+            json={"table_path": "../etc/passwd"},
+        )
+        assert resp.status_code == 400
+
     def test_table_metadata_path_traversal(self, worker_client):
         """Path with separators should be rejected as 400."""
         resp = worker_client.post(

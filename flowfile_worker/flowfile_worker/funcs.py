@@ -18,13 +18,39 @@ from flowfile_worker.external_sources.sql_source.main import write_df_to_databas
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 from flowfile_worker.flow_logger import get_worker_logger
 from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
-from shared.delta_utils import format_delta_timestamp, get_delta_size_bytes, make_json_safe, validate_catalog_path
+from shared.delta_utils import (
+    format_delta_timestamp,
+    get_delta_size_bytes,
+    make_json_safe,
+    validate_catalog_path,
+    validate_catalog_uri,
+)
 from shared.storage_config import storage
 
 
 def _validate_catalog_path(table_name: str) -> Path:
     """Validate and resolve *table_name* under the catalog tables directory."""
     return validate_catalog_path(table_name, storage.catalog_tables_directory)
+
+
+def _resolve_catalog_target(table_name: str, base_uri: str | None) -> str:
+    """Resolve a bare *table_name* to a local path or an object-storage URI."""
+    if base_uri is not None:
+        return validate_catalog_uri(table_name, base_uri)
+    return str(_validate_catalog_path(table_name))
+
+
+def _resolve_storage_options(storage_payload: dict | None) -> dict | None:
+    """Decrypt object-storage options from a serialized ``CatalogStorageInterface`` (``None`` for local).
+
+    The connection's owner-encrypted secrets are decrypted here, worker-side.
+    """
+    if not storage_payload:
+        return None
+    from flowfile_worker.external_sources.s3_source.models import FullCloudStorageConnection
+
+    conn = FullCloudStorageConnection(**storage_payload["connection"])
+    return conn.get_storage_options()
 
 
 def _validate_virtual_results_path(name: str) -> Path:
@@ -36,9 +62,9 @@ def _row_count_ipc(p: Path) -> int:
     return int(pl.scan_ipc(str(p)).select(pl.len()).collect().item())
 
 
-def _get_delta_size_bytes(delta_dir: Path) -> int:
+def _get_delta_size_bytes(delta_dir: Path | str, storage_options: dict | None = None) -> int:
     """Delegate to ``shared.delta_utils.get_delta_size_bytes``."""
-    return get_delta_size_bytes(delta_dir)
+    return get_delta_size_bytes(delta_dir, storage_options=storage_options)
 
 
 # 'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample']
@@ -126,9 +152,7 @@ def apply_model_task(
     from shared.ml.trainers import get_trainer
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
-    flowfile_logger.info(
-        f"Starting apply_model_task, output_column={output_column}"
-    )
+    flowfile_logger.info(f"Starting apply_model_task, output_column={output_column}")
     try:
         with open(model_path, "rb") as f:
             model = _json.loads(f.read())
@@ -589,6 +613,7 @@ def write_delta(
     output_path: str,
     mode: str = "overwrite",
     partition_by: list[str] | None = None,
+    storage_payload: dict | None = None,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -597,15 +622,19 @@ def write_delta(
     This offloads the collect() from core to the worker process, producing
     a Delta table at *output_path*.  Metadata (schema, row_count, size_bytes)
     is returned via the queue so the core never needs to read the table.
+
+    *storage_payload* routes the write to object storage (``None`` ⇒ local); *output_path* is
+    the fully-resolved destination (local path or ``s3://`` URI).
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting write_delta operation to: {output_path}")
     try:
         from shared.delta_utils import write_delta as _write_delta
 
+        storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
-        wrote = _write_delta(df, output_path, mode=mode, partition_by=partition_by)
+        wrote = _write_delta(df, output_path, mode=mode, partition_by=partition_by, storage_options=storage_options)
 
         if not wrote:
             queue.put({"skipped": True})
@@ -614,7 +643,7 @@ def write_delta(
                 progress.value = 100
             return
 
-        size_bytes = _get_delta_size_bytes(Path(output_path))
+        size_bytes = _get_delta_size_bytes(output_path, storage_options=storage_options)
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
 
         queue.put(
@@ -648,6 +677,7 @@ def merge_delta(
     merge_mode: str = "upsert",
     merge_keys: list[str] | None = None,
     partition_by: list[str] | None = None,
+    storage_payload: dict | None = None,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -657,16 +687,24 @@ def merge_delta(
     - upsert: update matched rows + insert unmatched
     - update: update only matched rows (no inserts)
     - delete: remove matched rows from target
+
+    *storage_payload* routes the merge to object storage (``None`` ⇒ local-filesystem table).
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting merge_delta ({merge_mode}) to: {output_path}")
     try:
         from shared.delta_utils import merge_into_delta
 
+        storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
         wrote = merge_into_delta(
-            df, output_path, merge_mode=merge_mode, merge_keys=merge_keys, partition_by=partition_by
+            df,
+            output_path,
+            merge_mode=merge_mode,
+            merge_keys=merge_keys,
+            partition_by=partition_by,
+            storage_options=storage_options,
         )
 
         if not wrote:
@@ -676,11 +714,11 @@ def merge_delta(
                 progress.value = 100
             return
 
-        result_df = pl.scan_delta(output_path)
+        result_df = pl.scan_delta(output_path, storage_options=storage_options)
         result_schema = result_df.collect_schema()
         schema = [{"name": n, "dtype": str(d)} for n, d in result_schema.items()]
         row_count = result_df.select(pl.len()).collect().item()
-        size_bytes = _get_delta_size_bytes(Path(output_path))
+        size_bytes = _get_delta_size_bytes(output_path, storage_options=storage_options)
 
         queue.put(
             {
@@ -709,9 +747,16 @@ def materialize_catalog_table_task(
     progress: Value,
     error_message: Array,
     queue: Queue,
+    storage_options: dict | None = None,
 ):
-    """Subprocess task: reads a source file and materializes it as a Delta table, returning metadata via queue."""
+    """Subprocess task: reads a source file and materializes it as a Delta table, returning metadata via queue.
+
+    *dest_path* is the fully-resolved destination (local path or ``s3://`` URI); *storage_options*
+    is set for the object-storage case.
+    """
     try:
+        from shared.delta_utils import write_delta as _write_delta
+
         ext = os.path.splitext(source_file_path)[1].lower()
         if ext in (".csv", ".txt", ".tsv"):
             df = pl.scan_csv(source_file_path, infer_schema_length=10000, encoding="utf8-lossy")
@@ -725,10 +770,9 @@ def materialize_catalog_table_task(
         if isinstance(df, pl.LazyFrame):
             df = df.collect()
 
-        os.makedirs(dest_path, exist_ok=True)
-        df.write_delta(dest_path, mode="overwrite")
+        _write_delta(df, dest_path, mode="overwrite", storage_options=storage_options)
 
-        size_bytes = _get_delta_size_bytes(Path(dest_path))
+        size_bytes = _get_delta_size_bytes(dest_path, storage_options=storage_options)
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
 
         queue.put(
@@ -756,18 +800,19 @@ def optimize_catalog_table_task(
     progress: Value,
     error_message: Array,
     queue: Queue,
+    storage_options: dict | None = None,
 ):
     """Subprocess task: compact (and optionally Z-order) a Delta catalog table.
 
-    *table_path* is the absolute, already-validated table directory (the route
-    resolves it in the parent process so this works regardless of the child's
-    storage configuration).
+    *table_path* is the already-validated table directory or object-storage URI (resolved by the
+    route in the parent process); *storage_options* is set for the object-storage case.
     """
     try:
         from shared.delta_utils import optimize_delta
 
-        metrics = optimize_delta(table_path, z_order_columns=z_order_columns or None)
-        queue.put({"metrics": metrics, "size_bytes": _get_delta_size_bytes(Path(table_path))})
+        metrics = optimize_delta(table_path, z_order_columns=z_order_columns or None, storage_options=storage_options)
+        size_bytes = _get_delta_size_bytes(table_path, storage_options=storage_options)
+        queue.put({"metrics": metrics, "size_bytes": size_bytes})
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
@@ -785,20 +830,24 @@ def vacuum_catalog_table_task(
     progress: Value,
     error_message: Array,
     queue: Queue,
+    storage_options: dict | None = None,
 ):
     """Subprocess task: vacuum tombstoned files from a Delta catalog table.
 
-    *table_path* is the absolute, already-validated table directory.
+    *table_path* is the absolute, already-validated table directory or object-storage
+    URI; *storage_options* is set for the object-storage case.
     """
     try:
         from shared.delta_utils import vacuum_delta
 
-        files = vacuum_delta(table_path, retention_hours=retention_hours, dry_run=dry_run)
+        files = vacuum_delta(
+            table_path, retention_hours=retention_hours, dry_run=dry_run, storage_options=storage_options
+        )
         queue.put(
             {
                 "files_removed": list(files),
                 "file_count": len(files),
-                "size_bytes": _get_delta_size_bytes(Path(table_path)),
+                "size_bytes": _get_delta_size_bytes(table_path, storage_options=storage_options),
             }
         )
         with progress.get_lock():
@@ -816,17 +865,20 @@ def execute_sql_query(
     tables: dict[str, str],
     max_rows: int = 10_000,
     virtual_refs: dict[str, str] | None = None,
+    base_uri: str | None = None,
+    storage_options: dict | None = None,
 ) -> dict:
     """Execute a SQL query against catalog tables using pl.SQLContext.
 
     *tables* is a mapping of logical table name -> directory name.  The
     directory name is resolved under the catalog tables directory using
-    ``_validate_catalog_path``.  Only tables actually referenced in the
-    query plan are reported in *used_tables*.
+    ``_validate_catalog_path`` (or, when *base_uri* is set, joined onto the
+    object-storage root and scanned with *storage_options*).  Only tables
+    actually referenced in the query plan are reported in *used_tables*.
 
     *virtual_refs* is an optional mapping of virtual table name -> bare IPC
     filename under the catalog_virtual_results directory; the worker scans
-    each via ``pl.scan_ipc``.
+    each via ``pl.scan_ipc`` (always local).
 
     Returns a dict matching the SqlQueryResponse schema.
     """
@@ -838,7 +890,7 @@ def execute_sql_query(
     ctx = pl.SQLContext()
     registered_names: list[str] = []
     for name, dir_name in tables.items():
-        ctx.register(name, open_catalog_table(dir_name))
+        ctx.register(name, open_catalog_table(dir_name, base_uri=base_uri, storage_options=storage_options))
         registered_names.append(name)
 
     if virtual_refs:
@@ -877,19 +929,20 @@ def execute_sql_query(
     }
 
 
-def read_table_metadata(table_name: str) -> dict:
-    """Read schema, row_count, column_count, size_bytes from a table on disk.
+def read_table_metadata(table_name: str, base_uri: str | None = None, storage_options: dict | None = None) -> dict:
+    """Read schema, row_count, column_count, size_bytes from a table.
 
     *table_name* is the bare directory name inside the catalog tables
-    directory (no path separators allowed).
+    directory (no path separators allowed); when *base_uri* is set the table
+    lives in object storage and is read with *storage_options*.
 
     Called by the worker endpoint so the core process never touches data files.
     """
-    lf = open_catalog_table(table_name)
+    lf = open_catalog_table(table_name, base_uri=base_uri, storage_options=storage_options)
     schema = lf.collect_schema()
     schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
     row_count = lf.select(pl.len()).collect().item()
-    size_bytes = _get_delta_size_bytes(_validate_catalog_path(table_name))
+    size_bytes = _get_delta_size_bytes(_resolve_catalog_target(table_name, base_uri), storage_options=storage_options)
     return {
         "schema": schema_list,
         "row_count": row_count,
@@ -898,13 +951,19 @@ def read_table_metadata(table_name: str) -> dict:
     }
 
 
-def get_delta_history(table_name: str, limit: int | None = None) -> models.DeltaHistoryResponse:
+def get_delta_history(
+    table_name: str,
+    limit: int | None = None,
+    base_uri: str | None = None,
+    storage_options: dict | None = None,
+) -> models.DeltaHistoryResponse:
     """Read version history from a Delta table using the deltalake library.
 
-    *table_name* is the bare directory name inside the catalog tables directory.
+    *table_name* is the bare directory name inside the catalog tables directory,
+    or a key under *base_uri* in object storage when set.
     """
-    validated = _validate_catalog_path(table_name)
-    dt = DeltaTable(str(validated))
+    target = _resolve_catalog_target(table_name, base_uri)
+    dt = DeltaTable(target, storage_options=storage_options)
     history = dt.history(limit)
     current_version = dt.version()
     entries: list[models.DeltaVersionCommit] = []
@@ -920,20 +979,13 @@ def get_delta_history(table_name: str, limit: int | None = None) -> models.Delta
     return models.DeltaHistoryResponse(current_version=current_version, history=entries)
 
 
-def read_delta_version_preview(table_name: str, version: int, n_rows: int = 100) -> models.DeltaVersionPreviewResponse:
-    """Read a preview of a Delta table at a specific version using deltalake + PyArrow (no Polars).
-
-    *table_name* is the bare directory name inside the catalog tables directory.
-    """
-    validated = _validate_catalog_path(table_name)
-    dt = DeltaTable(str(validated), version=version)
+def _delta_preview_payload(dt: DeltaTable, n_rows: int) -> tuple[list[str], list[str], list[list], int]:
+    """Bounded head read of an open Delta table -> (columns, dtypes, rows, total_rows)."""
     dataset = dt.to_pyarrow_dataset()
     pa_table = dataset.head(n_rows)
     columns = pa_table.column_names
     dtypes = [str(field.type) for field in pa_table.schema]
-    rows = pa_table.to_pylist()
-
-    row_list = [[make_json_safe(row.get(c)) for c in columns] for row in rows]
+    row_list = [[make_json_safe(row.get(c)) for c in columns] for row in pa_table.to_pylist()]
     try:
         total_rows = sum(
             v for v in dt.get_add_actions(flatten=True).to_pydict().get("num_records", []) if v is not None
@@ -942,14 +994,44 @@ def read_delta_version_preview(table_name: str, version: int, n_rows: int = 100)
         total_rows = len(row_list)
     if total_rows == 0:
         total_rows = len(row_list)
+    return columns, dtypes, row_list, total_rows
 
+
+def read_delta_version_preview(
+    table_name: str,
+    version: int,
+    n_rows: int = 100,
+    base_uri: str | None = None,
+    storage_options: dict | None = None,
+) -> models.DeltaVersionPreviewResponse:
+    """Read a preview of a Delta table at a specific version using deltalake + PyArrow (no Polars).
+
+    *table_name* is the bare directory name inside the catalog tables directory,
+    or a key under *base_uri* in object storage when set.
+    """
+    target = _resolve_catalog_target(table_name, base_uri)
+    dt = DeltaTable(target, version=version, storage_options=storage_options)
+    columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows)
     return models.DeltaVersionPreviewResponse(
-        version=version,
-        columns=columns,
-        dtypes=dtypes,
-        rows=row_list,
-        total_rows=total_rows,
+        version=version, columns=columns, dtypes=dtypes, rows=rows, total_rows=total_rows
     )
+
+
+def read_delta_preview(
+    table_name: str,
+    n_rows: int = 100,
+    base_uri: str | None = None,
+    storage_options: dict | None = None,
+) -> models.DeltaPreviewResponse:
+    """Read a preview (latest version) of a Delta table using deltalake + PyArrow (no Polars).
+
+    *table_name* is the bare directory name inside the catalog tables directory,
+    or a key under *base_uri* in object storage when set.
+    """
+    target = _resolve_catalog_target(table_name, base_uri)
+    dt = DeltaTable(target, storage_options=storage_options)
+    columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows)
+    return models.DeltaPreviewResponse(columns=columns, dtypes=dtypes, rows=rows, total_rows=total_rows)
 
 
 def generic_task(
