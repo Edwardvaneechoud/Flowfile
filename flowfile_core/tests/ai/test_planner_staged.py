@@ -45,7 +45,7 @@ from flowfile_core.ai.tools.registry import (
     get_staged_fill_inner_field_name,
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 
 # Test helpers (mirrored from test_planner.py to keep the fixture stack
@@ -2124,7 +2124,21 @@ def test_connect_from_staged_non_source_to_live_is_allowed_end_to_end() -> None:
     """
     from flowfile_core.ai.diff import StagedToolEntry
 
-    flow = _make_flow()
+    flow = _make_flow()  # node 1 = manual_input source
+    # A LIVE non-source target (node 2 = filter) so the connect actually
+    # succeeds. Wiring into node 1 (a source) would be rejected with
+    # ``target_is_source``, masking the very behaviour this test claims to
+    # check, so the target must be a transform with a free input port.
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                filter_type="advanced", advanced_filter="[region]=='EU'"
+            ),
+        )
+    )
     sess = _make_session(flow)
 
     # Simulate a prior round having staged a filter (id 7) — a
@@ -2167,11 +2181,11 @@ def test_connect_from_staged_non_source_to_live_is_allowed_end_to_end() -> None:
                         arguments={
                             "flow_id": flow.flow_id,
                             "from_node_id": 7,
-                            "to_node_id": 1,
+                            "to_node_id": 2,
                         },
                     )
                 ],
-                content="Wiring filter to orders.",
+                content="Wiring the staged filter into the live filter.",
                 finish_reason="tool_calls",
             ),
             _Step(content=None, finish_reason="stop"),
@@ -2182,17 +2196,19 @@ def test_connect_from_staged_non_source_to_live_is_allowed_end_to_end() -> None:
         _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
     )
 
-    # No unrequested_wire_to_live rejection for the connect call —
-    # the staged upstream is a transform, not a source.
-    unrequested_rejections = [
-        e for e in events
-        if e.event == "tool_call_rejected"
-        and e.payload.get("reason") == "unrequested_wire_to_live"
-    ]
-    assert unrequested_rejections == [], (
-        f"non-source staged upstream must NOT trip the refusal; "
-        f"got rejections {[r.payload for r in unrequested_rejections]}"
+    # The connect is ALLOWED end-to-end: it was staged, with no rejection of
+    # any kind (neither ``unrequested_wire_to_live`` nor ``target_is_source``
+    # nor ``target_not_found``).
+    rejections = [e for e in events if e.event == "tool_call_rejected"]
+    assert rejections == [], (
+        f"staged non-source → live non-source must NOT be rejected; "
+        f"got {[(r.payload.get('name'), r.payload.get('reason')) for r in rejections]}"
     )
+    connect_staged = [
+        e for e in events
+        if e.event == "tool_call_staged" and e.payload.get("name") == "flowfile.graph.connect"
+    ]
+    assert connect_staged, "expected the connect to be staged"
 
 
 # connect → add-join pivot (escape the single_stage_op trap) #
@@ -2349,3 +2365,74 @@ def test_connect_into_live_source_pivots_back_to_classify() -> None:
     assert len(pivots) == 1
     assert pivots[0].payload["from"] == "single_stage_op"
     assert pivots[0].payload["to"] == "classify"
+
+
+def test_connect_join_pivot_is_capped() -> None:
+    """A model that never stops re-picking ``connect`` must not pivot
+    forever. After ``_MAX_CONNECT_JOIN_PIVOTS`` (6) pivots the next rejected
+    connect falls through to the normal retry budget instead of pivoting —
+    so 7 consecutive ``target_not_found`` connects yield exactly 6 pivots,
+    and the run then fails on the retry budget."""
+    flow = _make_flow()  # node 1 = source; node 4 never exists
+    sess = _make_session(flow)
+    sess.user_prompt = "combine all my data"
+
+    # 7 cycles of [classify→connect, connect 1→4 → target_not_found]. The
+    # first 6 connect rejections pivot back to classify; the 7th is past the
+    # cap and does not.
+    steps: list[_Step] = []
+    for i in range(7):
+        steps.append(
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id=f"t-classify-{i}",
+                        name=CLASSIFY_INTENT_TOOL_NAME,
+                        arguments={"op_kind": "connect", "rationale": "combine"},
+                    )
+                ]
+            )
+        )
+        steps.append(
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id=f"t-connect-{i}",
+                        name="flowfile.graph.connect",
+                        arguments={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 4},
+                    )
+                ],
+                content="Wiring into the join.",
+                finish_reason="tool_calls",
+            )
+        )
+
+    provider = _ScriptedProvider(steps)
+    events = asyncio.run(
+        _drain(
+            run_planner_session(
+                session=sess,
+                flow=flow,
+                provider=provider,
+                scheduler=_no_wait_scheduler(),
+                max_retries_per_step=1,
+            )
+        )
+    )
+
+    rejections = [
+        e for e in events
+        if e.event == "tool_call_rejected" and e.payload.get("reason") == "target_not_found"
+    ]
+    pivots = [
+        e for e in events
+        if e.event == "stage_advanced" and e.payload.get("op_kind_meta") == "connect_join_pivot"
+    ]
+    assert len(rejections) == 7, f"expected 7 connect rejections; got {len(rejections)}"
+    assert len(pivots) == 6, (
+        f"pivots must be capped at _MAX_CONNECT_JOIN_PIVOTS (6); got {len(pivots)} "
+        f"— the 7th rejection must fall through to the retry path, not pivot"
+    )
+    # The uncapped 7th rejection fell through to the retry budget, which (at
+    # max_retries_per_step=1) terminates the run.
+    assert sess.status == "failed"

@@ -131,7 +131,7 @@ def format_missing_connection_target_detail(node_id: int) -> str:
         f"has not been created yet. If you are combining or joining data "
         f"sources, the join (or union) node IS the combine step: ADD it as a "
         f"NEW node with the two nodes as its inputs "
-        f"(``left_input_node_id`` / ``right_input_node_id`` for a join) — its "
+        f"(``upstream_node_ids`` + ``right_input_node_id`` for a join) — its "
         f"input wiring is created automatically, so do NOT invent a target "
         f"id and connect into it. Otherwise, target an existing node id from "
         f"the live graph."

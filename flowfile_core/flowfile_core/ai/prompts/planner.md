@@ -160,7 +160,7 @@ If you want to add a downstream consumer of your new source (e.g. an ``explore_d
 
 ### Combining / joining sources is an `add`, not a `connect`
 
-To combine/join/merge two upstreams, **add a `join` / `cross_join` / `fuzzy_match`** (``left_input_node_id`` + ``right_input_node_id``) or a **`union`** (``upstream_node_ids``). That node IS the combine step and wires its inputs automatically when added.
+To combine/join/merge two upstreams, **add a `join` / `cross_join` / `fuzzy_match`** (``upstream_node_ids`` = left/main input + ``right_input_node_id`` = right input) or a **`union`** (all inputs in ``upstream_node_ids``). That node IS the combine step and wires its inputs automatically when added.
 
 **Never `connect` two sources** — a source target is rejected (``target_is_source``), and there is no join node to wire into until you add one (don't invent ids like *"connect 1 → 4"* — ``target_not_found``). To combine N sources, add N−1 joins, chaining each join's output into the next.
 
