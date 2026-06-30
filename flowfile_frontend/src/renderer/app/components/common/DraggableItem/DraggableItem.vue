@@ -81,9 +81,11 @@
       >
         <span class="icon">❐</span>
       </button>
-      <span class="group-badge" @mousedown="startMove">
-        {{ title }}
-      </span>
+      <slot name="header-title">
+        <span class="group-badge" @mousedown="startMove">
+          {{ title }}
+        </span>
+      </slot>
     </div>
 
     <div class="content" @click="registerClick">
@@ -243,12 +245,16 @@ const initialGroupStates = ref<
   Record<string, { top: number; left: number; width: number; height: number }>
 >({});
 
-// Track previous window dimensions for proportional repositioning. Initialized
-// in onMounted from the live window — referencing window at module-eval time
-// would freeze in stale values when the module is imported before the window
-// reaches its final size (HMR, code-splitting, etc.).
-const prevWindowWidth = ref(0);
-const prevWindowHeight = ref(0);
+// Track previous container (canvas <main>) dimensions for proportional
+// repositioning. Seeded in onMounted from the live container — panels are
+// absolutely positioned inside <main>, so every bounds calculation must use the
+// container, not the window (which is taller by the page header).
+const prevContainerWidth = ref(0);
+const prevContainerHeight = ref(0);
+
+// Container bounds captured once at the start of a resize gesture. The container
+// can't change mid-drag, and reading it per-mousemove would force a reflow.
+const resizeBounds = ref<{ width: number; height: number }>({ width: 0, height: 0 });
 
 const resizeDelay = ref<ReturnType<typeof setTimeout> | null>(null);
 const resizeOnEnter = (e: MouseEvent, position: "top" | "bottom" | "left" | "right") => {
@@ -398,6 +404,7 @@ const startResizeRight = (e: MouseEvent) => {
   handleReziging(e);
   resizeDirection.value = "right";
   captureGroupInitialStates();
+  resizeBounds.value = getStickyContainer();
   startX.value = e.clientX;
   startWidth.value = itemState.value.width;
   document.addEventListener("mousemove", onResizeWidth);
@@ -408,7 +415,7 @@ const onResizeWidth = (e: MouseEvent) => {
   if (isResizing.value) {
     const deltaX = e.clientX - startX.value;
     const newWidth = startWidth.value + deltaX;
-    if (newWidth > 100 && newWidth < window.innerWidth) {
+    if (newWidth > 100 && newWidth < resizeBounds.value.width) {
       itemState.value.width = newWidth;
       savePositionAndSize();
     }
@@ -421,6 +428,7 @@ const startResizeBottom = (e: MouseEvent) => {
   handleReziging(e);
   resizeDirection.value = "bottom";
   captureGroupInitialStates();
+  resizeBounds.value = getStickyContainer();
   startY.value = e.clientY;
   startHeight.value = itemState.value.height;
   document.addEventListener("mousemove", onResizeHeight);
@@ -431,7 +439,7 @@ const onResizeHeight = (e: MouseEvent) => {
   if (isResizing.value) {
     const deltaY = e.clientY - startY.value;
     const newHeight = startHeight.value + deltaY;
-    if (newHeight > 100 && newHeight < window.innerHeight - 100) {
+    if (newHeight > 100 && newHeight < resizeBounds.value.height) {
       itemState.value.height = newHeight;
       savePositionAndSize();
     }
@@ -444,6 +452,7 @@ const startResizeTop = (e: MouseEvent) => {
   handleReziging(e);
   resizeDirection.value = "top";
   captureGroupInitialStates();
+  resizeBounds.value = getStickyContainer();
   startY.value = e.clientY;
   startTop.value = itemState.value.top;
   startHeight.value = itemState.value.height;
@@ -456,7 +465,7 @@ const onResizeTop = (e: MouseEvent) => {
     const deltaY = e.clientY - startY.value;
     const newTop = startTop.value + deltaY;
     const newHeight = startHeight.value - deltaY;
-    if (newHeight > 100 && newHeight < window.innerHeight - 100 && newTop >= 0) {
+    if (newHeight > 100 && newHeight < resizeBounds.value.height && newTop >= 0) {
       itemState.value.top = newTop;
       itemState.value.height = newHeight;
       savePositionAndSize();
@@ -470,6 +479,7 @@ const startResizeLeft = (e: MouseEvent) => {
   handleReziging(e);
   resizeDirection.value = "left";
   captureGroupInitialStates();
+  resizeBounds.value = getStickyContainer();
   startX.value = e.clientX;
   startLeft.value = itemState.value.left;
   startWidth.value = itemState.value.width;
@@ -482,7 +492,7 @@ const onResizeLeft = (e: MouseEvent) => {
     const deltaX = e.clientX - startX.value;
     const newLeft = startLeft.value + deltaX;
     const newWidth = startWidth.value - deltaX;
-    if (newWidth > 100 && newWidth < window.innerWidth - 100) {
+    if (newWidth > 100 && newWidth < resizeBounds.value.width) {
       itemState.value.left = newLeft;
       itemState.value.width = newWidth;
       savePositionAndSize();
@@ -632,8 +642,33 @@ const moveToTop = () => {
 
 const applyStickyPosition = () => {
   const c = getStickyContainer();
-  const newWindowWidth = window.innerWidth;
-  const newWindowHeight = window.innerHeight;
+  // Bail before any mutation if the container isn't laid out yet — clamping
+  // against a 0-sized box would collapse the panel.
+  if (c.width <= 0 || c.height <= 0) return;
+
+  // Resizing while fullscreen should keep the panel filling the canvas, not run
+  // the shrink/reposition math below.
+  if (itemState.value.fullScreen) {
+    itemState.value.width = c.width;
+    itemState.value.height = c.height;
+    itemState.value.left = 0;
+    itemState.value.top = 0;
+    prevContainerWidth.value = c.width;
+    prevContainerHeight.value = c.height;
+    savePositionAndSize();
+    return;
+  }
+
+  // A minimized panel renders as a ~35px header (CSS overrides its size), so its
+  // stored height is the pre-collapse value — use the rendered height for the
+  // vertical position math instead.
+  const effHeight = isMinimized.value ? 35 : itemState.value.height;
+
+  // Shrink an expanded panel to fit a smaller canvas before positioning it.
+  if (!isMinimized.value) {
+    itemState.value.width = Math.min(itemState.value.width, c.width);
+    itemState.value.height = Math.min(itemState.value.height, c.height);
+  }
 
   switch (itemState.value.stickynessPosition) {
     case "top":
@@ -646,7 +681,7 @@ const applyStickyPosition = () => {
 
     case "bottom":
       itemState.value.left = props.initialLeft || 0;
-      itemState.value.top = c.height - itemState.value.height - (props.initialTop || 0);
+      itemState.value.top = Math.max(0, c.height - effHeight - (props.initialTop || 0));
       if (itemState.value.fullWidth) {
         itemState.value.width = c.width - (props.initialLeft || 0);
       }
@@ -661,7 +696,7 @@ const applyStickyPosition = () => {
       break;
 
     case "right":
-      itemState.value.left = c.width - itemState.value.width;
+      itemState.value.left = Math.max(0, c.width - itemState.value.width);
       itemState.value.top = props.initialTop || 0;
       if (itemState.value.fullHeight) {
         itemState.value.height = c.height - (props.initialTop || 0);
@@ -670,51 +705,39 @@ const applyStickyPosition = () => {
 
     case "free":
     default: {
-      if (prevWindowWidth.value > 0 && prevWindowHeight.value > 0) {
-        const wasRightAligned = itemState.value.left > prevWindowWidth.value / 2;
-        const wasBottomAligned = itemState.value.top > prevWindowHeight.value / 2;
+      if (prevContainerWidth.value > 0 && prevContainerHeight.value > 0) {
+        const wasRightAligned = itemState.value.left > prevContainerWidth.value / 2;
+        const wasBottomAligned = itemState.value.top > prevContainerHeight.value / 2;
 
         if (wasRightAligned) {
           const distanceFromRight =
-            prevWindowWidth.value - itemState.value.left - itemState.value.width;
-          itemState.value.left = Math.max(
-            0,
-            newWindowWidth - itemState.value.width - distanceFromRight,
-          );
+            prevContainerWidth.value - itemState.value.left - itemState.value.width;
+          itemState.value.left = Math.max(0, c.width - itemState.value.width - distanceFromRight);
         }
 
         if (wasBottomAligned) {
-          const distanceFromBottom =
-            prevWindowHeight.value - itemState.value.top - itemState.value.height;
-          itemState.value.top = Math.max(
-            0,
-            newWindowHeight - itemState.value.height - distanceFromBottom,
-          );
+          const distanceFromBottom = prevContainerHeight.value - itemState.value.top - effHeight;
+          itemState.value.top = Math.max(0, c.height - effHeight - distanceFromBottom);
         }
       }
 
-      const minVisible = 100; // Minimum visible pixels
-      itemState.value.left = Math.max(
+      // Keep the panel inside the canvas: fully when expanded; header-visible
+      // when minimized (its rendered width is content-driven, so fall back to a
+      // minimum-visible margin rather than the stale stored width).
+      const minVisible = 100;
+      const maxLeft = Math.max(
         0,
-        Math.min(itemState.value.left, newWindowWidth - minVisible),
+        c.width - (isMinimized.value ? minVisible : itemState.value.width),
       );
-      itemState.value.top = Math.max(
-        0,
-        Math.min(itemState.value.top, newWindowHeight - minVisible),
-      );
-
-      if (itemState.value.width > newWindowWidth) {
-        itemState.value.width = newWindowWidth - 20;
-      }
-      if (itemState.value.height > newWindowHeight - 50) {
-        itemState.value.height = newWindowHeight - 70;
-      }
+      const maxTop = Math.max(0, c.height - effHeight);
+      itemState.value.left = Math.max(0, Math.min(itemState.value.left, maxLeft));
+      itemState.value.top = Math.max(0, Math.min(itemState.value.top, maxTop));
       break;
     }
   }
 
-  prevWindowWidth.value = newWindowWidth;
-  prevWindowHeight.value = newWindowHeight;
+  prevContainerWidth.value = c.width;
+  prevContainerHeight.value = c.height;
 
   savePositionAndSize();
 };
@@ -745,7 +768,12 @@ const parentResizeObserver = new ResizeObserver(() => {
 });
 
 const observeParentResize = () => {
-  const parentElement = instance?.parent?.vnode.el as HTMLElement | null;
+  // Observe the exact element bounds are read from (the overlay's offsetParent,
+  // i.e. the canvas <main>), falling back to the Vue parent root.
+  const overlayEl = document.getElementById(props.id);
+  const parentElement =
+    (overlayEl?.offsetParent as HTMLElement | null) ??
+    (instance?.parent?.vnode.el as HTMLElement | null);
   if (parentElement) {
     parentResizeObserver.observe(parentElement);
   }
@@ -800,20 +828,23 @@ nextTick().then(() => {
 let layoutResetHandler: (() => void) | null = null;
 
 const clampStateToViewport = (state: ItemLayout) => {
+  const c = getStickyContainer();
+  // Bail before first layout — clamping against a 0-sized box would collapse the
+  // panel; the post-mount applyStickyPosition (nextTick) re-clamps once laid out.
+  if (c.width <= 0 || c.height <= 0) return;
   const minVisible = 100;
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  state.width = Math.max(150, Math.min(state.width, w));
-  state.height = Math.max(100, Math.min(state.height, Math.max(150, h - 50)));
-  state.left = Math.max(0, Math.min(state.left, Math.max(0, w - minVisible)));
-  state.top = Math.max(0, Math.min(state.top, Math.max(0, h - minVisible)));
+  state.width = Math.max(150, Math.min(state.width, c.width));
+  state.height = Math.max(100, Math.min(state.height, Math.max(150, c.height)));
+  state.left = Math.max(0, Math.min(state.left, Math.max(0, c.width - minVisible)));
+  state.top = Math.max(0, Math.min(state.top, Math.max(0, c.height - minVisible)));
 };
 
 onMounted(() => {
-  // Capture window dimensions now (not at module-eval time) so proportional
-  // repositioning math in handleWindowResize stays accurate.
-  prevWindowWidth.value = window.innerWidth;
-  prevWindowHeight.value = window.innerHeight;
+  // Capture the canvas container size now (not at module-eval time) so the
+  // proportional repositioning math in applyStickyPosition stays accurate.
+  const initialBounds = getStickyContainer();
+  prevContainerWidth.value = initialBounds.width;
+  prevContainerHeight.value = initialBounds.height;
 
   const initialWidth = calculateWidth();
   const initialHeight = calculateHeight();

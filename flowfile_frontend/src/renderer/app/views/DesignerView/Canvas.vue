@@ -374,8 +374,15 @@ const handleNodeSettingsClose = (event: any | PointerEvent) => {
   };
 };
 
-const toggleShowTablePreview = () => {
-  showTablePreview.value = !showTablePreview.value;
+// Merged bottom dock: Data (table preview) and Logs share one panel, switched
+// via a small tab strip. `showTablePreview` and `editorStore.isShowingLogViewer`
+// remain the two independent source booleans; this tracks the active tab.
+const bottomActiveTab = ref<"data" | "logs">("data");
+
+const closeBottomDock = () => {
+  showTablePreview.value = false;
+  editorStore.hideLogViewerForThisRun = true;
+  editorStore.hideLogViewer();
 };
 
 function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
@@ -636,7 +643,7 @@ const openNodeData = (nodeId: number) => {
   if (isGroupNodeId(String(nodeId))) return;
   showTablePreview.value = true;
   nextTick().then(() => {
-    itemStore.bringToFront("tablePreview");
+    itemStore.bringToFront("bottomDock");
     const needsLoad =
       !NodeIsSelected(String(nodeId)) ||
       (dataPreview.value &&
@@ -648,8 +655,11 @@ const openNodeData = (nodeId: number) => {
 };
 
 const nodeClick = (mouseEvent: any) => {
-  // Single click: Settings only — never touches the table.
-  openNodeSettings(parseInt(mouseEvent.node.id));
+  // Single click selects the node: open Settings and load its data into the
+  // bottom Data/Logs dock so the inspector follows the selection.
+  const rawId = String(mouseEvent.node.id);
+  openNodeSettings(parseInt(rawId));
+  if (!isGroupNodeId(rawId)) openNodeData(parseInt(rawId));
 };
 
 const setNodeTableView = (nodeId: number) => {
@@ -667,6 +677,24 @@ watch(
 watch(
   () => editorStore.nodeDataOpenRequest.token,
   () => openNodeData(editorStore.nodeDataOpenRequest.nodeId),
+);
+
+// Bottom dock tab focus: surface a source when it turns on. The Data tab is
+// always present (it shows a "select a step" placeholder when nothing is loaded),
+// so when Logs closes we fall back to Data. Logs auto-activate on run only when
+// the user's "show logs during execution" preference flips it on.
+watch(
+  () => showTablePreview.value,
+  (now, prev) => {
+    if (now && !prev) bottomActiveTab.value = "data";
+  },
+);
+watch(
+  () => editorStore.isShowingLogViewer,
+  (now, prev) => {
+    if (now && !prev) bottomActiveTab.value = "logs";
+    else if (!now && bottomActiveTab.value === "logs") bottomActiveTab.value = "data";
+  },
 );
 
 const handleNodeChange = async (nodeChangesEvent: any) => {
@@ -1027,11 +1055,6 @@ const handleResetLayoutGraph = async () => {
   // loadFlow already fetches history state
   fitView({ padding: 0.2 });
   saveViewportToSession();
-};
-
-const hideLogViewer = () => {
-  editorStore.hideLogViewerForThisRun = true;
-  nodeStore.hideLogViewer();
 };
 
 // Shared editable-context check: when focus is in a text field / code editor or
@@ -1425,20 +1448,6 @@ defineExpose({
         <NodeList @dragstart="onDragStart" />
       </draggable-item>
       <draggable-item
-        v-if="nodeStore.isShowingLogViewer"
-        id="logViewer"
-        :show-bottom="true"
-        title="Log overview"
-        :allow-full-screen="true"
-        initial-position="bottom"
-        :initial-left="180"
-        :on-minize="hideLogViewer"
-        group="bottomPanels"
-        :sync-dimensions="true"
-      >
-        <LogViewer />
-      </draggable-item>
-      <draggable-item
         v-if="nodeStore.showFlowResult"
         id="flowresults"
         :show-right="true"
@@ -1451,19 +1460,54 @@ defineExpose({
         <FlowResults :on-click="selectNodeExternally" />
       </draggable-item>
       <draggable-item
-        v-if="showTablePreview"
-        id="tablePreview"
+        v-if="showTablePreview || editorStore.isShowingLogViewer"
+        id="bottomDock"
         :show-bottom="true"
         :allow-full-screen="true"
-        title="Table Preview"
+        :title="bottomActiveTab === 'logs' ? 'Logs' : 'Data preview'"
         initial-position="bottom"
-        :on-minize="toggleShowTablePreview"
+        :on-minize="closeBottomDock"
         :initial-height="tablePreviewHeight"
         :initial-left="180"
-        group="bottomPanels"
-        :sync-dimensions="true"
       >
-        <data-preview ref="dataPreview"> text </data-preview>
+        <div class="bottom-dock">
+          <div class="bottom-dock-tabs">
+            <button
+              class="preview-tab"
+              :class="{ active: bottomActiveTab === 'data' }"
+              @click="bottomActiveTab = 'data'"
+            >
+              Data
+            </button>
+            <button
+              v-if="editorStore.isShowingLogViewer"
+              class="preview-tab"
+              :class="{ active: bottomActiveTab === 'logs' }"
+              @click="bottomActiveTab = 'logs'"
+            >
+              Logs
+            </button>
+          </div>
+          <div class="bottom-dock-body">
+            <!-- Wrapper divs are required: DataPreview/LogViewer must keep their
+                 state across tab switches (v-show, not v-if), but DataPreview has
+                 a multi-root template so v-show can't bind to it directly. -->
+            <div v-show="bottomActiveTab === 'data'" class="bottom-dock-pane">
+              <data-preview v-if="showTablePreview" ref="dataPreview" />
+              <div v-else class="bottom-dock-empty">
+                <span class="material-icons bottom-dock-empty-icon">ads_click</span>
+                <p>Select a step to observe the data</p>
+              </div>
+            </div>
+            <div
+              v-if="editorStore.isShowingLogViewer"
+              v-show="bottomActiveTab === 'logs'"
+              class="bottom-dock-pane"
+            >
+              <LogViewer />
+            </div>
+          </div>
+        </div>
       </draggable-item>
       <draggable-item
         v-if="nodeStore.isDrawerOpen"
@@ -1654,5 +1698,72 @@ main {
   flex-grow: 1;
   position: relative;
   overflow: hidden;
+}
+
+/* Merged bottom dock (Data preview + Logs). Reuses the global .preview-tab
+   styling from dataPreview.vue as a minimal, VS Code-like tab strip. */
+.bottom-dock {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.bottom-dock-tabs {
+  display: flex;
+  gap: 0;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
+}
+
+.bottom-dock-tabs .preview-tab {
+  padding: 5px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.bottom-dock-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Each pane fills the body; the inactive one is hidden via v-show (display:none).
+   The wrapper is what v-show toggles, so component state survives the switch. */
+.bottom-dock-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bottom-dock-pane > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Placeholder shown in the Data tab when no step is selected. */
+.bottom-dock-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--color-background-primary);
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+}
+
+.bottom-dock-empty-icon {
+  font-size: 30px;
+  opacity: 0.55;
+}
+
+.bottom-dock-empty p {
+  margin: 0;
+  font-size: 13px;
 }
 </style>
