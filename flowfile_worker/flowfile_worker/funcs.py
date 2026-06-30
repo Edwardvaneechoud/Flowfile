@@ -983,6 +983,24 @@ def get_delta_history(
     return models.DeltaHistoryResponse(current_version=current_version, history=entries)
 
 
+def _delta_preview_payload(dt: DeltaTable, n_rows: int) -> tuple[list[str], list[str], list[list], int]:
+    """Bounded head read of an open Delta table -> (columns, dtypes, rows, total_rows)."""
+    dataset = dt.to_pyarrow_dataset()
+    pa_table = dataset.head(n_rows)
+    columns = pa_table.column_names
+    dtypes = [str(field.type) for field in pa_table.schema]
+    row_list = [[make_json_safe(row.get(c)) for c in columns] for row in pa_table.to_pylist()]
+    try:
+        total_rows = sum(
+            v for v in dt.get_add_actions(flatten=True).to_pydict().get("num_records", []) if v is not None
+        )
+    except Exception:
+        total_rows = len(row_list)
+    if total_rows == 0:
+        total_rows = len(row_list)
+    return columns, dtypes, row_list, total_rows
+
+
 def read_delta_version_preview(
     table_name: str,
     version: int,
@@ -997,29 +1015,27 @@ def read_delta_version_preview(
     """
     target = _resolve_catalog_target(table_name, base_uri)
     dt = DeltaTable(target, version=version, storage_options=storage_options)
-    dataset = dt.to_pyarrow_dataset()
-    pa_table = dataset.head(n_rows)
-    columns = pa_table.column_names
-    dtypes = [str(field.type) for field in pa_table.schema]
-    rows = pa_table.to_pylist()
-
-    row_list = [[make_json_safe(row.get(c)) for c in columns] for row in rows]
-    try:
-        total_rows = sum(
-            v for v in dt.get_add_actions(flatten=True).to_pydict().get("num_records", []) if v is not None
-        )
-    except Exception:
-        total_rows = len(row_list)
-    if total_rows == 0:
-        total_rows = len(row_list)
-
+    columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows)
     return models.DeltaVersionPreviewResponse(
-        version=version,
-        columns=columns,
-        dtypes=dtypes,
-        rows=row_list,
-        total_rows=total_rows,
+        version=version, columns=columns, dtypes=dtypes, rows=rows, total_rows=total_rows
     )
+
+
+def read_delta_preview(
+    table_name: str,
+    n_rows: int = 100,
+    base_uri: str | None = None,
+    storage_options: dict | None = None,
+) -> models.DeltaPreviewResponse:
+    """Read a preview (latest version) of a Delta table using deltalake + PyArrow (no Polars).
+
+    *table_name* is the bare directory name inside the catalog tables directory,
+    or a key under *base_uri* in object storage when set.
+    """
+    target = _resolve_catalog_target(table_name, base_uri)
+    dt = DeltaTable(target, storage_options=storage_options)
+    columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows)
+    return models.DeltaPreviewResponse(columns=columns, dtypes=dtypes, rows=rows, total_rows=total_rows)
 
 
 def generic_task(

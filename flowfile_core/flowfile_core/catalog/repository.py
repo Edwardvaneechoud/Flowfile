@@ -404,6 +404,7 @@ class SQLAlchemyCatalogRepository:
 
     def count_physical_tables_under_namespace(self, namespace_id: int) -> int:
         """Count physical tables in a catalog and its child schemas (storage-immutability check)."""
+        # Catalog hierarchy is capped at depth 1 (catalog -> schema); grandchildren are not possible.
         child_ids = [r[0] for r in self._db.query(CatalogNamespace.id).filter_by(parent_id=namespace_id).all()]
         ids = [namespace_id, *child_ids]
         return (

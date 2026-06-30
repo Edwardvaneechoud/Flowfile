@@ -34,6 +34,7 @@ from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.storage_backend import (
     CatalogStorageTarget,
+    _catalog_table_dir_name,
     _is_cloud_uri,
     join_catalog_uri,
     resolve_for_namespace,
@@ -71,16 +72,6 @@ def _is_managed_table_path(file_path: str) -> bool:
         return True
     except (ValueError, OSError):
         return False
-
-
-def _catalog_table_dir_name(path_or_uri: str) -> str:
-    """Last path segment (the table directory name) of a local path or object-storage URI.
-
-    Avoids ``Path(...).name`` on URIs, where ``Path`` would corrupt the ``scheme://`` prefix.
-    """
-    if _is_cloud_uri(path_or_uri):
-        return path_or_uri.rstrip("/").rsplit("/", 1)[-1]
-    return Path(path_or_uri).name
 
 
 def _should_offload() -> bool:

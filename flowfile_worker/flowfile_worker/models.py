@@ -279,6 +279,19 @@ class DeltaVersionPreviewResponse(BaseModel):
     total_rows: int
 
 
+class DeltaPreviewRequest(BaseModel):
+    table_path: str  # Bare table directory name (no path separators)
+    n_rows: int = 100
+    storage: CatalogStorageInterface | None = None
+
+
+class DeltaPreviewResponse(BaseModel):
+    columns: list[str]
+    dtypes: list[str]
+    rows: list[list]
+    total_rows: int
+
+
 class SqlQueryRequest(BaseModel):
     query: str
     tables: dict[str, str]  # mapping of logical table name -> directory name

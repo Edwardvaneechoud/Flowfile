@@ -504,6 +504,25 @@ def trigger_delta_version_preview(
     return CatalogTablePreview.model_validate(response.json())
 
 
+def trigger_delta_preview(
+    table_name: str,
+    n_rows: int = 100,
+    storage: dict | None = None,
+) -> CatalogTablePreview:
+    """Ask the worker to preview a Delta table (latest version).
+
+    *table_name* is the bare directory name inside the catalog tables directory.
+    *storage* (when set) reads from object storage.
+    """
+    payload = {"table_path": table_name, "n_rows": n_rows}
+    if storage is not None:
+        payload["storage"] = storage
+    response = requests.post(f"{WORKER_URL}/catalog/delta_preview", json=payload)
+    if not response.ok:
+        raise RuntimeError(f"Worker delta preview failed: {response.text}")
+    return CatalogTablePreview.model_validate(response.json())
+
+
 def trigger_optimize_catalog_table(
     table_name: str,
     z_order_columns: list[str] | None = None,

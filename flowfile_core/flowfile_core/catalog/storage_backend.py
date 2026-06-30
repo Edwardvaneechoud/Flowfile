@@ -55,6 +55,16 @@ def join_catalog_uri(base: str, dir_name: str) -> str:
     return str(Path(base) / dir_name)
 
 
+def _catalog_table_dir_name(path_or_uri: str) -> str:
+    """Last path segment (the table directory name) of a local path or object-storage URI.
+
+    Avoids ``Path(...).name`` on URIs, where ``Path`` would corrupt the ``scheme://`` prefix.
+    """
+    if _is_cloud_uri(path_or_uri):
+        return path_or_uri.rstrip("/").rsplit("/", 1)[-1]
+    return Path(path_or_uri).name
+
+
 @dataclass(frozen=True)
 class CatalogStorageTarget:
     """Where a catalog table's bytes live, plus the credentials to reach them.
@@ -132,10 +142,10 @@ def resolve_for_namespace(namespace_id: int | None, *, db: Session | None = None
         return _resolve_in_session(own_db, namespace_id)
 
 
-def resolve_catalog_storage(user_id: int, *, namespace_id: int | None = None) -> CatalogStorageTarget:
+def resolve_catalog_storage(_user_id: int, *, namespace_id: int | None = None) -> CatalogStorageTarget:
     """Backward-compatible shim around :func:`resolve_for_namespace`.
 
-    *user_id* is retained for call-compatibility but ignored — per-catalog credentials always resolve
+    *_user_id* is retained for call-compatibility but ignored — per-catalog credentials always resolve
     as the catalog owner. New code should call :func:`resolve_for_namespace` directly.
     """
     return resolve_for_namespace(namespace_id)

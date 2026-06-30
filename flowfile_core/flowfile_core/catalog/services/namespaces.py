@@ -68,7 +68,6 @@ def _validate_namespace_storage(owner_id: int, storage_uri: str | None, storage_
             f"Cloud connection {storage_connection_name!r} was not found or is not accessible for the catalog owner."
         )
     provider = getattr(conn, "storage_type", None)
-    provider = getattr(provider, "value", provider)  # CloudStorageType enum -> its string value
     expected_provider = _STORAGE_SCHEME_PROVIDER.get(storage_uri.split("://", 1)[0].lower())
     if expected_provider is not None and provider != expected_provider:
         raise InvalidNamespaceStorageError(

@@ -542,6 +542,45 @@ def test_cloud_physical_read_path_existence_preview_version_history(monkeypatch)
         assert len(hist.history) >= 2
 
 
+def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
+    """With offload on, a cloud non-versioned preview routes through the worker
+    (trigger_delta_preview) carrying the storage payload, and the catalog's stored
+    row_count stays authoritative for total_rows (a page-bounded read never sees the whole table).
+
+    No MinIO/worker needed: the worker call is faked, so this exercises core's routing + total_rows
+    contract deterministically. The real in-process fallback is covered by the offload-off test above.
+    """
+    from flowfile_core.schemas.catalog_schema import CatalogTablePreview
+
+    _ensure_connection()
+    prefix = f"s3://{_BUCKET}/offload_{uuid.uuid4().hex[:8]}"
+    cat_id = _create_catalog(storage_uri=prefix, storage_connection_name=_CONNECTION_NAME)
+    dest = join_catalog_uri(prefix, f"t_{uuid.uuid4().hex[:6]}")
+    table_id = _add_physical_table(cat_id, dest)
+    with get_db_context() as db:
+        t = db.get(db_models.CatalogTable, table_id)
+        t.row_count = 4242
+        db.commit()
+
+    captured = {}
+
+    def _fake_trigger(table_name, n_rows, storage=None):
+        captured.update(table_name=table_name, n_rows=n_rows, storage=storage)
+        return CatalogTablePreview(columns=["a"], dtypes=["Int64"], rows=[[1], [2]], total_rows=2)
+
+    monkeypatch.setattr("flowfile_core.catalog.services.previews._should_offload", lambda: True)
+    monkeypatch.setattr("flowfile_core.catalog.services.previews.trigger_delta_preview", _fake_trigger)
+
+    with get_db_context() as db:
+        preview = CatalogService(SQLAlchemyCatalogRepository(db)).get_table_preview(table_id, limit=10)
+
+    assert captured["table_name"] == dest.rsplit("/", 1)[-1]  # bare dir name, scheme stripped
+    assert captured["n_rows"] == 10
+    assert captured["storage"] is not None and captured["storage"]["base_uri"] == prefix
+    assert preview.rows == [[1], [2]]  # rows come from the worker
+    assert preview.total_rows == 4242  # catalog row_count, not the worker's page-bounded count
+
+
 def test_cloud_table_file_exists_false_when_connection_missing():
     """A cloud table whose catalog's storage connection no longer resolves reports file_exists=False
     (existence reflects connection availability, not a data probe)."""

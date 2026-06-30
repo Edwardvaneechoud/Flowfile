@@ -17,13 +17,19 @@ from flowfile_core.catalog.exceptions import TableNotFoundError
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.serializers import format_pyarrow_preview
 from flowfile_core.catalog.services._resolve import resolve_or_log
-from flowfile_core.catalog.services.tables import TableService, _catalog_table_dir_name
+from flowfile_core.catalog.services.tables import TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
-from flowfile_core.catalog.storage_backend import CatalogStorageTarget, _is_cloud_uri, resolve_for_namespace
+from flowfile_core.catalog.storage_backend import (
+    CatalogStorageTarget,
+    _catalog_table_dir_name,
+    _is_cloud_uri,
+    resolve_for_namespace,
+)
 from flowfile_core.catalog.text_utils import hash_source_versions, parse_delta_history
 from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_delta_history,
+    trigger_delta_preview,
     trigger_delta_version_preview,
     trigger_resolve_virtual_table,
 )
@@ -153,14 +159,7 @@ class TablePreviewService:
             target = resolve_for_namespace(table.namespace_id)
             if version is not None:
                 return self._get_delta_version_preview(table.file_path, version, limit, target=target)
-            # Bounded cloud read (head only) — stays within the no-full-collect rule for previews.
-            pa_table = (
-                pl.scan_delta(table.file_path, storage_options=target.storage_options or None)
-                .head(limit)
-                .collect()
-                .to_arrow()
-            )
-            return format_pyarrow_preview(pa_table, total_rows=table.row_count)
+            return self._get_delta_preview(table.file_path, limit, total_rows=table.row_count, target=target)
 
         data_path = Path(table.file_path)
         if not table_exists(data_path):
@@ -193,6 +192,30 @@ class TablePreviewService:
         dataset = delta_table.to_pyarrow_dataset()
         pa_table = dataset.head(limit)
         return format_pyarrow_preview(pa_table)
+
+    def _get_delta_preview(
+        self,
+        table_path: str,
+        limit: int,
+        total_rows: int | None = None,
+        target: CatalogStorageTarget | None = None,
+    ) -> CatalogTablePreview:
+        """Read a Delta table preview (latest version) via the worker (or locally).
+
+        ``total_rows`` (the catalog's stored row count) stays authoritative when known — a
+        page-bounded read never sees the whole table.
+        """
+        storage_payload = target.to_worker_payload() if target else None
+        storage_options = (target.storage_options or None) if target else None
+        if _should_offload():
+            try:
+                preview = trigger_delta_preview(_catalog_table_dir_name(table_path), limit, storage=storage_payload)
+                return preview.model_copy(update={"total_rows": total_rows}) if total_rows is not None else preview
+            except (RuntimeError, OSError, ValueError, KeyError):
+                logger.warning("Worker delta preview failed, falling back to local", exc_info=True)
+
+        pa_table = pl.scan_delta(table_path, storage_options=storage_options).head(limit).collect().to_arrow()
+        return format_pyarrow_preview(pa_table, total_rows=total_rows)
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table."""

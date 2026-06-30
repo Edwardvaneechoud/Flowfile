@@ -759,6 +759,21 @@ def get_delta_version_preview(payload: models.DeltaVersionPreviewRequest) -> mod
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.post("/catalog/delta_preview", response_model=models.DeltaPreviewResponse)
+def get_delta_preview(payload: models.DeltaPreviewRequest) -> models.DeltaPreviewResponse:
+    """Preview data from a Delta table (latest version)."""
+    try:
+        _, base_uri, storage_options = _resolve_catalog_route(payload.table_path, payload.storage)
+        return funcs.read_delta_preview(
+            payload.table_path, payload.n_rows, base_uri=base_uri, storage_options=storage_options
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Error reading delta preview: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.post("/catalog/visualize_query", response_model=models.VisualizeQueryResponse)
 async def catalog_visualize_query(payload: models.VisualizeQueryRequest) -> models.VisualizeQueryResponse:
     """Run a Graphic Walker workflow against a cached source LazyFrame."""
