@@ -23,6 +23,7 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.tables import TableService
+from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
 from flowfile_core.catalog.text_utils import (
     is_table_reference,
     rewrite_qualified_references,
@@ -346,7 +347,12 @@ class VirtualTableService:
                     kind="nested query virtual table",
                     identifier=t.name,
                 )
-            if t.is_optimized and t.serialized_lazy_frame and check_source_versions_current(t.source_table_versions):
+            if (
+                t.is_optimized
+                and t.serialized_lazy_frame
+                and not serialized_frame_uses_cloud(t.serialized_lazy_frame)
+                and check_source_versions_current(t.source_table_versions)
+            ):
                 return pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame))
             if t.producer_registration_id:
                 return resolve_or_log(
@@ -355,6 +361,9 @@ class VirtualTableService:
                     identifier=t.name,
                 )
             return None
+        if t.file_path and _is_cloud_uri(t.file_path):
+            target = resolve_for_namespace(t.namespace_id)
+            return pl.scan_delta(t.file_path, storage_options=target.storage_options or None)
         if t.file_path and is_delta_table(Path(t.file_path)):
             return pl.scan_delta(t.file_path)
         return None
@@ -384,7 +393,11 @@ class VirtualTableService:
         if table.sql_query:
             return self.resolve_query_virtual_table(table_id, user_id=user_id)
 
-        if table.is_optimized and table.serialized_lazy_frame:
+        if (
+            table.is_optimized
+            and table.serialized_lazy_frame
+            and not serialized_frame_uses_cloud(table.serialized_lazy_frame)
+        ):
             if check_source_versions_current(table.source_table_versions):
                 return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
             logger.info(
@@ -427,7 +440,10 @@ class VirtualTableService:
     # ---- Discovery ------------------------------------------------------- #
 
     def resolve_all_delta_tables(self) -> dict[str, str]:
-        """Return a mapping of logical table name -> directory name for all Delta catalog tables."""
+        """Return a mapping of logical table name -> directory name for LOCAL Delta catalog tables.
+
+        Object-storage tables are excluded — the dir-name + local-root model can't address them.
+        """
         tables = self.repo.list_tables()
         return {
             table.name: Path(table.file_path).name
@@ -443,6 +459,9 @@ class VirtualTableService:
         ``accessible_table_ids`` (set in multi-user mode) restricts the registered
         tables to the ones the requesting user may read, so SQL cannot reach a
         table the user cannot see.
+
+        Object-storage tables are excluded from this worker-offloaded SQL path; cloud catalog SQL
+        runs through the flow_graph catalog-SQL node instead.
         """
         tables = self.repo.list_tables()
         if accessible_table_ids is not None:

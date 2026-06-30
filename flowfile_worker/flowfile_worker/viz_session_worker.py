@@ -26,6 +26,7 @@ def _build_sql_lazyframe_in_child(
     virtual_refs: dict[str, str] | None,
 ) -> pl.LazyFrame:
     ctx = pl.SQLContext()
+    # Cloud tables are excluded upstream (resolve_all_queryable_tables); dir_name is always local here.
     for name, dir_name in (tables or {}).items():
         ctx.register(name, open_catalog_table(dir_name))
     if virtual_refs:

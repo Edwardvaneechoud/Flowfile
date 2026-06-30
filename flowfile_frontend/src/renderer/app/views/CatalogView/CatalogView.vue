@@ -92,11 +92,13 @@
               :selected-flow-id="catalogStore.selectedFlowId"
               :selected-artifact-id="catalogStore.selectedArtifactId"
               :selected-table-id="catalogStore.selectedTableId"
+              :selected-namespace-id="catalogStore.selectedNamespaceId"
               :search-query="searchQuery"
               :show-unavailable="showUnavailable"
               @select-flow="selectFlow($event)"
               @select-artifact="selectArtifact($event)"
               @select-table="selectTable($event)"
+              @select-namespace="selectNamespace($event)"
               @table-context-menu="onTableContextMenu($event)"
               @artifact-context-menu="onArtifactContextMenu($event)"
               @flow-context-menu="onFlowContextMenu($event)"
@@ -150,6 +152,12 @@
           @navigate-to-flow="navigateToFlow($event)"
           @delete-artifact="handleDeleteArtifact($event)"
         />
+        <!-- Namespace (catalog) settings view -->
+        <NamespaceDetailPanel
+          v-else-if="catalogStore.selectedNamespace"
+          :namespace="catalogStore.selectedNamespace"
+          @close="handleCloseDetail"
+        />
         <!-- Table detail view -->
         <TableDetailPanel
           v-else-if="catalogStore.selectedTable"
@@ -157,6 +165,8 @@
           :preview="catalogStore.tablePreview"
           :loading-preview="catalogStore.loadingTablePreview"
           :table-history="catalogStore.tableHistory"
+          :loading-table-history="catalogStore.loadingTableHistory"
+          :table-history-stale="catalogStore.tableHistoryStale"
           :selected-version="catalogStore.selectedVersion"
           @close="handleCloseDetail"
           @delete-table="handleDeleteTable($event)"
@@ -165,6 +175,8 @@
           @select-version="catalogStore.selectVersion($event)"
           @query-table="handleQueryTable($event)"
           @recover-from-run="openRunSnapshot($event)"
+          @load-preview="catalogStore.loadSelectedPreview()"
+          @refresh-history="catalogStore.refreshTableHistory()"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -514,6 +526,7 @@ import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
 import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
 import TableDetailPanel from "./TableDetailPanel.vue";
+import NamespaceDetailPanel from "./NamespaceDetailPanel.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
 import CreateNamespaceModal from "./CreateNamespaceModal.vue";
@@ -751,6 +764,13 @@ function selectTable(tableId: number) {
   router.push({
     name: "catalog",
     query: { tab: "catalog", tableId: String(tableId) },
+  });
+}
+
+function selectNamespace(namespaceId: number) {
+  router.push({
+    name: "catalog",
+    query: { tab: "catalog", namespaceId: String(namespaceId) },
   });
 }
 
@@ -1346,6 +1366,7 @@ function applyRouteToStore() {
   const artifactId = q.artifactId ? Number(q.artifactId) : null;
   const tableId = q.tableId ? Number(q.tableId) : null;
   const scheduleId = q.scheduleId ? Number(q.scheduleId) : null;
+  const namespaceId = q.namespaceId ? Number(q.namespaceId) : null;
 
   // Update tab (set directly to avoid setActiveTab clearing selections)
   if (catalogStore.activeTab !== tab) {
@@ -1354,6 +1375,14 @@ function applyRouteToStore() {
     else if (tab === "runs" && !flowId) catalogStore.loadRuns();
     else if (tab === "schedules") catalogStore.loadSchedules();
     else if (tab === "catalog") catalogStore.loadTree();
+  }
+
+  // Namespace (catalog) settings is exclusive with all other selections; selectNamespace
+  // clears them, and the chain below leaves namespace untouched when one of them is in the URL.
+  if (namespaceId !== null) {
+    if (namespaceId !== catalogStore.selectedNamespaceId) catalogStore.selectNamespace(namespaceId);
+  } else if (catalogStore.selectedNamespace) {
+    catalogStore.clearNamespaceSelection();
   }
 
   // Handle selections (mutually exclusive: table, artifact, schedule, or flow+run)

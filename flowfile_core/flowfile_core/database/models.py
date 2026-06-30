@@ -164,6 +164,9 @@ class CatalogNamespace(Base):
     # Visible to every user as a tree container in multi-user mode (set on the seeded
     # system namespaces); contents stay per-user filtered. See auth/sharing.py.
     is_public = Column(Boolean, nullable=False, default=False, server_default="0")
+    # Per-catalog object storage (level-0 only; schemas/tables inherit). NULL ⇒ local filesystem.
+    storage_uri = Column(String, nullable=True)
+    storage_connection_name = Column(String, nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -517,7 +520,9 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     # Virtual Table fields (NULL for physical tables)
     table_type = Column(String, nullable=False, default="physical", server_default="physical")
     producer_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
-    serialized_lazy_frame = Column(LargeBinary, nullable=True)  #  TODO Should be hashed
+    # Cached plan for optimized virtual tables; only local, secret-free plans (a serialized cloud
+    # scan would embed decrypted credentials, so cloud sources are excluded).
+    serialized_lazy_frame = Column(LargeBinary, nullable=True)
     is_optimized = Column(Boolean, nullable=True, default=False)
     sql_query = Column(Text, nullable=True)  # SQL definition for query-based virtual tables
     polars_plan = Column(Text, nullable=True)  # Polars explain() plan for optimized virtual tables

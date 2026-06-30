@@ -67,6 +67,28 @@ class NamespaceNotEmptyError(CatalogError):
         super().__init__(f"Cannot delete namespace: still contains {detail}")
 
 
+class InvalidNamespaceStorageError(CatalogError):
+    """Raised when per-catalog storage config is invalid (non-root, bad URI, or unresolved connection)."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
+class NamespaceStorageLockedError(CatalogError):
+    """Raised when changing a catalog's storage while it already holds physical tables.
+
+    One namespace <-> one storage: storage is immutable once a physical table exists beneath the catalog.
+    """
+
+    def __init__(self, namespace_id: int, tables: int):
+        self.namespace_id = namespace_id
+        self.tables = tables
+        super().__init__(
+            f"Cannot change storage for catalog id={namespace_id}: {tables} physical table(s) already exist. "
+            "Create a new catalog to use different storage."
+        )
+
+
 class FlowNotFoundError(CatalogError):
     """Raised when a flow registration lookup fails."""
 
