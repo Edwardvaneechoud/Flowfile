@@ -385,10 +385,12 @@ export const useItemStore = defineStore("itemStore", () => {
         items.value[id].zIndex = FULLSCREEN_Z_INDEX;
       } else {
         items.value[id].fullScreen = false;
-        items.value[id].width = items.value[id].prevWidth || 400;
-        items.value[id].height = items.value[id].prevHeight || 300;
-        items.value[id].left = items.value[id].prevLeft || 100;
-        items.value[id].top = items.value[id].prevTop || 100;
+        // ?? not || — a legitimately-saved 0 (panel flush at top/left) must not
+        // fall through to the default and shift the panel on restore.
+        items.value[id].width = items.value[id].prevWidth ?? 400;
+        items.value[id].height = items.value[id].prevHeight ?? 300;
+        items.value[id].left = items.value[id].prevLeft ?? 100;
+        items.value[id].top = items.value[id].prevTop ?? 100;
 
         Object.keys(items.value).forEach((otherId) => {
           items.value[otherId].zIndex = BASE_Z_INDEX;

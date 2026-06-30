@@ -390,9 +390,19 @@ const handleReziging = (e: MouseEvent) => {
   itemStore.inResizing = true;
 };
 
+// Re-anchor the "scale" baseline to the current container after a fullscreen
+// round-trip changes the panel size out-of-band — otherwise the next resize
+// applies a phantom delta to the restored size.
+const syncScaleBaseline = () => {
+  const c = getStickyContainer();
+  prevContainerWidth.value = c.width;
+  prevContainerHeight.value = c.height;
+};
+
 const toggleFullScreen = () => {
   itemStore.toggleFullScreen(props.id);
   loadPositionAndSize();
+  syncScaleBaseline();
 };
 
 const handleResizeBarDblClick = (e: MouseEvent) => {
@@ -746,17 +756,33 @@ const applyStickyPosition = () => {
 
     case "left":
       itemState.value.left = 0;
-      itemState.value.top = props.initialTop || 0;
-      if (hB === "fill") {
-        itemState.value.height = c.height - (props.initialTop || 0);
+      if (hB === "scale") {
+        // Preserve the user's vertical offset — the scale step already kept the
+        // height gap; only keep it on-screen (mirrors the "free" branch).
+        itemState.value.top = Math.max(
+          0,
+          Math.min(itemState.value.top, Math.max(0, c.height - effHeight)),
+        );
+      } else {
+        itemState.value.top = props.initialTop || 0;
+        if (hB === "fill") {
+          itemState.value.height = c.height - (props.initialTop || 0);
+        }
       }
       break;
 
     case "right":
       itemState.value.left = Math.max(0, c.width - itemState.value.width);
-      itemState.value.top = props.initialTop || 0;
-      if (hB === "fill") {
-        itemState.value.height = c.height - (props.initialTop || 0);
+      if (hB === "scale") {
+        itemState.value.top = Math.max(
+          0,
+          Math.min(itemState.value.top, Math.max(0, c.height - effHeight)),
+        );
+      } else {
+        itemState.value.top = props.initialTop || 0;
+        if (hB === "fill") {
+          itemState.value.height = c.height - (props.initialTop || 0);
+        }
       }
       break;
 
@@ -854,6 +880,7 @@ const registerClick = () => {
 const setFullScreen = (makeFull: boolean) => {
   itemStore.setFullScreen(props.id, makeFull);
   loadPositionAndSize();
+  syncScaleBaseline();
 };
 
 watch(
