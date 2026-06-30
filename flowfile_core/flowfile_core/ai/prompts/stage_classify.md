@@ -16,12 +16,11 @@ single op_kind that best describes what the user wants to do next.
    node's settings? → **modify**.
 2. Does the user reference an EXISTING node AND want it removed? →
    **delete**.
-3. Does the user want to **combine / join / merge / blend / consolidate
-   / unify** two or more nodes — especially source nodes that have no
-   downstream? → **add** (a `join` or `union` node). This is NOT
+3. Does the user want to **combine / join / merge / union** two or more
+   nodes (especially sources)? → **add** a `join` or `union` node — NOT
    `connect`. See *"Combining data is `add`"* below.
-4. Does the user want to wire two EXISTING nodes together, where the
-   TARGET is a transformation/output node with a free input port? →
+4. Does the user want to wire two EXISTING nodes together, the TARGET
+   being a transformation/output node with a free input port? →
    **connect**.
 5. Does the user want to remove an existing connection? →
    **disconnect**.
@@ -45,31 +44,18 @@ context) almost always proposes new nodes — when the user replies
 
 ## Combining data is `add`, never `connect`
 
-When the user asks to **combine, join, merge, blend, consolidate, or
-unify** two or more datasets — *"combine these"*, *"join the customer
-and order data"*, *"merge on customer_id"* — the operation is **`add`**:
-you add a **`join`** node (look up matching keys across two inputs) or a
-**`union`** node (stack rows of same-schema inputs). That new node IS
-the combine step; it takes the two nodes to combine as its left/right
-inputs and the wiring is created automatically.
+**combine / join / merge / union** two or more datasets → **`add`** a
+`join` node (match on keys) or `union` node (stack same-schema rows).
+That node IS the combine step; it takes the two nodes as inputs and wires
+them automatically.
 
-This is **not** `connect`. You can NEVER `connect` two source nodes
-together — sources (`read`, `manual_input`, `database_reader`, …) have
-no input port, so a `connect` whose target is a source is always
-rejected. There is also no join node to connect into until you add one —
-do not invent a target id (e.g. *"connect node 1 → node 4"* when node 4
-was never created). To combine N sources, add N−1 joins, each taking the
-previous result plus the next source as its two inputs.
+You can NOT `connect` two sources (sources have no input port), and there
+is no join node to connect into until you add one — never invent a target
+id like *"connect node 1 → node 4"* when node 4 was never created. To
+combine N sources, add N−1 joins.
 
-> **Worked example:** *"Join the customer, order, and support ticket data
-> on customer_id"* over three stand-alone sources (read#1, read#2,
-> read#3):
-> Round 1: `op_kind="add"` → pick `join`, inputs read#1 + read#2.
-> Round 2: `op_kind="add"` → pick `join`, inputs (first join) + read#3.
-> Round 3: `op_kind="other"` — done.
-> ❌ **Wrong**: `op_kind="connect"` and wiring read#1 → read#2 (rejected:
-> read#2 is a source), or wiring read#1 → node 4 (rejected: node 4 does
-> not exist — you never added it).
+Example — *"join customers, orders, support on customer_id"* (read#1/2/3):
+`add` join (read#1 + read#2) → `add` join (result + read#3) → `other`.
 
 ## Op kinds (reference)
 
@@ -86,10 +72,9 @@ previous result plus the next source as its two inputs.
   Advances to a single-stage `update_node_settings` call.
 * **delete** — the user wants to remove a node from the canvas.
   Advances to a single-stage `delete_node` call.
-* **connect** — the user wants to wire two existing nodes together,
-  where the TARGET node is a transformation/output node that has a free
-  input port. NOT for combining data sources — adding a `join` / `union`
-  node does that (see *"Combining data is `add`"* above). Advances to a
+* **connect** — wire two existing nodes together, where the TARGET is a
+  transformation/output node with a free input port. NOT for combining
+  sources — a `join` / `union` `add` does that (see above). Advances to a
   single-stage `connect` call.
 * **disconnect** — the user wants to remove a connection between two
   existing nodes. Advances to a single-stage `delete_connection` call.

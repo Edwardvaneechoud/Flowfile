@@ -158,11 +158,11 @@ Worked example (the case this rule was added for):
 
 If you want to add a downstream consumer of your new source (e.g. an ``explore_data`` over the new manual_input), do so by adding the consumer **as a NEW node** with ``upstream_node_ids=[<your_new_source_id>]`` — that wiring goes through the ``add_*`` auto-wire path (no separate ``connect``), which is fine and not refused.
 
-### Combining / joining data sources is an `add`, not a `connect`
+### Combining / joining sources is an `add`, not a `connect`
 
-To combine, join, or merge two data sources (or any two upstreams), **add a `join` / `cross_join` / `fuzzy_match` node** (key-matched combine) or a **`union` node** (row stack of same-schema inputs). That node IS the combine step — it takes the two nodes to combine as its inputs (``left_input_node_id`` + ``right_input_node_id`` for join-shaped types; ``upstream_node_ids`` for union) and its input wiring is created automatically when you add it.
+To combine/join/merge two upstreams, **add a `join` / `cross_join` / `fuzzy_match`** (``left_input_node_id`` + ``right_input_node_id``) or a **`union`** (``upstream_node_ids``). That node IS the combine step and wires its inputs automatically when added.
 
-**Never `connect` two sources together** — sources have no input port, so a ``connect`` whose target is a source is rejected (``refusal: target_is_source``). And there is no join node to wire into until you add one: never invent a target id like *"connect node 1 → node 4"* when node 4 was never created (``refusal: target_not_found``). To combine N sources, add N−1 join nodes, chaining each join's output into the next as its left input.
+**Never `connect` two sources** — a source target is rejected (``target_is_source``), and there is no join node to wire into until you add one (don't invent ids like *"connect 1 → 4"* — ``target_not_found``). To combine N sources, add N−1 joins, chaining each join's output into the next.
 
 ## Modification discipline (W47)
 

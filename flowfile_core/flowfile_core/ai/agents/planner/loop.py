@@ -171,31 +171,22 @@ def _build_join_pivot_steer(
     tool_args: dict[str, Any],
     refusal_reason: str | None,
 ) -> str:
-    """Host note injected after a connect→add-join pivot. Tells the LLM
-    why the connect was doomed and that combining sources means ADDING a
-    join/union node — while leaving the door open to finish (``op_kind=
-    "other"``) if the requested joins already exist."""
+    """Short host note injected after a connect→add-join pivot. Kept terse
+    on purpose — it is re-injected on every pivot, so verbose prose would
+    eat the context budget of small models."""
     to_id = tool_args.get("to_node_id")
-    target = f"node {to_id}" if to_id is not None else "that target"
-    if refusal_reason == "target_is_source":
-        why = f"{target} is a source node and has no input port"
-    else:
-        why = f"{target} does not exist yet"
+    target = f"node {to_id}" if to_id is not None else "the target"
+    why = (
+        f"{target} is a source (no input port)"
+        if refusal_reason == "target_is_source"
+        else f"{target} does not exist"
+    )
     return (
-        f"NOTE FROM HOST: The connect was rejected because {why}. You cannot "
-        f"wire data INTO a source node or a node that has not been created. "
-        f"To COMBINE or JOIN data sources, the join (or union) node IS the "
-        f"operation — it is a NEW node you ADD, taking the nodes to combine "
-        f"as its inputs; the wiring is created automatically, so do NOT emit "
-        f"a separate connect.\n\n"
-        f"Next, call ``classify_intent`` with ``op_kind=\"add\"`` and at the "
-        f"following stage pick ``join`` (look up matching keys across two "
-        f"inputs, e.g. on customer_id) or ``union`` (stack rows of "
-        f"same-schema inputs), then select the two nodes to combine as the "
-        f"join's left and right inputs. If you have ALREADY created every "
-        f"join the user asked for and the data is combined, instead call "
-        f"``classify_intent`` with ``op_kind=\"other\"`` and write your "
-        f"wrap-up — do not keep adding nodes."
+        f"NOTE FROM HOST: connect rejected — {why}. To combine/join sources you "
+        f'ADD a node, not connect them. Next: classify_intent op_kind="add", '
+        f"then pick join (match on keys) or union (stack rows) — its inputs wire "
+        f'automatically. If every join already exists, classify_intent op_kind='
+        f'"other" and write your wrap-up.'
     )
 
 

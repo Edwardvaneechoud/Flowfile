@@ -134,41 +134,30 @@ denominator and the per-city numerators.
 
 ## Worked example — combining / joining multiple sources
 
-For *"join the customer, order, and support ticket data on
-customer_id"* over three stand-alone sources ``read#1`` (customers),
-``read#2`` (orders), ``read#3`` (support tickets):
+*"join customers, orders, support on customer_id"* over three
+stand-alone sources read#1, read#2, read#3 → a multi-step **`add`** plan
+(N sources need N−1 joins), NOT a `connect` plan:
 
 ```
 ## Current state
 
-Three stand-alone source nodes — customers (read#1), orders (read#2),
-and support tickets (read#3) — share a customer_id key but are not
-wired to anything yet.
+Three stand-alone sources (read#1, read#2, read#3) share a customer_id
+key but aren't wired to anything.
 
 ## Proposed changes
 
-1. join — combine customers (read#1) and orders (read#2) on
-   customer_id.
-   *Why*: links each customer to their orders. This new join node takes
-   read#1 and read#2 as its left and right inputs.
-2. join — combine the result of step 1 with support tickets (read#3) on
-   customer_id.
-   *Why*: adds support-ticket context. The second join takes the first
-   join's output as its left input and read#3 as its right input.
+1. join — combine read#1 + read#2 on customer_id.
+   *Why*: links each customer to their orders.
+2. join — combine step 1's output + read#3 on customer_id.
+   *Why*: adds support-ticket context.
 
 ## Edge cases / caveats
 
-- Each join is a NEW node you ADD — you do NOT connect the sources
-  together (sources have no input port). The join node IS the combine
-  step and wires its own inputs automatically.
-- N sources need N−1 joins, chained: each join combines the running
-  result with the next source.
-- Using left joins preserves all customer rows; switch to inner if you
-  only want customers that have matching orders / tickets.
+- Each join is a NEW node you ADD (its inputs wire automatically); you
+  do NOT connect the sources — sources have no input port.
+- Left joins keep all customer rows; use inner to drop customers with no
+  match.
 ```
-
-This is a multi-step **`add`** plan (two joins), not a `connect` plan —
-``classify`` will route each step to ``op_kind="add"``.
 
 ## When the plan is short
 
